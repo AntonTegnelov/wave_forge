@@ -55,7 +55,7 @@ fn test_run_simple_2x1x1_success() {
     let num_tiles = 2;
     let num_axes = 6; // 3D checks, even for 2x1x1 grid
     let weights = vec![1.0, 1.0]; // Equal weights for Tile 0 and Tile 1
-    let tileset = TileSet::new(weights);
+    let tileset = TileSet::new(weights).expect("Failed to create TileSet for simple success test");
     let rules = create_simple_rules(num_tiles, num_axes);
     let propagator = CpuConstraintPropagator::new();
     let entropy_calculator = CpuEntropyCalculator::new();
@@ -106,7 +106,7 @@ fn test_run_forced_contradiction() {
     let num_tiles = 2;
     let num_axes = 6;
     let weights = vec![1.0, 1.0];
-    let tileset = TileSet::new(weights);
+    let tileset = TileSet::new(weights).expect("Failed to create TileSet for contradiction test");
     // Rule: Tile 0 cannot be next to Tile 0 (only Tile 1)
     // Rule: Tile 1 cannot be next to Tile 1 (only Tile 0)
     let mut allowed = vec![false; num_axes * num_tiles * num_tiles];

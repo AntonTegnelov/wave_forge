@@ -142,3 +142,165 @@ impl PossibilityGrid {
 
 // Type alias for the entropy grid (can still use the generic Grid)
 pub type EntropyGrid = Grid<f32>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Tests for generic Grid<T> ---
+
+    #[test]
+    fn test_grid_new() {
+        let grid: Grid<i32> = Grid::new(3, 4, 5);
+        assert_eq!(grid.width, 3);
+        assert_eq!(grid.height, 4);
+        assert_eq!(grid.depth, 5);
+        assert_eq!(grid.data.len(), 3 * 4 * 5);
+        // Check default initialization (i32 defaults to 0)
+        assert!(grid.data.iter().all(|&v| v == 0));
+
+        // Test zero dimension
+        let grid_zero: Grid<f64> = Grid::new(0, 10, 10);
+        assert_eq!(grid_zero.width, 0);
+        assert_eq!(grid_zero.height, 10);
+        assert_eq!(grid_zero.depth, 10);
+        assert!(grid_zero.data.is_empty());
+
+        let grid_zero2: Grid<f64> = Grid::new(10, 0, 10);
+        assert!(grid_zero2.data.is_empty());
+
+        let grid_zero3: Grid<f64> = Grid::new(10, 10, 0);
+        assert!(grid_zero3.data.is_empty());
+    }
+
+    #[test]
+    fn test_grid_index() {
+        let grid: Grid<u8> = Grid::new(2, 3, 4); // size = 24
+
+        // Test valid indices
+        assert_eq!(grid.index(0, 0, 0), Some(0));
+        assert_eq!(grid.index(1, 0, 0), Some(1));
+        assert_eq!(grid.index(0, 1, 0), Some(2)); // y=1, x=0 -> 0*6 + 1*2 + 0 = 2
+        assert_eq!(grid.index(1, 1, 0), Some(3)); // y=1, x=1 -> 0*6 + 1*2 + 1 = 3
+        assert_eq!(grid.index(0, 0, 1), Some(6)); // z=1 -> 1*6 + 0*2 + 0 = 6
+        assert_eq!(grid.index(1, 2, 3), Some(23)); // z=3, y=2, x=1 -> 3*6 + 2*2 + 1 = 18+4+1=23
+
+        // Test out-of-bounds indices
+        assert_eq!(grid.index(2, 0, 0), None); // x out of bounds
+        assert_eq!(grid.index(0, 3, 0), None); // y out of bounds
+        assert_eq!(grid.index(0, 0, 4), None); // z out of bounds
+        assert_eq!(grid.index(2, 3, 4), None); // all out of bounds
+    }
+
+    #[test]
+    fn test_grid_get() {
+        let mut grid: Grid<String> = Grid::new(2, 2, 2);
+        grid.data[0] = "Hello".to_string();
+        grid.data[7] = "World".to_string();
+
+        assert_eq!(grid.get(0, 0, 0), Some(&"Hello".to_string()));
+        assert_eq!(grid.get(1, 1, 1), Some(&"World".to_string())); // Index 7
+        assert_eq!(grid.get(1, 0, 0), Some(&String::default())); // Index 1, default value
+
+        // Out of bounds
+        assert_eq!(grid.get(2, 0, 0), None);
+        assert_eq!(grid.get(0, 2, 0), None);
+        assert_eq!(grid.get(0, 0, 2), None);
+    }
+
+    #[test]
+    fn test_grid_get_mut() {
+        let mut grid: Grid<i32> = Grid::new(2, 2, 2);
+
+        // Get mutable reference and modify
+        if let Some(val) = grid.get_mut(0, 1, 0) {
+            // Index 2
+            *val = 42;
+        }
+        assert_eq!(grid.data[2], 42);
+
+        if let Some(val) = grid.get_mut(1, 1, 1) {
+            // Index 7
+            *val = -10;
+        }
+        assert_eq!(grid.data[7], -10);
+
+        // Check original default values weren't changed elsewhere
+        assert_eq!(grid.data[0], 0);
+        assert_eq!(grid.data[1], 0);
+
+        // Attempt to get out of bounds mutable reference
+        assert!(grid.get_mut(2, 0, 0).is_none());
+        assert!(grid.get_mut(0, 2, 0).is_none());
+        assert!(grid.get_mut(0, 0, 2).is_none());
+    }
+
+    // --- Tests for PossibilityGrid ---
+
+    #[test]
+    fn test_possibility_grid_new() {
+        let grid = PossibilityGrid::new(2, 3, 4, 5); // 24 cells, 5 tiles
+        assert_eq!(grid.width, 2);
+        assert_eq!(grid.height, 3);
+        assert_eq!(grid.depth, 4);
+        assert_eq!(grid.num_tiles(), 5);
+        assert_eq!(grid.data.len(), 2 * 3 * 4);
+
+        // Check that all cells are initialized with all bits set
+        let expected_bv = bitvec![1; 5];
+        assert!(grid.data.iter().all(|bv| *bv == expected_bv));
+
+        // Test zero dimension
+        let grid_zero = PossibilityGrid::new(0, 10, 10, 3);
+        assert!(grid_zero.data.is_empty());
+        assert_eq!(grid_zero.num_tiles(), 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "num_tiles must be greater than 0")]
+    fn test_possibility_grid_new_zero_tiles() {
+        let _ = PossibilityGrid::new(2, 2, 2, 0);
+    }
+
+    #[test]
+    fn test_possibility_grid_get() {
+        let grid = PossibilityGrid::new(2, 2, 2, 3);
+        let expected_bv = bitvec![1; 3];
+
+        assert_eq!(grid.get(0, 0, 0), Some(&expected_bv));
+        assert_eq!(grid.get(1, 1, 1), Some(&expected_bv));
+
+        // Out of bounds
+        assert_eq!(grid.get(2, 0, 0), None);
+    }
+
+    #[test]
+    fn test_possibility_grid_get_mut() {
+        let mut grid = PossibilityGrid::new(2, 2, 2, 4);
+        let expected_initial = bitvec![1; 4];
+        let modified_bv = bitvec![0, 1, 0, 1];
+
+        // Check initial state
+        assert_eq!(grid.get(0, 1, 0).unwrap(), &expected_initial);
+
+        // Get mutable reference and modify
+        if let Some(bv) = grid.get_mut(0, 1, 0) {
+            // Index 2
+            *bv = modified_bv.clone();
+        }
+        assert_eq!(grid.get(0, 1, 0).unwrap(), &modified_bv);
+
+        // Check other cells weren't affected
+        assert_eq!(grid.get(0, 0, 0).unwrap(), &expected_initial);
+        assert_eq!(grid.get(1, 1, 1).unwrap(), &expected_initial);
+
+        // Attempt to get out of bounds mutable reference
+        assert!(grid.get_mut(2, 0, 0).is_none());
+    }
+
+    #[test]
+    fn test_possibility_grid_num_tiles() {
+        let grid = PossibilityGrid::new(1, 1, 1, 10);
+        assert_eq!(grid.num_tiles(), 10);
+    }
+}
