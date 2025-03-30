@@ -1,0 +1,22 @@
+[package]
+name = "wave_forge"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[workspace]
+members = [
+    "wfc-core",
+    "wfc-rules",
+    "wfc-gpu",
+    "wave-forge-app",
+]
+
+[workspace.dependencies]
+# Add common dependencies here if needed later
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

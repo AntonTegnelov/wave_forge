@@ -1,0 +1,5 @@
+/target
+
+# Aider configuration file (potentially contains secrets)
+.aider.conf.yml
+CONVENTIONS.MD

@@ -1,0 +1,16 @@
+[package]
+name = "wfc-core"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitvec = "1.0"
+rayon = "1.8" # Added for parallel entropy calculation
+float-ord = "0.3" # Corrected name (was float_ord)
+log = "0.4"
+rand = "0.8" # Added for random tile selection during collapse
+thiserror = "1.0"
+
+[dev-dependencies]

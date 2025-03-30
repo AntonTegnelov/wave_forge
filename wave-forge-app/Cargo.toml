@@ -1,0 +1,23 @@
+[package]
+name = "wave-forge-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "wave-forge"
+path = "src/main.rs"
+
+[dependencies]
+wfc-core = { path = "../wfc-core" }
+wfc-rules = { path = "../wfc-rules" }
+wfc-gpu = { path = "../wfc-gpu", optional = true }
+
+clap = { version = "4.4", features = ["derive"] }
+rayon = "1.8"
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1.0" # For application-level error handling
+
+[features]
+default = []
+gpu = ["dep:wfc-gpu"] 

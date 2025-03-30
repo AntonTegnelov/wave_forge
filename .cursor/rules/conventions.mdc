@@ -1,0 +1,29 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Coding Conventions for wave_forge (Prioritizing Stability)
+
+- **Explicit Types:** Always specify types explicitly for function signatures, variables (`let` bindings), and struct fields. Avoid type inference where it might reduce clarity or lead to ambiguity.
+- **Comprehensive Error Handling:**
+  - Use `Result<T, E>` extensively for functions that can fail.
+  - Prefer specific, descriptive error types (using `thiserror` for library crates, `anyhow` for the application binary) over generic errors or panics.
+  - Avoid `unwrap()` and `expect()`. Use pattern matching (`match`, `if let`), `?` operator, or combinators like `map_err`, `ok_or_else` for robust error handling. Use `expect()` _only_ if a failure represents an unrecoverable panic or a definite logic bug, and provide a detailed explanation in the message.
+  - Add `#[must_use]` to functions returning `Result` or types whose value should generally not be ignored.
+- **Immutability:** Prefer immutable data structures and bindings (`let x = ...`) over mutable ones (`let mut x = ...`) whenever possible. Use mutability only when necessary and scope it tightly.
+- **Ownership and Borrowing:** Adhere strictly to Rust's ownership and borrowing rules. Use lifetimes explicitly when needed for clarity, even if the compiler could infer them. Prefer borrowing (`&`, `&mut`) over cloning (`.clone()`) unless ownership transfer is required or performance dictates otherwise.
+- **Defensive Programming:**
+  - Add checks for preconditions, invariants, and edge cases, especially at API boundaries.
+  - Be mindful of potential integer overflows; use checked arithmetic operations where appropriate.
+  - Validate external inputs rigorously (e.g., file paths, configuration values).
+- **Dependencies:**
+  - Prefer standard library types and functions over external crates unless the crate provides significant, necessary functionality or ergonomic improvements (e.g., `rayon`, `wgpu`, `clap`, `serde`, `bitvec`, `thiserror`, `anyhow`, `log`).
+  - Keep dependencies updated, but prioritize stable versions.
+- **Concurrency/Parallelism:**
+  - When using `rayon` or other concurrency primitives, pay meticulous attention to data races and synchronization. Use appropriate synchronization tools (`Mutex`, `RwLock`, atomics) correctly.
+  - Ensure thread safety for all shared data.
+- **Documentation:** Write clear documentation comments (`///`) for all public functions, structs, enums, traits, and modules, explaining their purpose, parameters, return values, and any potential panics or errors. Add comments (`//`) for complex or non-obvious logic within function bodies.
+- **Testing:** Write comprehensive unit tests for core logic and integration tests for interactions between components. Test edge cases, error conditions, and common usage patterns. Minimize the use of mocking, only mock when neccesssary
+- **Linting:** Adhere strictly to common Rust best practices and `clippy` lint recommendations (e.g., `cargo clippy -- -D warnings`). Fix lints proactively.
+- **Modularity:** Keep functions and modules focused on a single responsibility. Prefer smaller, well-defined units of code.

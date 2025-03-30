@@ -1,0 +1,12 @@
+[package]
+name = "wfc-gpu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wgpu = "0.19" # Check for latest stable wgpu version
+wfc-core = { path = "../wfc-core" }
+thiserror = "1.0"
+log = "0.4"
+
+[dev-dependencies] 
