@@ -25,4 +25,8 @@ pub enum GpuError {
     ValidationError(wgpu::Error),
     #[error("Unknown GPU error")]
     Unknown,
+    #[error("Failed to map GPU buffer: {0}")]
+    BufferMapFailed(String),
+    #[error("GPU operation failed: {0}")]
+    Other(String),
 }

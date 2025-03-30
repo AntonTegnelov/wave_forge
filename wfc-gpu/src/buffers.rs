@@ -172,10 +172,66 @@ impl GpuBuffers {
         })
     }
 
-    // TODO: Add methods for uploading updates (updated_coords) to updates_buf
-    // pub fn upload_updates(&self, queue: &wgpu::Queue, updates: &[(usize, usize, usize)]) { ... }
+    // Uploads a list of updated cell coordinates (packed as u32 indices) to the updates buffer.
+    #[allow(dead_code)] // TODO: Implement and use
+    pub fn upload_updates(&self, queue: &wgpu::Queue, updates: &[u32]) {
+        // TODO: Ensure updates doesn't exceed updates_buf capacity?
+        queue.write_buffer(&self.updates_buf, 0, bytemuck::cast_slice(updates));
+    }
 
-    // TODO: Add methods for downloading results (entropy, contradiction flag) from staging buffers
-    // pub async fn download_entropy(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<EntropyGrid, GpuError> { ... }
-    // pub async fn check_contradiction(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<bool, GpuError> { ... }
+    // Downloads the entropy grid results from the staging buffer.
+    // This is an async operation as it involves mapping the staging buffer.
+    #[allow(dead_code)] // TODO: Implement and use
+    pub async fn download_entropy(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<Vec<f32>, GpuError> {
+        // Return raw data for now
+        // 1. Create command encoder
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Entropy Download Encoder"),
+        });
+
+        // 2. Copy from entropy_buf to entropy_staging_buf
+        encoder.copy_buffer_to_buffer(
+            &self.entropy_buf,
+            0,
+            &self.entropy_staging_buf,
+            0,
+            self.entropy_staging_buf.size(),
+        );
+
+        // 3. Submit command encoder
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // 4. Map staging buffer
+        let buffer_slice = self.entropy_staging_buf.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+        // 5. Wait for map completion and process result
+        device.poll(wgpu::Maintain::Wait); // Block until queue is idle
+        let map_result = receiver.receive().await.ok_or_else(|| {
+            GpuError::BufferMapFailed("Channel closed before receiving map result".to_string())
+        })?;
+
+        if map_result.is_ok() {
+            let data = buffer_slice.get_mapped_range();
+            let entropy_data: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+            // Drop the mapped range guard to unmap the buffer
+            drop(data);
+            self.entropy_staging_buf.unmap();
+            Ok(entropy_data)
+        } else {
+            // Unmap even on error
+            self.entropy_staging_buf.unmap();
+            Err(GpuError::BufferMapFailed(
+                "Buffer mapping failed asynchronously".to_string(),
+            ))
+        }
+    }
+
+    // TODO: Add similar method for downloading contradiction flag
+    // pub async fn download_contradiction_flag(...) -> Result<bool, GpuError> { ... }
 }

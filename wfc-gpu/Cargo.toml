@@ -10,5 +10,6 @@ thiserror = "1.0"
 log = "0.4"
 bytemuck = { version = "1.15", features = ["derive"] }
 bitvec = "1.0"
+futures-intrusive = "0.5" # For async buffer mapping
 
 [dev-dependencies] 
