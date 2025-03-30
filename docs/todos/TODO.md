@@ -63,7 +63,7 @@ _Purpose: Defines the fundamental data structures and the platform-agnostic WFC 
 _Purpose: Handles loading tile set definitions and adjacency rules from external files._
 
 - **File:** `wfc-rules/src/lib.rs`
-  - [ ] Define error types for loading/parsing.
+  - [x] Define error types for loading/parsing.
 - **File:** `wfc-rules/src/loader.rs`
   - [ ] Implement `load_from_file(path: &Path) -> Result<(TileSet, AdjacencyRules), LoadError>` function.
   - [ ] Choose file format (e.g., RON, JSON). Add necessary dependencies (`serde`, `ron` or `serde_json`).
