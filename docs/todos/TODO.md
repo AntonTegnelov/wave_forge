@@ -88,7 +88,7 @@ _Purpose: Implements GPU-accelerated versions of entropy calculation and propaga
   - [x] Implement shader loading and compute pipeline creation. (Shader loading done)
 - **File:** `wfc-gpu/src/buffers.rs`
   - [x] Implement logic to create and manage GPU buffers for grid state (bitsets), rules (flattened/indexed), entropy etc.
-  - [ ] Implement CPU <-> GPU data transfer logic (staging buffers). (Upload/Download methods added)
+  - [x] Implement CPU <-> GPU data transfer logic (staging buffers). (Upload/Download methods added)
         _Design to keep grid state and rules primarily on GPU, minimizing transfers during the main loop._
 - **File:** `wfc-gpu/src/accelerator.rs`
   - [x] Define `GpuAccelerator` struct holding `wgpu` state, pipelines, buffers.
@@ -156,25 +156,4 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
   - [ ] If benchmark mode is enabled, run benchmarks using the benchmark infrastructure.
   - [ ] Set up progress reporting based on configuration.
   - [ ] Initialize visualizer if visualization mode is enabled.
-  - [ ] Call `wfc-core::runner::run` with the initialized grid, injected components, and progress callback.
-  - [ ] Handle results (success or failure).
-- **File:** `wave-forge-app/src/output.rs` (Simple Output)
-  - [ ] Implement function to save the final collapsed `Grid<TileId>` to a simple format (e.g., text, basic binary, RON).
-- **Testing:** `wave-forge-app/tests/`
-  - [ ] Add integration tests for running the app with basic configs (CPU and GPU if possible).
-  - [ ] Add tests for argument parsing.
-  - [ ] Add tests for benchmark comparisons.
-  - [ ] Add tests for progress reporting.
-  - [ ] Add tests for visualization rendering.
-
-## General / Ongoing
-
-- [ ] Refine error handling across all crates. _Strategy: Use `thiserror` for library crates (`wfc-core`, `wfc-rules`, `wfc-gpu`) and `anyhow` for the application (`wave-forge-app`)._
-- [ ] Add documentation comments (`///`) to public APIs.
-- [ ] Set up basic logging (`log`, `env_logger`).
-- [ ] Profile and optimize bottlenecks (CPU and GPU).
-- [ ] **Thread Safety (CPU):** Rigorously verify thread safety in `rayon`-based parallel implementations within `wfc-core` (e.g., avoiding data races on shared structures like `Grid`, ensuring proper synchronization if needed, handling error aggregation from parallel tasks).
-- [ ] Add visualization toggle to CLI interface.
-- [ ] Implement configurable logging levels for progress reporting.
-- [ ] Add benchmark results to documentation.
-- [ ] Create sample configurations for different visualization modes.
+  - [ ] Call `

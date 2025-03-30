@@ -13,6 +13,8 @@ pub enum GpuError {
     DeviceRequestFailed(#[from] wgpu::RequestDeviceError),
     #[error("Failed to create WGPU buffer: {0}")]
     BufferCreationError(String),
+    #[error("GPU buffer operation error: {0}")]
+    BufferOperationError(String),
     #[error("Failed to create WGPU pipeline: {0}")]
     PipelineCreationError(String),
     #[error("Failed to execute WGPU command: {0}")]
@@ -26,7 +28,7 @@ pub enum GpuError {
     #[error("Unknown GPU error")]
     Unknown,
     #[error("Failed to map GPU buffer: {0}")]
-    BufferMapFailed(String),
+    BufferMapFailed(#[from] wgpu::BufferAsyncError),
     #[error("GPU operation failed: {0}")]
     Other(String),
 }

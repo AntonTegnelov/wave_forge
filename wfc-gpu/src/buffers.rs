@@ -173,21 +173,26 @@ impl GpuBuffers {
     }
 
     // Uploads a list of updated cell coordinates (packed as u32 indices) to the updates buffer.
-    #[allow(dead_code)] // TODO: Implement and use
-    pub fn upload_updates(&self, queue: &wgpu::Queue, updates: &[u32]) {
-        // TODO: Ensure updates doesn't exceed updates_buf capacity?
+    pub fn upload_updates(&self, queue: &wgpu::Queue, updates: &[u32]) -> Result<(), GpuError> {
+        let updates_byte_size = std::mem::size_of_val(updates) as u64;
+        if updates_byte_size > self.updates_buf.size() {
+            return Err(GpuError::BufferOperationError(format!(
+                "Update data size ({} bytes) exceeds updates buffer capacity ({} bytes)",
+                updates_byte_size,
+                self.updates_buf.size()
+            )));
+        }
         queue.write_buffer(&self.updates_buf, 0, bytemuck::cast_slice(updates));
+        Ok(())
     }
 
     // Downloads the entropy grid results from the staging buffer.
     // This is an async operation as it involves mapping the staging buffer.
-    #[allow(dead_code)] // TODO: Implement and use
     pub async fn download_entropy(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<Vec<f32>, GpuError> {
-        // Return raw data for now
         // 1. Create command encoder
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Entropy Download Encoder"),
@@ -212,26 +217,109 @@ impl GpuBuffers {
 
         // 5. Wait for map completion and process result
         device.poll(wgpu::Maintain::Wait); // Block until queue is idle
+
+        // Receive the mapping result. Handle potential channel close error first.
         let map_result = receiver.receive().await.ok_or_else(|| {
-            GpuError::BufferMapFailed("Channel closed before receiving map result".to_string())
+            // Use a different error for channel closing, BufferMapFailed is now for BufferAsyncError
+            GpuError::Other(
+                "Channel closed before receiving map result for entropy buffer".to_string(),
+            )
         })?;
 
-        if map_result.is_ok() {
+        // Now propagate the actual buffer mapping error (BufferAsyncError)
+        map_result?; // This uses the `From<wgpu::BufferAsyncError>` for BufferMapFailed
+
+        // If we reach here, mapping was successful. Read the data.
+        let entropy_data: Vec<f32>;
+        {
+            // Create a scope for the mapped range guard `data`.
+            // When `data` goes out of scope, the buffer is automatically unmapped.
             let data = buffer_slice.get_mapped_range();
-            let entropy_data: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
-            // Drop the mapped range guard to unmap the buffer
-            drop(data);
-            self.entropy_staging_buf.unmap();
-            Ok(entropy_data)
-        } else {
-            // Unmap even on error
-            self.entropy_staging_buf.unmap();
-            Err(GpuError::BufferMapFailed(
-                "Buffer mapping failed asynchronously".to_string(),
-            ))
+            // Read the Vec<f32> directly. Buffer size should match entropy_staging_buf.size()
+            entropy_data = bytemuck::cast_slice(&data).to_vec();
+            // `data` guard goes out of scope here, unmapping the buffer.
         }
+
+        // No explicit unmap call needed here.
+        Ok(entropy_data)
     }
 
-    // TODO: Add similar method for downloading contradiction flag
-    // pub async fn download_contradiction_flag(...) -> Result<bool, GpuError> { ... }
+    // Downloads the contradiction flag result from the staging buffer.
+    // Returns true if a contradiction was detected (flag is non-zero), false otherwise.
+    pub async fn download_contradiction_flag(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<bool, GpuError> {
+        // 1. Create command encoder
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Contradiction Download Encoder"),
+        });
+
+        // 2. Copy from contradiction_flag_buf to contradiction_staging_buf
+        encoder.copy_buffer_to_buffer(
+            &self.contradiction_flag_buf,
+            0,
+            &self.contradiction_staging_buf,
+            0,
+            self.contradiction_staging_buf.size(), // Should be size of u32
+        );
+
+        // 3. Submit command encoder
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // 4. Map staging buffer
+        let buffer_slice = self.contradiction_staging_buf.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+        // 5. Wait for map completion and process result
+        device.poll(wgpu::Maintain::Wait); // Block until queue is idle
+
+        // Receive the mapping result. Handle potential channel close error first.
+        let map_result = receiver.receive().await.ok_or_else(|| {
+            // Use a different error for channel closing
+            GpuError::Other(
+                "Channel closed before receiving map result for contradiction flag".to_string(),
+            )
+        })?;
+
+        // Now propagate the actual buffer mapping error (BufferAsyncError)
+        map_result?; // This uses the `From<wgpu::BufferAsyncError>` for BufferMapFailed
+
+        // If we reach here, mapping was successful. Read the data.
+        let contradiction_value: u32;
+        {
+            // Create a scope for the mapped range guard `data`.
+            // When `data` goes out of scope, the buffer is automatically unmapped.
+            let data = buffer_slice.get_mapped_range();
+            if data.len() >= std::mem::size_of::<u32>() {
+                // Read the first u32
+                contradiction_value =
+                    *bytemuck::from_bytes::<u32>(&data[..std::mem::size_of::<u32>()]);
+            } else {
+                // Buffer is mapped, but size is wrong. Log error and return a specific GpuError.
+                // Dropping `data` here (at the end of the scope) will unmap the buffer before returning.
+                log::error!(
+                    "Contradiction staging buffer too small ({} bytes), expected at least {}",
+                    data.len(),
+                    std::mem::size_of::<u32>()
+                );
+                // We must ensure unmapping occurs before returning Err.
+                // The scope guard `data` handles this when this scope ends.
+                // No need to explicitly drop(data) or call unmap here.
+                return Err(GpuError::BufferOperationError(format!(
+                    "Contradiction staging buffer too small ({} bytes), expected at least {}",
+                    data.len(),
+                    std::mem::size_of::<u32>()
+                )));
+            }
+            // `data` guard goes out of scope here, unmapping the buffer.
+        }
+
+        // No explicit unmap call needed here.
+
+        // Interpret the flag: non-zero means contradiction detected
+        Ok(contradiction_value != 0)
+    }
 }
