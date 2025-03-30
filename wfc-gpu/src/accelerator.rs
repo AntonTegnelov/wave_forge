@@ -25,6 +25,7 @@ impl GpuAccelerator {
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
     ) -> Result<Self, GpuError> {
+        info!("Entered GpuAccelerator::new");
         info!("Initializing GPU Accelerator...");
 
         // 1. Initialize wgpu Instance
@@ -35,30 +36,38 @@ impl GpuAccelerator {
 
         // 2. Request Adapter (physical GPU)
         info!("Requesting GPU adapter...");
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None, // No surface needed for compute
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or(GpuError::AdapterRequestFailed)?;
+        let adapter = {
+            info!("Awaiting adapter request...");
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None, // No surface needed for compute
+                    force_fallback_adapter: false,
+                })
+                .await
+                .ok_or(GpuError::AdapterRequestFailed)?
+        };
+        info!("Adapter request returned.");
         info!("Adapter selected: {:?}", adapter.get_info());
 
         // 3. Request Device (logical device) & Queue
         info!("Requesting logical device and queue...");
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("WFC GPU Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
-                    // memory_hints: wgpu::MemoryHints::Performance, // Commented out - investigate feature/version issue later
-                },
-                None, // Optional trace path
-            )
-            .await
-            .map_err(GpuError::DeviceRequestFailed)?;
+        let (device, queue) = {
+            info!("Awaiting device request...");
+            adapter
+                .request_device(
+                    &wgpu::DeviceDescriptor {
+                        label: Some("WFC GPU Device"),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
+                        // memory_hints: wgpu::MemoryHints::Performance, // Commented out - investigate feature/version issue later
+                    },
+                    None, // Optional trace path
+                )
+                .await
+                .map_err(GpuError::DeviceRequestFailed)?
+        };
+        info!("Device request returned.");
         info!("Device and queue obtained.");
 
         let device = Arc::new(device);

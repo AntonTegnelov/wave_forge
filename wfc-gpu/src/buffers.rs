@@ -227,8 +227,7 @@ impl GpuBuffers {
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        device.poll(wgpu::Maintain::Wait);
-
+        // Wait for the mapping to complete
         receiver.receive().await.ok_or_else(|| {
             GpuError::Other(
                 "Channel closed before receiving map result for entropy buffer".to_string(),
@@ -315,8 +314,7 @@ impl GpuBuffers {
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        device.poll(wgpu::Maintain::Wait);
-
+        // Wait for the mapping to complete
         receiver.receive().await.ok_or_else(|| {
             GpuError::Other(
                 "Channel closed before receiving map result for contradiction buffer".to_string(),
@@ -371,8 +369,7 @@ impl GpuBuffers {
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        device.poll(wgpu::Maintain::Wait);
-
+        // Wait for the mapping to complete
         receiver.receive().await.ok_or_else(|| {
             GpuError::Other(
                 "Channel closed before receiving map result for params buffer".to_string(),
