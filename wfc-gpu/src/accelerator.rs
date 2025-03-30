@@ -1,4 +1,5 @@
 use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
+use log::{info, warn};
 use std::sync::Arc;
 use wfc_core::{
     entropy::EntropyCalculator,
@@ -6,6 +7,7 @@ use wfc_core::{
     propagator::{ConstraintPropagator, PropagationError},
     rules::AdjacencyRules,
 }; // Use Arc for shared GPU resources
+use wgpu::Backends;
 
 // Main struct holding GPU state and implementing core traits
 pub struct GpuAccelerator {
@@ -23,22 +25,67 @@ impl GpuAccelerator {
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
     ) -> Result<Self, GpuError> {
-        // TODO: Initialize wgpu instance, adapter, device, queue
-        // let instance = wgpu::Instance::new(...);
-        // let adapter = instance.request_adapter(...).await.ok_or(...)?;
-        // let (device, queue) = adapter.request_device(...).await.map_err(...)?;
-        // let device = Arc::new(device);
-        // let queue = Arc::new(queue);
+        info!("Initializing GPU Accelerator...");
 
-        // TODO: Create pipelines
-        // let pipelines = ComputePipelines::new(&device)?;
+        // 1. Initialize wgpu Instance
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(), // Or specify e.g., Vulkan, DX12
+            ..Default::default()
+        });
 
-        // TODO: Create buffers
-        // let buffers = GpuBuffers::new(&device, initial_grid, rules)?;
+        // 2. Request Adapter (physical GPU)
+        info!("Requesting GPU adapter...");
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None, // No surface needed for compute
+                force_fallback_adapter: false,
+            })
+            .await
+            .ok_or(GpuError::AdapterRequestFailed)?;
+        info!("Adapter selected: {:?}", adapter.get_info());
 
-        // let grid_dims = (initial_grid.width, initial_grid.height, initial_grid.depth);
+        // 3. Request Device (logical device) & Queue
+        info!("Requesting logical device and queue...");
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("WFC GPU Device"),
+                    required_features: wgpu::Features::empty(), // Specify features if needed
+                    // Check limits based on shader requirements if necessary
+                    required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                },
+                None, // Optional trace path
+            )
+            .await
+            .map_err(|e| GpuError::DeviceRequestFailed(e))?;
+        info!("Device and queue obtained.");
 
-        todo!()
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
+        // 4. Create pipelines (Placeholder - needs shader loading)
+        // TODO: Implement shader loading and pipeline creation
+        warn!("Pipeline creation is not yet implemented.");
+        let pipelines = ComputePipelines::new(&device)?;
+
+        // 5. Create buffers (Placeholder - needs implementation)
+        // TODO: Implement buffer creation and data upload
+        warn!("Buffer creation is not yet implemented.");
+        let buffers = GpuBuffers::new(&device, initial_grid, rules)?;
+
+        let grid_dims = (initial_grid.width, initial_grid.height, initial_grid.depth);
+
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            pipelines,
+            buffers,
+            grid_dims,
+        })
     }
 }
 

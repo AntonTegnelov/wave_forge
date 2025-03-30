@@ -80,7 +80,7 @@ _Purpose: Handles loading tile set definitions and adjacency rules from external
 _Purpose: Implements GPU-accelerated versions of entropy calculation and propagation._
 
 - **File:** `wfc-gpu/src/lib.rs`
-  - [ ] Set up `wgpu` basics (Instance, Adapter, Device, Queue). Needs `wgpu` dependency.
+  - [x] Set up `wgpu` basics (Instance, Adapter, Device, Queue). Needs `wgpu` dependency.
   - [ ] Define error types.
 - **File:** `wfc-gpu/src/shaders/`
   - [ ] Write `entropy.wgsl` compute shader.
