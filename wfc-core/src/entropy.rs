@@ -100,3 +100,106 @@ impl EntropyCalculator for CpuEntropyCalculator {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid::{EntropyGrid, PossibilityGrid};
+    use bitvec::prelude::*;
+
+    #[test]
+    fn test_calculate_entropy_basic() {
+        let calculator = CpuEntropyCalculator::new();
+        let mut grid = PossibilityGrid::new(2, 1, 1, 3); // 2 cells, 3 tiles
+
+        // Initial state: all possible [1, 1, 1]
+        let entropy_grid = calculator.calculate_entropy(&grid);
+        assert_eq!(entropy_grid.get(0, 0, 0), Some(&3.0));
+        assert_eq!(entropy_grid.get(1, 0, 0), Some(&3.0));
+
+        // Collapse one cell: [1, 0, 0]
+        *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0, 0];
+        let entropy_grid = calculator.calculate_entropy(&grid);
+        assert_eq!(entropy_grid.get(0, 0, 0), Some(&0.0)); // Entropy becomes 0 for collapsed
+        assert_eq!(entropy_grid.get(1, 0, 0), Some(&3.0));
+
+        // Partially collapse other cell: [0, 1, 1]
+        *grid.get_mut(1, 0, 0).unwrap() = bitvec![0, 1, 1];
+        let entropy_grid = calculator.calculate_entropy(&grid);
+        assert_eq!(entropy_grid.get(0, 0, 0), Some(&0.0));
+        assert_eq!(entropy_grid.get(1, 0, 0), Some(&2.0)); // Entropy is count > 1
+
+        // Collapse other cell: [0, 1, 0]
+        *grid.get_mut(1, 0, 0).unwrap() = bitvec![0, 1, 0];
+        let entropy_grid = calculator.calculate_entropy(&grid);
+        assert_eq!(entropy_grid.get(0, 0, 0), Some(&0.0));
+        assert_eq!(entropy_grid.get(1, 0, 0), Some(&0.0));
+    }
+
+    #[test]
+    fn test_calculate_entropy_empty_grid() {
+        let calculator = CpuEntropyCalculator::new();
+        let grid = PossibilityGrid::new(0, 1, 1, 3);
+        let entropy_grid = calculator.calculate_entropy(&grid);
+        assert_eq!(entropy_grid.width, 0);
+        assert!(entropy_grid.data.is_empty());
+    }
+
+    #[test]
+    fn test_find_lowest_entropy_basic() {
+        let calculator = CpuEntropyCalculator::new();
+        let mut entropy_grid = EntropyGrid::new(2, 2, 1);
+        // Set some entropy values
+        *entropy_grid.get_mut(0, 0, 0).unwrap() = 3.0;
+        *entropy_grid.get_mut(1, 0, 0).unwrap() = 0.0; // Collapsed
+        *entropy_grid.get_mut(0, 1, 0).unwrap() = 2.0; // Lowest positive
+        *entropy_grid.get_mut(1, 1, 0).unwrap() = 4.0;
+
+        let lowest = calculator.find_lowest_entropy(&entropy_grid);
+        assert_eq!(lowest, Some((0, 1, 0)));
+    }
+
+    #[test]
+    fn test_find_lowest_entropy_tie() {
+        let calculator = CpuEntropyCalculator::new();
+        let mut entropy_grid = EntropyGrid::new(2, 1, 1);
+        *entropy_grid.get_mut(0, 0, 0).unwrap() = 2.0;
+        *entropy_grid.get_mut(1, 0, 0).unwrap() = 2.0;
+
+        let lowest = calculator.find_lowest_entropy(&entropy_grid);
+        // Should return one of the coordinates with the lowest entropy
+        assert!(lowest == Some((0, 0, 0)) || lowest == Some((1, 0, 0)));
+    }
+
+    #[test]
+    fn test_find_lowest_entropy_all_zero() {
+        let calculator = CpuEntropyCalculator::new();
+        let mut entropy_grid = EntropyGrid::new(2, 1, 1);
+        *entropy_grid.get_mut(0, 0, 0).unwrap() = 0.0;
+        *entropy_grid.get_mut(1, 0, 0).unwrap() = 0.0;
+
+        let lowest = calculator.find_lowest_entropy(&entropy_grid);
+        assert_eq!(lowest, None); // No positive entropy found
+    }
+
+    #[test]
+    fn test_find_lowest_entropy_single_cell() {
+        let calculator = CpuEntropyCalculator::new();
+        let mut entropy_grid = EntropyGrid::new(1, 1, 1);
+        *entropy_grid.get_mut(0, 0, 0).unwrap() = 5.0;
+        let lowest = calculator.find_lowest_entropy(&entropy_grid);
+        assert_eq!(lowest, Some((0, 0, 0)));
+
+        *entropy_grid.get_mut(0, 0, 0).unwrap() = 0.0;
+        let lowest = calculator.find_lowest_entropy(&entropy_grid);
+        assert_eq!(lowest, None);
+    }
+
+    #[test]
+    fn test_find_lowest_entropy_empty_grid() {
+        let calculator = CpuEntropyCalculator::new();
+        let entropy_grid = EntropyGrid::new(0, 0, 0);
+        let lowest = calculator.find_lowest_entropy(&entropy_grid);
+        assert_eq!(lowest, None);
+    }
+}
