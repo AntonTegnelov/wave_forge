@@ -51,9 +51,9 @@ _Purpose: Defines the fundamental data structures and the platform-agnostic WFC 
       ```
     - [x] Create `ProgressInfo` struct with iteration count, collapsed cells count, etc.
 - **File:** `wfc-core/src/lib.rs`
-  - [ ] Define public API / module structure.
+  - [x] Define public API / module structure.
 - **Testing:** `wfc-core/tests/`
-  - [ ] Add unit tests for grid manipulation.
+  - [x] Add unit tests for grid manipulation.
   - [ ] Add unit tests for CPU entropy calculation.
   - [ ] Add unit tests for CPU propagation logic.
   - [ ] Add integration tests for the core WFC `run` function (using CPU components).
