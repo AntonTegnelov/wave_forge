@@ -1,5 +1,4 @@
-use std::path::Path;
-use wfc_core::{AdjacencyRules, TileId};
+use wfc_core::TileId;
 use wfc_rules::loader::load_from_file;
 use wfc_rules::LoadError;
 
