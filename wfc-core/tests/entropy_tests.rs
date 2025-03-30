@@ -3,31 +3,23 @@ use bitvec::prelude::*;
 use wfc_core::entropy::{CpuEntropyCalculator, EntropyCalculator};
 use wfc_core::grid::{EntropyGrid, PossibilityGrid};
 
-// Helper to create a simple PossibilityGrid for testing using public API
+// Helper to create a PossibilityGrid using the new constructor
 fn create_test_possibility_grid(
     width: usize,
     height: usize,
     depth: usize,
     num_tiles: usize,
 ) -> PossibilityGrid {
-    let mut grid = PossibilityGrid::new(width, height, depth);
-    let all_possible = bitvec![1; num_tiles];
-    for z in 0..depth {
-        for y in 0..height {
-            for x in 0..width {
-                if let Some(cell) = grid.get_mut(x, y, z) {
-                    *cell = all_possible.clone();
-                }
-            }
-        }
-    }
-    grid
+    // Now calls the specific PossibilityGrid constructor
+    PossibilityGrid::new(width, height, depth, num_tiles)
+    // No need to manually set bits, constructor does it.
 }
 
 #[test]
 fn test_calculate_entropy_initial() {
     let calculator = CpuEntropyCalculator::new();
     let num_tiles = 8;
+    // Call updated helper
     let grid = create_test_possibility_grid(2, 2, 1, num_tiles);
     let entropy_grid = calculator.calculate_entropy(&grid);
 
@@ -57,9 +49,10 @@ fn test_calculate_entropy_initial() {
 fn test_calculate_entropy_varied() {
     let calculator = CpuEntropyCalculator::new();
     let num_tiles = 4;
+    // Call updated helper
     let mut grid = create_test_possibility_grid(2, 1, 1, num_tiles);
 
-    // Set specific possibilities
+    // Set specific possibilities (using get_mut as before)
     *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0, 1, 0]; // 2 possibilities -> entropy 2.0
     *grid.get_mut(1, 0, 0).unwrap() = bitvec![0, 0, 0, 1]; // 1 possibility -> entropy 0.0 (collapsed)
 

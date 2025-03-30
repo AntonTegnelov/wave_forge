@@ -27,25 +27,14 @@ fn create_simple_rules(num_tiles: usize, num_axes: usize) -> AdjacencyRules {
     AdjacencyRules::new(num_tiles, num_axes, allowed)
 }
 
-// Helper to create a grid initialized with all possibilities
+// Helper to create a grid initialized with all possibilities using new constructor
 fn create_initial_grid(
     width: usize,
     height: usize,
     depth: usize,
     num_tiles: usize,
 ) -> PossibilityGrid {
-    let mut grid = PossibilityGrid::new(width, height, depth);
-    let all_possible = bitvec![1; num_tiles];
-    for z in 0..depth {
-        for y in 0..height {
-            for x in 0..width {
-                if let Some(cell) = grid.get_mut(x, y, z) {
-                    *cell = all_possible.clone();
-                }
-            }
-        }
-    }
-    grid
+    PossibilityGrid::new(width, height, depth, num_tiles)
 }
 
 #[test]

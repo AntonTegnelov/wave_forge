@@ -34,14 +34,19 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
 ) -> Result<(), WfcError> {
     info!("Starting WFC run...");
     let mut iterations = 0;
-    let total_cells = grid.width * grid.height * grid.depth;
+    let width = grid.width;
+    let height = grid.height;
+    let depth = grid.depth;
+    let total_cells = width * height * depth;
     let mut collapsed_cells_count = 0;
+    let num_tiles = grid.num_tiles();
 
-    // Pre-calculate initial collapsed count and check for initial contradictions
-    for z in 0..grid.depth {
-        for y in 0..grid.height {
-            for x in 0..grid.width {
+    // Pre-calculate initial collapsed count using local dimensions
+    for z in 0..depth {
+        for y in 0..height {
+            for x in 0..width {
                 if let Some(cell) = grid.get(x, y, z) {
+                    assert_eq!(cell.len(), num_tiles, "Grid cell bitvec length mismatch");
                     let count = cell.count_ones();
                     if count == 0 {
                         error!("Initial contradiction found at ({}, {}, {})", x, y, z);
@@ -61,6 +66,40 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     }
     debug!(
         "Initial state: {}/{} cells collapsed.",
+        collapsed_cells_count, total_cells
+    );
+
+    // Run initial propagation based on any pre-collapsed cells or initial constraints.
+    // Use local dimensions for coordinate generation
+    let all_coords: Vec<(usize, usize, usize)> = (0..depth)
+        .flat_map(|z| (0..height).flat_map(move |y| (0..width).map(move |x| (x, y, z))))
+        .collect();
+    debug!(
+        "Running initial propagation for all {} cells...",
+        all_coords.len()
+    );
+    propagator.propagate(grid, all_coords, rules).map_err(|e| {
+        error!("Initial propagation failed: {:?}", e);
+        WfcError::from(e)
+    })?;
+    // Recalculate collapsed count after initial propagation
+    {
+        let current_grid = &*grid; // Reborrow immutably
+                                   // Use local dimensions in recalculation
+        collapsed_cells_count = (0..depth)
+            .flat_map(|z| {
+                (0..height).flat_map(move |y| {
+                    (0..width).map(move |x| {
+                        current_grid
+                            .get(x, y, z)
+                            .map_or(0, |c| if c.count_ones() == 1 { 1 } else { 0 })
+                    })
+                })
+            })
+            .sum();
+    }
+    debug!(
+        "After initial propagation: {}/{} cells collapsed.",
         collapsed_cells_count, total_cells
     );
 
@@ -87,11 +126,15 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                 );
                 WfcError::GridError("Lowest entropy cell coordinates out of bounds".to_string())
             })?;
+            assert_eq!(
+                cell_to_collapse.len(),
+                num_tiles,
+                "Grid cell bitvec length mismatch"
+            );
 
             let possible_tile_indices: Vec<usize> = cell_to_collapse.iter_ones().collect();
 
             if possible_tile_indices.is_empty() {
-                // Propagator should ideally prevent this, but check defensively.
                 error!("Contradiction detected at ({}, {}, {}): No possible tiles left (collapse phase).", x, y, z);
                 return Err(WfcError::Contradiction);
             }
@@ -134,7 +177,6 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
 
                 let mut rng = thread_rng();
                 let chosen_weighted_index = dist.sample(&mut rng);
-                // The chosen index corresponds to the index *within* possible_tile_indices/weights
                 let chosen_tile_index = possible_tile_indices[chosen_weighted_index];
 
                 debug!(
@@ -143,13 +185,11 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                 );
 
                 // Update the grid cell state directly
-                cell_to_collapse.clear();
+                cell_to_collapse.fill(false);
                 cell_to_collapse.set(chosen_tile_index, true);
-                collapsed_cells_count += 1;
 
                 // --- 3. Propagate Constraints ---
                 debug!("Propagating constraints from ({}, {}, {})...", x, y, z);
-                // Handle potential propagation errors
                 propagator
                     .propagate(grid, vec![(x, y, z)], rules)
                     .map_err(|e| {
@@ -157,13 +197,30 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                             "Propagation failed after collapsing ({}, {}, {}): {:?}",
                             x, y, z, e
                         );
-                        WfcError::from(e) // Convert PropagationError to WfcError
+                        WfcError::from(e)
                     })?;
                 debug!("Propagation successful.");
+                // Recalculate collapsed count AFTER propagation
+                {
+                    let current_grid = &*grid; // Reborrow immutably
+                                               // Use local dimensions in recalculation
+                    collapsed_cells_count = (0..depth)
+                        .flat_map(|z| {
+                            (0..height).flat_map(move |y| {
+                                (0..width).map(move |x| {
+                                    current_grid.get(x, y, z).map_or(0, |c| {
+                                        if c.count_ones() == 1 {
+                                            1
+                                        } else {
+                                            0
+                                        }
+                                    })
+                                })
+                            })
+                        })
+                        .sum();
+                } // Immutable borrow ends
             } else {
-                // Cell was already collapsed (len == 1). find_lowest_entropy should ideally not
-                // return collapsed cells unless all others are collapsed or have issues.
-                // Log this potentially odd state but continue.
                 debug!(
                     "Cell ({}, {}, {}) was already collapsed, skipping collapse/propagation.",
                     x, y, z
@@ -185,12 +242,11 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
 
         // --- 4. Progress Reporting (Optional) ---
         if let Some(ref callback) = progress_callback {
-            let total_cells = grid.width * grid.height * grid.depth; // Access fields directly
             let progress = ProgressInfo {
                 iteration: iterations,
-                collapsed_cells: collapsed_cells_count, // Assuming collapsed_cells_count holds this value
-                total_cells,
-                contradictions: None, // Initialize contradictions to None for now
+                collapsed_cells: collapsed_cells_count,
+                total_cells, // Use local total_cells
+                contradictions: None,
             };
             callback(progress);
             debug!(
@@ -202,7 +258,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         iterations += 1;
         // Safeguard against infinite loops (optional, adjust limit as needed)
         if iterations > total_cells * 10 {
-            // Example limit
+            // Use local total_cells
             error!(
                 "WFC exceeded maximum iterations ({}), assuming infinite loop.",
                 total_cells * 10

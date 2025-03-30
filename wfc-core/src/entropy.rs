@@ -30,26 +30,40 @@ impl Default for CpuEntropyCalculator {
 impl EntropyCalculator for CpuEntropyCalculator {
     fn calculate_entropy(&self, grid: &PossibilityGrid) -> EntropyGrid {
         let mut entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
+        let width = grid.width;
+        let height = grid.height;
+        // let num_tiles = grid.num_tiles(); // num_tiles is not strictly needed for count_ones
 
-        // Parallel calculation using rayon
+        // Parallel calculation using rayon - iterate over the output entropy grid's data
         entropy_grid
-            .data
-            .par_iter_mut() // Parallel mutable iterator over output entropy data
-            .zip(grid.data.par_iter()) // Zip with parallel iterator over input possibility data
-            .for_each(|(entropy_cell, possibility_cell)| {
-                // Simple placeholder entropy: number of possibilities (set bits)
-                // Lower non-zero count = lower entropy (more constrained)
-                // Cells with 0 or 1 possibility have entropy 0.0 (already collapsed or contradiction)
-                let possibilities_count = possibility_cell.count_ones();
-                *entropy_cell = if possibilities_count <= 1 {
-                    0.0
+            .data // Access data of EntropyGrid (which is Grid<f32>, so data is Vec<f32>)
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(index, entropy_cell)| {
+                // Calculate 3D coordinates from 1D index
+                let z = index / (width * height);
+                let temp = index % (width * height);
+                let y = temp / width;
+                let x = temp % width;
+
+                // Get the corresponding possibility cell using public API
+                if let Some(possibility_cell) = grid.get(x, y, z) {
+                    // Ensure the bitvec length matches num_tiles if needed for operations, though count_ones is fine.
+                    // assert_eq!(possibility_cell.len(), num_tiles);
+                    let possibilities_count = possibility_cell.count_ones();
+                    *entropy_cell = if possibilities_count <= 1 {
+                        0.0
+                    } else {
+                        // More sophisticated entropy calculations can go here.
+                        // For now, just use the count as a proxy.
+                        // Adding a small amount of noise can help break ties.
+                        // TODO: Replace with proper Shannon entropy or similar.
+                        possibilities_count as f32 // + small random noise?
+                    };
                 } else {
-                    // More sophisticated entropy calculations can go here.
-                    // For now, just use the count as a proxy.
-                    // Adding a small amount of noise can help break ties.
-                    // TODO: Replace with proper Shannon entropy or similar.
-                    possibilities_count as f32 // + small random noise?
-                };
+                    // Should not happen if grids are consistent, but handle defensively
+                    *entropy_cell = f32::NAN; // Or some other error indicator
+                }
             });
 
         entropy_grid

@@ -11,7 +11,7 @@ pub mod tile;
 
 // Re-export core public items
 pub use crate::entropy::{CpuEntropyCalculator, EntropyCalculator};
-pub use crate::grid::PossibilityGrid; // Renamed from Grid<BitVec> if applicable, or adjust
+pub use crate::grid::{EntropyGrid, Grid, PossibilityGrid}; // Keep Grid<T> generic export if needed
 pub use crate::propagator::{ConstraintPropagator, CpuConstraintPropagator, PropagationError};
 pub use crate::rules::AdjacencyRules;
 pub use crate::runner::run;

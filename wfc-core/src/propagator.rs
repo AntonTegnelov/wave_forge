@@ -127,14 +127,22 @@ impl ConstraintPropagator for CpuConstraintPropagator {
                 // Get the neighbor's current possibilities and update them
                 if let Some(neighbor_possibilities) = grid.get_mut(nx, ny, nz) {
                     let original_neighbor_possibilities = neighbor_possibilities.clone();
-                    *neighbor_possibilities &= &allowed_neighbor_tiles; // Intersect with allowed
+
+                    // Calculate the intersection by cloning and operating on the value
+                    let intersection =
+                        original_neighbor_possibilities.clone() & &allowed_neighbor_tiles; // Clone lhs
 
                     // Check for contradiction
-                    if neighbor_possibilities.not_any() {
+                    if intersection.not_any() {
                         return Err(PropagationError::Contradiction(nx, ny, nz));
+                    } else {
+                        // Only assign back if not a contradiction
+                        // Assign the calculated intersection result, not the reference
+                        *neighbor_possibilities = intersection;
                     }
 
                     // If possibilities changed AND the neighbor was not already in the worklist_set, add it.
+                    // Compare with original state BEFORE the potential modification
                     if *neighbor_possibilities != original_neighbor_possibilities
                         && worklist_set.insert((nx, ny, nz))
                     {

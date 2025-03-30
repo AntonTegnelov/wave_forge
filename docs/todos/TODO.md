@@ -53,10 +53,10 @@ _Purpose: Defines the fundamental data structures and the platform-agnostic WFC 
 - **File:** `wfc-core/src/lib.rs`
   - [x] Define public API / module structure.
 - **Testing:** `wfc-core/tests/`
-  - [x] Add unit tests for grid manipulation.
-  - [x] Add unit tests for CPU entropy calculation.
-  - [x] Add unit tests for CPU propagation logic.
-  - [ ] Add integration tests for the core WFC `run` function (using CPU components).
+  - [ ] Add unit tests for grid manipulation.
+  - [ ] Add unit tests for CPU entropy calculation.
+  - [ ] Add unit tests for CPU propagation logic.
+  - [x] Add integration tests for the core WFC `run` function (using CPU components).
 
 ## Crate: `wfc-rules` (Rule Loading & Parsing)
 
