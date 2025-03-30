@@ -29,6 +29,16 @@ impl AdjacencyRules {
         }
     }
 
+    /// Gets the number of different tile types the rules are defined for.
+    pub fn num_tiles(&self) -> usize {
+        self.num_tiles
+    }
+
+    /// Gets the number of axes/directions the rules are defined for (e.g., 6 for 3D +/- X/Y/Z).
+    pub fn num_axes(&self) -> usize {
+        self.num_axes
+    }
+
     /// Checks if `tile2` is allowed to be adjacent to `tile1` along the specified `axis`.
     ///
     /// # Panics
