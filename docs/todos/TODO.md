@@ -83,7 +83,7 @@ _Purpose: Implements GPU-accelerated versions of entropy calculation and propaga
   - [x] Define error types.
 - **File:** `wfc-gpu/src/shaders/`
   - [x] Write `entropy.wgsl` compute shader.
-  - [ ] Write `propagate.wgsl` compute shader.
+  - [/] Write `propagate.wgsl` compute shader. (Initial structure created)
 - **File:** `wfc-gpu/src/pipeline.rs`
   - [ ] Implement shader loading and compute pipeline creation.
 - **File:** `wfc-gpu/src/buffers.rs`
