@@ -91,7 +91,7 @@ _Purpose: Implements GPU-accelerated versions of entropy calculation and propaga
   - [/] Implement CPU <-> GPU data transfer logic (staging buffers). (Upload/Download methods added)
     _Design to keep grid state and rules primarily on GPU, minimizing transfers during the main loop._
 - **File:** `wfc-gpu/src/accelerator.rs`
-  - [ ] Define `GpuAccelerator` struct holding `wgpu` state, pipelines, buffers.
+  - [x] Define `GpuAccelerator` struct holding `wgpu` state, pipelines, buffers.
   - [ ] Implement `wfc-core::EntropyCalculator` trait using the entropy compute shader.
   - [ ] Implement `wfc-core::ConstraintPropagator` trait using the propagation compute shader.
 - **Testing:** `wfc-gpu/tests/` (May require specific setup or be harder to unit test)
