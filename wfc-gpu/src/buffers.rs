@@ -14,9 +14,8 @@ pub struct GpuParamsUniform {
     num_tiles: u32,
     num_tiles_u32: u32, // Number of u32s needed per cell for possibilities
     num_axes: u32,
-    // Add padding if necessary for alignment (std140 layout)
-    _padding1: u32,
-    _padding2: u32,
+    worklist_size: u32, // Add worklist size field
+    _padding1: u32,     // Adjust padding if needed
 }
 
 // Placeholder struct for managing GPU buffers
@@ -27,8 +26,12 @@ pub struct GpuBuffers {
     pub rules_buf: wgpu::Buffer,
     // Entropy output buffer
     pub entropy_buf: wgpu::Buffer,
-    // Buffer for updated coordinates (input to propagation)
+    // Buffer for updated coordinates (input to propagation worklist)
     pub updates_buf: wgpu::Buffer,
+    // Buffer for the next propagation worklist (output from shader)
+    pub output_worklist_buf: wgpu::Buffer,
+    // Buffer to hold the count for the output worklist (atomic u32)
+    pub output_worklist_count_buf: wgpu::Buffer,
     // Staging buffers for reading results back to CPU (e.g., entropy, contradiction)
     pub entropy_staging_buf: wgpu::Buffer,
     pub params_uniform_buf: wgpu::Buffer,
@@ -91,15 +94,18 @@ impl GpuBuffers {
             num_tiles: num_tiles as u32,
             num_tiles_u32: u32s_per_cell as u32,
             num_axes: num_axes as u32,
-            _padding1: 0, // Explicit padding
-            _padding2: 0,
+            worklist_size: 0, // Initial worklist size is 0
+            _padding1: 0,     // Ensure padding is correct if struct changes
         };
         let _params_buffer_size = std::mem::size_of::<GpuParamsUniform>() as u64;
 
         // --- Calculate Other Buffer Sizes ---
         let entropy_buffer_size = (num_cells * std::mem::size_of::<f32>()) as u64;
-        // Max updates could be num_cells, passing index (u32)
+        // Input worklist (updates) can contain up to num_cells indices
         let updates_buffer_size = (num_cells * std::mem::size_of::<u32>()) as u64;
+        // Output worklist can also contain up to num_cells indices
+        let output_worklist_buffer_size = updates_buffer_size;
+        let output_worklist_count_buffer_size = std::mem::size_of::<u32>() as u64;
         let contradiction_buffer_size = std::mem::size_of::<u32>() as u64;
 
         // --- Create Buffers --- (Use calculated sizes)
@@ -131,15 +137,32 @@ impl GpuBuffers {
         });
 
         let updates_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Updates"),
-            size: updates_buffer_size, // Use calculated size
+            label: Some("Updates Worklist"),
+            size: updates_buffer_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let output_worklist_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Output Worklist"),
+            size: output_worklist_buffer_size,
+            // Needs STORAGE for shader write, COPY_SRC if read back needed
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let output_worklist_count_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Output Worklist Count"),
+            size: output_worklist_count_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
         let contradiction_flag_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Contradiction Flag"),
-            size: contradiction_buffer_size, // Use calculated size
+            size: contradiction_buffer_size,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -166,6 +189,8 @@ impl GpuBuffers {
             params_uniform_buf,
             entropy_buf,
             updates_buf,
+            output_worklist_buf,
+            output_worklist_count_buf,
             contradiction_flag_buf,
             entropy_staging_buf,
             contradiction_staging_buf,
@@ -244,8 +269,47 @@ impl GpuBuffers {
         Ok(entropy_data)
     }
 
-    // Downloads the contradiction flag result from the staging buffer.
-    // Returns true if a contradiction was detected (flag is non-zero), false otherwise.
+    /// Resets the contradiction flag buffer to 0.
+    pub fn reset_contradiction_flag(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
+        queue.write_buffer(&self.contradiction_flag_buf, 0, bytemuck::bytes_of(&0u32));
+        Ok(())
+    }
+
+    /// Resets the output worklist count buffer to 0.
+    pub fn reset_output_worklist_count(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
+        queue.write_buffer(
+            &self.output_worklist_count_buf,
+            0,
+            bytemuck::bytes_of(&0u32),
+        );
+        Ok(())
+    }
+
+    /// Updates the worklist_size field within the params uniform buffer.
+    pub fn update_params_worklist_size(
+        &self,
+        queue: &wgpu::Queue,
+        worklist_size: u32,
+    ) -> Result<(), GpuError> {
+        // Calculate the offset of the worklist_size field within the GpuParamsUniform struct.
+        // This is fragile if the struct layout changes. Consider using `offset_of!` macro from a crate
+        // or defining offsets explicitly. For now, assume it's after 6 * u32.
+        let offset = (6 * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
+        if offset + std::mem::size_of::<u32>() as u64 > self.params_uniform_buf.size() {
+            return Err(GpuError::BufferOperationError(
+                "Calculated offset for worklist_size exceeds params buffer size.".to_string(),
+            ));
+        }
+        queue.write_buffer(
+            &self.params_uniform_buf,
+            offset,
+            bytemuck::bytes_of(&worklist_size),
+        );
+        Ok(())
+    }
+
+    /// Downloads the contradiction flag result from the staging buffer.
+    /// Returns true if a contradiction was detected (flag is non-zero), false otherwise.
     pub async fn download_contradiction_flag(
         &self,
         device: &wgpu::Device,
@@ -262,7 +326,7 @@ impl GpuBuffers {
             0,
             &self.contradiction_staging_buf,
             0,
-            self.contradiction_staging_buf.size(), // Should be size of u32
+            self.contradiction_staging_buf.size(),
         );
 
         // 3. Submit command encoder
@@ -276,50 +340,20 @@ impl GpuBuffers {
         // 5. Wait for map completion and process result
         device.poll(wgpu::Maintain::Wait); // Block until queue is idle
 
-        // Receive the mapping result. Handle potential channel close error first.
-        let map_result = receiver.receive().await.ok_or_else(|| {
-            // Use a different error for channel closing
+        // Receive mapping result
+        receiver.receive().await.ok_or_else(|| {
             GpuError::Other(
-                "Channel closed before receiving map result for contradiction flag".to_string(),
+                "Channel closed before receiving map result for contradiction buffer".to_string(),
             )
-        })?;
+        })??; // Propagate channel close and BufferAsyncError
 
-        // Now propagate the actual buffer mapping error (BufferAsyncError)
-        map_result?; // This uses the `From<wgpu::BufferAsyncError>` for BufferMapFailed
-
-        // If we reach here, mapping was successful. Read the data.
-        let contradiction_value: u32;
-        {
-            // Create a scope for the mapped range guard `data`.
-            // When `data` goes out of scope, the buffer is automatically unmapped.
+        // Read the data
+        let flag_value: u32 = {
             let data = buffer_slice.get_mapped_range();
-            if data.len() >= std::mem::size_of::<u32>() {
-                // Read the first u32
-                contradiction_value =
-                    *bytemuck::from_bytes::<u32>(&data[..std::mem::size_of::<u32>()]);
-            } else {
-                // Buffer is mapped, but size is wrong. Log error and return a specific GpuError.
-                // Dropping `data` here (at the end of the scope) will unmap the buffer before returning.
-                log::error!(
-                    "Contradiction staging buffer too small ({} bytes), expected at least {}",
-                    data.len(),
-                    std::mem::size_of::<u32>()
-                );
-                // We must ensure unmapping occurs before returning Err.
-                // The scope guard `data` handles this when this scope ends.
-                // No need to explicitly drop(data) or call unmap here.
-                return Err(GpuError::BufferOperationError(format!(
-                    "Contradiction staging buffer too small ({} bytes), expected at least {}",
-                    data.len(),
-                    std::mem::size_of::<u32>()
-                )));
-            }
-            // `data` guard goes out of scope here, unmapping the buffer.
-        }
+            // Read the single u32 value
+            *bytemuck::from_bytes::<u32>(&data)
+        }; // Buffer unmapped here
 
-        // No explicit unmap call needed here.
-
-        // Interpret the flag: non-zero means contradiction detected
-        Ok(contradiction_value != 0)
+        Ok(flag_value != 0)
     }
 }

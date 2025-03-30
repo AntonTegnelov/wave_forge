@@ -225,31 +225,163 @@ impl ConstraintPropagator for GpuAccelerator {
     fn propagate(
         &mut self,
         _grid: &mut PossibilityGrid,
-        _updated_coords: Vec<(usize, usize, usize)>,
+        updated_coords: Vec<(usize, usize, usize)>,
         _rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        // Implementation still TODO, but signature matches now.
-        // Use `rules` parameter if needed for setup or shader uniforms.
-        let _ = _rules; // Mark as used for now to avoid warning
-        let _ = _grid; // Mark as used
-        let _ = _updated_coords; // Mark as used
+        log::debug!("Running GPU propagate...");
 
-        // This implementation needs to:
-        // 1. Upload updated_coords to buffers.updates_buf.
-        // 2. Reset contradiction flag buffer.
-        // 3. Create command encoder.
-        // 4. Create bind group for propagation shader.
-        // 5. Set pipeline and bind group.
-        // 6. Dispatch compute for propagation (potentially iteratively if needed).
-        // 7. Copy contradiction_flag_buf to contradiction_staging_buf.
-        // 8. Submit command encoder.
-        // 9. Map staging buffer, read contradiction flag, unmap.
-        // 10. If contradiction, return Err(PropagationError::Contradiction).
-        // 11. (Optional/Complex) If PossibilityGrid needs updating on CPU side, download results.
-        // This should also likely be async.
-        log::warn!(
-            "GPU propagate needs careful implementation regarding CPU/GPU state sync and async operations"
-        );
-        todo!()
+        let (width, height, _depth) = self.grid_dims; // Prefix depth with underscore
+
+        // --- 1. Prepare Data ---
+
+        // Pack updated coordinates into 1D indices (u32)
+        let worklist: Vec<u32> = updated_coords
+            .iter()
+            .map(|&(x, y, z)| (z * width * height + y * width + x) as u32)
+            .collect();
+
+        if worklist.is_empty() {
+            log::debug!("GPU propagate: No updates to process.");
+            return Ok(());
+        }
+
+        let worklist_size = worklist.len() as u32;
+
+        // --- 2. Upload Worklist & Reset Buffers ---
+        // Upload the worklist (updated cell indices) to the GPU buffer.
+        self.buffers
+            .upload_updates(&self.queue, &worklist)
+            .map_err(|e| {
+                log::error!("Failed to upload updates to GPU: {}", e);
+                // Convert GpuError to a generic propagation error for now
+                PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+            })?;
+
+        // Reset contradiction flag buffer to 0 on the GPU
+        self.buffers
+            .reset_contradiction_flag(&self.queue)
+            .map_err(|e| {
+                log::error!("Failed to reset contradiction flag on GPU: {}", e);
+                PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+            })?;
+
+        // Reset output worklist count (if iterative propagation was implemented)
+        // For single pass, this isn't strictly necessary but good practice
+        self.buffers
+            .reset_output_worklist_count(&self.queue)
+            .map_err(|e| {
+                log::error!("Failed to reset output worklist count on GPU: {}", e);
+                PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+            })?;
+
+        // --- 3. Create Command Encoder ---
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Propagation Compute Encoder"),
+            });
+
+        // --- 4. Update Uniforms (Worklist Size) ---
+        // We need to update the params uniform buffer with the current worklist_size
+        self.buffers
+            .update_params_worklist_size(&self.queue, worklist_size)
+            .map_err(|e| {
+                log::error!("Failed to update worklist size uniform on GPU: {}", e);
+                PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+            })?;
+
+        // --- 5. Create Bind Group ---
+        // Note: Bind group needs to be recreated if buffer bindings change,
+        // but here the buffers themselves don't change, only their contents.
+        let propagation_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Propagation Bind Group"),
+            layout: &self.pipelines.propagation_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.buffers.rules_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.buffers.updates_buf.as_entire_binding(), // Contains the worklist
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.buffers.output_worklist_buf.as_entire_binding(), // Output worklist (unused in single pass)
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.buffers.params_uniform_buf.as_entire_binding(), // Contains worklist_size now
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.buffers.output_worklist_count_buf.as_entire_binding(), // Output count (unused in single pass)
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        // --- 6. Dispatch Compute ---
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Propagation Compute Pass"),
+                timestamp_writes: None,
+            });
+
+            compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
+            compute_pass.set_bind_group(0, &propagation_bind_group, &[]);
+
+            // Dispatch based on the worklist size.
+            // The shader uses global_id.x to index into the worklist.
+            // We need enough workgroups to cover all items in the worklist.
+            let workgroup_size = 64; // Match shader's workgroup size (e.g., @workgroup_size(64, 1, 1)) if using 1D
+                                     // If shader is 3D (e.g., 8x8x4), need to adjust dispatch logic
+                                     // Assuming 1D dispatch matching shader's @workgroup_size(X, 1, 1) for now
+            let workgroups_needed = worklist_size.div_ceil(workgroup_size); // Use div_ceil
+
+            log::debug!(
+                "Dispatching propagation shader for {} updates with {} workgroups (size {}).",
+                worklist_size,
+                workgroups_needed,
+                workgroup_size
+            );
+            compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
+        } // End compute pass scope
+
+        // --- 7. Submit and Check Contradiction ---
+        self.queue.submit(std::iter::once(encoder.finish()));
+        log::debug!("Propagation compute shader submitted.");
+
+        // Download the contradiction flag (synchronously for now)
+        log::debug!("Downloading contradiction flag...");
+        let contradiction_detected = pollster::block_on(
+            self.buffers
+                .download_contradiction_flag(&self.device, &self.queue),
+        )
+        .map_err(|e| {
+            log::error!("Failed to download contradiction flag: {}", e);
+            PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+        })?;
+
+        if contradiction_detected {
+            log::warn!("GPU propagation detected a contradiction!");
+            // TODO: Can we get the *location* of the contradiction from the GPU?
+            // Requires more complex shader logic and buffer reading.
+            Err(PropagationError::Contradiction(0, 0, 0)) // Generic location for now
+        } else {
+            log::debug!("GPU propagation finished successfully.");
+            Ok(())
+        }
+
+        // Note: If iterative propagation or CPU grid updates were needed,
+        // this would involve reading the output worklist/count and potentially
+        // downloading the entire grid_possibilities buffer.
     }
 }
