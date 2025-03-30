@@ -12,4 +12,4 @@ thiserror = "1.0"
 log = "0.4"
 rayon = "1.8" # For potential parallel parsing
 
-[dev-dependencies] 
+[dev-dependencies]

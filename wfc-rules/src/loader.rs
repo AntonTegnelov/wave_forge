@@ -1,22 +1,19 @@
-use crate::LoadError;
+use crate::{formats, LoadError};
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
-use wfc_core::{rules::AdjacencyRules, tile::TileSet};
+use wfc_core::{AdjacencyRules, TileSet};
 
-/// Loads the tile set and adjacency rules from a specified file.
+/// Loads TileSet and AdjacencyRules from a specified file path.
 ///
-/// # Arguments
-///
-/// * `path` - The path to the rule definition file (e.g., a RON or JSON file).
-///
-/// # Returns
-///
-/// A `Result` containing the loaded `TileSet` and `AdjacencyRules` on success,
-/// or a `LoadError` on failure.
+/// The file format is determined by the implementation (currently expects RON).
 pub fn load_from_file(path: &Path) -> Result<(TileSet, AdjacencyRules), LoadError> {
-    // TODO: Implement file reading
-    // TODO: Determine format (e.g., based on extension)
-    // TODO: Parse using appropriate format module (e.g., formats::ron::parse)
-    // TODO: Convert parsed format structs into wfc-core structs
-    // TODO: Explore rayon for parallelizing parts of the conversion if beneficial
-    todo!()
+    // 1. Read the file content
+    let mut file = File::open(path).map_err(LoadError::Io)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).map_err(LoadError::Io)?;
+
+    // 2. Parse the content (delegating to the format-specific parser)
+    // Assuming RON format for now.
+    formats::ron_format::parse_ron_rules(&contents)
 }
