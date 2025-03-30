@@ -85,9 +85,8 @@ fn grid_index(x: u32, y: u32, z: u32) -> u32 {
 fn is_tile_possible(tile_index: u32, mask: ptr<function, array<u32, 4>>) -> bool {
     let u32_index = tile_index / 32u;
     let bit_index = tile_index % 32u;
-    // Ensure we don't read out of bounds if num_tiles isn't a multiple of 32
-    // Although params.num_tiles_u32 should handle the array size correctly.
-    if (u32_index >= params.num_tiles_u32) { return false; }
+    // Critical safety check - must ensure we don't access beyond array bounds
+    if (u32_index >= params.num_tiles_u32 || u32_index >= 4u) { return false; }
     return ((*mask)[u32_index] & (1u << bit_index)) != 0u;
 }
 
@@ -95,14 +94,19 @@ fn is_tile_possible(tile_index: u32, mask: ptr<function, array<u32, 4>>) -> bool
 fn set_tile_possible(tile_index: u32, mask: ptr<function, array<u32, 4>>) {
     let u32_index = tile_index / 32u;
     let bit_index = tile_index % 32u;
-    if (u32_index < params.num_tiles_u32) {
-       (*mask)[u32_index] = (*mask)[u32_index] | (1u << bit_index);
-    }
+    // Critical safety check - must ensure we don't access beyond array bounds
+    if (u32_index >= params.num_tiles_u32 || u32_index >= 4u) { return; }
+    (*mask)[u32_index] = (*mask)[u32_index] | (1u << bit_index);
 }
 
 // Helper function to check adjacency rule
 // Assumes rules are packed tightly: rule[axis][tile1][tile2]
 fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
+    // Bounds check for tile indices
+    if (tile1 >= params.num_tiles || tile2 >= params.num_tiles || axis >= params.num_axes) {
+        return false; // Out of bounds - rule doesn't exist
+    }
+
     // Index: axis * num_tiles * num_tiles + tile1 * num_tiles + tile2
     let rule_idx = axis * params.num_tiles * params.num_tiles + tile1 * params.num_tiles + tile2;
 
@@ -110,8 +114,10 @@ fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
     let u32_idx = rule_idx / 32u;
     let bit_idx = rule_idx % 32u;
 
-    // TODO: Add bounds check for adjacency_rules array size if necessary
-    // It depends on how the buffer was sized on the CPU side.
+    // Bounds check for adjacency_rules array 
+    if (u32_idx >= (params.num_axes * params.num_tiles * params.num_tiles + 31u) / 32u) {
+        return false; // Out of bounds access
+    }
 
     // Check the specific bit
     return (adjacency_rules[u32_idx] & (1u << bit_idx)) != 0u;
@@ -137,8 +143,20 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let x = temp_coord % params.grid_width;
     let current_cell_idx_1d = grid_index(x, y, z); // Pre-calculate 1D index
 
+    // SAFETY CHECK: Only process if params.num_tiles_u32 <= 4 to avoid out of bounds
+    if (params.num_tiles_u32 > 4u) {
+        atomicMax(&contradiction_flag, 1u); // Mark as contradiction
+        return;
+    }
+
     var current_possibilities: array<u32, 4>; // Example for up to 128 tiles
-    for (var i: u32 = 0u; i < params.num_tiles_u32; i = i + 1u) {
+    // Initialize to 0
+    for (var i: u32 = 0u; i < 4u; i = i + 1u) {
+        current_possibilities[i] = 0u;
+    }
+
+    // Only load as many as we need and are within bounds
+    for (var i: u32 = 0u; i < params.num_tiles_u32 && i < 4u; i = i + 1u) {
        current_possibilities[i] = atomicLoad(&grid_possibilities[current_cell_idx_1d * params.num_tiles_u32 + i]);
     }
 
@@ -203,7 +221,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             // --- Calculate Allowed Neighbor Tiles ---
             var allowed_neighbor_mask: array<u32, 4>; // Max 128 tiles example
             // Initialize mask to all zeros
-            for (var i: u32 = 0u; i < params.num_tiles_u32; i=i+1u) {
+            for (var i: u32 = 0u; i < 4u; i=i+1u) {
                 allowed_neighbor_mask[i] = 0u;
             }
 
@@ -229,8 +247,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             var is_zero = true; // Assume contradiction until proven otherwise
             var neighbor_original_value: array<u32, 4>; // To check for changes
             var neighbor_new_value: array<u32, 4>; // Result after AND
+            
+            // Initialize arrays to 0
+            for (var i: u32 = 0u; i < 4u; i = i + 1u) {
+                neighbor_original_value[i] = 0u;
+                neighbor_new_value[i] = 0u;
+            }
 
-            for (var i: u32 = 0u; i < params.num_tiles_u32; i = i + 1u) {
+            // Only process what's within bounds
+            for (var i: u32 = 0u; i < params.num_tiles_u32 && i < 4u; i = i + 1u) {
                 let neighbor_atomic_offset = neighbor_idx_1d * params.num_tiles_u32 + i;
                 // Perform atomic AND, getting the value *before* the AND
                 neighbor_original_value[i] = atomicAnd(&grid_possibilities[neighbor_atomic_offset], allowed_neighbor_mask[i]);

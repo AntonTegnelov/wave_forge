@@ -28,6 +28,16 @@ impl GpuAccelerator {
         info!("Entered GpuAccelerator::new");
         info!("Initializing GPU Accelerator...");
 
+        // Check if the grid has a reasonable number of tiles (shader has hardcoded max of 4 u32s = 128 tiles)
+        let num_tiles = rules.num_tiles();
+        let u32s_per_cell = (num_tiles + 31) / 32; // Ceiling division
+        if u32s_per_cell > 4 {
+            return Err(GpuError::Other(format!(
+                "GPU implementation supports a maximum of 128 tiles, but grid has {}",
+                num_tiles
+            )));
+        }
+
         // 1. Initialize wgpu Instance
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(), // Or specify e.g., Vulkan, DX12
