@@ -1,60 +1,77 @@
 use crate::GpuError;
-use wfc_core::{
-    grid::{EntropyGrid, PossibilityGrid},
-    rules::AdjacencyRules,
-};
-use wgpu::util::DeviceExt;
+use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules};
+use wgpu;
 
 // Placeholder struct for managing GPU buffers
 pub struct GpuBuffers {
     // Grid state (possibilities) - likely atomic u32 for bitvec representation
     pub grid_possibilities_buf: wgpu::Buffer,
     // Adjacency rules (flattened)
-    pub adjacency_rules_buf: wgpu::Buffer,
+    pub rules_buf: wgpu::Buffer,
     // Entropy output buffer
     pub entropy_buf: wgpu::Buffer,
     // Buffer for updated coordinates (input to propagation)
     pub updates_buf: wgpu::Buffer,
-    // Buffer for contradiction flag (output from propagation)
-    pub contradiction_flag_buf: wgpu::Buffer,
     // Staging buffers for reading results back to CPU (e.g., entropy, contradiction)
     pub entropy_staging_buf: wgpu::Buffer,
-    pub contradiction_staging_buf: wgpu::Buffer,
-    // Uniform buffers if needed (e.g., grid dimensions)
-    pub grid_dims_uniform_buf: wgpu::Buffer,
 }
 
 impl GpuBuffers {
     pub fn new(
-        device: &wgpu::Device,
-        initial_grid: &PossibilityGrid,
-        rules: &AdjacencyRules,
+        _device: &wgpu::Device,
+        _initial_grid: &PossibilityGrid,
+        _rules: &AdjacencyRules,
     ) -> Result<Self, GpuError> {
-        // TODO: Convert PossibilityGrid (BitVec) to appropriate GPU format (e.g., Vec<u32>)
-        let grid_data: Vec<u32> = Vec::new(); // Placeholder
-        // TODO: Get flattened rule data from AdjacencyRules
-        let rules_data: Vec<u8> = Vec::new(); // Placeholder
-        // TODO: Determine buffer sizes based on grid dimensions
-        let grid_buffer_size = 0; // Placeholder
-        let entropy_buffer_size = 0; // Placeholder
-        let updates_buffer_capacity = 0; // Placeholder
+        // TODO: Calculate actual buffer sizes based on grid dims, num_tiles, rules size
+        // TODO: Pack grid possibilities and rules into appropriate formats (e.g., Vec<u32> for bitsets)
 
-        // TODO: Create GPU buffers using device.create_buffer_init for initial data
-        //       or device.create_buffer for output/staging buffers.
-        // Example:
-        // let grid_possibilities_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //     label: Some("Grid Possibilities Buffer"),
-        //     contents: bytemuck::cast_slice(&grid_data),
-        //     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-        // });
+        // Placeholder data and sizes - REMOVE WHEN IMPLEMENTED
+        let _grid_data: Vec<u32> = Vec::new();
+        let _rules_data: Vec<u8> = Vec::new();
+        let _grid_buffer_size = 0u64; // Use u64 for buffer sizes
+        let _entropy_buffer_size = 0u64;
+        let _updates_buffer_capacity = 0u64;
 
-        // TODO: Create uniform buffer for grid dimensions
-        // let grid_dims = [initial_grid.width as u32, initial_grid.height as u32, initial_grid.depth as u32];
-        // let grid_dims_uniform_buf = device.create_buffer_init(...);
+        // TODO: Create actual buffers using device.create_buffer_init or device.create_buffer
+        // Example (replace with actual implementation):
+        let grid_possibilities_buf = _device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grid Possibilities"),
+            size: 1024,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let rules_buf = _device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Rules"),
+            size: 1024,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let entropy_buf = _device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Entropy"),
+            size: 1024,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let entropy_staging_buf = _device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Entropy Staging"),
+            size: 1024,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let updates_buf = _device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Updates"),
+            size: 1024,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
-        // TODO: Create other buffers (rules, entropy, updates, contradiction, staging)
-
-        todo!()
+        Ok(Self {
+            grid_possibilities_buf,
+            rules_buf,
+            entropy_buf,
+            entropy_staging_buf,
+            updates_buf,
+        })
     }
 
     // TODO: Add methods for uploading updates (updated_coords) to updates_buf

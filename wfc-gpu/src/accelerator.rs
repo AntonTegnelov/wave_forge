@@ -7,9 +7,9 @@ use wfc_core::{
     propagator::{ConstraintPropagator, PropagationError},
     rules::AdjacencyRules,
 }; // Use Arc for shared GPU resources
-use wgpu::Backends;
 
 // Main struct holding GPU state and implementing core traits
+#[allow(dead_code)] // Allow unused fields while implementation is pending
 pub struct GpuAccelerator {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -51,15 +51,14 @@ impl GpuAccelerator {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("WFC GPU Device"),
-                    required_features: wgpu::Features::empty(), // Specify features if needed
-                    // Check limits based on shader requirements if necessary
+                    required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
-                    memory_hints: wgpu::MemoryHints::Performance,
+                    // memory_hints: wgpu::MemoryHints::Performance, // Commented out - investigate feature/version issue later
                 },
                 None, // Optional trace path
             )
             .await
-            .map_err(|e| GpuError::DeviceRequestFailed(e))?;
+            .map_err(GpuError::DeviceRequestFailed)?;
         info!("Device and queue obtained.");
 
         let device = Arc::new(device);
@@ -91,7 +90,7 @@ impl GpuAccelerator {
 
 impl EntropyCalculator for GpuAccelerator {
     #[must_use]
-    fn calculate_entropy(&self, grid: &PossibilityGrid) -> EntropyGrid {
+    fn calculate_entropy(&self, _grid: &PossibilityGrid) -> EntropyGrid {
         // Note: This might be tricky if the PossibilityGrid is CPU-side.
         // Ideally, the grid state is primarily kept on the GPU.
         // This implementation might need to:
@@ -129,18 +128,17 @@ impl EntropyCalculator for GpuAccelerator {
 }
 
 impl ConstraintPropagator for GpuAccelerator {
-    #[must_use]
     fn propagate(
         &mut self,
-        grid: &mut PossibilityGrid, // This grid might become less relevant if state is GPU-primary
-        updated_coords: Vec<(usize, usize, usize)>,
-        rules: &AdjacencyRules, // Add the missing parameter
+        _grid: &mut PossibilityGrid,
+        _updated_coords: Vec<(usize, usize, usize)>,
+        _rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
         // Implementation still TODO, but signature matches now.
         // Use `rules` parameter if needed for setup or shader uniforms.
-        let _ = rules; // Mark as used for now to avoid warning
-        let _ = grid; // Mark as used
-        let _ = updated_coords; // Mark as used
+        let _ = _rules; // Mark as used for now to avoid warning
+        let _ = _grid; // Mark as used
+        let _ = _updated_coords; // Mark as used
 
         // This implementation needs to:
         // 1. Upload updated_coords to buffers.updates_buf.
