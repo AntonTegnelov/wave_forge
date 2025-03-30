@@ -55,7 +55,7 @@ _Purpose: Defines the fundamental data structures and the platform-agnostic WFC 
 - **Testing:** `wfc-core/tests/`
   - [x] Add unit tests for grid manipulation.
   - [x] Add unit tests for CPU entropy calculation.
-  - [ ] Add unit tests for CPU propagation logic.
+  - [x] Add unit tests for CPU propagation logic.
   - [x] Add integration tests for the core WFC `run` function (using CPU components).
 
 ## Crate: `wfc-rules` (Rule Loading & Parsing)

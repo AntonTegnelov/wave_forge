@@ -43,14 +43,19 @@ impl AdjacencyRules {
     ///
     /// # Panics
     /// Panics if `axis` is out of bounds or if `tile1` or `tile2` IDs are out of bounds.
+    #[inline]
     pub fn check(&self, tile1: TileId, tile2: TileId, axis: usize) -> bool {
+        assert!(tile1.0 < self.num_tiles, "tile1 ID out of bounds");
+        assert!(tile2.0 < self.num_tiles, "tile2 ID out of bounds");
         assert!(axis < self.num_axes, "Axis index out of bounds");
-        assert!(tile1.0 < self.num_tiles, "Tile1 ID out of bounds");
-        assert!(tile2.0 < self.num_tiles, "Tile2 ID out of bounds");
 
         let index = axis * self.num_tiles * self.num_tiles + tile1.0 * self.num_tiles + tile2.0;
-        // Use get() for safety, though asserts should prevent panics.
-        // Default to false if index is somehow out of bounds (shouldn't happen with asserts).
-        *self.allowed.get(index).unwrap_or(&false)
+        assert!(
+            index < self.allowed.len(),
+            "Calculated rule index out of bounds"
+        );
+
+        let result = *self.allowed.get(index).unwrap_or(&false);
+        result
     }
 }
