@@ -39,6 +39,12 @@ impl AdjacencyRules {
         self.num_axes
     }
 
+    /// Provides read-only access to the internal flattened boolean vector representing allowed adjacencies.
+    /// Intended for scenarios like GPU buffer packing where direct access is needed.
+    pub fn get_allowed_rules(&self) -> &Vec<bool> {
+        &self.allowed
+    }
+
     /// Checks if `tile2` is allowed to be adjacent to `tile1` along the specified `axis`.
     ///
     /// # Panics

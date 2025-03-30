@@ -111,6 +111,12 @@ impl PossibilityGrid {
         self.num_tiles
     }
 
+    /// Provides read-only access to the internal data vector containing BitVecs for each cell.
+    /// Intended for scenarios like GPU buffer packing where direct access is needed.
+    pub fn get_cell_data(&self) -> &Vec<BitVec> {
+        &self.data
+    }
+
     /// Calculates the 1D index for the given 3D coordinates.
     /// Returns None if the coordinates are out of bounds.
     #[inline]

@@ -87,7 +87,7 @@ _Purpose: Implements GPU-accelerated versions of entropy calculation and propaga
 - **File:** `wfc-gpu/src/pipeline.rs`
   - [/] Implement shader loading and compute pipeline creation. (Shader loading done)
 - **File:** `wfc-gpu/src/buffers.rs`
-  - [ ] Implement logic to create and manage GPU buffers for grid state (bitsets), rules (flattened/indexed), entropy etc.
+  - [x] Implement logic to create and manage GPU buffers for grid state (bitsets), rules (flattened/indexed), entropy etc.
   - [ ] Implement CPU <-> GPU data transfer logic (staging buffers). _Design to keep grid state and rules primarily on GPU, minimizing transfers during the main loop._
 - **File:** `wfc-gpu/src/accelerator.rs`
   - [ ] Define `GpuAccelerator` struct holding `wgpu` state, pipelines, buffers.
