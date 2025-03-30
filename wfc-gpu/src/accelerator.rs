@@ -244,6 +244,10 @@ impl ConstraintPropagator for GpuAccelerator {
     ) -> Result<(), PropagationError> {
         log::debug!("Running GPU propagate...");
 
+        // Add emergency timeout to prevent indefinite hangs
+        let timeout = std::time::Duration::from_secs(5);
+        let propagate_start = std::time::Instant::now();
+
         let (width, height, _depth) = self.grid_dims; // Prefix depth with underscore
 
         // --- 1. Prepare Data ---
@@ -355,22 +359,48 @@ impl ConstraintPropagator for GpuAccelerator {
             // Dispatch based on the worklist size.
             // The shader uses a 3D workgroup size (8,8,4) = 256 threads per workgroup
             // We need to calculate how many 3D workgroups to dispatch to cover all items in the worklist
-            let workgroup_size_total = 256u32; // 8x8x4 = 256 threads per workgroup
-            let workgroups_needed = worklist_size.div_ceil(workgroup_size_total);
 
-            // Since we need to dispatch in 3D, we'll use a simple distribution
-            // Keeping z=1 and distributing across x,y dimensions
-            let workgroups_x = (workgroups_needed as f32).sqrt().ceil() as u32;
-            let workgroups_y = workgroups_needed.div_ceil(workgroups_x);
+            let workgroup_size_x = 8u32;
+            let workgroup_size_y = 8u32;
+            let workgroup_size_z = 4u32;
+            let threads_per_workgroup = workgroup_size_x * workgroup_size_y * workgroup_size_z; // 256
+
+            // We need at least one workgroup, even for tiny worklists
+            let workgroups_needed = std::cmp::max(1, worklist_size.div_ceil(threads_per_workgroup));
+
+            // For 2D dispatching (keeping z=1), distribute across x and y
+            // Use a simple heuristic - try to make it close to square
+            let workgroups_x = std::cmp::max(1, (workgroups_needed as f32).sqrt().ceil() as u32);
+            let workgroups_y =
+                std::cmp::max(1, (workgroups_needed + workgroups_x - 1) / workgroups_x);
             let workgroups_z = 1u32;
 
             log::debug!(
-                "Dispatching propagation shader for {} updates with {}x{}x{} workgroups (8x8x4 threads each).",
+                "Dispatching propagation shader for {} updates with {}x{}x{} workgroups ({}x{}x{} threads each = {} threads per workgroup).",
                 worklist_size,
                 workgroups_x,
                 workgroups_y,
-                workgroups_z
+                workgroups_z,
+                workgroup_size_x,
+                workgroup_size_y,
+                workgroup_size_z,
+                threads_per_workgroup
             );
+
+            // Print these critical parameters so we can see them in test output
+            println!(
+                "Dispatching propagation shader: worklist_size={}, workgroups={}x{}x{}, threads_per_workgroup={}",
+                worklist_size,
+                workgroups_x,
+                workgroups_y,
+                workgroups_z,
+                threads_per_workgroup
+            );
+
+            // Sanity check - dispatch will launch this many threads in total:
+            let total_threads = workgroups_x * workgroups_y * workgroups_z * threads_per_workgroup;
+            println!("Total threads launched: {}", total_threads);
+
             compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         } // End compute pass scope
 
@@ -380,6 +410,13 @@ impl ConstraintPropagator for GpuAccelerator {
 
         // Download the contradiction flag (synchronously for now)
         log::debug!("Downloading contradiction flag...");
+
+        // Check if we're approaching timeout
+        if propagate_start.elapsed() > timeout {
+            log::error!("GPU propagation timed out after {:?}", timeout);
+            return Err(PropagationError::Contradiction(0, 0, 0));
+        }
+
         let contradiction_detected = pollster::block_on(
             self.buffers
                 .download_contradiction_flag(&self.device, &self.queue),

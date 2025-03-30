@@ -283,16 +283,20 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             if (changed) {
                 // Atomically increment the output worklist counter and get the index
                 let output_index = atomicAdd(&output_worklist_count, 1u);
-                // TODO: Check if output_index exceeds the output_worklist buffer size
-                // This requires knowing the size of output_worklist, maybe pass in params?
-                // if (output_index < max_output_worklist_size) {
+                
+                // CRITICAL: Check for worklist overflow - we must have a maximum size limit
+                // This prevents infinite iterations and potential hangs
+                let max_worklist_size = params.grid_width * params.grid_height * params.grid_depth;
+                
+                if (output_index < max_worklist_size) {
                     // Store the packed coordinates of the neighbor
                     let neighbor_coords_packed = unz * params.grid_width * params.grid_height + uny * params.grid_width + unx;
                     // Use atomicStore; although not strictly necessary if only one thread writes per index, it's safer.
                     atomicStore(&output_worklist[output_index], neighbor_coords_packed);
-                // } else {
-                    // Handle worklist overflow? Maybe another flag? Or just drop?
-                // }
+                } else {
+                    // If worklist overflows, mark as contradiction to halt processing
+                    atomicMax(&contradiction_flag, 1u);
+                }
             }
         } // End bounds check
     } // End neighbor loop
