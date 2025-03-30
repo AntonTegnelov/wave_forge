@@ -1,7 +1,6 @@
 # Wave Forge
 
-
-
+**Note:** This project is currently under heavy development and is not yet ready for use.
 
 Multithreaded 3D GPU Terrain generation using Wave Function Collapse (WFC).
 
