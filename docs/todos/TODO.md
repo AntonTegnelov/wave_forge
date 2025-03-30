@@ -54,7 +54,7 @@ _Purpose: Defines the fundamental data structures and the platform-agnostic WFC 
   - [x] Define public API / module structure.
 - **Testing:** `wfc-core/tests/`
   - [x] Add unit tests for grid manipulation.
-  - [ ] Add unit tests for CPU entropy calculation.
+  - [x] Add unit tests for CPU entropy calculation.
   - [ ] Add unit tests for CPU propagation logic.
   - [ ] Add integration tests for the core WFC `run` function (using CPU components).
 
