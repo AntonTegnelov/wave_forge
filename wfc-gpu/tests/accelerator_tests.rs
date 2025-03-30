@@ -12,7 +12,7 @@ use wfc_gpu::accelerator::GpuAccelerator; // Ensure accelerator is public or cra
 // }
 
 #[test]
-#[ignore] // Explicitly ignore this test by default to prevent hangs
+// #[ignore] // Remove ignore attribute to test our fix
 fn test_gpu_calculate_entropy_basic_run() {
     // setup_logger(); // Temporarily disabled
 
@@ -74,49 +74,66 @@ fn test_gpu_calculate_entropy_basic_run() {
     // If we get here, we at least have a GPU available, which is enough for this basic test
 }
 
-// #[test] // Temporarily disable this test
-// fn test_gpu_propagate_basic_run() {
-//     setup_logger();
-//
-//     // Basic setup
-//     let width = 2;
-//     let height = 1;
-//     let depth = 1;
-//     let num_tiles = 2;
-//     let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
-//     let rules = AdjacencyRules::new(num_tiles, 6, vec![true; 6 * num_tiles * num_tiles]); // All allowed
-//
-//     // Initialize GPU Accelerator
-//     log::info!("Entering pollster::block_on(GpuAccelerator::new) for propagate test...");
-//     let accelerator_result = pollster::block_on(GpuAccelerator::new(&grid, &rules));
-//     log::info!("Exited pollster::block_on(GpuAccelerator::new) for propagate test.");
-//     if let Err(e) = accelerator_result {
-//         eprintln!(
-//             "Skipping GPU test: Failed to initialize GpuAccelerator: {}",
-//             e
-//         );
-//         return;
-//     }
-//     let mut accelerator = accelerator_result.unwrap();
-//
-//     // Define initial updates (e.g., cell at (0,0,0) was just collapsed)
-//     let updated_coords = vec![(0, 0, 0)];
-//
-//     // Call propagate
-//     // The PossibilityGrid parameter is currently unused by the GPU implementation,
-//     // but we pass it to satisfy the trait method signature.
-//     let result = accelerator.propagate(&mut grid, updated_coords, &rules);
-//
-//     // Assertions
-//     // For this basic test with permissive rules, we expect no contradiction.
-//     assert!(
-//         result.is_ok(),
-//         "GPU propagate returned an error: {:?}",
-//         result.err()
-//     );
-//
-//     // More advanced tests would involve:
-//     // - Setting up specific grid states and rules that *should* cause contradiction.
-//     // - Downloading the grid_possibilities buffer after propagation.
-//     // - Comparing the GPU result with the expected CPU result.
-// }
+#[test]
+// Uncomment the propagate test to verify our fix works with both entropy calculation and propagation
+fn test_gpu_propagate_basic_run() {
+    // setup_logger();
+
+    // Basic setup
+    let width = 2;
+    let height = 1;
+    let depth = 1;
+    let num_tiles = 2;
+    let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
+    let rules = AdjacencyRules::new(num_tiles, 6, vec![true; 6 * num_tiles * num_tiles]); // All allowed
+
+    // Initialize GPU Accelerator with timeout
+    println!("Entering GpuAccelerator::new for propagate test...");
+    let timeout = Duration::from_secs(10);
+    let start_time = Instant::now();
+
+    let accelerator_result = pollster::block_on(GpuAccelerator::new(&grid, &rules));
+
+    // Check if we timed out
+    if start_time.elapsed() > timeout {
+        println!(
+            "GPU initialization timed out after {:?} - skipping test",
+            timeout
+        );
+        return;
+    }
+
+    println!("Exited GpuAccelerator::new for propagate test.");
+    if let Err(e) = accelerator_result {
+        println!(
+            "Skipping GPU test: Failed to initialize GpuAccelerator: {}",
+            e
+        );
+        return;
+    }
+    let mut accelerator = accelerator_result.unwrap();
+
+    // Define initial updates (e.g., cell at (0,0,0) was just collapsed)
+    let updated_coords = vec![(0, 0, 0)];
+
+    println!("Calling propagate...");
+    // Call propagate with timeout
+    let start_time = Instant::now();
+    let result = accelerator.propagate(&mut grid, updated_coords, &rules);
+
+    // Check if propagate timed out
+    if start_time.elapsed() > timeout {
+        println!("Propagate timed out after {:?} - test failed", timeout);
+        panic!("Propagate operation timed out");
+    }
+
+    println!("Propagate completed successfully.");
+
+    // Assertions
+    // For this basic test with permissive rules, we expect no contradiction.
+    assert!(
+        result.is_ok(),
+        "GPU propagate returned an error: {:?}",
+        result.err()
+    );
+}

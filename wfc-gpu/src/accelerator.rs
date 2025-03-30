@@ -146,20 +146,15 @@ impl EntropyCalculator for GpuAccelerator {
             compute_pass.set_bind_group(0, &bind_group, &[]);
 
             // Dispatch - Calculate workgroup counts
-            let workgroup_size_x = 8;
-            let workgroup_size_y = 8;
-            let workgroup_size_z = 1;
-            let workgroups_x = (width as u32).div_ceil(workgroup_size_x);
-            let workgroups_y = (height as u32).div_ceil(workgroup_size_y);
-            let workgroups_z = (depth as u32).div_ceil(workgroup_size_z);
+            // Entropy shader uses workgroup_size(64)
+            let workgroup_size = 64u32;
+            let workgroups_needed = num_cells.div_ceil(workgroup_size as usize) as u32;
 
             log::debug!(
-                "Dispatching entropy shader with workgroups: ({}, {}, {})",
-                workgroups_x,
-                workgroups_y,
-                workgroups_z
+                "Dispatching entropy shader with {} workgroups of size 64",
+                workgroups_needed
             );
-            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
         } // End compute pass scope
 
         // 4. Submit to Queue
@@ -348,20 +343,25 @@ impl ConstraintPropagator for GpuAccelerator {
             compute_pass.set_bind_group(0, &propagation_bind_group, &[]);
 
             // Dispatch based on the worklist size.
-            // The shader uses global_id.x to index into the worklist.
-            // We need enough workgroups to cover all items in the worklist.
-            let workgroup_size = 64; // Match shader's workgroup size (e.g., @workgroup_size(64, 1, 1)) if using 1D
-                                     // If shader is 3D (e.g., 8x8x4), need to adjust dispatch logic
-                                     // Assuming 1D dispatch matching shader's @workgroup_size(X, 1, 1) for now
-            let workgroups_needed = worklist_size.div_ceil(workgroup_size); // Use div_ceil
+            // The shader uses a 3D workgroup size (8,8,4) = 256 threads per workgroup
+            // We need to calculate how many 3D workgroups to dispatch to cover all items in the worklist
+            let workgroup_size_total = 256u32; // 8x8x4 = 256 threads per workgroup
+            let workgroups_needed = worklist_size.div_ceil(workgroup_size_total);
+
+            // Since we need to dispatch in 3D, we'll use a simple distribution
+            // Keeping z=1 and distributing across x,y dimensions
+            let workgroups_x = (workgroups_needed as f32).sqrt().ceil() as u32;
+            let workgroups_y = workgroups_needed.div_ceil(workgroups_x);
+            let workgroups_z = 1u32;
 
             log::debug!(
-                "Dispatching propagation shader for {} updates with {} workgroups (size {}).",
+                "Dispatching propagation shader for {} updates with {}x{}x{} workgroups (8x8x4 threads each).",
                 worklist_size,
-                workgroups_needed,
-                workgroup_size
+                workgroups_x,
+                workgroups_y,
+                workgroups_z
             );
-            compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
+            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         } // End compute pass scope
 
         // --- 7. Submit and Check Contradiction ---

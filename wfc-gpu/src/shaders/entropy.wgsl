@@ -32,6 +32,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // Binding for the output entropy grid (write-only)
 @group(0) @binding(1) var<storage, read_write> entropy: array<f32>;
 
+// Params struct containing grid dimensions
+struct Params {
+    grid_width: u32,
+    grid_height: u32,
+    grid_depth: u32,
+    num_tiles: u32,
+    num_tiles_u32: u32,
+    num_axes: u32,
+    worklist_size: u32,
+};
+@group(0) @binding(2) var<uniform> params: Params;
+
 // TODO: Consider passing grid dimensions (width, height, depth) via uniform buffer
 // For now, assume global_invocation_id maps directly to flat grid index
 
@@ -50,11 +62,16 @@ fn count_set_bits(n: u32) -> u32 {
 fn main(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
-    // Assuming 1D mapping for simplicity now. Need dimensions for 3D mapping.
+    // Get 1D index from thread ID
     let index = global_id.x;
-
-    // TODO: Add boundary checks if workgroup size doesn't perfectly divide grid size
-    // if (index >= grid_size) { return; }
+    
+    // Get total grid size from params
+    let grid_size = params.grid_width * params.grid_height * params.grid_depth;
+    
+    // Bounds check to prevent out-of-bounds access
+    if (index >= grid_size) {
+        return;
+    }
 
     let possibility_mask = possibilities[index];
     let possibilities_count = count_set_bits(possibility_mask);

@@ -118,16 +118,19 @@ fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
 }
 
 @compute
-@workgroup_size(8, 8, 4) // Example workgroup size, tune based on architecture
+@workgroup_size(8, 8, 4) // Using 3D workgroup for better GPU thread locality
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let work_index = global_id.x; // Simple 1D dispatch for now
-
+    // Compute 1D index from 3D global_id for workgroup distribution
+    let x_size = 8u;
+    let y_size = 8u;
+    let thread_idx = (global_id.z * x_size * y_size) + (global_id.y * x_size) + global_id.x;
+    
     // Bounds check for worklist
-    if (work_index >= params.worklist_size) {
+    if (thread_idx >= params.worklist_size) {
         return;
     }
-
-    let coords_packed = worklist[work_index];
+    
+    let coords_packed = worklist[thread_idx];
     let z = coords_packed / (params.grid_width * params.grid_height);
     let temp_coord = coords_packed % (params.grid_width * params.grid_height);
     let y = temp_coord / params.grid_width;
