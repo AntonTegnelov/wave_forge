@@ -1,0 +1,15 @@
+[build]
+# Set default build flags if needed
+
+[cargo-new]
+# Set defaults for new crates if needed
+
+[target.'cfg(target_os = "windows")']
+# Windows-specific settings if needed
+
+[term]
+# Terminal settings if needed
+
+# Adding the test configuration
+[test]
+workspace = true 
