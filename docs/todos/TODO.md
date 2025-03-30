@@ -96,8 +96,7 @@ _Purpose: Implements GPU-accelerated versions of entropy calculation and propaga
   - [x] Implement `wfc-core::ConstraintPropagator` trait using the propagation compute shader.
 - **Testing:** `wfc-gpu/tests/` (May require specific setup or be harder to unit test)
   - [x] Add tests for buffer creation and data transfer.
-  - [ ] (Optional/Difficult) Add tests comparing GPU vs CPU results for simple cases.
-  - [ ] FIXME: Investigate and fix GPU test deadlocks (e.g., `test_update_params_worklist_size`).
+  - [x] Investigated and fixed GPU test deadlock in `test_update_params_worklist_size` (removed redundant `device.poll(Wait)`).
 
 ## Crate: `wave-forge-app` (Main Binary - Orchestrator)
 

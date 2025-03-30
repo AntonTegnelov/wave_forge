@@ -1,8 +1,5 @@
 use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules};
-use wfc_gpu::{
-    buffers::{GpuBuffers, GpuParamsUniform},
-    GpuError,
-};
+use wfc_gpu::{buffers::GpuBuffers, GpuError};
 
 // Helper to initialize logging for tests
 fn setup_logger() {
@@ -157,7 +154,6 @@ fn test_reset_contradiction_flag() {
 }
 
 #[test]
-#[ignore] // FIXME: Test hangs, likely due to pollster/wgpu async interaction deadlock.
 fn test_update_params_worklist_size() {
     setup_logger();
     let wgpu_result = pollster::block_on(setup_wgpu());
@@ -184,7 +180,6 @@ fn test_update_params_worklist_size() {
     let new_worklist_size = 42u32;
     let update_result = buffers.update_params_worklist_size(&queue, new_worklist_size);
     assert!(update_result.is_ok(), "update_params_worklist_size failed");
-    device.poll(wgpu::Maintain::Wait);
 
     // Download again and verify
     let updated_params = pollster::block_on(buffers.download_params(&device, &queue))
