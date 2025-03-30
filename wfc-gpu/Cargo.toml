@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wgpu = "0.19" # Check for latest stable wgpu version
+wgpu = { version = "0.20", features = ["naga"] }
 wfc-core = { path = "../wfc-core" }
 thiserror = "1.0"
 log = "0.4"
 bytemuck = { version = "1.15", features = ["derive"] }
 bitvec = "1.0"
-futures-intrusive = "0.5" # For async buffer mapping
+futures-intrusive = "0.5" # For async channel in buffer download
+pollster = "0.3" # For blocking on async GPU operations
 
-[dev-dependencies] 
+[dev-dependencies]
+env_logger = "0.11" 

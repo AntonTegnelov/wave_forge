@@ -75,22 +75,6 @@ const AXIS_NEG_Y: u32 = 3u;
 const AXIS_POS_Z: u32 = 4u;
 const AXIS_NEG_Z: u32 = 5u;
 
-// Array of neighbor offsets and corresponding axes
-struct NeighborInfo {
-    offset: vec3<i32>,
-    axis: u32,
-    opposite_axis: u32,
-};
-
-const neighbor_info: array<NeighborInfo, 6> = array<NeighborInfo, 6>(
-    NeighborInfo(vec3<i32>(1, 0, 0), AXIS_POS_X, AXIS_NEG_X), // +X
-    NeighborInfo(vec3<i32>(-1, 0, 0), AXIS_NEG_X, AXIS_POS_X), // -X
-    NeighborInfo(vec3<i32>(0, 1, 0), AXIS_POS_Y, AXIS_NEG_Y), // +Y
-    NeighborInfo(vec3<i32>(0, -1, 0), AXIS_NEG_Y, AXIS_POS_Y), // -Y
-    NeighborInfo(vec3<i32>(0, 0, 1), AXIS_POS_Z, AXIS_NEG_Z), // +Z
-    NeighborInfo(vec3<i32>(0, 0, -1), AXIS_NEG_Z, AXIS_POS_Z)  // -Z
-);
-
 // Helper function to get 1D index from 3D coords
 fn grid_index(x: u32, y: u32, z: u32) -> u32 {
     // Assumes packed u32s for possibilities are handled by multiplying by num_tiles_u32 later
@@ -137,6 +121,8 @@ fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
 @workgroup_size(8, 8, 4) // Example workgroup size, tune based on architecture
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let work_index = global_id.x; // Simple 1D dispatch for now
+
+    // Bounds check for worklist
     if (work_index >= params.worklist_size) {
         return;
     }
@@ -150,17 +136,52 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var current_possibilities: array<u32, 4>; // Example for up to 128 tiles
     for (var i: u32 = 0u; i < params.num_tiles_u32; i = i + 1u) {
-       // Non-atomic read is fine here, as we only need a snapshot for rule checking.
-       // If the value changes concurrently, a later propagation step will handle it.
        current_possibilities[i] = atomicLoad(&grid_possibilities[current_cell_idx_1d * params.num_tiles_u32 + i]);
     }
 
     // --- Iterate through Neighbors ---
     for (var axis_idx: u32 = 0u; axis_idx < 6u; axis_idx = axis_idx + 1u) {
-        let info = neighbor_info[axis_idx];
-        let neighbor_offset = info.offset;
-        let current_axis = info.axis;
-        let neighbor_axis = info.opposite_axis; // Rule is checked from neighbor's perspective
+        // Determine offset and axes using a switch based on axis_idx
+        var neighbor_offset: vec3<i32>;
+        var current_axis: u32;
+        var neighbor_axis: u32;
+
+        switch axis_idx {
+            case 0u: { // +X
+                neighbor_offset = vec3<i32>(1, 0, 0);
+                current_axis = 0u;
+                neighbor_axis = 1u;
+            }
+            case 1u: { // -X
+                neighbor_offset = vec3<i32>(-1, 0, 0);
+                current_axis = 1u;
+                neighbor_axis = 0u;
+            }
+            case 2u: { // +Y
+                neighbor_offset = vec3<i32>(0, 1, 0);
+                current_axis = 2u;
+                neighbor_axis = 3u;
+            }
+            case 3u: { // -Y
+                neighbor_offset = vec3<i32>(0, -1, 0);
+                current_axis = 3u;
+                neighbor_axis = 2u;
+            }
+            case 4u: { // +Z
+                neighbor_offset = vec3<i32>(0, 0, 1);
+                current_axis = 4u;
+                neighbor_axis = 5u;
+            }
+            case 5u: { // -Z
+                neighbor_offset = vec3<i32>(0, 0, -1);
+                current_axis = 5u;
+                neighbor_axis = 4u;
+            }
+            default: { // Should not happen
+                // Optionally handle error or continue
+                continue;
+            }
+        }
 
         let nx = i32(x) + neighbor_offset.x;
         let ny = i32(y) + neighbor_offset.y;

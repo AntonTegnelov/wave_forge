@@ -6,7 +6,7 @@ pub struct Grid<T> {
     pub width: usize,
     pub height: usize,
     pub depth: usize,
-    pub(crate) data: Vec<T>,
+    pub data: Vec<T>,
 }
 
 impl<T: Clone + Default> Grid<T> {

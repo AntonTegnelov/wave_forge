@@ -130,14 +130,25 @@ impl ComputePipelines {
                         },
                         count: None,
                     },
-                    // contradiction_flag (read-write storage, atomic)
+                    // output_worklist_count (atomic u32)
                     wgpu::BindGroupLayoutEntry {
                         binding: 5,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
-                            min_binding_size: None,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
+                        },
+                        count: None,
+                    },
+                    // contradiction_flag (atomic u32)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
                         },
                         count: None,
                     },
@@ -165,6 +176,7 @@ impl ComputePipelines {
             layout: Some(&entropy_pipeline_layout),
             module: &entropy_shader,
             entry_point: "main", // Assuming entry point is 'main'
+            compilation_options: Default::default(),
         });
 
         let propagation_pipeline =
@@ -173,6 +185,7 @@ impl ComputePipelines {
                 layout: Some(&propagation_pipeline_layout),
                 module: &propagation_shader,
                 entry_point: "main", // Assuming entry point is 'main'
+                compilation_options: Default::default(),
             });
 
         Ok(Self {

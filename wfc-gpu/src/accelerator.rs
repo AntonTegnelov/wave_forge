@@ -3,7 +3,7 @@ use log::{info, warn};
 use std::sync::Arc;
 use wfc_core::{
     entropy::EntropyCalculator,
-    grid::{EntropyGrid, PossibilityGrid},
+    grid::{EntropyGrid, Grid, PossibilityGrid},
     propagator::{ConstraintPropagator, PropagationError},
     rules::AdjacencyRules,
 }; // Use Arc for shared GPU resources
@@ -91,23 +91,117 @@ impl GpuAccelerator {
 impl EntropyCalculator for GpuAccelerator {
     #[must_use]
     fn calculate_entropy(&self, _grid: &PossibilityGrid) -> EntropyGrid {
-        // Note: This might be tricky if the PossibilityGrid is CPU-side.
-        // Ideally, the grid state is primarily kept on the GPU.
-        // This implementation might need to:
-        // 1. Ensure the grid data in buffers.grid_possibilities_buf is up-to-date (if modified by CPU?).
-        // 2. Create a command encoder.
-        // 3. Create bind group for the entropy shader.
-        // 4. Set pipeline and bind group.
-        // 5. Dispatch compute for entropy calculation.
-        // 6. Copy result from entropy_buf to entropy_staging_buf.
-        // 7. Submit command encoder.
-        // 8. Map staging buffer, read data, unmap.
-        // 9. Convert raw entropy data (e.g., Vec<f32>) back into an EntropyGrid.
-        // This should likely be an async fn if interacting heavily with the queue.
-        log::warn!(
-            "GPU calculate_entropy needs careful implementation regarding CPU/GPU state sync"
-        );
-        todo!()
+        // Assuming grid state is primarily managed on the GPU via self.buffers.grid_possibilities_buf
+        // _grid parameter is technically unused as we read directly from the GPU buffer.
+        // Consider changing the trait or method signature if this becomes an issue.
+        log::debug!("Running GPU calculate_entropy...");
+
+        let (width, height, depth) = self.grid_dims;
+        let num_cells = width * height * depth;
+
+        // 1. Create Command Encoder
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Entropy Compute Encoder"),
+            });
+
+        // 2. Create Bind Group
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Entropy Bind Group"),
+            layout: &self.pipelines.entropy_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.buffers.entropy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.buffers.params_uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        // 3. Begin Compute Pass
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Entropy Compute Pass"),
+                timestamp_writes: None, // Add timestamps later if needed for profiling
+            });
+
+            compute_pass.set_pipeline(&self.pipelines.entropy_pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+
+            // Dispatch - Calculate workgroup counts
+            let workgroup_size_x = 8;
+            let workgroup_size_y = 8;
+            let workgroup_size_z = 1;
+            let workgroups_x = (width as u32).div_ceil(workgroup_size_x);
+            let workgroups_y = (height as u32).div_ceil(workgroup_size_y);
+            let workgroups_z = (depth as u32).div_ceil(workgroup_size_z);
+
+            log::debug!(
+                "Dispatching entropy shader with workgroups: ({}, {}, {})",
+                workgroups_x,
+                workgroups_y,
+                workgroups_z
+            );
+            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        } // End compute pass scope
+
+        // 4. Submit to Queue
+        self.queue.submit(std::iter::once(encoder.finish()));
+        log::debug!("Entropy compute shader submitted.");
+
+        // 5. Download results (synchronously for now to match trait)
+        // We use pollster::block_on to wait for the async download_entropy to complete.
+        // This is simpler for now but might block the calling thread.
+        // Consider making the trait method async in the future if needed.
+        log::debug!("Downloading entropy results...");
+        let entropy_data_result =
+            pollster::block_on(self.buffers.download_entropy(&self.device, &self.queue));
+
+        match entropy_data_result {
+            Ok(entropy_data) => {
+                log::debug!(
+                    "Entropy results downloaded successfully ({} floats).",
+                    entropy_data.len()
+                );
+                if entropy_data.len() != num_cells {
+                    log::error!(
+                        "GPU entropy result size mismatch: expected {}, got {}",
+                        num_cells,
+                        entropy_data.len()
+                    );
+                    // Return an empty/error grid or panic? For now, create with potentially wrong data.
+                    // Construct Grid directly since data is public
+                    Grid {
+                        width,
+                        height,
+                        depth,
+                        data: entropy_data,
+                    }
+                } else {
+                    // 6. Create Grid from the downloaded data
+                    // Construct Grid directly since data is public
+                    Grid {
+                        width,
+                        height,
+                        depth,
+                        data: entropy_data,
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to download entropy results: {}", e);
+                // Return a default/error grid
+                EntropyGrid::new(width, height, depth) // Creates grid with default (0.0) values
+            }
+        }
     }
 
     #[must_use]
