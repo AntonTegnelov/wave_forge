@@ -34,8 +34,18 @@ pub enum WfcError {
     IncompleteCollapse,
     #[error("WFC exceeded maximum iterations, potential infinite loop")]
     TimeoutOrInfiniteLoop,
+    #[error("TileSet configuration error: {0}")]
+    TileSetError(#[from] TileSetError),
     #[error("Unknown WFC error")]
     Unknown,
+}
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)] // Add derives for TileSetError
+pub enum TileSetError {
+    #[error("TileSet weights cannot be empty.")]
+    EmptyWeights,
+    #[error("TileSet weights must be positive. Found non-positive weight at index {0}: {1}")]
+    NonPositiveWeight(usize, String), // Store index and value for better message
 }
 
 /// Information about the current state of the WFC algorithm execution.

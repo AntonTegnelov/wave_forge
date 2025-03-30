@@ -1,6 +1,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileId(pub usize); // Simple wrapper for now
 
+use crate::TileSetError; // Import the new error type
+
 #[derive(Debug, Clone)]
 pub struct TileSet {
     /// Relative weights for each tile. Higher weight means higher probability of being chosen.
@@ -11,16 +13,19 @@ pub struct TileSet {
 
 impl TileSet {
     /// Creates a new TileSet with the given weights.
-    ///
-    /// # Panics
-    /// Panics if the weights vector is empty or contains non-positive values.
-    pub fn new(weights: Vec<f32>) -> Self {
-        assert!(!weights.is_empty(), "TileSet weights cannot be empty.");
-        assert!(
-            weights.iter().all(|&w| w > 0.0),
-            "TileSet weights must be positive."
-        );
-        Self { weights }
+    /// Returns TileSetError if validation fails.
+    pub fn new(weights: Vec<f32>) -> Result<Self, TileSetError> {
+        if weights.is_empty() {
+            return Err(TileSetError::EmptyWeights);
+        }
+        // Check for non-positive weights
+        for (index, &weight) in weights.iter().enumerate() {
+            if weight <= 0.0 {
+                return Err(TileSetError::NonPositiveWeight(index, weight.to_string()));
+            }
+        }
+        // All checks passed
+        Ok(Self { weights })
     }
 
     /// Gets the weight for a specific TileId.

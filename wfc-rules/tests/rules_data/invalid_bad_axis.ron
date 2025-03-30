@@ -1,0 +1,8 @@
+(
+    tiles: [
+        ( name: "A", weight: 1.0 ),
+    ],
+    adjacency: [
+        ("A", "A", "InvalidAxis"), // Invalid axis name
+    ]
+) 

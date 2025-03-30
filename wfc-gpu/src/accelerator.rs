@@ -1,4 +1,4 @@
-use crate::{GpuError, buffers::GpuBuffers, pipeline::ComputePipelines};
+use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
 use std::sync::Arc;
 use wfc_core::{
     entropy::EntropyCalculator,
@@ -87,7 +87,14 @@ impl ConstraintPropagator for GpuAccelerator {
         &mut self,
         grid: &mut PossibilityGrid, // This grid might become less relevant if state is GPU-primary
         updated_coords: Vec<(usize, usize, usize)>,
+        rules: &AdjacencyRules, // Add the missing parameter
     ) -> Result<(), PropagationError> {
+        // Implementation still TODO, but signature matches now.
+        // Use `rules` parameter if needed for setup or shader uniforms.
+        let _ = rules; // Mark as used for now to avoid warning
+        let _ = grid; // Mark as used
+        let _ = updated_coords; // Mark as used
+
         // This implementation needs to:
         // 1. Upload updated_coords to buffers.updates_buf.
         // 2. Reset contradiction flag buffer.

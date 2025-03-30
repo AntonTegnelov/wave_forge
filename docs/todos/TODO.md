@@ -66,10 +66,10 @@ _Purpose: Handles loading tile set definitions and adjacency rules from external
   - [x] Define error types for loading/parsing.
 - **File:** `wfc-rules/src/loader.rs`
   - [x] Implement `load_from_file(path: &Path) -> Result<(TileSet, AdjacencyRules), LoadError>` function.
-  - [x] Choose file format (e.g., RON, JSON). Add necessary dependencies (`serde`, `ron` or `serde_json`).
+  - [x] Choose file format (RON). Add necessary dependencies (`ron`).
 - **File:** `wfc-rules/src/formats/mod.rs`, `wfc-rules/src/formats/ron_format.rs` (example)
   - [x] Define structs matching the chosen file format (`#[derive(Serialize, Deserialize)]`).
-  - [ ] Implement parsing logic to transform file format structs into `wfc-core` structs (`TileSet`, flattened/indexed `AdjacencyRules`).
+  - [x] Implement parsing logic to transform file format structs into `wfc-core` structs (`TileSet`, flattened/indexed `AdjacencyRules`).
     - [ ] **Parallelism (CPU - Low Priority):** If parsing involves significant independent computation per tile/rule after loading, consider using `rayon` for parallel parsing/transformation steps.
 - **Testing:** `wfc-rules/tests/`
   - [ ] Add tests for loading valid rule files.

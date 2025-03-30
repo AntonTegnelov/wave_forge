@@ -1,0 +1,7 @@
+(
+    tiles: [
+        ( name: "A", weight: 1.0 ),
+        ( name: "A", weight: 2.0 ), // Duplicate name
+    ],
+    adjacency: []
+) 

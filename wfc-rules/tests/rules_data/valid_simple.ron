@@ -1,0 +1,22 @@
+(
+    tiles: [
+        ( name: "A", weight: 1.0 ),
+        ( name: "B", weight: 2.0 ),
+    ],
+    adjacency: [
+        ("A", "A", "+x"),
+        ("A", "A", "-x"),
+        ("A", "A", "+y"),
+        ("A", "A", "-y"),
+        ("A", "A", "+z"),
+        ("A", "A", "-z"),
+        ("B", "B", "+x"),
+        ("B", "B", "-x"),
+        ("B", "B", "+y"),
+        ("B", "B", "-y"),
+        ("B", "B", "+z"),
+        ("B", "B", "-z"),
+        ("A", "B", "+x"), // A allows B to its +x
+        ("B", "A", "-x"), // B allows A to its -x (consistent)
+    ]
+) 
