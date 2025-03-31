@@ -1,20 +1,34 @@
 use crate::tile::TileId;
 
-// Represents adjacency rules using a flattened vector for efficiency.
-// The vector stores boolean values indicating if tile2 is allowed next to tile1 along a specific axis.
-// Indexing: allowed[axis * num_tiles * num_tiles + tile1.0 * num_tiles + tile2.0]
+/// Represents adjacency rules between tiles for different axes.
+///
+/// Stores the rules efficiently in a flattened boolean vector for fast lookup
+/// and easy transfer to GPU buffers.
+/// The indexing scheme assumes `allowed[axis][tile1][tile2]` layout.
 #[derive(Debug, Clone)]
 pub struct AdjacencyRules {
     num_tiles: usize,
     num_axes: usize,
-    /// Flattened vector: allowed[axis][tile1][tile2]
+    /// Flattened vector storing allowed adjacencies.
+    /// Indexing: `axis * num_tiles * num_tiles + tile1.0 * num_tiles + tile2.0`
     allowed: Vec<bool>,
 }
 
 impl AdjacencyRules {
-    /// Creates new AdjacencyRules, initializing all adjacencies based on the provided `allowed` vector.
+    /// Creates new `AdjacencyRules`.
+    ///
+    /// Initializes the rules based on the provided `allowed` vector,
+    /// which must be pre-flattened according to the scheme:
+    /// `allowed[axis * num_tiles * num_tiles + tile1.0 * num_tiles + tile2.0]`
+    ///
+    /// # Arguments
+    ///
+    /// * `num_tiles` - The total number of unique tile types.
+    /// * `num_axes` - The number of axes (directions) rules are defined for (e.g., 6 for 3D).
+    /// * `allowed` - The flattened boolean vector representing allowed adjacencies.
     ///
     /// # Panics
+    ///
     /// Panics if the length of `allowed` is not equal to `num_axes * num_tiles * num_tiles`.
     pub fn new(num_tiles: usize, num_axes: usize, allowed: Vec<bool>) -> Self {
         assert_eq!(
@@ -29,39 +43,38 @@ impl AdjacencyRules {
         }
     }
 
-    /// Gets the number of different tile types the rules are defined for.
+    /// Gets the number of different tile types these rules apply to.
     pub fn num_tiles(&self) -> usize {
         self.num_tiles
     }
 
-    /// Gets the number of axes/directions the rules are defined for (e.g., 6 for 3D +/- X/Y/Z).
+    /// Gets the number of axes/directions these rules are defined for (e.g., 6 for 3D +/- X/Y/Z).
     pub fn num_axes(&self) -> usize {
         self.num_axes
     }
 
     /// Provides read-only access to the internal flattened boolean vector representing allowed adjacencies.
-    /// Intended for scenarios like GPU buffer packing where direct access is needed.
+    ///
+    /// This is primarily intended for scenarios like GPU buffer packing where direct access to the raw rule data is needed.
     pub fn get_allowed_rules(&self) -> &Vec<bool> {
         &self.allowed
     }
 
-    /// Checks if `tile2` is allowed to be adjacent to `tile1` along the specified `axis`.
+    /// Checks if `tile2` is allowed to be placed adjacent to `tile1` along the specified `axis`.
     ///
-    /// # Panics
-    /// Panics if `axis` is out of bounds or if `tile1` or `tile2` IDs are out of bounds.
+    /// Performs bounds checks internally and returns `false` if indices are out of range.
+    /// Uses inline attribute for potential performance optimization in tight loops.
     #[inline]
     pub fn check(&self, tile1: TileId, tile2: TileId, axis: usize) -> bool {
-        assert!(tile1.0 < self.num_tiles, "tile1 ID out of bounds");
-        assert!(tile2.0 < self.num_tiles, "tile2 ID out of bounds");
-        assert!(axis < self.num_axes, "Axis index out of bounds");
+        // Use checked indexing instead of asserts to avoid panics in release builds if used incorrectly.
+        if tile1.0 >= self.num_tiles || tile2.0 >= self.num_tiles || axis >= self.num_axes {
+            // Consider logging a warning here in debug builds?
+            return false; // Treat out-of-bounds as disallowed.
+        }
 
         let index = axis * self.num_tiles * self.num_tiles + tile1.0 * self.num_tiles + tile2.0;
-        assert!(
-            index < self.allowed.len(),
-            "Calculated rule index out of bounds"
-        );
 
-        let result = *self.allowed.get(index).unwrap_or(&false);
-        result
+        // Use .get() for safe access to the vector.
+        *self.allowed.get(index).unwrap_or(&false)
     }
 }

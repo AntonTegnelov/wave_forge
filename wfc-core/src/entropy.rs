@@ -2,19 +2,58 @@ use crate::grid::{EntropyGrid, PossibilityGrid};
 use float_ord::FloatOrd;
 use rayon::prelude::*;
 
+/// Trait defining the interface for calculating cell entropy and finding the minimum.
+///
+/// Entropy is a measure of uncertainty or "mixedness" within a cell's possibility state.
+/// Lower entropy generally indicates fewer possible tiles, making the cell a good candidate
+/// for collapsing next in the WFC algorithm.
 pub trait EntropyCalculator {
+    /// Calculates the entropy for every cell in the `PossibilityGrid`.
+    ///
+    /// Returns an `EntropyGrid` (a `Grid<f32>`) where each cell contains the calculated
+    /// entropy value based on the corresponding cell's `BitVec` in the input `grid`.
+    /// The specific entropy calculation method depends on the implementing type.
+    ///
+    /// # Arguments
+    ///
+    /// * `grid` - The `PossibilityGrid` containing the current possibility state.
+    ///
+    /// # Returns
+    ///
+    /// An `EntropyGrid` with the calculated entropy for each cell.
     #[must_use]
     fn calculate_entropy(&self, grid: &PossibilityGrid) -> EntropyGrid;
 
+    /// Finds the coordinates of the cell with the lowest positive entropy.
+    ///
+    /// Iterates through the `entropy_grid`, ignoring cells with entropy <= 0 (already collapsed
+    /// or potentially in a contradictory state), and returns the `(x, y, z)` coordinates
+    /// of the cell with the minimum positive entropy value.
+    ///
+    /// Returns `None` if all cells have entropy <= 0 (i.e., the grid is fully collapsed or in an error state).
+    /// Ties may be broken arbitrarily (often by picking the first one found).
+    ///
+    /// # Arguments
+    ///
+    /// * `entropy_grid` - The grid containing pre-calculated entropy values.
+    ///
+    /// # Returns
+    ///
+    /// * `Some((x, y, z))` - Coordinates of the cell with the lowest positive entropy.
+    /// * `None` - If no cell with positive entropy is found.
     #[must_use]
     fn find_lowest_entropy(&self, entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)>;
 }
 
-// Basic CPU implementation
+/// A basic, parallel CPU implementation of the `EntropyCalculator` trait.
+///
+/// This implementation uses `rayon` for parallel computation of entropy across grid cells.
+/// Note: Currently uses a simple heuristic for entropy (count of possibilities).
 #[derive(Debug, Clone)]
 pub struct CpuEntropyCalculator;
 
 impl CpuEntropyCalculator {
+    /// Creates a new `CpuEntropyCalculator`.
     pub fn new() -> Self {
         Self
     }
@@ -22,12 +61,21 @@ impl CpuEntropyCalculator {
 
 // Implement Default as suggested by clippy
 impl Default for CpuEntropyCalculator {
+    /// Creates a default `CpuEntropyCalculator`.
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl EntropyCalculator for CpuEntropyCalculator {
+    /// Calculates entropy for each cell based on the number of remaining possibilities.
+    ///
+    /// Uses `rayon` to parallelize the calculation across cells.
+    /// Cells with 1 or fewer possibilities (already collapsed) are assigned an entropy of 0.0.
+    /// For cells with > 1 possibility, the entropy is currently calculated simply as the
+    /// count of set bits (number of possible tiles).
+    ///
+    /// TODO: Implement a more sophisticated entropy calculation (e.g., Shannon entropy based on tile weights).
     fn calculate_entropy(&self, grid: &PossibilityGrid) -> EntropyGrid {
         let mut entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
         let width = grid.width;
@@ -69,6 +117,14 @@ impl EntropyCalculator for CpuEntropyCalculator {
         entropy_grid
     }
 
+    /// Finds the coordinates of the cell with the minimum positive entropy using a parallel search.
+    ///
+    /// Uses `rayon` to iterate over the `entropy_grid` in parallel.
+    /// Filters out cells with entropy <= 0.0.
+    /// Uses `float_ord::FloatOrd` for reliable comparison of `f32` entropy values.
+    /// Finds the index of the minimum element and converts it back to `(x, y, z)` coordinates.
+    ///
+    /// Returns `None` if no cells with positive entropy exist.
     fn find_lowest_entropy(&self, entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)> {
         // Use parallel iteration and reduction to find the minimum non-zero entropy.
         // We need to find the *index* of the minimum element, not just the value.

@@ -6,19 +6,48 @@ use std::collections::{HashSet, VecDeque};
 use std::default::Default;
 use thiserror::Error;
 
+/// Errors that can occur during the constraint propagation phase of WFC.
 #[derive(Error, Debug, Clone)]
 pub enum PropagationError {
+    /// Indicates that a cell's possibility set became empty during propagation,
+    /// meaning no tile can satisfy the constraints at this location.
+    /// Contains the (x, y, z) coordinates of the contradictory cell.
     #[error("Contradiction detected during propagation at ({0}, {1}, {2})")]
     Contradiction(usize, usize, usize),
-    // Add other specific propagation errors later
+    /// Represents an error during the setup phase of GPU-based propagation (if used).
     #[error("GPU setup error during propagation: {0}")]
     GpuSetupError(String),
+    /// Represents an error during communication with the GPU during propagation (if used).
     #[error("GPU communication error during propagation: {0}")]
     GpuCommunicationError(String),
 }
 
-#[must_use]
+/// Trait defining the interface for a constraint propagation algorithm.
+///
+/// Implementors of this trait are responsible for updating the `PossibilityGrid`
+/// based on changes initiated (e.g., collapsing a cell) and the defined `AdjacencyRules`.
+#[must_use] // Propagation results in a Result that should be checked
 pub trait ConstraintPropagator {
+    /// Performs constraint propagation on the grid.
+    ///
+    /// Takes the current state of the `PossibilityGrid`, a list of coordinates
+    /// `updated_coords` where possibilities have recently changed (e.g., due to a collapse),
+    /// and the `AdjacencyRules`.
+    ///
+    /// Modifies the `grid` in place by removing possibilities that violate the rules
+    /// based on the updates.
+    ///
+    /// # Arguments
+    ///
+    /// * `grid` - The mutable `PossibilityGrid` to operate on.
+    /// * `updated_coords` - A vector of (x, y, z) coordinates indicating cells whose possibilities have changed.
+    /// * `rules` - The `AdjacencyRules` defining valid neighbor relationships.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if propagation completed successfully without contradictions.
+    /// * `Err(PropagationError::Contradiction(x, y, z))` if a cell at (x, y, z) becomes empty (contradiction).
+    /// * Other `Err(PropagationError)` variants for different propagation issues (e.g., GPU errors).
     fn propagate(
         &mut self,
         grid: &mut PossibilityGrid,
@@ -27,32 +56,47 @@ pub trait ConstraintPropagator {
     ) -> Result<(), PropagationError>;
 }
 
-// Basic CPU implementation
+/// A basic, single-threaded CPU implementation of the `ConstraintPropagator` trait.
+///
+/// This propagator uses a worklist (queue) to manage cells whose possibilities
+/// need to be re-evaluated and propagated to their neighbors.
 #[derive(Debug, Clone)]
 pub struct CpuConstraintPropagator;
 
 impl CpuConstraintPropagator {
+    /// Creates a new `CpuConstraintPropagator`.
     pub fn new() -> Self {
         Self
     }
 }
 
 impl Default for CpuConstraintPropagator {
+    /// Creates a default `CpuConstraintPropagator`.
     fn default() -> Self {
         Self::new()
     }
 }
 
-// Define axes explicitly for clarity (assuming 6 axes)
-const AXIS_POS_X: usize = 0;
-const AXIS_NEG_X: usize = 1;
-const AXIS_POS_Y: usize = 2;
-const AXIS_NEG_Y: usize = 3;
-const AXIS_POS_Z: usize = 4;
-const AXIS_NEG_Z: usize = 5;
-const NUM_AXES: usize = 6; // Should match AdjacencyRules num_axes
+// --- Axis Definitions (Internal Detail but useful for understanding) ---
 
-// Axis definitions: (dx, dy, dz, axis_index, opposite_axis_index)
+/// Index for the positive X-axis direction (+1, 0, 0).
+const AXIS_POS_X: usize = 0;
+/// Index for the negative X-axis direction (-1, 0, 0).
+const AXIS_NEG_X: usize = 1;
+/// Index for the positive Y-axis direction (0, +1, 0).
+const AXIS_POS_Y: usize = 2;
+/// Index for the negative Y-axis direction (0, -1, 0).
+const AXIS_NEG_Y: usize = 3;
+/// Index for the positive Z-axis direction (0, 0, +1).
+const AXIS_POS_Z: usize = 4;
+/// Index for the negative Z-axis direction (0, 0, -1).
+const AXIS_NEG_Z: usize = 5;
+/// Total number of axes (should match `AdjacencyRules::num_axes`).
+const NUM_AXES: usize = 6;
+
+/// Array defining the properties of each axis for neighbor checking.
+/// Format: `(dx, dy, dz, axis_index, opposite_axis_index)`
+/// Used to iterate through neighbors and apply the correct adjacency rule direction.
 const AXES: [(isize, isize, isize, usize, usize); NUM_AXES] = [
     (1, 0, 0, AXIS_POS_X, AXIS_NEG_X),  // +X
     (-1, 0, 0, AXIS_NEG_X, AXIS_POS_X), // -X
@@ -62,7 +106,35 @@ const AXES: [(isize, isize, isize, usize, usize); NUM_AXES] = [
     (0, 0, -1, AXIS_NEG_Z, AXIS_POS_Z), // -Z
 ];
 
+// --- CPU Propagator Implementation ---
+
 impl ConstraintPropagator for CpuConstraintPropagator {
+    /// CPU implementation of the constraint propagation algorithm.
+    ///
+    /// Uses a worklist approach (VecDeque and HashSet) to process updated cells
+    /// and their neighbors iteratively until no further changes occur or a
+    /// contradiction is found.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Initialize a worklist queue and set with the initial `updated_coords`.
+    /// 2. While the worklist is not empty:
+    ///    a. Dequeue a cell coordinate (x, y, z).
+    ///    b. Retrieve the current possibilities `P` for cell (x, y, z).
+    ///    c. For each neighbor (nx, ny, nz) of (x, y, z) along each `axis`:
+    ///       i. Determine the set of allowed tiles `A` for the neighbor based on `P` and `rules.check(..., axis)`.
+    ///       ii. Get the neighbor's current possibilities `N`.
+    ///       iii. Calculate the intersection `I = N & A`.
+    ///       iv. If `I` is empty, return `Err(PropagationError::Contradiction)`.
+    ///       v. If `I` is different from `N`:
+    ///          - Update the neighbor's possibilities in the `grid` to `I`.
+    ///          - Enqueue (nx, ny, nz) to the worklist if it wasn't already present.
+    /// 3. If the loop finishes without contradiction, return `Ok(())`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rules.num_axes()` does not match the internal `NUM_AXES` constant (currently 6).
+    /// This indicates an inconsistency between the rule definition and the propagator's expectation.
     fn propagate(
         &mut self,
         grid: &mut PossibilityGrid,

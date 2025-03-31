@@ -10,20 +10,42 @@ use log::{debug, error, info};
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::thread_rng;
 
-/// Runs the Wave Function Collapse algorithm.
+/// Runs the core Wave Function Collapse (WFC) algorithm loop.
+///
+/// This function orchestrates the WFC process:
+/// 1. **Initialization**: Checks the initial grid state for contradictions and runs initial propagation.
+/// 2. **Observation**: Repeatedly selects the cell with the lowest entropy (uncertainty).
+/// 3. **Collapse**: Collapses the selected cell to a single possible tile, chosen randomly based on weights.
+/// 4. **Propagation**: Propagates the consequences of the collapse through the grid using the `ConstraintPropagator`,
+///    eliminating possibilities that violate `AdjacencyRules`.
+/// 5. **Termination**: Stops when all cells are collapsed (success) or a contradiction occurs (failure).
+///
+/// # Type Parameters
+///
+/// * `P`: A type implementing the `ConstraintPropagator` trait (e.g., `CpuConstraintPropagator`).
+/// * `E`: A type implementing the `EntropyCalculator` trait (e.g., `CpuEntropyCalculator`).
 ///
 /// # Arguments
 ///
-/// * `grid` - The mutable grid of possibilities.
-/// * `tileset` - Information about the tiles (weights, etc.).
-/// * `rules` - Adjacency constraints between tiles.
-/// * `propagator` - The constraint propagation implementation.
-/// * `entropy_calculator` - The entropy calculation implementation.
-/// * `progress_callback` - An optional callback for reporting progress.
+/// * `grid`: A mutable reference to the `PossibilityGrid` representing the state of the system.
+///            It will be modified in place during the WFC run.
+/// * `tileset`: A reference to the `TileSet` containing information about tile weights.
+/// * `rules`: A reference to the `AdjacencyRules` defining valid neighbor constraints.
+/// * `propagator`: An instance of the chosen `ConstraintPropagator` implementation.
+/// * `entropy_calculator`: An instance of the chosen `EntropyCalculator` implementation.
+/// * `progress_callback`: An optional closure that receives `ProgressInfo` updates during the run.
+///                        This allows external monitoring or UI updates.
 ///
 /// # Returns
 ///
-/// `Ok(())` on successful collapse, `Err(WfcError)` otherwise.
+/// * `Ok(())` if the algorithm successfully collapses the entire grid without contradictions.
+/// * `Err(WfcError)` if an error occurs, such as:
+///     * `WfcError::Contradiction`: A cell reaches a state where no tiles are possible.
+///     * `WfcError::PropagationError`: An error occurs during constraint propagation.
+///     * `WfcError::GridError`: An issue accessing grid data.
+///     * `WfcError::ConfigurationError`: Invalid input (e.g., missing weights).
+///     * `WfcError::IncompleteCollapse`: The algorithm finishes but some cells remain uncollapsed.
+///     * `WfcError::TimeoutOrInfiniteLoop`: The algorithm exceeds a maximum iteration limit.
 pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     grid: &mut PossibilityGrid,
     tileset: &TileSet,

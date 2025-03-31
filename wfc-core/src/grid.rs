@@ -1,16 +1,36 @@
 use bitvec::prelude::*;
 
-/// Generic 3D Grid structure.
+/// A generic 3-dimensional grid structure holding data of type `T`.
+///
+/// Used as a basic building block for various grid-based representations
+/// in the WFC algorithm, such as the `PossibilityGrid` and `EntropyGrid`.
 #[derive(Debug, Clone)] // Keep Clone for tests, consider removing if large grids are cloned often
 pub struct Grid<T> {
+    /// The width of the grid (X dimension).
     pub width: usize,
+    /// The height of the grid (Y dimension).
     pub height: usize,
+    /// The depth of the grid (Z dimension).
     pub depth: usize,
+    /// The flattened 1D vector storing the grid data.
+    /// Data is stored in row-major order (x varies fastest, then y, then z).
+    /// Use `get` and `get_mut` for safe access via 3D coordinates.
     pub data: Vec<T>,
 }
 
 impl<T: Clone + Default> Grid<T> {
-    /// Creates a new generic grid with the given dimensions, initialized with default values.
+    /// Creates a new generic grid with the given dimensions, initialized with default values of type `T`.
+    ///
+    /// # Arguments
+    ///
+    /// * `width` - Grid width (X dimension).
+    /// * `height` - Grid height (Y dimension).
+    /// * `depth` - Grid depth (Z dimension).
+    ///
+    /// # Returns
+    ///
+    /// A new `Grid<T>` instance with dimensions `width`x`height`x`depth`,
+    /// where each cell contains `T::default()`.
     pub fn new(width: usize, height: usize, depth: usize) -> Self {
         let size = width * height * depth;
         // Ensure size is not zero to prevent Vec::with_capacity(0)
@@ -31,8 +51,10 @@ impl<T: Clone + Default> Grid<T> {
         }
     }
 
-    /// Calculates the 1D index for the given 3D coordinates.
-    /// Returns None if the coordinates are out of bounds.
+    /// Calculates the 1D index into the `data` vector for the given 3D coordinates.
+    ///
+    /// Returns `None` if the coordinates `(x, y, z)` are outside the grid boundaries.
+    /// The indexing scheme is `z * width * height + y * width + x`.
     #[inline] // Make indexing inline for performance
     fn index(&self, x: usize, y: usize, z: usize) -> Option<usize> {
         if x < self.width && y < self.height && z < self.depth {
@@ -42,15 +64,17 @@ impl<T: Clone + Default> Grid<T> {
         }
     }
 
-    /// Returns an immutable reference to the element at the given coordinates,
-    /// or None if the coordinates are out of bounds.
+    /// Returns an immutable reference to the element at the given 3D coordinates `(x, y, z)`.
+    ///
+    /// Returns `None` if the coordinates are out of bounds.
     #[inline] // Make access inline
     pub fn get(&self, x: usize, y: usize, z: usize) -> Option<&T> {
         self.index(x, y, z).and_then(|idx| self.data.get(idx))
     }
 
-    /// Returns a mutable reference to the element at the given coordinates,
-    /// or None if the coordinates are out of bounds.
+    /// Returns a mutable reference to the element at the given 3D coordinates `(x, y, z)`.
+    ///
+    /// Returns `None` if the coordinates are out of bounds.
     #[inline] // Make access inline
     pub fn get_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut T> {
         self.index(x, y, z)
@@ -60,27 +84,44 @@ impl<T: Clone + Default> Grid<T> {
 
 // --- PossibilityGrid Definition ---
 
-/// Specific Grid implementation for storing tile possibilities using BitVec.
+/// A specialized 3D grid storing the possibility state for each cell in the WFC algorithm.
+///
+/// Each cell contains a `BitVec`, where the index corresponds to a `TileId`.
+/// If the bit at index `i` is set (`true`), it means `TileId(i)` is still considered
+/// a possible tile for that cell. If the bit is unset (`false`), the tile has been eliminated.
 #[derive(Debug, Clone)]
 pub struct PossibilityGrid {
+    /// The width of the grid (X dimension).
     pub width: usize,
+    /// The height of the grid (Y dimension).
     pub height: usize,
+    /// The depth of the grid (Z dimension).
     pub depth: usize,
-    num_tiles: usize, // Store num_tiles for validation/consistency
+    /// The total number of unique tile types the grid is configured for.
+    /// This determines the length of the `BitVec` in each cell.
+    num_tiles: usize,
+    /// The flattened 1D vector storing the `BitVec` possibility state for each cell.
+    /// Use `get` and `get_mut` for safe access via 3D coordinates.
     data: Vec<BitVec>,
 }
 
 impl PossibilityGrid {
-    /// Creates a new PossibilityGrid initialized with all tiles possible for every cell.
+    /// Creates a new `PossibilityGrid` initialized with all tiles possible for every cell.
     ///
     /// # Arguments
+    ///
     /// * `width` - Grid width (X dimension).
     /// * `height` - Grid height (Y dimension).
     /// * `depth` - Grid depth (Z dimension).
     /// * `num_tiles` - The total number of unique tile types.
     ///
+    /// # Returns
+    ///
+    /// A new `PossibilityGrid` where every bit in every cell's `BitVec` is set to `true`.
+    ///
     /// # Panics
-    /// Panics if `num_tiles` is 0.
+    ///
+    /// Panics if `num_tiles` is 0, as a grid must have at least one tile type.
     pub fn new(width: usize, height: usize, depth: usize, num_tiles: usize) -> Self {
         assert!(num_tiles > 0, "num_tiles must be greater than 0");
         let size = width * height * depth;
@@ -107,18 +148,25 @@ impl PossibilityGrid {
     }
 
     /// Returns the number of unique tile types this grid is configured for.
+    /// This corresponds to the length of the `BitVec` in each cell.
     pub fn num_tiles(&self) -> usize {
         self.num_tiles
     }
 
-    /// Provides read-only access to the internal data vector containing BitVecs for each cell.
-    /// Intended for scenarios like GPU buffer packing where direct access is needed.
+    /// Provides read-only access to the internal flat vector containing the `BitVec`
+    /// possibility state for each cell.
+    ///
+    /// Primarily intended for advanced use cases like direct buffer manipulation (e.g., for GPU transfer),
+    /// where accessing the underlying data structure is necessary.
+    /// Use `get` for standard cell access.
     pub fn get_cell_data(&self) -> &Vec<BitVec> {
         &self.data
     }
 
-    /// Calculates the 1D index for the given 3D coordinates.
-    /// Returns None if the coordinates are out of bounds.
+    /// Calculates the 1D index into the `data` vector for the given 3D coordinates.
+    ///
+    /// Returns `None` if the coordinates `(x, y, z)` are outside the grid boundaries.
+    /// The indexing scheme is `z * width * height + y * width + x`.
     #[inline]
     fn index(&self, x: usize, y: usize, z: usize) -> Option<usize> {
         if x < self.width && y < self.height && z < self.depth {
@@ -128,15 +176,17 @@ impl PossibilityGrid {
         }
     }
 
-    /// Returns an immutable reference to the possibility BitVec at the given coordinates,
-    /// or None if the coordinates are out of bounds.
+    /// Returns an immutable reference to the possibility `BitVec` at the given 3D coordinates `(x, y, z)`.
+    ///
+    /// Returns `None` if the coordinates are out of bounds.
     #[inline]
     pub fn get(&self, x: usize, y: usize, z: usize) -> Option<&BitVec> {
         self.index(x, y, z).and_then(|idx| self.data.get(idx))
     }
 
-    /// Returns a mutable reference to the possibility BitVec at the given coordinates,
-    /// or None if the coordinates are out of bounds.
+    /// Returns a mutable reference to the possibility `BitVec` at the given 3D coordinates `(x, y, z)`.
+    ///
+    /// Returns `None` if the coordinates are out of bounds.
     #[inline]
     pub fn get_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut BitVec> {
         self.index(x, y, z)
@@ -146,6 +196,8 @@ impl PossibilityGrid {
 
 // --- EntropyGrid Definition ---
 
+/// Type alias for a 3D grid storing floating-point entropy values for each cell.
+/// Typically uses `f32` for entropy representation.
 // Type alias for the entropy grid (can still use the generic Grid)
 pub type EntropyGrid = Grid<f32>;
 
