@@ -180,7 +180,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 
 ## General / Ongoing
 
-- [ ] Refine error handling across all crates. _Strategy: Use `thiserror` for library crates (`wfc-core`, `wfc-rules`, `wfc-gpu`) and `anyhow` for the application (`wave-forge-app`)._
+- [x] Refine error handling across all crates. _Strategy: Use `thiserror` for library crates (`wfc-core`, `wfc-rules`, `wfc-gpu`) and `anyhow` for the application (`wave-forge-app`)._
 - [ ] Add documentation comments (`///`) to public APIs.
 - [ ] Set up basic logging (`log`, `env_logger`).
 - [ ] Profile and optimize bottlenecks (CPU and GPU).

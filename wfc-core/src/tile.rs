@@ -1,7 +1,15 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileId(pub usize); // Simple wrapper for now
 
-use crate::TileSetError; // Import the new error type
+use thiserror::Error; // Need thiserror here
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)] // Add derives for TileSetError
+pub enum TileSetError {
+    #[error("TileSet weights cannot be empty.")]
+    EmptyWeights,
+    #[error("TileSet weights must be positive. Found non-positive weight at index {0}: {1}")]
+    NonPositiveWeight(usize, String), // Store index and value for better message
+}
 
 #[derive(Debug, Clone)]
 pub struct TileSet {

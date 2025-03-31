@@ -15,7 +15,7 @@ pub use crate::grid::{EntropyGrid, Grid, PossibilityGrid}; // Keep Grid<T> gener
 pub use crate::propagator::{ConstraintPropagator, CpuConstraintPropagator, PropagationError};
 pub use crate::rules::AdjacencyRules;
 pub use crate::runner::run;
-pub use crate::tile::{TileId, TileSet};
+pub use crate::tile::{TileId, TileSet, TileSetError}; // Re-export TileSetError
 
 // Public error type
 #[derive(Error, Debug, Clone)]
@@ -35,17 +35,9 @@ pub enum WfcError {
     #[error("WFC exceeded maximum iterations, potential infinite loop")]
     TimeoutOrInfiniteLoop,
     #[error("TileSet configuration error: {0}")]
-    TileSetError(#[from] TileSetError),
+    TileSetError(#[from] TileSetError), // Keep using the re-exported error
     #[error("Unknown WFC error")]
     Unknown,
-}
-
-#[derive(Error, Debug, Clone, PartialEq, Eq)] // Add derives for TileSetError
-pub enum TileSetError {
-    #[error("TileSet weights cannot be empty.")]
-    EmptyWeights,
-    #[error("TileSet weights must be positive. Found non-positive weight at index {0}: {1}")]
-    NonPositiveWeight(usize, String), // Store index and value for better message
 }
 
 /// Information about the current state of the WFC algorithm execution.
