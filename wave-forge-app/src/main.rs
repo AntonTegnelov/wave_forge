@@ -76,38 +76,87 @@ async fn main() -> Result<()> {
         }
     } else {
         log::info!("Running standard WFC...");
-        // TODO: Select CPU/GPU components based on config.cpu_only and feature flags
-        // TODO: Instantiate the correct propagator and entropy_calculator
 
-        // Placeholder: Always use CPU for now
-        let mut propagator = wfc_core::propagator::CpuConstraintPropagator::new();
-        let entropy_calculator = wfc_core::entropy::CpuEntropyCalculator::new();
+        let use_gpu = !config.cpu_only && cfg!(feature = "gpu");
 
         // TODO: Set up progress reporting based on config.report_progress_interval
         let progress_callback = None; // Placeholder
 
-        // Run WFC using the selected components
-        // This call needs the runner signature to be fixed manually in wfc-core
-        match wfc_core::runner::run(
-            &mut grid,
-            &tileset,
-            &rules,
-            &mut propagator,
-            &entropy_calculator,
-            progress_callback,
-        ) {
-            Ok(_) => {
-                log::info!("WFC completed successfully.");
-                // TODO: Implement output saving based on config.output_path
+        if use_gpu {
+            #[cfg(feature = "gpu")]
+            // This cfg block ensures GpuAccelerator code is only compiled with feature
+            {
+                log::info!("Initializing GPU Accelerator...");
+                match wfc_gpu::accelerator::GpuAccelerator::new(&grid, &rules).await {
+                    Ok(mut gpu_accelerator) => {
+                        log::info!("Running WFC on GPU...");
+                        // Assuming run signature is fixed to take refs
+                        match wfc_core::runner::run(
+                            &mut grid,
+                            &tileset,
+                            &rules,
+                            &mut gpu_accelerator, // Pass the single instance mutably
+                            &gpu_accelerator,     // Pass the single instance immutably
+                            progress_callback,
+                        ) {
+                            Ok(_) => log::info!("GPU WFC completed successfully."),
+                            Err(e) => {
+                                log::error!("GPU WFC failed: {}", e);
+                                return Err(anyhow::anyhow!(e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to initialize GPU Accelerator: {}. Falling back to CPU.",
+                            e
+                        );
+                        // Fallback to CPU if GPU initialization fails
+                        run_cpu(&mut grid, &tileset, &rules, progress_callback)?;
+                    }
+                }
             }
-            Err(e) => {
-                log::error!("WFC failed: {}", e);
-                // Return an error using anyhow
-                return Err(anyhow::anyhow!(e));
+            #[cfg(not(feature = "gpu"))]
+            {
+                log::error!("GPU mode selected but GPU feature not compiled. Using CPU.");
+                run_cpu(&mut grid, &tileset, &rules, progress_callback)?;
             }
+        } else {
+            log::info!("Running WFC on CPU...");
+            run_cpu(&mut grid, &tileset, &rules, progress_callback)?;
         }
     }
 
     log::info!("Wave Forge App Finished.");
     Ok(())
+}
+
+// Helper function to run WFC on CPU
+fn run_cpu(
+    grid: &mut PossibilityGrid,
+    tileset: &wfc_core::TileSet,
+    rules: &wfc_core::rules::AdjacencyRules,
+    progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>>,
+) -> Result<(), anyhow::Error> {
+    let mut propagator = wfc_core::propagator::CpuConstraintPropagator::new();
+    let entropy_calculator = wfc_core::entropy::CpuEntropyCalculator::new();
+
+    // Assuming run signature is fixed to take refs
+    match wfc_core::runner::run(
+        grid,
+        tileset,
+        rules,
+        &mut propagator,
+        &entropy_calculator,
+        progress_callback,
+    ) {
+        Ok(_) => {
+            log::info!("CPU WFC completed successfully.");
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("CPU WFC failed: {}", e);
+            Err(anyhow::anyhow!(e)) // Convert WfcError to anyhow::Error
+        }
+    }
 }
