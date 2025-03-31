@@ -67,6 +67,18 @@ impl ComputePipelines {
                         },
                         count: None,
                     },
+                    // min_entropy_info (read-write storage, atomic vec2<u32>)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3, // New binding for min entropy info
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false }, // Needs write access for atomic operations
+                            has_dynamic_offset: false,
+                            // Minimum size for vec2<u32>
+                            min_binding_size: Some(std::num::NonZeroU64::new(8).unwrap()),
+                        },
+                        count: None,
+                    },
                 ],
             });
 

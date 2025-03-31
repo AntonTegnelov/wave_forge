@@ -47,6 +47,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // Binding for the output entropy grid (write-only)
 @group(0) @binding(1) var<storage, read_write> entropy: array<f32>;
 
+// Binding for minimum entropy info [f32 bits, index] (atomic access required)
+// Using vec2<atomic<u32>> to store f32 bits and index atomically.
+@group(0) @binding(3) var<storage, read_write> min_entropy_info: vec2<atomic<u32>>;
+
 // Params struct containing grid dimensions
 struct Params {
     grid_width: u32,
@@ -61,6 +65,38 @@ struct Params {
 
 // TODO: Consider passing grid dimensions (width, height, depth) via uniform buffer
 // For now, assume global_invocation_id maps directly to flat grid index
+
+// Function to atomically update the minimum entropy info
+// Only updates if the new entropy is lower than the current minimum.
+fn atomicMinF32Index(index: u32, entropy_value: f32) {
+    let entropy_bits = bitcast<u32>(entropy_value);
+
+    // Loop to ensure atomic update succeeds
+    loop {
+        // Atomically load the current minimum entropy bits and index
+        let current_min_bits = atomicLoad(&min_entropy_info[0]);
+        let current_min_entropy = bitcast<f32>(current_min_bits);
+
+        // Check if the new entropy is lower, or if it's the same but the index is lower (for tie-breaking)
+        // Also handle the initial state (f32::MAX)
+        if (entropy_value < current_min_entropy || current_min_entropy >= 3.402823e+38) { // Check against ~f32::MAX
+            // Attempt to atomically swap the value
+            // atomicCompareExchangeWeak returns a vec2<u32> where [0] is old value, [1] is success flag (1 if success)
+            let compare_result = atomicCompareExchangeWeak(&min_entropy_info[0], current_min_bits, entropy_bits);
+
+            // If the swap was successful (meaning no other thread updated it in the meantime)
+            if (compare_result.exchanged) {
+                // Atomically store the new index (no compare needed, we won the race for entropy)
+                atomicStore(&min_entropy_info[1], index);
+                break; // Exit loop
+            }
+            // If compare failed, another thread updated, loop again to retry
+        } else {
+            // New entropy is not lower, no need to update
+            break;
+        }
+    }
+}
 
 // Function to count set bits in a u32
 fn count_set_bits(n: u32) -> u32 {
@@ -92,18 +128,22 @@ fn main(
     let possibilities_count = count_set_bits(possibility_mask);
 
     var calculated_entropy = 0.0;
-    if (possibilities_count > 1u) {
-        calculated_entropy = f32(possibilities_count);
+    if (possibilities_count == 1u) {
+        // Collapsed cell, entropy is 0 (or effectively infinite/ignored)
+        calculated_entropy = 0.0;
+    } else if (possibilities_count > 1u) {
         // TODO: Replace with proper Shannon entropy if desired
-        // let num_tiles_f = 32.0; // Example: Needs actual num_tiles
-        // var shannon_entropy = 0.0;
-        // for (var i = 0u; i < 32u; i = i + 1u) {
-        //    if ((possibility_mask >> i) & 1u == 1u) {
-        //        let prob = 1.0 / f32(possibilities_count);
-        //        shannon_entropy = shannon_entropy - prob * log2(prob);
-        //    }
-        // }
-        // calculated_entropy = shannon_entropy;
+        calculated_entropy = f32(possibilities_count); // Current: Higher count = higher entropy
+
+        // Atomically update the global minimum entropy if this cell's entropy is lower
+        // Only consider cells that are not yet collapsed (possibilities_count > 1)
+        atomicMinF32Index(index, calculated_entropy);
+
+    } else { // possibilities_count == 0u
+        // Contradiction! Entropy is effectively infinite (use a large negative number or specific flag if needed)
+        // For simplicity, setting entropy to 0 here, but contradiction handling should occur elsewhere.
+        calculated_entropy = 0.0;
+        // Optionally, signal contradiction via another atomic buffer if needed.
     }
 
     entropy[index] = calculated_entropy;

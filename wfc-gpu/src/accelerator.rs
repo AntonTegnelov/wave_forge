@@ -183,6 +183,13 @@ impl EntropyCalculator for GpuAccelerator {
         let (width, height, depth) = self.grid_dims;
         let num_cells = width * height * depth;
 
+        // Reset the min entropy buffer before dispatch
+        if let Err(e) = self.buffers.reset_min_entropy_info(&self.queue) {
+            log::error!("Failed to reset min entropy info buffer: {}", e);
+            // Return an empty/error grid
+            return EntropyGrid::new(width, height, depth);
+        }
+
         // 1. Create Command Encoder
         let mut encoder = self
             .device
@@ -206,6 +213,11 @@ impl EntropyCalculator for GpuAccelerator {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: self.buffers.params_uniform_buf.as_entire_binding(),
+                },
+                // Add binding for min_entropy_info buffer
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.buffers.min_entropy_info_buf.as_entire_binding(),
                 },
             ],
         });
@@ -297,19 +309,54 @@ impl EntropyCalculator for GpuAccelerator {
     /// Option containing the coordinates of the cell with lowest entropy,
     /// or None if no valid cell is found
     #[must_use]
-    fn find_lowest_entropy(&self, entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)> {
-        // This is typically done on the CPU after calculating entropy.
-        // If entropy calculation is done on GPU and result downloaded,
-        // we can reuse the CPU implementation from wfc_core.
-        // Alternatively, a reduction shader could find the minimum on the GPU,
-        // but that adds complexity.
-        log::info!(
-            "Using CPU logic to find lowest entropy from GPU-calculated grid (or placeholder)"
+    fn find_lowest_entropy(&self, _entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)> {
+        // GPU reduction happens during calculate_entropy. Here we just download the result.
+        // _entropy_grid parameter is unused because the min info is read directly from its GPU buffer.
+        log::debug!("Downloading GPU minimum entropy info...");
+
+        // Download the result [min_entropy_f32_bits, min_index_u32]
+        let download_result = pollster::block_on(
+            self.buffers
+                .download_min_entropy_info(&self.device, &self.queue),
         );
-        // Placeholder: Re-use CPU logic by creating a temporary CPU calculator
-        let cpu_calc = wfc_core::entropy::CpuEntropyCalculator::new();
-        cpu_calc.find_lowest_entropy(entropy_grid)
-        // todo!() // Replace placeholder if GPU reduction is implemented
+
+        match download_result {
+            Ok((min_entropy_val, min_index)) => {
+                log::debug!(
+                    "GPU min entropy info downloaded: value = {}, index = {}",
+                    min_entropy_val,
+                    min_index
+                );
+
+                // Check if a valid minimum was found (index != u32::MAX)
+                if min_index != u32::MAX {
+                    // Convert the 1D index back to 3D coordinates
+                    let (width, height, _depth) = self.grid_dims;
+                    let z = min_index / (width * height) as u32;
+                    let rem = min_index % (width * height) as u32;
+                    let y = rem / width as u32;
+                    let x = rem % width as u32;
+                    log::info!(
+                        "GPU found lowest entropy ({}) at ({}, {}, {})",
+                        min_entropy_val,
+                        x,
+                        y,
+                        z
+                    );
+                    Some((x as usize, y as usize, z as usize))
+                } else {
+                    // No cell with entropy > 0 found (or grid was empty/fully collapsed initially)
+                    log::info!(
+                        "GPU reported no cell with calculable entropy (all collapsed or empty?)."
+                    );
+                    None
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to download minimum entropy info: {}", e);
+                None // Return None on error
+            }
+        }
     }
 }
 
