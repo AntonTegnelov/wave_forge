@@ -11,6 +11,10 @@ pub enum PropagationError {
     #[error("Contradiction detected during propagation at ({0}, {1}, {2})")]
     Contradiction(usize, usize, usize),
     // Add other specific propagation errors later
+    #[error("GPU setup error during propagation: {0}")]
+    GpuSetupError(String),
+    #[error("GPU communication error during propagation: {0}")]
+    GpuCommunicationError(String),
 }
 
 #[must_use]
@@ -393,5 +397,22 @@ mod tests {
         assert!(rules.check(TileId(0), TileId(2), 1), "Check -X: 0->2");
         assert!(!rules.check(TileId(0), TileId(1), 1), "Check -X: 0->1");
         assert!(!rules.check(TileId(1), TileId(2), 1), "Check -X: 1->2");
+    }
+
+    #[test]
+    fn test_propagation_error_variants() {
+        let err1 = PropagationError::Contradiction(1, 2, 3);
+        let err2 = PropagationError::GpuSetupError("Setup failed".to_string());
+        let err3 = PropagationError::GpuCommunicationError("Comm failed".to_string());
+
+        assert!(matches!(err1, PropagationError::Contradiction(1, 2, 3)));
+        match err2 {
+            PropagationError::GpuSetupError(msg) => assert_eq!(msg, "Setup failed"),
+            _ => panic!("Expected GpuSetupError"),
+        }
+        match err3 {
+            PropagationError::GpuCommunicationError(msg) => assert_eq!(msg, "Comm failed"),
+            _ => panic!("Expected GpuCommunicationError"),
+        }
     }
 }

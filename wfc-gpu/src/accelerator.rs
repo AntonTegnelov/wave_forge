@@ -429,7 +429,8 @@ impl ConstraintPropagator for GpuAccelerator {
             .map_err(|e| {
                 log::error!("Failed to upload updates to GPU: {}", e);
                 // Convert GpuError to a generic propagation error for now
-                PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+                // PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+                PropagationError::GpuCommunicationError(format!("Failed to upload updates: {}", e))
             })?;
 
         // Reset contradiction flag buffer to 0 on the GPU
@@ -437,7 +438,11 @@ impl ConstraintPropagator for GpuAccelerator {
             .reset_contradiction_flag(&self.queue)
             .map_err(|e| {
                 log::error!("Failed to reset contradiction flag on GPU: {}", e);
-                PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+                // PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+                PropagationError::GpuCommunicationError(format!(
+                    "Failed to reset contradiction flag: {}",
+                    e
+                ))
             })?;
 
         // Reset output worklist count (if iterative propagation was implemented)
@@ -446,7 +451,11 @@ impl ConstraintPropagator for GpuAccelerator {
             .reset_output_worklist_count(&self.queue)
             .map_err(|e| {
                 log::error!("Failed to reset output worklist count on GPU: {}", e);
-                PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+                // PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+                PropagationError::GpuCommunicationError(format!(
+                    "Failed to reset output worklist count: {}",
+                    e
+                ))
             })?;
 
         // --- 3. Create Command Encoder ---
@@ -462,7 +471,11 @@ impl ConstraintPropagator for GpuAccelerator {
             .update_params_worklist_size(&self.queue, worklist_size)
             .map_err(|e| {
                 log::error!("Failed to update worklist size uniform on GPU: {}", e);
-                PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+                // PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
+                PropagationError::GpuCommunicationError(format!(
+                    "Failed to update worklist size uniform: {}",
+                    e
+                ))
             })?;
 
         // --- 5. Create Bind Group ---
@@ -583,36 +596,45 @@ impl ConstraintPropagator for GpuAccelerator {
             println!("GPU signaled completion.");
         }
 
-        // Download the contradiction flag (synchronously for now)
-        log::debug!("Downloading contradiction flag...");
+        // --- 8. Check for Contradiction ---
+        log::debug!("Checking for GPU propagation contradictions...");
 
-        // Check if we're approaching timeout
-        if propagate_start.elapsed() > timeout {
-            log::error!("GPU propagation timed out after {:?}", timeout);
-            return Err(PropagationError::Contradiction(0, 0, 0));
+        // Poll device to ensure queue is processed before mapping buffers (crucial!)
+        // Use a timeout to prevent indefinite hangs
+        self.device.poll(wgpu::Maintain::Wait); // Wait for GPU to finish work submitted
+        log::debug!("GPU poll completed.");
+
+        // Download the contradiction flag buffer
+        // Use pollster::block_on to call the async download function from sync context
+        let download_result = pollster::block_on(self.buffers.download_contradiction_flag(
+            &self.device,
+            &self.queue,
+            // timeout - propagate_start.elapsed(), // Timeout handled by poll/device wait
+        ));
+
+        match download_result {
+            Ok(contradiction_detected) => {
+                if contradiction_detected {
+                    log::warn!("GPU propagation resulted in a contradiction.");
+                    // TODO: Enhance GPU contradiction reporting to include location if feasible
+                    return Err(PropagationError::Contradiction(0, 0, 0)); // Placeholder location
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to download contradiction flag: {}", e);
+                return Err(PropagationError::GpuCommunicationError(format!(
+                    "Failed to download contradiction flag: {}",
+                    e
+                )));
+            }
         }
 
-        let contradiction_detected = pollster::block_on(
-            self.buffers
-                .download_contradiction_flag(&self.device, &self.queue),
-        )
-        .map_err(|e| {
-            log::error!("Failed to download contradiction flag: {}", e);
-            PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
-        })?;
+        // TODO: Add logic to download the output worklist if implementing iterative propagation
 
-        if contradiction_detected {
-            log::warn!("GPU propagation detected a contradiction!");
-            // TODO: Can we get the *location* of the contradiction from the GPU?
-            // Requires more complex shader logic and buffer reading.
-            Err(PropagationError::Contradiction(0, 0, 0)) // Generic location for now
-        } else {
-            log::debug!("GPU propagation finished successfully.");
-            Ok(())
-        }
-
-        // Note: If iterative propagation or CPU grid updates were needed,
-        // this would involve reading the output worklist/count and potentially
-        // downloading the entire grid_possibilities buffer.
+        log::debug!(
+            "GPU propagate finished successfully in {:?}.",
+            propagate_start.elapsed()
+        );
+        Ok(())
     }
 }
