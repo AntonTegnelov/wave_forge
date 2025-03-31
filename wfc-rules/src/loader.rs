@@ -4,9 +4,22 @@ use std::io::Read;
 use std::path::Path;
 use wfc_core::{AdjacencyRules, TileSet};
 
-/// Loads TileSet and AdjacencyRules from a specified file path.
+/// Loads a `TileSet` and corresponding `AdjacencyRules` from a rule definition file.
 ///
-/// The file format is determined by the implementation (currently expects RON).
+/// This function acts as the main entry point for loading WFC rules.
+/// It currently expects the file to be in RON (Rusty Object Notation) format,
+/// but the underlying parsing is handled by the `formats` module.
+///
+/// # Arguments
+///
+/// * `path` - A reference to the `Path` of the rule file to load.
+///
+/// # Returns
+///
+/// * `Ok((TileSet, AdjacencyRules))` containing the loaded tile information and adjacency constraints
+///   if the file is successfully read and parsed.
+/// * `Err(LoadError)` if any error occurs during file reading, parsing, or data validation.
+///   The specific error type (`Io`, `ParseError`, `InvalidData`) provides more details.
 pub fn load_from_file(path: &Path) -> Result<(TileSet, AdjacencyRules), LoadError> {
     // 1. Read the file content
     let mut file = File::open(path).map_err(LoadError::Io)?;

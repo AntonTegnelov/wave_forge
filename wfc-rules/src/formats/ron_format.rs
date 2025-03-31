@@ -5,23 +5,32 @@ use wfc_core::{AdjacencyRules, TileId, TileSet, TileSetError};
 
 // --- Structs mirroring the RON format ---
 
+/// Represents the data for a single tile as defined in the RON file.
+/// Used internally for deserialization.
 #[derive(Deserialize, Debug, Clone)]
 struct RonTileData {
+    /// The unique identifier name for the tile used in rule definitions.
     name: String, // Used for defining rules by name
+    /// The weight associated with this tile, influencing its selection probability.
     weight: f32,
     // Add other tile properties like symmetry later if needed
 }
 
+/// Represents the top-level structure of the WFC rule file in RON format.
+/// Used internally for deserialization.
 #[derive(Deserialize, Debug, Clone)]
 struct RonRuleFile {
+    /// A list defining all available tiles.
     tiles: Vec<RonTileData>,
-    // Rules defined as (Tile1 Name, Tile2 Name, Axis Name)
+    /// A list defining the allowed adjacencies between tiles along specific axes.
+    /// Each tuple represents `(Tile1 Name, Tile2 Name, Axis Name)`.
     adjacency: Vec<(String, String, String)>,
 }
 
 // --- Parsing Logic ---
 
-// Map axis names to indices (consistent with wfc-core::propagator)
+/// Maps standard axis names (e.g., "+x", "-y") to their corresponding numerical indices (0-5).
+/// Used internally during rule parsing.
 fn axis_name_to_index(axis_name: &str) -> Result<usize, LoadError> {
     match axis_name {
         "+x" => Ok(0),
@@ -37,7 +46,44 @@ fn axis_name_to_index(axis_name: &str) -> Result<usize, LoadError> {
     }
 }
 
-/// Parses the RON file content into TileSet and AdjacencyRules.
+/// Parses WFC rules defined in a RON (Rusty Object Notation) string.
+///
+/// This function takes the content of a RON file as a string, deserializes it,
+/// validates the data, and converts it into the core `TileSet` and `AdjacencyRules`
+/// structures used by the `wfc-core` engine.
+///
+/// # Arguments
+///
+/// * `ron_content` - A string slice containing the WFC rules in RON format.
+///
+/// # Returns
+///
+/// * `Ok((TileSet, AdjacencyRules))` containing the parsed tile set and rules if successful.
+/// * `Err(LoadError)` if deserialization fails, the data is invalid (e.g., duplicate tile names,
+///   non-positive weights, unknown tile names in rules, invalid axis names), or any other
+///   parsing/validation issue occurs.
+///
+/// # Expected RON Format Example:
+///
+/// ```ron
+/// (
+///     tiles: [
+///         (name: "Air", weight: 1.0),
+///         (name: "Ground", weight: 1.0),
+///     ],
+///     adjacency: [
+///         // Air can be above Ground along +y
+///         ("Ground", "Air", "+y"),
+///         // Ground can be below Air along -y
+///         ("Air", "Ground", "-y"),
+///         // Air can be next to Air horizontally
+///         ("Air", "Air", "+x"), ("Air", "Air", "-x"),
+///         // Ground can be next to Ground horizontally
+///         ("Ground", "Ground", "+x"), ("Ground", "Ground", "-x"),
+///         // Assuming Z-axis rules are similar...
+///     ],
+/// )
+/// ```
 pub fn parse_ron_rules(ron_content: &str) -> Result<(TileSet, AdjacencyRules), LoadError> {
     // 1. Deserialize the RON string into RonRuleFile struct
     let rule_file: RonRuleFile = ron::from_str(ron_content)
