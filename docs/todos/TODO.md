@@ -165,7 +165,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
   - [x] **Threading:** Use `rayon` to run them in parallel.
     - [ ] Parallelize parts of a _single_ large grid generation
   - [x] If benchmark mode is enabled, run benchmarks using the benchmark infrastructure.
-  - [ ] Set up progress reporting based on configuration.
+  - [x] Set up progress reporting based on configuration.
   - [ ] Initialize visualizer if visualization mode is enabled.
   - [x] Call `wfc-core::runner::run` with the initialized grid, injected components, and progress callback.
   - [x] Handle results (success or failure).

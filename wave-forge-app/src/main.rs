@@ -6,6 +6,8 @@ pub mod config;
 use anyhow::Result;
 use clap::Parser;
 use config::AppConfig;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
 
@@ -79,8 +81,35 @@ async fn main() -> Result<()> {
 
         let use_gpu = !config.cpu_only && cfg!(feature = "gpu");
 
-        // TODO: Set up progress reporting based on config.report_progress_interval
-        let progress_callback = None; // Placeholder
+        // --- Progress Reporting Setup ---
+        let last_report_time = Arc::new(Mutex::new(Instant::now()));
+        let report_interval = config.report_progress_interval;
+
+        let progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>> =
+            if let Some(interval) = report_interval {
+                Some(Box::new(move |info: wfc_core::ProgressInfo| {
+                    let mut last_time = last_report_time.lock().unwrap();
+                    if last_time.elapsed() >= interval {
+                        let percentage = if info.total_cells > 0 {
+                            (info.collapsed_cells as f32 / info.total_cells as f32) * 100.0
+                        } else {
+                            100.0 // Grid is empty, consider it 100% done?
+                        };
+                        // Simple console log for progress
+                        log::info!(
+                            "Progress: Iteration {}, Collapsed {}/{} ({:.1}%)                    ",
+                            info.iteration,
+                            info.collapsed_cells,
+                            info.total_cells,
+                            percentage
+                        );
+                        *last_time = Instant::now(); // Reset timer
+                    }
+                }))
+            } else {
+                None
+            };
+        // --- End Progress Reporting Setup ---
 
         if use_gpu {
             #[cfg(feature = "gpu")]
@@ -97,7 +126,7 @@ async fn main() -> Result<()> {
                             &rules,
                             &mut gpu_accelerator, // Pass the single instance mutably
                             &gpu_accelerator,     // Pass the single instance immutably
-                            progress_callback,
+                            progress_callback.clone(), // Pass the callback (clone Arc)
                         ) {
                             Ok(_) => log::info!("GPU WFC completed successfully."),
                             Err(e) => {
@@ -148,7 +177,7 @@ fn run_cpu(
         rules,
         &mut propagator,
         &entropy_calculator,
-        progress_callback,
+        progress_callback, // Pass the callback (already an Option<Box>)
     ) {
         Ok(_) => {
             log::info!("CPU WFC completed successfully.");
