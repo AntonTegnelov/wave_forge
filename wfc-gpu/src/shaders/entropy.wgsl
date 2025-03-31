@@ -48,8 +48,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 @group(0) @binding(1) var<storage, read_write> entropy: array<f32>;
 
 // Binding for minimum entropy info [f32 bits, index] (atomic access required)
-// Using vec2<atomic<u32>> to store f32 bits and index atomically.
-@group(0) @binding(3) var<storage, read_write> min_entropy_info: vec2<atomic<u32>>;
+// Using array<atomic<u32>, 2> to store f32 bits and index atomically.
+@group(0) @binding(3) var<storage, read_write> min_entropy_info: array<atomic<u32>, 2>;
 
 // Params struct containing grid dimensions
 struct Params {
