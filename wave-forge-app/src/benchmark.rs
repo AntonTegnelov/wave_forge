@@ -186,3 +186,81 @@ pub fn report_single_result(result: &BenchmarkResult) {
 
 // TODO: Implement CSV output function
 // TODO: Implement function to run benchmarks for various grid sizes/complexities
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules, tile::TileSet};
+
+    // Helper to create simple rules: Tile 0 adjacent to itself
+    fn create_simple_rules_and_tileset() -> (TileSet, AdjacencyRules) {
+        let num_tiles = 1;
+        let num_axes = 6;
+        let weights = vec![1.0];
+        let tileset = TileSet::new(weights).unwrap();
+
+        let mut allowed = vec![false; num_axes * num_tiles * num_tiles];
+        // Allow Tile 0 <-> Tile 0 on all axes
+        for axis in 0..num_axes {
+            let index = axis * num_tiles * num_tiles + 0 * num_tiles + 0;
+            allowed[index] = true;
+        }
+        let rules = AdjacencyRules::new(num_tiles, num_axes, allowed);
+        (tileset, rules)
+    }
+
+    #[tokio::test]
+    async fn test_cpu_benchmark_run_basic() {
+        let (tileset, rules) = create_simple_rules_and_tileset();
+        let mut grid = PossibilityGrid::new(3, 3, 3, tileset.weights.len());
+
+        let result = run_single_benchmark("CPU", &mut grid, &tileset, &rules)
+            .await
+            .expect("CPU benchmark failed to run");
+
+        assert_eq!(result.implementation, "CPU");
+        assert!(result.total_time > Duration::ZERO);
+        assert!(result.wfc_result.is_ok()); // Expect success for simple case
+    }
+
+    #[cfg(feature = "gpu")]
+    #[tokio::test]
+    async fn test_gpu_benchmark_run_skipped() {
+        // This test verifies the current workaround where GPU runs are skipped.
+        let (tileset, rules) = create_simple_rules_and_tileset();
+        let mut grid = PossibilityGrid::new(3, 3, 3, tileset.weights.len());
+
+        let result = run_single_benchmark("GPU", &mut grid, &tileset, &rules)
+            .await
+            .expect("GPU benchmark (skipped case) failed to run");
+
+        assert_eq!(result.implementation, "GPU");
+        // Time might be very small, but check > 0
+        assert!(result.total_time > Duration::ZERO);
+        // Expect specific error due to skip
+        assert!(matches!(result.wfc_result, Err(WfcError::InternalError(_))));
+    }
+
+    #[cfg(feature = "gpu")]
+    #[tokio::test]
+    async fn test_compare_implementations_basic() {
+        // This test also relies on the GPU skip workaround
+        let (tileset, rules) = create_simple_rules_and_tileset();
+        let grid = PossibilityGrid::new(3, 3, 3, tileset.weights.len());
+
+        let result = compare_implementations(&grid, &tileset, &rules).await;
+
+        // Expect the comparison function itself to succeed, even if GPU part returns error
+        assert!(result.is_ok());
+
+        if let Ok((cpu_res, gpu_res)) = result {
+            assert_eq!(cpu_res.implementation, "CPU");
+            assert!(cpu_res.wfc_result.is_ok());
+            assert_eq!(gpu_res.implementation, "GPU");
+            assert!(matches!(
+                gpu_res.wfc_result,
+                Err(WfcError::InternalError(_))
+            ));
+        }
+    }
+}

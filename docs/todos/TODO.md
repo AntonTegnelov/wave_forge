@@ -174,7 +174,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - **Testing:** `wave-forge-app/tests/`
   - [x] Add integration tests for running the app with basic configs (CPU and GPU if possible).
   - [x] Add tests for argument parsing.
-  - [ ] Add tests for benchmark comparisons.
+  - [x] Add tests for benchmark comparisons.
   - [ ] Add tests for progress reporting.
   - [ ] Add tests for visualization rendering.
 
