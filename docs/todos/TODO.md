@@ -111,7 +111,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - **File:** `wave-forge-app/src/config.rs`
 
   - [x] Define `AppConfig` struct for generation parameters (size, rule file path, use_gpu, seed, output_path).
-  - [ ] Implement command-line argument parsing using `clap`.
+  - [x] Implement command-line argument parsing using `clap`.
   - [ ] Add configuration options for benchmarking, progress reporting, and visualization:
 
     ```rust

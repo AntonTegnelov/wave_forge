@@ -2,7 +2,10 @@
 
 mod config;
 
+use config::AppConfig;
+
 fn main() {
-    println!("Wave Forge App - Placeholder");
-    // TODO: Implement main application logic
+    let config = AppConfig::from_args();
+    println!("Wave Forge App - Loaded Config: {:?}", config);
+    // TODO: Implement main application logic based on config
 }
