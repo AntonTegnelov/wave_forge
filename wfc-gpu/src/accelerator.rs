@@ -357,51 +357,34 @@ impl ConstraintPropagator for GpuAccelerator {
             compute_pass.set_bind_group(0, &propagation_bind_group, &[]);
 
             // Dispatch based on the worklist size.
-            // The shader uses a 3D workgroup size (8,8,4) = 256 threads per workgroup
-            // We need to calculate how many 3D workgroups to dispatch to cover all items in the worklist
+            // The shader now uses a 1D workgroup size (64,1,1) = 64 threads per workgroup
+            // This is much simpler and less error-prone
 
-            let workgroup_size_x = 8u32;
-            let workgroup_size_y = 8u32;
-            let workgroup_size_z = 4u32;
-            let threads_per_workgroup = workgroup_size_x * workgroup_size_y * workgroup_size_z; // 256
+            let workgroup_size = 64u32;
 
-            // We need at least one workgroup, even for tiny worklists
-            let workgroups_needed = std::cmp::max(1, worklist_size.div_ceil(threads_per_workgroup));
-
-            // For 2D dispatching (keeping z=1), distribute across x and y
-            // Use a simple heuristic - try to make it close to square
-            let workgroups_x = std::cmp::max(1, (workgroups_needed as f32).sqrt().ceil() as u32);
-            let workgroups_y =
-                std::cmp::max(1, (workgroups_needed + workgroups_x - 1) / workgroups_x);
-            let workgroups_z = 1u32;
+            // Simple 1D dispatch - just calculate how many workgroups we need
+            let workgroups_needed = std::cmp::max(1, worklist_size.div_ceil(workgroup_size));
 
             log::debug!(
-                "Dispatching propagation shader for {} updates with {}x{}x{} workgroups ({}x{}x{} threads each = {} threads per workgroup).",
+                "Dispatching propagation shader for {} updates with {} workgroups (size {}).",
                 worklist_size,
-                workgroups_x,
-                workgroups_y,
-                workgroups_z,
-                workgroup_size_x,
-                workgroup_size_y,
-                workgroup_size_z,
-                threads_per_workgroup
+                workgroups_needed,
+                workgroup_size
             );
 
             // Print these critical parameters so we can see them in test output
             println!(
-                "Dispatching propagation shader: worklist_size={}, workgroups={}x{}x{}, threads_per_workgroup={}",
+                "Dispatching propagation shader: worklist_size={}, workgroups={}, threads_per_workgroup={}",
                 worklist_size,
-                workgroups_x,
-                workgroups_y,
-                workgroups_z,
-                threads_per_workgroup
+                workgroups_needed,
+                workgroup_size
             );
 
             // Sanity check - dispatch will launch this many threads in total:
-            let total_threads = workgroups_x * workgroups_y * workgroups_z * threads_per_workgroup;
+            let total_threads = workgroups_needed * workgroup_size;
             println!("Total threads launched: {}", total_threads);
 
-            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
         } // End compute pass scope
 
         // --- 7. Submit and Check Contradiction ---

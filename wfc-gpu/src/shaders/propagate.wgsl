@@ -52,6 +52,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 @group(0) @binding(1) var<storage, read> adjacency_rules: array<u32>; // Flattened rules
 @group(0) @binding(2) var<storage, read> worklist: array<u32>; // Coordinates or indices of updated cells
 @group(0) @binding(3) var<storage, read_write> output_worklist: array<atomic<u32>>; // For new cells that need propagation
+@group(0) @binding(4) var<uniform> params: Params;
 @group(0) @binding(5) var<storage, read_write> output_worklist_count: atomic<u32>; // Atomic counter for output_worklist size
 @group(0) @binding(6) var<storage, read_write> contradiction_flag: atomic<u32>; // Global flag for contradictions
 
@@ -65,7 +66,6 @@ struct Params {
     num_axes: u32,
     worklist_size: u32,
 };
-@group(0) @binding(4) var<uniform> params: Params;
 
 // Constants for axes (match CPU version)
 const AXIS_POS_X: u32 = 0u;
@@ -124,12 +124,10 @@ fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
 }
 
 @compute
-@workgroup_size(8, 8, 4) // Using 3D workgroup for better GPU thread locality
+@workgroup_size(64, 1, 1) // Switch to simple 1D layout - much less error prone
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    // Compute 1D index from 3D global_id for workgroup distribution
-    let x_size = 8u;
-    let y_size = 8u;
-    let thread_idx = (global_id.z * x_size * y_size) + (global_id.y * x_size) + global_id.x;
+    // Use flat 1D indexing - much more reliable
+    let thread_idx = global_id.x;
     
     // Bounds check for worklist
     if (thread_idx >= params.worklist_size) {
