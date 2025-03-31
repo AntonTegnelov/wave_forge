@@ -18,7 +18,7 @@ pub use crate::runner::run;
 pub use crate::tile::{TileId, TileSet};
 
 // Public error type
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum WfcError {
     #[error("Propagation failed: Contradiction found")]
     Contradiction,

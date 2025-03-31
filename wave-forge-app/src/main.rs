@@ -1,6 +1,8 @@
 // wave-forge-app/src/main.rs
 
+pub mod benchmark;
 pub mod config;
+
 use clap::Parser;
 use config::AppConfig;
 

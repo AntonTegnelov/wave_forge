@@ -6,7 +6,7 @@ use std::collections::{HashSet, VecDeque};
 use std::default::Default;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum PropagationError {
     #[error("Contradiction detected during propagation at ({0}, {1}, {2})")]
     Contradiction(usize, usize, usize),
