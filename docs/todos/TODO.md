@@ -170,7 +170,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
   - [x] Call `wfc-core::runner::run` with the initialized grid, injected components, and progress callback.
   - [x] Handle results (success or failure).
 - **File:** `wave-forge-app/src/output.rs` (Simple Output)
-  - [ ] Implement function to save the final collapsed `Grid<TileId>` to a simple format (e.g., text, basic binary, RON).
+  - [x] Implement function to save the final collapsed `Grid<TileId>` to a simple format (e.g., text, basic binary, RON).
 - **Testing:** `wave-forge-app/tests/`
   - [ ] Add integration tests for running the app with basic configs (CPU and GPU if possible).
   - [ ] Add tests for argument parsing.

@@ -2,6 +2,7 @@
 
 pub mod benchmark;
 pub mod config;
+pub mod output;
 pub mod visualization;
 
 use anyhow::Result;
@@ -149,7 +150,17 @@ async fn main() -> Result<()> {
                             &gpu_accelerator,     // Pass the single instance immutably
                             progress_callback.clone(), // Pass the callback (clone Arc)
                         ) {
-                            Ok(_) => log::info!("GPU WFC completed successfully."),
+                            Ok(_) => {
+                                log::info!("GPU WFC completed successfully.");
+                                // Save the grid
+                                if let Err(e) =
+                                    output::save_grid_to_file(&grid, config.output_path.as_path())
+                                {
+                                    log::error!("Failed to save grid: {}", e);
+                                    // Decide whether to return error or just log
+                                    return Err(e);
+                                }
+                            }
                             Err(e) => {
                                 log::error!("GPU WFC failed: {}", e);
                                 return Err(anyhow::anyhow!(e));
@@ -162,18 +173,18 @@ async fn main() -> Result<()> {
                             e
                         );
                         // Fallback to CPU if GPU initialization fails
-                        run_cpu(&mut grid, &tileset, &rules, progress_callback)?;
+                        run_cpu(&mut grid, &tileset, &rules, progress_callback, &config)?;
                     }
                 }
             }
             #[cfg(not(feature = "gpu"))]
             {
                 log::error!("GPU mode selected but GPU feature not compiled. Using CPU.");
-                run_cpu(&mut grid, &tileset, &rules, progress_callback)?;
+                run_cpu(&mut grid, &tileset, &rules, progress_callback, &config)?;
             }
         } else {
             log::info!("Running WFC on CPU...");
-            run_cpu(&mut grid, &tileset, &rules, progress_callback)?;
+            run_cpu(&mut grid, &tileset, &rules, progress_callback, &config)?;
         }
     }
 
@@ -187,6 +198,7 @@ fn run_cpu(
     tileset: &wfc_core::TileSet,
     rules: &wfc_core::rules::AdjacencyRules,
     progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>>,
+    config: &AppConfig,
 ) -> Result<(), anyhow::Error> {
     let mut propagator = wfc_core::propagator::CpuConstraintPropagator::new();
     let entropy_calculator = wfc_core::entropy::CpuEntropyCalculator::new();
@@ -202,6 +214,12 @@ fn run_cpu(
     ) {
         Ok(_) => {
             log::info!("CPU WFC completed successfully.");
+            // Save the grid using the passed config
+            if let Err(e) = output::save_grid_to_file(&grid, config.output_path.as_path()) {
+                log::error!("Failed to save grid: {}", e);
+                // Decide whether to return error or just log
+                return Err(e);
+            }
             Ok(())
         }
         Err(e) => {
