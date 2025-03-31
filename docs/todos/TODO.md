@@ -173,7 +173,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
   - [x] Implement function to save the final collapsed `Grid<TileId>` to a simple format (e.g., text, basic binary, RON).
 - **Testing:** `wave-forge-app/tests/`
   - [x] Add integration tests for running the app with basic configs (CPU and GPU if possible).
-  - [ ] Add tests for argument parsing.
+  - [x] Add tests for argument parsing.
   - [ ] Add tests for benchmark comparisons.
   - [ ] Add tests for progress reporting.
   - [ ] Add tests for visualization rendering.
