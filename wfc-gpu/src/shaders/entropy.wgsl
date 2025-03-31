@@ -132,8 +132,21 @@ fn main(
         // Collapsed cell, entropy is 0 (or effectively infinite/ignored)
         calculated_entropy = 0.0;
     } else if (possibilities_count > 1u) {
-        // TODO: Replace with proper Shannon entropy if desired
-        calculated_entropy = f32(possibilities_count); // Current: Higher count = higher entropy
+        // Implement proper Shannon entropy (with uniform probability assumption):
+        // H = log2(N), where N is possibilities_count
+        calculated_entropy = log2(f32(possibilities_count));
+
+        // Add a small amount of noise to break ties consistently
+        // Hash the index to get a pseudo-random offset
+        var hash = index;
+        hash = hash ^ (hash >> 16u);
+        hash = hash * 0x45d9f3b5u;
+        hash = hash ^ (hash >> 16u);
+        hash = hash * 0x45d9f3b5u;
+        hash = hash ^ (hash >> 16u);
+        let noise = f32(hash) * (1.0 / 4294967296.0); // Map hash to [0, 1)
+        let noise_scale = 0.0001; // Small scale factor for noise
+        calculated_entropy = calculated_entropy + noise * noise_scale;
 
         // Atomically update the global minimum entropy if this cell's entropy is lower
         // Only consider cells that are not yet collapsed (possibilities_count > 1)
