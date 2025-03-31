@@ -1,3 +1,18 @@
+// WGSL Shader for Wave Function Collapse entropy calculation
+//
+// This compute shader calculates the entropy (uncertainty) for each cell in the grid
+// based on the number of remaining possibilities. Cells with higher entropy have
+// more possibilities and are less constrained.
+//
+// CRITICAL SAFETY FEATURES:
+// 1. Uses 1D workgroup layout (64) for simpler thread indexing
+// 2. Enforces strict bounds checking on grid indices
+// 3. Uses grid dimensions from uniform buffer to prevent out-of-bounds access
+// 4. Simple count-based entropy calculation to avoid NaN/infinity issues
+//
+// The entropy values are used in the WFC algorithm to determine which cell
+// to collapse next (typically the one with the lowest non-zero entropy).
+
 // Placeholder for WGSL shader code
 // This file might eventually use include_str! or a build script
 // to embed the actual shader code.
@@ -58,7 +73,7 @@ fn count_set_bits(n: u32) -> u32 {
     return count;
 }
 
-@compute @workgroup_size(64) // Example workgroup size, adjust as needed
+@compute @workgroup_size(64)
 fn main(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {

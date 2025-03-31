@@ -1,3 +1,21 @@
+// WGSL Shader for Wave Function Collapse constraint propagation
+//
+// This compute shader handles the propagation of constraints through the grid
+// after a cell's possibilities have been restricted or collapsed. It ensures that
+// all neighboring cells maintain consistent possibility states based on the 
+// adjacency rules.
+//
+// CRITICAL SAFETY FEATURES:
+// 1. Uses 1D workgroup layout (64,1,1) for simpler thread indexing
+// 2. Enforces strict bounds checking on all array accesses
+// 3. Limits maximum tiles to 128 (4 u32s) to prevent buffer overflows
+// 4. Contains output worklist size limits to prevent infinite propagation loops
+// 5. Detects and reports contradictions early
+//
+// The shader processes each cell in the input worklist, updates all valid 
+// neighbors according to adjacency rules, and adds any changed neighbors
+// to the output worklist for further processing if needed.
+
 // Placeholder for WGSL shader code
 
 /*

@@ -4,7 +4,15 @@ use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules};
 use wgpu;
 use wgpu::util::DeviceExt; // Import for create_buffer_init
 
-// Uniform buffer structure - MUST match shader layout
+/// Uniform buffer structure for passing parameters to GPU compute shaders.
+///
+/// This structure must match the layout of the equivalent struct in WGSL shaders.
+/// It contains all grid dimensions, tile counts, and runtime values needed by shaders.
+///
+/// # Memory Layout Considerations
+///
+/// The struct is marked with `repr(C)` to ensure consistent memory layout between
+/// Rust and shader code. It also implements Pod and Zeroable for safe casting.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct GpuParamsUniform {
@@ -18,7 +26,23 @@ pub struct GpuParamsUniform {
     pub _padding1: u32,     // Adjust padding if needed
 }
 
-// Placeholder struct for managing GPU buffers
+/// Manages GPU buffers for the Wave Function Collapse algorithm.
+///
+/// This struct handles all GPU memory management, including:
+/// - Grid possibility data (bitvectors packed into u32 arrays)
+/// - Adjacency rules in packed format
+/// - Entropy calculation buffers
+/// - Propagation worklists and counters
+/// - Flags for detecting contradictions
+///
+/// # Synchronization and Hang Prevention
+///
+/// The buffer operations include several measures to prevent GPU hangs:
+/// - Explicit polling when waiting for GPU operations
+/// - Proper buffer size checking before operations
+/// - Staging buffers for safe memory transfers
+/// - Explicit unmapping of GPU buffers
+/// - Careful handling of asynchronous buffer operations
 pub struct GpuBuffers {
     // Grid state (possibilities) - likely atomic u32 for bitvec representation
     pub grid_possibilities_buf: wgpu::Buffer,
@@ -38,6 +62,28 @@ pub struct GpuBuffers {
 }
 
 impl GpuBuffers {
+    /// Creates a new set of GPU buffers for WFC computation.
+    ///
+    /// Initializes all necessary buffers with appropriate sizes and content based on
+    /// the initial grid and rules. The buffers are allocated on the GPU and filled
+    /// with initial data.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The wgpu device to create buffers on
+    /// * `initial_grid` - The initial grid with possibility data
+    /// * `rules` - The adjacency rules defining valid tile arrangements
+    ///
+    /// # Returns
+    ///
+    /// A Result containing either the initialized buffers or a GPU error
+    ///
+    /// # Implementation Details
+    ///
+    /// 1. Packs grid possibilities into bit vectors (u32 arrays)
+    /// 2. Packs adjacency rules into bit vectors
+    /// 3. Creates uniform buffer with grid parameters
+    /// 4. Allocates working buffers for computation
     pub fn new(
         device: &wgpu::Device,
         initial_grid: &PossibilityGrid,
@@ -181,7 +227,23 @@ impl GpuBuffers {
         })
     }
 
-    // Uploads a list of updated cell coordinates (packed as u32 indices) to the updates buffer.
+    /// Uploads a list of updated cell coordinates to the GPU.
+    ///
+    /// This is used to tell the propagation shader which cells have been updated
+    /// and need their constraints propagated to neighbors.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The GPU command queue to submit the upload
+    /// * `updates` - Array of cell indices (packed as u32) to process
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or a buffer operation error
+    ///
+    /// # Safety
+    ///
+    /// Checks that the update data doesn't exceed buffer capacity before uploading
     pub fn upload_updates(&self, queue: &wgpu::Queue, updates: &[u32]) -> Result<(), GpuError> {
         let updates_byte_size = std::mem::size_of_val(updates) as u64;
         if updates_byte_size > self.updates_buf.size() {
@@ -195,8 +257,24 @@ impl GpuBuffers {
         Ok(())
     }
 
-    // Downloads the entropy grid results from the staging buffer.
-    // This is an async operation as it involves mapping the staging buffer.
+    /// Downloads the entropy grid results from the GPU.
+    ///
+    /// This async function copies entropy data from the GPU to a staging buffer,
+    /// then maps that buffer for CPU access to read back the results.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The wgpu device
+    /// * `queue` - The GPU command queue
+    ///
+    /// # Returns
+    ///
+    /// Result containing either the entropy values or a GPU error
+    ///
+    /// # Asynchronous Operation
+    ///
+    /// This function is async because it needs to wait for the GPU
+    /// to complete the copy operation and mapping before reading data.
     pub async fn download_entropy(
         &self,
         device: &wgpu::Device,
@@ -244,12 +322,34 @@ impl GpuBuffers {
     }
 
     /// Resets the contradiction flag buffer to 0.
+    ///
+    /// This needs to be done before each propagation run to ensure
+    /// we start with a clean state for contradiction detection.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The GPU command queue
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or a buffer operation error
     pub fn reset_contradiction_flag(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
         queue.write_buffer(&self.contradiction_flag_buf, 0, bytemuck::bytes_of(&0u32));
         Ok(())
     }
 
     /// Resets the output worklist count buffer to 0.
+    ///
+    /// This prepares the output worklist for a new propagation run
+    /// by resetting its atomic counter to zero.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The GPU command queue
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or a buffer operation error
     pub fn reset_output_worklist_count(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
         queue.write_buffer(
             &self.output_worklist_count_buf,
@@ -259,7 +359,24 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Updates the worklist_size field within the params uniform buffer.
+    /// Updates the worklist_size field in the params uniform buffer.
+    ///
+    /// This tells the GPU shader how many items are in the worklist
+    /// to process during propagation.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The GPU command queue
+    /// * `worklist_size` - Number of cells in the current worklist
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or a buffer operation error
+    ///
+    /// # Implementation Details
+    ///
+    /// Uses a calculated offset to update just the worklist_size field
+    /// within the larger params uniform structure.
     pub fn update_params_worklist_size(
         &self,
         queue: &wgpu::Queue,
@@ -282,8 +399,26 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Downloads the contradiction flag result from the staging buffer.
-    /// Returns true if a contradiction was detected (flag is non-zero), false otherwise.
+    /// Downloads the contradiction flag from the GPU.
+    ///
+    /// This async function checks if a contradiction was detected during
+    /// propagation by reading back the contradiction flag.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The wgpu device
+    /// * `queue` - The GPU command queue
+    ///
+    /// # Returns
+    ///
+    /// Result containing a boolean (true if contradiction detected)
+    /// or a GPU error
+    ///
+    /// # Asynchronous Operation
+    ///
+    /// This function uses explicit GPU polling and synchronization to
+    /// ensure all GPU operations complete before reading results.
+    /// It prevents hangs by explicitly waiting for GPU completion.
     pub async fn download_contradiction_flag(
         &self,
         device: &wgpu::Device,
@@ -359,7 +494,19 @@ impl GpuBuffers {
         Ok(flag_value != 0)
     }
 
-    /// Downloads the GpuParamsUniform struct from the params staging buffer.
+    /// Downloads the full params uniform struct from the GPU.
+    ///
+    /// This is primarily used for debugging to verify that parameters
+    /// were uploaded correctly.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The wgpu device
+    /// * `queue` - The GPU command queue
+    ///
+    /// # Returns
+    ///
+    /// Result containing the params struct or a GPU error
     pub async fn download_params(
         &self,
         device: &wgpu::Device,
