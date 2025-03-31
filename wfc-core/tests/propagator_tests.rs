@@ -123,6 +123,10 @@ fn test_propagate_contradiction() {
             );
         }
         Ok(()) => panic!("Expected Contradiction error, but got Ok"),
+        Err(PropagationError::GpuSetupError(_)) => panic!("Got unexpected GpuSetupError"),
+        Err(PropagationError::GpuCommunicationError(_)) => {
+            panic!("Got unexpected GpuCommunicationError")
+        }
     }
 
     // Test propagating from the other cell too, should yield same contradiction
@@ -146,6 +150,10 @@ fn test_propagate_contradiction() {
             );
         }
         Ok(()) => panic!("Expected Contradiction error, but got Ok"),
+        Err(PropagationError::GpuSetupError(_)) => panic!("Got unexpected GpuSetupError"),
+        Err(PropagationError::GpuCommunicationError(_)) => {
+            panic!("Got unexpected GpuCommunicationError")
+        }
     }
 }
 

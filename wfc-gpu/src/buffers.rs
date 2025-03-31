@@ -631,7 +631,7 @@ impl GpuBuffers {
         device.poll(wgpu::Maintain::Wait); // Crucial: Wait for GPU to finish before blocking
 
         if let Some(result) = receiver.receive().await {
-            result.map_err(|e| GpuError::BufferMapFailed(e))?;
+            result.map_err(GpuError::BufferMapFailed)?;
 
             let data = buffer_slice.get_mapped_range();
             let location_index: u32 = bytemuck::from_bytes::<u32>(&data).to_owned();
@@ -649,29 +649,6 @@ impl GpuBuffers {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use bitvec::prelude::bitvec;
-    use wfc_core::grid::PossibilityGrid;
-    use wfc_core::rules::AdjacencyRules;
-    use wfc_core::tile::TileId;
-
-    fn create_dummy_grid(
-        width: usize,
-        height: usize,
-        depth: usize,
-        num_tiles: usize,
-    ) -> PossibilityGrid {
-        PossibilityGrid::new(width, height, depth, num_tiles)
-    }
-
-    fn create_dummy_rules(num_tiles: usize, num_axes: usize) -> AdjacencyRules {
-        AdjacencyRules::new(
-            num_tiles,
-            num_axes,
-            vec![true; num_axes * num_tiles * num_tiles],
-        )
-    }
-
     #[test]
     fn test_buffer_creation() {
         // Simplified: Cannot easily create device/queue in standard test environment.
@@ -693,21 +670,6 @@ mod tests {
         // We only check that the function call signatures are valid.
         // Assume buffers.reset_...(&queue).is_ok() logic is tested elsewhere or implicitly.
         assert!(true); // Placeholder assertion
-
-        // // Original async test structure (requires test_utils):
-        // pollster::block_on(async {
-        //     let (device, queue) = setup_gpu_test_env().await.expect("Failed to setup GPU test environment");
-        //     let grid = create_dummy_grid(2, 1, 1, 2);
-        //     let rules = create_dummy_rules(2, 6);
-        //     let buffers = GpuBuffers::new(&device, &grid, &rules).unwrap();
-
-        //     // Test each reset function
-        //     assert!(buffers.reset_min_entropy_info(&queue).is_ok());
-        //     assert!(buffers.reset_contradiction_flag(&queue).is_ok());
-        //     assert!(buffers.reset_contradiction_location(&queue).is_ok()); // Added check
-        //     assert!(buffers.reset_output_worklist_count(&queue).is_ok());
-        //     // Verification would require downloading, but check API call success
-        // });
     }
 
     #[test]

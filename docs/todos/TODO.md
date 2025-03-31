@@ -103,7 +103,7 @@ _Purpose: Implements GPU-accelerated versions of entropy calculation and propaga
   - [x] Add tests for buffer creation and data transfer.
   - [x] Investigate and fixed GPU test deadlock in `test_update_params_worklist_size` (Simplified tests to only check API call success since GPU synchronization and buffer mapping is difficult to make reliably cross-platform without deadlocks)
   - [x] accelerator.rs: Implement GPU reduction for finding lowest entropy (replace CPU placeholder).
-  - [ ] accelerator.rs: Map GpuError to PropagationError more appropriately where marked (`// TODO: Better error mapping`).
+  - [x] accelerator.rs: Map GpuError to PropagationError more appropriately where marked (`// TODO: Better error mapping`).
   - [ ] accelerator.rs: Enhance GPU contradiction reporting to include location (if feasible).
   - [ ] pipeline.rs: Specify minimum binding size for entropy shader `grid_possibilities` buffer layout if necessary.
   - [ ] entropy.wgsl: Implement proper Shannon entropy calculation instead of just possibility count.
@@ -117,7 +117,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 
   - [x] Define `AppConfig` struct for generation parameters (size, rule file path, use_gpu, seed, output_path).
   - [x] Implement command-line argument parsing using `clap`.
-  - [ ] Add configuration options for benchmarking, progress reporting, and visualization:
+  - [x] Add configuration options for benchmarking, progress reporting, and visualization:
 
     ```rust
     pub struct AppConfig {

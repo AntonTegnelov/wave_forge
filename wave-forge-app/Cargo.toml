@@ -17,6 +17,7 @@ rayon = "1.8"
 log = "0.4"
 env_logger = "0.11"
 anyhow = "1.0" # For application-level error handling
+humantime = "2.1" # For parsing duration strings
 
 [features]
 default = []

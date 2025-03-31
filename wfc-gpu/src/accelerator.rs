@@ -402,7 +402,7 @@ impl ConstraintPropagator for GpuAccelerator {
         log::debug!("Running GPU propagate...");
 
         // Add emergency timeout to prevent indefinite hangs
-        let timeout = std::time::Duration::from_secs(1); // Reduced from 5s to 1s for faster testing feedback
+        let _timeout = std::time::Duration::from_secs(1); // Reduced from 5s to 1s for faster testing feedback
         let propagate_start = std::time::Instant::now();
 
         let (width, height, _depth) = self.grid_dims; // Prefix depth with underscore
@@ -429,7 +429,6 @@ impl ConstraintPropagator for GpuAccelerator {
             .map_err(|e| {
                 log::error!("Failed to upload updates to GPU: {}", e);
                 // Convert GpuError to a generic propagation error for now
-                // PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
                 PropagationError::GpuCommunicationError(format!("Failed to upload updates: {}", e))
             })?;
 
@@ -438,7 +437,6 @@ impl ConstraintPropagator for GpuAccelerator {
             .reset_contradiction_flag(&self.queue)
             .map_err(|e| {
                 log::error!("Failed to reset contradiction flag on GPU: {}", e);
-                // PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
                 PropagationError::GpuCommunicationError(format!(
                     "Failed to reset contradiction flag: {}",
                     e
@@ -462,7 +460,6 @@ impl ConstraintPropagator for GpuAccelerator {
             .reset_output_worklist_count(&self.queue)
             .map_err(|e| {
                 log::error!("Failed to reset output worklist count on GPU: {}", e);
-                // PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
                 PropagationError::GpuCommunicationError(format!(
                     "Failed to reset output worklist count: {}",
                     e
@@ -482,7 +479,6 @@ impl ConstraintPropagator for GpuAccelerator {
             .update_params_worklist_size(&self.queue, worklist_size)
             .map_err(|e| {
                 log::error!("Failed to update worklist size uniform on GPU: {}", e);
-                // PropagationError::Contradiction(0, 0, 0) // TODO: Better error mapping
                 PropagationError::GpuCommunicationError(format!(
                     "Failed to update worklist size uniform: {}",
                     e
