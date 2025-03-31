@@ -41,7 +41,7 @@ impl ComputePipelines {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
-                            min_binding_size: None, // TODO: Specify minimum size?
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
                         },
                         count: None,
                     },
@@ -52,7 +52,7 @@ impl ComputePipelines {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
-                            min_binding_size: None,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
                         },
                         count: None,
                     },
@@ -94,7 +94,7 @@ impl ComputePipelines {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
-                            min_binding_size: None,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
                         },
                         count: None,
                     },
@@ -105,7 +105,7 @@ impl ComputePipelines {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
-                            min_binding_size: None,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
                         },
                         count: None,
                     },
@@ -116,7 +116,7 @@ impl ComputePipelines {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
-                            min_binding_size: None,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
                         },
                         count: None,
                     },
@@ -127,7 +127,7 @@ impl ComputePipelines {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
-                            min_binding_size: None,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
                         },
                         count: None,
                     },

@@ -96,7 +96,7 @@ _Purpose: Implements GPU-accelerated versions of entropy calculation and propaga
   - [x] Implement `wfc-core::ConstraintPropagator` trait using the propagation compute shader.
   - [x] accelerator.rs: Map GpuError to PropagationError more appropriately where marked (`// TODO: Better error mapping`).
   - [x] accelerator.rs: Enhance GPU contradiction reporting to include location (if feasible).
-  - [ ] pipeline.rs: Specify minimum binding size for entropy shader `grid_possibilities` buffer layout if necessary.
+  - [x] pipeline.rs: Specify minimum binding size for entropy shader `grid_possibilities` buffer layout if necessary.
   - [ ] entropy.wgsl: Implement proper Shannon entropy calculation instead of just possibility count.
   - [ ] propagate.wgsl: Verify `check_rule` uses the correct axis (`current_axis` vs `neighbor_axis`) based on CPU rule definition/structure.
 - **Testing:** `wfc-gpu/tests/` (May require specific setup or be harder to unit test)
