@@ -2,10 +2,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use wfc_core::{
-    entropy::EntropyCalculator, grid::PossibilityGrid, propagator::ConstraintPropagator,
-    rules::AdjacencyRules,
-};
+use wfc_core::{grid::PossibilityGrid, propagator::ConstraintPropagator, rules::AdjacencyRules};
 use wfc_gpu::accelerator::GpuAccelerator; // Ensure accelerator is public or crate-visible
 
 /// Tests for the GPU accelerator implementations of Wave Function Collapse algorithms.
@@ -40,13 +37,13 @@ fn test_gpu_calculate_entropy_basic_run() {
     let height = 4;
     let depth = 1;
     let num_tiles = 3;
-    let grid = PossibilityGrid::new(width, height, depth, num_tiles);
+    let _grid = PossibilityGrid::new(width, height, depth, num_tiles);
 
     // Create simple rules: Allow all adjacencies in 6 directions (3 axes)
     let num_axes = 6;
     let num_rules = num_axes * num_tiles * num_tiles;
     let allowed_rules = vec![true; num_rules]; // All true
-    let rules = AdjacencyRules::new(num_tiles, num_axes, allowed_rules);
+    let _rules = AdjacencyRules::new(num_tiles, num_axes, allowed_rules);
 
     // Initialize GPU with a direct approach and manual timeout
     println!("Starting GPU accelerator initialization...");

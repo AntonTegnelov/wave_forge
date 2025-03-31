@@ -44,6 +44,7 @@ pub struct GpuParamsUniform {
 /// - Staging buffers for safe memory transfers
 /// - Explicit unmapping of GPU buffers
 /// - Careful handling of asynchronous buffer operations
+#[allow(dead_code)] // Allow unused fields/methods during development
 pub struct GpuBuffers {
     // Grid state (possibilities) - likely atomic u32 for bitvec representation
     pub grid_possibilities_buf: wgpu::Buffer,
