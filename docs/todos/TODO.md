@@ -176,7 +176,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
   - [x] Add tests for argument parsing.
   - [x] Add tests for benchmark comparisons.
   - [x] Add tests for progress reporting.
-  - [ ] Add tests for visualization rendering.
+  - [x] Add tests for visualization rendering.
 
 ## General / Ongoing
 
