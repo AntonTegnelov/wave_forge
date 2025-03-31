@@ -1,8 +1,6 @@
 use crate::GpuError;
-use bitvec::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use log::{debug, error, info, warn};
-use std::num::NonZeroU64;
 use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules};
 use wgpu;
 use wgpu::util::DeviceExt; // Import for create_buffer_init
@@ -263,18 +261,6 @@ impl GpuBuffers {
             mapped_at_creation: false,
         });
 
-        // Initialize min entropy buffer (f32::MAX, u32::MAX)
-        let initial_min_info = [f32::MAX.to_bits(), u32::MAX];
-        let queue = device.create_queue(); // Create a temporary queue for initialization
-        queue.write_buffer(
-            &min_entropy_info_buf,
-            0,
-            bytemuck::cast_slice(&initial_min_info),
-        );
-        debug!("Created and initialized min entropy info buffers.");
-
-        drop(queue); // Drop temporary queue
-
         info!("GPU buffers created successfully.");
         Ok(Self {
             grid_possibilities_buf,
@@ -306,7 +292,11 @@ impl GpuBuffers {
                 update_data.len(),
                 self.updates_buf.size()
             );
-            return Err(GpuError::BufferTooSmall("updates_buf".to_string()));
+            return Err(GpuError::BufferOperationError(format!(
+                "Update data size ({}) exceeds updates buffer size ({})",
+                update_data.len(),
+                self.updates_buf.size()
+            )));
         }
         debug!(
             "Uploading {} updates ({} bytes) to GPU.",
