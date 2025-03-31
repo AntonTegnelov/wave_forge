@@ -149,7 +149,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
     - [ ] Add statistics tracking (contradictions, backtracks, collapsed cells)
 - **File:** `wave-forge-app/src/visualization.rs`
   - [ ] Implement simple visualization modes:
-    - [ ] Define `Visualizer` trait with methods to display current WFC state
+    - [x] Define `Visualizer` trait with methods to display current WFC state
     - [ ] Implement terminal-based visualization using ASCII/Unicode characters
     - [ ] Add simple 2D slice visualization of the 3D grid state
     - [ ] Support toggling visualization on/off during runtime

@@ -2,6 +2,7 @@
 
 pub mod benchmark;
 pub mod config;
+pub mod visualization;
 
 use anyhow::Result;
 use clap::Parser;
