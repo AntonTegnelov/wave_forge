@@ -28,8 +28,8 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     grid: &mut PossibilityGrid,
     tileset: &TileSet,
     rules: &AdjacencyRules,
-    propagator: &mut P,
-    entropy_calculator: &E,
+    mut propagator: P,
+    entropy_calculator: E,
     progress_callback: Option<Box<dyn Fn(ProgressInfo) + Send + Sync>>,
 ) -> Result<(), WfcError> {
     info!("Starting WFC run...");

@@ -44,17 +44,10 @@ pub async fn run_single_benchmark(
     let wfc_result = match implementation {
         "CPU" => {
             log::info!("Running CPU Benchmark...");
-            let mut propagator = CpuConstraintPropagator::new();
+            let propagator = CpuConstraintPropagator::new();
             let entropy_calculator = CpuEntropyCalculator::new();
-            // Use references now (assuming run signature is fixed manually)
-            run(
-                grid,
-                tileset,
-                rules,
-                &mut propagator,
-                &entropy_calculator,
-                None,
-            )
+            // Run with owned components
+            run(grid, tileset, rules, propagator, entropy_calculator, None)
         }
         "GPU" => {
             // This block is only compiled if 'gpu' feature is enabled
@@ -62,16 +55,17 @@ pub async fn run_single_benchmark(
             {
                 log::info!("Running GPU Benchmark...");
                 // Ensure grid possibilities are reset or cloned if necessary before running GPU
-                let mut gpu_accelerator = GpuAccelerator::new(grid, rules).await?;
-                // Use references now (assuming run signature is fixed manually)
-                run(
-                    grid,
-                    tileset,
-                    rules,
-                    &mut gpu_accelerator,
-                    &gpu_accelerator,
-                    None,
-                )
+                #[allow(unused_variables)]
+                let gpu_accelerator = GpuAccelerator::new(grid, rules)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("GPU initialization failed: {}", e))?;
+                // TODO: Ownership conflict! GpuAccelerator implements both traits,
+                //       but run() takes ownership, and GpuAccelerator is not Clone.
+                //       Requires refactoring GpuAccelerator or run() signature.
+                // run(grid, tileset, rules, gpu_accelerator, gpu_accelerator, None) // This won't compile
+                log::warn!("GPU benchmark run skipped due to ownership conflict.");
+                Err(WfcError::InternalError("GPU benchmark skipped".to_string()))
+                // Placeholder
             }
             // If 'gpu' feature is not enabled, this case should not be reachable
             // or should return an appropriate error.

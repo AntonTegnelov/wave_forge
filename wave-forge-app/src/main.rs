@@ -109,8 +109,9 @@ async fn main() -> Result<()> {
 
         let progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>> =
             if let Some(interval) = report_interval {
+                let last_report_time_clone = Arc::clone(&last_report_time); // Clone Arc here
                 Some(Box::new(move |info: wfc_core::ProgressInfo| {
-                    let mut last_time = last_report_time.lock().unwrap();
+                    let mut last_time = last_report_time_clone.lock().unwrap(); // Use cloned Arc
                     if last_time.elapsed() >= interval {
                         let percentage = if info.total_cells > 0 {
                             (info.collapsed_cells as f32 / info.total_cells as f32) * 100.0
@@ -135,37 +136,26 @@ async fn main() -> Result<()> {
 
         if use_gpu {
             #[cfg(feature = "gpu")]
-            // This cfg block ensures GpuAccelerator code is only compiled with feature
             {
                 log::info!("Initializing GPU Accelerator...");
                 match wfc_gpu::accelerator::GpuAccelerator::new(&grid, &rules).await {
-                    Ok(mut gpu_accelerator) => {
+                    #[allow(unused_variables)] // Allow unused until run call is fixed
+                    Ok(gpu_accelerator) => {
                         log::info!("Running WFC on GPU...");
-                        // Assuming run signature is fixed to take refs
-                        match wfc_core::runner::run(
-                            &mut grid,
-                            &tileset,
-                            &rules,
-                            &mut gpu_accelerator, // Pass the single instance mutably
-                            &gpu_accelerator,     // Pass the single instance immutably
-                            progress_callback.clone(), // Pass the callback (clone Arc)
-                        ) {
-                            Ok(_) => {
-                                log::info!("GPU WFC completed successfully.");
-                                // Save the grid
-                                if let Err(e) =
-                                    output::save_grid_to_file(&grid, config.output_path.as_path())
-                                {
-                                    log::error!("Failed to save grid: {}", e);
-                                    // Decide whether to return error or just log
-                                    return Err(e);
-                                }
-                            }
-                            Err(e) => {
-                                log::error!("GPU WFC failed: {}", e);
-                                return Err(anyhow::anyhow!(e));
-                            }
-                        }
+                        // TODO: Ownership conflict! GpuAccelerator implements both traits,
+                        //       but run() takes ownership, and GpuAccelerator is not Clone.
+                        //       Requires refactoring GpuAccelerator or run() signature.
+                        // match wfc_core::runner::run(
+                        //     &mut grid,
+                        //     &tileset,
+                        //     &rules,
+                        //     gpu_accelerator, // Passes ownership
+                        //     gpu_accelerator, // Error: Use of moved value
+                        //     progress_callback,
+                        // ) { ... }
+                        log::warn!("GPU run skipped due to ownership conflict.");
+                        // Placeholder: Treat as error for now
+                        return Err(anyhow::anyhow!("GPU run skipped due to ownership conflict"));
                     }
                     Err(e) => {
                         log::error!(
@@ -200,17 +190,17 @@ fn run_cpu(
     progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>>,
     config: &AppConfig,
 ) -> Result<(), anyhow::Error> {
-    let mut propagator = wfc_core::propagator::CpuConstraintPropagator::new();
+    let propagator = wfc_core::propagator::CpuConstraintPropagator::new();
     let entropy_calculator = wfc_core::entropy::CpuEntropyCalculator::new();
 
-    // Assuming run signature is fixed to take refs
+    // Run with owned components (matches reverted signature)
     match wfc_core::runner::run(
         grid,
         tileset,
         rules,
-        &mut propagator,
-        &entropy_calculator,
-        progress_callback, // Pass the callback (already an Option<Box>)
+        propagator,         // Pass ownership
+        entropy_calculator, // Pass ownership
+        progress_callback,
     ) {
         Ok(_) => {
             log::info!("CPU WFC completed successfully.");

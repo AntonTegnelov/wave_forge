@@ -22,4 +22,9 @@ tokio = { version = "1", features = ["full"] } # Add tokio for async runtime
 
 [features]
 default = []
-gpu = ["dep:wfc-gpu"] 
+gpu = ["dep:wfc-gpu"]
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"
+tempfile = "3.8" 
