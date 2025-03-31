@@ -162,7 +162,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
   - [x] **DI / Loose Coupling:** Based on `AppConfig`, instantiate the required components. The `wfc-core::runner::run` function only depends on the `EntropyCalculator` and `ConstraintPropagator` traits, ensuring it's decoupled from the specific implementation (CPU or GPU):
     - If `use_gpu`: Initialize `wfc_gpu::GpuAccelerator`. Create trait objects (e.g., `Box<dyn EntropyCalculator>`) or use generics (`impl EntropyCalculator`) pointing to the GPU implementations provided by `wfc-gpu`.
     - Else: Create trait objects or use generics pointing to the default CPU implementations provided by `wfc-core`.
-  - [ ] **Threading:** Use `rayon` to run them in parallel.
+  - [x] **Threading:** Use `rayon` to run them in parallel.
     - [ ] Parallelize parts of a _single_ large grid generation
   - [x] If benchmark mode is enabled, run benchmarks using the benchmark infrastructure.
   - [ ] Set up progress reporting based on configuration.
