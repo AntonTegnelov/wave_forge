@@ -164,6 +164,17 @@ impl ComputePipelines {
                         },
                         count: None,
                     },
+                    // contradiction_location (atomic u32)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
+                        },
+                        count: None,
+                    },
                 ],
             });
 

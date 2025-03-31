@@ -73,6 +73,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 @group(0) @binding(4) var<uniform> params: Params;
 @group(0) @binding(5) var<storage, read_write> output_worklist_count: atomic<u32>; // Atomic counter for output_worklist size
 @group(0) @binding(6) var<storage, read_write> contradiction_flag: atomic<u32>; // Global flag for contradictions
+@group(0) @binding(7) var<storage, read_write> contradiction_location: atomic<u32>; // Global index of first contradiction (initialized to u32::MAX)
 
 // Uniforms for grid dimensions, num_tiles etc.
 struct Params {
@@ -162,6 +163,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // SAFETY CHECK: Only process if params.num_tiles_u32 <= 4 to avoid out of bounds
     if (params.num_tiles_u32 > 4u) {
         atomicMax(&contradiction_flag, 1u); // Mark as contradiction
+        // Atomically store the location if it hasn't been stored yet (atomicMin with u32::MAX as initial)
+        atomicMin(&contradiction_location, current_cell_idx_1d); 
         return;
     }
 
@@ -258,44 +261,42 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 }
             }
 
-            // --- Atomically Update Neighbor Possibilities ---
+            // --- Perform Atomic Update on Neighbor ---
+            var original_neighbor_mask: array<u32, 4>;
             var changed = false;
-            var is_zero = true; // Assume contradiction until proven otherwise
-            var neighbor_original_value: array<u32, 4>; // To check for changes
-            var neighbor_new_value: array<u32, 4>; // Result after AND
-            
-            // Initialize arrays to 0
-            for (var i: u32 = 0u; i < 4u; i = i + 1u) {
-                neighbor_original_value[i] = 0u;
-                neighbor_new_value[i] = 0u;
-            }
+            var became_empty = true;
 
-            // Only process what's within bounds
             for (var i: u32 = 0u; i < params.num_tiles_u32 && i < 4u; i = i + 1u) {
-                let neighbor_atomic_offset = neighbor_idx_1d * params.num_tiles_u32 + i;
-                // Perform atomic AND, getting the value *before* the AND
-                neighbor_original_value[i] = atomicAnd(&grid_possibilities[neighbor_atomic_offset], allowed_neighbor_mask[i]);
-                // Calculate the value *after* the AND
-                neighbor_new_value[i] = neighbor_original_value[i] & allowed_neighbor_mask[i];
+                let neighbor_atomic_ptr = &grid_possibilities[neighbor_idx_1d * params.num_tiles_u32 + i];
+                // Perform atomic AND
+                let original_val = atomicAnd(neighbor_atomic_ptr, allowed_neighbor_mask[i]);
+                original_neighbor_mask[i] = original_val;
 
-                if (neighbor_new_value[i] != neighbor_original_value[i]) {
+                // Check if the mask actually changed
+                if ((original_val & allowed_neighbor_mask[i]) != original_val) {
                     changed = true;
                 }
-                if (neighbor_new_value[i] != 0u) {
-                    is_zero = false; // Found a non-zero part, so no contradiction (yet)
+
+                // Check if the updated mask part is non-zero
+                if ((original_val & allowed_neighbor_mask[i]) != 0u) {
+                    became_empty = false;
                 }
             }
 
-            // --- Handle Contradiction ---
-            if (is_zero) {
-                // Signal contradiction globally using atomicMax (or similar)
-                // Set flag to 1. Subsequent attempts won't change it if already 1.
+            // --- Check for Contradiction --- 
+            if (became_empty) {
+                // Set global contradiction flag
                 atomicMax(&contradiction_flag, 1u);
-                // Don't add to worklist if contradiction
-                changed = false;
+                // Atomically store the location of the CONTRADICTION (neighbor cell)
+                // Only store if no other location has been stored yet (atomicMin vs u32::MAX)
+                atomicMin(&contradiction_location, neighbor_idx_1d); 
+
+                // Important: Even if a contradiction is found, we might need to continue
+                // processing other neighbors or updates depending on the desired propagation behavior.
+                // For now, we continue processing other neighbors of the current cell.
             }
 
-            // --- Add to Output Worklist if Changed ---
+            // --- Add to Output Worklist if Changed (Optional/Complex) ---
             if (changed) {
                 // Atomically increment the output worklist counter and get the index
                 let output_index = atomicAdd(&output_worklist_count, 1u);

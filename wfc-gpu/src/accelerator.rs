@@ -445,6 +445,17 @@ impl ConstraintPropagator for GpuAccelerator {
                 ))
             })?;
 
+        // Reset contradiction location buffer to u32::MAX
+        self.buffers
+            .reset_contradiction_location(&self.queue)
+            .map_err(|e| {
+                log::error!("Failed to reset contradiction location on GPU: {}", e);
+                PropagationError::GpuCommunicationError(format!(
+                    "Failed to reset contradiction location: {}",
+                    e
+                ))
+            })?;
+
         // Reset output worklist count (if iterative propagation was implemented)
         // For single pass, this isn't strictly necessary but good practice
         self.buffers
@@ -512,6 +523,10 @@ impl ConstraintPropagator for GpuAccelerator {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.buffers.contradiction_location_buf.as_entire_binding(),
                 },
             ],
         });
@@ -605,20 +620,58 @@ impl ConstraintPropagator for GpuAccelerator {
         log::debug!("GPU poll completed.");
 
         // Download the contradiction flag buffer
-        // Use pollster::block_on to call the async download function from sync context
-        let download_result = pollster::block_on(self.buffers.download_contradiction_flag(
-            &self.device,
-            &self.queue,
-            // timeout - propagate_start.elapsed(), // Timeout handled by poll/device wait
-        ));
+        let contradiction_flag_result = pollster::block_on(
+            self.buffers
+                .download_contradiction_flag(&self.device, &self.queue),
+        );
 
-        match download_result {
+        match contradiction_flag_result {
             Ok(contradiction_detected) => {
                 if contradiction_detected {
                     log::warn!("GPU propagation resulted in a contradiction.");
-                    // TODO: Enhance GPU contradiction reporting to include location if feasible
-                    return Err(PropagationError::Contradiction(0, 0, 0)); // Placeholder location
+
+                    // If flag is set, download the location
+                    let location_result = pollster::block_on(
+                        self.buffers
+                            .download_contradiction_location(&self.device, &self.queue),
+                    );
+
+                    match location_result {
+                        Ok(location_index) if location_index != u32::MAX => {
+                            // Convert 1D index back to 3D coordinates
+                            let z = location_index / (width * height) as u32;
+                            let rem = location_index % (width * height) as u32;
+                            let y = rem / width as u32;
+                            let x = rem % width as u32;
+                            log::error!(
+                                "Contradiction location reported by GPU: ({}, {}, {})",
+                                x,
+                                y,
+                                z
+                            );
+                            return Err(PropagationError::Contradiction(
+                                x as usize, y as usize, z as usize,
+                            ));
+                        }
+                        Ok(_) => {
+                            // Flag was set, but location wasn't (or was MAX), weird state
+                            log::error!("GPU contradiction flag set, but location index was MAX. Returning generic contradiction.");
+                            return Err(PropagationError::Contradiction(0, 0, 0));
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "GPU contradiction flag set, but failed to download location: {}. Returning generic contradiction.",
+                                e
+                            );
+                            // Map the download error
+                            return Err(PropagationError::GpuCommunicationError(format!(
+                                "Failed to download contradiction location after flag was set: {}",
+                                e
+                            )));
+                        }
+                    }
                 }
+                // If flag is Ok(false), no contradiction, proceed normally
             }
             Err(e) => {
                 log::error!("Failed to download contradiction flag: {}", e);
