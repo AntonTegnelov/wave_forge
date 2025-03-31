@@ -17,4 +17,18 @@ pub trait Visualizer {
 // --- Implementations ---
 
 // TODO: Implement TerminalVisualizer
+// Placeholder implementation
+pub struct TerminalVisualizer;
+
+impl Visualizer for TerminalVisualizer {
+    fn display_state(&mut self, grid: &PossibilityGrid) -> Result<(), anyhow::Error> {
+        // Placeholder: Print basic grid info
+        println!("--- Visualization Frame ---");
+        println!("Grid: {}x{}x{}", grid.width, grid.height, grid.depth);
+        // TODO: Implement actual terminal rendering
+        println!("---------------------------");
+        Ok(())
+    }
+}
+
 // TODO: Implement Simple2DVisualizer

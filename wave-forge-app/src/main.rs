@@ -7,8 +7,10 @@ pub mod visualization;
 use anyhow::Result;
 use clap::Parser;
 use config::AppConfig;
+use config::VisualizationMode;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use visualization::{TerminalVisualizer, Visualizer};
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
 
@@ -23,6 +25,24 @@ async fn main() -> Result<()> {
 
     log::info!("Wave Forge App Starting");
     log::debug!("Loaded Config: {:?}", config);
+
+    // --- Initialize Visualizer (if configured) ---
+    #[allow(unused_variables, unused_mut)] // Allow unused for now
+    let mut visualizer: Option<Box<dyn Visualizer + Send + Sync>> = match config.visualization_mode
+    {
+        VisualizationMode::None => None,
+        VisualizationMode::Terminal => {
+            log::info!("Terminal visualization enabled.");
+            Some(Box::new(TerminalVisualizer {}))
+        }
+        VisualizationMode::Simple2D => {
+            log::warn!("Simple2D visualization not yet implemented, using None.");
+            // TODO: Instantiate Simple2DVisualizer when implemented
+            None
+        }
+    };
+    // TODO: Call initial display? visualizer.as_mut().map(|v| v.display_state(&initial_grid));
+    // --- End Visualizer Initialization ---
 
     println!("Wave Forge App");
     println!("Config: {:?}", config);
