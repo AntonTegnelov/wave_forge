@@ -289,6 +289,7 @@ impl GpuBuffers {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<bool, GpuError> {
+        log::debug!("Creating staging buffer for contradiction flag download...");
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Contradiction Download Encoder"),
         });
@@ -301,6 +302,7 @@ impl GpuBuffers {
             mapped_at_creation: false,
         });
 
+        log::debug!("Copying contradiction flag to staging buffer...");
         encoder.copy_buffer_to_buffer(
             &self.contradiction_flag_buf,
             0,
@@ -308,24 +310,40 @@ impl GpuBuffers {
             0,
             staging_buffer.size(),
         );
-        queue.submit(std::iter::once(encoder.finish()));
+        let submission_index = queue.submit(std::iter::once(encoder.finish()));
+        log::debug!(
+            "Contradiction flag copy submitted with index: {:?}",
+            submission_index
+        );
 
+        // Explicitly wait for the GPU to finish the copy
+        device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission_index));
+        log::debug!("GPU signaled completion of contradiction flag copy.");
+
+        log::debug!("Mapping staging buffer...");
         let buffer_slice = staging_buffer.slice(..); // Use temp buffer
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
+        // Poll device to ensure mapping has a chance to complete
+        device.poll(wgpu::Maintain::Wait);
+
         // Wait for the mapping to complete
+        log::debug!("Awaiting buffer mapping...");
         receiver.receive().await.ok_or_else(|| {
             GpuError::Other(
                 "Channel closed before receiving map result for contradiction buffer".to_string(),
             )
         })??;
+        log::debug!("Buffer mapping completed.");
 
         let flag_value: u32 = {
             let data = buffer_slice.get_mapped_range();
             let result = if data.len() >= std::mem::size_of::<u32>() {
+                log::debug!("Reading contradiction flag value: {} bytes", data.len());
                 Ok(*bytemuck::from_bytes::<u32>(&data))
             } else {
+                log::error!("Contradiction buffer too small: {} bytes", data.len());
                 Err(GpuError::BufferOperationError(format!(
                     "Contradiction staging buffer too small ({} bytes), expected {}",
                     data.len(),
@@ -335,6 +353,9 @@ impl GpuBuffers {
             drop(data); // Explicitly drop guard (unmap)
             result? // Propagate error
         };
+
+        log::debug!("Contradiction flag value: {}", flag_value);
+        staging_buffer.unmap(); // Explicitly unmap the buffer
         Ok(flag_value != 0)
     }
 

@@ -245,7 +245,7 @@ impl ConstraintPropagator for GpuAccelerator {
         log::debug!("Running GPU propagate...");
 
         // Add emergency timeout to prevent indefinite hangs
-        let timeout = std::time::Duration::from_secs(5);
+        let timeout = std::time::Duration::from_secs(1); // Reduced from 5s to 1s for faster testing feedback
         let propagate_start = std::time::Instant::now();
 
         let (width, height, _depth) = self.grid_dims; // Prefix depth with underscore
@@ -388,8 +388,43 @@ impl ConstraintPropagator for GpuAccelerator {
         } // End compute pass scope
 
         // --- 7. Submit and Check Contradiction ---
-        self.queue.submit(std::iter::once(encoder.finish()));
-        log::debug!("Propagation compute shader submitted.");
+        let submission_index = self.queue.submit(std::iter::once(encoder.finish()));
+        log::debug!(
+            "Propagation compute shader submitted with index: {:?}",
+            submission_index
+        );
+
+        // Critical: Wait for GPU to complete work before proceeding
+        // This helps ensure the GPU isn't still working when we try to read results
+        println!("Waiting for GPU to complete work...");
+
+        // Try polling with a timeout to avoid indefinite hangs
+        let poll_start = std::time::Instant::now();
+        let poll_timeout = std::time::Duration::from_millis(500);
+
+        // Poll explicitly in a loop with timeout
+        let mut poll_successful = false;
+        while poll_start.elapsed() < poll_timeout {
+            // Use Poll mode to check status without blocking
+            let poll_result = self.device.poll(wgpu::Maintain::Poll);
+
+            // Check if the queue is empty
+            if let wgpu::MaintainResult::SubmissionQueueEmpty = poll_result {
+                poll_successful = true;
+                println!("GPU queue is empty - all work completed");
+                break;
+            }
+
+            // Small delay to avoid busy loop
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // Check if we successfully polled or timed out
+        if !poll_successful {
+            println!("WARNING: GPU polling timed out after {:?}", poll_timeout);
+        } else {
+            println!("GPU signaled completion.");
+        }
 
         // Download the contradiction flag (synchronously for now)
         log::debug!("Downloading contradiction flag...");

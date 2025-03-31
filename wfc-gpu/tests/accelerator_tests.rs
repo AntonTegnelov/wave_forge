@@ -2,7 +2,10 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use wfc_core::{entropy::EntropyCalculator, grid::PossibilityGrid, rules::AdjacencyRules};
+use wfc_core::{
+    entropy::EntropyCalculator, grid::PossibilityGrid, propagator::ConstraintPropagator,
+    rules::AdjacencyRules,
+};
 use wfc_gpu::accelerator::GpuAccelerator; // Ensure accelerator is public or crate-visible
 
 // Helper to initialize logging for tests
@@ -89,7 +92,7 @@ fn test_gpu_propagate_basic_run() {
 
     // Initialize GPU Accelerator with timeout
     println!("Entering GpuAccelerator::new for propagate test...");
-    let timeout = Duration::from_secs(10);
+    let timeout = Duration::from_secs(1); // Reduced from 10s to 1s for faster testing feedback
     let start_time = Instant::now();
 
     let accelerator_result = pollster::block_on(GpuAccelerator::new(&grid, &rules));
