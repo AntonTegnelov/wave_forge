@@ -251,9 +251,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     // If tile1 is possible, iterate over all possible tiles (tile2) for the *neighbor*
                     for (var tile2_idx: u32 = 0u; tile2_idx < params.num_tiles; tile2_idx = tile2_idx + 1u) {
                         // Check the rule: Is tile2 allowed next to tile1 along this axis?
-                        // Note: We use neighbor_axis because rules are often defined symmetrically
-                        // or from the perspective of the tile being constrained. Check CPU definition.
-                        if (check_rule(tile1_idx, tile2_idx, current_axis)) { // Or neighbor_axis? Needs verification.
+                        if (check_rule(tile1_idx, tile2_idx, current_axis)) {
                             // If the rule allows it, mark tile2 as possible for the neighbor
                             set_tile_possible(tile2_idx, &allowed_neighbor_mask);
                         }
