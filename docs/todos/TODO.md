@@ -156,19 +156,19 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
     - [ ] Implement color coding for entropy levels and cell states
     - [ ] Add ability to focus on specific layers/slices of the 3D grid
 - **File:** `wave-forge-app/src/main.rs`
-  - [ ] Parse arguments into `AppConfig`.
-  - [ ] Load rules using `wfc-rules::loader::load_from_file`.
-  - [ ] Initialize `wfc-core::Grid`.
+  - [x] Parse arguments into `AppConfig`.
+  - [x] Load rules using `wfc-rules::loader::load_from_file`.
+  - [x] Initialize `wfc-core::Grid`.
   - [ ] **DI / Loose Coupling:** Based on `AppConfig`, instantiate the required components. The `wfc-core::runner::run` function only depends on the `EntropyCalculator` and `ConstraintPropagator` traits, ensuring it's decoupled from the specific implementation (CPU or GPU):
     - If `use_gpu`: Initialize `wfc_gpu::GpuAccelerator`. Create trait objects (e.g., `Box<dyn EntropyCalculator>`) or use generics (`impl EntropyCalculator`) pointing to the GPU implementations provided by `wfc-gpu`.
     - Else: Create trait objects or use generics pointing to the default CPU implementations provided by `wfc-core`.
   - [ ] **Threading:** Use `rayon` to run them in parallel.
     - [ ] Parallelize parts of a _single_ large grid generation
-  - [ ] If benchmark mode is enabled, run benchmarks using the benchmark infrastructure.
+  - [x] If benchmark mode is enabled, run benchmarks using the benchmark infrastructure.
   - [ ] Set up progress reporting based on configuration.
   - [ ] Initialize visualizer if visualization mode is enabled.
-  - [ ] Call `wfc-core::runner::run` with the initialized grid, injected components, and progress callback.
-  - [ ] Handle results (success or failure).
+  - [x] Call `wfc-core::runner::run` with the initialized grid, injected components, and progress callback.
+  - [x] Handle results (success or failure).
 - **File:** `wave-forge-app/src/output.rs` (Simple Output)
   - [ ] Implement function to save the final collapsed `Grid<TileId>` to a simple format (e.g., text, basic binary, RON).
 - **Testing:** `wave-forge-app/tests/`
