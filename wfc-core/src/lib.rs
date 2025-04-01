@@ -1,12 +1,21 @@
+//! Core library for the Wave Function Collapse algorithm implementation.
+//! Defines the fundamental data structures and platform-agnostic logic.
+
 // Removed: use bitvec::prelude::*; (unused import)
 use thiserror::Error;
 
 // Module declarations (keep public if they contain public items)
+/// Entropy calculation logic and traits.
 pub mod entropy;
+/// Generic 3D grid structures and specialized WFC grids.
 pub mod grid;
+/// Constraint propagation logic and traits.
 pub mod propagator;
+/// Tile adjacency rule representation.
 pub mod rules;
+/// The core WFC algorithm runner.
 pub mod runner;
+/// Tile representation (ID, TileSet).
 pub mod tile;
 
 // Re-export core public items
