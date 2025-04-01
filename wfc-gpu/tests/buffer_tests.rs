@@ -47,10 +47,10 @@ fn test_buffer_creation_sizes() {
         eprintln!("Skipping GPU test: Failed to initialize wgpu: {}", e);
         return;
     }
-    let (device, _queue) = wgpu_result.unwrap();
+    let (device, queue) = wgpu_result.unwrap();
 
     // Create buffers
-    let buffers_result = GpuBuffers::new(&device, &grid, &rules);
+    let buffers_result = GpuBuffers::new(&device, &queue, &grid, &rules);
     assert!(buffers_result.is_ok(), "Failed to create GpuBuffers");
     let buffers = buffers_result.unwrap();
 
@@ -128,7 +128,8 @@ fn test_reset_contradiction_flag() {
     // Dummy grid/rules needed for buffer creation
     let grid = PossibilityGrid::new(1, 1, 1, 1);
     let rules = AdjacencyRules::new(1, 6, vec![true; 6]);
-    let buffers = GpuBuffers::new(&device, &grid, &rules).expect("Failed to create buffers");
+    let buffers =
+        GpuBuffers::new(&device, &queue, &grid, &rules).expect("Failed to create buffers");
 
     // Simply test that the API call succeeds - we can't reliably test the GPU side behavior
     // in a cross-platform way without proper synchronization
@@ -151,7 +152,8 @@ fn test_update_params_worklist_size() {
     // Dummy grid/rules
     let grid = PossibilityGrid::new(1, 1, 1, 1);
     let rules = AdjacencyRules::new(1, 6, vec![true; 6]);
-    let buffers = GpuBuffers::new(&device, &grid, &rules).expect("Failed to create buffers");
+    let buffers =
+        GpuBuffers::new(&device, &queue, &grid, &rules).expect("Failed to create buffers");
 
     // Simply test that the API call succeeds - we can't reliably test the GPU side behavior
     // in a cross-platform way without proper synchronization
