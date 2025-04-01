@@ -191,6 +191,6 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - [x] Add visualization toggle to CLI interface.
 - [x] Implement configurable logging levels for progress reporting.
 - [x] Add benchmark results to documentation.
-- [ ] Create sample configurations for different visualization modes.
+- [x] Create sample configurations for different visualization modes.
 - [x] Add ability to focus on specific layers/slices of the 3D grid
 - [ ] Explore alternative propagation algorithms (e.g., parallel strategies).
