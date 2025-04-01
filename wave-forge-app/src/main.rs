@@ -168,8 +168,6 @@ async fn main() -> Result<()> {
         println!("Size (WxHxD)    | Impl | Total Time | Iterations | Collapsed Cells | Result");
         println!("----------------|------|------------|------------|-----------------|----------|-----------------"); // Keep separator wide enough for GPU case
 
-        let mut last_cpu_time: Option<Duration> = None;
-
         for ((w, h, d), result_item) in &all_results {
             let size_str = format!("{}x{}x{}", w, h, d);
             match result_item {
@@ -191,29 +189,28 @@ async fn main() -> Result<()> {
                         } else {
                             "Fail"
                         },
-                        "-"
+                        "-" // Placeholder for speedup column
                     );
-                    last_cpu_time = Some(cpu_result.total_time); // Store for speedup calculation
-
-                    // Print GPU result
-                    let speedup_str = if let Some(cpu_time) = last_cpu_time {
-                        if gpu_result.total_time > Duration::ZERO
-                            && cpu_time > Duration::ZERO
-                            && gpu_result.wfc_result.is_ok()
-                            && cpu_result.wfc_result.is_ok()
-                        {
-                            format!(
-                                "{:.2}x",
-                                cpu_time.as_secs_f64() / gpu_result.total_time.as_secs_f64()
-                            )
-                        } else if gpu_result.wfc_result.is_err() {
-                            "N/A (GPU Fail)".to_string()
-                        } else {
-                            "N/A (CPU Fail)".to_string()
-                        }
+                    // Calculate speedup directly here
+                    let speedup_str = if gpu_result.total_time > Duration::ZERO
+                        && cpu_result.total_time > Duration::ZERO
+                        && gpu_result.wfc_result.is_ok()
+                        && cpu_result.wfc_result.is_ok()
+                    {
+                        format!(
+                            "{:.2}x",
+                            cpu_result.total_time.as_secs_f64()
+                                / gpu_result.total_time.as_secs_f64()
+                        )
+                    } else if gpu_result.wfc_result.is_err() {
+                        "N/A (GPU Fail)".to_string()
+                    } else if cpu_result.wfc_result.is_err() {
+                        "N/A (CPU Fail)".to_string()
                     } else {
                         "N/A".to_string()
                     };
+
+                    // Print GPU result
                     println!(
                         "{:<15} | GPU  | {:<10?} | {:<10} | {:<15} | {:<8} | {:<15}",
                         "", // Don't repeat size
@@ -231,7 +228,6 @@ async fn main() -> Result<()> {
                         },
                         speedup_str
                     );
-                    last_cpu_time = None; // Reset for next size group
                 }
                 #[cfg(not(feature = "gpu"))]
                 Ok(cpu_result) => {
@@ -255,7 +251,6 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     println!("{:<15} | Both | Error running benchmark: {} |", size_str, e);
-                    last_cpu_time = None; // Reset on error
                 }
             }
             println!("-------------------------------------------------------------------------------------------");
