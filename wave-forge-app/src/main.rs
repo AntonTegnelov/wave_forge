@@ -415,8 +415,10 @@ async fn main() -> Result<()> {
         // --- Progress Reporting Setup ---
         let last_report_time = Arc::new(Mutex::new(Instant::now()));
         let report_interval = config.report_progress_interval;
+        let progress_log_level = config.progress_log_level.clone();
 
         log::info!("Progress reporting interval: {:?}", report_interval);
+        log::info!("Progress log level: {:?}", progress_log_level);
 
         let progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>> =
             if let Some(interval) = report_interval {
@@ -437,14 +439,20 @@ async fn main() -> Result<()> {
                         } else {
                             100.0 // Grid is empty, consider it 100% done?
                         };
-                        // Simple console log for progress
-                        log::info!(
+
+                        // Log with the configured level
+                        let progress_msg = format!(
                             "Progress: Iteration {}, Collapsed {}/{} ({:.1}%)                    ",
-                            info.iteration,
-                            info.collapsed_cells,
-                            info.total_cells,
-                            percentage
+                            info.iteration, info.collapsed_cells, info.total_cells, percentage
                         );
+
+                        match progress_log_level {
+                            config::ProgressLogLevel::Trace => log::trace!("{}", progress_msg),
+                            config::ProgressLogLevel::Debug => log::debug!("{}", progress_msg),
+                            config::ProgressLogLevel::Info => log::info!("{}", progress_msg),
+                            config::ProgressLogLevel::Warn => log::warn!("{}", progress_msg),
+                        }
+
                         *last_time = now; // Reset timer
                     }
                 }))

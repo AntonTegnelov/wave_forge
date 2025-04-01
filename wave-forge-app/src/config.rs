@@ -13,6 +13,20 @@ pub enum VisualizationMode {
     Simple2D, // Placeholder for a simple 2D slice view
 }
 
+/// Log level for progress reporting.
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+pub enum ProgressLogLevel {
+    /// Use trace level for progress reports (very verbose)
+    Trace,
+    /// Use debug level for progress reports (detailed)
+    Debug,
+    /// Use info level for progress reports (normal)
+    #[default]
+    Info,
+    /// Use warn level for progress reports (less frequent)
+    Warn,
+}
+
 /// Configuration for the Wave Forge application.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -52,6 +66,10 @@ pub struct AppConfig {
     /// Report progress updates every specified interval (e.g., "1s", "500ms").
     #[arg(long, value_name = "DURATION", value_parser = humantime::parse_duration)]
     pub report_progress_interval: Option<Duration>,
+
+    /// Log level to use for progress reporting.
+    #[arg(long, value_enum, default_value_t = ProgressLogLevel::Info)]
+    pub progress_log_level: ProgressLogLevel,
 
     /// Choose the visualization mode.
     #[arg(long, value_enum, default_value_t = VisualizationMode::None)]
@@ -202,5 +220,41 @@ mod tests {
         ];
         let config = AppConfig::try_parse_from(args).unwrap();
         assert_eq!(config.visualization_toggle_key, 'V');
+    }
+
+    #[test]
+    fn test_progress_log_level() {
+        // Test default value
+        let args = vec!["wave-forge", "--rule-file", "r.ron"];
+        let config = AppConfig::try_parse_from(args).unwrap();
+        assert_eq!(config.progress_log_level, ProgressLogLevel::Info); // Default should be Info
+
+        // Test each value
+        for (level_str, expected_level) in &[
+            ("trace", ProgressLogLevel::Trace),
+            ("debug", ProgressLogLevel::Debug),
+            ("info", ProgressLogLevel::Info),
+            ("warn", ProgressLogLevel::Warn),
+        ] {
+            let args = vec![
+                "wave-forge",
+                "--rule-file",
+                "r.ron",
+                "--progress-log-level",
+                level_str,
+            ];
+            let config = AppConfig::try_parse_from(args).unwrap();
+            assert_eq!(config.progress_log_level, *expected_level);
+        }
+
+        // Test invalid value should error
+        let args = vec![
+            "wave-forge",
+            "--rule-file",
+            "r.ron",
+            "--progress-log-level",
+            "invalid-level",
+        ];
+        assert!(AppConfig::try_parse_from(args).is_err());
     }
 }
