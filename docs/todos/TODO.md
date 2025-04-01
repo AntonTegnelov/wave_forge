@@ -143,7 +143,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
     - [x] Add option to output results in CSV format for further analysis
 - **File:** `wave-forge-app/src/progress.rs`
   - [ ] Implement progress reporting system:
-    - [ ] Define `ProgressReporter` trait with methods for reporting status updates
+    - [x] Define `ProgressReporter` trait with methods for reporting status updates
     - [ ] Implement console reporter with percentage complete, ETA, and current operation
     - [ ] Support throttling of updates to avoid performance impact
     - [ ] Add statistics tracking (contradictions, backtracks, collapsed cells)
