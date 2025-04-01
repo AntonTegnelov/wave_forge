@@ -153,7 +153,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
     - [x] Implement terminal-based visualization using ASCII/Unicode characters
     - [x] Add simple 2D slice visualization of the 3D grid state
     - [ ] Support toggling visualization on/off during runtime
-    - [ ] Implement color coding for entropy levels and cell states
+    - [x] Implement color coding for entropy levels and cell states
 - **File:** `wave-forge-app/src/main.rs`
   - [x] Parse arguments into `AppConfig`.
   - [x] Load rules using `wfc-rules::loader::load_from_file`.
@@ -188,3 +188,4 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - [ ] Implement configurable logging levels for progress reporting.
 - [ ] Add benchmark results to documentation.
 - [ ] Create sample configurations for different visualization modes.
+- [ ] Add ability to focus on specific layers/slices of the 3D grid

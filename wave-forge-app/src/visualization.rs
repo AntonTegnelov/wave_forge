@@ -1,4 +1,6 @@
-use wfc_core::grid::PossibilityGrid;
+use anyhow::Result;
+use colored::*;
+use wfc_core::grid::PossibilityGrid; // Import colored crate
 
 // TODO: Define specific error type for visualization?
 
@@ -48,23 +50,28 @@ impl Visualizer for TerminalVisualizer {
             for x in 0..grid.width {
                 if let Some(cell) = grid.get(x, y, z) {
                     let possibilities = cell.count_ones();
-                    let char_to_print = match possibilities {
-                        0 => 'X', // Contradiction
+                    match possibilities {
+                        0 => print!("{}", "X".red().bold()), // Contradiction
                         1 => {
                             // Find the single possible TileId
-                            let tile_id_index = cell.iter_ones().next().unwrap_or(0); // Should always have one
-                                                                                      // Simple mapping: 0 -> '0', 1 -> '1', ... 9 -> '9', 10+ -> '+'
-                            if tile_id_index < 10 {
+                            let tile_id_index = cell.iter_ones().next().unwrap_or(0);
+                            // Simple mapping: Use different colors/styles for different tiles (example)
+                            let tile_char = if tile_id_index < 10 {
                                 std::char::from_digit(tile_id_index as u32, 10).unwrap_or('#')
                             } else {
                                 '+'
+                            };
+                            // Example coloring based on tile index parity
+                            if tile_id_index % 2 == 0 {
+                                print!("{}", tile_char.to_string().green());
+                            } else {
+                                print!("{}", tile_char.to_string().blue());
                             }
                         }
-                        _ => '?', // Multiple possibilities
+                        _ => print!("{}", "?".yellow()), // Multiple possibilities
                     };
-                    print!("{}", char_to_print);
                 } else {
-                    print!("E"); // Error getting cell
+                    print!("{}", "E".magenta().bold()); // Error getting cell
                 }
             }
             println!(); // Newline after each row

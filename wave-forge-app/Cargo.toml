@@ -20,6 +20,7 @@ anyhow = "1.0" # For application-level error handling
 humantime = "2.1" # For parsing duration strings
 tokio = { version = "1", features = ["full"] } # Add tokio for async runtime
 csv = "1.3.1"
+colored = "3.0.0"
 
 [features]
 default = []
