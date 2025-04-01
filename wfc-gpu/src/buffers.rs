@@ -5,97 +5,139 @@ use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules};
 use wgpu;
 use wgpu::util::DeviceExt; // Import for create_buffer_init
 
-/// Uniform buffer structure for passing parameters to GPU compute shaders.
+/// Uniform buffer structure holding parameters accessible by GPU compute shaders.
 ///
-/// This structure must match the layout of the equivalent struct in WGSL shaders.
-/// It contains all grid dimensions, tile counts, and runtime values needed by shaders.
+/// This struct defines the layout for constant data passed to the GPU, such as grid dimensions
+/// and tile counts. It must exactly match the corresponding struct definition in the WGSL shaders
+/// (e.g., `Params` struct in `propagate.wgsl` and `entropy.wgsl`).
 ///
-/// # Memory Layout Considerations
-///
-/// The struct is marked with `repr(C)` to ensure consistent memory layout between
-/// Rust and shader code. It also implements Pod and Zeroable for safe casting.
+/// Marked `#[repr(C)]` for stable memory layout across Rust/WGSL.
+/// Implements `Pod` and `Zeroable` for safe, direct memory mapping (`bytemuck`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct GpuParamsUniform {
+    /// Width of the grid (X dimension).
     pub grid_width: u32,
+    /// Height of the grid (Y dimension).
     pub grid_height: u32,
+    /// Depth of the grid (Z dimension).
     pub grid_depth: u32,
+    /// Total number of unique tile types.
     pub num_tiles: u32,
-    pub num_tiles_u32: u32, // Number of u32s needed per cell for possibilities
+    /// Number of `u32` elements required to store the possibility bitvector for a single cell.
+    /// Calculated as `ceil(num_tiles / 32)`.
+    pub num_tiles_u32: u32,
+    /// Number of adjacency axes (typically 6 for 3D).
     pub num_axes: u32,
-    pub worklist_size: u32, // Add worklist size field
-    pub _padding1: u32,     // Adjust padding if needed
+    /// Current size of the input worklist (number of updated cells) for the propagation shader.
+    pub worklist_size: u32,
+    /// Padding to ensure struct size is a multiple of 16 bytes, often required for uniform buffers.
+    pub _padding1: u32,
 }
 
-/// Manages GPU buffers for the Wave Function Collapse algorithm.
+/// Manages the collection of WGPU buffers required for GPU-accelerated WFC.
 ///
-/// This struct handles all GPU memory management, including:
-/// - Grid possibility data (bitvectors packed into u32 arrays)
-/// - Adjacency rules in packed format
-/// - Entropy calculation buffers
-/// - Propagation worklists and counters
-/// - Flags for detecting contradictions
+/// This struct encapsulates all GPU memory allocation and management for the algorithm,
+/// including buffers for:
+/// - Storing the possibility state of the grid (`grid_possibilities_buf`).
+/// - Storing the adjacency rules (`rules_buf`).
+/// - Storing calculated entropy values (`entropy_buf`).
+/// - Holding shader parameters (`params_uniform_buf`).
+/// - Managing worklists for propagation (`updates_buf`, `output_worklist_buf`, `output_worklist_count_buf`).
+/// - Communicating results and status flags (e.g., `contradiction_flag_buf`, `min_entropy_info_buf`).
 ///
-/// # Synchronization and Hang Prevention
-///
-/// The buffer operations include several measures to prevent GPU hangs:
-/// - Explicit polling when waiting for GPU operations
-/// - Proper buffer size checking before operations
-/// - Staging buffers for safe memory transfers
-/// - Explicit unmapping of GPU buffers
-/// - Careful handling of asynchronous buffer operations
+/// It also includes corresponding staging buffers (prefixed `staging_`) used for efficiently
+/// transferring data between the CPU and GPU, particularly for downloading results.
 #[allow(dead_code)] // Allow unused fields/methods during development
 pub struct GpuBuffers {
-    // Grid state (possibilities) - likely atomic u32 for bitvec representation
+    /// **GPU Buffer**: Stores the possibility bitvector for each grid cell.
+    /// Each cell's possibilities are packed into `num_tiles_u32` elements.
+    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
     pub grid_possibilities_buf: wgpu::Buffer,
-    staging_grid_possibilities_buf: wgpu::Buffer, // For downloading final results
-    // Adjacency rules (flattened)
+    /// **Staging Buffer**: Used for downloading the final grid possibilities state to the CPU.
+    /// Usage: `MAP_READ | COPY_DST`
+    staging_grid_possibilities_buf: wgpu::Buffer,
+    /// **GPU Buffer**: Stores the flattened adjacency rules, packed into u32s.
+    /// Read-only by shaders.
+    /// Usage: `STORAGE`
     pub rules_buf: wgpu::Buffer,
-    // Entropy output buffer
+    /// **GPU Buffer**: Stores the calculated entropy value (f32) for each grid cell.
+    /// Written to by the entropy shader, read back to CPU.
+    /// Usage: `STORAGE | COPY_SRC`
     pub entropy_buf: wgpu::Buffer,
-    staging_entropy_buf: wgpu::Buffer, // For downloading entropy grid
-    // Minimum entropy info (calculated alongside entropy)
-    pub min_entropy_info_buf: wgpu::Buffer, // Stores [min_entropy_bits: u32, min_index: u32]
-    staging_min_entropy_info_buf: wgpu::Buffer, // For downloading min info
-    // Buffer for updated coordinates (input to propagation worklist)
+    /// **Staging Buffer**: Used for downloading the entropy grid to the CPU.
+    /// Usage: `MAP_READ | COPY_DST`
+    staging_entropy_buf: wgpu::Buffer,
+    /// **GPU Buffer**: Stores the minimum positive entropy found and its index.
+    /// Layout: `[f32_entropy_bits: u32, flat_index: u32]`.
+    /// Written atomically by the entropy shader.
+    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    pub min_entropy_info_buf: wgpu::Buffer,
+    /// **Staging Buffer**: Used for downloading the minimum entropy info.
+    /// Usage: `MAP_READ | COPY_DST`
+    staging_min_entropy_info_buf: wgpu::Buffer,
+    /// **GPU Buffer**: Input buffer for propagation, storing flat indices of updated cells.
+    /// Written to by the CPU (`upload_updates`), read by the propagation shader.
+    /// Usage: `STORAGE | COPY_DST`
     pub updates_buf: wgpu::Buffer,
-    // Buffer for the next propagation worklist (output from shader)
+    /// **GPU Buffer**: Output buffer for propagation worklist (potentially unused/future work).
+    /// Usage: `STORAGE | COPY_SRC`
     pub output_worklist_buf: wgpu::Buffer,
-    // Buffer to hold the count for the output worklist (atomic u32)
+    /// **GPU Buffer**: Atomic counter for the output worklist (potentially unused/future work).
+    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
     pub output_worklist_count_buf: wgpu::Buffer,
-    // Staging buffers for reading results back to CPU (e.g., entropy, contradiction)
+    /// **GPU Buffer**: Flag (u32) set by the propagation shader if a contradiction is detected.
+    /// 0 = no contradiction, 1 = contradiction.
+    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
     pub contradiction_flag_buf: wgpu::Buffer,
+    /// **GPU Buffer**: Uniform buffer holding `GpuParamsUniform`.
+    /// Usage: `UNIFORM | COPY_DST | COPY_SRC`
     pub params_uniform_buf: wgpu::Buffer,
-    staging_contradiction_flag_buf: wgpu::Buffer, // Added for downloading contradiction flag
-    pub contradiction_location_buf: wgpu::Buffer, // Stores index of first contradiction
-    staging_contradiction_location_buf: wgpu::Buffer, // For downloading location
+    /// **Staging Buffer**: Used for downloading the contradiction flag.
+    /// Usage: `MAP_READ | COPY_DST`
+    staging_contradiction_flag_buf: wgpu::Buffer,
+    /// **GPU Buffer**: Stores the flat index of the first cell where a contradiction was detected.
+    /// Written atomically by the propagation shader.
+    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    pub contradiction_location_buf: wgpu::Buffer,
+    /// **Staging Buffer**: Used for downloading the contradiction location index.
+    /// Usage: `MAP_READ | COPY_DST`
+    staging_contradiction_location_buf: wgpu::Buffer,
 }
 
 impl GpuBuffers {
-    /// Creates a new set of GPU buffers for WFC computation.
+    /// Creates and initializes all necessary GPU buffers for the WFC algorithm.
     ///
-    /// Initializes all necessary buffers with appropriate sizes and content based on
-    /// the initial grid and rules. The buffers are allocated on the GPU and filled
-    /// with initial data.
+    /// This includes buffers for:
+    /// - Grid possibilities (`grid_possibilities_buf`)
+    /// - Adjacency rules (`rules_buf`)
+    /// - Calculated entropy (`entropy_buf`)
+    /// - Minimum entropy info (`min_entropy_info_buf`)
+    /// - Updates worklist (`updates_buf`)
+    /// - Uniform parameters (`params_uniform_buf`)
+    /// - Output worklist (for potential future iterative propagation) (`output_worklist_buf`)
+    /// - Output worklist count (`output_worklist_count_buf`)
+    /// - Contradiction flag (`contradiction_flag_buf`)
+    /// - Contradiction location (`contradiction_location_buf`)
+    /// - Staging buffers for efficient data transfer between CPU and GPU.
     ///
     /// # Arguments
     ///
-    /// * `device` - The wgpu device to create buffers on
-    /// * `initial_grid` - The initial grid with possibility data
-    /// * `rules` - The adjacency rules defining valid tile arrangements
+    /// * `device` - The WGPU `Device` used to create buffers.
+    /// * `queue` - The WGPU `Queue` used for initial buffer writes (e.g., uploading rules).
+    /// * `params` - The `GpuParamsUniform` structure containing grid dimensions, tile counts, etc.
+    /// * `rules` - The `AdjacencyRules` structure containing the adjacency constraints.
+    /// * `initial_possibilities` - A slice representing the initial possibility state for each cell,
+    ///    packed into `u32` values (e.g., using bitsets).
     ///
     /// # Returns
     ///
-    /// A Result containing either the initialized buffers or a GPU error
-    ///
-    /// # Implementation Details
-    ///
-    /// 1. Packs grid possibilities into bit vectors (u32 arrays)
-    /// 2. Packs adjacency rules into bit vectors
-    /// 3. Creates uniform buffer with grid parameters
-    /// 4. Allocates working buffers for computation
+    /// * `Ok(Self)` - An instance of `GpuBuffers` containing all created buffers.
+    /// * `Err(GpuError)` - If buffer creation fails or if initial data upload encounters issues
+    ///   (e.g., size mismatch).
     pub fn new(
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
     ) -> Result<Self, GpuError> {
@@ -301,7 +343,19 @@ impl GpuBuffers {
         })
     }
 
-    /// Uploads the initial worklist (indices of updated cells) to the GPU buffer.
+    /// Uploads a list of updated cell indices (flat 1D indices) to the `updates_buf` GPU buffer.
+    ///
+    /// This buffer serves as the input worklist for the propagation compute shader.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The WGPU `Queue` used to write to the buffer.
+    /// * `updates` - A slice of `u32` representing the flat indices of cells whose possibilities have changed.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the upload is successful.
+    /// * `Err(GpuError::BufferOperationError)` if the size of the `updates` data exceeds the buffer capacity.
     pub fn upload_updates(&self, queue: &wgpu::Queue, updates: &[u32]) -> Result<(), GpuError> {
         if updates.is_empty() {
             debug!("No updates to upload.");
@@ -329,8 +383,18 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Resets the minimum entropy info buffer on the GPU.
-    /// Initializes min_entropy to f32::MAX and min_index to u32::MAX.
+    /// Resets the `min_entropy_info_buf` on the GPU to its initial state.
+    ///
+    /// Sets the minimum entropy value to `f32::MAX` (represented as bits) and the index to `u32::MAX`.
+    /// This is typically done before running the entropy calculation shader.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The WGPU `Queue` used to write to the buffer.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` always (buffer writing is typically fire-and-forget, errors are harder to catch here).
     pub fn reset_min_entropy_info(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
         debug!("Resetting min entropy info buffer on GPU.");
         let initial_data = [f32::MAX.to_bits(), u32::MAX]; // [min_entropy_f32_bits, min_index_u32]
@@ -342,7 +406,18 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Resets the contradiction flag buffer to 0 on the GPU.
+    /// Resets the `contradiction_flag_buf` on the GPU to 0.
+    ///
+    /// A value of 0 indicates no contradiction has been detected.
+    /// This should be called before running the propagation shader.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The WGPU `Queue` used to write to the buffer.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` always.
     pub fn reset_contradiction_flag(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
         debug!("Resetting contradiction flag buffer on GPU.");
         queue.write_buffer(
@@ -353,7 +428,17 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Resets the output worklist count buffer to 0 on the GPU.
+    /// Resets the `output_worklist_count_buf` on the GPU to 0.
+    ///
+    /// Used if implementing iterative GPU propagation where the shader generates a new worklist.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The WGPU `Queue` used to write to the buffer.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` always.
     pub fn reset_output_worklist_count(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
         debug!("Resetting output worklist count buffer on GPU.");
         queue.write_buffer(
@@ -364,7 +449,17 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Resets the contradiction location buffer to u32::MAX.
+    /// Resets the `contradiction_location_buf` on the GPU to `u32::MAX`.
+    ///
+    /// `u32::MAX` is used to indicate that no specific contradiction location has been recorded yet.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The WGPU `Queue` used to write to the buffer.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` always.
     pub fn reset_contradiction_location(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
         let max_u32 = [u32::MAX];
         queue.write_buffer(
@@ -375,7 +470,23 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Updates the worklist_size field in the params uniform buffer on the GPU.
+    /// Updates the `worklist_size` field within the `params_uniform_buf` on the GPU.
+    ///
+    /// This informs the propagation shader how many updated cells are present in the `updates_buf`.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The WGPU `Queue` used to write to the buffer.
+    /// * `worklist_size` - The number of valid entries in the `updates_buf`.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` always.
+    ///
+    /// # Panics
+    ///
+    /// This function relies on the memory layout of `GpuParamsUniform`. Changes to that struct
+    /// might require updating the offset calculation here.
     pub fn update_params_worklist_size(
         &self,
         queue: &wgpu::Queue,
@@ -398,14 +509,19 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Downloads the entropy grid data from the GPU to the CPU.
+    /// Asynchronously downloads the calculated entropy values from the GPU `entropy_buf`.
+    ///
+    /// Copies data from the GPU buffer to a staging buffer and maps it for CPU access.
     ///
     /// # Arguments
-    /// * `device` - The wgpu device.
-    /// * `queue` - The wgpu queue.
+    ///
+    /// * `device` - The WGPU `Device`.
+    /// * `queue` - The WGPU `Queue`.
     ///
     /// # Returns
-    /// A Result containing a Vec<f32> with the entropy values or a GpuError.
+    ///
+    /// * `Ok(Vec<f32>)` containing the entropy values for each cell.
+    /// * `Err(GpuError)` if the GPU copy or buffer mapping fails.
     pub async fn download_entropy(
         &self,
         device: &wgpu::Device,
@@ -458,14 +574,23 @@ impl GpuBuffers {
         }
     }
 
-    /// Downloads the minimum entropy info [value, index] from the GPU.
+    /// Asynchronously downloads the minimum entropy information (value and index) from the GPU `min_entropy_info_buf`.
+    ///
+    /// Copies data from the GPU buffer to a staging buffer and maps it for CPU access.
+    /// The downloaded data represents the minimum *positive* entropy found and the flat index
+    /// of the cell where it occurred.
     ///
     /// # Arguments
-    /// * `device` - The wgpu device.
-    /// * `queue` - The wgpu queue.
+    ///
+    /// * `device` - The WGPU `Device`.
+    /// * `queue` - The WGPU `Queue`.
     ///
     /// # Returns
-    /// A Result containing a tuple (min_entropy_value: f32, min_index: u32) or a GpuError.
+    ///
+    /// * `Ok((f32, u32))` containing the minimum positive entropy value and its flat index.
+    ///   The index will be `u32::MAX` if no positive entropy value was found by the shader
+    ///   (e.g., all cells are collapsed or have zero entropy).
+    /// * `Err(GpuError)` if the GPU copy or buffer mapping fails.
     pub async fn download_min_entropy_info(
         &self,
         device: &wgpu::Device,
@@ -528,15 +653,20 @@ impl GpuBuffers {
         }
     }
 
-    /// Downloads the contradiction flag (u32) from the GPU.
+    /// Asynchronously downloads the contradiction flag (u32) from the GPU `contradiction_flag_buf`.
+    ///
+    /// Copies data from the GPU buffer to a staging buffer and maps it for CPU access.
+    /// The flag indicates whether the propagation shader detected a contradiction (a cell with zero possibilities).
     ///
     /// # Arguments
-    /// * `device` - The wgpu device.
-    /// * `queue` - The wgpu queue.
+    ///
+    /// * `device` - The WGPU `Device`.
+    /// * `queue` - The WGPU `Queue`.
     ///
     /// # Returns
-    /// A Result containing true if a contradiction was detected (flag > 0), false otherwise,
-    /// or a GpuError.
+    ///
+    /// * `Ok(bool)` - `true` if the flag read from the GPU is greater than 0, `false` otherwise.
+    /// * `Err(GpuError)` if the GPU copy or buffer mapping fails.
     pub async fn download_contradiction_flag(
         &self,
         device: &wgpu::Device,
@@ -592,8 +722,23 @@ impl GpuBuffers {
         }
     }
 
-    /// Downloads the contradiction location index from the GPU.
-    /// Returns u32::MAX if no contradiction location was recorded.
+    /// Asynchronously downloads the contradiction location index (u32) from the GPU `contradiction_location_buf`.
+    ///
+    /// Copies data from the GPU buffer to a staging buffer and maps it for CPU access.
+    /// This index represents the flat 1D index of the first cell where the propagation shader
+    /// detected a contradiction.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The WGPU `Device`.
+    /// * `queue` - The WGPU `Queue`.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(u32)` - The flat index of the first cell where a contradiction was detected. Returns `u32::MAX`
+    ///   if no specific location was recorded by the shader (e.g., if the buffer wasn't written to, was reset,
+    ///   or no contradiction occurred).
+    /// * `Err(GpuError)` if the GPU copy or buffer mapping fails, or if the buffer size is incorrect.
     pub async fn download_contradiction_location(
         &self,
         device: &wgpu::Device,

@@ -8,28 +8,26 @@ use wfc_core::{
     rules::AdjacencyRules,
 }; // Use Arc for shared GPU resources
 
-/// Accelerates WFC computations using the GPU through wgpu.
+/// Manages the WGPU context and orchestrates GPU-accelerated WFC operations.
 ///
-/// This module provides GPU accelerated implementations of:
-/// - Entropy calculation for finding the next cell to collapse
-/// - Constraint propagation for updating neighbor cell possibilities
+/// This struct holds the necessary WGPU resources (instance, adapter, device, queue)
+/// and manages the compute pipelines (`ComputePipelines`) and GPU buffers (`GpuBuffers`)
+/// required for accelerating entropy calculation and constraint propagation.
 ///
-/// # Implementation Details
+/// It implements the `EntropyCalculator` and `ConstraintPropagator` traits from `wfc-core`,
+/// providing GPU-accelerated alternatives to the CPU implementations.
 ///
-/// The GPU accelerator works by:
-/// 1. Transferring grid possibilities and constraints to the GPU
-/// 2. Running compute shaders to perform batch operations in parallel
-/// 3. Reading back results to the CPU
+/// # Initialization
 ///
-/// # Error Prevention
+/// Use the asynchronous `GpuAccelerator::new()` function to initialize the WGPU context
+/// and create the necessary resources based on the initial grid state and rules.
 ///
-/// To avoid GPU hangs and crashes, the implementation includes:
-/// - Explicit synchronization between CPU and GPU
-/// - Timeout mechanisms for GPU operations
-/// - Proper device polling to ensure GPU work completes
-/// - Bounds checking in shaders to prevent memory access violations
-/// - Workgroup size matching between shader declaration and dispatching logic
-/// - Safe buffer management with proper staging buffers
+/// # Usage
+///
+/// Once initialized, the `GpuAccelerator` instance can be passed to the main WFC `run` function
+/// (or used directly) to perform entropy calculation and constraint propagation steps on the GPU.
+/// Data synchronization between CPU (`PossibilityGrid`) and GPU (`GpuBuffers`) is handled
+/// internally by the respective trait method implementations.
 #[allow(dead_code)] // Allow unused fields while implementation is pending
 pub struct GpuAccelerator {
     instance: wgpu::Instance,
@@ -42,25 +40,31 @@ pub struct GpuAccelerator {
 }
 
 impl GpuAccelerator {
-    /// Creates a new GPU accelerator for WFC operations.
+    /// Asynchronously creates and initializes a new `GpuAccelerator`.
     ///
-    /// Initializes the GPU context, loads shaders, and creates buffers needed for
-    /// entropy calculation and constraint propagation.
+    /// This involves:
+    /// 1. Setting up the WGPU instance, adapter, logical device, and queue.
+    /// 2. Loading and compiling compute shaders.
+    /// 3. Creating compute pipelines (`ComputePipelines`).
+    /// 4. Allocating GPU buffers (`GpuBuffers`) and uploading initial grid/rule data.
     ///
     /// # Arguments
     ///
-    /// * `initial_grid` - The initial grid with possibility data for each cell
-    /// * `rules` - Adjacency rules defining valid tile arrangements
+    /// * `initial_grid` - A reference to the initial `PossibilityGrid` state.
+    ///                    Used to determine buffer sizes and upload initial possibilities.
+    /// * `rules` - A reference to the `AdjacencyRules` defining constraints.
+    ///             Used to upload rule data to the GPU.
     ///
     /// # Returns
     ///
-    /// A Result containing either the initialized accelerator or a GPU error
+    /// * `Ok(Self)` containing the initialized `GpuAccelerator` if successful.
+    /// * `Err(GpuError)` if any part of the WGPU setup, shader compilation, pipeline creation,
+    ///   or buffer allocation fails.
     ///
-    /// # Safety considerations
+    /// # Constraints
     ///
-    /// - Enforces a maximum of 128 tiles (4 u32s per cell) to prevent shader array overflows
-    /// - Uses Arc for shared GPU resources to ensure proper lifetime management
-    /// - Handles GPU adapter and device initialization failures gracefully
+    /// * Currently supports a maximum of 128 unique tile types due to shader limitations.
+    ///   An error will be returned if `rules.num_tiles()` exceeds this limit.
     pub async fn new(
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
@@ -148,31 +152,23 @@ impl GpuAccelerator {
 }
 
 impl EntropyCalculator for GpuAccelerator {
-    /// Calculates the entropy for each cell in the grid using the GPU.
+    /// Calculates the entropy for each cell using a dedicated compute shader.
     ///
-    /// Entropy is a measure of uncertainty, with higher values indicating
-    /// cells with more possibilities that are less constrained.
+    /// This method orchestrates the execution of the entropy calculation shader:
+    /// 1. Resets the auxiliary buffer used for finding the minimum entropy.
+    /// 2. Sets up the necessary bind group containing GPU buffers (possibilities, entropy output, parameters, min_entropy_info).
+    /// 3. Creates a compute pass and dispatches the entropy compute shader.
+    /// 4. Submits the commands to the GPU queue.
+    /// 5. Reads the calculated entropy values back from the `entropy_buf` into a CPU-side `EntropyGrid`.
     ///
-    /// # Arguments
-    ///
-    /// * `_grid` - The current grid state (not directly used, as we read from GPU buffer)
+    /// The actual entropy calculation logic resides within the `entropy.wgsl` compute shader.
+    /// Note: The `_grid` parameter (CPU-side `PossibilityGrid`) is technically unused as this method
+    /// assumes the relevant possibility data is already present in the GPU buffer (`self.buffers.grid_possibilities_buf`).
     ///
     /// # Returns
     ///
-    /// An EntropyGrid containing calculated entropy values for each cell
-    ///
-    /// # Implementation Details
-    ///
-    /// 1. Creates a compute pass with appropriate bind groups
-    /// 2. Dispatches the entropy calculation shader with appropriate workgroup size
-    /// 3. Reads back the results from GPU memory
-    /// 4. Handles potential errors like mismatched buffer sizes
-    ///
-    /// # Safety and Performance
-    ///
-    /// - Uses a 1D dispatch model for simplicity and reliability
-    /// - Properly scales workgroups based on grid size
-    /// - Performs bounds checking in the shader to prevent out-of-bounds access
+    /// An `EntropyGrid` containing the entropy values calculated by the GPU. If reading the results
+    /// from the GPU fails, an empty grid with the correct dimensions is returned, and an error is logged.
     #[must_use]
     fn calculate_entropy(&self, _grid: &PossibilityGrid) -> EntropyGrid {
         // Assuming grid state is primarily managed on the GPU via self.buffers.grid_possibilities_buf
@@ -295,19 +291,24 @@ impl EntropyCalculator for GpuAccelerator {
         }
     }
 
-    /// Finds the cell with the lowest non-zero entropy.
+    /// Finds the coordinates of the cell with the lowest positive entropy using results from the GPU.
     ///
-    /// This helps identify the next cell to collapse in the WFC algorithm.
-    /// Currently uses CPU implementation after downloading entropy values.
+    /// This method retrieves the minimum entropy value and its corresponding index, which were
+    /// calculated and stored in the `min_entropy_info_buf` by the `calculate_entropy` compute shader.
     ///
-    /// # Arguments
+    /// 1. Reads the `min_entropy_info_buf` from the GPU to the CPU.
+    /// 2. Parses the buffer content to extract the minimum entropy value (`min_val`) and the flat index (`min_idx`).
+    /// 3. If `min_val` is positive (indicating a valid, uncollapsed cell was found),
+    ///    converts the flat `min_idx` back into 3D `(x, y, z)` coordinates.
+    /// 4. Returns `Some((x, y, z))` if a minimum positive entropy cell was found, otherwise returns `None`.
     ///
-    /// * `entropy_grid` - Grid containing entropy values for each cell
+    /// Note: The `_entropy_grid` parameter (CPU-side `EntropyGrid`) is unused as the minimum is determined
+    /// directly from the GPU buffer populated during the `calculate_entropy` step.
     ///
     /// # Returns
     ///
-    /// Option containing the coordinates of the cell with lowest entropy,
-    /// or None if no valid cell is found
+    /// * `Some((x, y, z))` - Coordinates of the cell with the lowest positive entropy found by the GPU.
+    /// * `None` - If no cell with positive entropy was found (e.g., grid fully collapsed or error).
     #[must_use]
     fn find_lowest_entropy(&self, _entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)> {
         // GPU reduction happens during calculate_entropy. Here we just download the result.
@@ -361,38 +362,45 @@ impl EntropyCalculator for GpuAccelerator {
 }
 
 impl ConstraintPropagator for GpuAccelerator {
-    /// Propagates constraints through the grid after a cell is collapsed.
+    /// Performs constraint propagation on the GPU using compute shaders.
     ///
-    /// This is the core of the WFC algorithm, ensuring that all cells maintain
-    /// consistent possibilities based on the adjacency rules and the constraints
-    /// introduced by collapsing a cell.
+    /// This method handles the propagation of changes across the grid based on
+    /// the `updated_coords` provided. It leverages the GPU for parallel processing.
+    ///
+    /// # Workflow:
+    ///
+    /// 1.  **Upload Updates**: Writes the `updated_coords` list to the dedicated `updated_cells_buf` on the GPU.
+    /// 2.  **Reset Contradiction Flag**: Clears the `contradiction_flag_buf` before running the shader.
+    /// 3.  **Shader Dispatch**: Executes the `propagate.wgsl` compute shader.
+    ///     -   The shader reads the updated cells.
+    ///     -   For each updated cell, it examines neighbors based on `rules_buf`.
+    ///     -   It calculates the intersection of allowed tiles and updates the main `grid_possibilities_buf`.
+    ///     -   If a contradiction (empty possibility set) is detected, it sets the `contradiction_flag_buf`.
+    ///     -   (Note: The current shader might perform a fixed number of iterations or a simplified propagation step).
+    /// 4.  **Synchronization**: Submits the command buffer and waits for the GPU to finish (implicitly via buffer mapping or explicit polling if needed).
+    /// 5.  **Check Contradiction**: Reads the `contradiction_flag_buf` back to the CPU.
+    /// 6.  **Return Result**: Returns `Ok(())` if the contradiction flag is not set, or `Err(PropagationError::Contradiction(x, y, z))`
+    ///     if a contradiction was detected (coordinates might be approximate or the first detected one).
     ///
     /// # Arguments
     ///
-    /// * `_grid` - Current grid state (not directly used in GPU implementation)
-    /// * `updated_coords` - Coordinates of cells that were updated/collapsed
-    /// * `_rules` - Adjacency rules (not directly used, as they're already on GPU)
+    /// * `_grid`: Mutable reference to the CPU-side `PossibilityGrid`. **Note:** This implementation primarily operates
+    ///            on the GPU buffers (`self.buffers`). The CPU grid is *not* directly modified by this function.
+    ///            The caller is responsible for potentially reading back the updated grid state from the GPU
+    ///            using separate buffer reading methods if needed after the run completes.
+    /// * `updated_coords`: A vector of `(x, y, z)` coordinates indicating cells whose possibilities have recently changed
+    ///                     (e.g., due to a collapse) and need to be propagated from.
+    /// * `_rules`: Reference to the `AdjacencyRules`. **Note:** This is not directly used, as the rules are assumed
+    ///             to be already present in `self.buffers.rules_buf` on the GPU.
     ///
     /// # Returns
     ///
-    /// Result indicating success or a contradiction with coordinates
-    ///
-    /// # Implementation Details
-    ///
-    /// 1. Converts updated coordinates to indices for the GPU
-    /// 2. Uploads the indices to the GPU
-    /// 3. Sets up and dispatches the compute shader
-    /// 4. Explicitly synchronizes and waits for GPU completion
-    /// 5. Checks for contradictions
-    ///
-    /// # Safety and Hang Prevention
-    ///
-    /// Several measures prevent indefinite hanging:
-    /// - Emergency timeout to abort operations that take too long
-    /// - Explicit GPU polling to ensure work completes
-    /// - Shader bounds checking to prevent out-of-bounds memory access
-    /// - Simple 1D workgroup model to avoid thread mapping errors
-    /// - Output worklist size limits to prevent infinite loops
+    /// * `Ok(())` if the propagation shader executed successfully without detecting a contradiction.
+    /// * `Err(PropagationError::Contradiction(x, y, z))` if the shader detected and flagged a contradiction.
+    ///   The coordinates might indicate the first cell where the contradiction was found.
+    /// * `Err(PropagationError::Gpu*Error)` if a GPU-specific error occurs during buffer updates or shader execution,
+    ///   wrapped within the `PropagationError` enum.
+    #[must_use]
     fn propagate(
         &mut self,
         _grid: &mut PossibilityGrid,

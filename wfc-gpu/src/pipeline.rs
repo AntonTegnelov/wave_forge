@@ -1,16 +1,43 @@
 use crate::GpuError;
 use wgpu;
 
-// Placeholder struct for managing GPU pipelines
+/// Manages the WGPU compute pipelines required for WFC acceleration.
+///
+/// This struct holds the compiled compute pipeline objects and their corresponding
+/// bind group layouts for both the entropy calculation and constraint propagation shaders.
+/// It is typically created once during the initialization of the `GpuAccelerator`.
 pub struct ComputePipelines {
+    /// The compiled compute pipeline for the entropy calculation shader (`entropy.wgsl`).
     pub entropy_pipeline: wgpu::ComputePipeline,
+    /// The compiled compute pipeline for the constraint propagation shader (`propagate.wgsl`).
     pub propagation_pipeline: wgpu::ComputePipeline,
-    // Keep layouts if needed elsewhere (e.g., for creating bind groups dynamically)
+    /// The layout describing the binding structure for the entropy pipeline's bind group.
+    /// Required for creating bind groups compatible with `entropy_pipeline`.
     pub entropy_bind_group_layout: wgpu::BindGroupLayout,
+    /// The layout describing the binding structure for the propagation pipeline's bind group.
+    /// Required for creating bind groups compatible with `propagation_pipeline`.
     pub propagation_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl ComputePipelines {
+    /// Creates new `ComputePipelines` by loading shaders and compiling them.
+    ///
+    /// This function:
+    /// 1. Loads the WGSL source code for the entropy and propagation shaders.
+    /// 2. Creates `wgpu::ShaderModule` objects from the source code.
+    /// 3. Defines the `wgpu::BindGroupLayout` for each shader, specifying the types and bindings
+    ///    of the GPU buffers they expect (e.g., storage buffers, uniform buffers).
+    /// 4. Defines the `wgpu::PipelineLayout` using the bind group layouts.
+    /// 5. Creates the `wgpu::ComputePipeline` objects using the shader modules and pipeline layouts.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - A reference to the WGPU `Device` used for creating pipeline resources.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Self)` containing the initialized `ComputePipelines`.
+    /// * `Err(GpuError)` if shader loading, compilation, or pipeline creation fails.
     pub fn new(device: &wgpu::Device) -> Result<Self, GpuError> {
         // Load shader code
         let entropy_shader_code = include_str!("shaders/entropy.wgsl");
