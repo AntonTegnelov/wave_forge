@@ -146,7 +146,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
     - [x] Define `ProgressReporter` trait with methods for reporting status updates
     - [x] Implement console reporter with percentage complete, ETA, and current operation
     - [x] Support throttling of updates to avoid performance impact
-    - [ ] Add statistics tracking (contradictions, backtracks, collapsed cells)
+    - [x] Add statistics tracking (contradictions, collapsed cells)
 - **File:** `wave-forge-app/src/visualization.rs`
   - [ ] Implement simple visualization modes:
     - [x] Define `Visualizer` trait with methods to display current WFC state

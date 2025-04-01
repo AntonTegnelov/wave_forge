@@ -42,8 +42,9 @@ pub use crate::tile::TileSetError;
 #[derive(Error, Debug, Clone)]
 pub enum WfcError {
     /// Propagation failed due to finding a cell with no possible tiles remaining.
-    #[error("Propagation failed: Contradiction found")]
-    Contradiction,
+    /// Includes the (x, y, z) coordinates of the contradictory cell.
+    #[error("Propagation failed: Contradiction found at ({0}, {1}, {2})")]
+    Contradiction(usize, usize, usize),
     /// An error occurred during the constraint propagation phase.
     #[error("Propagation error: {0}")]
     PropagationError(#[from] PropagationError),

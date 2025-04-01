@@ -1,7 +1,7 @@
 use crate::{
     entropy::EntropyCalculator,
     grid::PossibilityGrid,
-    propagator::ConstraintPropagator,
+    propagator::{ConstraintPropagator, PropagationError},
     rules::AdjacencyRules,
     tile::{TileId, TileSet},
     ProgressInfo, WfcError,
@@ -61,6 +61,8 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     let depth = grid.depth;
     let total_cells = width * height * depth;
     let mut collapsed_cells_count = 0;
+    #[allow(unused_assignments)]
+    let mut contradiction_count = 0;
     let num_tiles = grid.num_tiles();
 
     // Pre-calculate initial collapsed count using local dimensions
@@ -72,7 +74,8 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                     let count = cell.count_ones();
                     if count == 0 {
                         error!("Initial contradiction found at ({}, {}, {})", x, y, z);
-                        return Err(WfcError::Contradiction);
+                        contradiction_count += 1;
+                        return Err(WfcError::Contradiction(x, y, z));
                     } else if count == 1 {
                         collapsed_cells_count += 1;
                     }
@@ -100,10 +103,14 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         "Running initial propagation for all {} cells...",
         all_coords.len()
     );
-    propagator.propagate(grid, all_coords, rules).map_err(|e| {
-        error!("Initial propagation failed: {:?}", e);
-        WfcError::from(e)
-    })?;
+    if let Err(prop_err) = propagator.propagate(grid, all_coords, rules) {
+        error!("Initial propagation failed: {:?}", prop_err);
+        if let PropagationError::Contradiction(cx, cy, cz) = prop_err {
+            contradiction_count += 1;
+            return Err(WfcError::Contradiction(cx, cy, cz));
+        }
+        return Err(WfcError::from(prop_err));
+    }
     // Recalculate collapsed count after initial propagation
     {
         let current_grid = &*grid; // Reborrow immutably
@@ -158,7 +165,8 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
 
             if possible_tile_indices.is_empty() {
                 error!("Contradiction detected at ({}, {}, {}): No possible tiles left (collapse phase).", x, y, z);
-                return Err(WfcError::Contradiction);
+                contradiction_count += 1;
+                return Err(WfcError::Contradiction(x, y, z));
             }
 
             if possible_tile_indices.len() > 1 {
@@ -212,15 +220,17 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
 
                 // --- 3. Propagate Constraints ---
                 debug!("Propagating constraints from ({}, {}, {})...", x, y, z);
-                propagator
-                    .propagate(grid, vec![(x, y, z)], rules)
-                    .map_err(|e| {
-                        error!(
-                            "Propagation failed after collapsing ({}, {}, {}): {:?}",
-                            x, y, z, e
-                        );
-                        WfcError::from(e)
-                    })?;
+                if let Err(prop_err) = propagator.propagate(grid, vec![(x, y, z)], rules) {
+                    error!(
+                        "Propagation failed after collapsing ({}, {}, {}): {:?}",
+                        x, y, z, prop_err
+                    );
+                    if let PropagationError::Contradiction(cx, cy, cz) = prop_err {
+                        contradiction_count += 1;
+                        return Err(WfcError::Contradiction(cx, cy, cz));
+                    }
+                    return Err(WfcError::from(prop_err));
+                }
                 debug!("Propagation successful.");
                 // Recalculate collapsed count AFTER propagation
                 {
@@ -271,10 +281,10 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         // --- Call Progress Callback ---
         if let Some(ref callback) = progress_callback {
             let progress_info = ProgressInfo {
-                iteration: iterations, // Use the incremented iteration count
+                iteration: iterations,
                 collapsed_cells: collapsed_cells_count,
                 total_cells,
-                contradictions: None, // TODO: Track contradictions if needed later
+                contradictions: Some(contradiction_count),
             };
             callback(progress_info);
         }

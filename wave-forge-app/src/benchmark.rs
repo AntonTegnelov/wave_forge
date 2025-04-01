@@ -720,7 +720,7 @@ mod tests {
             grid_depth: 4,
             num_tiles: 3,
             total_time: Duration::from_millis(567),
-            wfc_result: Err(WfcError::Contradiction),
+            wfc_result: Err(WfcError::Contradiction(0, 0, 0)),
             iterations: Some(50),
             collapsed_cells: Some(60),
         };

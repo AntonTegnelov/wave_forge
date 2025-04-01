@@ -81,15 +81,22 @@ impl ProgressReporter for ConsoleProgressReporter {
                 "ETA: N/A".to_string()
             };
 
+            // Add contradiction count if available
+            let contra_str = info.contradictions.map_or_else(
+                || "".to_string(), // No count available
+                |count| format!(" | Contradictions: {}", count),
+            );
+
             // Use standard println! or log::info! - using log::info!
             log::info!(
-                "Progress: Iter: {} | Collapsed: {}/{} ({:.1}%) | Elapsed: {} | {}",
+                "Progress: Iter: {} | Collapsed: {}/{} ({:.1}%) | Elapsed: {}{}{}",
                 info.iteration,
                 info.collapsed_cells,
                 info.total_cells,
                 percentage,
                 Self::format_duration(elapsed),
-                eta_str
+                eta_str,
+                contra_str
             );
 
             self.last_report_time = now;
@@ -121,6 +128,7 @@ impl ProgressReporter for ConsoleProgressReporter {
 mod tests {
     use super::*;
     use std::{thread, time::Duration};
+    use wfc_core::WfcError; // Ensure WfcError is imported for tests
 
     #[test]
     fn test_console_reporter_basic_flow() {
@@ -130,7 +138,7 @@ mod tests {
             iteration: 10,
             collapsed_cells: 50,
             total_cells: 1000,
-            contradictions: None,
+            contradictions: Some(2), // Add contradiction info
         };
         // First report should always print
         let res1 = reporter.report(&info1);
@@ -142,7 +150,7 @@ mod tests {
             iteration: 11,
             collapsed_cells: 55,
             total_cells: 1000,
-            contradictions: None,
+            contradictions: Some(2),
         };
         let res2 = reporter.report(&info2);
         assert!(res2.is_ok());
@@ -155,7 +163,7 @@ mod tests {
             iteration: 20,
             collapsed_cells: 100,
             total_cells: 1000,
-            contradictions: None,
+            contradictions: Some(3), // Increment contradictions
         };
         let res3 = reporter.report(&info3);
         assert!(res3.is_ok());
@@ -178,7 +186,7 @@ mod tests {
             iteration: 0,
             collapsed_cells: 0,
             total_cells: 0,
-            contradictions: None,
+            contradictions: Some(0), // Contradictions can be 0
         };
         let res = reporter.report(&info);
         // Should report 100% and N/A for ETA without error
