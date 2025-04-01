@@ -36,11 +36,40 @@ pub struct TerminalVisualizer;
 
 impl Visualizer for TerminalVisualizer {
     fn display_state(&mut self, grid: &PossibilityGrid) -> Result<(), anyhow::Error> {
-        // Placeholder: Print basic grid info
-        println!("--- Visualization Frame ---");
-        println!("Grid: {}x{}x{}", grid.width, grid.height, grid.depth);
-        // TODO: Implement actual terminal rendering
-        println!("---------------------------");
+        println!("--- Visualization Frame (Z=0 Slice) ---");
+        if grid.depth == 0 || grid.height == 0 || grid.width == 0 {
+            println!("(Grid is empty or flat)");
+            println!("-------------------------------------");
+            return Ok(());
+        }
+
+        let z = 0; // Display only the first layer for simplicity
+        for y in 0..grid.height {
+            for x in 0..grid.width {
+                if let Some(cell) = grid.get(x, y, z) {
+                    let possibilities = cell.count_ones();
+                    let char_to_print = match possibilities {
+                        0 => 'X', // Contradiction
+                        1 => {
+                            // Find the single possible TileId
+                            let tile_id_index = cell.iter_ones().next().unwrap_or(0); // Should always have one
+                                                                                      // Simple mapping: 0 -> '0', 1 -> '1', ... 9 -> '9', 10+ -> '+'
+                            if tile_id_index < 10 {
+                                std::char::from_digit(tile_id_index as u32, 10).unwrap_or('#')
+                            } else {
+                                '+'
+                            }
+                        }
+                        _ => '?', // Multiple possibilities
+                    };
+                    print!("{}", char_to_print);
+                } else {
+                    print!("E"); // Error getting cell
+                }
+            }
+            println!(); // Newline after each row
+        }
+        println!("-------------------------------------");
         Ok(())
     }
 }
