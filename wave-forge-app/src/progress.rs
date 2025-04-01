@@ -4,7 +4,7 @@ use crate::{ProgressReporter, ReporterConfig};
 use anyhow::Result;
 use log;
 use std::time::{Duration, Instant};
-use wfc_core::{ProgressInfo, WfcError}; // Added WfcError
+use wfc_core::ProgressInfo;
 
 /// Trait for reporting the progress of the WFC algorithm.
 ///
@@ -124,7 +124,6 @@ impl ProgressReporter for ConsoleProgressReporter {
 mod tests {
     use super::*;
     use std::{thread, time::Duration};
-    use wfc_core::WfcError; // Ensure WfcError is imported for tests
 
     #[test]
     fn test_console_reporter_basic_flow() {

@@ -154,6 +154,8 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
     - [x] Add simple 2D slice visualization of the 3D grid state
     - [ ] Support toggling visualization on/off during runtime
     - [x] Implement color coding for entropy levels and cell states
+    - [x] Add ability to focus on specific layers/slices of the 3D grid
+    - [x] Implement Simple2DVisualizer (using a basic 2D graphics library like minifb or pixels)
 - **File:** `wave-forge-app/src/main.rs`
   - [x] Parse arguments into `AppConfig`.
   - [x] Load rules using `wfc-rules::loader::load_from_file`.

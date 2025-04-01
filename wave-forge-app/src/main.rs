@@ -19,7 +19,7 @@ use clap::Parser;
 use config::AppConfig;
 use config::VisualizationMode;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use visualization::{TerminalVisualizer, Visualizer};
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
@@ -46,18 +46,29 @@ async fn main() -> Result<()> {
     log::debug!("Loaded Config: {:?}", config);
 
     // --- Initialize Visualizer (if configured) ---
-    #[allow(unused_variables, unused_mut)] // Allow unused for now
-    let mut visualizer: Option<Box<dyn Visualizer + Send + Sync>> = match config.visualization_mode
-    {
+    #[allow(unused_variables, unused_mut)]
+    let mut visualizer: Option<Box<dyn Visualizer>> = match config.visualization_mode {
         VisualizationMode::None => None,
         VisualizationMode::Terminal => {
             log::info!("Terminal visualization enabled.");
             Some(Box::new(TerminalVisualizer::new()))
         }
         VisualizationMode::Simple2D => {
-            log::warn!("Simple2D visualization not yet implemented, using None.");
-            // TODO: Instantiate Simple2DVisualizer when implemented
-            None
+            log::info!("Simple2D visualization enabled.");
+            match visualization::Simple2DVisualizer::new(
+                &format!("Wave Forge - {}x{}", config.width, config.height),
+                config.width,
+                config.height,
+            ) {
+                Ok(viz) => Some(Box::new(viz)),
+                Err(e) => {
+                    log::error!(
+                        "Failed to initialize Simple2DVisualizer: {}. Visualization disabled.",
+                        e
+                    );
+                    None
+                }
+            }
         }
     };
     // TODO: Call initial display? visualizer.as_mut().map(|v| v.display_state(&initial_grid));
@@ -275,9 +286,9 @@ async fn main() -> Result<()> {
 
         let progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>> =
             if let Some(interval) = report_interval {
-                let last_report_time_clone = Arc::clone(&last_report_time); // Clone Arc here
+                let last_report_time_clone = Arc::clone(&last_report_time);
                 Some(Box::new(move |info: wfc_core::ProgressInfo| {
-                    let mut last_time = last_report_time_clone.lock().unwrap(); // Use cloned Arc
+                    let mut last_time = last_report_time_clone.lock().unwrap();
                     if last_time.elapsed() >= interval {
                         let percentage = if info.total_cells > 0 {
                             (info.collapsed_cells as f32 / info.total_cells as f32) * 100.0
