@@ -188,4 +188,4 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - [ ] Implement configurable logging levels for progress reporting.
 - [ ] Add benchmark results to documentation.
 - [ ] Create sample configurations for different visualization modes.
-- [ ] Add ability to focus on specific layers/slices of the 3D grid
+- [x] Add ability to focus on specific layers/slices of the 3D grid

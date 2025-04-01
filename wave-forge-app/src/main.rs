@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
         VisualizationMode::None => None,
         VisualizationMode::Terminal => {
             log::info!("Terminal visualization enabled.");
-            Some(Box::new(TerminalVisualizer {}))
+            Some(Box::new(TerminalVisualizer::new()))
         }
         VisualizationMode::Simple2D => {
             log::warn!("Simple2D visualization not yet implemented, using None.");

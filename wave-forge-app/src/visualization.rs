@@ -32,20 +32,38 @@ pub trait Visualizer {
 // --- Implementations ---
 
 // TODO: Implement TerminalVisualizer
-/// A placeholder visualizer intended to render the grid state in the terminal.
-// Placeholder implementation
-pub struct TerminalVisualizer;
+/// A visualizer that renders a 2D slice of the grid state in the terminal.
+pub struct TerminalVisualizer {
+    /// The Z-layer index to display.
+    z_layer: usize,
+}
+
+impl TerminalVisualizer {
+    /// Creates a new TerminalVisualizer focused on layer 0.
+    pub fn new() -> Self {
+        Self { z_layer: 0 }
+    }
+
+    /// Sets the Z-layer index to be displayed.
+    pub fn set_layer(&mut self, z_layer: usize) {
+        self.z_layer = z_layer;
+    }
+}
 
 impl Visualizer for TerminalVisualizer {
     fn display_state(&mut self, grid: &PossibilityGrid) -> Result<(), anyhow::Error> {
-        println!("--- Visualization Frame (Z=0 Slice) ---");
-        if grid.depth == 0 || grid.height == 0 || grid.width == 0 {
-            println!("(Grid is empty or flat)");
+        println!("--- Visualization Frame (Z={} Slice) ---", self.z_layer);
+        if self.z_layer >= grid.depth || grid.height == 0 || grid.width == 0 {
+            println!(
+                "(Grid is empty or Z-layer {} is out of bounds [0..{}])",
+                self.z_layer,
+                grid.depth.saturating_sub(1)
+            );
             println!("-------------------------------------");
             return Ok(());
         }
 
-        let z = 0; // Display only the first layer for simplicity
+        let z = self.z_layer; // Use the stored layer index
         for y in 0..grid.height {
             for x in 0..grid.width {
                 if let Some(cell) = grid.get(x, y, z) {
