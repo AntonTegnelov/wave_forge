@@ -393,7 +393,6 @@ impl ConstraintPropagator for GpuAccelerator {
     ///   The coordinates might indicate the first cell where the contradiction was found.
     /// * `Err(PropagationError::Gpu*Error)` if a GPU-specific error occurs during buffer updates or shader execution,
     ///   wrapped within the `PropagationError` enum.
-    #[must_use]
     fn propagate(
         &mut self,
         _grid: &mut PossibilityGrid,

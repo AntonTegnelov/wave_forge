@@ -71,6 +71,12 @@ pub struct TerminalVisualizer {
     enabled: bool,
 }
 
+impl Default for TerminalVisualizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TerminalVisualizer {
     /// Creates a new TerminalVisualizer focused on layer 0.
     pub fn new() -> Self {
@@ -183,8 +189,8 @@ fn get_color(possibilities: &BitSlice<usize, Lsb0>, num_tiles: usize) -> u32 {
         }
         _ => {
             // Not collapsed - use blue, intensity based on entropy (possibility count proxy)
-            let blue = (255 - (count * 200 / num_tiles).min(200)) as u32; // More possibilities = darker blue
-            blue
+            // More possibilities = darker blue
+            (255 - (count * 200 / num_tiles).min(200)) as u32
         }
     }
 }
@@ -202,6 +208,12 @@ pub struct Simple2DVisualizer {
 impl Simple2DVisualizer {
     /// Creates a new Simple2DVisualizer window.
     ///
+    /// # Parameters
+    ///
+    /// * `title` - The title of the visualization window
+    /// * `grid_width` - The width of the grid (currently using fixed window size instead)
+    /// * `grid_height` - The height of the grid (currently using fixed window size instead)
+    ///
     /// # Errors
     ///
     /// Returns an error if the window cannot be created.
@@ -210,9 +222,9 @@ impl Simple2DVisualizer {
         _grid_width: usize,
         _grid_height: usize,
     ) -> Result<Self, anyhow::Error> {
-        // Prefix unused vars
-        // Determine window size - maybe scale based on grid size?
-        // For now, use defaults, but ensure buffer matches window.
+        // Using fixed window size rather than scaling based on grid dimensions
+        // This allows consistent window size regardless of grid size
+        // TODO: Consider implementing proper scaling based on grid dimensions
         let window_width = DEFAULT_WINDOW_WIDTH;
         let window_height = DEFAULT_WINDOW_HEIGHT;
 

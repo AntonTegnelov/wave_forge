@@ -158,7 +158,7 @@ pub async fn run_single_benchmark(
         num_tiles: rules.num_tiles(),
         total_time,
         wfc_result,
-        iterations: final_progress.as_ref().map(|p| p.iteration as usize),
+        iterations: final_progress.as_ref().map(|p| p.iteration),
         collapsed_cells: final_progress.as_ref().map(|p| p.collapsed_cells),
     })
 }
@@ -314,9 +314,6 @@ pub fn report_single_result(result: &BenchmarkResult) {
     // Adjust separator
 }
 
-// TODO: Implement CSV output function
-// TODO: Implement function to run benchmarks for various grid sizes/complexities
-
 /// Writes a collection of benchmark results to a CSV file.
 ///
 /// Creates a CSV file at the specified path and writes the header row followed by
@@ -340,8 +337,11 @@ type BenchmarkTuple = (BenchmarkResult, BenchmarkResult);
 #[cfg(not(feature = "gpu"))]
 type BenchmarkTuple = BenchmarkResult;
 
+/// Type alias for a tuple containing grid dimensions and benchmark result
+pub type BenchmarkResultTuple = ((usize, usize, usize), Result<BenchmarkTuple, anyhow::Error>);
+
 pub fn write_results_to_csv(
-    results: &[((usize, usize, usize), Result<BenchmarkTuple, anyhow::Error>)],
+    results: &[BenchmarkResultTuple],
     filepath: &Path,
 ) -> Result<(), anyhow::Error> {
     log::info!("Writing benchmark results to CSV: {:?}", filepath);
@@ -753,7 +753,7 @@ mod tests {
             collapsed_cells: Some(60),
         };
 
-        let results: Vec<((usize, usize, usize), Result<BenchmarkTuple, anyhow::Error>)> = vec![
+        let results: Vec<BenchmarkResultTuple> = vec![
             ((8, 8, 8), Ok(cpu_result_ok)),
             ((4, 4, 4), Ok(cpu_result_fail)),
             ((2, 2, 2), Err(anyhow::anyhow!("Setup failed"))),
@@ -828,7 +828,7 @@ mod tests {
             collapsed_cells: Some(64),
         };
 
-        let results: Vec<((usize, usize, usize), Result<BenchmarkTuple, anyhow::Error>)> = vec![
+        let results: Vec<BenchmarkResultTuple> = vec![
             ((8, 8, 8), Ok((cpu_result.clone(), gpu_result.clone()))),
             (
                 (4, 4, 4),

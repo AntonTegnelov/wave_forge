@@ -183,8 +183,7 @@ async fn main() -> Result<()> {
         type BenchmarkTuple = (benchmark::BenchmarkResult, benchmark::BenchmarkResult);
         #[cfg(not(feature = "gpu"))]
         type BenchmarkTuple = benchmark::BenchmarkResult;
-        let mut all_results: Vec<((usize, usize, usize), Result<BenchmarkTuple, anyhow::Error>)> =
-            Vec::new();
+        let mut all_results: Vec<benchmark::BenchmarkResultTuple> = Vec::new();
 
         #[cfg(feature = "gpu")]
         {
@@ -224,7 +223,7 @@ async fn main() -> Result<()> {
                     PossibilityGrid::new(width, height, depth, tileset.weights.len());
                 let result =
                     benchmark::run_single_benchmark("CPU", &mut cpu_grid, &tileset, &rules).await;
-                all_results.push(((width, height, depth), result.map_err(anyhow::Error::from)));
+                all_results.push(((width, height, depth), result));
             }
         }
 
