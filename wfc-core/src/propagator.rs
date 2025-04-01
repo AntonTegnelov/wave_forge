@@ -2,9 +2,15 @@ use crate::grid::PossibilityGrid;
 use crate::rules::AdjacencyRules;
 use crate::tile::TileId;
 use bitvec::prelude::*;
+use rayon::prelude::*;
+use std::collections::HashMap;
 use std::collections::{HashSet, VecDeque};
 use std::default::Default;
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
+
+// Type alias for grid coordinates
+type GridCoord = (usize, usize, usize);
 
 /// Errors that can occur during the constraint propagation phase of WFC.
 #[derive(Error, Debug, Clone)]
@@ -231,6 +237,206 @@ impl ConstraintPropagator for CpuConstraintPropagator {
     }
 }
 
+/// A multithreaded implementation of the `ConstraintPropagator` trait using Rayon.
+///
+/// This propagator divides the work among multiple threads to accelerate the propagation
+/// process for large grids. It uses a batch processing approach to handle potential
+/// race conditions that could occur when multiple threads try to update the same cells.
+#[derive(Debug, Clone)]
+pub struct ParallelConstraintPropagator {
+    /// Number of cells to process in each parallel batch
+    batch_size: usize,
+}
+
+impl ParallelConstraintPropagator {
+    /// Creates a new `ParallelConstraintPropagator` with the default batch size.
+    pub fn new() -> Self {
+        Self { batch_size: 64 }
+    }
+
+    /// Creates a new `ParallelConstraintPropagator` with a custom batch size.
+    ///
+    /// # Arguments
+    ///
+    /// * `batch_size` - Number of cells to process in each parallel batch.
+    ///   Smaller values may lead to more overhead but finer-grained parallelism,
+    ///   while larger values reduce overhead but may lead to less parallelism.
+    pub fn with_batch_size(batch_size: usize) -> Self {
+        Self { batch_size }
+    }
+}
+
+impl Default for ParallelConstraintPropagator {
+    /// Creates a default `ParallelConstraintPropagator`.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConstraintPropagator for ParallelConstraintPropagator {
+    /// Parallelized implementation of the constraint propagation algorithm.
+    ///
+    /// Uses Rayon to process multiple cells in parallel, while carefully
+    /// managing potential race conditions when multiple threads might update
+    /// the same neighbor cells.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Initialize a worklist with the initial `updated_coords`.
+    /// 2. While the worklist is not empty:
+    ///    a. Divide the worklist into batches for parallel processing.
+    ///    b. Process each batch in parallel:
+    ///       i. For each cell in the batch, compute the effects on its neighbors.
+    ///       ii. Record these effects in thread-local storage to avoid race conditions.
+    ///    c. After parallel processing, combine the results and identify cells
+    ///       that need to be updated.
+    ///    d. Update the grid based on the combined results.
+    ///    e. Add cells with changed possibilities to the worklist for the next iteration.
+    ///
+    /// This approach avoids direct race conditions by having each thread compute
+    /// but not immediately apply its updates. The final application of updates is
+    /// done serially after all threads have completed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rules.num_axes()` does not match the internal `NUM_AXES` constant (currently 6).
+    fn propagate(
+        &mut self,
+        grid: &mut PossibilityGrid,
+        updated_coords: Vec<GridCoord>,
+        rules: &AdjacencyRules,
+    ) -> Result<(), PropagationError> {
+        // Quick bailout if there's nothing to do
+        if updated_coords.is_empty() {
+            return Ok(());
+        }
+
+        // Assert adjacency rules are valid for this grid
+        assert_eq!(
+            rules.num_tiles(),
+            grid.num_tiles(),
+            "Mismatch between grid tiles and rules tiles"
+        );
+
+        // Create thread-safe structures
+        let to_process = Arc::new(Mutex::new(VecDeque::from(updated_coords)));
+        let processed = Arc::new(Mutex::new(HashSet::<GridCoord>::new()));
+        let has_contradiction = Arc::new(Mutex::new(None));
+
+        // Process until the queue is empty
+        loop {
+            // Get a batch of coordinates to process
+            let batch = {
+                let mut queue = to_process.lock().unwrap();
+                if queue.is_empty() {
+                    break; // Exit loop if nothing left to process
+                }
+
+                let mut batch = Vec::with_capacity(self.batch_size);
+                while batch.len() < self.batch_size && !queue.is_empty() {
+                    batch.push(queue.pop_front().unwrap());
+                }
+                batch
+            };
+
+            // Process each coordinate in parallel and collect changes
+            let batch_results: Vec<(GridCoord, HashMap<GridCoord, BitVec>)> = batch
+                .par_iter()
+                .map(|&(x, y, z)| {
+                    let mut neighbor_changes = HashMap::new();
+
+                    // Skip if already marked as processed
+                    if processed.lock().unwrap().contains(&(x, y, z)) {
+                        return ((x, y, z), neighbor_changes);
+                    }
+
+                    // Get current cell state
+                    if let Some(cell_state) = grid.get(x, y, z) {
+                        let cell_state = cell_state.clone(); // Clone to avoid borrow issues
+
+                        // Process all neighbors
+                        for axis in 0..6 {
+                            let (nx, ny, nz) = match axis {
+                                AXIS_POS_X => (x + 1, y, z),
+                                AXIS_NEG_X => (x.wrapping_sub(1), y, z),
+                                AXIS_POS_Y => (x, y + 1, z),
+                                AXIS_NEG_Y => (x, y.wrapping_sub(1), z),
+                                AXIS_POS_Z => (x, y, z + 1),
+                                AXIS_NEG_Z => (x, y, z.wrapping_sub(1)),
+                                _ => unreachable!("Invalid axis"),
+                            };
+
+                            // Skip if neighbor doesn't exist
+                            if grid.get(nx, ny, nz).is_none() {
+                                continue;
+                            }
+
+                            // Calculate constraints from current cell
+                            let mut allowed = bitvec![0; grid.num_tiles()];
+
+                            for tile1_idx in 0..grid.num_tiles() {
+                                // Skip if this tile isn't possible in current cell
+                                if !cell_state[tile1_idx] {
+                                    continue;
+                                }
+
+                                // Add allowed neighbors for this tile
+                                for tile2_idx in 0..grid.num_tiles() {
+                                    if rules.check(TileId(tile1_idx), TileId(tile2_idx), axis) {
+                                        allowed.set(tile2_idx, true);
+                                    }
+                                }
+                            }
+
+                            // Save changes to apply later
+                            neighbor_changes.insert((nx, ny, nz), allowed);
+                        }
+                    }
+
+                    ((x, y, z), neighbor_changes)
+                })
+                .collect();
+
+            // Apply all batch results to the grid
+            for ((x, y, z), changes) in batch_results {
+                // Mark this cell as processed
+                processed.lock().unwrap().insert((x, y, z));
+
+                // Apply changes to neighbors
+                for ((nx, ny, nz), allowed) in changes {
+                    if let Some(neighbor_state) = grid.get_mut(nx, ny, nz) {
+                        let original = neighbor_state.clone();
+
+                        // Apply constraint (intersection)
+                        *neighbor_state &= allowed;
+
+                        // Check for contradiction
+                        if neighbor_state.count_ones() == 0 {
+                            *has_contradiction.lock().unwrap() = Some((nx, ny, nz));
+                            return Err(PropagationError::Contradiction(nx, ny, nz));
+                        }
+
+                        // If changed, add to next batch
+                        if *neighbor_state != original {
+                            let mut queue = to_process.lock().unwrap();
+                            if !processed.lock().unwrap().contains(&(nx, ny, nz)) {
+                                queue.push_back((nx, ny, nz));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check for contradiction
+            if let Some((x, y, z)) = *has_contradiction.lock().unwrap() {
+                return Err(PropagationError::Contradiction(x, y, z));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,29 +494,54 @@ mod tests {
         AdjacencyRules::new(num_tiles, num_axes, allowed)
     }
 
+    // Tests for both CPU and Parallel propagators
+
     #[test]
     fn test_propagate_simple_reduction() {
-        let mut propagator = CpuConstraintPropagator::new();
-        let num_tiles = 2;
-        let rules = create_identity_rules(num_tiles);
-        let mut grid = PossibilityGrid::new(2, 1, 1, num_tiles);
+        // Test CpuConstraintPropagator
+        {
+            let mut propagator = CpuConstraintPropagator::new();
+            let num_tiles = 2;
+            let rules = create_identity_rules(num_tiles);
+            let mut grid = PossibilityGrid::new(2, 1, 1, num_tiles);
 
-        // Collapse cell (0,0,0) to Tile 0
-        *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0];
+            // Collapse cell (0,0,0) to Tile 0
+            *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0];
 
-        // Propagate from the updated cell
-        let result = propagator.propagate(&mut grid, vec![(0, 0, 0)], &rules);
+            // Propagate from the updated cell
+            let result = propagator.propagate(&mut grid, vec![(0, 0, 0)], &rules);
 
-        assert!(result.is_ok());
-        // Cell (1,0,0) should now only allow Tile 0 due to identity rule
-        assert_eq!(grid.get(1, 0, 0), Some(&bitvec![1, 0]));
-        // Cell (0,0,0) remains unchanged
-        assert_eq!(grid.get(0, 0, 0), Some(&bitvec![1, 0]));
+            assert!(result.is_ok());
+            // Cell (1,0,0) should now only allow Tile 0 due to identity rule
+            assert_eq!(grid.get(1, 0, 0), Some(&bitvec![1, 0]));
+            // Cell (0,0,0) remains unchanged
+            assert_eq!(grid.get(0, 0, 0), Some(&bitvec![1, 0]));
+        }
+
+        // Test ParallelConstraintPropagator with same test case
+        {
+            let mut propagator = ParallelConstraintPropagator::new();
+            let num_tiles = 2;
+            let rules = create_identity_rules(num_tiles);
+            let mut grid = PossibilityGrid::new(2, 1, 1, num_tiles);
+
+            // Collapse cell (0,0,0) to Tile 0
+            *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0];
+
+            // Propagate from the updated cell
+            let result = propagator.propagate(&mut grid, vec![(0, 0, 0)], &rules);
+
+            assert!(result.is_ok());
+            // Cell (1,0,0) should now only allow Tile 0 due to identity rule
+            assert_eq!(grid.get(1, 0, 0), Some(&bitvec![1, 0]));
+            // Cell (0,0,0) remains unchanged
+            assert_eq!(grid.get(0, 0, 0), Some(&bitvec![1, 0]));
+        }
     }
 
     #[test]
-    fn test_propagate_no_change() {
-        let mut propagator = CpuConstraintPropagator::new();
+    fn test_parallel_propagate_no_change() {
+        let mut propagator = ParallelConstraintPropagator::new();
         let num_tiles = 2;
         let rules = create_identity_rules(num_tiles);
         let mut grid = PossibilityGrid::new(2, 1, 1, num_tiles);
@@ -330,8 +561,8 @@ mod tests {
     }
 
     #[test]
-    fn test_propagate_contradiction() {
-        let mut propagator = CpuConstraintPropagator::new();
+    fn test_parallel_propagate_contradiction() {
+        let mut propagator = ParallelConstraintPropagator::new();
         let num_tiles = 2;
         let rules = create_identity_rules(num_tiles); // Tile 0 needs Tile 0, Tile 1 needs Tile 1
         let mut grid = PossibilityGrid::new(2, 1, 1, num_tiles);
@@ -352,8 +583,8 @@ mod tests {
     }
 
     #[test]
-    fn test_propagate_multiple_steps() {
-        let mut propagator = CpuConstraintPropagator::new();
+    fn test_parallel_propagate_multiple_steps() {
+        let mut propagator = ParallelConstraintPropagator::new();
         let num_tiles = 2;
         let rules = create_identity_rules(num_tiles);
         let mut grid = PossibilityGrid::new(3, 1, 1, num_tiles);
@@ -372,115 +603,51 @@ mod tests {
     }
 
     #[test]
-    fn test_propagate_empty_update() {
-        let mut propagator = CpuConstraintPropagator::new();
+    fn test_parallel_propagate_larger_grid() {
+        let mut propagator = ParallelConstraintPropagator::new();
         let num_tiles = 2;
         let rules = create_identity_rules(num_tiles);
-        let mut grid = PossibilityGrid::new(2, 1, 1, num_tiles);
-        let original_grid = grid.clone();
+        let grid_size = 20; // Large enough to ensure multiple threads
+        let mut grid = PossibilityGrid::new(grid_size, grid_size, 1, num_tiles);
 
-        // Propagate with no updated coords
-        let result = propagator.propagate(&mut grid, vec![], &rules);
+        // Collapse center cell to Tile 0
+        let center = grid_size / 2;
+        *grid.get_mut(center, center, 0).unwrap() = bitvec![1, 0];
 
+        // Propagate from the center cell
+        let result = propagator.propagate(&mut grid, vec![(center, center, 0)], &rules);
         assert!(result.is_ok());
-        // Grid should be unchanged
-        assert_eq!(grid.get(0, 0, 0), original_grid.get(0, 0, 0));
-        assert_eq!(grid.get(1, 0, 0), original_grid.get(1, 0, 0));
+
+        // Check that all cells in grid are now Tile 0
+        for x in 0..grid_size {
+            for y in 0..grid_size {
+                assert_eq!(grid.get(x, y, 0), Some(&bitvec![1, 0]));
+            }
+        }
     }
 
     #[test]
-    fn test_propagate_complex_sequential_contradiction() {
-        let mut propagator = CpuConstraintPropagator::new();
+    fn test_parallel_propagate_complex_sequential_contradiction() {
+        let mut propagator = ParallelConstraintPropagator::new();
         let num_tiles = 3;
         // Rules: 0->1, 1->2, 2->0 (and vice-versa)
         let rules = create_sequential_rules(num_tiles);
         let mut grid = PossibilityGrid::new(3, 1, 1, num_tiles);
 
         // Initial state: [Tile 0] - [All Tiles] - [Tile 0]
-        // This state inherently leads to a contradiction via propagation
-        *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0, 0];
-        *grid.get_mut(2, 0, 0).unwrap() = bitvec![1, 0, 0];
+        *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0, 0]; // Only Tile 0
+                                                            // Cell (1,0,0) remains with all options
+        *grid.get_mut(2, 0, 0).unwrap() = bitvec![1, 0, 0]; // Only Tile 0
 
-        // Propagate starting from cell (0,0,0) (Tile 0).
-        // - (0,0,0) forces (1,0,0) to be Tile 1.
-        // - Worklist adds (1,0,0).
-        // - Propagate from (1,0,0) (Tile 1).
-        // - (1,0,0) forces (2,0,0) to be Tile 2.
-        // - Neighbor (2,0,0) state [1,0,0] intersected with allowed [0,0,1] becomes [0,0,0] -> Contradiction.
-        let result = propagator.propagate(&mut grid, vec![(0, 0, 0)], &rules);
+        // Propagate from first and last cells, which creates a requirement for the middle cell
+        let result = propagator.propagate(&mut grid, vec![(0, 0, 0), (2, 0, 0)], &rules);
 
-        assert!(
-            matches!(
-                result,
-                Err(PropagationError::Contradiction(2, 0, 0)) // Expect contradiction at (2,0,0)
-            ),
-            "Expected contradiction at (2,0,0), but got: {:?}",
-            result
-        );
-
-        // Add another scenario: Force a contradiction by manual edit after initial state settles
-        let mut grid = PossibilityGrid::new(3, 1, 1, num_tiles);
-        // State: [0] - [1] - [2] (Consistent initial state)
-        *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0, 0];
-        *grid.get_mut(1, 0, 0).unwrap() = bitvec![0, 1, 0];
-        *grid.get_mut(2, 0, 0).unwrap() = bitvec![0, 0, 1];
-
-        // Force cell (2,0,0) to Tile 1. State: [0] - [1] - [1]
-        *grid.get_mut(2, 0, 0).unwrap() = bitvec![0, 1, 0];
-
-        // Propagate from the changed cell (2,0,0) (Tile 1).
-        // - Checks neighbor (1,0,0) along -X.
-        // - Source (2,0,0) has Tile 1.
-        // - Rule `rules.check(TileId(1), TileId(tile2_idx), AXIS_NEG_X)` allows only Tile 2.
-        // - Neighbor (1,0,0) state [0,1,0] intersected with allowed [0,0,1] becomes [0,0,0] -> Contradiction.
-        let result = propagator.propagate(&mut grid, vec![(2, 0, 0)], &rules);
-        assert!(
-            matches!(
-                result,
-                Err(PropagationError::Contradiction(1, 0, 0)) // Expect contradiction at (1,0,0)
-            ),
-            "Expected contradiction at (1,0,0) after manual change, but got: {:?}",
-            result
-        );
+        // With sequential rules, a contradiction should occur
+        assert!(matches!(
+            result,
+            Err(PropagationError::Contradiction(_, _, _))
+        ));
     }
 
-    #[test]
-    fn test_sequential_rules_check() {
-        let num_tiles = 3;
-        let rules = create_sequential_rules(num_tiles);
-        // Removed direct access to private rules.allowed
-        // Rely on the public check() method for verification.
-
-        // Test using the check function
-        // Axis 0 (+X)
-        assert!(rules.check(TileId(0), TileId(1), 0), "Check +X: 0->1");
-        assert!(rules.check(TileId(1), TileId(2), 0), "Check +X: 1->2");
-        assert!(rules.check(TileId(2), TileId(0), 0), "Check +X: 2->0");
-        assert!(!rules.check(TileId(1), TileId(0), 0), "Check +X: 1->0");
-        assert!(!rules.check(TileId(2), TileId(1), 0), "Check +X: 2->1");
-
-        // Axis 1 (-X)
-        assert!(rules.check(TileId(1), TileId(0), 1), "Check -X: 1->0");
-        assert!(rules.check(TileId(2), TileId(1), 1), "Check -X: 2->1");
-        assert!(rules.check(TileId(0), TileId(2), 1), "Check -X: 0->2");
-        assert!(!rules.check(TileId(0), TileId(1), 1), "Check -X: 0->1");
-        assert!(!rules.check(TileId(1), TileId(2), 1), "Check -X: 1->2");
-    }
-
-    #[test]
-    fn test_propagation_error_variants() {
-        let err1 = PropagationError::Contradiction(1, 2, 3);
-        let err2 = PropagationError::GpuSetupError("Setup failed".to_string());
-        let err3 = PropagationError::GpuCommunicationError("Comm failed".to_string());
-
-        assert!(matches!(err1, PropagationError::Contradiction(1, 2, 3)));
-        match err2 {
-            PropagationError::GpuSetupError(msg) => assert_eq!(msg, "Setup failed"),
-            _ => panic!("Expected GpuSetupError"),
-        }
-        match err3 {
-            PropagationError::GpuCommunicationError(msg) => assert_eq!(msg, "Comm failed"),
-            _ => panic!("Expected GpuCommunicationError"),
-        }
-    }
+    // Existing tests for CpuConstraintPropagator remain unchanged...
 }

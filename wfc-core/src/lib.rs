@@ -34,6 +34,8 @@ pub use crate::grid::PossibilityGrid;
 pub use crate::propagator::ConstraintPropagator;
 /// Provides CPU-specific implementation for constraint propagation.
 pub use crate::propagator::CpuConstraintPropagator;
+/// Provides a parallelized CPU implementation for constraint propagation.
+pub use crate::propagator::ParallelConstraintPropagator;
 /// Errors specific to the propagation phase.
 pub use crate::propagator::PropagationError;
 /// Represents the adjacency rules between tiles.

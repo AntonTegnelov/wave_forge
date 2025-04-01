@@ -558,8 +558,8 @@ async fn main() -> Result<()> {
 /// Helper function to execute the Wave Function Collapse algorithm using the CPU implementation.
 ///
 /// This function is called when GPU acceleration is disabled, unavailable, or fails to initialize.
-/// It instantiates the CPU-based `ConstraintPropagator` and `EntropyCalculator`,
-/// then calls the core `wfc_core::runner::run` function.
+/// It instantiates the appropriate CPU-based `ConstraintPropagator` and `EntropyCalculator`,
+/// with parallel execution for larger grids, then calls the core `wfc_core::runner::run` function.
 ///
 /// After successful completion, it saves the resulting grid to the specified output path.
 /// Handles potential errors during the WFC run or file saving.
@@ -585,18 +585,59 @@ fn run_cpu(
     config: &AppConfig,
     viz_tx: Option<Sender<VizMessage>>,
 ) -> Result<(), anyhow::Error> {
-    let propagator = wfc_core::propagator::CpuConstraintPropagator::new();
-    let entropy_calculator = wfc_core::entropy::CpuEntropyCalculator::new();
+    // Choose the appropriate propagator based on grid size
+    let large_grid_threshold = 16; // Threshold to switch to parallel propagator
+    let total_cells = grid.width * grid.height * grid.depth;
+    let is_large_grid = grid.width >= large_grid_threshold
+        || grid.height >= large_grid_threshold
+        || grid.depth >= large_grid_threshold
+        || total_cells >= large_grid_threshold.pow(3);
 
-    // Run with owned components (matches reverted signature)
-    match wfc_core::runner::run(
-        grid,
-        tileset,
-        rules,
-        propagator,         // Pass ownership
-        entropy_calculator, // Pass ownership
-        progress_callback,
-    ) {
+    log::info!(
+        "CPU grid size: {}x{}x{} ({} cells). {}",
+        grid.width,
+        grid.height,
+        grid.depth,
+        total_cells,
+        if is_large_grid {
+            "Using parallel propagator for large grid"
+        } else {
+            "Using standard propagator"
+        }
+    );
+
+    let run_result = if is_large_grid {
+        // For large grids, use parallel propagator
+        let propagator = wfc_core::ParallelConstraintPropagator::new();
+        let entropy_calculator = wfc_core::entropy::CpuEntropyCalculator::new();
+
+        // Run with owned components
+        wfc_core::runner::run(
+            grid,
+            tileset,
+            rules,
+            propagator,         // Pass ownership
+            entropy_calculator, // Pass ownership
+            progress_callback,
+        )
+    } else {
+        // For smaller grids, use standard single-threaded propagator
+        let propagator = wfc_core::propagator::CpuConstraintPropagator::new();
+        let entropy_calculator = wfc_core::entropy::CpuEntropyCalculator::new();
+
+        // Run with owned components
+        wfc_core::runner::run(
+            grid,
+            tileset,
+            rules,
+            propagator,         // Pass ownership
+            entropy_calculator, // Pass ownership
+            progress_callback,
+        )
+    };
+
+    // Process result
+    match run_result {
         Ok(_) => {
             log::info!("CPU WFC completed successfully.");
 
@@ -613,7 +654,7 @@ fn run_cpu(
             }
 
             // Save the grid using the passed config
-            if let Err(e) = output::save_grid_to_file(&grid, config.output_path.as_path()) {
+            if let Err(e) = output::save_grid_to_file(grid, config.output_path.as_path()) {
                 log::error!("Failed to save grid: {}", e);
                 // Decide whether to return error or just log
                 return Err(e);
