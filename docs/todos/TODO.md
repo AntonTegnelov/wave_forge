@@ -183,7 +183,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - [x] Add documentation comments (///) to public APIs.
 - [x] Clean up code, remove unused variables/imports, improve comments.
 - [ ] Add more comprehensive testing, especially for edge cases and GPU paths.
-- [ ] Set up basic logging (`log`, `env_logger`).
+- [x] Set up basic logging (`log`, `env_logger`).
 - [ ] Profile and optimize bottlenecks (CPU and GPU).
 - [ ] **Thread Safety (CPU):** Rigorously verify thread safety in `rayon`-based parallel implementations within `wfc-core` (e.g., avoiding data races on shared structures like `Grid`, ensuring proper synchronization if needed, handling error aggregation from parallel tasks).
 - [ ] Add visualization toggle to CLI interface.
@@ -191,3 +191,4 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - [ ] Add benchmark results to documentation.
 - [ ] Create sample configurations for different visualization modes.
 - [x] Add ability to focus on specific layers/slices of the 3D grid
+- [ ] Explore alternative propagation algorithms (e.g., parallel strategies).
