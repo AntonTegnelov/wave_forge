@@ -1883,6 +1883,7 @@ dependencies = [
  "humantime",
  "log",
  "minifb",
+ "once_cell",
  "predicates",
  "rayon",
  "tempfile",
@@ -1890,6 +1891,7 @@ dependencies = [
  "wfc-core",
  "wfc-gpu",
  "wfc-rules",
+ "winapi",
 ]
 
 [[package]]

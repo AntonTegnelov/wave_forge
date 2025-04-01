@@ -1,10 +1,16 @@
 // wave-forge-app/src/progress.rs
 
-use crate::{ProgressReporter, ReporterConfig};
 use anyhow::Result;
 use log;
 use std::time::{Duration, Instant};
 use wfc_core::ProgressInfo;
+use wfc_core::WfcError;
+
+/// Configuration for progress reporter behavior.
+pub struct ReporterConfig {
+    /// Minimum time that must elapse between progress reports.
+    pub report_interval: Duration,
+}
 
 /// Trait for reporting the progress of the WFC algorithm.
 ///

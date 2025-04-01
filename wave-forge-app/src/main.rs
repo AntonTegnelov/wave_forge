@@ -12,12 +12,15 @@
 pub mod benchmark;
 pub mod config;
 pub mod output;
+pub mod profiler;
+pub mod progress;
 pub mod visualization;
 
 use anyhow::Result;
 use clap::Parser;
 use config::AppConfig;
 use config::VisualizationMode;
+use profiler::{global_profiler, print_profiler_summary, Profiler};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;

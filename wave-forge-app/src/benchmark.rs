@@ -20,8 +20,11 @@ use wfc_gpu::accelerator::GpuAccelerator;
 
 // Use anyhow for application-level errors
 use anyhow::Error;
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
+
+use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
 
 /// Structure to hold benchmark results for a single run (CPU or GPU).
 ///
@@ -46,7 +49,10 @@ pub struct BenchmarkResult {
     pub iterations: Option<usize>,
     /// Number of cells collapsed before finishing or failing. `None` if run failed very early or callback wasn't invoked.
     pub collapsed_cells: Option<usize>,
-    // TODO: Add more metrics like time per step, memory usage, contradictions etc.
+    /// Profiling data per code section, if collected
+    pub profile_metrics: Option<HashMap<String, ProfileMetric>>,
+    /// Memory usage in bytes (if available)
+    pub memory_usage: Option<usize>,
 }
 
 /// Runs the WFC algorithm using the specified implementation (CPU or GPU)
@@ -79,6 +85,11 @@ pub async fn run_single_benchmark(
     rules: &AdjacencyRules,
     // TODO: Add other parameters like seed if necessary
 ) -> Result<BenchmarkResult, Error> {
+    // Create a profiler for this benchmark run
+    let profiler = Profiler::new(implementation);
+
+    // Start overall timing
+    let _overall_guard = profiler.profile("total_execution");
     let start_time = Instant::now();
     let latest_progress = Arc::new(Mutex::new(None::<ProgressInfo>));
 
@@ -94,11 +105,27 @@ pub async fn run_single_benchmark(
         Some(Box::new(callback) as Box<dyn Fn(ProgressInfo) + Send + Sync>)
     };
 
+    // Get initial memory usage (if supported on platform)
+    let initial_memory = get_memory_usage().ok();
+
     let wfc_result = match implementation {
         "CPU" => {
             log::info!("Running CPU Benchmark...");
-            let propagator = CpuConstraintPropagator::new();
-            let entropy_calculator = CpuEntropyCalculator::new();
+
+            // Create CPU components with profiling
+            let propagator = {
+                let _guard = profiler.profile("cpu_propagator_init");
+                CpuConstraintPropagator::new()
+            };
+
+            let entropy_calculator = {
+                let _guard = profiler.profile("cpu_entropy_calculator_init");
+                CpuEntropyCalculator::new()
+            };
+
+            // Profile the actual WFC run
+            let _run_guard = profiler.profile("cpu_wfc_run");
+
             // Run with owned components and progress callback
             run(
                 grid,
@@ -114,13 +141,21 @@ pub async fn run_single_benchmark(
             #[cfg(feature = "gpu")]
             {
                 log::info!("Running GPU Benchmark...");
-                let gpu_accelerator = GpuAccelerator::new(grid, rules)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("GPU initialization failed: {}", e))?;
+
+                // Profile GPU initialization
+                let gpu_accelerator = {
+                    let _guard = profiler.profile("gpu_accelerator_init");
+                    GpuAccelerator::new(grid, rules)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("GPU initialization failed: {}", e))?
+                };
 
                 // Now we can clone the accelerator
                 let propagator = gpu_accelerator.clone();
                 let entropy_calc = gpu_accelerator; // Use original for the second owned param
+
+                // Profile the actual WFC run
+                let _run_guard = profiler.profile("gpu_wfc_run");
 
                 run(
                     grid,
@@ -147,8 +182,23 @@ pub async fn run_single_benchmark(
 
     let total_time = start_time.elapsed();
 
+    // Get final memory usage (if supported)
+    let final_memory = get_memory_usage().ok();
+    let memory_usage = final_memory
+        .zip(initial_memory)
+        .map(|(final_mem, initial_mem)| {
+            if final_mem > initial_mem {
+                final_mem - initial_mem
+            } else {
+                0
+            }
+        });
+
     // Retrieve the last captured progress info
     let final_progress = latest_progress.lock().unwrap().clone(); // Clone the Option<ProgressInfo>
+
+    // Print profiling results
+    print_profiler_summary(&profiler);
 
     Ok(BenchmarkResult {
         implementation: implementation.to_string(),
@@ -160,7 +210,71 @@ pub async fn run_single_benchmark(
         wfc_result,
         iterations: final_progress.as_ref().map(|p| p.iteration),
         collapsed_cells: final_progress.as_ref().map(|p| p.collapsed_cells),
+        profile_metrics: Some(profiler.get_metrics()),
+        memory_usage,
     })
+}
+
+/// Attempts to get the current memory usage of the process.
+/// This is very platform-specific and may not be available on all platforms.
+fn get_memory_usage() -> Result<usize, Error> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs::File;
+        use std::io::Read;
+
+        let mut status = String::new();
+        File::open("/proc/self/status")?.read_to_string(&mut status)?;
+
+        // Look for VmRSS line in /proc/self/status
+        for line in status.lines() {
+            if line.starts_with("VmRSS:") {
+                // Parse the line to extract memory usage in KB
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let Ok(kb) = parts[1].parse::<usize>() {
+                        return Ok(kb * 1024); // Convert KB to bytes
+                    }
+                }
+            }
+        }
+        Err(anyhow::anyhow!("Could not determine memory usage"))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+
+        // On macOS, we can use `ps` to get memory usage
+        let output = Command::new("ps")
+            .args(&["-o", "rss=", "-p", &std::process::id().to_string()])
+            .output()?;
+
+        if output.status.success() {
+            let rss = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse::<usize>()?;
+            return Ok(rss * 1024); // Convert KB to bytes
+        }
+
+        Err(anyhow::anyhow!("Could not determine memory usage"))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // For Windows, we don't have a simple way to get memory usage without extra dependencies
+        // Return a placeholder for now
+        log::debug!("Memory usage tracking not fully implemented on Windows");
+        Ok(0)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        // For other platforms, we don't have an implementation yet
+        Err(anyhow::anyhow!(
+            "Memory usage tracking not supported on this platform"
+        ))
+    }
 }
 
 /// Runs both CPU and GPU benchmarks for the same initial configuration
@@ -218,100 +332,287 @@ pub async fn compare_implementations(
     Ok((cpu_result, gpu_result))
 }
 
-/// Formats and prints the comparison results of CPU and GPU benchmarks to the console.
+/// Formats and prints a detailed comparison between CPU and GPU benchmark results.
 ///
-/// Displays grid dimensions, tile count, timing for each implementation, and calculates
-/// the speedup factor.
-///
-/// **Note:** This function is only available when the `gpu` feature is enabled.
+/// This function generates a human-readable side-by-side comparison of CPU and GPU
+/// performance metrics, highlighting relative speedup/slowdown and other key differences.
 ///
 /// # Arguments
 ///
-/// * `cpu_result` - The `BenchmarkResult` from the CPU run.
-/// * `gpu_result` - The `BenchmarkResult` from the GPU run.
-#[cfg(feature = "gpu")] // Only relevant if GPU results exist
+/// * `cpu_result` - The benchmark result from the CPU implementation.
+/// * `gpu_result` - The benchmark result from the GPU implementation.
+///
 pub fn report_comparison(cpu_result: &BenchmarkResult, gpu_result: &BenchmarkResult) {
-    println!("\n--- Benchmark Comparison ---");
+    use colored::*;
+
+    println!("\n=== BENCHMARK COMPARISON ===");
     println!(
-        "Grid Dimensions: {}x{}x{}",
+        "Grid Size: {}x{}x{}",
         cpu_result.grid_width, cpu_result.grid_height, cpu_result.grid_depth
     );
     println!("Number of Tiles: {}", cpu_result.num_tiles);
-    println!("\nImplementation | Total Time | Iterations | Collapsed Cells | Result");
-    println!("----------------|------------|------------|-----------------|--------");
+
+    // Color differently based on which is faster
+    let speedup = if cpu_result.total_time.as_millis() > 0 {
+        gpu_result.total_time.as_secs_f64() / cpu_result.total_time.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    let speedup_text = if speedup > 1.0 {
+        format!("{:.2}x slower", speedup).red()
+    } else if speedup > 0.0 {
+        format!("{:.2}x faster", 1.0 / speedup).green()
+    } else {
+        "N/A".yellow()
+    };
+
+    println!("\n{:<20} | {:<20} | {:<20}", "Metric", "CPU", "GPU");
+    println!("{:-<67}", "");
+
     println!(
-        "CPU             | {:<10?} | {:<10} | {:<15} | {:?}",
-        cpu_result.total_time,
-        cpu_result
-            .iterations
-            .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
-        cpu_result
-            .collapsed_cells
-            .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
-        cpu_result.wfc_result.is_ok() // Simple OK/Err indicator
-    );
-    println!(
-        "GPU             | {:<10?} | {:<10} | {:<15} | {:?}",
-        gpu_result.total_time,
-        gpu_result
-            .iterations
-            .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
-        gpu_result
-            .collapsed_cells
-            .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
-        gpu_result.wfc_result.is_ok()
+        "{:<20} | {:<20} | {:<20}",
+        "Total Time",
+        format!("{:.2}s", cpu_result.total_time.as_secs_f64()),
+        format!("{:.2}s", gpu_result.total_time.as_secs_f64())
     );
 
-    // Calculate speedup
-    if gpu_result.total_time > Duration::ZERO
-        && cpu_result.total_time > Duration::ZERO
-        && gpu_result.wfc_result.is_ok()
-        && cpu_result.wfc_result.is_ok()
+    println!(
+        "{:<20} | {:<20} | {:<20}",
+        "Relative Speed", "baseline", speedup_text
+    );
+
+    // Display iterations and collapsed cells if available
+    let cpu_iterations = cpu_result
+        .iterations
+        .map_or("N/A".to_string(), |i| i.to_string());
+    let gpu_iterations = gpu_result
+        .iterations
+        .map_or("N/A".to_string(), |i| i.to_string());
+    println!(
+        "{:<20} | {:<20} | {:<20}",
+        "Iterations", cpu_iterations, gpu_iterations
+    );
+
+    let cpu_collapsed = cpu_result
+        .collapsed_cells
+        .map_or("N/A".to_string(), |c| c.to_string());
+    let gpu_collapsed = gpu_result
+        .collapsed_cells
+        .map_or("N/A".to_string(), |c| c.to_string());
+    println!(
+        "{:<20} | {:<20} | {:<20}",
+        "Collapsed Cells", cpu_collapsed, gpu_collapsed
+    );
+
+    // Display memory usage if available
+    let cpu_memory = cpu_result.memory_usage.map_or("N/A".to_string(), |m| {
+        format!("{:.2} MB", m as f64 / 1024.0 / 1024.0)
+    });
+    let gpu_memory = gpu_result.memory_usage.map_or("N/A".to_string(), |m| {
+        format!("{:.2} MB", m as f64 / 1024.0 / 1024.0)
+    });
+    println!(
+        "{:<20} | {:<20} | {:<20}",
+        "Memory Usage", cpu_memory, gpu_memory
+    );
+
+    // Display result status
+    let cpu_status = match &cpu_result.wfc_result {
+        Ok(_) => "Success".green(),
+        Err(e) => format!("Failed: {}", e).red(),
+    };
+
+    let gpu_status = match &gpu_result.wfc_result {
+        Ok(_) => "Success".green(),
+        Err(e) => format!("Failed: {}", e).red(),
+    };
+
+    println!("{:<20} | {:<20} | {:<20}", "Status", cpu_status, gpu_status);
+
+    // If both have profiling data, compare the common sections
+    if let (Some(cpu_metrics), Some(gpu_metrics)) =
+        (&cpu_result.profile_metrics, &gpu_result.profile_metrics)
     {
-        // Only report speedup if both finished successfully and times are non-zero
-        let speedup = cpu_result.total_time.as_secs_f64() / gpu_result.total_time.as_secs_f64();
-        println!("\nGPU Speedup: {:.2}x", speedup);
-    } else if gpu_result.wfc_result.is_err() {
-        println!("\nGPU Speedup: N/A (GPU run failed or was skipped)");
-    } else {
-        println!("\nGPU Speedup: N/A (Timing data invalid or CPU run failed)");
+        println!("\n=== Performance Hotspots Comparison ===");
+
+        // Find common sections
+        let mut common_sections: Vec<String> = cpu_metrics
+            .keys()
+            .filter(|k| gpu_metrics.contains_key(*k))
+            .cloned()
+            .collect();
+
+        // Sort by CPU time
+        common_sections.sort_by(|a, b| cpu_metrics[b].total_time.cmp(&cpu_metrics[a].total_time));
+
+        if !common_sections.is_empty() {
+            println!(
+                "{:<20} | {:<15} | {:<15} | {:<10}",
+                "Section", "CPU Time", "GPU Time", "Speedup"
+            );
+            println!("{:-<67}", "");
+
+            for section in common_sections {
+                let cpu_time = cpu_metrics[&section].total_time;
+                let gpu_time = gpu_metrics[&section].total_time;
+
+                let section_speedup = if cpu_time.as_nanos() > 0 {
+                    gpu_time.as_secs_f64() / cpu_time.as_secs_f64()
+                } else {
+                    0.0
+                };
+
+                let speedup_text = if section_speedup > 1.0 {
+                    format!("{:.2}x slower", section_speedup).red()
+                } else if section_speedup > 0.0 {
+                    format!("{:.2}x faster", 1.0 / section_speedup).green()
+                } else {
+                    "N/A".yellow()
+                };
+
+                println!(
+                    "{:<20} | {:<15} | {:<15} | {:<10}",
+                    section,
+                    format_duration(cpu_time),
+                    format_duration(gpu_time),
+                    speedup_text
+                );
+            }
+        } else {
+            println!("No common profiling sections found between CPU and GPU.");
+        }
+
+        // Show CPU-only sections
+        let cpu_only: Vec<&String> = cpu_metrics
+            .keys()
+            .filter(|k| !gpu_metrics.contains_key(*k))
+            .collect();
+
+        if !cpu_only.is_empty() {
+            println!("\nCPU-only sections:");
+            for section in cpu_only {
+                println!(
+                    "  - {}: {}",
+                    section,
+                    format_duration(cpu_metrics[section].total_time)
+                );
+            }
+        }
+
+        // Show GPU-only sections
+        let gpu_only: Vec<&String> = gpu_metrics
+            .keys()
+            .filter(|k| !cpu_metrics.contains_key(*k))
+            .collect();
+
+        if !gpu_only.is_empty() {
+            println!("\nGPU-only sections:");
+            for section in gpu_only {
+                println!(
+                    "  - {}: {}",
+                    section,
+                    format_duration(gpu_metrics[section].total_time)
+                );
+            }
+        }
     }
-    println!("----------------------------------------------------------------");
-    // Adjust separator
 }
 
-/// Formats and prints the results of a single benchmark run to the console.
+/// Helper function to format a duration for display
+fn format_duration(duration: Duration) -> String {
+    if duration.as_secs() > 0 {
+        format!("{:.2}s", duration.as_secs_f64())
+    } else if duration.as_millis() > 0 {
+        format!("{:.2}ms", duration.as_millis() as f64)
+    } else if duration.as_micros() > 0 {
+        format!("{:.2}µs", duration.as_micros() as f64)
+    } else {
+        format!("{}ns", duration.as_nanos())
+    }
+}
+
+/// Formats and prints a detailed report for a single benchmark result.
 ///
-/// Used when only one implementation (typically CPU) was run, or when not comparing.
-/// Displays grid dimensions, tile count, implementation name, timing, and success/failure.
+/// This function generates a human-readable summary of key performance metrics
+/// for a single benchmark run (either CPU or GPU).
 ///
 /// # Arguments
 ///
-/// * `result` - The `BenchmarkResult` from the single run.
-// Function to report results when only CPU is run (e.g., no GPU feature)
+/// * `result` - The benchmark result to report on.
+///
 pub fn report_single_result(result: &BenchmarkResult) {
-    println!("\n--- Benchmark Result ---");
+    use colored::*;
+
+    println!("\n=== {} BENCHMARK RESULT ===", result.implementation);
     println!(
-        "Grid Dimensions: {}x{}x{}",
+        "Grid Size: {}x{}x{}",
         result.grid_width, result.grid_height, result.grid_depth
     );
     println!("Number of Tiles: {}", result.num_tiles);
-    println!("\nImplementation | Total Time | Iterations | Collapsed Cells | Result");
-    println!("----------------|------------|------------|-----------------|--------");
+
+    println!("\n{:<25} | {:<20}", "Metric", "Value");
+    println!("{:-<48}", "");
+
     println!(
-        "{:<15} | {:<10?} | {:<10} | {:<15} | {:?}",
-        result.implementation,
-        result.total_time,
-        result
-            .iterations
-            .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
-        result
-            .collapsed_cells
-            .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
-        result.wfc_result.is_ok()
+        "{:<25} | {:<20}",
+        "Total Time",
+        format!("{:.3}s", result.total_time.as_secs_f64())
     );
-    println!("----------------------------------------------------------------");
-    // Adjust separator
+
+    // Display iterations and collapsed cells if available
+    let iterations = result
+        .iterations
+        .map_or("N/A".to_string(), |i| i.to_string());
+    println!("{:<25} | {:<20}", "Iterations", iterations);
+
+    let collapsed = result
+        .collapsed_cells
+        .map_or("N/A".to_string(), |c| c.to_string());
+    println!("{:<25} | {:<20}", "Collapsed Cells", collapsed);
+
+    // Display memory usage if available
+    if let Some(memory) = result.memory_usage {
+        println!(
+            "{:<25} | {:<20}",
+            "Memory Usage",
+            format!("{:.2} MB", memory as f64 / 1024.0 / 1024.0)
+        );
+    }
+
+    // Display result status
+    let status = match &result.wfc_result {
+        Ok(_) => "Success".green(),
+        Err(e) => format!("Failed: {}", e).red(),
+    };
+    println!("{:<25} | {:<20}", "Status", status);
+
+    // If profiling data is available, display bottlenecks
+    if let Some(metrics) = &result.profile_metrics {
+        if !metrics.is_empty() {
+            println!("\n=== Performance Hotspots ===");
+
+            // Sort sections by total time (descending)
+            let mut sections: Vec<(&String, &ProfileMetric)> = metrics.iter().collect();
+            sections.sort_by(|a, b| b.1.total_time.cmp(&a.1.total_time));
+
+            println!(
+                "{:<25} | {:<10} | {:<10} | {:<10}",
+                "Section", "Total", "Calls", "Average"
+            );
+            println!("{:-<60}", "");
+
+            for (section, metric) in sections {
+                println!(
+                    "{:<25} | {:<10} | {:<10} | {:<10}",
+                    section,
+                    format_duration(metric.total_time),
+                    metric.calls,
+                    format_duration(metric.average_time())
+                );
+            }
+        }
+    }
 }
 
 /// Writes a collection of benchmark results to a CSV file.
@@ -647,6 +948,8 @@ mod tests {
             wfc_result: Ok(()),
             iterations: Some(5),
             collapsed_cells: Some(1),
+            profile_metrics: None,
+            memory_usage: None,
         };
         report_single_result(&result_ok); // Just call it
 
@@ -662,6 +965,8 @@ mod tests {
             ))),
             iterations: Some(2),
             collapsed_cells: Some(0),
+            profile_metrics: None,
+            memory_usage: None,
         };
         report_single_result(&result_fail);
 
@@ -675,6 +980,8 @@ mod tests {
             wfc_result: Err(WfcError::InternalError("Setup failed".into())),
             iterations: None,
             collapsed_cells: None,
+            profile_metrics: None,
+            memory_usage: None,
         };
         report_single_result(&result_none);
     }
@@ -693,6 +1000,8 @@ mod tests {
             wfc_result: Ok(()),
             iterations: Some(10),
             collapsed_cells: Some(1),
+            profile_metrics: None,
+            memory_usage: None,
         };
         let gpu_result_skipped = BenchmarkResult {
             implementation: "GPU".to_string(),
@@ -704,6 +1013,8 @@ mod tests {
             wfc_result: Err(WfcError::InternalError("Skipped".into())),
             iterations: None,
             collapsed_cells: None,
+            profile_metrics: None,
+            memory_usage: None,
         };
         report_comparison(&cpu_result, &gpu_result_skipped); // Call with skipped GPU
 
@@ -718,6 +1029,8 @@ mod tests {
             wfc_result: Ok(()),
             iterations: Some(10),
             collapsed_cells: Some(1),
+            profile_metrics: None,
+            memory_usage: None,
         };
         report_comparison(&cpu_result, &gpu_result_success);
     }
@@ -740,6 +1053,8 @@ mod tests {
             wfc_result: Ok(()),
             iterations: Some(100),
             collapsed_cells: Some(512),
+            profile_metrics: None,
+            memory_usage: None,
         };
         let cpu_result_fail = BenchmarkResult {
             implementation: "CPU".to_string(),
@@ -751,6 +1066,8 @@ mod tests {
             wfc_result: Err(WfcError::Contradiction(0, 0, 0)),
             iterations: Some(50),
             collapsed_cells: Some(60),
+            profile_metrics: None,
+            memory_usage: None,
         };
 
         let results: Vec<BenchmarkResultTuple> = vec![
@@ -791,6 +1108,8 @@ mod tests {
             wfc_result: Ok(()),
             iterations: Some(100),
             collapsed_cells: Some(512),
+            profile_metrics: None,
+            memory_usage: None,
         };
         // Simulate a successful (hypothetical) GPU run
         let gpu_result = BenchmarkResult {
@@ -803,6 +1122,8 @@ mod tests {
             wfc_result: Ok(()),
             iterations: Some(100),
             collapsed_cells: Some(512),
+            profile_metrics: None,
+            memory_usage: None,
         };
         // Simulate a failed GPU run
         let gpu_result_fail = BenchmarkResult {
@@ -815,6 +1136,8 @@ mod tests {
             wfc_result: Err(WfcError::InternalError("Skipped".into())),
             iterations: None,
             collapsed_cells: None,
+            profile_metrics: None,
+            memory_usage: None,
         };
         let cpu_result_for_fail = BenchmarkResult {
             implementation: "CPU".to_string(),
@@ -826,6 +1149,8 @@ mod tests {
             wfc_result: Ok(()),
             iterations: Some(60),
             collapsed_cells: Some(64),
+            profile_metrics: None,
+            memory_usage: None,
         };
 
         let results: Vec<BenchmarkResultTuple> = vec![

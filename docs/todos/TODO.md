@@ -186,7 +186,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - [x] Clean up code, remove unused variables/imports, improve comments.
 - [x] Add more comprehensive testing, especially for edge cases and GPU paths.
 - [x] Set up basic logging (`log`, `env_logger`).
-- [ ] Profile and optimize bottlenecks (CPU and GPU).
+- [x] Profile and optimize bottlenecks (CPU and GPU).
 - [ ] **Thread Safety (CPU):** Rigorously verify thread safety in `rayon`-based parallel implementations within `wfc-core` (e.g., avoiding data races on shared structures like `Grid`, ensuring proper synchronization if needed, handling error aggregation from parallel tasks).
 - [x] Add visualization toggle to CLI interface.
 - [ ] Implement configurable logging levels for progress reporting.
