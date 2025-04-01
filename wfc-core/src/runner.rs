@@ -262,22 +262,23 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
             break;
         }
 
-        // --- 4. Progress Reporting (Optional) ---
+        iterations += 1;
+        debug!(
+            "End of iteration {}. Collapsed cells: {}/{}",
+            iterations, collapsed_cells_count, total_cells
+        );
+
+        // --- Call Progress Callback ---
         if let Some(ref callback) = progress_callback {
-            let progress = ProgressInfo {
-                iteration: iterations,
+            let progress_info = ProgressInfo {
+                iteration: iterations, // Use the incremented iteration count
                 collapsed_cells: collapsed_cells_count,
-                total_cells, // Use local total_cells
-                contradictions: None,
+                total_cells,
+                contradictions: None, // TODO: Track contradictions if needed later
             };
-            callback(progress);
-            debug!(
-                "Progress: Iteration {}, Collapsed {}/{}",
-                iterations, collapsed_cells_count, total_cells
-            );
+            callback(progress_info);
         }
 
-        iterations += 1;
         // Safeguard against infinite loops (optional, adjust limit as needed)
         if iterations > total_cells * 10 {
             // Use local total_cells

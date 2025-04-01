@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wfc_core::{
     // Need the CPU implementations for comparison
@@ -5,9 +6,10 @@ use wfc_core::{
     grid::PossibilityGrid,
     propagator::CpuConstraintPropagator,
     rules::AdjacencyRules,
-    runner::run, // WfcError is re-exported by wfc_core::WfcError directly
-    TileSet,     // Import directly from wfc_core
-    WfcError,    // Import directly from wfc_core
+    runner::run,
+    ProgressInfo, // Import ProgressInfo directly from wfc_core
+    TileSet,      // Import directly from wfc_core
+    WfcError,     // Import directly from wfc_core
 };
 
 // Only include GPU-specific code when the 'gpu' feature is enabled
@@ -36,6 +38,10 @@ pub struct BenchmarkResult {
     pub total_time: Duration,
     /// The result of the WFC run (`Ok(())` on success, `Err(WfcError)` on failure).
     pub wfc_result: Result<(), WfcError>,
+    /// Number of iterations completed before finishing or failing. `None` if run failed very early or callback wasn't invoked.
+    pub iterations: Option<usize>,
+    /// Number of cells collapsed before finishing or failing. `None` if run failed very early or callback wasn't invoked.
+    pub collapsed_cells: Option<usize>,
     // TODO: Add more metrics like time per step, memory usage, contradictions etc.
 }
 
@@ -70,14 +76,34 @@ pub async fn run_single_benchmark(
     // TODO: Add other parameters like seed if necessary
 ) -> Result<BenchmarkResult, Error> {
     let start_time = Instant::now();
+    let latest_progress = Arc::new(Mutex::new(None::<ProgressInfo>));
+
+    // Prepare the progress callback
+    let progress_callback = {
+        let progress_clone = Arc::clone(&latest_progress);
+        let callback = move |info: ProgressInfo| {
+            // TODO: Potentially throttle this write if it becomes a bottleneck
+            let mut progress_guard = progress_clone.lock().unwrap(); // Using unwrap as poison error is critical
+            *progress_guard = Some(info);
+        };
+        // Box the closure and cast it to the dynamic trait object
+        Some(Box::new(callback) as Box<dyn Fn(ProgressInfo) + Send + Sync>)
+    };
 
     let wfc_result = match implementation {
         "CPU" => {
             log::info!("Running CPU Benchmark...");
             let propagator = CpuConstraintPropagator::new();
             let entropy_calculator = CpuEntropyCalculator::new();
-            // Run with owned components
-            run(grid, tileset, rules, propagator, entropy_calculator, None)
+            // Run with owned components and progress callback
+            run(
+                grid,
+                tileset,
+                rules,
+                propagator,
+                entropy_calculator,
+                progress_callback,
+            )
         }
         "GPU" => {
             // This block is only compiled if 'gpu' feature is enabled
@@ -86,15 +112,17 @@ pub async fn run_single_benchmark(
                 log::info!("Running GPU Benchmark...");
                 // Ensure grid possibilities are reset or cloned if necessary before running GPU
                 #[allow(unused_variables)]
-                let gpu_accelerator = GpuAccelerator::new(grid, rules)
+                let mut gpu_accelerator = GpuAccelerator::new(grid, rules)
                     .await
                     .map_err(|e| anyhow::anyhow!("GPU initialization failed: {}", e))?;
                 // TODO: Ownership conflict! GpuAccelerator implements both traits,
                 //       but run() takes ownership, and GpuAccelerator is not Clone.
                 //       Requires refactoring GpuAccelerator or run() signature.
-                // run(grid, tileset, rules, gpu_accelerator, gpu_accelerator, None) // This won't compile
-                log::warn!("GPU benchmark run skipped due to ownership conflict.");
-                Err(WfcError::InternalError("GPU benchmark skipped".to_string()))
+                // run(grid, tileset, rules, gpu_accelerator, gpu_accelerator, progress_callback) // This won't compile
+                log::warn!("GPU benchmark run skipped due to ownership conflict. Cannot use progress callback.");
+                Err(WfcError::InternalError(
+                    "GPU benchmark skipped due to ownership conflict".to_string(),
+                ))
                 // Placeholder
             }
             // If 'gpu' feature is not enabled, this case should not be reachable
@@ -115,6 +143,9 @@ pub async fn run_single_benchmark(
 
     let total_time = start_time.elapsed();
 
+    // Retrieve the last captured progress info
+    let final_progress = latest_progress.lock().unwrap().clone(); // Clone the Option<ProgressInfo>
+
     Ok(BenchmarkResult {
         implementation: implementation.to_string(),
         grid_width: grid.width,
@@ -123,6 +154,8 @@ pub async fn run_single_benchmark(
         num_tiles: rules.num_tiles(),
         total_time,
         wfc_result,
+        iterations: final_progress.as_ref().map(|p| p.iteration as usize),
+        collapsed_cells: final_progress.as_ref().map(|p| p.collapsed_cells),
     })
 }
 
@@ -200,27 +233,47 @@ pub fn report_comparison(cpu_result: &BenchmarkResult, gpu_result: &BenchmarkRes
         cpu_result.grid_width, cpu_result.grid_height, cpu_result.grid_depth
     );
     println!("Number of Tiles: {}", cpu_result.num_tiles);
-    println!("\nImplementation | Total Time | Result");
-    println!("----------------|------------|--------");
+    println!("\nImplementation | Total Time | Iterations | Collapsed Cells | Result");
+    println!("----------------|------------|------------|-----------------|--------");
     println!(
-        "CPU             | {:<10?} | {:?}",
+        "CPU             | {:<10?} | {:<10} | {:<15} | {:?}",
         cpu_result.total_time,
+        cpu_result
+            .iterations
+            .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
+        cpu_result
+            .collapsed_cells
+            .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
         cpu_result.wfc_result.is_ok() // Simple OK/Err indicator
     );
     println!(
-        "GPU             | {:<10?} | {:?}",
+        "GPU             | {:<10?} | {:<10} | {:<15} | {:?}",
         gpu_result.total_time,
+        gpu_result
+            .iterations
+            .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
+        gpu_result
+            .collapsed_cells
+            .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
         gpu_result.wfc_result.is_ok()
     );
 
     // Calculate speedup
-    if gpu_result.total_time > Duration::ZERO {
+    if gpu_result.total_time > Duration::ZERO
+        && cpu_result.total_time > Duration::ZERO
+        && gpu_result.wfc_result.is_ok()
+        && cpu_result.wfc_result.is_ok()
+    {
+        // Only report speedup if both finished successfully and times are non-zero
         let speedup = cpu_result.total_time.as_secs_f64() / gpu_result.total_time.as_secs_f64();
         println!("\nGPU Speedup: {:.2}x", speedup);
+    } else if gpu_result.wfc_result.is_err() {
+        println!("\nGPU Speedup: N/A (GPU run failed or was skipped)");
     } else {
-        println!("\nGPU Speedup: N/A (GPU time was zero)");
+        println!("\nGPU Speedup: N/A (Timing data invalid or CPU run failed)");
     }
-    println!("----------------------------\n");
+    println!("----------------------------------------------------------------");
+    // Adjust separator
 }
 
 /// Formats and prints the results of a single benchmark run to the console.
@@ -239,15 +292,22 @@ pub fn report_single_result(result: &BenchmarkResult) {
         result.grid_width, result.grid_height, result.grid_depth
     );
     println!("Number of Tiles: {}", result.num_tiles);
-    println!("\nImplementation | Total Time | Result");
-    println!("----------------|------------|--------");
+    println!("\nImplementation | Total Time | Iterations | Collapsed Cells | Result");
+    println!("----------------|------------|------------|-----------------|--------");
     println!(
-        "{}         | {:<10?} | {:?}",
+        "{:<15} | {:<10?} | {:<10} | {:<15} | {:?}",
         result.implementation,
         result.total_time,
+        result
+            .iterations
+            .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
+        result
+            .collapsed_cells
+            .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
         result.wfc_result.is_ok()
     );
-    println!("----------------------------\n");
+    println!("----------------------------------------------------------------");
+    // Adjust separator
 }
 
 // TODO: Implement CSV output function
@@ -256,21 +316,39 @@ pub fn report_single_result(result: &BenchmarkResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules, tile::TileSet};
+    // Correct imports for tests
+    use wfc_core::{AdjacencyRules, PossibilityGrid, PropagationError, TileSet, WfcError}; // Added WfcError & PropagationError
 
-    // Helper to create simple rules: Tile 0 adjacent to itself
+    // Helper function for creating simple rules/tileset with 2 tiles
     fn create_simple_rules_and_tileset() -> (TileSet, AdjacencyRules) {
-        let num_tiles = 1;
-        let num_axes = 6;
-        let weights = vec![1.0];
-        let tileset = TileSet::new(weights).unwrap();
+        let num_tiles = 2;
+        let num_axes = 6; // 3 dimensions * 2 directions per dimension
+        let tileset = TileSet::new(vec![1.0, 1.0]).expect("Failed to create simple tileset"); // 2 tiles, equal weight
 
+        // Create the allowed vector
         let mut allowed = vec![false; num_axes * num_tiles * num_tiles];
-        // Allow Tile 0 <-> Tile 0 on all axes
+        let tile0 = 0;
+        let tile1 = 1;
+
+        // Helper closure for setting rules
+        let mut set_rule = |t1: usize, t2: usize, axis: usize| {
+            let index = axis * num_tiles * num_tiles + t1 * num_tiles + t2;
+            if index < allowed.len() {
+                allowed[index] = true;
+            }
+        };
+
+        // Define rules:
         for axis in 0..num_axes {
-            let index = axis * num_tiles * num_tiles + 0 * num_tiles + 0;
-            allowed[index] = true;
+            set_rule(tile0, tile0, axis); // Tile 0 adjacent to Tile 0 (all axes)
+            set_rule(tile1, tile1, axis); // Tile 1 adjacent to Tile 1 (all axes)
         }
+        // Specific rules: Tile 0 below Tile 1 (+Y = axis 2), Tile 1 above Tile 0 (-Y = axis 3)
+        let axis_pos_y = 2;
+        let axis_neg_y = 3;
+        set_rule(tile0, tile1, axis_pos_y); // Tile 0 -> Tile 1 (+Y)
+        set_rule(tile1, tile0, axis_neg_y); // Tile 1 -> Tile 0 (-Y)
+
         let rules = AdjacencyRules::new(num_tiles, num_axes, allowed);
         (tileset, rules)
     }
@@ -278,55 +356,189 @@ mod tests {
     #[tokio::test]
     async fn test_cpu_benchmark_run_basic() {
         let (tileset, rules) = create_simple_rules_and_tileset();
-        let mut grid = PossibilityGrid::new(3, 3, 3, tileset.weights.len());
+        // Create grid with 2 tiles, so it doesn't start fully collapsed
+        let mut grid = PossibilityGrid::new(2, 2, 2, rules.num_tiles()); // Small grid, 2 tiles
+        assert_eq!(rules.num_tiles(), 2, "Test setup should use 2 tiles");
 
         let result = run_single_benchmark("CPU", &mut grid, &tileset, &rules)
             .await
-            .expect("CPU benchmark failed to run");
+            .expect("CPU benchmark failed unexpectedly");
 
         assert_eq!(result.implementation, "CPU");
+        assert_eq!(result.grid_width, 2);
+        assert_eq!(result.grid_height, 2);
+        assert_eq!(result.grid_depth, 2);
+        assert_eq!(result.num_tiles, 2); // Verify 2 tiles used
         assert!(result.total_time > Duration::ZERO);
-        assert!(result.wfc_result.is_ok()); // Expect success for simple case
+        // Check if result is Ok. With these simple rules, it should succeed.
+        assert!(
+            result.wfc_result.is_ok(),
+            "WFC run failed: {:?}",
+            result.wfc_result
+        );
+        // Check if metrics were captured. Now the callback should be called.
+        assert!(result.iterations.is_some(), "Iterations should be Some");
+        assert!(
+            result.iterations.unwrap() >= 1,
+            "Should run at least 1 iteration"
+        );
+        assert!(
+            result.collapsed_cells.is_some(),
+            "Collapsed cells should be Some"
+        );
+        assert_eq!(
+            result.collapsed_cells.unwrap(),
+            2 * 2 * 2,
+            "All cells should be collapsed"
+        ); // 8 cells in the grid
     }
 
     #[cfg(feature = "gpu")]
     #[tokio::test]
     async fn test_gpu_benchmark_run_skipped() {
-        // This test verifies the current workaround where GPU runs are skipped.
+        // This test setup also needs to use 2 tiles for consistency, even though GPU is skipped
         let (tileset, rules) = create_simple_rules_and_tileset();
-        let mut grid = PossibilityGrid::new(3, 3, 3, tileset.weights.len());
+        let mut grid = PossibilityGrid::new(2, 2, 2, rules.num_tiles());
+        assert_eq!(rules.num_tiles(), 2, "Test setup should use 2 tiles");
 
+        // Expect the GPU run to return the specific InternalError due to skipping
         let result = run_single_benchmark("GPU", &mut grid, &tileset, &rules)
             .await
-            .expect("GPU benchmark (skipped case) failed to run");
+            .expect("GPU benchmark function failed");
 
         assert_eq!(result.implementation, "GPU");
-        // Time might be very small, but check > 0
-        assert!(result.total_time > Duration::ZERO);
-        // Expect specific error due to skip
+        assert_eq!(result.num_tiles, 2);
         assert!(matches!(result.wfc_result, Err(WfcError::InternalError(_))));
+        // Since GPU run is skipped before calling core run(), progress info won't be captured
+        assert!(result.iterations.is_none());
+        assert!(result.collapsed_cells.is_none());
     }
 
     #[cfg(feature = "gpu")]
     #[tokio::test]
     async fn test_compare_implementations_basic() {
-        // This test also relies on the GPU skip workaround
+        // Use 2 tiles for this test too
         let (tileset, rules) = create_simple_rules_and_tileset();
-        let grid = PossibilityGrid::new(3, 3, 3, tileset.weights.len());
+        let initial_grid = PossibilityGrid::new(2, 2, 2, rules.num_tiles()); // Initial state
+        assert_eq!(rules.num_tiles(), 2, "Test setup should use 2 tiles");
 
-        let result = compare_implementations(&grid, &tileset, &rules).await;
+        let result = compare_implementations(&initial_grid, &tileset, &rules).await;
 
-        // Expect the comparison function itself to succeed, even if GPU part returns error
+        // Check if the comparison function ran without panicking
         assert!(result.is_ok());
 
-        if let Ok((cpu_res, gpu_res)) = result {
-            assert_eq!(cpu_res.implementation, "CPU");
-            assert!(cpu_res.wfc_result.is_ok());
-            assert_eq!(gpu_res.implementation, "GPU");
+        if let Ok((cpu_result, gpu_result)) = result {
+            // CPU result checks
+            assert_eq!(cpu_result.implementation, "CPU");
+            assert_eq!(cpu_result.num_tiles, 2);
+            assert!(cpu_result.total_time > Duration::ZERO);
+            assert!(
+                cpu_result.wfc_result.is_ok(),
+                "CPU WFC run failed: {:?}",
+                cpu_result.wfc_result
+            );
+            assert!(cpu_result.iterations.is_some());
+            assert!(cpu_result.iterations.unwrap() >= 1);
+            assert!(cpu_result.collapsed_cells.is_some());
+            assert_eq!(cpu_result.collapsed_cells.unwrap(), 2 * 2 * 2);
+
+            // GPU result checks (currently skipped)
+            assert_eq!(gpu_result.implementation, "GPU");
+            assert_eq!(gpu_result.num_tiles, 2);
             assert!(matches!(
-                gpu_res.wfc_result,
+                gpu_result.wfc_result,
                 Err(WfcError::InternalError(_))
             ));
+            assert!(gpu_result.iterations.is_none()); // Should be None as it was skipped
+            assert!(gpu_result.collapsed_cells.is_none()); // Should be None
         }
+    }
+
+    #[test]
+    fn test_report_single_result_formatting() {
+        // Simple test to ensure report function doesn't panic
+        let result_ok = BenchmarkResult {
+            implementation: "CPU".to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            grid_depth: 1,
+            num_tiles: 1,
+            total_time: Duration::from_millis(100),
+            wfc_result: Ok(()),
+            iterations: Some(5),
+            collapsed_cells: Some(1),
+        };
+        report_single_result(&result_ok); // Just call it
+
+        let result_fail = BenchmarkResult {
+            implementation: "CPU".to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            grid_depth: 1,
+            num_tiles: 1,
+            total_time: Duration::from_millis(50),
+            wfc_result: Err(WfcError::PropagationError(PropagationError::Contradiction(
+                0, 0, 0,
+            ))),
+            iterations: Some(2),
+            collapsed_cells: Some(0),
+        };
+        report_single_result(&result_fail);
+
+        let result_none = BenchmarkResult {
+            implementation: "CPU".to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            grid_depth: 1,
+            num_tiles: 1,
+            total_time: Duration::from_millis(1),
+            wfc_result: Err(WfcError::InternalError("Setup failed".into())),
+            iterations: None,
+            collapsed_cells: None,
+        };
+        report_single_result(&result_none);
+    }
+
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn test_report_comparison_formatting() {
+        // Simple test to ensure report function doesn't panic
+        let cpu_result = BenchmarkResult {
+            implementation: "CPU".to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            grid_depth: 1,
+            num_tiles: 1,
+            total_time: Duration::from_millis(100),
+            wfc_result: Ok(()),
+            iterations: Some(10),
+            collapsed_cells: Some(1),
+        };
+        let gpu_result_skipped = BenchmarkResult {
+            implementation: "GPU".to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            grid_depth: 1,
+            num_tiles: 1,
+            total_time: Duration::from_millis(1),
+            wfc_result: Err(WfcError::InternalError("Skipped".into())),
+            iterations: None,
+            collapsed_cells: None,
+        };
+        report_comparison(&cpu_result, &gpu_result_skipped); // Call with skipped GPU
+
+        // Example with hypothetical successful GPU run (if skipping is fixed later)
+        let gpu_result_success = BenchmarkResult {
+            implementation: "GPU".to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            grid_depth: 1,
+            num_tiles: 1,
+            total_time: Duration::from_millis(20),
+            wfc_result: Ok(()),
+            iterations: Some(10),
+            collapsed_cells: Some(1),
+        };
+        report_comparison(&cpu_result, &gpu_result_success);
     }
 }

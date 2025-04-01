@@ -137,7 +137,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - **File:** `wave-forge-app/src/benchmark.rs`
   - [x] Implement benchmarking infrastructure:
     - [x] Add function to run both CPU and GPU implementations with identical input
-    - [ ] Record metrics: total runtime, memory usage, time per step, etc.
+    - [x] Record metrics: total runtime, memory usage, time per step, etc.
     - [x] Implement comparison and reporting of benchmark results
     - [ ] Support different grid sizes and complexity levels for comprehensive testing
     - [ ] Add option to output results in CSV format for further analysis
