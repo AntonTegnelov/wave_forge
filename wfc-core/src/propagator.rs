@@ -208,10 +208,6 @@ impl ConstraintPropagator for CpuConstraintPropagator {
                     let intersection =
                         original_neighbor_possibilities.clone() & &allowed_neighbor_tiles;
 
-                    // REMOVE DEBUG PRINT (Temporary)
-                    // if (x, y, z) == (1, 0, 0) && (nx, ny, nz) == (2, 0, 0) { ... }
-                    // END REMOVE DEBUG PRINT
-
                     // Check for contradiction first
                     if intersection.not_any() {
                         return Err(PropagationError::Contradiction(nx, ny, nz));
