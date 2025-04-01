@@ -77,10 +77,19 @@ impl EntropyCalculator for CpuEntropyCalculator {
     ///
     /// TODO: Implement a more sophisticated entropy calculation (e.g., Shannon entropy based on tile weights).
     fn calculate_entropy(&self, grid: &PossibilityGrid) -> EntropyGrid {
+        // Quick check for empty grid
+        if grid.width == 0 || grid.height == 0 || grid.depth == 0 {
+            return EntropyGrid::new(grid.width, grid.height, grid.depth);
+        }
+
         let mut entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
         let width = grid.width;
         let height = grid.height;
-        // let num_tiles = grid.num_tiles(); // num_tiles is not strictly needed for count_ones
+
+        // Thread safety note: This is safe because:
+        // 1. We're only reading from `grid` (shared immutable reference)
+        // 2. Each thread writes to different elements of `entropy_grid.data`
+        // 3. No synchronization is needed between threads
 
         // Parallel calculation using rayon - iterate over the output entropy grid's data
         entropy_grid
@@ -126,18 +135,25 @@ impl EntropyCalculator for CpuEntropyCalculator {
     ///
     /// Returns `None` if no cells with positive entropy exist.
     fn find_lowest_entropy(&self, entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)> {
+        // Quick check for empty grid to avoid unnecessary work
+        if entropy_grid.data.is_empty() {
+            return None;
+        }
+
         // Use parallel iteration and reduction to find the minimum non-zero entropy.
         // We need to find the *index* of the minimum element, not just the value.
         // We ignore cells with entropy 0.0 (already collapsed or contradiction).
         // Need to handle potential floating point precision issues and NaNs if using f32 directly for min.
         // Using FloatOrd helps here.
 
+        // Thread-safe approach: Use rayon's parallel iterator and reduction
         let result = entropy_grid
             .data
             .par_iter()
             .enumerate()
             .filter_map(|(index, &entropy)| {
-                if entropy > 0.0 {
+                // Filter out invalid entropy values (NaN, negative, or zero entropy cells)
+                if entropy.is_finite() && entropy > 0.0 {
                     // Wrap f32 in FloatOrd for comparison
                     Some((index, FloatOrd(entropy)))
                 } else {
@@ -162,6 +178,8 @@ mod tests {
     use super::*;
     use crate::grid::{EntropyGrid, PossibilityGrid};
     use bitvec::prelude::*;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     #[test]
     fn test_calculate_entropy_basic() {
@@ -257,5 +275,109 @@ mod tests {
         let entropy_grid = EntropyGrid::new(0, 0, 0);
         let lowest = calculator.find_lowest_entropy(&entropy_grid);
         assert_eq!(lowest, None);
+    }
+
+    #[test]
+    fn test_entropy_calculator_thread_safety() {
+        // Create an entropy calculator
+        let calculator = Arc::new(CpuEntropyCalculator::new());
+
+        // Create a larger grid to better exercise parallel processing
+        let width = 20;
+        let height = 20;
+        let depth = 20;
+        let num_tiles = 8;
+
+        // Create a grid with random possibility patterns
+        let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
+
+        // Set some cells to have different possibility patterns
+        for x in 0..width {
+            for y in 0..height {
+                for z in 0..depth {
+                    if let Some(cell) = grid.get_mut(x, y, z) {
+                        // Create different patterns based on coordinates
+                        let pattern = (x % 2) + (y % 3) + (z % 4);
+                        if pattern % 2 == 0 {
+                            // Leave all possibilities open
+                        } else if pattern % 3 == 0 {
+                            // Collapse to a single tile
+                            *cell = bitvec![0; num_tiles];
+                            cell.set(pattern % num_tiles, true);
+                        } else {
+                            // Random subset of possibilities
+                            for i in 0..num_tiles {
+                                if (x + y + z + i) % 3 == 0 {
+                                    cell.set(i, false);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Make the grid thread-safe for concurrent access
+        let grid = Arc::new(grid);
+
+        // Test concurrent access from multiple threads
+        let num_threads = 4;
+        let barrier = Arc::new(Barrier::new(num_threads));
+        let mut handles = vec![];
+
+        for thread_id in 0..num_threads {
+            let calculator_clone = Arc::clone(&calculator);
+            let grid_clone = Arc::clone(&grid);
+            let barrier_clone = Arc::clone(&barrier);
+
+            let handle = thread::spawn(move || {
+                // Wait for all threads to reach this point
+                barrier_clone.wait();
+
+                // Each thread calculates entropy and finds the minimum
+                let entropy_grid = calculator_clone.calculate_entropy(&grid_clone);
+                let min_entropy = calculator_clone.find_lowest_entropy(&entropy_grid);
+
+                // Return the result for verification
+                (thread_id, entropy_grid, min_entropy)
+            });
+
+            handles.push(handle);
+        }
+
+        // Collect results from all threads
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // Verify all threads got consistent results
+        // (The entropy calculation and minimum finding should be deterministic)
+        if let Some((_, first_entropy_grid, first_min_entropy)) = results.first() {
+            for (thread_id, entropy_grid, min_entropy) in &results[1..] {
+                // Compare with the first thread's results
+                assert_eq!(
+                    first_entropy_grid.data.len(),
+                    entropy_grid.data.len(),
+                    "Thread {} got different size entropy grid",
+                    thread_id
+                );
+
+                // Check if minimum entropy coordinates match
+                assert_eq!(
+                    first_min_entropy, min_entropy,
+                    "Thread {} found different minimum entropy coordinates",
+                    thread_id
+                );
+
+                // Verify a sample of entropy values
+                let check_count = first_entropy_grid.data.len().min(100);
+                for i in 0..check_count {
+                    let sample_index = i * first_entropy_grid.data.len() / check_count;
+                    assert_eq!(
+                        first_entropy_grid.data[sample_index], entropy_grid.data[sample_index],
+                        "Thread {} got different entropy value at index {}",
+                        thread_id, sample_index
+                    );
+                }
+            }
+        }
     }
 }
