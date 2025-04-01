@@ -1,6 +1,10 @@
+//! Crate responsible for loading and parsing WFC tile and rule definitions from external sources.
+
 use thiserror::Error;
 
+/// Contains format-specific parsing logic (e.g., RON).
 pub mod formats;
+/// Contains the main rule loading functions.
 pub mod loader;
 
 /// Errors that can occur when loading or parsing adjacency rules.
