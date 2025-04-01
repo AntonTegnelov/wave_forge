@@ -1,5 +1,5 @@
 use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
-use log::{info, warn};
+use log::info;
 use std::sync::Arc;
 use wfc_core::{
     entropy::EntropyCalculator,
@@ -29,13 +29,14 @@ use wfc_core::{
 /// Data synchronization between CPU (`PossibilityGrid`) and GPU (`GpuBuffers`) is handled
 /// internally by the respective trait method implementations.
 #[allow(dead_code)] // Allow unused fields while implementation is pending
+#[derive(Clone)] // Derive Clone
 pub struct GpuAccelerator {
-    instance: wgpu::Instance,
-    adapter: wgpu::Adapter,
+    instance: Arc<wgpu::Instance>, // Wrap in Arc
+    adapter: Arc<wgpu::Adapter>,   // Wrap in Arc
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    pipelines: ComputePipelines,
-    buffers: GpuBuffers,
+    pipelines: ComputePipelines, // Already derives Clone
+    buffers: GpuBuffers,         // Already derives Clone
     grid_dims: (usize, usize, usize),
 }
 
@@ -82,15 +83,15 @@ impl GpuAccelerator {
             )));
         }
 
-        // 1. Initialize wgpu Instance
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        // 1. Initialize wgpu Instance (Wrap in Arc)
+        let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(), // Or specify e.g., Vulkan, DX12
             ..Default::default()
-        });
+        }));
 
-        // 2. Request Adapter (physical GPU)
+        // 2. Request Adapter (physical GPU) (Wrap in Arc)
         info!("Requesting GPU adapter...");
-        let adapter = {
+        let adapter = Arc::new({
             info!("Awaiting adapter request...");
             instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
@@ -100,11 +101,11 @@ impl GpuAccelerator {
                 })
                 .await
                 .ok_or(GpuError::AdapterRequestFailed)?
-        };
+        });
         info!("Adapter request returned.");
         info!("Adapter selected: {:?}", adapter.get_info());
 
-        // 3. Request Device (logical device) & Queue
+        // 3. Request Device (logical device) & Queue (Already Arc)
         info!("Requesting logical device and queue...");
         let (device, queue) = {
             info!("Awaiting device request...");
@@ -127,15 +128,11 @@ impl GpuAccelerator {
         let device = Arc::new(device);
         let queue = Arc::new(queue);
 
-        // 4. Create pipelines (Placeholder - needs shader loading)
-        // TODO: Implement shader loading and pipeline creation
-        warn!("Pipeline creation is not yet implemented.");
+        // 4. Create pipelines (uses device, returns Cloneable struct)
         let pipelines = ComputePipelines::new(&device)?;
 
-        // 5. Create buffers (Placeholder - needs implementation)
-        // TODO: Implement buffer creation and data upload
-        warn!("Buffer creation is not yet implemented.");
-        let buffers = GpuBuffers::new(&device, initial_grid, rules)?;
+        // 5. Create buffers (uses device & queue, returns Cloneable struct)
+        let buffers = GpuBuffers::new(&device, &queue, initial_grid, rules)?;
 
         let grid_dims = (initial_grid.width, initial_grid.height, initial_grid.depth);
 
@@ -186,46 +183,45 @@ impl EntropyCalculator for GpuAccelerator {
             return EntropyGrid::new(width, height, depth);
         }
 
-        // 1. Create Command Encoder
+        // 1. Create Command Encoder (uses Arc<Device>)
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Entropy Compute Encoder"),
             });
 
-        // 2. Create Bind Group
+        // 2. Create Bind Group (uses Arc<Device>, Arc<BindGroupLayout>, Arc<Buffer>)
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Entropy Bind Group"),
-            layout: &self.pipelines.entropy_bind_group_layout,
+            layout: &self.pipelines.entropy_bind_group_layout, // Access Arc<Layout>
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                    resource: self.buffers.grid_possibilities_buf.as_entire_binding(), // Access Arc<Buffer>
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: self.buffers.entropy_buf.as_entire_binding(),
+                    resource: self.buffers.entropy_buf.as_entire_binding(), // Access Arc<Buffer>
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: self.buffers.params_uniform_buf.as_entire_binding(),
+                    resource: self.buffers.params_uniform_buf.as_entire_binding(), // Access Arc<Buffer>
                 },
-                // Add binding for min_entropy_info buffer
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: self.buffers.min_entropy_info_buf.as_entire_binding(),
+                    resource: self.buffers.min_entropy_info_buf.as_entire_binding(), // Access Arc<Buffer>
                 },
             ],
         });
 
-        // 3. Begin Compute Pass
+        // 3. Begin Compute Pass (uses Arc<ComputePipeline>)
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Entropy Compute Pass"),
                 timestamp_writes: None, // Add timestamps later if needed for profiling
             });
 
-            compute_pass.set_pipeline(&self.pipelines.entropy_pipeline);
+            compute_pass.set_pipeline(&self.pipelines.entropy_pipeline); // Access Arc<Pipeline>
             compute_pass.set_bind_group(0, &bind_group, &[]);
 
             // Dispatch - Calculate workgroup counts
@@ -240,14 +236,11 @@ impl EntropyCalculator for GpuAccelerator {
             compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
         } // End compute pass scope
 
-        // 4. Submit to Queue
+        // 4. Submit to Queue (uses Arc<Queue>)
         self.queue.submit(std::iter::once(encoder.finish()));
         log::debug!("Entropy compute shader submitted.");
 
-        // 5. Download results (synchronously for now to match trait)
-        // We use pollster::block_on to wait for the async download_entropy to complete.
-        // This is simpler for now but might block the calling thread.
-        // Consider making the trait method async in the future if needed.
+        // 5. Download results (uses Arc<Device>, Arc<Queue>)
         log::debug!("Downloading entropy results...");
         let entropy_data_result =
             pollster::block_on(self.buffers.download_entropy(&self.device, &self.queue));
@@ -498,15 +491,15 @@ impl ConstraintPropagator for GpuAccelerator {
         // but here the buffers themselves don't change, only their contents.
         let propagation_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Propagation Bind Group"),
-            layout: &self.pipelines.propagation_bind_group_layout,
+            layout: &self.pipelines.propagation_bind_group_layout, // Use Arc<Layout>
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                    resource: self.buffers.grid_possibilities_buf.as_entire_binding(), // Use Arc<Buffer>
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: self.buffers.rules_buf.as_entire_binding(),
+                    resource: self.buffers.rules_buf.as_entire_binding(), // Use Arc<Buffer>
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -542,7 +535,7 @@ impl ConstraintPropagator for GpuAccelerator {
                 timestamp_writes: None,
             });
 
-            compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
+            compute_pass.set_pipeline(&self.pipelines.propagation_pipeline); // Use Arc<Pipeline>
             compute_pass.set_bind_group(0, &propagation_bind_group, &[]);
 
             // Dispatch based on the worklist size.

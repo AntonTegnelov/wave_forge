@@ -1,4 +1,5 @@
 use crate::GpuError;
+use std::sync::Arc;
 use wgpu;
 
 /// Manages the WGPU compute pipelines required for WFC acceleration.
@@ -6,17 +7,18 @@ use wgpu;
 /// This struct holds the compiled compute pipeline objects and their corresponding
 /// bind group layouts for both the entropy calculation and constraint propagation shaders.
 /// It is typically created once during the initialization of the `GpuAccelerator`.
+#[derive(Clone)]
 pub struct ComputePipelines {
     /// The compiled compute pipeline for the entropy calculation shader (`entropy.wgsl`).
-    pub entropy_pipeline: wgpu::ComputePipeline,
+    pub entropy_pipeline: Arc<wgpu::ComputePipeline>,
     /// The compiled compute pipeline for the constraint propagation shader (`propagate.wgsl`).
-    pub propagation_pipeline: wgpu::ComputePipeline,
+    pub propagation_pipeline: Arc<wgpu::ComputePipeline>,
     /// The layout describing the binding structure for the entropy pipeline's bind group.
     /// Required for creating bind groups compatible with `entropy_pipeline`.
-    pub entropy_bind_group_layout: wgpu::BindGroupLayout,
+    pub entropy_bind_group_layout: Arc<wgpu::BindGroupLayout>,
     /// The layout describing the binding structure for the propagation pipeline's bind group.
     /// Required for creating bind groups compatible with `propagation_pipeline`.
-    pub propagation_bind_group_layout: wgpu::BindGroupLayout,
+    pub propagation_bind_group_layout: Arc<wgpu::BindGroupLayout>,
 }
 
 impl ComputePipelines {
@@ -57,8 +59,8 @@ impl ComputePipelines {
         // --- Define Bind Group Layouts ---
 
         // Layout for entropy shader
-        let entropy_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let entropy_bind_group_layout = Arc::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
                 label: Some("Entropy Bind Group Layout"),
                 entries: &[
                     // grid_possibilities (read-only storage)
@@ -107,11 +109,12 @@ impl ComputePipelines {
                         count: None,
                     },
                 ],
-            });
+            },
+        ));
 
         // Layout for propagation shader
-        let propagation_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let propagation_bind_group_layout = Arc::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
                 label: Some("Propagation Bind Group Layout"),
                 entries: &[
                     // grid_possibilities (read-write storage, atomic)
@@ -203,7 +206,8 @@ impl ComputePipelines {
                         count: None,
                     },
                 ],
-            });
+            },
+        ));
 
         // --- Define Pipeline Layouts ---
         let entropy_pipeline_layout =
@@ -221,22 +225,25 @@ impl ComputePipelines {
             });
 
         // --- Create Compute Pipelines ---
-        let entropy_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Entropy Pipeline"),
-            layout: Some(&entropy_pipeline_layout),
-            module: &entropy_shader,
-            entry_point: "main", // Assuming entry point is 'main'
-            compilation_options: Default::default(),
-        });
+        let entropy_pipeline = Arc::new(device.create_compute_pipeline(
+            &wgpu::ComputePipelineDescriptor {
+                label: Some("Entropy Pipeline"),
+                layout: Some(&entropy_pipeline_layout),
+                module: &entropy_shader,
+                entry_point: "main", // Assuming entry point is 'main'
+                compilation_options: Default::default(),
+            },
+        ));
 
-        let propagation_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let propagation_pipeline = Arc::new(device.create_compute_pipeline(
+            &wgpu::ComputePipelineDescriptor {
                 label: Some("Propagation Pipeline"),
                 layout: Some(&propagation_pipeline_layout),
                 module: &propagation_shader,
                 entry_point: "main", // Assuming entry point is 'main'
                 compilation_options: Default::default(),
-            });
+            },
+        ));
 
         Ok(Self {
             entropy_pipeline,

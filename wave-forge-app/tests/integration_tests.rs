@@ -68,6 +68,7 @@ fn test_basic_gpu_run() -> Result<(), Box<dyn std::error::Error>> {
     let output_file = tmp_dir.path().join("gpu_output.txt");
 
     let mut cmd = Command::cargo_bin("wave-forge")?;
+    cmd.env("RUST_LOG", "info"); // Set log level for test run
 
     // Run without --cpu-only to test GPU path
     cmd.arg("--rule-file")
@@ -81,14 +82,13 @@ fn test_basic_gpu_run() -> Result<(), Box<dyn std::error::Error>> {
         .arg("--output-path")
         .arg(&output_file);
 
-    // May need to adjust expectations depending on GPU availability/initialization success
-    cmd.assert().failure().stderr(predicate::str::contains(
-        "GPU run skipped due to ownership conflict",
-    ));
+    // Now expect success or a normal WFC error, not the specific skipped message
+    cmd.assert()
+        .success()
+        .stderr(predicate::str::contains("GPU WFC completed successfully."));
 
-    // Check if output file was created (it shouldn't be in this case, but let's check non-existence or handle appropriately)
-    // assert!(!output_file.exists(), "Output file was created unexpectedly during skipped GPU run");
-    // For now, let's skip the output file check for the failing GPU test.
+    // Check if output file was created
+    assert!(output_file.exists(), "Output file was not created");
 
     Ok(())
 }

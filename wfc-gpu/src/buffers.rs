@@ -1,9 +1,10 @@
 use crate::GpuError;
 use bytemuck::{Pod, Zeroable};
 use log::{debug, error, info, warn};
+use std::sync::Arc;
 use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules};
 use wgpu;
-use wgpu::util::DeviceExt; // Import for create_buffer_init
+use wgpu::util::DeviceExt; // Import for create_buffer_init // Add Arc
 
 /// Uniform buffer structure holding parameters accessible by GPU compute shaders.
 ///
@@ -49,60 +50,61 @@ pub struct GpuParamsUniform {
 /// It also includes corresponding staging buffers (prefixed `staging_`) used for efficiently
 /// transferring data between the CPU and GPU, particularly for downloading results.
 #[allow(dead_code)] // Allow unused fields/methods during development
+#[derive(Clone)] // Derive Clone
 pub struct GpuBuffers {
     /// **GPU Buffer**: Stores the possibility bitvector for each grid cell.
     /// Each cell's possibilities are packed into `num_tiles_u32` elements.
     /// Usage: `STORAGE | COPY_DST | COPY_SRC`
-    pub grid_possibilities_buf: wgpu::Buffer,
+    pub grid_possibilities_buf: Arc<wgpu::Buffer>,
     /// **Staging Buffer**: Used for downloading the final grid possibilities state to the CPU.
     /// Usage: `MAP_READ | COPY_DST`
-    staging_grid_possibilities_buf: wgpu::Buffer,
+    staging_grid_possibilities_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Stores the flattened adjacency rules, packed into u32s.
     /// Read-only by shaders.
     /// Usage: `STORAGE`
-    pub rules_buf: wgpu::Buffer,
+    pub rules_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Stores the calculated entropy value (f32) for each grid cell.
     /// Written to by the entropy shader, read back to CPU.
     /// Usage: `STORAGE | COPY_SRC`
-    pub entropy_buf: wgpu::Buffer,
+    pub entropy_buf: Arc<wgpu::Buffer>,
     /// **Staging Buffer**: Used for downloading the entropy grid to the CPU.
     /// Usage: `MAP_READ | COPY_DST`
-    staging_entropy_buf: wgpu::Buffer,
+    staging_entropy_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Stores the minimum positive entropy found and its index.
     /// Layout: `[f32_entropy_bits: u32, flat_index: u32]`.
     /// Written atomically by the entropy shader.
     /// Usage: `STORAGE | COPY_DST | COPY_SRC`
-    pub min_entropy_info_buf: wgpu::Buffer,
+    pub min_entropy_info_buf: Arc<wgpu::Buffer>,
     /// **Staging Buffer**: Used for downloading the minimum entropy info.
     /// Usage: `MAP_READ | COPY_DST`
-    staging_min_entropy_info_buf: wgpu::Buffer,
+    staging_min_entropy_info_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Input buffer for propagation, storing flat indices of updated cells.
     /// Written to by the CPU (`upload_updates`), read by the propagation shader.
     /// Usage: `STORAGE | COPY_DST`
-    pub updates_buf: wgpu::Buffer,
+    pub updates_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Output buffer for propagation worklist (potentially unused/future work).
     /// Usage: `STORAGE | COPY_SRC`
-    pub output_worklist_buf: wgpu::Buffer,
+    pub output_worklist_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Atomic counter for the output worklist (potentially unused/future work).
     /// Usage: `STORAGE | COPY_DST | COPY_SRC`
-    pub output_worklist_count_buf: wgpu::Buffer,
+    pub output_worklist_count_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Flag (u32) set by the propagation shader if a contradiction is detected.
     /// 0 = no contradiction, 1 = contradiction.
     /// Usage: `STORAGE | COPY_DST | COPY_SRC`
-    pub contradiction_flag_buf: wgpu::Buffer,
+    pub contradiction_flag_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Uniform buffer holding `GpuParamsUniform`.
     /// Usage: `UNIFORM | COPY_DST | COPY_SRC`
-    pub params_uniform_buf: wgpu::Buffer,
+    pub params_uniform_buf: Arc<wgpu::Buffer>,
     /// **Staging Buffer**: Used for downloading the contradiction flag.
     /// Usage: `MAP_READ | COPY_DST`
-    staging_contradiction_flag_buf: wgpu::Buffer,
+    staging_contradiction_flag_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Stores the flat index of the first cell where a contradiction was detected.
     /// Written atomically by the propagation shader.
     /// Usage: `STORAGE | COPY_DST | COPY_SRC`
-    pub contradiction_location_buf: wgpu::Buffer,
+    pub contradiction_location_buf: Arc<wgpu::Buffer>,
     /// **Staging Buffer**: Used for downloading the contradiction location index.
     /// Usage: `MAP_READ | COPY_DST`
-    staging_contradiction_location_buf: wgpu::Buffer,
+    staging_contradiction_location_buf: Arc<wgpu::Buffer>,
 }
 
 impl GpuBuffers {
@@ -137,7 +139,7 @@ impl GpuBuffers {
     ///   (e.g., size mismatch).
     pub fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        _queue: &wgpu::Queue,
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
     ) -> Result<Self, GpuError> {
@@ -207,121 +209,131 @@ impl GpuBuffers {
         let min_entropy_info_buffer_size = (2 * std::mem::size_of::<u32>()) as u64; // Size for [f32_bits, u32_index]
         let contradiction_location_buffer_size = std::mem::size_of::<u32>() as u64;
 
-        // --- Create Buffers --- (Use calculated sizes)
-        let grid_possibilities_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Grid Possibilities"),
-            contents: bytemuck::cast_slice(&packed_possibilities),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-        });
+        // --- Create Buffers --- (Wrap in Arc)
+        let grid_possibilities_buf = Arc::new(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Grid Possibilities"),
+                contents: bytemuck::cast_slice(&packed_possibilities),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+            },
+        ));
 
-        let rules_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Rules"),
-            contents: bytemuck::cast_slice(&packed_rules),
-            usage: wgpu::BufferUsages::STORAGE, // Read-only in shader
-        });
+        let rules_buf = Arc::new(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Rules"),
+                contents: bytemuck::cast_slice(&packed_rules),
+                usage: wgpu::BufferUsages::STORAGE, // Read-only in shader
+            }),
+        );
 
-        let params_uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Params Uniform"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-        });
+        let params_uniform_buf = Arc::new(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Params Uniform"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+            },
+        ));
 
-        let entropy_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let entropy_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Entropy"),
             size: entropy_buffer_size, // Use calculated size
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        });
+        }));
 
-        let updates_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let updates_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Updates Worklist"),
             size: updates_buffer_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
+        }));
 
-        let output_worklist_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let output_worklist_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Output Worklist"),
             size: output_worklist_buffer_size,
             // Needs STORAGE for shader write, COPY_SRC if read back needed
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        });
+        }));
 
-        let output_worklist_count_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let output_worklist_count_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Output Worklist Count"),
             size: output_worklist_count_buffer_size,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        });
+        }));
 
-        let contradiction_flag_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let contradiction_flag_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Contradiction Flag"),
             size: contradiction_buffer_size,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        });
+        }));
 
-        let contradiction_location_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let contradiction_location_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Contradiction Location"),
             size: contradiction_location_buffer_size,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST // For reset
                 | wgpu::BufferUsages::COPY_SRC, // For download
             mapped_at_creation: false,
-        });
+        }));
 
-        let min_entropy_info_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let min_entropy_info_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Min Entropy Info Buffer"),
             size: min_entropy_info_buffer_size,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST // For initialization/reset
                 | wgpu::BufferUsages::COPY_SRC, // For reading back result
             mapped_at_creation: false,
-        });
+        }));
 
-        let staging_grid_possibilities_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging Grid Possibilities Buffer"),
-            size: _grid_buffer_size, // Use calculated size from packed_possibilities
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let staging_grid_possibilities_buf =
+            Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Staging Grid Possibilities Buffer"),
+                size: _grid_buffer_size, // Use calculated size from packed_possibilities
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
 
-        let staging_entropy_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let staging_entropy_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Staging Entropy Buffer"),
             size: entropy_buffer_size,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
+        }));
 
-        let staging_min_entropy_info_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging Min Entropy Info"),
-            size: min_entropy_info_buffer_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let staging_min_entropy_info_buf =
+            Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Staging Min Entropy Info"),
+                size: min_entropy_info_buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
 
-        let staging_contradiction_flag_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging Contradiction Flag"),
-            size: contradiction_buffer_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let staging_contradiction_flag_buf =
+            Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Staging Contradiction Flag"),
+                size: contradiction_buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
 
-        let staging_contradiction_location_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging Contradiction Location Buffer"),
-            size: contradiction_location_buffer_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let staging_contradiction_location_buf =
+            Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Staging Contradiction Location Buffer"),
+                size: contradiction_location_buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
 
         info!("GPU buffers created successfully.");
         Ok(Self {

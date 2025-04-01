@@ -114,23 +114,23 @@ pub async fn run_single_benchmark(
             #[cfg(feature = "gpu")]
             {
                 log::info!("Running GPU Benchmark...");
-                // Ensure grid possibilities are reset or cloned if necessary before running GPU
-                #[allow(unused_variables)]
-                let mut gpu_accelerator = GpuAccelerator::new(grid, rules)
+                let gpu_accelerator = GpuAccelerator::new(grid, rules)
                     .await
                     .map_err(|e| anyhow::anyhow!("GPU initialization failed: {}", e))?;
-                // TODO: Ownership conflict! GpuAccelerator implements both traits,
-                //       but run() takes ownership, and GpuAccelerator is not Clone.
-                //       Requires refactoring GpuAccelerator or run() signature.
-                // run(grid, tileset, rules, gpu_accelerator, gpu_accelerator, progress_callback) // This won't compile
-                log::warn!("GPU benchmark run skipped due to ownership conflict. Cannot use progress callback.");
-                Err(WfcError::InternalError(
-                    "GPU benchmark skipped due to ownership conflict".to_string(),
-                ))
-                // Placeholder
+
+                // Now we can clone the accelerator
+                let propagator = gpu_accelerator.clone();
+                let entropy_calc = gpu_accelerator; // Use original for the second owned param
+
+                run(
+                    grid,
+                    tileset,
+                    rules,
+                    propagator,
+                    entropy_calc,
+                    progress_callback,
+                )
             }
-            // If 'gpu' feature is not enabled, this case should not be reachable
-            // or should return an appropriate error.
             #[cfg(not(feature = "gpu"))]
             {
                 log::error!("GPU benchmark requested but GPU feature is not enabled!");
@@ -552,36 +552,49 @@ mod tests {
 
     #[cfg(feature = "gpu")]
     #[tokio::test]
-    async fn test_gpu_benchmark_run_skipped() {
-        // This test setup also needs to use 2 tiles for consistency, even though GPU is skipped
+    async fn test_gpu_benchmark_run_basic() {
         let (tileset, rules) = create_simple_rules_and_tileset();
         let mut grid = PossibilityGrid::new(2, 2, 2, rules.num_tiles());
         assert_eq!(rules.num_tiles(), 2, "Test setup should use 2 tiles");
 
-        // Expect the GPU run to return the specific InternalError due to skipping
+        // Expect the GPU run to succeed or fail normally, not with the specific InternalError
         let result = run_single_benchmark("GPU", &mut grid, &tileset, &rules)
             .await
             .expect("GPU benchmark function failed");
 
         assert_eq!(result.implementation, "GPU");
         assert_eq!(result.num_tiles, 2);
-        assert!(matches!(result.wfc_result, Err(WfcError::InternalError(_))));
-        // Since GPU run is skipped before calling core run(), progress info won't be captured
-        assert!(result.iterations.is_none());
-        assert!(result.collapsed_cells.is_none());
+        // Check if result is Ok or a valid WfcError (Contradiction, etc.)
+        // It should NOT be the specific InternalError("GPU benchmark skipped...")
+        match &result.wfc_result {
+            Ok(_) => (),
+            Err(WfcError::InternalError(s)) if s.contains("skipped") => {
+                panic!(
+                    "GPU benchmark run was unexpectedly skipped: {:?}",
+                    result.wfc_result
+                );
+            }
+            Err(_) => (), // Allow other WfcErrors like Contradiction
+        }
+        // Check if metrics were captured (if run succeeded)
+        if result.wfc_result.is_ok() {
+            assert!(result.iterations.is_some());
+            assert!(result.iterations.unwrap() >= 1);
+            assert!(result.collapsed_cells.is_some());
+            assert_eq!(result.collapsed_cells.unwrap(), 2 * 2 * 2);
+        } else {
+            // If failed, metrics might or might not be None
+        }
     }
 
     #[cfg(feature = "gpu")]
     #[tokio::test]
     async fn test_compare_implementations_basic() {
-        // Use 2 tiles for this test too
         let (tileset, rules) = create_simple_rules_and_tileset();
-        let initial_grid = PossibilityGrid::new(2, 2, 2, rules.num_tiles()); // Initial state
+        let initial_grid = PossibilityGrid::new(2, 2, 2, rules.num_tiles());
         assert_eq!(rules.num_tiles(), 2, "Test setup should use 2 tiles");
 
         let result = compare_implementations(&initial_grid, &tileset, &rules).await;
-
-        // Check if the comparison function ran without panicking
         assert!(result.is_ok());
 
         if let Ok((cpu_result, gpu_result)) = result {
@@ -599,15 +612,25 @@ mod tests {
             assert!(cpu_result.collapsed_cells.is_some());
             assert_eq!(cpu_result.collapsed_cells.unwrap(), 2 * 2 * 2);
 
-            // GPU result checks (currently skipped)
+            // GPU result checks (expect normal run)
             assert_eq!(gpu_result.implementation, "GPU");
             assert_eq!(gpu_result.num_tiles, 2);
-            assert!(matches!(
-                gpu_result.wfc_result,
-                Err(WfcError::InternalError(_))
-            ));
-            assert!(gpu_result.iterations.is_none()); // Should be None as it was skipped
-            assert!(gpu_result.collapsed_cells.is_none()); // Should be None
+            match &gpu_result.wfc_result {
+                Ok(_) => (),
+                Err(WfcError::InternalError(s)) if s.contains("skipped") => {
+                    panic!(
+                        "GPU benchmark run was unexpectedly skipped: {:?}",
+                        gpu_result.wfc_result
+                    );
+                }
+                Err(_) => (), // Allow other WfcErrors
+            }
+            if gpu_result.wfc_result.is_ok() {
+                assert!(gpu_result.iterations.is_some());
+                assert!(gpu_result.iterations.unwrap() >= 1);
+                assert!(gpu_result.collapsed_cells.is_some());
+                assert_eq!(gpu_result.collapsed_cells.unwrap(), 2 * 2 * 2);
+            }
         }
     }
 
@@ -699,6 +722,9 @@ mod tests {
         report_comparison(&cpu_result, &gpu_result_success);
     }
 
+    // This test is specifically for the case when only CPU results are expected,
+    // i.e., when the 'gpu' feature is NOT enabled.
+    #[cfg(not(feature = "gpu"))]
     #[test]
     fn test_write_results_to_csv_cpu_only() {
         let temp_dir = tempdir().unwrap();

@@ -305,23 +305,35 @@ async fn main() -> Result<()> {
             {
                 log::info!("Initializing GPU Accelerator...");
                 match wfc_gpu::accelerator::GpuAccelerator::new(&grid, &rules).await {
-                    #[allow(unused_variables)] // Allow unused until run call is fixed
                     Ok(gpu_accelerator) => {
                         log::info!("Running WFC on GPU...");
-                        // TODO: Ownership conflict! GpuAccelerator implements both traits,
-                        //       but run() takes ownership, and GpuAccelerator is not Clone.
-                        //       Requires refactoring GpuAccelerator or run() signature.
-                        // match wfc_core::runner::run(
-                        //     &mut grid,
-                        //     &tileset,
-                        //     &rules,
-                        //     gpu_accelerator, // Passes ownership
-                        //     gpu_accelerator, // Error: Use of moved value
-                        //     progress_callback,
-                        // ) { ... }
-                        log::warn!("GPU run skipped due to ownership conflict.");
-                        // Placeholder: Treat as error for now
-                        return Err(anyhow::anyhow!("GPU run skipped due to ownership conflict"));
+                        // Clone the accelerator for the two trait parameters
+                        let propagator = gpu_accelerator.clone();
+                        let entropy_calc = gpu_accelerator; // Use original
+                        match wfc_core::runner::run(
+                            &mut grid,
+                            &tileset,
+                            &rules,
+                            propagator,   // Passes ownership of clone
+                            entropy_calc, // Passes ownership of original
+                            progress_callback,
+                        ) {
+                            Ok(_) => {
+                                log::info!("GPU WFC completed successfully.");
+                                // Save the grid using the passed config
+                                if let Err(e) =
+                                    output::save_grid_to_file(&grid, config.output_path.as_path())
+                                {
+                                    log::error!("Failed to save grid: {}", e);
+                                    return Err(e);
+                                }
+                                Ok(())
+                            }
+                            Err(e) => {
+                                log::error!("GPU WFC failed: {}", e);
+                                Err(anyhow::anyhow!(e)) // Convert WfcError to anyhow::Error
+                            }
+                        }?; // Propagate error from run
                     }
                     Err(e) => {
                         log::error!(
