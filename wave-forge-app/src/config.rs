@@ -1,3 +1,5 @@
+//! Handles command-line argument parsing and application configuration.
+
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 use std::time::Duration;

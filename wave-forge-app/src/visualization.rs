@@ -1,3 +1,5 @@
+//! Provides traits and implementations for visualizing the WFC grid state.
+
 use anyhow::Result;
 use colored::*;
 use wfc_core::grid::PossibilityGrid; // Import colored crate

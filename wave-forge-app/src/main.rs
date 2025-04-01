@@ -1,3 +1,12 @@
+//! # Wave Forge Application
+//!
+//! This is the main executable crate for the Wave Forge project.
+//! It provides a command-line interface to:
+//! - Run the Wave Function Collapse (WFC) algorithm on specified rule files and grid dimensions.
+//! - Optionally use GPU acceleration (if the `gpu` feature is enabled).
+//! - Benchmark CPU vs GPU performance (if the `gpu` feature is enabled).
+//! - Configure output paths, visualization modes, and progress reporting.
+
 // wave-forge-app/src/main.rs
 
 pub mod benchmark;
@@ -15,7 +24,16 @@ use visualization::{TerminalVisualizer, Visualizer};
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
 
-// Make main async
+/// The main entry point for the Wave Forge application.
+///
+/// Parses command-line arguments using `clap`, initializes logging, loads WFC rules,
+/// sets up the grid, and then either runs the benchmarking suite or the standard
+/// WFC algorithm based on the provided configuration.
+///
+/// Handles both CPU and GPU execution paths (conditional on the `gpu` feature).
+/// Orchestrates progress reporting and final output saving.
+///
+/// Uses `tokio` for the async runtime, primarily for the asynchronous GPU initialization.
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging (using env_logger)
@@ -335,7 +353,27 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// Helper function to run WFC on CPU
+/// Helper function to execute the Wave Function Collapse algorithm using the CPU implementation.
+///
+/// This function is called when GPU acceleration is disabled, unavailable, or fails to initialize.
+/// It instantiates the CPU-based `ConstraintPropagator` and `EntropyCalculator`,
+/// then calls the core `wfc_core::runner::run` function.
+///
+/// After successful completion, it saves the resulting grid to the specified output path.
+/// Handles potential errors during the WFC run or file saving.
+///
+/// # Arguments
+///
+/// * `grid` - A mutable reference to the `PossibilityGrid` to be collapsed.
+/// * `tileset` - A reference to the loaded `TileSet`.
+/// * `rules` - A reference to the loaded `AdjacencyRules`.
+/// * `progress_callback` - An optional callback function for reporting progress.
+/// * `config` - A reference to the application configuration (`AppConfig`) for output settings.
+///
+/// # Returns
+///
+/// * `Ok(())` if the WFC run completes successfully and the output is saved.
+/// * `Err(anyhow::Error)` if the WFC run fails or saving the output fails.
 fn run_cpu(
     grid: &mut PossibilityGrid,
     tileset: &wfc_core::TileSet,

@@ -1,3 +1,5 @@
+//! Benchmarking utilities for comparing WFC implementations (CPU vs GPU).
+
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wfc_core::{

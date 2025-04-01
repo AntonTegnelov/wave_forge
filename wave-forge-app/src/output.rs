@@ -1,3 +1,5 @@
+//! Handles saving the generated WFC grid state to output files.
+
 use anyhow::{bail, Context, Result};
 use std::fs::File;
 use std::io::{self, Write};
