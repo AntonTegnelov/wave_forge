@@ -89,7 +89,4 @@ pub struct ProgressInfo {
     pub collapsed_cells: usize,
     /// The total number of cells in the grid.
     pub total_cells: usize,
-    /// Optional: Number of contradictions encountered so far.
-    pub contradictions: Option<usize>,
-    // Add other relevant progress metrics as needed
 }
