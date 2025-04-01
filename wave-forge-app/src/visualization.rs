@@ -2,12 +2,25 @@ use wfc_core::grid::PossibilityGrid;
 
 // TODO: Define specific error type for visualization?
 
-/// Trait for visualizing the state of the WFC grid.
+/// Trait for types that can visualize the state of the WFC `PossibilityGrid`.
+///
+/// Implementors of this trait define how the grid's state (e.g., possibilities,
+/// entropy, final collapsed state) is presented to the user, such as via
+/// terminal output or a graphical window.
 pub trait Visualizer {
-    /// Displays the current state of the grid.
+    /// Displays or updates the visualization based on the current state of the grid.
     ///
-    /// This might involve printing to console, updating a window, etc.
-    /// It might take the grid directly, or potentially other info like entropy.
+    /// This method is called to render the grid's state. The specific behavior
+    /// depends on the implementing visualizer (e.g., print to console, update GUI).
+    ///
+    /// # Arguments
+    ///
+    /// * `grid` - A reference to the `PossibilityGrid` whose state should be displayed.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the display was successful.
+    /// * `Err(anyhow::Error)` if an error occurred during visualization.
     fn display_state(&mut self, grid: &PossibilityGrid) -> Result<(), anyhow::Error>; // Using anyhow for app errors
 
     // TODO: Add methods for initialization, updates during run, final display?
@@ -17,6 +30,7 @@ pub trait Visualizer {
 // --- Implementations ---
 
 // TODO: Implement TerminalVisualizer
+/// A placeholder visualizer intended to render the grid state in the terminal.
 // Placeholder implementation
 pub struct TerminalVisualizer;
 

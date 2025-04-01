@@ -17,21 +17,51 @@ use wfc_gpu::accelerator::GpuAccelerator;
 // Use anyhow for application-level errors
 use anyhow::Error;
 
-/// Structure to hold benchmark results for a single run (CPU or GPU)
+/// Structure to hold benchmark results for a single run (CPU or GPU).
+///
+/// Contains timing information, grid parameters, and the final result of the WFC run.
 #[derive(Debug, Clone)]
 pub struct BenchmarkResult {
-    pub implementation: String, // "CPU" or "GPU"
+    /// Identifier for the implementation used ("CPU" or "GPU").
+    pub implementation: String,
+    /// Width of the grid used in the benchmark.
     pub grid_width: usize,
+    /// Height of the grid used in the benchmark.
     pub grid_height: usize,
+    /// Depth of the grid used in the benchmark.
     pub grid_depth: usize,
+    /// Number of unique tiles used in the benchmark.
     pub num_tiles: usize,
+    /// Total wall-clock time taken for the WFC algorithm to complete or error out.
     pub total_time: Duration,
-    pub wfc_result: Result<(), WfcError>, // Store if WFC succeeded or failed
-                                          // TODO: Add more metrics like time per step, memory usage, contradictions etc.
+    /// The result of the WFC run (`Ok(())` on success, `Err(WfcError)` on failure).
+    pub wfc_result: Result<(), WfcError>,
+    // TODO: Add more metrics like time per step, memory usage, contradictions etc.
 }
 
 /// Runs the WFC algorithm using the specified implementation (CPU or GPU)
-/// and collects timing information.
+/// and collects timing and result information.
+///
+/// This function executes the core WFC logic using either the CPU or GPU backend
+/// based on the `implementation` parameter and records the execution time.
+///
+/// **Note:** Currently, the GPU execution path is skipped due to an ownership
+/// conflict in the underlying `run` function signature when using `GpuAccelerator`.
+/// It will return an `InternalError` if "GPU" is specified when the `gpu` feature is enabled.
+///
+/// # Arguments
+///
+/// * `implementation` - A string slice indicating the backend to use ("CPU" or "GPU").
+/// * `grid` - A mutable reference to the `PossibilityGrid` to run the algorithm on.
+/// * `tileset` - A reference to the `TileSet` containing tile information (e.g., weights).
+/// * `rules` - A reference to the `AdjacencyRules` defining constraints.
+///
+/// # Returns
+///
+/// * `Ok(BenchmarkResult)` containing the details of the benchmark run.
+/// * `Err(Error)` if an unknown implementation is specified, if the GPU feature is required
+///   but not enabled, or if GPU initialization fails (if implemented).
+///
 pub async fn run_single_benchmark(
     implementation: &str, // "CPU" or "GPU"
     grid: &mut PossibilityGrid,
@@ -97,7 +127,25 @@ pub async fn run_single_benchmark(
 }
 
 /// Runs both CPU and GPU benchmarks for the same initial configuration
-/// and returns the results.
+/// and returns the results for comparison.
+///
+/// This function clones the initial grid state to ensure both CPU and GPU runs
+/// start from the exact same conditions.
+///
+/// **Note:** This function is only available when the `gpu` feature is enabled.
+/// Currently, the GPU execution path within `run_single_benchmark` is skipped,
+/// so the GPU result will contain an `InternalError`.
+///
+/// # Arguments
+///
+/// * `initial_grid` - A reference to the initial `PossibilityGrid` state before collapse.
+/// * `tileset` - A reference to the `TileSet`.
+/// * `rules` - A reference to the `AdjacencyRules`.
+///
+/// # Returns
+///
+/// * `Ok((BenchmarkResult, BenchmarkResult))` - A tuple containing the CPU result and the GPU result.
+/// * `Err(Error)` - If either the CPU or GPU benchmark run encounters an error (e.g., setup fails).
 // This function should only be available if the GPU feature is enabled,
 // as it explicitly compares CPU and GPU.
 #[cfg(feature = "gpu")]
@@ -133,7 +181,17 @@ pub async fn compare_implementations(
     Ok((cpu_result, gpu_result))
 }
 
-/// Formats and prints the comparison results to the console.
+/// Formats and prints the comparison results of CPU and GPU benchmarks to the console.
+///
+/// Displays grid dimensions, tile count, timing for each implementation, and calculates
+/// the speedup factor.
+///
+/// **Note:** This function is only available when the `gpu` feature is enabled.
+///
+/// # Arguments
+///
+/// * `cpu_result` - The `BenchmarkResult` from the CPU run.
+/// * `gpu_result` - The `BenchmarkResult` from the GPU run.
 #[cfg(feature = "gpu")] // Only relevant if GPU results exist
 pub fn report_comparison(cpu_result: &BenchmarkResult, gpu_result: &BenchmarkResult) {
     println!("\n--- Benchmark Comparison ---");
@@ -165,6 +223,14 @@ pub fn report_comparison(cpu_result: &BenchmarkResult, gpu_result: &BenchmarkRes
     println!("----------------------------\n");
 }
 
+/// Formats and prints the results of a single benchmark run to the console.
+///
+/// Used when only one implementation (typically CPU) was run, or when not comparing.
+/// Displays grid dimensions, tile count, implementation name, timing, and success/failure.
+///
+/// # Arguments
+///
+/// * `result` - The `BenchmarkResult` from the single run.
 // Function to report results when only CPU is run (e.g., no GPU feature)
 pub fn report_single_result(result: &BenchmarkResult) {
     println!("\n--- Benchmark Result ---");
