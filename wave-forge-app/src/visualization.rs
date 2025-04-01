@@ -69,6 +69,8 @@ pub struct TerminalVisualizer {
     z_layer: usize,
     /// Whether visualization is currently enabled
     enabled: bool,
+    /// Toggle key character (for consistency with other visualizers)
+    toggle_key: char,
 }
 
 impl Default for TerminalVisualizer {
@@ -83,6 +85,16 @@ impl TerminalVisualizer {
         Self {
             z_layer: 0,
             enabled: true,
+            toggle_key: 'T', // Default toggle key
+        }
+    }
+
+    /// Creates a new TerminalVisualizer with specified toggle key.
+    pub fn with_toggle_key(toggle_key: char) -> Self {
+        Self {
+            z_layer: 0,
+            enabled: true,
+            toggle_key,
         }
     }
 
@@ -201,8 +213,9 @@ pub struct Simple2DVisualizer {
     buffer: Vec<u32>,
     width: usize,
     height: usize,
-    z_layer: usize, // Layer to display
-    enabled: bool,  // Whether visualization is currently enabled
+    z_layer: usize,  // Layer to display
+    enabled: bool,   // Whether visualization is currently enabled
+    toggle_key: Key, // Key used to toggle visualization on/off (default is 'T')
 }
 
 impl Simple2DVisualizer {
@@ -213,6 +226,7 @@ impl Simple2DVisualizer {
     /// * `title` - The title of the visualization window
     /// * `grid_width` - The width of the grid (currently using fixed window size instead)
     /// * `grid_height` - The height of the grid (currently using fixed window size instead)
+    /// * `toggle_key` - The key used to toggle visualization on/off (default is 'T')
     ///
     /// # Errors
     ///
@@ -221,6 +235,7 @@ impl Simple2DVisualizer {
         title: &str,
         _grid_width: usize,
         _grid_height: usize,
+        toggle_key: char,
     ) -> Result<Self, anyhow::Error> {
         // Using fixed window size rather than scaling based on grid dimensions
         // This allows consistent window size regardless of grid size
@@ -233,6 +248,51 @@ impl Simple2DVisualizer {
 
         let buffer = vec![0; window_width * window_height];
 
+        // Convert the toggle_key character to a minifb Key
+        // This is a simple mapping for common keys
+        let key = match toggle_key.to_ascii_uppercase() {
+            'A' => Key::A,
+            'B' => Key::B,
+            'C' => Key::C,
+            'D' => Key::D,
+            'E' => Key::E,
+            'F' => Key::F,
+            'G' => Key::G,
+            'H' => Key::H,
+            'I' => Key::I,
+            'J' => Key::J,
+            'K' => Key::K,
+            'L' => Key::L,
+            'M' => Key::M,
+            'N' => Key::N,
+            'O' => Key::O,
+            'P' => Key::P,
+            'Q' => Key::Q,
+            'R' => Key::R,
+            'S' => Key::S,
+            'T' => Key::T,
+            'U' => Key::U,
+            'V' => Key::V,
+            'W' => Key::W,
+            'X' => Key::X,
+            'Y' => Key::Y,
+            'Z' => Key::Z,
+            '0' => Key::Key0,
+            '1' => Key::Key1,
+            '2' => Key::Key2,
+            '3' => Key::Key3,
+            '4' => Key::Key4,
+            '5' => Key::Key5,
+            '6' => Key::Key6,
+            '7' => Key::Key7,
+            '8' => Key::Key8,
+            '9' => Key::Key9,
+            _ => {
+                log::warn!("Unsupported toggle key '{}', using 'T' instead", toggle_key);
+                Key::T // Default to T for unsupported keys
+            }
+        };
+
         Ok(Self {
             window,
             buffer,
@@ -240,6 +300,7 @@ impl Simple2DVisualizer {
             height: window_height,
             z_layer: 0,
             enabled: true,
+            toggle_key: key,
         })
     }
 
@@ -329,8 +390,8 @@ impl Visualizer for Simple2DVisualizer {
             return Ok(false); // Signal that visualization was closed
         }
 
-        // Check for visualization toggle key (T)
-        if self.window.is_key_released(Key::T) {
+        // Check for visualization toggle key (using the configured key)
+        if self.window.is_key_released(self.toggle_key) {
             self.toggle_enabled();
         }
 

@@ -64,21 +64,28 @@ async fn main() -> Result<()> {
             let viz_mode = config.visualization_mode.clone();
             let grid_width = config.width;
             let grid_height = config.height;
+            let toggle_key = config.visualization_toggle_key;
 
             log::info!("Starting visualization thread with mode: {:?}", viz_mode);
+            log::info!("Visualization toggle key: '{}'", toggle_key);
+
             thread::spawn(move || {
                 let mut visualizer: Box<dyn Visualizer> = match viz_mode {
-                    VisualizationMode::Terminal => Box::new(TerminalVisualizer::new()),
+                    VisualizationMode::Terminal => {
+                        Box::new(TerminalVisualizer::with_toggle_key(toggle_key))
+                    }
                     VisualizationMode::Simple2D => {
                         match visualization::Simple2DVisualizer::new(
                             &format!("Wave Forge - {}x{}", grid_width, grid_height),
                             grid_width,
                             grid_height,
+                            toggle_key,
                         ) {
                             Ok(viz) => Box::new(viz),
                             Err(e) => {
                                 log::error!("Failed to create Simple2DVisualizer: {}", e);
-                                Box::new(TerminalVisualizer::new()) // Fallback to terminal
+                                Box::new(TerminalVisualizer::with_toggle_key(toggle_key))
+                                // Fallback to terminal
                             }
                         }
                     }

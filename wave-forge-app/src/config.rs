@@ -57,6 +57,10 @@ pub struct AppConfig {
     #[arg(long, value_enum, default_value_t = VisualizationMode::None)]
     pub visualization_mode: VisualizationMode,
 
+    /// Key to toggle visualization on/off during runtime (single character).
+    #[arg(long, default_value = "T")]
+    pub visualization_toggle_key: char,
+
     /// Optional: Path to save benchmark results as a CSV file.
     /// Only used if benchmark_mode is also enabled.
     #[arg(long, value_name = "CSV_FILE")]
@@ -179,5 +183,24 @@ mod tests {
             Some(PathBuf::from("results.csv"))
         );
         assert!(!config.benchmark_mode); // Verify benchmark mode is off
+    }
+
+    #[test]
+    fn test_visualization_toggle_key() {
+        // Test default value
+        let args = vec!["wave-forge", "--rule-file", "r.ron"];
+        let config = AppConfig::try_parse_from(args).unwrap();
+        assert_eq!(config.visualization_toggle_key, 'T');
+
+        // Test custom value
+        let args = vec![
+            "wave-forge",
+            "--rule-file",
+            "r.ron",
+            "--visualization-toggle-key",
+            "V",
+        ];
+        let config = AppConfig::try_parse_from(args).unwrap();
+        assert_eq!(config.visualization_toggle_key, 'V');
     }
 }
