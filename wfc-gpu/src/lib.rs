@@ -1,8 +1,14 @@
+//! Provides GPU acceleration for the WFC algorithm using WGPU compute shaders.
+
 use thiserror::Error;
 
+/// Manages the WGPU context and implements the WFC traits using compute shaders.
 pub mod accelerator;
+/// Handles creation and management of WGPU buffers for grid state, rules, etc.
 pub mod buffers;
+/// Logic for loading shaders and creating WGPU compute pipelines.
 pub mod pipeline;
+/// Contains WGSL shader code as string constants or loading utilities.
 pub mod shaders; // Module to potentially help load shaders
 
 /// Errors related to GPU setup, buffer operations, shader compilation, and pipeline execution using WGPU.
