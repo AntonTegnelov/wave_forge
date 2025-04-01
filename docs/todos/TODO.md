@@ -152,7 +152,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
     - [x] Define `Visualizer` trait with methods to display current WFC state
     - [x] Implement terminal-based visualization using ASCII/Unicode characters
     - [x] Add simple 2D slice visualization of the 3D grid state
-    - [ ] Support toggling visualization on/off during runtime
+    - [x] Support toggling visualization on/off during runtime
     - [x] Implement color coding for entropy levels and cell states
     - [x] Add ability to focus on specific layers/slices of the 3D grid
     - [x] Implement Simple2DVisualizer (using a basic 2D graphics library like minifb or pixels)
@@ -183,7 +183,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 
 - [x] Refine error handling across all crates. _Strategy: Use thiserror for library crates (wfc-core, wfc-rules, wfc-gpu) and anyhow for the application (wave-forge-app)._
 - [x] Add documentation comments (///) to public APIs.
-- [x] Clean up code, remove unused variables/imports, improve comments.
+- [ ] Clean up code, remove unused variables/imports, improve comments.
 - [ ] Add more comprehensive testing, especially for edge cases and GPU paths.
 - [x] Set up basic logging (`log`, `env_logger`).
 - [ ] Profile and optimize bottlenecks (CPU and GPU).

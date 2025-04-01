@@ -18,11 +18,19 @@ use anyhow::Result;
 use clap::Parser;
 use config::AppConfig;
 use config::VisualizationMode;
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 use visualization::{TerminalVisualizer, Visualizer};
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
+
+// Helper enum for visualization control messages
+enum VizMessage {
+    UpdateGrid(Box<PossibilityGrid>),
+    Finished,
+}
 
 /// The main entry point for the Wave Forge application.
 ///
@@ -45,33 +53,81 @@ async fn main() -> Result<()> {
     log::info!("Wave Forge App Starting");
     log::debug!("Loaded Config: {:?}", config);
 
-    // --- Initialize Visualizer (if configured) ---
-    #[allow(unused_variables, unused_mut)]
-    let mut visualizer: Option<Box<dyn Visualizer>> = match config.visualization_mode {
+    // --- Initialize Visualizer in a separate thread if configured ---
+    let viz_tx = match config.visualization_mode {
         VisualizationMode::None => None,
-        VisualizationMode::Terminal => {
-            log::info!("Terminal visualization enabled.");
-            Some(Box::new(TerminalVisualizer::new()))
-        }
-        VisualizationMode::Simple2D => {
-            log::info!("Simple2D visualization enabled.");
-            match visualization::Simple2DVisualizer::new(
-                &format!("Wave Forge - {}x{}", config.width, config.height),
-                config.width,
-                config.height,
-            ) {
-                Ok(viz) => Some(Box::new(viz)),
-                Err(e) => {
-                    log::error!(
-                        "Failed to initialize Simple2DVisualizer: {}. Visualization disabled.",
-                        e
-                    );
-                    None
+        _ => {
+            // Create a channel to send grid snapshots for visualization
+            let (tx, rx) = mpsc::channel();
+
+            // Start visualization in a separate thread
+            let viz_mode = config.visualization_mode.clone();
+            let grid_width = config.width;
+            let grid_height = config.height;
+
+            log::info!("Starting visualization thread with mode: {:?}", viz_mode);
+            thread::spawn(move || {
+                let mut visualizer: Box<dyn Visualizer> = match viz_mode {
+                    VisualizationMode::Terminal => Box::new(TerminalVisualizer::new()),
+                    VisualizationMode::Simple2D => {
+                        match visualization::Simple2DVisualizer::new(
+                            &format!("Wave Forge - {}x{}", grid_width, grid_height),
+                            grid_width,
+                            grid_height,
+                        ) {
+                            Ok(viz) => Box::new(viz),
+                            Err(e) => {
+                                log::error!("Failed to create Simple2DVisualizer: {}", e);
+                                Box::new(TerminalVisualizer::new()) // Fallback to terminal
+                            }
+                        }
+                    }
+                    VisualizationMode::None => unreachable!(),
+                };
+
+                log::info!("Visualization thread started");
+
+                // Process incoming grid snapshots
+                let mut running = true;
+                while running {
+                    match rx.recv() {
+                        Ok(VizMessage::UpdateGrid(grid)) => {
+                            // Process input to handle toggle requests
+                            if let Ok(continue_viz) = visualizer.process_input() {
+                                if !continue_viz {
+                                    log::info!("Visualization stopped by user input");
+                                    running = false;
+                                    continue;
+                                }
+
+                                // Only display if visualization is enabled
+                                if visualizer.is_enabled() {
+                                    if let Err(e) = visualizer.display_state(&grid) {
+                                        log::error!("Failed to display grid: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        Ok(VizMessage::Finished) => {
+                            log::info!("Visualization finished signal received");
+                            running = false;
+                        }
+                        Err(e) => {
+                            log::error!("Error receiving visualization update: {}", e);
+                            running = false;
+                        }
+                    }
+
+                    // Small sleep to prevent busy-waiting
+                    thread::sleep(Duration::from_millis(10));
                 }
-            }
+
+                log::info!("Visualization thread terminated");
+            });
+
+            Some(tx)
         }
     };
-    // TODO: Call initial display? visualizer.as_mut().map(|v| v.display_state(&initial_grid));
     // --- End Visualizer Initialization ---
 
     println!("Wave Forge App");
@@ -99,6 +155,14 @@ async fn main() -> Result<()> {
         config.depth,
         tileset.weights.len(),
     );
+
+    // Initial visualization of the empty grid
+    if let Some(tx) = &viz_tx {
+        log::info!("Sending initial grid state to visualization thread");
+        if let Err(e) = tx.send(VizMessage::UpdateGrid(Box::new(grid.clone()))) {
+            log::error!("Failed to send initial grid state: {}", e);
+        }
+    }
 
     if config.benchmark_mode {
         log::info!("Benchmark mode enabled.");
@@ -280,16 +344,88 @@ async fn main() -> Result<()> {
 
         let use_gpu = !config.cpu_only && cfg!(feature = "gpu");
 
+        // Create a thread-safe grid reference for the visualization thread
+        let grid_snapshot = Arc::new(Mutex::new(grid.clone()));
+        let grid_snapshot_for_viz = Arc::clone(&grid_snapshot);
+
+        // Create a visualization update thread if needed
+        let _viz_handle = if let Some(tx) = &viz_tx {
+            let tx_clone = tx.clone();
+            let viz_interval = config
+                .report_progress_interval
+                .map(|d| {
+                    if d < Duration::from_millis(500) {
+                        d
+                    } else {
+                        d / 2
+                    }
+                })
+                .unwrap_or_else(|| Duration::from_millis(500)); // Default to 500ms
+
+            log::info!(
+                "Starting visualization update thread with interval: {:?}",
+                viz_interval
+            );
+
+            let handle = thread::spawn(move || {
+                let mut last_update = Instant::now();
+
+                loop {
+                    // Check if we should update
+                    if last_update.elapsed() >= viz_interval {
+                        // Get a snapshot of the current grid
+                        let grid_clone = {
+                            let grid_guard = grid_snapshot_for_viz.lock().unwrap();
+                            grid_guard.clone()
+                        };
+
+                        // Send it to the visualization thread
+                        match tx_clone.send(VizMessage::UpdateGrid(Box::new(grid_clone))) {
+                            Ok(_) => {
+                                last_update = Instant::now();
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Failed to send grid update to visualization thread: {}",
+                                    e
+                                );
+                                break; // Exit if the receiver is gone
+                            }
+                        }
+                    }
+
+                    // Sleep briefly to avoid busy waiting
+                    thread::sleep(Duration::from_millis(50));
+                }
+
+                log::info!("Visualization update thread terminated");
+            });
+
+            Some(handle)
+        } else {
+            None
+        };
+
         // --- Progress Reporting Setup ---
         let last_report_time = Arc::new(Mutex::new(Instant::now()));
         let report_interval = config.report_progress_interval;
 
+        log::info!("Progress reporting interval: {:?}", report_interval);
+
         let progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>> =
             if let Some(interval) = report_interval {
                 let last_report_time_clone = Arc::clone(&last_report_time);
+
                 Some(Box::new(move |info: wfc_core::ProgressInfo| {
+                    let now = Instant::now();
+
+                    // We can't access 'grid' directly in the closure
+                    // Since we can't update the grid snapshot from ProgressInfo (doesn't have grid)
+                    // This feature will be handled by the separate visualization thread instead
+
+                    // Progress reporting logic
                     let mut last_time = last_report_time_clone.lock().unwrap();
-                    if last_time.elapsed() >= interval {
+                    if now.duration_since(*last_time) >= interval {
                         let percentage = if info.total_cells > 0 {
                             (info.collapsed_cells as f32 / info.total_cells as f32) * 100.0
                         } else {
@@ -303,7 +439,7 @@ async fn main() -> Result<()> {
                             info.total_cells,
                             percentage
                         );
-                        *last_time = Instant::now(); // Reset timer
+                        *last_time = now; // Reset timer
                     }
                 }))
             } else {
@@ -331,6 +467,29 @@ async fn main() -> Result<()> {
                         ) {
                             Ok(_) => {
                                 log::info!("GPU WFC completed successfully.");
+
+                                // Stop the visualization update thread if it exists
+                                if let Some(handle) = _viz_handle {
+                                    // Just let it terminate on its own
+                                }
+
+                                // Final visualization
+                                if let Some(tx) = &viz_tx {
+                                    // Send final grid state
+                                    if let Err(e) =
+                                        tx.send(VizMessage::UpdateGrid(Box::new(grid.clone())))
+                                    {
+                                        log::error!("Failed to send final grid state: {}", e);
+                                    }
+                                    // Signal visualization is finished
+                                    if let Err(e) = tx.send(VizMessage::Finished) {
+                                        log::error!(
+                                            "Failed to send visualization finished signal: {}",
+                                            e
+                                        );
+                                    }
+                                }
+
                                 // Save the grid using the passed config
                                 if let Err(e) =
                                     output::save_grid_to_file(&grid, config.output_path.as_path())
@@ -342,6 +501,10 @@ async fn main() -> Result<()> {
                             }
                             Err(e) => {
                                 log::error!("GPU WFC failed: {}", e);
+                                // Still notify visualization to finish
+                                if let Some(tx) = &viz_tx {
+                                    let _ = tx.send(VizMessage::Finished);
+                                }
                                 Err(anyhow::anyhow!(e)) // Convert WfcError to anyhow::Error
                             }
                         }?; // Propagate error from run
@@ -352,18 +515,39 @@ async fn main() -> Result<()> {
                             e
                         );
                         // Fallback to CPU if GPU initialization fails
-                        run_cpu(&mut grid, &tileset, &rules, progress_callback, &config)?;
+                        run_cpu(
+                            &mut grid,
+                            &tileset,
+                            &rules,
+                            progress_callback,
+                            &config,
+                            viz_tx.clone(),
+                        )?;
                     }
                 }
             }
             #[cfg(not(feature = "gpu"))]
             {
                 log::error!("GPU mode selected but GPU feature not compiled. Using CPU.");
-                run_cpu(&mut grid, &tileset, &rules, progress_callback, &config)?;
+                run_cpu(
+                    &mut grid,
+                    &tileset,
+                    &rules,
+                    progress_callback,
+                    &config,
+                    viz_tx.clone(),
+                )?;
             }
         } else {
             log::info!("Running WFC on CPU...");
-            run_cpu(&mut grid, &tileset, &rules, progress_callback, &config)?;
+            run_cpu(
+                &mut grid,
+                &tileset,
+                &rules,
+                progress_callback,
+                &config,
+                viz_tx.clone(),
+            )?;
         }
     }
 
@@ -387,6 +571,7 @@ async fn main() -> Result<()> {
 /// * `rules` - A reference to the loaded `AdjacencyRules`.
 /// * `progress_callback` - An optional callback function for reporting progress.
 /// * `config` - A reference to the application configuration (`AppConfig`) for output settings.
+/// * `viz_tx` - Optional sender channel for visualization updates.
 ///
 /// # Returns
 ///
@@ -398,6 +583,7 @@ fn run_cpu(
     rules: &wfc_core::rules::AdjacencyRules,
     progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>>,
     config: &AppConfig,
+    viz_tx: Option<Sender<VizMessage>>,
 ) -> Result<(), anyhow::Error> {
     let propagator = wfc_core::propagator::CpuConstraintPropagator::new();
     let entropy_calculator = wfc_core::entropy::CpuEntropyCalculator::new();
@@ -413,6 +599,19 @@ fn run_cpu(
     ) {
         Ok(_) => {
             log::info!("CPU WFC completed successfully.");
+
+            // Final visualization
+            if let Some(tx) = &viz_tx {
+                // Send final grid state
+                if let Err(e) = tx.send(VizMessage::UpdateGrid(Box::new(grid.clone()))) {
+                    log::error!("Failed to send final grid state: {}", e);
+                }
+                // Signal visualization is finished
+                if let Err(e) = tx.send(VizMessage::Finished) {
+                    log::error!("Failed to send visualization finished signal: {}", e);
+                }
+            }
+
             // Save the grid using the passed config
             if let Err(e) = output::save_grid_to_file(&grid, config.output_path.as_path()) {
                 log::error!("Failed to save grid: {}", e);
@@ -423,6 +622,10 @@ fn run_cpu(
         }
         Err(e) => {
             log::error!("CPU WFC failed: {}", e);
+            // Still notify visualization to finish
+            if let Some(tx) = &viz_tx {
+                let _ = tx.send(VizMessage::Finished);
+            }
             Err(anyhow::anyhow!(e)) // Convert WfcError to anyhow::Error
         }
     }

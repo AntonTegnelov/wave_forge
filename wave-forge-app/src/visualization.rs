@@ -29,8 +29,35 @@ pub trait Visualizer {
     /// * `Err(anyhow::Error)` if an error occurred during visualization.
     fn display_state(&mut self, grid: &PossibilityGrid) -> Result<(), anyhow::Error>; // Using anyhow for app errors
 
-    // TODO: Add methods for initialization, updates during run, final display?
-    // TODO: Add methods for toggling, focusing layers?
+    /// Checks if the visualizer is currently enabled (active).
+    ///
+    /// # Returns
+    ///
+    /// * `true` if visualization is currently enabled
+    /// * `false` if visualization is disabled/paused
+    fn is_enabled(&self) -> bool;
+
+    /// Toggles the enabled state of the visualizer.
+    ///
+    /// # Returns
+    ///
+    /// * The new enabled state after toggling
+    fn toggle_enabled(&mut self) -> bool;
+
+    /// Processes any pending user input to check for toggle commands, etc.
+    ///
+    /// This method should be called regularly to handle user input events.
+    /// It provides a way for users to interact with the visualization,
+    /// such as toggling on/off, changing layers, etc.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` if visualization should continue (not permanently closed)
+    /// * `Ok(false)` if visualization was permanently closed (e.g., window closed)
+    /// * `Err(anyhow::Error)` if an error occurred while processing input
+    fn process_input(&mut self) -> Result<bool, anyhow::Error>;
+
+    // TODO: Add methods for initialization, final display?
 }
 
 // --- Implementations ---
@@ -40,12 +67,17 @@ pub trait Visualizer {
 pub struct TerminalVisualizer {
     /// The Z-layer index to display.
     z_layer: usize,
+    /// Whether visualization is currently enabled
+    enabled: bool,
 }
 
 impl TerminalVisualizer {
     /// Creates a new TerminalVisualizer focused on layer 0.
     pub fn new() -> Self {
-        Self { z_layer: 0 }
+        Self {
+            z_layer: 0,
+            enabled: true,
+        }
     }
 
     /// Sets the Z-layer index to be displayed.
@@ -56,6 +88,11 @@ impl TerminalVisualizer {
 
 impl Visualizer for TerminalVisualizer {
     fn display_state(&mut self, grid: &PossibilityGrid) -> Result<(), anyhow::Error> {
+        // Only display if enabled
+        if !self.enabled {
+            return Ok(());
+        }
+
         println!("--- Visualization Frame (Z={} Slice) ---", self.z_layer);
         if self.z_layer >= grid.depth || grid.height == 0 || grid.width == 0 {
             println!(
@@ -101,6 +138,26 @@ impl Visualizer for TerminalVisualizer {
         println!("-------------------------------------");
         Ok(())
     }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn toggle_enabled(&mut self) -> bool {
+        self.enabled = !self.enabled;
+        if self.enabled {
+            println!("Terminal visualization enabled");
+        } else {
+            println!("Terminal visualization disabled");
+        }
+        self.enabled
+    }
+
+    fn process_input(&mut self) -> Result<bool, anyhow::Error> {
+        // Terminal visualizer doesn't process input directly
+        // Toggling will be handled via explicit toggle_enabled calls
+        Ok(true) // Always continue
+    }
 }
 
 // --- Simple 2D Visualizer (using minifb) ---
@@ -139,6 +196,7 @@ pub struct Simple2DVisualizer {
     width: usize,
     height: usize,
     z_layer: usize, // Layer to display
+    enabled: bool,  // Whether visualization is currently enabled
 }
 
 impl Simple2DVisualizer {
@@ -169,6 +227,7 @@ impl Simple2DVisualizer {
             width: window_width,
             height: window_height,
             z_layer: 0,
+            enabled: true,
         })
     }
 
@@ -180,6 +239,20 @@ impl Simple2DVisualizer {
 
 impl Visualizer for Simple2DVisualizer {
     fn display_state(&mut self, grid: &PossibilityGrid) -> Result<(), anyhow::Error> {
+        // Skip rendering if disabled
+        if !self.enabled {
+            // Still need to update window and check for input even when not rendering
+            // This ensures the window remains responsive
+            if !self.window.is_open() {
+                return Ok(());
+            }
+            // Update window with current buffer (no changes)
+            self.window
+                .update_with_buffer(&self.buffer, self.width, self.height)
+                .map_err(|e| anyhow::anyhow!("Failed to update minifb window buffer: {}", e))?;
+            return Ok(());
+        }
+
         if !self.window.is_open() || self.window.is_key_down(Key::Escape) {
             // Allow closing window gracefully - maybe return a specific error?
             // For now, just stop displaying but don't error out the whole WFC.
@@ -222,5 +295,44 @@ impl Visualizer for Simple2DVisualizer {
             .map_err(|e| anyhow::anyhow!("Failed to update minifb window buffer: {}", e))?;
 
         Ok(())
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn toggle_enabled(&mut self) -> bool {
+        self.enabled = !self.enabled;
+        if self.enabled {
+            log::info!("2D visualization enabled");
+        } else {
+            log::info!("2D visualization disabled");
+        }
+        self.enabled
+    }
+
+    fn process_input(&mut self) -> Result<bool, anyhow::Error> {
+        // Check if window is still open
+        if !self.window.is_open() {
+            return Ok(false); // Signal that visualization was closed
+        }
+
+        // Check for visualization toggle key (T)
+        if self.window.is_key_released(Key::T) {
+            self.toggle_enabled();
+        }
+
+        // Check for layer navigation keys (UP/DOWN arrows)
+        if self.window.is_key_released(Key::Up) {
+            self.z_layer = self.z_layer.saturating_add(1);
+            log::info!("Visualization layer changed to z={}", self.z_layer);
+        }
+        if self.window.is_key_released(Key::Down) {
+            self.z_layer = self.z_layer.saturating_sub(1);
+            log::info!("Visualization layer changed to z={}", self.z_layer);
+        }
+
+        // Window is still open and can continue
+        Ok(true)
     }
 }
