@@ -140,7 +140,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
     - [x] Record metrics: total runtime, memory usage, time per step, etc.
     - [x] Implement comparison and reporting of benchmark results
     - [x] Support different grid sizes and complexity levels for comprehensive testing
-    - [ ] Add option to output results in CSV format for further analysis
+    - [x] Add option to output results in CSV format for further analysis
 - **File:** `wave-forge-app/src/progress.rs`
   - [ ] Implement progress reporting system:
     - [ ] Define `ProgressReporter` trait with methods for reporting status updates

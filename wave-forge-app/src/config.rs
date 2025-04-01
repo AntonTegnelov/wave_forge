@@ -54,6 +54,11 @@ pub struct AppConfig {
     /// Choose the visualization mode.
     #[arg(long, value_enum, default_value_t = VisualizationMode::None)]
     pub visualization_mode: VisualizationMode,
+
+    /// Optional: Path to save benchmark results as a CSV file.
+    /// Only used if benchmark_mode is also enabled.
+    #[arg(long, value_name = "CSV_FILE")]
+    pub benchmark_csv_output: Option<PathBuf>,
     // Note: use_gpu can be inferred later based on gpu availability and cpu_only flag.
 }
 
@@ -136,5 +141,41 @@ mod tests {
             "invalid-mode",
         ];
         assert!(AppConfig::try_parse_from(args_err).is_err());
+    }
+
+    #[test]
+    fn test_benchmark_csv_output_flag() {
+        let args = vec![
+            "wave-forge",
+            "--rule-file",
+            "r.ron",
+            "--benchmark-mode", // CSV output only makes sense with benchmark mode
+            "--benchmark-csv-output",
+            "bench_results.csv",
+        ];
+        let config = AppConfig::try_parse_from(args).unwrap();
+        assert!(config.benchmark_mode);
+        assert_eq!(
+            config.benchmark_csv_output,
+            Some(PathBuf::from("bench_results.csv"))
+        );
+    }
+
+    #[test]
+    fn test_benchmark_csv_output_flag_no_benchmark_mode() {
+        // Should parse ok, but the path might be ignored later if benchmark_mode is false
+        let args = vec![
+            "wave-forge",
+            "--rule-file",
+            "r.ron",
+            "--benchmark-csv-output",
+            "results.csv",
+        ];
+        let config = AppConfig::try_parse_from(args).unwrap();
+        assert_eq!(
+            config.benchmark_csv_output,
+            Some(PathBuf::from("results.csv"))
+        );
+        assert!(!config.benchmark_mode); // Verify benchmark mode is off
     }
 }

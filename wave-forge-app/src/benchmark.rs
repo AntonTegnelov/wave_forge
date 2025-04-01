@@ -18,6 +18,8 @@ use wfc_gpu::accelerator::GpuAccelerator;
 
 // Use anyhow for application-level errors
 use anyhow::Error;
+use std::fs::File;
+use std::path::Path;
 
 /// Structure to hold benchmark results for a single run (CPU or GPU).
 ///
@@ -313,11 +315,164 @@ pub fn report_single_result(result: &BenchmarkResult) {
 // TODO: Implement CSV output function
 // TODO: Implement function to run benchmarks for various grid sizes/complexities
 
+/// Writes a collection of benchmark results to a CSV file.
+///
+/// Creates a CSV file at the specified path and writes the header row followed by
+/// data rows for each `BenchmarkResult` provided.
+///
+/// # Arguments
+///
+/// * `results` - A slice of tuples, where each tuple contains the grid dimensions
+///               and a `Result` containing either the benchmark data (`BenchmarkTuple`)
+///               or an error that occurred during the benchmark run.
+///               `BenchmarkTuple` varies depending on whether the `gpu` feature is enabled.
+/// * `filepath` - The `Path` where the CSV file should be created.
+///
+/// # Returns
+///
+/// * `Ok(())` if the CSV file was written successfully.
+/// * `Err(anyhow::Error)` if there was an error creating the file or writing to it.
+// Conditionally define the type alias based on the feature flag
+#[cfg(feature = "gpu")]
+type BenchmarkTuple = (BenchmarkResult, BenchmarkResult);
+#[cfg(not(feature = "gpu"))]
+type BenchmarkTuple = BenchmarkResult;
+
+pub fn write_results_to_csv(
+    results: &[((usize, usize, usize), Result<BenchmarkTuple, anyhow::Error>)],
+    filepath: &Path,
+) -> Result<(), anyhow::Error> {
+    log::info!("Writing benchmark results to CSV: {:?}", filepath);
+    let file =
+        File::create(filepath).map_err(|e| anyhow::anyhow!("Failed to create CSV file: {}", e))?;
+    let mut writer = csv::Writer::from_writer(file);
+
+    // Write header row - adjust based on features
+    #[cfg(feature = "gpu")]
+    writer.write_record([
+        "Width",
+        "Height",
+        "Depth",
+        "Num Tiles",
+        "Implementation",
+        "Total Time (ms)",
+        "Iterations",
+        "Collapsed Cells",
+        "Result",
+    ])?;
+    #[cfg(not(feature = "gpu"))]
+    writer.write_record([
+        "Width",
+        "Height",
+        "Depth",
+        "Num Tiles",
+        "Implementation",
+        "Total Time (ms)",
+        "Iterations",
+        "Collapsed Cells",
+        "Result",
+    ])?;
+
+    // Write data rows
+    for ((w, h, d), result_item) in results {
+        match result_item {
+            #[cfg(feature = "gpu")]
+            Ok((cpu_result, gpu_result)) => {
+                // Write CPU row
+                writer.write_record(&[
+                    w.to_string(),
+                    h.to_string(),
+                    d.to_string(),
+                    cpu_result.num_tiles.to_string(),
+                    cpu_result.implementation.clone(),
+                    cpu_result.total_time.as_millis().to_string(),
+                    cpu_result
+                        .iterations
+                        .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
+                    cpu_result
+                        .collapsed_cells
+                        .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
+                    if cpu_result.wfc_result.is_ok() {
+                        "Ok"
+                    } else {
+                        "Fail"
+                    }
+                    .to_string(),
+                ])?;
+                // Write GPU row
+                writer.write_record(&[
+                    w.to_string(),
+                    h.to_string(),
+                    d.to_string(),
+                    gpu_result.num_tiles.to_string(),
+                    gpu_result.implementation.clone(),
+                    gpu_result.total_time.as_millis().to_string(),
+                    gpu_result
+                        .iterations
+                        .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
+                    gpu_result
+                        .collapsed_cells
+                        .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
+                    if gpu_result.wfc_result.is_ok() {
+                        "Ok"
+                    } else {
+                        "Fail"
+                    }
+                    .to_string(),
+                ])?;
+            }
+            #[cfg(not(feature = "gpu"))]
+            Ok(cpu_result) => {
+                writer.write_record(&[
+                    w.to_string(),
+                    h.to_string(),
+                    d.to_string(),
+                    cpu_result.num_tiles.to_string(),
+                    cpu_result.implementation.clone(),
+                    cpu_result.total_time.as_millis().to_string(),
+                    cpu_result
+                        .iterations
+                        .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
+                    cpu_result
+                        .collapsed_cells
+                        .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
+                    if cpu_result.wfc_result.is_ok() {
+                        "Ok"
+                    } else {
+                        "Fail"
+                    }
+                    .to_string(),
+                ])?;
+            }
+            Err(e) => {
+                // Write an error row
+                writer.write_record(&[
+                    w.to_string(),
+                    h.to_string(),
+                    d.to_string(),
+                    "N/A".to_string(),
+                    "Error".to_string(),
+                    "N/A".to_string(),
+                    "N/A".to_string(),
+                    "N/A".to_string(),
+                    format!("Benchmark Error: {}", e),
+                ])?;
+            }
+        }
+    }
+
+    writer.flush()?;
+    log::info!("Benchmark results successfully written to CSV.");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     // Correct imports for tests
-    use wfc_core::{AdjacencyRules, PossibilityGrid, PropagationError, TileSet, WfcError}; // Added WfcError & PropagationError
+    use std::fs;
+    use tempfile::tempdir;
+    use wfc_core::{AdjacencyRules, PossibilityGrid, PropagationError, TileSet, WfcError}; // Added WfcError & PropagationError // For creating temporary directory for CSV test
 
     // Helper function for creating simple rules/tileset with 2 tiles
     fn create_simple_rules_and_tileset() -> (TileSet, AdjacencyRules) {
@@ -540,5 +695,139 @@ mod tests {
             collapsed_cells: Some(1),
         };
         report_comparison(&cpu_result, &gpu_result_success);
+    }
+
+    #[test]
+    fn test_write_results_to_csv_cpu_only() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("cpu_results.csv");
+
+        let cpu_result_ok = BenchmarkResult {
+            implementation: "CPU".to_string(),
+            grid_width: 8,
+            grid_height: 8,
+            grid_depth: 8,
+            num_tiles: 5,
+            total_time: Duration::from_millis(1234),
+            wfc_result: Ok(()),
+            iterations: Some(100),
+            collapsed_cells: Some(512),
+        };
+        let cpu_result_fail = BenchmarkResult {
+            implementation: "CPU".to_string(),
+            grid_width: 4,
+            grid_height: 4,
+            grid_depth: 4,
+            num_tiles: 3,
+            total_time: Duration::from_millis(567),
+            wfc_result: Err(WfcError::Contradiction),
+            iterations: Some(50),
+            collapsed_cells: Some(60),
+        };
+
+        let results: Vec<((usize, usize, usize), Result<BenchmarkTuple, anyhow::Error>)> = vec![
+            ((8, 8, 8), Ok(cpu_result_ok)),
+            ((4, 4, 4), Ok(cpu_result_fail)),
+            ((2, 2, 2), Err(anyhow::anyhow!("Setup failed"))),
+        ];
+
+        let write_result = write_results_to_csv(&results, &file_path);
+        assert!(write_result.is_ok());
+
+        // Verify file content
+        let content = fs::read_to_string(&file_path).expect("Failed to read test CSV");
+        let expected_header = "Width,Height,Depth,Num Tiles,Implementation,Total Time (ms),Iterations,Collapsed Cells,Result";
+        let expected_row1 = "8,8,8,5,CPU,1234,100,512,Ok";
+        let expected_row2 = "4,4,4,3,CPU,567,50,60,Fail";
+        let expected_row3 = "2,2,2,N/A,Error,N/A,N/A,N/A,Benchmark Error: Setup failed";
+
+        assert!(content.contains(expected_header));
+        assert!(content.contains(expected_row1));
+        assert!(content.contains(expected_row2));
+        assert!(content.contains(expected_row3));
+    }
+
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn test_write_results_to_csv_with_gpu() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("gpu_results.csv");
+
+        let cpu_result = BenchmarkResult {
+            implementation: "CPU".to_string(),
+            grid_width: 8,
+            grid_height: 8,
+            grid_depth: 8,
+            num_tiles: 5,
+            total_time: Duration::from_millis(2000),
+            wfc_result: Ok(()),
+            iterations: Some(100),
+            collapsed_cells: Some(512),
+        };
+        // Simulate a successful (hypothetical) GPU run
+        let gpu_result = BenchmarkResult {
+            implementation: "GPU".to_string(),
+            grid_width: 8,
+            grid_height: 8,
+            grid_depth: 8,
+            num_tiles: 5,
+            total_time: Duration::from_millis(500),
+            wfc_result: Ok(()),
+            iterations: Some(100),
+            collapsed_cells: Some(512),
+        };
+        // Simulate a failed GPU run
+        let gpu_result_fail = BenchmarkResult {
+            implementation: "GPU".to_string(),
+            grid_width: 4,
+            grid_height: 4,
+            grid_depth: 4,
+            num_tiles: 3,
+            total_time: Duration::from_millis(100),
+            wfc_result: Err(WfcError::InternalError("Skipped".into())),
+            iterations: None,
+            collapsed_cells: None,
+        };
+        let cpu_result_for_fail = BenchmarkResult {
+            implementation: "CPU".to_string(),
+            grid_width: 4,
+            grid_height: 4,
+            grid_depth: 4,
+            num_tiles: 3,
+            total_time: Duration::from_millis(800),
+            wfc_result: Ok(()),
+            iterations: Some(60),
+            collapsed_cells: Some(64),
+        };
+
+        let results: Vec<((usize, usize, usize), Result<BenchmarkTuple, anyhow::Error>)> = vec![
+            ((8, 8, 8), Ok((cpu_result.clone(), gpu_result.clone()))),
+            (
+                (4, 4, 4),
+                Ok((cpu_result_for_fail.clone(), gpu_result_fail.clone())),
+            ),
+            ((2, 2, 2), Err(anyhow::anyhow!("Setup failed"))),
+        ];
+
+        let write_result = write_results_to_csv(&results, &file_path);
+        assert!(write_result.is_ok());
+
+        // Verify file content
+        let content = fs::read_to_string(&file_path).expect("Failed to read test CSV");
+        println!("CSV Content:\n{}", content); // Print for debugging if needed
+
+        let expected_header = "Width,Height,Depth,Num Tiles,Implementation,Total Time (ms),Iterations,Collapsed Cells,Result";
+        let expected_cpu_row1 = "8,8,8,5,CPU,2000,100,512,Ok";
+        let expected_gpu_row1 = "8,8,8,5,GPU,500,100,512,Ok";
+        let expected_cpu_row2 = "4,4,4,3,CPU,800,60,64,Ok";
+        let expected_gpu_row2 = "4,4,4,3,GPU,100,N/A,N/A,Fail";
+        let expected_err_row = "2,2,2,N/A,Error,N/A,N/A,N/A,Benchmark Error: Setup failed";
+
+        assert!(content.contains(expected_header));
+        assert!(content.contains(expected_cpu_row1));
+        assert!(content.contains(expected_gpu_row1));
+        assert!(content.contains(expected_cpu_row2));
+        assert!(content.contains(expected_gpu_row2));
+        assert!(content.contains(expected_err_row));
     }
 }

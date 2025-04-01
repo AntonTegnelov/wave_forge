@@ -243,6 +243,14 @@ async fn main() -> Result<()> {
             println!("-------------------------------------------------------------------------------------------");
             // Keep separator wide enough for GPU case
         }
+
+        // --- Write to CSV if requested ---
+        if let Some(csv_path) = &config.benchmark_csv_output {
+            if let Err(e) = benchmark::write_results_to_csv(&all_results, csv_path) {
+                // Log the error but don't necessarily stop the whole app
+                log::error!("Failed to write benchmark results to CSV: {}", e);
+            }
+        }
     } else {
         log::info!("Running standard WFC...");
 
