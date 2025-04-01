@@ -10,7 +10,7 @@ use clap::Parser;
 use config::AppConfig;
 use config::VisualizationMode;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use visualization::{TerminalVisualizer, Visualizer};
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
@@ -74,29 +74,174 @@ async fn main() -> Result<()> {
     if config.benchmark_mode {
         log::info!("Benchmark mode enabled.");
 
-        // Ensure the GPU feature is enabled if comparing implementations
+        // Define benchmark scenarios (dimensions)
+        let benchmark_dimensions = [
+            (8, 8, 8), // Small
+            (16, 16, 16), // Medium
+                       // Add more sizes as needed, e.g.:
+                       // (32, 16, 8), // Larger, non-cubic
+                       // (32, 32, 32), // Large
+        ];
+        log::info!("Running benchmarks for sizes: {:?}", benchmark_dimensions);
+
+        // Store results for final report
+        // Adjusted to handle the conditional compilation of GPU results
+        #[cfg(feature = "gpu")]
+        type BenchmarkTuple = (benchmark::BenchmarkResult, benchmark::BenchmarkResult);
         #[cfg(not(feature = "gpu"))]
-        {
-            log::error!("Benchmark comparison requires the 'gpu' feature to be enabled.");
-            return Err(anyhow::anyhow!("GPU feature not enabled for benchmark"));
-        }
+        type BenchmarkTuple = benchmark::BenchmarkResult;
+        let mut all_results: Vec<((usize, usize, usize), Result<BenchmarkTuple, anyhow::Error>)> =
+            Vec::new();
 
         #[cfg(feature = "gpu")]
         {
-            // Run comparison benchmark
-            log::info!("Running CPU vs GPU benchmark...");
-            let initial_grid_for_bench = grid.clone(); // Clone initial state
-            match benchmark::compare_implementations(&initial_grid_for_bench, &tileset, &rules)
-                .await
-            {
+            for &(width, height, depth) in &benchmark_dimensions {
+                log::info!(
+                    "Starting benchmark for size: {}x{}x{}",
+                    width,
+                    height,
+                    depth
+                );
+
+                // Create a new initial grid for this size
+                let initial_grid_for_bench =
+                    PossibilityGrid::new(width, height, depth, tileset.weights.len());
+
+                // Run comparison benchmark for this size
+                let result =
+                    benchmark::compare_implementations(&initial_grid_for_bench, &tileset, &rules)
+                        .await;
+
+                // Store the result (or error) for this size
+                all_results.push(((width, height, depth), result.map_err(anyhow::Error::from)));
+            }
+        }
+        // If only CPU feature is enabled, run only CPU benchmarks
+        #[cfg(not(feature = "gpu"))]
+        {
+            log::warn!("GPU feature not enabled, running CPU benchmarks only.");
+            for &(width, height, depth) in &benchmark_dimensions {
+                log::info!(
+                    "Starting CPU benchmark for size: {}x{}x{}",
+                    width,
+                    height,
+                    depth
+                );
+                let mut cpu_grid =
+                    PossibilityGrid::new(width, height, depth, tileset.weights.len());
+                let result =
+                    benchmark::run_single_benchmark("CPU", &mut cpu_grid, &tileset, &rules).await;
+                all_results.push(((width, height, depth), result.map_err(anyhow::Error::from)));
+            }
+        }
+
+        // --- Report Summary --- (Moved reporting after all runs)
+        println!("\n--- Benchmark Suite Summary ---");
+        println!(
+            "Rule File: {:?}",
+            config.rule_file.file_name().unwrap_or_default()
+        );
+        println!("Num Tiles: {}", tileset.weights.len());
+        println!("-------------------------------------------------------------------------------------------");
+        // Adjust header based on features
+        #[cfg(feature = "gpu")]
+        println!("Size (WxHxD)    | Impl | Total Time | Iterations | Collapsed Cells | Result   | Speedup (vs CPU)");
+        #[cfg(not(feature = "gpu"))]
+        println!("Size (WxHxD)    | Impl | Total Time | Iterations | Collapsed Cells | Result");
+        println!("----------------|------|------------|------------|-----------------|----------|-----------------"); // Keep separator wide enough for GPU case
+
+        let mut last_cpu_time: Option<Duration> = None;
+
+        for ((w, h, d), result_item) in &all_results {
+            let size_str = format!("{}x{}x{}", w, h, d);
+            match result_item {
+                #[cfg(feature = "gpu")]
                 Ok((cpu_result, gpu_result)) => {
-                    benchmark::report_comparison(&cpu_result, &gpu_result);
+                    // Print CPU result
+                    println!(
+                        "{:<15} | CPU  | {:<10?} | {:<10} | {:<15} | {:<8} | {:<15}",
+                        size_str,
+                        cpu_result.total_time,
+                        cpu_result
+                            .iterations
+                            .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
+                        cpu_result
+                            .collapsed_cells
+                            .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
+                        if cpu_result.wfc_result.is_ok() {
+                            "Ok"
+                        } else {
+                            "Fail"
+                        },
+                        "-"
+                    );
+                    last_cpu_time = Some(cpu_result.total_time); // Store for speedup calculation
+
+                    // Print GPU result
+                    let speedup_str = if let Some(cpu_time) = last_cpu_time {
+                        if gpu_result.total_time > Duration::ZERO
+                            && cpu_time > Duration::ZERO
+                            && gpu_result.wfc_result.is_ok()
+                            && cpu_result.wfc_result.is_ok()
+                        {
+                            format!(
+                                "{:.2}x",
+                                cpu_time.as_secs_f64() / gpu_result.total_time.as_secs_f64()
+                            )
+                        } else if gpu_result.wfc_result.is_err() {
+                            "N/A (GPU Fail)".to_string()
+                        } else {
+                            "N/A (CPU Fail)".to_string()
+                        }
+                    } else {
+                        "N/A".to_string()
+                    };
+                    println!(
+                        "{:<15} | GPU  | {:<10?} | {:<10} | {:<15} | {:<8} | {:<15}",
+                        "", // Don't repeat size
+                        gpu_result.total_time,
+                        gpu_result
+                            .iterations
+                            .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
+                        gpu_result
+                            .collapsed_cells
+                            .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
+                        if gpu_result.wfc_result.is_ok() {
+                            "Ok"
+                        } else {
+                            "Fail"
+                        },
+                        speedup_str
+                    );
+                    last_cpu_time = None; // Reset for next size group
+                }
+                #[cfg(not(feature = "gpu"))]
+                Ok(cpu_result) => {
+                    // Print CPU result only
+                    println!(
+                        "{:<15} | CPU  | {:<10?} | {:<10} | {:<15} | {:<8}",
+                        size_str,
+                        cpu_result.total_time,
+                        cpu_result
+                            .iterations
+                            .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
+                        cpu_result
+                            .collapsed_cells
+                            .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
+                        if cpu_result.wfc_result.is_ok() {
+                            "Ok"
+                        } else {
+                            "Fail"
+                        },
+                    );
                 }
                 Err(e) => {
-                    log::error!("Benchmark comparison failed: {}", e);
-                    return Err(e);
+                    println!("{:<15} | Both | Error running benchmark: {} |", size_str, e);
+                    last_cpu_time = None; // Reset on error
                 }
             }
+            println!("-------------------------------------------------------------------------------------------");
+            // Keep separator wide enough for GPU case
         }
     } else {
         log::info!("Running standard WFC...");

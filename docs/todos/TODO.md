@@ -139,7 +139,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
     - [x] Add function to run both CPU and GPU implementations with identical input
     - [x] Record metrics: total runtime, memory usage, time per step, etc.
     - [x] Implement comparison and reporting of benchmark results
-    - [ ] Support different grid sizes and complexity levels for comprehensive testing
+    - [x] Support different grid sizes and complexity levels for comprehensive testing
     - [ ] Add option to output results in CSV format for further analysis
 - **File:** `wave-forge-app/src/progress.rs`
   - [ ] Implement progress reporting system:
