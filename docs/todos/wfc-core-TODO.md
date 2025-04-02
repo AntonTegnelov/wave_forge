@@ -2,30 +2,40 @@
 
 ## GPU Migration Plan
 
-- [ ] Design GPU data structures for efficient representation of the WFC state
+- [ ] Phase 1: Complete GPU implementation core components
 
-  - [ ] Create `GpuGrid` trait and `wgpu`-based implementation optimized for GPU memory layout
-  - [ ] Design shader-compatible representation of possibility states (likely using uint arrays)
-  - [ ] Implement buffer management system for grid data transfer
+  - [ ] Create dedicated `GpuEntropyCalculator` implementation in wfc-gpu
+  - [ ] Implement GPU-based constraint propagation algorithm
+  - [ ] Optimize grid representation for GPU memory layout (coalescence)
+  - [ ] Add comprehensive benchmarking tools to compare CPU vs GPU performance
 
-- [ ] Core algorithm GPU implementation
+- [ ] Phase 2: Performance optimization
 
-  - [ ] Implement `GpuEntropyCalculator` using compute shaders
-  - [ ] Implement `GpuConstraintPropagator` using compute shaders for massive parallel propagation
-  - [ ] Develop atomic operations for parallel grid updates
+  - [ ] Implement batched update processing for constraint propagation
+  - [ ] Minimize CPU-GPU data transfers during algorithm steps
+  - [ ] Optimize workgroup sizes and memory access patterns in shaders
+  - [ ] Add shader specialization for different grid sizes and tile counts
 
-- [ ] Integration and compatibility
+- [ ] Phase 3: API enhancement
 
-  - [ ] Create dispatcher to manage shader pipelines and buffer synchronization
-  - [ ] Implement host-device memory management for efficient data transfer
-  - [ ] Develop fallback mechanism for systems without compatible GPU hardware
+  - [ ] Create unified factory for CPU/GPU backends (runtime selection)
+  - [ ] Add graceful fallback to CPU implementation when GPU unavailable
+  - [ ] Implement multi-GPU support for large grids
+  - [ ] Add configurable precision options (float vs double for entropy)
 
-- [ ] Migration and benchmarking
-  - [ ] Create benchmarking suite to compare CPU vs GPU performance across grid sizes
-  - [ ] Implement phased deprecation of CPU-based implementations
-  - [ ] Document minimum GPU requirements and feature detection
+- [ ] Phase 4: Transition plan
 
-## Remaining Features
+  - [ ] Deprecate CPU implementations with warning messages
+  - [ ] Provide migration guide documentation
+  - [ ] Update all examples to use GPU implementation by default
+  - [ ] Create final benchmark suite demonstrating performance gains
+
+- [ ] Phase 5: Cleanup
+  - [ ] Remove CPU-specific implementations and refactor core API
+  - [ ] Consolidate all computation code into the GPU-based module
+  - [ ] Remove CPU-only optimizations and simplify codebase
+
+## Missing Features
 
 - [ ] Implement tile symmetry handling (rotation/reflection support in `TileSet`)
 - [ ] Add rule generation helpers based on symmetry/transformation principles
@@ -36,8 +46,8 @@
 
 ## Architecture Improvements
 
-- [ ] Refactor `AdjacencyRules` to use GPU-compatible storage for sparse rule sets
-- [ ] Adapt runner architecture for async GPU execution model
+- [ ] Refactor `AdjacencyRules` to use more memory-efficient storage for sparse rule sets
+- [ ] Simplify error propagation in `runner.rs` with better Result chaining
 - [ ] Break down the `run` function in runner.rs to improve separation of concerns
 - [ ] Make hard-coded values configurable (iteration limits, contradiction handling)
 - [ ] Create builder pattern for configurating WFC algorithm parameters
@@ -46,4 +56,3 @@
 
 - [ ] Add property-based tests (e.g., using proptest) for rule consistency
 - [ ] Implement fuzzing for edge case discovery
-- [ ] Create shader unit tests and validation tools for GPU code
