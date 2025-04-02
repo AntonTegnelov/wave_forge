@@ -4,6 +4,7 @@
 // Removed: use bitvec::prelude::*; (unused import)
 use std::time::Duration;
 use thiserror::Error;
+use wfc_rules::TileSetError;
 
 // Module declarations (keep public if they contain public items)
 /// Entropy calculation logic and traits.
@@ -33,16 +34,8 @@ pub use crate::grid::PossibilityGrid;
 pub use crate::propagator::ConstraintPropagator;
 /// Errors specific to the propagation phase.
 pub use crate::propagator::PropagationError;
-/// Represents the adjacency rules between tiles.
-pub use crate::rules::AdjacencyRules;
 /// The main function to execute the Wave Function Collapse algorithm.
 pub use crate::runner::run;
-/// Represents a unique identifier for a tile.
-pub use crate::tile::TileId;
-/// Contains information about the set of tiles, like weights.
-pub use crate::tile::TileSet;
-/// Errors related to TileSet configuration.
-pub use crate::tile::TileSetError;
 
 /// Errors that can occur during the Wave Function Collapse algorithm.
 #[derive(Error, Debug, Clone)]

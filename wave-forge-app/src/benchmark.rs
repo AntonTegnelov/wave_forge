@@ -6,12 +6,11 @@ use std::time::{Duration, Instant};
 use wfc_core::{
     // Core components needed
     grid::PossibilityGrid,
-    rules::AdjacencyRules,
     runner::run,
     ProgressInfo, // Import ProgressInfo directly from wfc_core
-    TileSet,      // Import directly from wfc_core
     WfcError,     // Import directly from wfc_core
 };
+use wfc_rules::{AdjacencyRules, TileSet}; // Use wfc-rules types
 
 // GPU implementation is now mandatory for benchmarks
 use wfc_gpu::accelerator::GpuAccelerator;
@@ -21,6 +20,7 @@ use anyhow::Error;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
 
@@ -108,6 +108,8 @@ pub async fn run_single_benchmark(
     let propagator = gpu_accelerator.clone();
     let entropy_calc = gpu_accelerator;
 
+    let shutdown_signal = Arc::new(AtomicBool::new(false)); // Create default signal
+
     // Profile the actual WFC run
     let _run_guard = profiler.profile("gpu_wfc_run");
 
@@ -118,6 +120,7 @@ pub async fn run_single_benchmark(
         propagator,
         entropy_calc,
         progress_callback,
+        shutdown_signal.clone(), // Pass the signal
     );
 
     let total_time = start_time.elapsed();

@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 use visualization::{TerminalVisualizer, Visualizer};
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
+use wfc_rules::{AdjacencyRules, TileSet};
 
 /// The main entry point for the Wave Forge application.
 ///

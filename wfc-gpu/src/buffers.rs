@@ -2,7 +2,8 @@ use crate::GpuError;
 use bytemuck::{Pod, Zeroable};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
-use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules};
+use wfc_core::grid::PossibilityGrid;
+use wfc_rules::AdjacencyRules;
 use wgpu;
 use wgpu::util::DeviceExt; // Import for create_buffer_init // Add Arc
 

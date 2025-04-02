@@ -5,8 +5,8 @@ use wfc_core::{
     entropy::EntropyCalculator,
     grid::{EntropyGrid, Grid, PossibilityGrid},
     propagator::{ConstraintPropagator, PropagationError},
-    rules::AdjacencyRules,
 }; // Use Arc for shared GPU resources
+use wfc_rules::AdjacencyRules; // Added import
 
 /// Manages the WGPU context and orchestrates GPU-accelerated WFC operations.
 ///

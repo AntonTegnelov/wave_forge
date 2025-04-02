@@ -11,7 +11,7 @@
   - [x] Replace internal rules implementation with wfc-rules in one commit
   - [x] Update all affected tests to use wfc-rules
   - [x] Verify all tests pass with the new implementation
-  - [ ] Remove the internal rules implementation code completely
+  - [x] Remove the internal rules implementation code completely
   - [ ] Update documentation to reflect the new dependency on wfc-rules module
 
 ## GPU Migration Plan

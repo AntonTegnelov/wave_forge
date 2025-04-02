@@ -14,10 +14,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use wfc_core::grid::PossibilityGrid;
-use wfc_core::rules::AdjacencyRules;
 use wfc_core::runner;
-use wfc_core::{ProgressInfo, TileSet};
+use wfc_core::ProgressInfo;
 use wfc_gpu::accelerator::GpuAccelerator;
+use wfc_rules::{AdjacencyRules, TileSet};
 
 pub async fn run_benchmark_mode(
     config: &AppConfig,
