@@ -1,6 +1,9 @@
 //! Handles command-line argument parsing and application configuration.
 
 use clap::{Parser, ValueEnum};
+use figment::Provider;
+use serde;
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -49,7 +52,7 @@ impl Default for GlobalLogLevel {
 }
 
 /// Configuration for the Wave Forge application.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Deserialize, Provider)]
 #[command(author, version, about, long_about = None)]
 pub struct AppConfig {
     /// Path to the RON rule file defining tiles and adjacencies.

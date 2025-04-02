@@ -21,6 +21,10 @@ pub mod visualization;
 use anyhow::Result;
 use clap::Parser;
 use config::AppConfig;
+use figment::{
+    providers::{Clap, Env, Format, Toml},
+    Figment,
+};
 use logging::init_logger;
 use setup::visualization::{setup_visualization, VizMessage};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -56,8 +60,12 @@ async fn main() -> Result<()> {
         signal_handler_shutdown.store(true, Ordering::Relaxed);
     });
 
-    // Parse command-line arguments first (we need the config for logger setup)
-    let config = AppConfig::parse();
+    // --- Configuration Loading ---
+    let config: AppConfig = Figment::from(Clap::from_args())
+        .merge(Toml::file("WaveForge.toml").nested()) // File values override Clap defaults
+        .merge(Env::prefixed("WAVEFORGE_").split("__")) // Env vars override file values
+        .extract()
+        .context("Failed to load configuration")?;
 
     // Initialize logging with the configured log level
     init_logger(&config);
