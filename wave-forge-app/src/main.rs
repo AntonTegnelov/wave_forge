@@ -15,13 +15,14 @@ pub mod logging;
 pub mod output;
 pub mod profiler;
 pub mod progress;
+pub mod setup;
 pub mod visualization;
 
 use anyhow::Result;
 use clap::Parser;
 use config::AppConfig;
-use config::VisualizationMode;
 use logging::init_logger;
+use setup::visualization::{setup_visualization, VizMessage};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -29,11 +30,6 @@ use std::time::{Duration, Instant};
 use visualization::{TerminalVisualizer, Visualizer};
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
-
-// Helper enum for visualization control messages
-enum VizMessage {
-    UpdateGrid(Box<PossibilityGrid>),
-}
 
 /// The main entry point for the Wave Forge application.
 ///
@@ -57,85 +53,8 @@ async fn main() -> Result<()> {
     log::debug!("Loaded Config: {:?}", config);
 
     // --- Initialize Visualizer in a separate thread if configured ---
-    let mut main_viz_handle: Option<thread::JoinHandle<()>> = None;
-    let viz_tx: Option<Sender<VizMessage>> = match config.visualization_mode {
-        VisualizationMode::None => None,
-        _ => {
-            // Create a channel to send grid snapshots for visualization
-            let (tx, rx) = mpsc::channel();
+    let (viz_tx, main_viz_handle) = setup_visualization(&config);
 
-            // Start visualization in a separate thread
-            let viz_mode = config.visualization_mode.clone();
-            let grid_width = config.width;
-            let grid_height = config.height;
-            let toggle_key = config.visualization_toggle_key;
-
-            log::info!("Starting visualization thread with mode: {:?}", viz_mode);
-            log::info!("Visualization toggle key: '{}'", toggle_key);
-
-            let handle = thread::spawn(move || {
-                let mut visualizer: Box<dyn Visualizer> = match viz_mode {
-                    VisualizationMode::Terminal => {
-                        Box::new(TerminalVisualizer::with_toggle_key(toggle_key))
-                    }
-                    VisualizationMode::Simple2D => {
-                        match visualization::Simple2DVisualizer::new(
-                            &format!("Wave Forge - {}x{}", grid_width, grid_height),
-                            grid_width,
-                            grid_height,
-                            toggle_key,
-                        ) {
-                            Ok(viz) => Box::new(viz),
-                            Err(e) => {
-                                log::error!("Failed to create Simple2DVisualizer: {}", e);
-                                Box::new(TerminalVisualizer::with_toggle_key(toggle_key))
-                                // Fallback to terminal
-                            }
-                        }
-                    }
-                    VisualizationMode::None => unreachable!(),
-                };
-
-                log::info!("Visualization thread started");
-
-                // Process incoming grid snapshots
-                let mut running = true;
-                while running {
-                    match rx.recv() {
-                        Ok(VizMessage::UpdateGrid(grid)) => {
-                            // Process input to handle toggle requests
-                            if let Ok(continue_viz) = visualizer.process_input() {
-                                if !continue_viz {
-                                    log::info!("Visualization stopped by user input");
-                                    running = false;
-                                    continue;
-                                }
-
-                                // Only display if visualization is enabled
-                                if visualizer.is_enabled() {
-                                    if let Err(e) = visualizer.display_state(&grid) {
-                                        log::error!("Failed to display grid: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Error receiving visualization update: {}", e);
-                            running = false;
-                        }
-                    }
-
-                    // Small sleep to prevent busy-waiting
-                    thread::sleep(Duration::from_millis(10));
-                }
-
-                log::info!("Visualization thread terminated");
-            });
-
-            main_viz_handle = Some(handle);
-            Some(tx)
-        }
-    };
     // --- End Visualizer Initialization ---
 
     println!("Wave Forge App");
