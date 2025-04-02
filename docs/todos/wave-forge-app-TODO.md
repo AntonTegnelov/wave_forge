@@ -18,7 +18,7 @@
 
 ## main.rs
 
-- [ ] Split main.rs into smaller files for better maintainability
+- [x] Split main.rs into smaller files for better maintainability
 - [ ] Improve visualization thread management to ensure threads are properly joined
 - [ ] Add graceful shutdown logic for all components
 
