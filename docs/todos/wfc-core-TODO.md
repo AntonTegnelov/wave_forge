@@ -12,7 +12,7 @@
   - [x] Update all affected tests to use wfc-rules
   - [x] Verify all tests pass with the new implementation
   - [x] Remove the internal rules implementation code completely
-  - [ ] Update documentation to reflect the new dependency on wfc-rules module
+  - [x] Update documentation to reflect the new dependency on wfc-rules module
 
 ## GPU Migration Plan
 

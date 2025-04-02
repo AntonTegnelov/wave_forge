@@ -48,8 +48,8 @@ fn axis_name_to_index(axis_name: &str) -> Result<usize, LoadError> {
 /// Parses WFC rules defined in a RON (Rusty Object Notation) string.
 ///
 /// This function takes the content of a RON file as a string, deserializes it,
-/// validates the data, and converts it into the core `TileSet` and `AdjacencyRules`
-/// structures used by the `wfc-core` engine.
+/// validates the data, and converts it into the `TileSet` and `AdjacencyRules`
+/// structures defined in this crate (`wfc-rules`).
 ///
 /// # Arguments
 ///
