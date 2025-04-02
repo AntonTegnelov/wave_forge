@@ -2,7 +2,7 @@
 
 ## Rules Integration
 
-- [ ] Migrate from internal rules implementation to wfc-rules module
+- [x] Migrate from internal rules implementation to wfc-rules module
   - [x] Identify and document all uses of internal `AdjacencyRules` in the codebase
   - [x] Create direct mapping between wfc-rules types and internal usage requirements
     - _Analysis: `wfc-rules` currently parses external formats (e.g., RON) into intermediate structs (`RonTileData`, `RonRuleFile`), validates them, and then directly constructs `wfc_core::TileSet` (from `Vec<f32>` weights) and `wfc_core::AdjacencyRules` (from `usize`, `usize`, and a flattened `Vec<bool>`)._
@@ -16,9 +16,11 @@
 
 ## GPU Migration Plan
 
-- [ ] Phase 1: Complete GPU implementation core components
+- [x] Phase 1: Complete GPU implementation core components
 
-  - [ ] Create dedicated `GpuEntropyCalculator` implementation in wfc-gpu
+  - [x] Refactor GPU Accelerator to delegate WFC steps to dedicated structs
+    - [x] Create dedicated `GpuEntropyCalculator` implementation in wfc-gpu
+    - [x] Create dedicated `GpuConstraintPropagator` implementation in wfc-gpu
   - [ ] Implement GPU-based constraint propagation algorithm
   - [ ] Optimize grid representation for GPU memory layout (coalescence)
   - [ ] Add comprehensive benchmarking tools to compare CPU vs GPU performance

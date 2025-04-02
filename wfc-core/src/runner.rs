@@ -2,8 +2,6 @@ use crate::{
     entropy::EntropyCalculator,
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    rules::AdjacencyRules,
-    tile::{TileId, TileSet},
     ProgressInfo, WfcError,
 };
 use log::{debug, error, info, warn};
@@ -12,6 +10,7 @@ use rand::thread_rng;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use wfc_rules::{AdjacencyRules, TileId, TileSet};
 
 /// Runs the core Wave Function Collapse (WFC) algorithm loop.
 ///
