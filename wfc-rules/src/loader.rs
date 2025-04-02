@@ -1,8 +1,7 @@
-use crate::{formats, LoadError};
+use crate::{formats, AdjacencyRules, LoadError, TileSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use wfc_core::{AdjacencyRules, TileSet};
 
 /// Loads a `TileSet` and corresponding `AdjacencyRules` from a rule definition file.
 ///

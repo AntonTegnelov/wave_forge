@@ -8,7 +8,7 @@
     - _Analysis: `wfc-rules` currently parses external formats (e.g., RON) into intermediate structs (`RonTileData`, `RonRuleFile`), validates them, and then directly constructs `wfc_core::TileSet` (from `Vec<f32>` weights) and `wfc_core::AdjacencyRules` (from `usize`, `usize`, and a flattened `Vec<bool>`)._
     - _Requirement: `wfc-rules` needs to define its *own* `TileSet` and `AdjacencyRules` types. The loading functions should return these new types. `wfc-core` (propagator, runner) must then be updated to use these `wfc-rules` types._
     - _Data Mapping: The core data (`Vec<f32>` for tileset weights, flattened `Vec<bool>` for adjacency rules) remains the same, but the struct definitions will move from `wfc-core` to `wfc-rules`._
-  - [ ] Replace internal rules implementation with wfc-rules in one commit
+  - [x] Replace internal rules implementation with wfc-rules in one commit
   - [ ] Update all affected tests to use wfc-rules
   - [ ] Verify all tests pass with the new implementation
   - [ ] Remove the internal rules implementation code completely

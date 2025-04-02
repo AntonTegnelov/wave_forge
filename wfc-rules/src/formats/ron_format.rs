@@ -1,7 +1,6 @@
-use crate::LoadError;
+use crate::{AdjacencyRules, LoadError, TileId, TileSet, TileSetError};
 use serde::Deserialize;
 use std::collections::HashMap;
-use wfc_core::{AdjacencyRules, TileId, TileSet, TileSetError};
 
 // --- Structs mirroring the RON format ---
 

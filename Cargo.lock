@@ -2109,6 +2109,7 @@ dependencies = [
  "rand",
  "rayon",
  "thiserror",
+ "wfc-rules",
 ]
 
 [[package]]
@@ -2136,7 +2137,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "wfc-core",
 ]
 
 [[package]]

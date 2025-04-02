@@ -6,6 +6,11 @@ use thiserror::Error;
 pub mod formats;
 /// Contains the main rule loading functions.
 pub mod loader;
+/// Contains the core types (TileId, TileSet, AdjacencyRules).
+pub mod types;
+
+/// Re-export core types for easier access
+pub use types::{AdjacencyRules, TileId, TileSet, TileSetError};
 
 /// Errors that can occur when loading or parsing adjacency rules.
 #[derive(Error, Debug)]

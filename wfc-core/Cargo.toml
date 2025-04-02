@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+wfc-rules = { path = "../wfc-rules" } # Added for rule/tileset types
 bitvec = "1.0"
 rayon = "1.8" # Added for parallel entropy calculation
 float-ord = "0.3" # Corrected name (was float_ord)

@@ -7,7 +7,6 @@ edition = "2021"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0" # Example, could use ron instead
 ron = "0.8"        # Example, could use JSON instead
-wfc-core = { path = "../wfc-core" }
 thiserror = "1.0"
 log = "0.4"
 rayon = "1.8" # For potential parallel parsing
