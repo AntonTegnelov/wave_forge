@@ -25,7 +25,7 @@
 ## config.rs
 
 - [x] Add support for configuration files in addition to command-line arguments
-- [ ] Add validation for interdependent configuration options
+- [x] Add validation for interdependent configuration options
 
 ## output.rs
 

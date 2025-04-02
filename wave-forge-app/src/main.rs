@@ -67,6 +67,12 @@ async fn main() -> Result<()> {
         .extract()
         .context("Failed to load configuration")?;
 
+    // --- Validate Configuration ---
+    if config.benchmark_mode && config.benchmark_csv_output.is_none() {
+        log::warn!("Running in benchmark mode without --benchmark-csv-output specified. Results will not be saved to CSV.");
+    }
+    // Add other validations here...
+
     // Initialize logging with the configured log level
     init_logger(&config);
 
