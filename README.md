@@ -2,7 +2,7 @@
 
 **Note:** This project is currently under heavy development and is not yet ready for use.
 
-Multithreaded 3D GPU Terrain generation using Wave Function Collapse (WFC).
+GPU-accelerated 3D terrain generation using Wave Function Collapse (WFC).
 
 ## Building
 
@@ -27,8 +27,7 @@ OPTIONS:
         --depth <DEPTH>                       Depth of the output grid [default: 10]
         --seed <SEED>                         Optional seed for the random number generator
     -o, --output-path <FILE>                  Path to save the generated output grid [default: output.txt]
-        --cpu-only                            Force using the CPU implementation even if GPU is available
-        --benchmark-mode                      Run in benchmark mode, comparing CPU and GPU performance
+        --benchmark-mode                      Run in benchmark mode (GPU performance only)
         --report-progress-interval <DURATION> Report progress updates every specified interval (e.g., "1s", "500ms")
         --progress-log-level <LEVEL>          Log level to use for progress reporting [default: info]
                                               [possible values: trace, debug, info, warn]
@@ -99,12 +98,7 @@ There are several ways to run tests in this project:
    cargo test --workspace
    ```
 
-3. Use the convenience scripts:
-   - PowerShell: `.\test-core.ps1` (tests core packages excluding GPU)
-   - Batch: `test-core.bat` (same as above, for Command Prompt)
-   - PowerShell: `.\test-all.ps1` (tests all packages including GPU)
-
-Note: GPU tests may take longer to run as they need to initialize the GPU.
+Note: Tests involving the GPU (`wfc-gpu`, `wave-forge-app`) may require a compatible GPU and driver setup.
 
 ## Contributing
 
