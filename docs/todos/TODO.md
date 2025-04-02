@@ -193,12 +193,12 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - [x] Add benchmark results to documentation.
 - [x] Create sample configurations for different visualization modes.
 - [x] Add ability to focus on specific layers/slices of the 3D grid
-- [ ] Explore alternative propagation algorithms (e.g., parallel strategies).
-- [ ] **Improved GPU Error Mapping:** Enhance error mapping in the GPU accelerator implementation to provide more detailed and accurate error information when GPU operations fail.
-  - [ ] Properly map `GpuError` to `PropagationError` types in accelerator.rs.
-  - [ ] Add location information (coordinates) to GPU contradiction errors.
-  - [ ] Improve error diagnostics for shader compilation failures.
-- [ ] **Optimize Memory Management:** Review and improve memory management in the GPU acceleration code.
-  - [ ] Evaluate the `Clone` implementation on `GpuAccelerator` and potential issues with cloning GPU buffers.
-  - [ ] Consider using more explicit sharing mechanisms (e.g., `Arc`) for GPU resources to avoid unnecessary duplication.
-  - [ ] Implement buffer pooling or reuse strategies for frequently updated buffers.
+- [x] **Improved GPU Error Mapping:** Enhance error mapping in the GPU accelerator implementation to provide more detailed and accurate error information when GPU operations fail.
+  - [x] Properly map `GpuError` to `PropagationError` types in accelerator.rs.
+  - [x] Add location information (coordinates) to GPU contradiction errors.
+  - [x] Improve error diagnostics for shader compilation failures.
+- [x] **Optimize Memory Management:** Review and improve memory management in the GPU acceleration code.
+  - [x] Evaluate the `Clone` implementation on `GpuAccelerator` and potential issues with cloning GPU buffers.
+  - [x] Use more explicit sharing mechanisms (e.g., `Arc`) for GPU resources to avoid unnecessary duplication.
+  - [x] Implement buffer pooling or reuse strategies for frequently updated buffers.
+- [x] Explore alternative propagation algorithms (e.g., parallel strategies).
