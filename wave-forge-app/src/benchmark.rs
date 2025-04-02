@@ -1,4 +1,4 @@
-//! Benchmarking utilities for comparing WFC implementations (CPU vs GPU).
+//! Benchmarking utilities for WFC GPU performance.
 //! Now focuses solely on GPU performance.
 
 use std::sync::{Arc, Mutex};
@@ -29,8 +29,6 @@ use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
 /// Contains timing information, grid parameters, and the final result of the WFC run.
 #[derive(Debug, Clone)]
 pub struct BenchmarkResult {
-    /// Identifier for the implementation used (always "GPU").
-    pub implementation: String,
     /// Width of the grid used in the benchmark.
     pub grid_width: usize,
     /// Height of the grid used in the benchmark.
@@ -143,7 +141,6 @@ pub async fn run_single_benchmark(
     print_profiler_summary(&profiler);
 
     Ok(BenchmarkResult {
-        implementation: "GPU".to_string(),
         grid_width: grid.width,
         grid_height: grid.height,
         grid_depth: grid.depth,
@@ -235,7 +232,6 @@ pub fn write_results_to_csv(results: &[BenchmarkResultTuple], path: &Path) -> Re
         "Height",
         "Depth",
         "Num Tiles",
-        "Implementation",
         "Total Time (ms)",
         "Iterations",
         "Collapsed Cells",
@@ -252,7 +248,6 @@ pub fn write_results_to_csv(results: &[BenchmarkResultTuple], path: &Path) -> Re
                     h.to_string(),
                     d.to_string(),
                     result.num_tiles.to_string(),
-                    result.implementation.clone(),
                     result.total_time.as_millis().to_string(),
                     result.iterations.map_or("".to_string(), |i| i.to_string()),
                     result
@@ -275,7 +270,6 @@ pub fn write_results_to_csv(results: &[BenchmarkResultTuple], path: &Path) -> Re
                     h.to_string(),
                     d.to_string(),
                     "N/A".to_string(), // Num tiles unknown if setup failed
-                    "GPU".to_string(), // Assumed GPU since CPU is removed
                     "N/A".to_string(),
                     "N/A".to_string(),
                     "N/A".to_string(),

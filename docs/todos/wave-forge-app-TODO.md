@@ -7,7 +7,7 @@
 - [x] Implement the changes in the doc
 - [x] Remove CPU implementation entirely
 - [x] Refactor `main.rs` to remove CPU-specific code paths
-- [ ] Update benchmarking to focus on GPU performance only
+- [x] Update benchmarking to focus on GPU performance only
 - [ ] Update documentation to reflect GPU-only approach
 
 ## General Improvements
