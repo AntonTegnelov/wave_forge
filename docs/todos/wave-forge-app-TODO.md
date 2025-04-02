@@ -34,7 +34,7 @@
 ## progress.rs
 
 - [x] Implement more detailed progress statistics
-- [ ] Add option to save progress logs to a file
+- [x] Add option to save progress logs to a file
 
 ## Performance Optimizations
 

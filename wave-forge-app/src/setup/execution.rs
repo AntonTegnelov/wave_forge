@@ -6,6 +6,8 @@ use crate::output;
 use crate::setup::visualization::VizMessage;
 use anyhow::{Context, Result};
 use log;
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -110,6 +112,19 @@ pub async fn run_standard_mode(
 ) -> Result<()> {
     log::info!("Running WFC (GPU only)...");
 
+    // --- Setup Progress Log File ---
+    let progress_log_writer = if let Some(path) = &config.progress_log_file {
+        log::info!("Opening progress log file: {:?}", path);
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("Failed to open progress log file: {:?}", path))?;
+        Some(Arc::new(Mutex::new(BufWriter::new(file)))) // Wrap in Arc<Mutex> for thread safety
+    } else {
+        None
+    };
+
     // GPU is mandatory
     let grid_snapshot = Arc::new(Mutex::new(grid.clone())); // Snapshot for GPU/Viz
 
@@ -162,16 +177,26 @@ pub async fn run_standard_mode(
     let last_report_time = Arc::new(Mutex::new(Instant::now()));
     let report_interval = config.report_progress_interval;
     let progress_log_level = config.progress_log_level.clone(); // Clone here
+    let progress_log_writer_clone = progress_log_writer.clone(); // Clone Arc for closure
     let progress_callback: Option<Box<dyn Fn(ProgressInfo) + Send + Sync>> = if let Some(interval) =
         report_interval
     {
         let last_report_time_clone = Arc::clone(&last_report_time);
         Some(Box::new(move |info: ProgressInfo| {
             let now = Instant::now();
-            let mut last_time = last_report_time_clone
-                .lock()
-                .expect("Progress mutex poisoned");
-            if now.duration_since(*last_time) >= interval {
+            let should_report = {
+                let mut last_time = last_report_time_clone
+                    .lock()
+                    .expect("Progress mutex poisoned");
+                if now.duration_since(*last_time) >= interval {
+                    *last_time = now;
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if should_report {
                 let elapsed_secs = info.elapsed_time.as_secs_f32();
                 let collapse_rate = if elapsed_secs > 0.0 {
                     info.collapsed_cells as f32 / elapsed_secs
@@ -184,9 +209,9 @@ pub async fn run_standard_mode(
                     100.0 // Avoid division by zero if grid is empty
                 };
                 let msg = format!(
-                        "Progress: Iter {}, Collapsed {}/{} ({:.1}%), Elapsed: {:.2?}, Rate: {:.1} cells/s",
-                        info.iteration, info.collapsed_cells, info.total_cells, percentage, info.elapsed_time, collapse_rate
-                    );
+                    "Progress: Iter {}, Collapsed {}/{} ({:.1}%), Elapsed: {:.2?}, Rate: {:.1} cells/s",
+                    info.iteration, info.collapsed_cells, info.total_cells, percentage, info.elapsed_time, collapse_rate
+                );
                 // Use the cloned progress_log_level
                 match progress_log_level {
                     ProgressLogLevel::Trace => log::trace!("{}", msg),
@@ -194,7 +219,17 @@ pub async fn run_standard_mode(
                     ProgressLogLevel::Info => log::info!("{}", msg),
                     ProgressLogLevel::Warn => log::warn!("{}", msg),
                 }
-                *last_time = now;
+
+                // Write to progress log file if enabled
+                if let Some(writer_arc) = &progress_log_writer_clone {
+                    if let Ok(mut writer_guard) = writer_arc.lock() {
+                        if let Err(e) = writeln!(writer_guard, "{}", msg) {
+                            log::error!("Failed to write to progress log file: {}", e);
+                        }
+                    } else {
+                        log::error!("Progress log file mutex poisoned!");
+                    }
+                }
             }
         }))
     } else {

@@ -107,6 +107,10 @@ pub struct AppConfig {
     /// Only used if benchmark_mode is also enabled.
     #[arg(long, value_name = "CSV_FILE")]
     pub benchmark_csv_output: Option<PathBuf>,
+
+    /// Optional: Path to save progress updates to a file.
+    #[arg(long, value_name = "LOG_FILE")]
+    pub progress_log_file: Option<PathBuf>,
 }
 
 #[cfg(test)]
