@@ -10,7 +10,7 @@
     - _Data Mapping: The core data (`Vec<f32>` for tileset weights, flattened `Vec<bool>` for adjacency rules) remains the same, but the struct definitions will move from `wfc-core` to `wfc-rules`._
   - [x] Replace internal rules implementation with wfc-rules in one commit
   - [x] Update all affected tests to use wfc-rules
-  - [ ] Verify all tests pass with the new implementation
+  - [x] Verify all tests pass with the new implementation
   - [ ] Remove the internal rules implementation code completely
   - [ ] Update documentation to reflect the new dependency on wfc-rules module
 
