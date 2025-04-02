@@ -1,14 +1,31 @@
 # WFC Core Module TODO List
 
-## Performance Improvements
+## GPU Migration Plan
 
-- [ ] Implement Shannon entropy calculation to replace simple counting in `CpuEntropyCalculator`
-- [ ] Optimize grid access patterns for better cache locality in 3D grid operations
-- [ ] Benchmark and optimize `ParallelConstraintPropagator` batch sizes for different grid dimensions
-- [ ] Implement GPU-accelerated versions of both entropy calculation and constraint propagation
-- [ ] Add compile-time optimizations for common use cases (e.g., 2D grids)
+- [ ] Design GPU data structures for efficient representation of the WFC state
 
-## Missing Features
+  - [ ] Create `GpuGrid` trait and `wgpu`-based implementation optimized for GPU memory layout
+  - [ ] Design shader-compatible representation of possibility states (likely using uint arrays)
+  - [ ] Implement buffer management system for grid data transfer
+
+- [ ] Core algorithm GPU implementation
+
+  - [ ] Implement `GpuEntropyCalculator` using compute shaders
+  - [ ] Implement `GpuConstraintPropagator` using compute shaders for massive parallel propagation
+  - [ ] Develop atomic operations for parallel grid updates
+
+- [ ] Integration and compatibility
+
+  - [ ] Create dispatcher to manage shader pipelines and buffer synchronization
+  - [ ] Implement host-device memory management for efficient data transfer
+  - [ ] Develop fallback mechanism for systems without compatible GPU hardware
+
+- [ ] Migration and benchmarking
+  - [ ] Create benchmarking suite to compare CPU vs GPU performance across grid sizes
+  - [ ] Implement phased deprecation of CPU-based implementations
+  - [ ] Document minimum GPU requirements and feature detection
+
+## Remaining Features
 
 - [ ] Implement tile symmetry handling (rotation/reflection support in `TileSet`)
 - [ ] Add rule generation helpers based on symmetry/transformation principles
@@ -19,29 +36,14 @@
 
 ## Architecture Improvements
 
-- [ ] Refactor `AdjacencyRules` to use more memory-efficient storage for sparse rule sets
-- [ ] Simplify error propagation in `runner.rs` with better Result chaining
+- [ ] Refactor `AdjacencyRules` to use GPU-compatible storage for sparse rule sets
+- [ ] Adapt runner architecture for async GPU execution model
 - [ ] Break down the `run` function in runner.rs to improve separation of concerns
 - [ ] Make hard-coded values configurable (iteration limits, contradiction handling)
 - [ ] Create builder pattern for configurating WFC algorithm parameters
-- [ ] Add abstraction layer for different grid dimensions (optimize 2D vs 3D)
 
 ## Code Quality Enhancements
 
 - [ ] Add property-based tests (e.g., using proptest) for rule consistency
-- [ ] Create benchmarking suite for performance regression testing
 - [ ] Implement fuzzing for edge case discovery
-- [ ] Add more examples showcasing different use cases
-
-## Documentation
-
-- [ ] Create visual documentation of algorithm steps
-- [ ] Document performance characteristics and memory usage
-- [ ] Add more detailed tutorials beyond code comments
-
-## Priority Tasks (Start Here)
-
-- [ ] Implement Shannon entropy for more accurate cell selection
-- [ ] Add tile symmetry support
-- [ ] Create memory-efficient rule storage for complex rulesets
-- [ ] Implement serialization support for grid states
+- [ ] Create shader unit tests and validation tools for GPU code
