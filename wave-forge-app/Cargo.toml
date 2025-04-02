@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 wfc-core = { path = "../wfc-core" }
 wfc-rules = { path = "../wfc-rules" }
-wfc-gpu = { path = "../wfc-gpu", optional = true }
+wfc-gpu = { path = "../wfc-gpu" }
 
 clap = { version = "4.4", features = ["derive"] }
 rayon = "1.8"

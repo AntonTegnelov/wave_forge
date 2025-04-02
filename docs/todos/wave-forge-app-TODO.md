@@ -4,7 +4,7 @@
 
 - [x] Figure out everywhere that need to be adjusted. Mark them with comments and create a markdown doc that keeps all the places and what needs to be done
 - [x] Make all wave collapse operations GPU-based
-- [ ] Implement the changes in the doc
+- [x] Implement the changes in the doc
 - [ ] Remove CPU implementation entirely
 - [ ] Refactor `main.rs` to remove CPU-specific code paths
 - [ ] Update benchmarking to focus on GPU performance only
