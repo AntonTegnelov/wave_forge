@@ -3,7 +3,7 @@
 ## GPU Migration
 
 - [x] Figure out everywhere that need to be adjusted. Mark them with comments and create a markdown doc that keeps all the places and what needs to be done
-- [ ] Make all wave collapse operations GPU-based
+- [x] Make all wave collapse operations GPU-based
 - [ ] Implement the changes in the doc
 - [ ] Remove CPU implementation entirely
 - [ ] Refactor `main.rs` to remove CPU-specific code paths
