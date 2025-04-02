@@ -5,6 +5,15 @@ use crate::tile::TileId;
 /// Stores the rules efficiently in a flattened boolean vector for fast lookup
 /// and easy transfer to GPU buffers.
 /// The indexing scheme assumes `allowed[axis][tile1][tile2]` layout.
+///
+/// **Current Usage:**
+/// - **`wfc-core`**: Defines the struct, used by `ConstraintPropagator` and `run` function.
+/// - **`wfc-rules`**: Loaded from definition files (e.g., RON) via `loader::load_from_file`.
+/// - **`wfc-gpu`**: Used for setting up GPU buffers (`buffers.rs`) and by the GPU accelerator (`accelerator.rs`).
+/// - **`wave-forge-app`**: Used in `setup::execution` and `benchmark` modules.
+/// - **Tests**: Used across various test modules in `wfc-core`, `wfc-gpu`, and `wfc-rules`.
+///
+/// **Migration Target:** Replace this internal definition with the one from the `wfc-rules` crate.
 #[derive(Debug, Clone)]
 pub struct AdjacencyRules {
     num_tiles: usize,

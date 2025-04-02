@@ -1,5 +1,16 @@
 # WFC Core Module TODO List
 
+## Rules Integration
+
+- [ ] Migrate from internal rules implementation to wfc-rules module
+  - [x] Identify and document all uses of internal `AdjacencyRules` in the codebase
+  - [ ] Create direct mapping between wfc-rules types and internal usage requirements
+  - [ ] Replace internal rules implementation with wfc-rules in one commit
+  - [ ] Update all affected tests to use wfc-rules
+  - [ ] Verify all tests pass with the new implementation
+  - [ ] Remove the internal rules implementation code completely
+  - [ ] Update documentation to reflect the new dependency on wfc-rules module
+
 ## GPU Migration Plan
 
 - [ ] Phase 1: Complete GPU implementation core components
@@ -49,14 +60,3 @@
 
 - [ ] Add property-based tests (e.g., using proptest) for rule consistency
 - [ ] Implement fuzzing for edge case discovery
-
-## Rules Integration
-
-- [ ] Migrate from internal rules implementation to wfc-rules module
-  - [ ] Identify and document all uses of internal `AdjacencyRules` in the codebase
-  - [ ] Create direct mapping between wfc-rules types and internal usage requirements
-  - [ ] Replace internal rules implementation with wfc-rules in one commit
-  - [ ] Update all affected tests to use wfc-rules
-  - [ ] Verify all tests pass with the new implementation
-  - [ ] Remove the internal rules implementation code completely
-  - [ ] Update documentation to reflect the new dependency on wfc-rules module
