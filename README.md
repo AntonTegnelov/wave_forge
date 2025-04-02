@@ -100,6 +100,10 @@ There are several ways to run tests in this project:
 
 Note: Tests involving the GPU (`wfc-gpu`, `wave-forge-app`) may require a compatible GPU and driver setup.
 
+### Feature Flags
+
+- `winapi`: Enables platform-specific code, primarily for attempting to measure memory usage during benchmarks on Windows using the `winapi` crate. This feature is optional and the application will build and run without it, although memory usage reporting might be less accurate or unavailable on Windows.
+
 ## Contributing
 
 _Information about contributing to the project._

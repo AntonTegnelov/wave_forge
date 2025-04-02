@@ -110,7 +110,8 @@ async fn main() -> Result<()> {
     log::debug!("Loaded Config: {:?}", config);
 
     // --- Initialize Visualizer in a separate thread if configured ---
-    let viz_tx = match config.visualization_mode {
+    let mut main_viz_handle: Option<thread::JoinHandle<()>> = None;
+    let viz_tx: Option<Sender<VizMessage>> = match config.visualization_mode {
         VisualizationMode::None => None,
         _ => {
             // Create a channel to send grid snapshots for visualization
@@ -125,7 +126,7 @@ async fn main() -> Result<()> {
             log::info!("Starting visualization thread with mode: {:?}", viz_mode);
             log::info!("Visualization toggle key: '{}'", toggle_key);
 
-            thread::spawn(move || {
+            let handle = thread::spawn(move || {
                 let mut visualizer: Box<dyn Visualizer> = match viz_mode {
                     VisualizationMode::Terminal => {
                         Box::new(TerminalVisualizer::with_toggle_key(toggle_key))
@@ -184,6 +185,7 @@ async fn main() -> Result<()> {
                 log::info!("Visualization thread terminated");
             });
 
+            main_viz_handle = Some(handle);
             Some(tx)
         }
     };
@@ -222,6 +224,9 @@ async fn main() -> Result<()> {
             log::error!("Failed to send initial grid state: {}", e);
         }
     }
+
+    // Declare handles *before* the benchmark/run split
+    let mut snapshot_handle: Option<thread::JoinHandle<()>> = None;
 
     if config.benchmark_mode {
         log::info!("Benchmark mode enabled (GPU only).");
@@ -293,14 +298,11 @@ async fn main() -> Result<()> {
                 log::error!("Failed to write benchmark results to CSV: {}", e);
             }
         }
-    } else {
-        log::info!("Running WFC (GPU only)...");
 
-        // GPU is mandatory
         // Setup visualization thread (needs Arc/Mutex for grid)
         let grid_snapshot = Arc::new(Mutex::new(grid.clone()));
-        let grid_snapshot_for_viz = Arc::clone(&grid_snapshot);
-        let _viz_handle = if let Some(tx) = &viz_tx {
+        if let Some(tx) = &viz_tx {
+            let grid_snapshot_for_viz = Arc::clone(&grid_snapshot);
             let tx_clone = tx.clone();
             let viz_interval = config
                 .report_progress_interval
@@ -339,9 +341,147 @@ async fn main() -> Result<()> {
                 }
                 log::info!("Visualization update thread terminated");
             });
-            Some(handle)
+            snapshot_handle = Some(handle);
         } else {
-            None
+            // Ensure snapshot_handle is None if viz is off
+            snapshot_handle = None;
+        };
+
+        // Setup progress reporting (needs Arc/Mutex for timer)
+        let last_report_time = Arc::new(Mutex::new(Instant::now()));
+        let report_interval = config.report_progress_interval;
+        let progress_log_level = config.progress_log_level.clone();
+        let progress_callback: Option<Box<dyn Fn(wfc_core::ProgressInfo) + Send + Sync>> =
+            if let Some(interval) = report_interval {
+                let last_report_time_clone = Arc::clone(&last_report_time);
+                Some(Box::new(move |info: wfc_core::ProgressInfo| {
+                    let now = Instant::now();
+                    let mut last_time = last_report_time_clone
+                        .lock()
+                        .expect("Progress mutex poisoned");
+                    if now.duration_since(*last_time) >= interval {
+                        let percentage = if info.total_cells > 0 {
+                            (info.collapsed_cells as f32 / info.total_cells as f32) * 100.0
+                        } else {
+                            100.0
+                        };
+                        let msg = format!(
+                            "Progress: Iter {}, Collapsed {}/{} ({:.1}%)",
+                            info.iteration, info.collapsed_cells, info.total_cells, percentage
+                        );
+                        match progress_log_level {
+                            config::ProgressLogLevel::Trace => log::trace!("{}", msg),
+                            config::ProgressLogLevel::Debug => log::debug!("{}", msg),
+                            config::ProgressLogLevel::Info => log::info!("{}", msg),
+                            config::ProgressLogLevel::Warn => log::warn!("{}", msg),
+                        }
+                        *last_time = now;
+                    }
+                }))
+            } else {
+                None
+            };
+
+        // Initialize GPU
+        log::info!("Initializing GPU Accelerator...");
+        match wfc_gpu::accelerator::GpuAccelerator::new(
+            &grid_snapshot.lock().expect("GPU init mutex poisoned"),
+            &rules,
+        )
+        .await
+        {
+            Ok(gpu_accelerator) => {
+                log::info!("Running WFC on GPU...");
+                let propagator = gpu_accelerator.clone();
+                let entropy_calc = gpu_accelerator;
+                // Run the WFC algorithm
+                match wfc_core::runner::run(
+                    &mut grid,
+                    &tileset,
+                    &rules,
+                    propagator,
+                    entropy_calc,
+                    progress_callback,
+                ) {
+                    Ok(_) => {
+                        log::info!("GPU WFC completed successfully.");
+                        // Final visualization update
+                        if let Some(tx) = &viz_tx {
+                            let _ = tx.send(VizMessage::UpdateGrid(Box::new(grid.clone())));
+                        }
+                        // Save grid
+                        if let Err(e) =
+                            output::save_grid_to_file(&grid, config.output_path.as_path())
+                        {
+                            log::error!("Failed to save grid: {}", e);
+                            return Err(e);
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        log::error!("GPU WFC failed: {}", e);
+                        Err(anyhow::anyhow!(e))
+                    }
+                }?
+            }
+            Err(e) => {
+                log::error!(
+                    "CRITICAL: Failed to initialize GPU Accelerator: {}. Cannot continue.",
+                    e
+                );
+                return Err(anyhow::anyhow!("GPU Initialization Failed: {}", e));
+            }
+        }
+    } else {
+        log::info!("Running WFC (GPU only)...");
+
+        // GPU is mandatory
+        // Setup visualization thread (needs Arc/Mutex for grid)
+        let grid_snapshot = Arc::new(Mutex::new(grid.clone()));
+        if let Some(tx) = &viz_tx {
+            let grid_snapshot_for_viz = Arc::clone(&grid_snapshot);
+            let tx_clone = tx.clone();
+            let viz_interval = config
+                .report_progress_interval
+                .map(|d| {
+                    if d < Duration::from_millis(500) {
+                        d
+                    } else {
+                        d / 2
+                    }
+                })
+                .unwrap_or_else(|| Duration::from_millis(500));
+            log::info!(
+                "Starting visualization update thread with interval: {:?}",
+                viz_interval
+            );
+            let handle = thread::spawn(move || {
+                let mut last_update = Instant::now();
+                loop {
+                    if last_update.elapsed() >= viz_interval {
+                        let grid_clone = {
+                            grid_snapshot_for_viz
+                                .lock()
+                                .expect("Visualization mutex poisoned")
+                                .clone()
+                        };
+                        if tx_clone
+                            .send(VizMessage::UpdateGrid(Box::new(grid_clone)))
+                            .is_err()
+                        {
+                            log::error!("Viz channel closed, stopping update thread.");
+                            break;
+                        }
+                        last_update = Instant::now();
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+                log::info!("Visualization update thread terminated");
+            });
+            snapshot_handle = Some(handle);
+        } else {
+            // Ensure snapshot_handle is None if viz is off
+            snapshot_handle = None;
         };
 
         // Setup progress reporting (needs Arc/Mutex for timer)
@@ -432,5 +572,24 @@ async fn main() -> Result<()> {
     }
 
     log::info!("Wave Forge App Finished.");
+
+    // --- Cleanup ---
+    log::debug!("Dropping visualization sender...");
+    drop(viz_tx);
+
+    if let Some(handle) = snapshot_handle {
+        log::debug!("Joining snapshot thread...");
+        if let Err(e) = handle.join() {
+            log::error!("Error joining snapshot thread: {:?}", e);
+        }
+    }
+
+    if let Some(handle) = main_viz_handle {
+        log::debug!("Joining main visualization thread...");
+        if let Err(e) = handle.join() {
+            log::error!("Error joining main visualization thread: {:?}", e);
+        }
+    }
+
     Ok(())
 }
