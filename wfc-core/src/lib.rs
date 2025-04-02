@@ -20,8 +20,6 @@ pub mod tile;
 
 // Re-export core public items
 
-/// Provides CPU-specific implementation for calculating entropy.
-pub use crate::entropy::CpuEntropyCalculator;
 /// Trait defining the interface for entropy calculation strategies.
 pub use crate::entropy::EntropyCalculator;
 /// Grid specifically storing entropy values (f32).
@@ -32,10 +30,6 @@ pub use crate::grid::Grid;
 pub use crate::grid::PossibilityGrid;
 /// Trait defining the interface for constraint propagation strategies.
 pub use crate::propagator::ConstraintPropagator;
-/// Provides CPU-specific implementation for constraint propagation.
-pub use crate::propagator::CpuConstraintPropagator;
-/// Provides a parallelized CPU implementation for constraint propagation.
-pub use crate::propagator::ParallelConstraintPropagator;
 /// Errors specific to the propagation phase.
 pub use crate::propagator::PropagationError;
 /// Represents the adjacency rules between tiles.

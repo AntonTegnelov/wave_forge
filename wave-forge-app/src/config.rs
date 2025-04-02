@@ -76,11 +76,7 @@ pub struct AppConfig {
     #[arg(short, long, value_name = "FILE", default_value = "output.txt")]
     pub output_path: PathBuf,
 
-    /// Force using the CPU implementation even if GPU is available.
-    #[arg(long, default_value_t = false)]
-    pub cpu_only: bool,
-
-    /// Run in benchmark mode, comparing CPU and GPU performance.
+    /// Run in benchmark mode (now GPU only).
     #[arg(long, default_value_t = false)]
     pub benchmark_mode: bool,
 
@@ -133,17 +129,9 @@ mod tests {
         assert_eq!(config.height, 10); // Default
         assert_eq!(config.depth, 10); // Default
         assert_eq!(config.output_path, PathBuf::from("out.txt"));
-        assert_eq!(config.cpu_only, false); // Default
         assert_eq!(config.benchmark_mode, false); // Default
         assert_eq!(config.report_progress_interval, None); // Default
         assert_eq!(config.visualization_mode, VisualizationMode::None); // Default
-    }
-
-    #[test]
-    fn test_cpu_only_flag() {
-        let args = vec!["wave-forge", "--rule-file", "r.ron", "--cpu-only"];
-        let config = AppConfig::try_parse_from(args).unwrap();
-        assert!(config.cpu_only);
     }
 
     #[test]

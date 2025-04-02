@@ -28,7 +28,6 @@ winapi = { version = "0.3", features = ["psapi", "processthreadsapi"], optional 
 
 [features]
 default = []
-gpu = ["dep:wfc-gpu"]
 winapi = ["dep:winapi"]
 
 [dev-dependencies]
