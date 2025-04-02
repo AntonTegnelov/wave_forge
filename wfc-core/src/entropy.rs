@@ -48,8 +48,6 @@ mod tests {
     use super::*;
     use crate::grid::{EntropyGrid, PossibilityGrid};
     use bitvec::prelude::*;
-    use std::sync::{Arc, Barrier};
-    use std::thread;
 
     // --- Test cases for entropy logic (CPU or GPU) ---
     // Note: These tests focus on the expected outcome (entropy grid state),

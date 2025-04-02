@@ -1,5 +1,4 @@
-use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
-use log::{debug, error, info, warn};
+use crate::{buffers::GpuBuffers, pipeline::ComputePipelines};
 use std::sync::Arc;
 use wfc_core::{
     entropy::EntropyCalculator,
@@ -24,7 +23,7 @@ impl GpuEntropyCalculator {
     /// Creates a new GpuEntropyCalculator.
     ///
     /// This typically takes the shared resources from a GpuAccelerator.
-    pub(crate) fn new(
+    pub fn new(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
         pipelines: ComputePipelines,

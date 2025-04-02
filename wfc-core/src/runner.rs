@@ -1,15 +1,14 @@
-use crate::{
-    entropy::EntropyCalculator,
-    grid::PossibilityGrid,
-    propagator::{ConstraintPropagator, PropagationError},
-    ProgressInfo, WfcError,
-};
+use crate::entropy::EntropyCalculator;
+use crate::grid::PossibilityGrid;
+use crate::propagator::{ConstraintPropagator, PropagationError};
+use crate::ProgressInfo;
+use crate::WfcError;
 use log::{debug, error, info, warn};
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::thread_rng;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use wfc_rules::{AdjacencyRules, TileId, TileSet};
 
 /// Runs the core Wave Function Collapse (WFC) algorithm loop.

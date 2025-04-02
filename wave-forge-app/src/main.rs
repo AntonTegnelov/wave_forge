@@ -1,41 +1,34 @@
-//! # Wave Forge Application
+//! # Wave Forge Application (Binary)
 //!
-//! This is the main executable crate for the Wave Forge project.
-//! It provides a command-line interface to:
-//! - Run the Wave Function Collapse (WFC) algorithm on specified rule files and grid dimensions
-//!   using GPU acceleration.
-//! - Benchmark GPU WFC performance.
-//! - Configure output paths, visualization modes, and progress reporting.
+//! Main executable entry point.
 
-// wave-forge-app/src/main.rs
+// Remove pub mod declarations
+// pub mod config;
+// pub mod error;
+// pub mod logging;
+// pub mod output;
+// pub mod profiler;
+// pub mod progress;
+// pub mod setup;
+// pub mod visualization;
 
-pub mod benchmark;
-pub mod config;
-pub mod logging;
-pub mod output;
-pub mod profiler;
-pub mod progress;
-pub mod setup;
-pub mod visualization;
+// Use the library crate
+use wave_forge_app::{config::AppConfig, setup}; // Removed unused error::AppError
 
+use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
-use config::AppConfig;
 use figment::{
-    providers::{Clap, Env, Format, Toml},
+    providers::{Env, Format, Serialized, Toml},
     Figment,
 };
-use logging::init_logger;
-use setup::visualization::{setup_visualization, VizMessage};
+use log;
+// Note: We will call functions using their library path, e.g., wave_forge_app::logging::init_logger
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
-use visualization::{TerminalVisualizer, Visualizer};
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
-use wfc_rules::{AdjacencyRules, TileSet};
 
 /// The main entry point for the Wave Forge application.
 ///
@@ -61,10 +54,13 @@ async fn main() -> Result<()> {
         signal_handler_shutdown.store(true, Ordering::Relaxed);
     });
 
-    // --- Configuration Loading ---
-    let config: AppConfig = Figment::from(Clap::from_args())
-        .merge(Toml::file("WaveForge.toml").nested()) // File values override Clap defaults
-        .merge(Env::prefixed("WAVEFORGE_").split("__")) // Env vars override file values
+    // 1. Load Configuration (Figment + Clap)
+    // Order: Defaults (optional) < TOML File < Env Vars < CLI Args
+    let config: AppConfig = Figment::new()
+        // Optional: Add Serialized::defaults(AppConfig::default()) here if you have defaults
+        .merge(Toml::file("WaveForge.toml").nested())
+        .merge(Env::prefixed("WAVEFORGE_").split("__"))
+        .merge(Serialized::defaults(AppConfig::parse())) // Parse clap args and merge last
         .extract()
         .context("Failed to load configuration")?;
 
@@ -75,13 +71,14 @@ async fn main() -> Result<()> {
     // Add other validations here...
 
     // Initialize logging with the configured log level
-    init_logger(&config);
+    wave_forge_app::logging::init_logger(&config);
 
     log::info!("Wave Forge App Starting");
     log::debug!("Loaded Config: {:?}", config);
 
     // --- Initialize Visualizer in a separate thread if configured ---
-    let (viz_tx, main_viz_handle) = setup_visualization(&config);
+    let (viz_tx, main_viz_handle) =
+        wave_forge_app::setup::visualization::setup_visualization(&config);
 
     // --- End Visualizer Initialization ---
 
@@ -114,7 +111,9 @@ async fn main() -> Result<()> {
     // Initial visualization of the empty grid
     if let Some(tx) = &viz_tx {
         log::info!("Sending initial grid state to visualization thread");
-        if let Err(e) = tx.send(VizMessage::UpdateGrid(Box::new(grid.clone()))) {
+        if let Err(e) = tx.send(
+            wave_forge_app::setup::visualization::VizMessage::UpdateGrid(Box::new(grid.clone())),
+        ) {
             log::error!("Failed to send initial grid state: {}", e);
         }
     }
@@ -123,7 +122,7 @@ async fn main() -> Result<()> {
     let mut snapshot_handle: Option<thread::JoinHandle<()>> = None;
 
     // Call the appropriate execution function
-    if config.benchmark_mode {
+    let run_result = if config.benchmark_mode {
         setup::execution::run_benchmark_mode(
             &config,
             &tileset,
@@ -133,7 +132,7 @@ async fn main() -> Result<()> {
             &mut snapshot_handle,
             shutdown_signal.clone(),
         )
-        .await?;
+        .await
     } else {
         setup::execution::run_standard_mode(
             &config,
@@ -144,8 +143,11 @@ async fn main() -> Result<()> {
             &mut snapshot_handle,
             shutdown_signal.clone(),
         )
-        .await?;
-    }
+        .await
+    };
+
+    // Handle the AppError after await
+    run_result.map_err(|app_err| anyhow::Error::new(app_err))?;
 
     log::info!("Wave Forge App Finished.");
 

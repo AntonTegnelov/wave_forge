@@ -26,10 +26,13 @@ bitvec = "1.0.1"
 once_cell = "1.18.0" # For static initialization
 winapi = { version = "0.3", features = ["psapi", "processthreadsapi"], optional = true }
 figment = { version = "0.10", features = ["toml", "env"] } # For configuration file loading
+serde = { version = "1.0", features = ["derive"] } # Add serde for deserialization
+thiserror = "1.0" # Added thiserror
 
 [features]
 default = []
 winapi = ["dep:winapi"]
+gpu = [] # Added gpu feature
 
 [dev-dependencies]
 assert_cmd = "2.0"

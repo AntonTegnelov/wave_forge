@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 use wfc_core::grid::PossibilityGrid;
-use wfc_core::tile::TileId;
+use wfc_rules::TileId;
 
 // TODO: Add different output format options (binary, RON)
 

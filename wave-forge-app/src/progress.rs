@@ -138,6 +138,7 @@ mod tests {
             iteration: 10,
             collapsed_cells: 50,
             total_cells: 1000,
+            elapsed_time: Duration::from_secs(1),
         };
         let res1 = reporter.report(&info1);
         assert!(res1.is_ok());
@@ -147,6 +148,7 @@ mod tests {
             iteration: 11,
             collapsed_cells: 55,
             total_cells: 1000,
+            elapsed_time: Duration::from_secs(1),
         };
         let res2 = reporter.report(&info2);
         assert!(res2.is_ok());
@@ -158,6 +160,7 @@ mod tests {
             iteration: 20,
             collapsed_cells: 100,
             total_cells: 1000,
+            elapsed_time: Duration::from_secs(2),
         };
         let res3 = reporter.report(&info3);
         assert!(res3.is_ok());
@@ -170,6 +173,7 @@ mod tests {
             iteration: 0,
             collapsed_cells: 0,
             total_cells: 0,
+            elapsed_time: Duration::from_secs(0),
         };
         let res = reporter.report(&info);
         assert!(res.is_ok());

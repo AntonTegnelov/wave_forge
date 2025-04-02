@@ -1,14 +1,14 @@
 //! Handles command-line argument parsing and application configuration.
 
 use clap::{Parser, ValueEnum};
-use figment::Provider;
 use serde;
 use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
 
 /// Represents the different visualization modes available.
-#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub enum VisualizationMode {
     #[default] // Default to None
     None,
@@ -17,7 +17,7 @@ pub enum VisualizationMode {
 }
 
 /// Log level for progress reporting.
-#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub enum ProgressLogLevel {
     /// Use trace level for progress reports (very verbose)
     Trace,
@@ -31,7 +31,7 @@ pub enum ProgressLogLevel {
 }
 
 /// Global log level for all application components.
-#[derive(ValueEnum, Clone, Debug, PartialEq)]
+#[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum GlobalLogLevel {
     /// Trace level - extremely verbose (all details)
     Trace,
@@ -52,7 +52,7 @@ impl Default for GlobalLogLevel {
 }
 
 /// Configuration for the Wave Forge application.
-#[derive(Parser, Debug, Deserialize, Provider)]
+#[derive(Parser, Debug, Deserialize, Serialize)]
 #[command(author, version, about, long_about = None)]
 pub struct AppConfig {
     /// Path to the RON rule file defining tiles and adjacencies.

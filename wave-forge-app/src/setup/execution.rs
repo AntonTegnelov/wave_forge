@@ -2,13 +2,14 @@
 
 use crate::benchmark::{self, BenchmarkResultTuple};
 use crate::config::{AppConfig, ProgressLogLevel};
+use crate::error::AppError;
 use crate::output;
 use crate::setup::visualization::VizMessage;
 use anyhow::{Context, Result};
 use log;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -17,17 +18,19 @@ use wfc_core::grid::PossibilityGrid;
 use wfc_core::runner;
 use wfc_core::ProgressInfo;
 use wfc_gpu::accelerator::GpuAccelerator;
+use wfc_gpu::entropy::GpuEntropyCalculator;
+use wfc_gpu::propagator::GpuConstraintPropagator;
 use wfc_rules::{AdjacencyRules, TileSet};
 
 pub async fn run_benchmark_mode(
     config: &AppConfig,
     tileset: &TileSet,
     rules: &AdjacencyRules,
-    grid: &mut PossibilityGrid, // Grid is modified by benchmark?
-    viz_tx: &Option<Sender<VizMessage>>,
-    snapshot_handle: &mut Option<thread::JoinHandle<()>>, // Needs to be mutable to assign
-    shutdown_signal: Arc<AtomicBool>,
-) -> Result<()> {
+    _grid: &mut PossibilityGrid,          // Prefixed unused
+    _viz_tx: &Option<Sender<VizMessage>>, // Prefixed unused
+    _snapshot_handle: &mut Option<thread::JoinHandle<()>>, // Prefixed unused
+    _shutdown_signal: Arc<AtomicBool>,    // Prefixed unused
+) -> Result<(), AppError> {
     log::info!("Benchmark mode enabled (GPU only).");
 
     // Define benchmark scenarios (dimensions)
@@ -49,8 +52,8 @@ pub async fn run_benchmark_mode(
         );
         // Need a *new* grid for each benchmark run to start fresh
         let mut bench_grid = PossibilityGrid::new(width, height, depth, tileset.weights.len());
-        let result = benchmark::run_single_benchmark(&mut bench_grid, tileset, rules).await;
-        benchmark_results.push(((width, height, depth), result.map_err(anyhow::Error::from)));
+        let result = benchmark::run_single_benchmark(&mut bench_grid, tileset, rules).await?;
+        benchmark_results.push(((width, height, depth), Ok(result)));
     }
 
     // Report Summary (Remains the same)
@@ -109,7 +112,7 @@ pub async fn run_standard_mode(
     viz_tx: &Option<Sender<VizMessage>>,
     snapshot_handle: &mut Option<thread::JoinHandle<()>>, // Needs to be mutable to assign
     shutdown_signal: Arc<AtomicBool>,
-) -> Result<()> {
+) -> Result<(), AppError> {
     log::info!("Running WFC (GPU only)...");
 
     // --- Setup Progress Log File ---
@@ -125,8 +128,7 @@ pub async fn run_standard_mode(
         None
     };
 
-    // GPU is mandatory
-    let grid_snapshot = Arc::new(Mutex::new(grid.clone())); // Snapshot for GPU/Viz
+    let grid_snapshot = Arc::new(Mutex::new(grid.clone())); // Keep snapshot for Viz
 
     // Setup visualization snapshot thread
     *snapshot_handle = if let Some(tx) = viz_tx {
@@ -236,45 +238,73 @@ pub async fn run_standard_mode(
         None
     };
 
-    // Initialize GPU
-    log::info!("Initializing GPU Accelerator...");
-    // Need to lock the original grid_snapshot for init, not the grid passed in?
+    // Initialize GPU - explicit match
     let gpu_accelerator = {
-        let grid_guard = grid_snapshot.lock().expect("GPU init mutex poisoned");
+        let grid_guard = grid_snapshot.lock().expect("GPU init mutex poisoned"); // Use snapshot for GPU init
         GpuAccelerator::new(&grid_guard, rules).await?
-        // lock is dropped here
     };
+
+    // Now create the specific propagator and calculator
+    let propagator = GpuConstraintPropagator::new(
+        gpu_accelerator.device(),
+        gpu_accelerator.queue(),
+        gpu_accelerator.pipelines(),
+        gpu_accelerator.buffers(),
+        gpu_accelerator.grid_dims(),
+    );
+    let entropy_calc = GpuEntropyCalculator::new(
+        gpu_accelerator.device(),
+        gpu_accelerator.queue(),
+        (*gpu_accelerator.pipelines()).clone(), // Clone required here
+        (*gpu_accelerator.buffers()).clone(),   // Clone required here
+        gpu_accelerator.grid_dims(),
+    );
 
     // Run WFC
     log::info!("Running WFC on GPU...");
-    let propagator = gpu_accelerator.clone();
-    let entropy_calc = gpu_accelerator;
+    // Clone the grid state *before* passing it to the runner
+    let mut runner_grid = {
+        let grid_guard = grid_snapshot
+            .lock()
+            .expect("Runner grid clone mutex poisoned");
+        grid_guard.clone()
+    };
 
-    match runner::run(
-        grid,
+    let wfc_result = runner::run(
+        &mut runner_grid, // Pass the mutable clone
         tileset,
         rules,
         propagator,
         entropy_calc,
         progress_callback,
         shutdown_signal,
-    ) {
+    );
+
+    match wfc_result {
         Ok(_) => {
             log::info!("GPU WFC completed successfully.");
-            // Final visualization update
-            if let Some(tx) = viz_tx {
-                let final_grid_guard = grid_snapshot.lock().expect("Final viz mutex poisoned");
-                let _ = tx.send(VizMessage::UpdateGrid(Box::new(final_grid_guard.clone())));
+            // Update the original grid/snapshot with the final successful state
+            {
+                let mut final_grid_guard = grid_snapshot
+                    .lock()
+                    .expect("Final grid update mutex poisoned");
+                *final_grid_guard = runner_grid; // Overwrite shared grid with runner's result
+                                                 // Send final update AFTER updating the shared state
+                if let Some(tx) = viz_tx {
+                    let _ = tx.send(VizMessage::UpdateGrid(Box::new(final_grid_guard.clone())));
+                }
             }
-            // Save grid
-            output::save_grid_to_file(grid, config.output_path.as_path())?
+            // Save grid (use the updated shared grid for saving)
+            {
+                let grid_to_save = grid_snapshot.lock().expect("Save grid mutex poisoned");
+                output::save_grid_to_file(&grid_to_save, config.output_path.as_path())?
+            }
         }
         Err(e) => {
             log::error!("GPU WFC failed: {}", e);
-            // Convert WfcError to anyhow::Error
-            return Err(anyhow::anyhow!(e));
+            return Err(e.into());
         }
-    }
+    };
 
     Ok(())
 }

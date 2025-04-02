@@ -2004,7 +2004,9 @@ dependencies = [
  "once_cell",
  "predicates",
  "rayon",
+ "serde",
  "tempfile",
+ "thiserror",
  "tokio",
  "wfc-core",
  "wfc-gpu",
@@ -2137,6 +2139,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 

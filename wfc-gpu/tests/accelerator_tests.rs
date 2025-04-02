@@ -108,16 +108,13 @@ fn test_gpu_calculate_entropy_basic_run() {
 ///
 /// This test verifies that:
 /// 1. We can initialize the GpuAccelerator
-/// 2. Update the initial state with new collapsed cell(s)
-/// 3. Successfully run constraint propagation on the GPU
-/// 4. Properly synchronize between CPU and GPU to avoid hangs
-/// 5. Read back results correctly
+/// 2. Create a GpuConstraintPropagator using the accelerator's resources
+/// 3. Update the initial state with new collapsed cell(s)
+/// 4. Successfully run constraint propagation on the GPU using the propagator
+/// 5. Properly synchronize between CPU and GPU to avoid hangs
+/// 6. Read back results correctly
 ///
-/// The test includes multiple safeguards to prevent indefinite hangs:
-/// - Explicit timeouts for GPU initialization and propagation
-/// - Proper device polling to ensure GPU work completes
-/// - Buffer synchronization to ensure correct data transfer
-/// - Simplified workgroup dispatching with bounds checking
+/// Includes safeguards like timeouts and polling.
 #[test]
 // Uncomment the propagate test to verify our fix works with both entropy calculation and propagation
 fn test_gpu_propagate_basic_run() {
@@ -156,12 +153,21 @@ fn test_gpu_propagate_basic_run() {
         );
         return;
     }
-    let mut accelerator = accelerator_result.unwrap();
+    let accelerator = accelerator_result.unwrap();
+
+    // Create the GpuConstraintPropagator using resources from GpuAccelerator via getters
+    let mut propagator = wfc_gpu::propagator::GpuConstraintPropagator::new(
+        accelerator.device(),    // Use getter
+        accelerator.queue(),     // Use getter
+        accelerator.pipelines(), // Use getter
+        accelerator.buffers(),   // Use getter
+        accelerator.grid_dims(), // Use getter
+    );
 
     // Define initial updates (e.g., cell at (0,0,0) was just collapsed)
     let updated_coords = vec![(0, 0, 0)];
 
-    println!("Calling propagate...");
+    println!("Calling propagate on GpuConstraintPropagator...");
     // Call propagate with timeout protection
     let start_time = Instant::now();
 
@@ -175,8 +181,8 @@ fn test_gpu_propagate_basic_run() {
         }
     });
 
-    // Run the propagation operation
-    let result = accelerator.propagate(&mut grid, updated_coords, &rules);
+    // Run the propagation operation using the propagator instance
+    let result = propagator.propagate(&mut grid, updated_coords, &rules);
 
     // The timeout thread will finish on its own
 

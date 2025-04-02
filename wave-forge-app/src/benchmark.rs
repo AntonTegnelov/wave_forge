@@ -1,28 +1,31 @@
 //! Benchmarking utilities for WFC GPU performance.
 //! Now focuses solely on GPU performance.
 
+use crate::error::AppError;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wfc_core::{
     // Core components needed
     grid::PossibilityGrid,
     runner::run,
-    ProgressInfo, // Import ProgressInfo directly from wfc_core
-    WfcError,     // Import directly from wfc_core
+    ProgressInfo,
+    WfcError,
 };
 use wfc_rules::{AdjacencyRules, TileSet}; // Use wfc-rules types
 
 // GPU implementation is now mandatory for benchmarks
 use wfc_gpu::accelerator::GpuAccelerator;
+use wfc_gpu::{entropy::GpuEntropyCalculator, propagator::GpuConstraintPropagator}; // Corrected import paths
 
 // Use anyhow for application-level errors
-use anyhow::Error;
+use anyhow::{Error, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
+use log; // Import AppError
 
 /// Structure to hold benchmark results for a single GPU run.
 ///
@@ -72,7 +75,7 @@ pub async fn run_single_benchmark(
     grid: &mut PossibilityGrid,
     tileset: &TileSet,
     rules: &AdjacencyRules,
-) -> Result<BenchmarkResult, Error> {
+) -> Result<BenchmarkResult, AppError> {
     // Create a profiler for this benchmark run
     let profiler = Profiler::new("GPU");
 
@@ -92,7 +95,7 @@ pub async fn run_single_benchmark(
     };
 
     // Get initial memory usage (if supported on platform)
-    let initial_memory = get_memory_usage().ok();
+    let initial_memory_res = get_memory_usage().map_err(|e| AppError::Anyhow(e));
 
     // GPU Path Only
     log::info!("Running GPU Benchmark...");
@@ -100,13 +103,24 @@ pub async fn run_single_benchmark(
     // Profile GPU initialization
     let gpu_accelerator = {
         let _guard = profiler.profile("gpu_accelerator_init");
-        GpuAccelerator::new(grid, rules)
-            .await
-            .map_err(|e| anyhow::anyhow!("GPU initialization failed: {}", e))?
+        GpuAccelerator::new(grid, rules).await?
     };
 
-    let propagator = gpu_accelerator.clone();
-    let entropy_calc = gpu_accelerator;
+    // Create the specific propagator and calculator instances using resources from the accelerator
+    let propagator = GpuConstraintPropagator::new(
+        gpu_accelerator.device(),
+        gpu_accelerator.queue(),
+        gpu_accelerator.pipelines(),
+        gpu_accelerator.buffers(),
+        gpu_accelerator.grid_dims(),
+    );
+    let entropy_calc = GpuEntropyCalculator::new(
+        gpu_accelerator.device(),
+        gpu_accelerator.queue(),
+        (*gpu_accelerator.pipelines()).clone(),
+        (*gpu_accelerator.buffers()).clone(),
+        gpu_accelerator.grid_dims(),
+    );
 
     let shutdown_signal = Arc::new(AtomicBool::new(false)); // Create default signal
 
@@ -126,16 +140,19 @@ pub async fn run_single_benchmark(
     let total_time = start_time.elapsed();
 
     // Get final memory usage (if supported)
-    let final_memory = get_memory_usage().ok();
-    let memory_usage = final_memory
-        .zip(initial_memory)
-        .map(|(final_mem, initial_mem)| {
-            if final_mem >= initial_mem {
-                final_mem - initial_mem
+    let final_memory_res = get_memory_usage().map_err(|e| AppError::Anyhow(e));
+
+    // Calculate memory usage only if both results are Ok
+    let memory_usage = match (initial_memory_res, final_memory_res) {
+        (Ok(initial), Ok(final_memory_val)) => {
+            if final_memory_val >= initial {
+                Some(final_memory_val - initial)
             } else {
-                0 // Handle potential decrease (e.g., OS memory management)
+                Some(0) // Handle potential decrease
             }
-        });
+        }
+        _ => None, // One or both memory reads failed
+    };
 
     // Retrieve the last captured progress info
     let final_progress = latest_progress.lock().unwrap().clone();
@@ -149,7 +166,7 @@ pub async fn run_single_benchmark(
         grid_depth: grid.depth,
         num_tiles: rules.num_tiles(),
         total_time,
-        wfc_result,
+        wfc_result: wfc_result.map_err(|e| e.into()),
         iterations: final_progress.as_ref().map(|p| p.iteration),
         collapsed_cells: final_progress.as_ref().map(|p| p.collapsed_cells),
         profile_metrics: Some(profiler.get_metrics()),

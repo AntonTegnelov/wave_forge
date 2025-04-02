@@ -2,9 +2,8 @@ use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
 use log::info;
 use std::sync::Arc;
 use wfc_core::{
-    entropy::EntropyCalculator,
-    grid::{EntropyGrid, Grid, PossibilityGrid},
-    propagator::{ConstraintPropagator, PropagationError},
+    // Removed unused: EntropyCalculator, ConstraintPropagator, PropagationError, EntropyGrid, Grid
+    grid::PossibilityGrid,
 }; // Use Arc for shared GPU resources
 use wfc_rules::AdjacencyRules; // Added import
 
@@ -35,8 +34,8 @@ pub struct GpuAccelerator {
     adapter: Arc<wgpu::Adapter>,   // Wrap in Arc
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    pipelines: ComputePipelines, // Already derives Clone
-    buffers: GpuBuffers,         // Already derives Clone
+    pipelines: Arc<ComputePipelines>, // Changed to Arc
+    buffers: Arc<GpuBuffers>,         // Changed to Arc
     grid_dims: (usize, usize, usize),
 }
 
@@ -129,10 +128,10 @@ impl GpuAccelerator {
         let queue = Arc::new(queue);
 
         // 4. Create pipelines (uses device, returns Cloneable struct)
-        let pipelines = ComputePipelines::new(&device)?;
+        let pipelines = Arc::new(ComputePipelines::new(&device)?); // Wrap in Arc
 
         // 5. Create buffers (uses device & queue, returns Cloneable struct)
-        let buffers = GpuBuffers::new(&device, &queue, initial_grid, rules)?;
+        let buffers = Arc::new(GpuBuffers::new(&device, &queue, initial_grid, rules)?); // Wrap in Arc
 
         let grid_dims = (initial_grid.width, initial_grid.height, initial_grid.depth);
 
@@ -141,9 +140,36 @@ impl GpuAccelerator {
             adapter,
             device,
             queue,
-            pipelines,
-            buffers,
+            pipelines, // Store the Arc
+            buffers,   // Store the Arc
             grid_dims,
         })
+    }
+
+    // --- Public Accessors for Shared Resources ---
+
+    /// Returns a clone of the Arc-wrapped WGPU Device.
+    pub fn device(&self) -> Arc<wgpu::Device> {
+        self.device.clone()
+    }
+
+    /// Returns a clone of the Arc-wrapped WGPU Queue.
+    pub fn queue(&self) -> Arc<wgpu::Queue> {
+        self.queue.clone()
+    }
+
+    /// Returns a clone of the Arc-wrapped ComputePipelines.
+    pub fn pipelines(&self) -> Arc<ComputePipelines> {
+        self.pipelines.clone() // Clone the Arc
+    }
+
+    /// Returns a clone of the Arc-wrapped GpuBuffers.
+    pub fn buffers(&self) -> Arc<GpuBuffers> {
+        self.buffers.clone() // Clone the Arc
+    }
+
+    /// Returns the grid dimensions (width, height, depth).
+    pub fn grid_dims(&self) -> (usize, usize, usize) {
+        self.grid_dims
     }
 }

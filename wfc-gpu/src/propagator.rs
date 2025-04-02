@@ -1,8 +1,4 @@
-use crate::{
-    buffers::GpuBuffers,
-    pipeline::ComputePipelines,
-    GpuError, // Assume these are pub in lib.rs or crate root
-};
+use crate::{buffers::GpuBuffers, pipeline::ComputePipelines};
 use log;
 use std::sync::Arc;
 use wfc_core::{

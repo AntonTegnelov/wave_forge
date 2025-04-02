@@ -1,7 +1,8 @@
 // use wfc_core::TileId; // This line should already be removed or commented out
-use std::path::PathBuf;
+// Removed unused: use std::fs;
+// Removed unused: use tempfile::tempdir;
 use wfc_rules::loader::load_from_file;
-use wfc_rules::{AdjacencyRules, LoadError, TileId, TileSet, TileSetError};
+use wfc_rules::{LoadError, TileId}; // Removed unused: AdjacencyRules, TileSet, TileSetError
 
 // Helper function to create the full path to test data
 fn test_data_path(filename: &str) -> std::path::PathBuf {

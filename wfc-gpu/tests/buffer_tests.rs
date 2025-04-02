@@ -1,7 +1,7 @@
-use crate::buffers::WfcBuffers;
-use wfc_core::{grid::PossibilityGrid, rules::AdjacencyRules};
-use wfc_gpu::{buffers::GpuBuffers, GpuError};
-use wfc_rules::AdjacencyRules as WfcRulesAdjacencyRules;
+use wfc_core::grid::PossibilityGrid;
+use wfc_gpu::buffers::GpuBuffers;
+use wfc_gpu::GpuError;
+use wfc_rules::AdjacencyRules;
 
 // Helper to initialize logging for tests
 fn setup_logger() {
