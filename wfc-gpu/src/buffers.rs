@@ -802,6 +802,68 @@ impl GpuBuffers {
             ))
         }
     }
+
+    /// Asynchronously downloads the output worklist count from the GPU.
+    ///
+    /// This is used after a propagation shader dispatch to determine how many cells
+    /// were modified and added to the output worklist for the next iteration.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The WGPU `Device`.
+    /// * `queue` - The WGPU `Queue`.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(u32)` - The number of items in the output worklist.
+    /// * `Err(GpuError)` - If buffer copying or mapping fails.
+    pub async fn download_output_worklist_count(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<u32, GpuError> {
+        let size = self.output_worklist_count_buf.size();
+        let staging_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            // Create staging buffer
+            label: Some("Staging Output Worklist Count"),
+            size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Download Output Worklist Count Encoder"),
+        });
+
+        encoder.copy_buffer_to_buffer(
+            &self.output_worklist_count_buf, // Source GPU buffer
+            0,
+            &staging_buffer, // Destination staging buffer
+            0,
+            size,
+        );
+
+        queue.submit(Some(encoder.finish()));
+
+        // Map the staging buffer
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+        // Wait for mapping
+        device.poll(wgpu::Maintain::Wait);
+        receiver.receive().await.ok_or_else(|| {
+            GpuError::BufferOperationError("Map receiver channel closed prematurely".to_string())
+        })??;
+
+        let data = buffer_slice.get_mapped_range();
+        let count = *bytemuck::from_bytes::<u32>(&data);
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
