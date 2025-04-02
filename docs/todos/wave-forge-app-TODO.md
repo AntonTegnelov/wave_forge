@@ -1,20 +1,20 @@
 # Wave Forge Application - TODO List
 
-## General Improvements
-
-- [ ] Standardize error handling approach across modules for consistency (using `thiserror` for library crates, `anyhow` for the application binary)
-- [ ] Improve resource management with graceful cleanup for all resources
-- [ ] Better document feature flags and how they interact
-
 ## GPU Migration
 
-- [ ] Figure out everywhere that need to be adjusted. Mark them with comments and create a markdown doc that keeps all the places and what needs to be done
+- [x] Figure out everywhere that need to be adjusted. Mark them with comments and create a markdown doc that keeps all the places and what needs to be done
 - [ ] Make all wave collapse operations GPU-based
 - [ ] Implement the changes in the doc
 - [ ] Remove CPU implementation entirely
 - [ ] Refactor `main.rs` to remove CPU-specific code paths
 - [ ] Update benchmarking to focus on GPU performance only
 - [ ] Update documentation to reflect GPU-only approach
+
+## General Improvements
+
+- [ ] Standardize error handling approach across modules for consistency (using `thiserror` for library crates, `anyhow` for the application binary)
+- [ ] Improve resource management with graceful cleanup for all resources
+- [ ] Better document feature flags and how they interact
 
 ## main.rs
 

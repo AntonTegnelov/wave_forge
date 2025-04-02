@@ -32,7 +32,7 @@ use rand::thread_rng;
 /// * `tileset`: A reference to the `TileSet` containing information about tile weights.
 /// * `rules`: A reference to the `AdjacencyRules` defining valid neighbor constraints.
 /// * `propagator`: An instance of the chosen `ConstraintPropagator` implementation.
-/// * `entropy_calculator`: An instance of the chosen `EntropyCalculator` implementation.
+/// * `entropy_calculator`: An instance of the chosen `EntropyCalculator` implementation. // TODO: GPU Migration - This type parameter will be constrained to the GPU EntropyCalculator implementation.
 /// * `progress_callback`: An optional closure that receives `ProgressInfo` updates during the run.
 ///                        This allows external monitoring or UI updates.
 ///
@@ -51,7 +51,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     tileset: &TileSet,
     rules: &AdjacencyRules,
     mut propagator: P,
-    entropy_calculator: E,
+    entropy_calculator: E, // TODO: GPU Migration - This type parameter will be constrained to the GPU EntropyCalculator implementation.
     progress_callback: Option<Box<dyn Fn(ProgressInfo) + Send + Sync>>,
 ) -> Result<(), WfcError> {
     info!("Starting WFC run...");
@@ -100,6 +100,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         "Running initial propagation for all {} cells...",
         all_coords.len()
     );
+    // TODO: GPU Migration - Ensure initial propagation uses the GPU propagator if applicable.
     if let Err(prop_err) = propagator.propagate(grid, all_coords, rules) {
         error!("Initial propagation failed: {:?}", prop_err);
         if let PropagationError::Contradiction(cx, cy, cz) = prop_err {
@@ -137,7 +138,9 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
 
         // --- 1. Find Lowest Entropy Cell ---
         debug!("Iteration {}: Calculating entropy...", iterations);
+        // TODO: GPU Migration - This call should use the GPU entropy calculation.
         let entropy_grid = entropy_calculator.calculate_entropy(grid);
+        // TODO: GPU Migration - This call should use the GPU implementation for finding the lowest entropy cell.
         let lowest_entropy_coords = entropy_calculator.find_lowest_entropy(&entropy_grid);
 
         if let Some((x, y, z)) = lowest_entropy_coords {
@@ -215,6 +218,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
 
                 // --- 3. Propagate Constraints ---
                 debug!("Propagating constraints from ({}, {}, {})...", x, y, z);
+                // TODO: GPU Migration - This call should use the GPU constraint propagator.
                 if let Err(prop_err) = propagator.propagate(grid, vec![(x, y, z)], rules) {
                     error!(
                         "Propagation failed after collapsing ({}, {}, {}): {:?}",

@@ -16,21 +16,14 @@
   - [ ] Optimize workgroup sizes and memory access patterns in shaders
   - [ ] Add shader specialization for different grid sizes and tile counts
 
-- [ ] Phase 3: API enhancement
-
-  - [ ] Create unified factory for CPU/GPU backends (runtime selection)
-  - [ ] Add graceful fallback to CPU implementation when GPU unavailable
-  - [ ] Implement multi-GPU support for large grids
-  - [ ] Add configurable precision options (float vs double for entropy)
-
-- [ ] Phase 4: Transition plan
+- [ ] Phase 3: Transition plan
 
   - [ ] Deprecate CPU implementations with warning messages
   - [ ] Provide migration guide documentation
   - [ ] Update all examples to use GPU implementation by default
   - [ ] Create final benchmark suite demonstrating performance gains
 
-- [ ] Phase 5: Cleanup
+- [ ] Phase 4: Cleanup
   - [ ] Remove CPU-specific implementations and refactor core API
   - [ ] Consolidate all computation code into the GPU-based module
   - [ ] Remove CPU-only optimizations and simplify codebase
@@ -56,3 +49,14 @@
 
 - [ ] Add property-based tests (e.g., using proptest) for rule consistency
 - [ ] Implement fuzzing for edge case discovery
+
+## Rules Integration
+
+- [ ] Migrate from internal rules implementation to wfc-rules module
+  - [ ] Identify and document all uses of internal `AdjacencyRules` in the codebase
+  - [ ] Create direct mapping between wfc-rules types and internal usage requirements
+  - [ ] Replace internal rules implementation with wfc-rules in one commit
+  - [ ] Update all affected tests to use wfc-rules
+  - [ ] Verify all tests pass with the new implementation
+  - [ ] Remove the internal rules implementation code completely
+  - [ ] Update documentation to reflect the new dependency on wfc-rules module
