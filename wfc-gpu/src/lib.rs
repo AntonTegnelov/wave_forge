@@ -6,6 +6,8 @@ use thiserror::Error;
 pub mod accelerator;
 /// Handles creation and management of WGPU buffers for grid state, rules, etc.
 pub mod buffers;
+/// GPU implementation of the EntropyCalculator trait.
+pub mod entropy;
 /// Logic for loading shaders and creating WGPU compute pipelines.
 pub mod pipeline;
 /// Contains WGSL shader code as string constants or loading utilities.
