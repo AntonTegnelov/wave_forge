@@ -1,6 +1,6 @@
 use crate::grid::PossibilityGrid;
-use crate::rules::AdjacencyRules;
 use thiserror::Error;
+use wfc_rules::AdjacencyRules;
 
 /// Errors that can occur during the constraint propagation phase of WFC.
 #[derive(Error, Debug, Clone)]
@@ -62,8 +62,8 @@ pub trait ConstraintPropagator {
 mod tests {
     use super::*;
     use crate::grid::PossibilityGrid;
-    use crate::rules::AdjacencyRules;
     use crate::tile::TileId;
+    use wfc_rules::AdjacencyRules;
     // Removed unused imports
 
     // Removed unused helper fn setup_simple_rules

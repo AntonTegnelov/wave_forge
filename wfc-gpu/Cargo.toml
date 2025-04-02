@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 wgpu = { version = "0.20", features = ["naga"] }
 wfc-core = { path = "../wfc-core" }
+wfc-rules = { path = "../wfc-rules" }
 thiserror = "1.0"
 log = "0.4"
 bytemuck = { version = "1.15", features = ["derive"] }

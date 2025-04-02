@@ -2,8 +2,10 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use wfc_core::{grid::PossibilityGrid, propagator::ConstraintPropagator, rules::AdjacencyRules};
-use wfc_gpu::accelerator::GpuAccelerator; // Ensure accelerator is public or crate-visible
+use wfc_core::grid::PossibilityGrid;
+use wfc_core::propagator::ConstraintPropagator;
+use wfc_gpu::accelerator::GpuAccelerator;
+use wfc_rules::AdjacencyRules; // Ensure accelerator is public or crate-visible
 
 // A custom drop implementation to ensure proper GPU device cleanup
 struct SafetyGuard;
