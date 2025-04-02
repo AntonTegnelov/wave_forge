@@ -21,6 +21,7 @@ use clap::Parser;
 use config::AppConfig;
 use config::VisualizationMode;
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use visualization::{TerminalVisualizer, Visualizer};
@@ -243,8 +244,7 @@ async fn main() -> Result<()> {
                 depth
             );
             let mut gpu_grid = PossibilityGrid::new(width, height, depth, tileset.weights.len());
-            let result =
-                benchmark::run_single_benchmark("GPU", &mut gpu_grid, &tileset, &rules).await;
+            let result = benchmark::run_single_benchmark(&mut gpu_grid, &tileset, &rules).await;
             benchmark_results.push(((width, height, depth), result.map_err(anyhow::Error::from)));
         }
 
@@ -320,7 +320,12 @@ async fn main() -> Result<()> {
                 let mut last_update = Instant::now();
                 loop {
                     if last_update.elapsed() >= viz_interval {
-                        let grid_clone = { grid_snapshot_for_viz.lock().unwrap().clone() };
+                        let grid_clone = {
+                            grid_snapshot_for_viz
+                                .lock()
+                                .expect("Visualization mutex poisoned")
+                                .clone()
+                        };
                         if tx_clone
                             .send(VizMessage::UpdateGrid(Box::new(grid_clone)))
                             .is_err()
@@ -348,7 +353,9 @@ async fn main() -> Result<()> {
                 let last_report_time_clone = Arc::clone(&last_report_time);
                 Some(Box::new(move |info: wfc_core::ProgressInfo| {
                     let now = Instant::now();
-                    let mut last_time = last_report_time_clone.lock().unwrap();
+                    let mut last_time = last_report_time_clone
+                        .lock()
+                        .expect("Progress mutex poisoned");
                     if now.duration_since(*last_time) >= interval {
                         let percentage = if info.total_cells > 0 {
                             (info.collapsed_cells as f32 / info.total_cells as f32) * 100.0
@@ -374,8 +381,11 @@ async fn main() -> Result<()> {
 
         // Initialize GPU
         log::info!("Initializing GPU Accelerator...");
-        match wfc_gpu::accelerator::GpuAccelerator::new(&grid_snapshot.lock().unwrap(), &rules)
-            .await
+        match wfc_gpu::accelerator::GpuAccelerator::new(
+            &grid_snapshot.lock().expect("GPU init mutex poisoned"),
+            &rules,
+        )
+        .await
         {
             Ok(gpu_accelerator) => {
                 log::info!("Running WFC on GPU...");

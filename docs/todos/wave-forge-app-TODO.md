@@ -12,7 +12,7 @@
 
 ## General Improvements
 
-- [ ] Standardize error handling approach across modules for consistency (using `thiserror` for library crates, `anyhow` for the application binary)
+- [x] Standardize error handling approach across modules for consistency (using `thiserror` for library crates, `anyhow` for the application binary)
 - [ ] Improve resource management with graceful cleanup for all resources
 - [ ] Better document feature flags and how they interact
 
