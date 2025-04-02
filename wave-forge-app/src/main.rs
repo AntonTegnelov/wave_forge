@@ -20,7 +20,6 @@ use anyhow::Result;
 use clap::Parser;
 use config::AppConfig;
 use config::VisualizationMode;
-use profiler::{global_profiler, print_profiler_summary, Profiler};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -246,6 +245,7 @@ async fn main() -> Result<()> {
         // Adjusted to handle the conditional compilation of GPU results
         #[cfg(feature = "gpu")]
         type BenchmarkTuple = (benchmark::BenchmarkResult, benchmark::BenchmarkResult);
+        #[allow(dead_code)]
         #[cfg(not(feature = "gpu"))]
         type BenchmarkTuple = benchmark::BenchmarkResult;
         let mut all_results: Vec<benchmark::BenchmarkResultTuple> = Vec::new();

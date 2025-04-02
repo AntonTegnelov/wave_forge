@@ -69,8 +69,6 @@ pub struct TerminalVisualizer {
     z_layer: usize,
     /// Whether visualization is currently enabled
     enabled: bool,
-    /// Toggle key character (for consistency with other visualizers)
-    toggle_key: char,
 }
 
 impl Default for TerminalVisualizer {
@@ -85,16 +83,15 @@ impl TerminalVisualizer {
         Self {
             z_layer: 0,
             enabled: true,
-            toggle_key: 'T', // Default toggle key
         }
     }
 
     /// Creates a new TerminalVisualizer with specified toggle key.
-    pub fn with_toggle_key(toggle_key: char) -> Self {
+    /// The toggle key is provided for API compatibility but not used internally.
+    pub fn with_toggle_key(_toggle_key: char) -> Self {
         Self {
             z_layer: 0,
             enabled: true,
-            toggle_key,
         }
     }
 
