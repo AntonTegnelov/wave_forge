@@ -61,7 +61,6 @@ pub type BenchmarkResultTuple = ((usize, usize, usize), Result<BenchmarkResult, 
 ///
 /// # Arguments
 ///
-/// * `implementation` - Should always be "GPU". Kept for consistency but ignored.
 /// * `grid` - A mutable reference to the `PossibilityGrid` to run the algorithm on.
 /// * `tileset` - A reference to the `TileSet` containing tile information.
 /// * `rules` - A reference to the `AdjacencyRules` defining constraints.
@@ -72,18 +71,10 @@ pub type BenchmarkResultTuple = ((usize, usize, usize), Result<BenchmarkResult, 
 /// * `Err(Error)` if GPU initialization or the WFC run fails.
 ///
 pub async fn run_single_benchmark(
-    implementation: &str, // Should always be "GPU"
     grid: &mut PossibilityGrid,
     tileset: &TileSet,
     rules: &AdjacencyRules,
 ) -> Result<BenchmarkResult, Error> {
-    if implementation != "GPU" {
-        log::warn!(
-            "run_single_benchmark called with implementation other than GPU: {}. Forcing GPU.",
-            implementation
-        );
-    }
-
     // Create a profiler for this benchmark run
     let profiler = Profiler::new("GPU");
 

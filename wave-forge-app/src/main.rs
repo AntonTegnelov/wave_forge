@@ -2,9 +2,9 @@
 //!
 //! This is the main executable crate for the Wave Forge project.
 //! It provides a command-line interface to:
-//! - Run the Wave Function Collapse (WFC) algorithm on specified rule files and grid dimensions.
-//! - Optionally use GPU acceleration (if the `gpu` feature is enabled).
-//! - Benchmark CPU vs GPU performance (if the `gpu` feature is enabled).
+//! - Run the Wave Function Collapse (WFC) algorithm on specified rule files and grid dimensions
+//!   using GPU acceleration.
+//! - Benchmark GPU WFC performance.
 //! - Configure output paths, visualization modes, and progress reporting.
 
 // wave-forge-app/src/main.rs
@@ -93,7 +93,7 @@ fn init_logger(config: &AppConfig) {
 /// sets up the grid, and then either runs the benchmarking suite or the standard
 /// WFC algorithm based on the provided configuration.
 ///
-/// Handles both CPU and GPU execution paths (conditional on the `gpu` feature).
+/// Uses GPU acceleration exclusively via the `wfc-gpu` crate.
 /// Orchestrates progress reporting and final output saving.
 ///
 /// Uses `tokio` for the async runtime, primarily for the asynchronous GPU initialization.

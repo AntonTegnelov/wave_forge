@@ -6,7 +6,7 @@
 - [x] Make all wave collapse operations GPU-based
 - [x] Implement the changes in the doc
 - [x] Remove CPU implementation entirely
-- [ ] Refactor `main.rs` to remove CPU-specific code paths
+- [x] Refactor `main.rs` to remove CPU-specific code paths
 - [ ] Update benchmarking to focus on GPU performance only
 - [ ] Update documentation to reflect GPU-only approach
 

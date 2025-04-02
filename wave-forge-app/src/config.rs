@@ -104,7 +104,6 @@ pub struct AppConfig {
     /// Only used if benchmark_mode is also enabled.
     #[arg(long, value_name = "CSV_FILE")]
     pub benchmark_csv_output: Option<PathBuf>,
-    // Note: use_gpu can be inferred later based on gpu availability and cpu_only flag.
 }
 
 #[cfg(test)]
