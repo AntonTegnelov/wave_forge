@@ -162,37 +162,44 @@ pub async fn run_standard_mode(
     let last_report_time = Arc::new(Mutex::new(Instant::now()));
     let report_interval = config.report_progress_interval;
     let progress_log_level = config.progress_log_level.clone(); // Clone here
-    let progress_callback: Option<Box<dyn Fn(ProgressInfo) + Send + Sync>> =
-        if let Some(interval) = report_interval {
-            let last_report_time_clone = Arc::clone(&last_report_time);
-            Some(Box::new(move |info: ProgressInfo| {
-                let now = Instant::now();
-                let mut last_time = last_report_time_clone
-                    .lock()
-                    .expect("Progress mutex poisoned");
-                if now.duration_since(*last_time) >= interval {
-                    let percentage = if info.total_cells > 0 {
-                        (info.collapsed_cells as f32 / info.total_cells as f32) * 100.0
-                    } else {
-                        100.0
-                    };
-                    let msg = format!(
-                        "Progress: Iter {}, Collapsed {}/{} ({:.1}%)",
-                        info.iteration, info.collapsed_cells, info.total_cells, percentage
+    let progress_callback: Option<Box<dyn Fn(ProgressInfo) + Send + Sync>> = if let Some(interval) =
+        report_interval
+    {
+        let last_report_time_clone = Arc::clone(&last_report_time);
+        Some(Box::new(move |info: ProgressInfo| {
+            let now = Instant::now();
+            let mut last_time = last_report_time_clone
+                .lock()
+                .expect("Progress mutex poisoned");
+            if now.duration_since(*last_time) >= interval {
+                let elapsed_secs = info.elapsed_time.as_secs_f32();
+                let collapse_rate = if elapsed_secs > 0.0 {
+                    info.collapsed_cells as f32 / elapsed_secs
+                } else {
+                    0.0
+                };
+                let percentage = if info.total_cells > 0 {
+                    (info.collapsed_cells as f32 / info.total_cells as f32) * 100.0
+                } else {
+                    100.0 // Avoid division by zero if grid is empty
+                };
+                let msg = format!(
+                        "Progress: Iter {}, Collapsed {}/{} ({:.1}%), Elapsed: {:.2?}, Rate: {:.1} cells/s",
+                        info.iteration, info.collapsed_cells, info.total_cells, percentage, info.elapsed_time, collapse_rate
                     );
-                    // Use the cloned progress_log_level
-                    match progress_log_level {
-                        ProgressLogLevel::Trace => log::trace!("{}", msg),
-                        ProgressLogLevel::Debug => log::debug!("{}", msg),
-                        ProgressLogLevel::Info => log::info!("{}", msg),
-                        ProgressLogLevel::Warn => log::warn!("{}", msg),
-                    }
-                    *last_time = now;
+                // Use the cloned progress_log_level
+                match progress_log_level {
+                    ProgressLogLevel::Trace => log::trace!("{}", msg),
+                    ProgressLogLevel::Debug => log::debug!("{}", msg),
+                    ProgressLogLevel::Info => log::info!("{}", msg),
+                    ProgressLogLevel::Warn => log::warn!("{}", msg),
                 }
-            }))
-        } else {
-            None
-        };
+                *last_time = now;
+            }
+        }))
+    } else {
+        None
+    };
 
     // Initialize GPU
     log::info!("Initializing GPU Accelerator...");

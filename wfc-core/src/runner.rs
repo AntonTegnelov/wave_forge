@@ -11,6 +11,7 @@ use rand::distributions::{Distribution, WeightedIndex};
 use rand::thread_rng;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// Runs the core Wave Function Collapse (WFC) algorithm loop.
 ///
@@ -61,6 +62,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     shutdown_signal: Arc<AtomicBool>,
 ) -> Result<(), WfcError> {
     info!("Starting WFC run...");
+    let start_time = Instant::now();
     let mut iterations = 0;
     let width = grid.width;
     let height = grid.height;
@@ -294,6 +296,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                 iteration: iterations,
                 collapsed_cells: collapsed_cells_count,
                 total_cells,
+                elapsed_time: start_time.elapsed(),
             };
             callback(progress_info);
         }

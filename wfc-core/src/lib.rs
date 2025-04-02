@@ -2,6 +2,7 @@
 //! Defines the fundamental data structures and platform-agnostic logic.
 
 // Removed: use bitvec::prelude::*; (unused import)
+use std::time::Duration;
 use thiserror::Error;
 
 // Module declarations (keep public if they contain public items)
@@ -88,4 +89,6 @@ pub struct ProgressInfo {
     pub collapsed_cells: usize,
     /// The total number of cells in the grid.
     pub total_cells: usize,
+    /// Time elapsed since the WFC run started.
+    pub elapsed_time: Duration,
 }
