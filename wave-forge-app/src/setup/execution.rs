@@ -6,6 +6,7 @@ use crate::output;
 use crate::setup::visualization::VizMessage;
 use anyhow::{Context, Result};
 use log;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -23,6 +24,7 @@ pub async fn run_benchmark_mode(
     grid: &mut PossibilityGrid, // Grid is modified by benchmark?
     viz_tx: &Option<Sender<VizMessage>>,
     snapshot_handle: &mut Option<thread::JoinHandle<()>>, // Needs to be mutable to assign
+    shutdown_signal: Arc<AtomicBool>,
 ) -> Result<()> {
     log::info!("Benchmark mode enabled (GPU only).");
 
@@ -104,6 +106,7 @@ pub async fn run_standard_mode(
     grid: &mut PossibilityGrid, // Mut ref needed for runner::run
     viz_tx: &Option<Sender<VizMessage>>,
     snapshot_handle: &mut Option<thread::JoinHandle<()>>, // Needs to be mutable to assign
+    shutdown_signal: Arc<AtomicBool>,
 ) -> Result<()> {
     log::info!("Running WFC (GPU only)...");
 
@@ -212,6 +215,7 @@ pub async fn run_standard_mode(
         propagator,
         entropy_calc,
         progress_callback,
+        shutdown_signal,
     ) {
         Ok(_) => {
             log::info!("GPU WFC completed successfully.");

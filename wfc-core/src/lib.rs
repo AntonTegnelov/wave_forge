@@ -71,6 +71,9 @@ pub enum WfcError {
     /// An error occurred validating the TileSet configuration.
     #[error("TileSet configuration error: {0}")]
     TileSetError(#[from] TileSetError),
+    /// WFC run was interrupted by an external signal (e.g., Ctrl+C).
+    #[error("WFC run interrupted by signal")]
+    Interrupted,
     /// An unknown or unspecified error occurred.
     #[error("Unknown WFC error")]
     Unknown,

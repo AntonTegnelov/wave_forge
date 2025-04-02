@@ -23,6 +23,7 @@ use clap::Parser;
 use config::AppConfig;
 use logging::init_logger;
 use setup::visualization::{setup_visualization, VizMessage};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -43,6 +44,18 @@ use wfc_rules::loader::load_from_file;
 /// Uses `tokio` for the async runtime, primarily for the asynchronous GPU initialization.
 #[tokio::main]
 async fn main() -> Result<()> {
+    // --- Setup Shutdown Signal ---
+    let shutdown_signal = Arc::new(AtomicBool::new(false));
+    let signal_handler_shutdown = shutdown_signal.clone();
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+        log::warn!("Ctrl+C received, initiating graceful shutdown...");
+        signal_handler_shutdown.store(true, Ordering::Relaxed);
+    });
+
     // Parse command-line arguments first (we need the config for logger setup)
     let config = AppConfig::parse();
 
@@ -103,6 +116,7 @@ async fn main() -> Result<()> {
             &mut grid,
             &viz_tx,
             &mut snapshot_handle,
+            shutdown_signal.clone(),
         )
         .await?;
     } else {
@@ -113,6 +127,7 @@ async fn main() -> Result<()> {
             &mut grid,
             &viz_tx,
             &mut snapshot_handle,
+            shutdown_signal.clone(),
         )
         .await?;
     }

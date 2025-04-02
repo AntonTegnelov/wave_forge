@@ -6,9 +6,11 @@ use crate::{
     tile::{TileId, TileSet},
     ProgressInfo, WfcError,
 };
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::thread_rng;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Runs the core Wave Function Collapse (WFC) algorithm loop.
 ///
@@ -35,6 +37,7 @@ use rand::thread_rng;
 /// * `entropy_calculator`: An instance of the chosen `EntropyCalculator` implementation. // TODO: GPU Migration - This type parameter will be constrained to the GPU EntropyCalculator implementation.
 /// * `progress_callback`: An optional closure that receives `ProgressInfo` updates during the run.
 ///                        This allows external monitoring or UI updates.
+/// * `shutdown_signal`: A shared atomic boolean indicating whether the run should stop.
 ///
 /// # Returns
 ///
@@ -46,6 +49,8 @@ use rand::thread_rng;
 ///     * `WfcError::ConfigurationError`: Invalid input (e.g., missing weights).
 ///     * `WfcError::IncompleteCollapse`: The algorithm finishes but some cells remain uncollapsed.
 ///     * `WfcError::TimeoutOrInfiniteLoop`: The algorithm exceeds a maximum iteration limit.
+///     * `WfcError::Interrupted`: The algorithm is interrupted by a shutdown signal.
+///     * `WfcError::Unknown`: An unknown error occurred.
 pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     grid: &mut PossibilityGrid,
     tileset: &TileSet,
@@ -53,6 +58,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     mut propagator: P,
     entropy_calculator: E, // TODO: GPU Migration - This type parameter will be constrained to the GPU EntropyCalculator implementation.
     progress_callback: Option<Box<dyn Fn(ProgressInfo) + Send + Sync>>,
+    shutdown_signal: Arc<AtomicBool>,
 ) -> Result<(), WfcError> {
     info!("Starting WFC run...");
     let mut iterations = 0;
@@ -130,6 +136,12 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     );
 
     loop {
+        // --- Check for shutdown signal ---
+        if shutdown_signal.load(Ordering::Relaxed) {
+            warn!("Shutdown signal received, stopping WFC run prematurely.");
+            return Err(WfcError::Interrupted);
+        }
+
         // --- Check if finished ---
         if collapsed_cells_count >= total_cells {
             info!("All cells collapsed.");
