@@ -10,6 +10,8 @@ pub mod buffers;
 pub mod entropy;
 /// Logic for loading shaders and creating WGPU compute pipelines.
 pub mod pipeline;
+/// GPU implementation of the ConstraintPropagator trait.
+pub mod propagator;
 /// Contains WGSL shader code as string constants or loading utilities.
 pub mod shaders; // Module to potentially help load shaders
 
