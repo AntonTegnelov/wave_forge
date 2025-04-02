@@ -11,6 +11,7 @@
 
 pub mod benchmark;
 pub mod config;
+pub mod logging;
 pub mod output;
 pub mod profiler;
 pub mod progress;
@@ -20,6 +21,7 @@ use anyhow::Result;
 use clap::Parser;
 use config::AppConfig;
 use config::VisualizationMode;
+use logging::init_logger;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -31,61 +33,6 @@ use wfc_rules::loader::load_from_file;
 // Helper enum for visualization control messages
 enum VizMessage {
     UpdateGrid(Box<PossibilityGrid>),
-}
-
-/// Initializes the logger with the appropriate configuration based on the application settings.
-///
-/// This function configures the log levels for the different components of the application:
-/// - The progress reports use the level specified in `config.progress_log_level`
-/// - Other module levels can be controlled via the RUST_LOG environment variable
-///
-/// If RUST_LOG is set, it is respected and combined with the progress log level configuration.
-/// If no RUST_LOG is provided, a default configuration is used.
-///
-/// # Arguments
-///
-/// * `config` - The application configuration containing the progress log level setting
-fn init_logger(config: &AppConfig) {
-    use env_logger::{Builder, Env};
-    use log::LevelFilter;
-
-    // Convert ProgressLogLevel to log::LevelFilter
-    let progress_level = match config.progress_log_level {
-        config::ProgressLogLevel::Trace => LevelFilter::Trace,
-        config::ProgressLogLevel::Debug => LevelFilter::Debug,
-        config::ProgressLogLevel::Info => LevelFilter::Info,
-        config::ProgressLogLevel::Warn => LevelFilter::Warn,
-    };
-
-    // Convert GlobalLogLevel to log::LevelFilter
-    let global_level = match config.global_log_level {
-        config::GlobalLogLevel::Trace => LevelFilter::Trace,
-        config::GlobalLogLevel::Debug => LevelFilter::Debug,
-        config::GlobalLogLevel::Info => LevelFilter::Info,
-        config::GlobalLogLevel::Warn => LevelFilter::Warn,
-        config::GlobalLogLevel::Error => LevelFilter::Error,
-    };
-
-    // Start with the environment configuration, but allow for override
-    let env = Env::default().filter_or("RUST_LOG", "info");
-
-    // Create a new builder
-    let mut builder = Builder::from_env(env);
-
-    // Set the default global log level
-    builder.filter_level(global_level);
-
-    // Set the progress module's log level specifically (prioritize this over global level)
-    builder.filter_module("wave_forge_app::progress", progress_level);
-
-    // Initialize the logger
-    builder.init();
-
-    log::debug!(
-        "Logger initialized with global log level: {:?}, progress log level: {:?}",
-        config.global_log_level,
-        config.progress_log_level
-    );
 }
 
 /// The main entry point for the Wave Forge application.
