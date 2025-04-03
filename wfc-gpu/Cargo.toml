@@ -15,4 +15,5 @@ futures-intrusive = "0.5" # For async channel in buffer download
 pollster = "0.3" # For blocking on async GPU operations
 
 [dev-dependencies]
-env_logger = "0.11" 
+env_logger = "0.11"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] } 

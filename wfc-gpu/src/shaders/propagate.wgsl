@@ -84,9 +84,10 @@ struct Params {
     grid_height: u32,
     grid_depth: u32,
     num_tiles: u32,
-    // num_tiles_u32: u32, // Removed - Now a specialization constant
     num_axes: u32,
     worklist_size: u32,
+    boundary_mode: u32, // 0: Clamped, 1: Periodic
+    _padding1: u32,
 };
 
 // Constants for axes (match CPU version)
@@ -101,6 +102,18 @@ const AXIS_NEG_Z: u32 = 5u;
 fn grid_index(x: u32, y: u32, z: u32) -> u32 {
     // Assumes packed u32s for possibilities are handled by multiplying by num_tiles_u32 later
     return z * params.grid_width * params.grid_height + y * params.grid_width + x;
+}
+
+// Helper to calculate wrapped coordinate for Periodic boundary mode
+fn wrap_coord(coord: i32, max_dim: u32) -> u32 {
+    if (max_dim == 0u) { return 0u; } // Avoid modulo by zero
+    // Efficient modulo for potentially negative numbers
+    let m = coord % i32(max_dim);
+    if (m < 0) {
+        return u32(m + i32(max_dim));
+    } else {
+        return u32(m);
+    }
 }
 
 // Helper function to check if a specific bit is set in a u32 array mask
@@ -224,25 +237,46 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 current_axis = 5u;
                 neighbor_axis = 4u;
             }
-            default: { // Should not happen
-                // Optionally handle error or continue
-                continue;
+            default: { continue; }
+        }
+
+        let nx_raw = i32(x) + neighbor_offset.x;
+        let ny_raw = i32(y) + neighbor_offset.y;
+        let nz_raw = i32(z) + neighbor_offset.z;
+
+        var nx: u32;
+        var ny: u32;
+        var nz: u32;
+        var is_neighbor_valid: bool;
+
+        if (params.boundary_mode == 1u) { // Periodic
+            nx = wrap_coord(nx_raw, params.grid_width);
+            ny = wrap_coord(ny_raw, params.grid_height);
+            nz = wrap_coord(nz_raw, params.grid_depth);
+            // For periodic boundaries, the neighbor is always 'valid' in terms of grid position
+            // (unless grid dimensions are zero, handled in wrap_coord)
+            is_neighbor_valid = (params.grid_width > 0u && params.grid_height > 0u && params.grid_depth > 0u);
+        } else { // Clamped (boundary_mode == 0u or default)
+            is_neighbor_valid = (nx_raw >= 0 && nx_raw < i32(params.grid_width) &&
+                                 ny_raw >= 0 && ny_raw < i32(params.grid_height) &&
+                                 nz_raw >= 0 && nz_raw < i32(params.grid_depth));
+            if (is_neighbor_valid) {
+                nx = u32(nx_raw);
+                ny = u32(ny_raw);
+                nz = u32(nz_raw);
+            } else {
+                // Assign dummy values, will be skipped by is_neighbor_valid check
+                nx = 0u;
+                ny = 0u;
+                nz = 0u;
             }
         }
 
-        let nx = i32(x) + neighbor_offset.x;
-        let ny = i32(y) + neighbor_offset.y;
-        let nz = i32(z) + neighbor_offset.z;
-
-        // --- Bounds Check ---
-        if (nx >= 0 && nx < i32(params.grid_width) &&
-            ny >= 0 && ny < i32(params.grid_height) &&
-            nz >= 0 && nz < i32(params.grid_depth)) {
-
-            let unx = u32(nx);
-            let uny = u32(ny);
-            let unz = u32(nz);
-            let neighbor_idx_1d = grid_index(unx, uny, unz);
+        // --- Process Valid Neighbor ---
+        // Use the calculated is_neighbor_valid flag instead of the previous inline check
+        if (is_neighbor_valid) {
+            // No changes needed inside this block initially, index calculation uses nx,ny,nz
+            let neighbor_idx_1d = grid_index(nx, ny, nz);
 
             // --- Calculate Allowed Neighbor Tiles ---
             // This mask represents the set of tiles allowed in the *neighbor*
@@ -332,6 +366,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                      // Perhaps atomicMax on a separate "output_overflow_flag"?
                 }
             }
-        } // end bounds check
+        } // end valid neighbor check
     } // end neighbor loop
 } 

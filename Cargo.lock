@@ -2385,6 +2385,7 @@ dependencies = [
  "log",
  "pollster",
  "thiserror",
+ "tokio",
  "wfc-core",
  "wfc-rules",
  "wgpu",

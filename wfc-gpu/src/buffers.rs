@@ -4,9 +4,10 @@ use bytemuck::{Pod, Zeroable};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
+use wfc_core::BoundaryMode;
 use wfc_rules::AdjacencyRules;
 use wgpu;
-use wgpu::util::DeviceExt; // Import for create_buffer_init // Add Arc
+use wgpu::util::DeviceExt;
 
 /// Uniform buffer structure holding parameters accessible by GPU compute shaders.
 ///
@@ -31,10 +32,10 @@ pub struct GpuParamsUniform {
     pub num_axes: u32,
     /// Current size of the input worklist (number of updated cells) for the propagation shader.
     pub worklist_size: u32,
-    /// Padding to ensure struct size is a multiple of 16 bytes, often required for uniform buffers.
-    /// Might need adjustment depending on final field layout.
-    pub _padding1: u32,
-    pub _padding2: u32, // Added another padding field if needed for alignment to 16 bytes
+    /// Boundary mode: 0 for Clamped, 1 for Periodic.
+    pub boundary_mode: u32,
+    /// Padding to ensure struct size is a multiple of 16 bytes.
+    pub _padding1: u32, // Ensure alignment to 16 bytes
 }
 
 /// Manages the collection of WGPU buffers required for GPU-accelerated WFC.
@@ -134,6 +135,7 @@ impl GpuBuffers {
     /// * `rules` - The `AdjacencyRules` structure containing the adjacency constraints.
     /// * `initial_possibilities` - A slice representing the initial possibility state for each cell,
     ///    packed into `u32` values (e.g., using bitsets).
+    /// * `boundary_mode` - The boundary mode for the grid.
     ///
     /// # Returns
     ///
@@ -145,8 +147,12 @@ impl GpuBuffers {
         _queue: &wgpu::Queue,
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
+        boundary_mode: BoundaryMode,
     ) -> Result<Self, GpuError> {
-        info!("Creating GPU buffers...");
+        info!(
+            "Creating GPU buffers with boundary mode: {:?}...",
+            boundary_mode
+        );
         let width = initial_grid.width;
         let height = initial_grid.height;
         let depth = initial_grid.depth;
@@ -246,8 +252,11 @@ impl GpuBuffers {
             num_tiles: num_tiles as u32,
             num_axes: num_axes as u32,
             worklist_size: 0, // Initial worklist size is 0
-            _padding1: 0,     // Adjust padding as needed
-            _padding2: 0,
+            boundary_mode: match boundary_mode {
+                BoundaryMode::Clamped => 0,
+                BoundaryMode::Periodic => 1,
+            },
+            _padding1: 0,
         };
         let _params_buffer_size = std::mem::size_of::<GpuParamsUniform>() as u64;
 
@@ -584,7 +593,7 @@ impl GpuBuffers {
     /// # Returns
     ///
     /// * `Ok(Vec<f32>)` containing the entropy values for each cell.
-    /// * `Err(GpuError)` if the GPU copy or buffer mapping fails.
+    /// * `Err(GpuError)` if an error occurs during the download process.
     pub async fn download_entropy(
         &self,
         device: &wgpu::Device,
@@ -592,97 +601,18 @@ impl GpuBuffers {
     ) -> Result<Vec<f32>, GpuError> {
         debug!("Initiating entropy download...");
         let buffer_size = self.entropy_buf.size();
+        let staging_buffer = Arc::clone(&self.staging_entropy_buf);
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Entropy Download Encoder"),
         });
-        encoder.copy_buffer_to_buffer(
-            &self.entropy_buf,
-            0,
-            &self.staging_entropy_buf,
-            0,
-            buffer_size,
-        );
+        encoder.copy_buffer_to_buffer(&self.entropy_buf, 0, &staging_buffer, 0, buffer_size);
         queue.submit(Some(encoder.finish()));
 
-        let buffer_slice = self.staging_entropy_buf.slice(..);
+        let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("Failed to send map result");
-        });
-
-        device.poll(wgpu::Maintain::Wait); // Wait for GPU to finish the copy
-
-        match receiver.receive().await {
-            Some(Ok(())) => {
-                let data = buffer_slice.get_mapped_range();
-                let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
-                // VERY IMPORTANT: Unmap the buffer after reading.
-                drop(data); // Explicitly drop mapped range before unmap
-                self.staging_entropy_buf.unmap();
-                debug!("Entropy download complete ({} floats).", result.len());
-                Ok(result)
-            }
-            Some(Err(e)) => {
-                error!("Failed to map staging entropy buffer: {:?}", e);
-                // Attempt to unmap even on error, although it might fail
-                self.staging_entropy_buf.unmap();
-                Err(GpuError::BufferMapFailed(e))
-            }
-            None => {
-                error!("Buffer map future cancelled/channel closed.");
-                // Attempt to unmap even on error
-                self.staging_entropy_buf.unmap();
-                Err(GpuError::Other("Buffer map future cancelled".to_string()))
-            }
-        }
-    }
-
-    /// Asynchronously downloads the minimum entropy information (value and index) from the GPU `min_entropy_info_buf`.
-    ///
-    /// Copies data from the GPU buffer to a staging buffer and maps it for CPU access.
-    /// The downloaded data represents the minimum *positive* entropy found and the flat index
-    /// of the cell where it occurred.
-    ///
-    /// # Arguments
-    ///
-    /// * `device` - The WGPU `Device`.
-    /// * `queue` - The WGPU `Queue`.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok((f32, u32))` containing the minimum positive entropy value and its flat index.
-    ///   The index will be `u32::MAX` if no positive entropy value was found by the shader
-    ///   (e.g., all cells are collapsed or have zero entropy).
-    /// * `Err(GpuError)` if the GPU copy or buffer mapping fails.
-    pub async fn download_min_entropy_info(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> Result<(f32, u32), GpuError> {
-        debug!("Initiating min entropy info download...");
-        let buffer_size = self.min_entropy_info_buf.size(); // Should be 8 bytes
-        if buffer_size != 8 {
-            warn!(
-                "Min entropy info buffer size is not 8 bytes: {}",
-                buffer_size
-            );
-        }
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Min Entropy Info Download Encoder"),
-        });
-        encoder.copy_buffer_to_buffer(
-            &self.min_entropy_info_buf,
-            0,
-            &self.staging_min_entropy_info_buf,
-            0,
-            buffer_size,
-        );
-        queue.submit(Some(encoder.finish()));
-
-        let buffer_slice = self.staging_min_entropy_info_buf.slice(..);
-        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("Failed to send map result");
+            let _ = sender.send(result); // Ignore error if receiver dropped
         });
 
         device.poll(wgpu::Maintain::Wait);
@@ -690,25 +620,100 @@ impl GpuBuffers {
         match receiver.receive().await {
             Some(Ok(())) => {
                 let data = buffer_slice.get_mapped_range();
-                let result_raw: [u32; 2] = *bytemuck::from_bytes::<[u32; 2]>(&data);
+                let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
                 drop(data);
-                self.staging_min_entropy_info_buf.unmap();
-                let min_entropy_val = f32::from_bits(result_raw[0]);
-                let min_index = result_raw[1];
-                debug!(
-                    "Min entropy info download complete: value={}, index={}",
-                    min_entropy_val, min_index
-                );
-                Ok((min_entropy_val, min_index))
+                staging_buffer.unmap();
+                debug!("Entropy download complete ({} floats).", result.len());
+                Ok(result)
+            }
+            Some(Err(e)) => {
+                error!("Failed to map staging entropy buffer: {:?}", e);
+                staging_buffer.unmap();
+                Err(GpuError::BufferMapFailed(e))
+            }
+            None => {
+                error!("Buffer map future cancelled/channel closed.");
+                // Attempt to unmap anyway, might already be unmapped or panic
+                // staging_buffer.unmap(); // unmap is called automatically when Arc/buffer drops if mapped
+                Err(GpuError::Other("Buffer map future cancelled".to_string()))
+            }
+        }
+    }
+
+    /// Asynchronously downloads the minimum entropy information (value and index) from the GPU `min_entropy_info_buf`.
+    pub async fn download_min_entropy_info(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<(f32, u32), GpuError> {
+        debug!("Initiating min entropy info download...");
+        let buffer_size = self.min_entropy_info_buf.size();
+        let staging_buffer = Arc::clone(&self.staging_min_entropy_info_buf);
+
+        if buffer_size != 8 {
+            warn!(
+                "Min entropy info buffer size is not 8 bytes: {}",
+                buffer_size
+            );
+            // Continue anyway, but log warning
+        }
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Min Entropy Info Download Encoder"),
+        });
+        encoder.copy_buffer_to_buffer(
+            &self.min_entropy_info_buf,
+            0,
+            &staging_buffer,
+            0,
+            buffer_size, // Copy the actual size, even if unexpected
+        );
+        queue.submit(Some(encoder.finish()));
+
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+
+        device.poll(wgpu::Maintain::Wait);
+
+        match receiver.receive().await {
+            Some(Ok(())) => {
+                let data = buffer_slice.get_mapped_range();
+                // Use size check before casting
+                if data.len() >= 8 {
+                    // Clone the slice to avoid moving `data`
+                    let data_slice = data[..8].to_vec();
+                    let result_raw: [u32; 2] = *bytemuck::from_bytes::<[u32; 2]>(&data_slice);
+                    let min_entropy_val = f32::from_bits(result_raw[0]);
+                    let min_index = result_raw[1];
+                    drop(data);
+                    staging_buffer.unmap();
+                    debug!(
+                        "Min entropy info download complete: value={}, index={}",
+                        min_entropy_val, min_index
+                    );
+                    Ok((min_entropy_val, min_index))
+                } else {
+                    error!(
+                        "Downloaded min entropy data size mismatch: expected >= 8, got {}",
+                        data.len()
+                    );
+                    drop(data);
+                    staging_buffer.unmap();
+                    Err(GpuError::BufferOperationError(format!(
+                        "Min entropy data size mismatch: expected >= 8, got {}",
+                        data.len()
+                    )))
+                }
             }
             Some(Err(e)) => {
                 error!("Failed to map staging min entropy buffer: {:?}", e);
-                self.staging_min_entropy_info_buf.unmap();
+                staging_buffer.unmap();
                 Err(GpuError::BufferMapFailed(e))
             }
             None => {
                 error!("Min entropy buffer map future cancelled.");
-                self.staging_min_entropy_info_buf.unmap();
                 Err(GpuError::Other(
                     "Min entropy buffer map future cancelled".to_string(),
                 ))
@@ -717,42 +722,31 @@ impl GpuBuffers {
     }
 
     /// Asynchronously downloads the contradiction flag (u32) from the GPU `contradiction_flag_buf`.
-    ///
-    /// Copies data from the GPU buffer to a staging buffer and maps it for CPU access.
-    /// The flag indicates whether the propagation shader detected a contradiction (a cell with zero possibilities).
-    ///
-    /// # Arguments
-    ///
-    /// * `device` - The WGPU `Device`.
-    /// * `queue` - The WGPU `Queue`.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(bool)` - `true` if the flag read from the GPU is greater than 0, `false` otherwise.
-    /// * `Err(GpuError)` if the GPU copy or buffer mapping fails.
     pub async fn download_contradiction_flag(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<bool, GpuError> {
         debug!("Initiating contradiction flag download...");
-        let buffer_size = self.contradiction_flag_buf.size(); // Should be 4 bytes
+        let buffer_size = self.contradiction_flag_buf.size();
+        let staging_buffer = Arc::clone(&self.staging_contradiction_flag_buf);
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Contradiction Flag Download Encoder"),
         });
         encoder.copy_buffer_to_buffer(
             &self.contradiction_flag_buf,
             0,
-            &self.staging_contradiction_flag_buf,
+            &staging_buffer,
             0,
             buffer_size,
         );
         queue.submit(Some(encoder.finish()));
 
-        let buffer_slice = self.staging_contradiction_flag_buf.slice(..);
+        let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("Failed to send map result");
+            let _ = sender.send(result);
         });
 
         device.poll(wgpu::Maintain::Wait);
@@ -760,24 +754,36 @@ impl GpuBuffers {
         match receiver.receive().await {
             Some(Ok(())) => {
                 let data = buffer_slice.get_mapped_range();
-                let result_raw: u32 = *bytemuck::from_bytes::<u32>(&data);
-                drop(data);
-                self.staging_contradiction_flag_buf.unmap();
-                let contradiction_detected = result_raw > 0;
-                debug!(
-                    "Contradiction flag download complete: raw={}, detected={}",
-                    result_raw, contradiction_detected
-                );
-                Ok(contradiction_detected)
+                if data.len() >= 4 {
+                    let result_raw: u32 = *bytemuck::from_bytes::<u32>(&data[..4]);
+                    let contradiction_detected = result_raw > 0;
+                    drop(data);
+                    staging_buffer.unmap();
+                    debug!(
+                        "Contradiction flag download complete: raw={}, detected={}",
+                        result_raw, contradiction_detected
+                    );
+                    Ok(contradiction_detected)
+                } else {
+                    error!(
+                        "Downloaded contradiction flag data size mismatch: expected >= 4, got {}",
+                        data.len()
+                    );
+                    drop(data);
+                    staging_buffer.unmap();
+                    Err(GpuError::BufferOperationError(format!(
+                        "Contradiction flag data size mismatch: expected >= 4, got {}",
+                        data.len()
+                    )))
+                }
             }
             Some(Err(e)) => {
                 error!("Failed to map staging contradiction flag buffer: {:?}", e);
-                self.staging_contradiction_flag_buf.unmap();
+                staging_buffer.unmap();
                 Err(GpuError::BufferMapFailed(e))
             }
             None => {
                 error!("Contradiction flag buffer map future cancelled.");
-                self.staging_contradiction_flag_buf.unmap();
                 Err(GpuError::Other(
                     "Contradiction flag buffer map future cancelled".to_string(),
                 ))
@@ -786,189 +792,337 @@ impl GpuBuffers {
     }
 
     /// Asynchronously downloads the contradiction location index (u32) from the GPU `contradiction_location_buf`.
-    ///
-    /// Copies data from the GPU buffer to a staging buffer and maps it for CPU access.
-    /// This index represents the flat 1D index of the first cell where the propagation shader
-    /// detected a contradiction.
-    ///
-    /// # Arguments
-    ///
-    /// * `device` - The WGPU `Device`.
-    /// * `queue` - The WGPU `Queue`.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(u32)` - The flat index of the first cell where a contradiction was detected. Returns `u32::MAX`
-    ///   if no specific location was recorded by the shader (e.g., if the buffer wasn't written to, was reset,
-    ///   or no contradiction occurred).
-    /// * `Err(GpuError)` if the GPU copy or buffer mapping fails, or if the buffer size is incorrect.
     pub async fn download_contradiction_location(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<u32, GpuError> {
         let buffer_size = self.contradiction_location_buf.size();
+        let staging_buffer = Arc::clone(&self.staging_contradiction_location_buf);
+
         if buffer_size != std::mem::size_of::<u32>() as u64 {
-            return Err(GpuError::BufferOperationError(format!(
+            warn!(
                 "Contradiction location buffer size mismatch: expected {}, got {}",
                 std::mem::size_of::<u32>(),
                 buffer_size
-            )));
+            );
+            // Continue anyway
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Contradiction Location Download Encoder"),
         });
-
         encoder.copy_buffer_to_buffer(
             &self.contradiction_location_buf,
             0,
-            &self.staging_contradiction_location_buf,
+            &staging_buffer,
             0,
-            buffer_size,
+            buffer_size, // Copy actual size
         );
-
         queue.submit(std::iter::once(encoder.finish()));
 
-        let buffer_slice = self.staging_contradiction_location_buf.slice(..);
+        let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("Failed to send map result");
+            let _ = sender.send(result);
         });
 
-        device.poll(wgpu::Maintain::Wait); // Crucial: Wait for GPU to finish before blocking
+        device.poll(wgpu::Maintain::Wait);
 
-        if let Some(result) = receiver.receive().await {
-            result.map_err(GpuError::BufferMapFailed)?;
-
-            let data = buffer_slice.get_mapped_range();
-            let location_index: u32 = bytemuck::from_bytes::<u32>(&data).to_owned();
-
-            drop(data); // Explicitly drop mapped range before unmapping
-            self.staging_contradiction_location_buf.unmap();
-            Ok(location_index)
-        } else {
-            Err(GpuError::BufferOperationError(
-                "Failed to receive buffer map result for contradiction location".to_string(),
-            ))
+        match receiver.receive().await {
+            Some(Ok(())) => {
+                let data = buffer_slice.get_mapped_range();
+                if data.len() >= 4 {
+                    let location_index: u32 = bytemuck::from_bytes::<u32>(&data[..4]).to_owned();
+                    drop(data);
+                    staging_buffer.unmap();
+                    Ok(location_index)
+                } else {
+                    error!("Downloaded contradiction location data size mismatch: expected >= 4, got {}", data.len());
+                    drop(data);
+                    staging_buffer.unmap();
+                    Err(GpuError::BufferOperationError(format!(
+                        "Contradiction location data size mismatch: expected >= 4, got {}",
+                        data.len()
+                    )))
+                }
+            }
+            Some(Err(e)) => {
+                error!(
+                    "Failed to map staging contradiction location buffer: {:?}",
+                    e
+                );
+                staging_buffer.unmap();
+                Err(GpuError::BufferMapFailed(e))
+            }
+            None => {
+                error!("Contradiction location buffer map future cancelled.");
+                Err(GpuError::BufferOperationError(
+                    "Failed to receive buffer map result for contradiction location".to_string(),
+                ))
+            }
         }
     }
 
     /// Asynchronously downloads the worklist count from the GPU `worklist_count_buf`.
-    ///
-    /// This is used after a propagation shader dispatch to determine how many cells
-    /// were modified and added to the output worklist for the next iteration.
-    ///
-    /// # Arguments
-    ///
-    /// * `device` - The WGPU `Device`.
-    /// * `queue` - The WGPU `Queue`.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(u32)` - The number of items in the output worklist.
-    /// * `Err(GpuError)` - If buffer copying or mapping fails.
     pub async fn download_worklist_count(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<u32, GpuError> {
         let size = self.worklist_count_buf.size();
-        let staging_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging Worklist Count"),
+        // Create a temporary staging buffer just for this download
+        let temp_staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Temp Staging Worklist Count"),
             size,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        }));
+        });
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Download Worklist Count Encoder"),
         });
-
-        encoder.copy_buffer_to_buffer(
-            &self.worklist_count_buf, // Source GPU buffer
-            0,
-            &staging_buffer, // Destination staging buffer
-            0,
-            size,
-        );
-
+        encoder.copy_buffer_to_buffer(&self.worklist_count_buf, 0, &temp_staging_buffer, 0, size);
         queue.submit(Some(encoder.finish()));
 
-        // Map the staging buffer
+        let buffer_slice = temp_staging_buffer.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| {
+            let _ = sender.send(v);
+        });
+
+        device.poll(wgpu::Maintain::Wait);
+
+        match receiver.receive().await {
+            Some(Ok(())) => {
+                let data = buffer_slice.get_mapped_range();
+                if data.len() >= 4 {
+                    let count = *bytemuck::from_bytes::<u32>(&data[..4]);
+                    drop(data);
+                    temp_staging_buffer.unmap();
+                    Ok(count)
+                } else {
+                    error!(
+                        "Downloaded worklist count data size mismatch: expected >= 4, got {}",
+                        data.len()
+                    );
+                    drop(data);
+                    temp_staging_buffer.unmap();
+                    Err(GpuError::BufferOperationError(format!(
+                        "Worklist count data size mismatch: expected >= 4, got {}",
+                        data.len()
+                    )))
+                }
+            }
+            Some(Err(e)) => {
+                error!("Failed to map staging worklist count buffer: {:?}", e);
+                temp_staging_buffer.unmap(); // Attempt unmap
+                Err(GpuError::BufferMapFailed(e))
+            }
+            None => {
+                error!("Worklist count buffer map future cancelled.");
+                Err(GpuError::BufferOperationError(
+                    "Map receiver channel closed prematurely".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Asynchronously downloads the raw possibility data (`Vec<u32>`) from the GPU `grid_possibilities_buf`.
+    pub async fn download_possibilities(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<Vec<u32>, GpuError> {
+        debug!("Initiating possibilities download...");
+        let buffer_size = self.grid_possibilities_buf.size();
+        let staging_buffer = Arc::clone(&self.staging_grid_possibilities_buf);
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Possibilities Download Encoder"),
+        });
+        encoder.copy_buffer_to_buffer(
+            &self.grid_possibilities_buf,
+            0,
+            &staging_buffer,
+            0,
+            buffer_size,
+        );
+        queue.submit(Some(encoder.finish()));
+
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
 
-        // Wait for mapping
         device.poll(wgpu::Maintain::Wait);
-        receiver.receive().await.ok_or_else(|| {
-            GpuError::BufferOperationError("Map receiver channel closed prematurely".to_string())
-        })??;
 
-        let data = buffer_slice.get_mapped_range();
-        let count = *bytemuck::from_bytes::<u32>(&data);
-
-        drop(data);
-        staging_buffer.unmap();
-
-        Ok(count)
+        match receiver.receive().await {
+            Some(Ok(())) => {
+                let data = buffer_slice.get_mapped_range();
+                // Cast the raw byte data to Vec<u32>
+                let result: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
+                drop(data);
+                staging_buffer.unmap();
+                debug!("Possibilities download complete ({} u32s).", result.len());
+                Ok(result)
+            }
+            Some(Err(e)) => {
+                error!("Failed to map staging possibilities buffer: {:?}", e);
+                staging_buffer.unmap();
+                Err(GpuError::BufferMapFailed(e))
+            }
+            None => {
+                error!("Possibilities buffer map future cancelled.");
+                Err(GpuError::Other(
+                    "Possibilities map future cancelled".to_string(),
+                ))
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn test_buffer_creation() {
-        // Simplified: Cannot easily create device/queue in standard test environment.
-        // Test focuses on checking if the code compiles and types match,
-        // assuming a valid device/queue could be passed.
-        // Actual buffer creation is implicitly tested via other tests that *do* run.
-        assert!(true); // Placeholder assertion
+    use super::*;
+    use std::sync::Arc;
+    use wfc_core::grid::PossibilityGrid;
+    use wfc_core::BoundaryMode;
+    use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
+
+    // Helper to create uniform rules
+    fn create_uniform_rules(tileset: &TileSet) -> AdjacencyRules {
+        let num_tiles = tileset.num_transformed_tiles();
+        let num_axes = 6;
+        let mut allowed_tuples = Vec::new();
+        for axis in 0..num_axes {
+            for ttid1 in 0..num_tiles {
+                for ttid2 in 0..num_tiles {
+                    allowed_tuples.push((axis, ttid1, ttid2));
+                }
+            }
+        }
+        AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_tuples)
+    }
+
+    // Helper to create simple tileset
+    fn create_simple_tileset(num_base_tiles: usize) -> Result<TileSet, TileSetError> {
+        let weights = vec![1.0; num_base_tiles];
+        let allowed_transforms = vec![vec![Transformation::Identity]; num_base_tiles];
+        TileSet::new(weights, allowed_transforms)
+    }
+
+    // Mock device/queue setup
+    struct MockGpuResources {
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+    }
+
+    async fn setup_mock_gpu() -> Option<MockGpuResources> {
+        // Standard setup using default adapter/device
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: Default::default(),
+            gles_minor_version: wgpu::Gles3MinorVersion::default(),
+            flags: Default::default(),
+        });
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .await?;
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    label: None,
+                },
+                None, // Trace path
+            )
+            .await
+            .ok()?;
+
+        Some(MockGpuResources {
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+        })
+    }
+
+    #[tokio::test]
+    async fn test_buffer_creation_with_boundary_mode() {
+        let gpu_res = match setup_mock_gpu().await {
+            Some(res) => res,
+            None => {
+                println!("Skipping test_buffer_creation_with_boundary_mode: No suitable GPU adapter found.");
+                return;
+            }
+        };
+        let device = &gpu_res.device;
+        let queue = &gpu_res.queue;
+
+        let tileset = create_simple_tileset(2).unwrap();
+        let rules = create_uniform_rules(&tileset);
+        let grid = PossibilityGrid::new(2, 2, 2, tileset.num_transformed_tiles());
+
+        let result_clamped = GpuBuffers::new(device, queue, &grid, &rules, BoundaryMode::Clamped);
+        assert!(result_clamped.is_ok());
+
+        let result_periodic = GpuBuffers::new(device, queue, &grid, &rules, BoundaryMode::Periodic);
+        assert!(result_periodic.is_ok());
     }
 
     #[test]
+    fn test_buffer_creation() {
+        assert!(true); // Simple compile check
+    }
+
+    // Other tests (upload_updates, reset_functions, etc.) remain as placeholders
+    // because they require actual GPU interaction which is hard in unit tests.
+    #[test]
     fn test_upload_updates() {
-        // Simplified: Cannot run GPU commands here.
-        assert!(true); // Placeholder assertion
+        assert!(true);
     }
 
     #[test]
     fn test_reset_functions() {
-        // Simplified: Cannot run GPU commands here.
-        // We only check that the function call signatures are valid.
-        // Assume buffers.reset_...(&queue).is_ok() logic is tested elsewhere or implicitly.
-        assert!(true); // Placeholder assertion
+        assert!(true);
     }
 
     #[test]
     fn test_update_params_worklist_size() {
-        // Simplified: Cannot run GPU commands here.
-        assert!(true); // Placeholder assertion
+        assert!(true);
     }
 
-    // Basic download tests (just check if they run without panic/error)
-    #[test]
-    fn test_download_entropy_smoke() {
-        // Simplified: Cannot run GPU commands here.
-        assert!(true); // Placeholder assertion
-    }
+    #[tokio::test]
+    async fn test_download_smoke_tests() {
+        // Smoke tests for download functions (check they compile and run basic async flow)
+        let gpu_res = match setup_mock_gpu().await {
+            Some(res) => res,
+            None => {
+                println!("Skipping test_download_smoke_tests: No suitable GPU adapter found.");
+                return;
+            }
+        };
+        let device = &gpu_res.device;
+        let queue = &gpu_res.queue;
 
-    #[test]
-    fn test_download_min_entropy_info_smoke() {
-        // Simplified: Cannot run GPU commands here.
-        assert!(true); // Placeholder assertion
-    }
+        let tileset = create_simple_tileset(2).unwrap();
+        let rules = create_uniform_rules(&tileset);
+        let grid = PossibilityGrid::new(2, 2, 2, tileset.num_transformed_tiles());
+        let buffers = GpuBuffers::new(device, queue, &grid, &rules, BoundaryMode::Clamped).unwrap();
 
-    #[test]
-    fn test_download_contradiction_flag_smoke() {
-        // Simplified: Cannot run GPU commands here.
-        assert!(true); // Placeholder assertion
-    }
-
-    #[test]
-    fn test_download_contradiction_location_smoke() {
-        // Simplified: Cannot run GPU commands here.
-        assert!(true); // Placeholder assertion
+        // Just call download functions, check if they return Result (don't care about value here)
+        let _ = buffers.download_entropy(device, queue).await;
+        let _ = buffers.download_min_entropy_info(device, queue).await;
+        let _ = buffers.download_contradiction_flag(device, queue).await;
+        let _ = buffers.download_contradiction_location(device, queue).await;
+        let _ = buffers.download_worklist_count(device, queue).await;
+        assert!(true); // If it reaches here without panic, basic flow is ok
     }
 }

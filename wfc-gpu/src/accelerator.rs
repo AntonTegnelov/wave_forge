@@ -2,8 +2,10 @@ use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
 use log::info;
 use std::sync::Arc;
 use wfc_core::{
-    // Removed unused: EntropyCalculator, ConstraintPropagator, PropagationError, EntropyGrid, Grid
-    grid::PossibilityGrid,
+    entropy::{EntropyCalculator, EntropyError},
+    grid::{EntropyGrid, PossibilityGrid},
+    propagator::{ConstraintPropagator, PropagationError},
+    BoundaryMode,
 }; // Use Arc for shared GPU resources
 use wfc_rules::AdjacencyRules; // Added import
 
@@ -37,7 +39,12 @@ pub struct GpuAccelerator {
     pipelines: Arc<ComputePipelines>, // Changed to Arc
     buffers: Arc<GpuBuffers>,         // Changed to Arc
     grid_dims: (usize, usize, usize),
+    boundary_mode: BoundaryMode, // Store boundary mode
 }
+
+// Import the concrete GPU implementations
+use crate::entropy::GpuEntropyCalculator;
+use crate::propagator::GpuConstraintPropagator;
 
 impl GpuAccelerator {
     /// Asynchronously creates and initializes a new `GpuAccelerator`.
@@ -54,6 +61,7 @@ impl GpuAccelerator {
     ///                    Used to determine buffer sizes and upload initial possibilities.
     /// * `rules` - A reference to the `AdjacencyRules` defining constraints.
     ///             Used to upload rule data to the GPU.
+    /// * `boundary_mode` - The boundary handling mode for the grid.
     ///
     /// # Returns
     ///
@@ -68,8 +76,12 @@ impl GpuAccelerator {
     pub async fn new(
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
+        boundary_mode: BoundaryMode,
     ) -> Result<Self, GpuError> {
-        info!("Entered GpuAccelerator::new");
+        info!(
+            "Entered GpuAccelerator::new with boundary mode {:?}",
+            boundary_mode
+        );
         info!("Initializing GPU Accelerator...");
 
         // Check if the grid has a reasonable number of tiles (shader has hardcoded max of 4 u32s = 128 tiles)
@@ -136,7 +148,13 @@ impl GpuAccelerator {
         let pipelines = Arc::new(ComputePipelines::new(&device, u32s_per_cell as u32)?); // Wrap in Arc
 
         // 5. Create buffers (uses device & queue, returns Cloneable struct)
-        let buffers = Arc::new(GpuBuffers::new(&device, &queue, initial_grid, rules)?); // Wrap in Arc
+        let buffers = Arc::new(GpuBuffers::new(
+            &device,
+            &queue,
+            initial_grid,
+            rules,
+            boundary_mode,
+        )?); // Pass boundary_mode to GpuBuffers::new
 
         let grid_dims = (initial_grid.width, initial_grid.height, initial_grid.depth);
 
@@ -148,6 +166,7 @@ impl GpuAccelerator {
             pipelines, // Store the Arc
             buffers,   // Store the Arc
             grid_dims,
+            boundary_mode, // Store boundary_mode
         })
     }
 
@@ -176,5 +195,79 @@ impl GpuAccelerator {
     /// Returns the grid dimensions (width, height, depth).
     pub fn grid_dims(&self) -> (usize, usize, usize) {
         self.grid_dims
+    }
+
+    /// Returns the boundary mode used by this accelerator.
+    pub fn boundary_mode(&self) -> BoundaryMode {
+        self.boundary_mode
+    }
+}
+
+// --- Trait Implementations ---
+
+impl ConstraintPropagator for GpuAccelerator {
+    /// Delegates propagation to an internal `GpuConstraintPropagator` instance.
+    ///
+    /// Note: This creates a new `GpuConstraintPropagator` instance on each call.
+    /// Consider optimizing if this becomes a bottleneck (e.g., store propagator instance).
+    fn propagate(
+        &mut self,
+        grid: &mut PossibilityGrid,
+        updated_coords: Vec<(usize, usize, usize)>,
+        rules: &AdjacencyRules,
+    ) -> Result<(), PropagationError> {
+        // Create a GpuConstraintPropagator using the accelerator's resources
+        let mut propagator = GpuConstraintPropagator::new(
+            self.device(),        // Clone Arc<Device>
+            self.queue(),         // Clone Arc<Queue>
+            self.pipelines(),     // Clone Arc<ComputePipelines>
+            self.buffers(),       // Clone Arc<GpuBuffers>
+            self.grid_dims(),     // Copy grid dimensions
+            self.boundary_mode(), // Get boundary mode
+        );
+        // Delegate the actual work
+        propagator.propagate(grid, updated_coords, rules)
+    }
+}
+
+impl EntropyCalculator for GpuAccelerator {
+    /// Delegates entropy calculation to an internal `GpuEntropyCalculator` instance.
+    ///
+    /// Note: This creates a new `GpuEntropyCalculator` instance on each call.
+    /// Consider optimizing if this becomes a bottleneck.
+    fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
+        // Create a GpuEntropyCalculator using the accelerator's resources
+        let calculator = GpuEntropyCalculator::new(
+            self.device(),
+            self.queue(),
+            self.pipelines(),
+            self.buffers(),
+            self.grid_dims(),
+        );
+        // Delegate the actual work
+        calculator.calculate_entropy(grid)
+    }
+
+    /// Selects the cell with the lowest entropy based on the GPU-calculated entropy grid.
+    ///
+    /// Downloads the minimum entropy information from the GPU and converts the flat index
+    /// back to 3D coordinates.
+    fn select_lowest_entropy_cell(
+        &self,
+        entropy_grid: &EntropyGrid,
+    ) -> Option<(usize, usize, usize)> {
+        // Create a GpuEntropyCalculator using the accelerator's resources
+        let calculator = GpuEntropyCalculator::new(
+            self.device(),
+            self.queue(),
+            self.pipelines(),
+            self.buffers(),
+            self.grid_dims(),
+        );
+        // Delegate the actual work
+        // Note: GpuEntropyCalculator::select_lowest_entropy_cell might need adjustment
+        // if it expects to reuse state or internal buffers.
+        // For now, assuming it's relatively stateless or handles its own setup.
+        calculator.select_lowest_entropy_cell(entropy_grid)
     }
 }

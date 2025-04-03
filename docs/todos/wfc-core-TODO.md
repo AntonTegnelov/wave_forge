@@ -51,7 +51,7 @@
 - [x] Support serialization of grid states for saving/loading
 - [x] Create checkpoint system to pause/resume WFC algorithm execution
 - [x] Enhance visualization hooks beyond simple progress callbacks
-- [ ] Add boundary condition options (periodic, fixed, etc.) -> Parameter added, implementation needed in propagator
+- [x] Add boundary condition options (periodic, fixed, etc.) -> Parameter added, implementation needed in propagator
 
 ## Architecture Improvements
 
@@ -65,3 +65,15 @@
 
 - [ ] Add property-based tests (e.g., using proptest) for rule consistency
 - [ ] Implement fuzzing for edge case discovery
+
+## Core Logic
+
+- [ ] Implement tile transformations (rotation, reflection) in `TileSet` and rule generation.
+- [ ] Add support for weighted tile selection during collapse.
+- [ ] Implement more sophisticated entropy selection strategies (e.g., Hilbert curve, random lowest).
+- [ ] Consider alternative propagation algorithms (e.g., AC-4).
+- [ ] Add checkpointing/resuming functionality to the `runner`.
+- [ ] Add progress reporting callback to the `runner`.
+- [ ] Refactor `runner` for clarity and potential parallelization (internal steps).
+- [ ] Add comprehensive unit tests for `propagator`, `entropy`, `runner`.
+- [ ] Add integration tests for the overall WFC process.
