@@ -127,8 +127,13 @@ impl GpuAccelerator {
         let device = Arc::new(device);
         let queue = Arc::new(queue);
 
+        // Calculate num_tiles_u32 here
+        let num_tiles = rules.num_tiles();
+        let u32s_per_cell = (num_tiles + 31) / 32; // Ceiling division
+
         // 4. Create pipelines (uses device, returns Cloneable struct)
-        let pipelines = Arc::new(ComputePipelines::new(&device)?); // Wrap in Arc
+        // Pass num_tiles_u32 for specialization
+        let pipelines = Arc::new(ComputePipelines::new(&device, u32s_per_cell as u32)?); // Wrap in Arc
 
         // 5. Create buffers (uses device & queue, returns Cloneable struct)
         let buffers = Arc::new(GpuBuffers::new(&device, &queue, initial_grid, rules)?); // Wrap in Arc

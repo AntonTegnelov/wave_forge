@@ -75,13 +75,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 @group(0) @binding(6) var<storage, read_write> contradiction_flag: atomic<u32>; // Global flag for contradictions
 @group(0) @binding(7) var<storage, read_write> contradiction_location: atomic<u32>; // Global index of first contradiction (initialized to u32::MAX)
 
+// Specialization constant for number of u32s per cell
+override NUM_TILES_U32: u32 = 1u; // Default value, MUST be overridden by pipeline
+
 // Uniforms for grid dimensions, num_tiles etc.
 struct Params {
     grid_width: u32,
     grid_height: u32,
     grid_depth: u32,
     num_tiles: u32,
-    num_tiles_u32: u32, // num_tiles rounded up for u32 array indexing
+    // num_tiles_u32: u32, // Removed - Now a specialization constant
     num_axes: u32,
     worklist_size: u32,
 };
@@ -104,8 +107,8 @@ fn grid_index(x: u32, y: u32, z: u32) -> u32 {
 fn is_tile_possible(tile_index: u32, mask: ptr<function, array<u32, 4>>) -> bool {
     let u32_index = tile_index / 32u;
     let bit_index = tile_index % 32u;
-    // Critical safety check - must ensure we don't access beyond array bounds
-    if (u32_index >= params.num_tiles_u32 || u32_index >= 4u) { return false; }
+    // Critical safety check - use specialization constant
+    if (u32_index >= NUM_TILES_U32 || u32_index >= 4u) { return false; } // Keep fixed size check for now
     return ((*mask)[u32_index] & (1u << bit_index)) != 0u;
 }
 
@@ -113,8 +116,8 @@ fn is_tile_possible(tile_index: u32, mask: ptr<function, array<u32, 4>>) -> bool
 fn set_tile_possible(tile_index: u32, mask: ptr<function, array<u32, 4>>) {
     let u32_index = tile_index / 32u;
     let bit_index = tile_index % 32u;
-    // Critical safety check - must ensure we don't access beyond array bounds
-    if (u32_index >= params.num_tiles_u32 || u32_index >= 4u) { return; }
+    // Critical safety check - use specialization constant
+    if (u32_index >= NUM_TILES_U32 || u32_index >= 4u) { return; } // Keep fixed size check for now
     (*mask)[u32_index] = (*mask)[u32_index] | (1u << bit_index);
 }
 
@@ -160,8 +163,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let x = temp_coord % params.grid_width;
     let current_cell_idx_1d = grid_index(x, y, z); // Pre-calculate 1D index
 
-    // SAFETY CHECK: Only process if params.num_tiles_u32 <= 4 to avoid out of bounds
-    if (params.num_tiles_u32 > 4u) {
+    // SAFETY CHECK: Only process if NUM_TILES_U32 <= 4 to avoid out of bounds
+    if (NUM_TILES_U32 > 4u) {
         atomicMax(&contradiction_flag, 1u); // Mark as contradiction
         // Atomically store the location if it hasn't been stored yet (atomicMin with u32::MAX as initial)
         atomicMin(&contradiction_location, current_cell_idx_1d); 
@@ -178,7 +181,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let num_cells = params.grid_width * params.grid_height * params.grid_depth;
 
     // Only load as many as we need and are within bounds
-    for (var i: u32 = 0u; i < params.num_tiles_u32 && i < 4u; i = i + 1u) {
+    for (var i: u32 = 0u; i < NUM_TILES_U32 && i < 4u; i = i + 1u) { // Use constant, keep fixed size
        // SoA index: chunk_index * num_cells + cell_index
        current_possibilities[i] = atomicLoad(&grid_possibilities[i * num_cells + current_cell_idx_1d]);
     }
@@ -280,7 +283,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
             // Apply the constraints (intersect allowed_neighbor_mask with neighbor's current mask)
             // Loop through the u32s that make up the possibility mask
-            for (var i: u32 = 0u; i < params.num_tiles_u32 && i < 4u; i = i + 1u) {
+            for (var i: u32 = 0u; i < NUM_TILES_U32 && i < 4u; i = i + 1u) { // Use constant, keep fixed size
                 // SoA index: chunk_index * num_cells + cell_index
                 let neighbor_atomic_ptr = &grid_possibilities[i * num_cells + neighbor_idx_1d];
                 

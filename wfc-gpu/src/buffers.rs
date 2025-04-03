@@ -26,15 +26,14 @@ pub struct GpuParamsUniform {
     pub grid_depth: u32,
     /// Total number of unique tile types.
     pub num_tiles: u32,
-    /// Number of `u32` elements required to store the possibility bitvector for a single cell.
-    /// Calculated as `ceil(num_tiles / 32)`.
-    pub num_tiles_u32: u32,
     /// Number of adjacency axes (typically 6 for 3D).
     pub num_axes: u32,
     /// Current size of the input worklist (number of updated cells) for the propagation shader.
     pub worklist_size: u32,
     /// Padding to ensure struct size is a multiple of 16 bytes, often required for uniform buffers.
+    /// Might need adjustment depending on final field layout.
     pub _padding1: u32,
+    pub _padding2: u32, // Added another padding field if needed for alignment to 16 bytes
 }
 
 /// Manages the collection of WGPU buffers required for GPU-accelerated WFC.
@@ -174,7 +173,7 @@ impl GpuBuffers {
                         } else {
                             // This should ideally not happen if allocation is correct
                             error!("SoA packing error: index out of bounds (cell {}, chunk {}, packed_idx {})", cell_idx, u32_chunk_idx, packed_idx);
-                            return Err(GpuError::BufferInitializationError(
+                            return Err(GpuError::BufferOperationError(
                                 "SoA packing index out of bounds".to_string(),
                             ));
                         }
@@ -189,7 +188,7 @@ impl GpuBuffers {
                 packed_possibilities.len(),
                 num_cells * u32s_per_cell
             );
-            return Err(GpuError::BufferInitializationError(
+            return Err(GpuError::BufferOperationError(
                 "SoA packing size mismatch".to_string(),
             ));
         }
@@ -215,10 +214,10 @@ impl GpuBuffers {
             grid_height: height as u32,
             grid_depth: depth as u32,
             num_tiles: num_tiles as u32,
-            num_tiles_u32: u32s_per_cell as u32,
             num_axes: num_axes as u32,
             worklist_size: 0, // Initial worklist size is 0
-            _padding1: 0,     // Ensure padding is correct if struct changes
+            _padding1: 0,     // Adjust padding as needed
+            _padding2: 0,
         };
         let _params_buffer_size = std::mem::size_of::<GpuParamsUniform>() as u64;
 
@@ -533,8 +532,8 @@ impl GpuBuffers {
         // Calculate the offset of the worklist_size field within the GpuParamsUniform struct.
         // WARNING: This assumes the layout defined in GpuParamsUniform.
         // If the struct changes, this offset needs to be updated.
-        // grid_width, grid_height, grid_depth, num_tiles, num_tiles_u32, num_axes are all u32.
-        let offset = (6 * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
+        // grid_width, grid_height, grid_depth, num_tiles, num_axes are all u32.
+        let offset = (5 * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
         queue.write_buffer(
             &self.params_uniform_buf,
             offset,

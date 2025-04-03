@@ -51,13 +51,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // Using array<atomic<u32>, 2> to store f32 bits and index atomically.
 @group(0) @binding(3) var<storage, read_write> min_entropy_info: array<atomic<u32>, 2>;
 
+// Specialization constant for number of u32s per cell
+override NUM_TILES_U32: u32 = 1u; // Default value, MUST be overridden by pipeline
+
 // Params struct containing grid dimensions
 struct Params {
     grid_width: u32,
     grid_height: u32,
     grid_depth: u32,
     num_tiles: u32,
-    num_tiles_u32: u32,
+    // num_tiles_u32: u32, // Removed - Now specialization constant
     num_axes: u32,
     worklist_size: u32,
 };
@@ -133,9 +136,9 @@ fn main(
     var possibilities_count: u32 = 0u;
 
     // Read the relevant chunks for this cell using SoA indexing
-    // SAFETY: Check num_tiles_u32 <= 4 to prevent out-of-bounds access
-    if (params.num_tiles_u32 <= 4u) { 
-        for (var i: u32 = 0u; i < params.num_tiles_u32; i = i + 1u) {
+    // SAFETY: Check NUM_TILES_U32 <= 4 to prevent out-of-bounds access
+    if (NUM_TILES_U32 <= 4u) { 
+        for (var i: u32 = 0u; i < NUM_TILES_U32; i = i + 1u) {
             // SoA Index: chunk_idx * num_cells + cell_idx
             let chunk = possibilities[i * num_cells + index];
             total_possibility_mask[i] = chunk;

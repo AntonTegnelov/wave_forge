@@ -1,4 +1,5 @@
 use crate::GpuError;
+use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu;
 
@@ -35,12 +36,13 @@ impl ComputePipelines {
     /// # Arguments
     ///
     /// * `device` - A reference to the WGPU `Device` used for creating pipeline resources.
+    /// * `num_tiles_u32` - The number of u32 chunks needed per cell, used for specialization.
     ///
     /// # Returns
     ///
     /// * `Ok(Self)` containing the initialized `ComputePipelines`.
     /// * `Err(GpuError)` if shader loading, compilation, or pipeline creation fails.
-    pub fn new(device: &wgpu::Device) -> Result<Self, GpuError> {
+    pub fn new(device: &wgpu::Device, num_tiles_u32: u32) -> Result<Self, GpuError> {
         // Load shader code
         let entropy_shader_code = include_str!("shaders/entropy.wgsl");
         let propagation_shader_code = include_str!("shaders/propagate.wgsl");
@@ -225,13 +227,23 @@ impl ComputePipelines {
             });
 
         // --- Create Compute Pipelines ---
+
+        // Define the specialization constant value
+        let specialization_constants = HashMap::from([
+            // Value must be f64 according to wgpu docs
+            ("NUM_TILES_U32".to_string(), num_tiles_u32 as f64),
+        ]);
+
         let entropy_pipeline = Arc::new(device.create_compute_pipeline(
             &wgpu::ComputePipelineDescriptor {
                 label: Some("Entropy Pipeline"),
                 layout: Some(&entropy_pipeline_layout),
                 module: &entropy_shader,
                 entry_point: "main", // Assuming entry point is 'main'
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &specialization_constants,
+                    ..Default::default()
+                },
             },
         ));
 
@@ -241,7 +253,10 @@ impl ComputePipelines {
                 layout: Some(&propagation_pipeline_layout),
                 module: &propagation_shader,
                 entry_point: "main", // Assuming entry point is 'main'
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &specialization_constants,
+                    ..Default::default()
+                },
             },
         ));
 
