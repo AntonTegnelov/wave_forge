@@ -15,24 +15,23 @@ const ENTROPY_WORKGROUP_SIZE: u32 = 64; // Match the value in entropy.wgsl
 ///
 /// This struct holds references to the necessary GPU resources (device, queue,
 /// pipelines, buffers) and implements the `EntropyCalculator` trait.
-#[derive(Clone)] // Clone is likely needed if GpuAccelerator holds it
+#[derive(Clone)] // Derive Clone since it holds Arcs
 pub struct GpuEntropyCalculator {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
-    pipelines: ComputePipelines, // Assumes ComputePipelines is Clone
-    buffers: GpuBuffers,         // Assumes GpuBuffers is Clone
-    grid_dims: (usize, usize, usize),
+    pub(crate) device: Arc<wgpu::Device>,
+    pub(crate) queue: Arc<wgpu::Queue>,
+    pub(crate) pipelines: Arc<ComputePipelines>,
+    pub(crate) buffers: Arc<GpuBuffers>,
+    pub(crate) grid_dims: (usize, usize, usize),
 }
 
 impl GpuEntropyCalculator {
-    /// Creates a new GpuEntropyCalculator.
-    ///
-    /// This typically takes the shared resources from a GpuAccelerator.
+    /// Creates a new `GpuEntropyCalculator` instance.
+    /// Requires access to initialized GPU device, queue, pipelines, and buffers.
     pub fn new(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
-        pipelines: ComputePipelines,
-        buffers: GpuBuffers,
+        pipelines: Arc<ComputePipelines>, // Expect Arc directly
+        buffers: Arc<GpuBuffers>,         // Expect Arc directly
         grid_dims: (usize, usize, usize),
     ) -> Self {
         Self {

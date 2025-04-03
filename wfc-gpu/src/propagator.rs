@@ -444,9 +444,9 @@ mod tests {
         let mut allowed_tuples = Vec::new();
         for axis in 0..num_axes {
             // Tile 0 -> Tile 0
-            allowed_tuples.push((axis, TileId(0), TileId(0)));
-            // Tile 1 -> Tile 1
-            allowed_tuples.push((axis, TileId(1), TileId(1)));
+            allowed_tuples.push((axis, 0, 0)); // Use usize directly
+                                               // Tile 1 -> Tile 1
+            allowed_tuples.push((axis, 1, 1)); // Use usize directly
         }
         AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_tuples)
     }

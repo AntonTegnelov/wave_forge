@@ -2,6 +2,11 @@ use crate::grid::PossibilityGrid;
 use thiserror::Error;
 use wfc_rules::AdjacencyRules;
 
+pub mod cpu;
+
+// Re-export the concrete implementation for easier use
+pub use cpu::CpuConstraintPropagator;
+
 /// Errors that can occur during the constraint propagation phase of WFC.
 #[derive(Error, Debug, Clone)]
 pub enum PropagationError {

@@ -681,13 +681,14 @@ impl GpuBuffers {
             Some(Ok(())) => {
                 let data = buffer_slice.get_mapped_range();
                 // Use size check before casting
-                if data.len() >= 8 {
+                let data_len = data.len(); // Store length before moving data
+                if data_len >= 8 {
                     // Clone the slice to avoid moving `data`
                     let data_slice = data[..8].to_vec();
                     let result_raw: [u32; 2] = *bytemuck::from_bytes::<[u32; 2]>(&data_slice);
                     let min_entropy_val = f32::from_bits(result_raw[0]);
                     let min_index = result_raw[1];
-                    drop(data);
+                    drop(data); // Drop the mapped range
                     staging_buffer.unmap();
                     debug!(
                         "Min entropy info download complete: value={}, index={}",
@@ -697,13 +698,13 @@ impl GpuBuffers {
                 } else {
                     error!(
                         "Downloaded min entropy data size mismatch: expected >= 8, got {}",
-                        data.len()
+                        data_len // Use stored length
                     );
-                    drop(data);
+                    drop(data); // Drop the mapped range
                     staging_buffer.unmap();
                     Err(GpuError::BufferOperationError(format!(
                         "Min entropy data size mismatch: expected >= 8, got {}",
-                        data.len()
+                        data_len // Use stored length
                     )))
                 }
             }
@@ -754,10 +755,11 @@ impl GpuBuffers {
         match receiver.receive().await {
             Some(Ok(())) => {
                 let data = buffer_slice.get_mapped_range();
-                if data.len() >= 4 {
+                let data_len = data.len(); // Store length before moving data
+                if data_len >= 4 {
                     let result_raw: u32 = *bytemuck::from_bytes::<u32>(&data[..4]);
                     let contradiction_detected = result_raw > 0;
-                    drop(data);
+                    drop(data); // Drop the mapped range
                     staging_buffer.unmap();
                     debug!(
                         "Contradiction flag download complete: raw={}, detected={}",
@@ -767,13 +769,13 @@ impl GpuBuffers {
                 } else {
                     error!(
                         "Downloaded contradiction flag data size mismatch: expected >= 4, got {}",
-                        data.len()
+                        data_len // Use stored length
                     );
-                    drop(data);
+                    drop(data); // Drop the mapped range
                     staging_buffer.unmap();
                     Err(GpuError::BufferOperationError(format!(
                         "Contradiction flag data size mismatch: expected >= 4, got {}",
-                        data.len()
+                        data_len // Use stored length
                     )))
                 }
             }
@@ -832,18 +834,19 @@ impl GpuBuffers {
         match receiver.receive().await {
             Some(Ok(())) => {
                 let data = buffer_slice.get_mapped_range();
-                if data.len() >= 4 {
+                let data_len = data.len(); // Store length before moving data
+                if data_len >= 4 {
                     let location_index: u32 = bytemuck::from_bytes::<u32>(&data[..4]).to_owned();
-                    drop(data);
+                    drop(data); // Drop the mapped range
                     staging_buffer.unmap();
                     Ok(location_index)
                 } else {
-                    error!("Downloaded contradiction location data size mismatch: expected >= 4, got {}", data.len());
-                    drop(data);
+                    error!("Downloaded contradiction location data size mismatch: expected >= 4, got {}", data_len); // Use stored length
+                    drop(data); // Drop the mapped range
                     staging_buffer.unmap();
                     Err(GpuError::BufferOperationError(format!(
                         "Contradiction location data size mismatch: expected >= 4, got {}",
-                        data.len()
+                        data_len // Use stored length
                     )))
                 }
             }
@@ -896,21 +899,22 @@ impl GpuBuffers {
         match receiver.receive().await {
             Some(Ok(())) => {
                 let data = buffer_slice.get_mapped_range();
-                if data.len() >= 4 {
+                let data_len = data.len(); // Store length before moving data
+                if data_len >= 4 {
                     let count = *bytemuck::from_bytes::<u32>(&data[..4]);
-                    drop(data);
+                    drop(data); // Drop the mapped range
                     temp_staging_buffer.unmap();
                     Ok(count)
                 } else {
                     error!(
                         "Downloaded worklist count data size mismatch: expected >= 4, got {}",
-                        data.len()
+                        data_len // Use stored length
                     );
-                    drop(data);
+                    drop(data); // Drop the mapped range
                     temp_staging_buffer.unmap();
                     Err(GpuError::BufferOperationError(format!(
                         "Worklist count data size mismatch: expected >= 4, got {}",
-                        data.len()
+                        data_len // Use stored length
                     )))
                 }
             }

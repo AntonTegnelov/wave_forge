@@ -378,6 +378,23 @@ impl AdjacencyRules {
         self.allowed
             .contains_key(&(axis, transformed_tile1_id, transformed_tile2_id))
     }
+
+    /// Returns the opposite axis index.
+    /// Assumes standard 3D axis convention:
+    /// 0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
+    /// Panics if the input axis is invalid (>= num_axes, usually 6).
+    #[inline]
+    pub fn opposite_axis(&self, axis: usize) -> usize {
+        match axis {
+            0 => 1,
+            1 => 0,
+            2 => 3,
+            3 => 2,
+            4 => 5,
+            5 => 4,
+            _ => panic!("Invalid axis index: {}", axis),
+        }
+    }
 }
 
 #[cfg(test)]
