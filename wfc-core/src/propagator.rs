@@ -1,4 +1,5 @@
 use crate::grid::PossibilityGrid;
+use async_trait::async_trait;
 use thiserror::Error;
 use wfc_rules::AdjacencyRules;
 
@@ -8,7 +9,7 @@ pub mod cpu;
 pub use cpu::CpuConstraintPropagator;
 
 /// Errors that can occur during the constraint propagation phase of WFC.
-#[derive(Error, Debug, Clone)]
+#[derive(Debug, Error)]
 pub enum PropagationError {
     /// Indicates that a cell's possibility set became empty during propagation,
     /// meaning no tile can satisfy the constraints at this location.
@@ -21,13 +22,16 @@ pub enum PropagationError {
     /// Represents an error during communication with the GPU during propagation (if used).
     #[error("GPU communication error during propagation: {0}")]
     GpuCommunicationError(String),
+    /// An internal error within the propagation logic.
+    #[error("Internal propagation error: {0}")]
+    InternalError(String),
 }
 
 /// Trait defining the interface for a constraint propagation algorithm.
 ///
 /// Implementors of this trait are responsible for updating the `PossibilityGrid`
 /// based on changes initiated (e.g., collapsing a cell) and the defined `AdjacencyRules`.
-#[must_use] // Propagation results in a Result that should be checked
+#[async_trait]
 pub trait ConstraintPropagator {
     /// Performs constraint propagation on the grid.
     ///
@@ -49,7 +53,7 @@ pub trait ConstraintPropagator {
     /// * `Ok(())` if propagation completed successfully without contradictions.
     /// * `Err(PropagationError::Contradiction(x, y, z))` if a cell at (x, y, z) becomes empty (contradiction).
     /// * Other `Err(PropagationError)` variants for different propagation issues (e.g., GPU errors).
-    fn propagate(
+    async fn propagate(
         &mut self,
         grid: &mut PossibilityGrid,
         updated_coords: Vec<(usize, usize, usize)>,
@@ -67,8 +71,8 @@ pub trait ConstraintPropagator {
 mod tests {
     use super::*;
     use crate::grid::PossibilityGrid;
-    use wfc_rules::AdjacencyRules;
-    // Removed unused imports
+    use tokio::runtime::Runtime;
+    use wfc_rules::AdjacencyRules; // Import tokio runtime for async tests
 
     // Removed unused helper fn setup_simple_rules
 
@@ -102,8 +106,9 @@ mod tests {
 
     // Mock Propagator (if needed for tests independent of CPU/GPU impl)
     struct MockPropagator;
+    #[async_trait]
     impl ConstraintPropagator for MockPropagator {
-        fn propagate(
+        async fn propagate(
             &mut self,
             _grid: &mut PossibilityGrid,
             _updated_coords: Vec<(usize, usize, usize)>,
@@ -115,12 +120,14 @@ mod tests {
     }
 
     // A basic test that uses the MockPropagator (if you need a placeholder)
-    #[test]
-    fn test_mock_propagator() {
+    #[tokio::test]
+    async fn test_mock_propagator() {
         let mut grid = PossibilityGrid::new(2, 1, 1, 2);
         let rules = setup_simple_rules_3d();
         let mut propagator = MockPropagator;
-        let result = propagator.propagate(&mut grid, vec![(0, 0, 0)], &rules);
+        let result = propagator
+            .propagate(&mut grid, vec![(0, 0, 0)], &rules)
+            .await;
         assert!(result.is_ok());
     }
 

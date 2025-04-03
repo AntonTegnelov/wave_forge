@@ -3,6 +3,7 @@ use crate::{
     propagator::{ConstraintPropagator, PropagationError},
     BoundaryCondition,
 };
+use async_trait::async_trait;
 use bitvec::prelude::*;
 use wfc_rules::AdjacencyRules;
 
@@ -68,8 +69,9 @@ impl CpuConstraintPropagator {
     }
 }
 
+#[async_trait]
 impl ConstraintPropagator for CpuConstraintPropagator {
-    fn propagate(
+    async fn propagate(
         &mut self,
         grid: &mut PossibilityGrid,
         updated_coords: Vec<(usize, usize, usize)>,
@@ -162,6 +164,7 @@ mod tests {
     use crate::grid::PossibilityGrid;
     use crate::BoundaryCondition;
     use bitvec::prelude::bitvec;
+    use tokio;
     use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
 
     // Helper to create a simple tileset with identity transforms
@@ -198,8 +201,8 @@ mod tests {
         (grid, rules)
     }
 
-    #[test]
-    fn test_propagate_simple_clamped() {
+    #[tokio::test]
+    async fn test_propagate_simple_clamped() {
         let rules = create_rules_for_tests();
         let mut grid = PossibilityGrid::new(3, 1, 1, 2);
         let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Finite);
@@ -208,7 +211,9 @@ mod tests {
         let center_cell = grid.get_mut(1, 0, 0).unwrap();
         *center_cell = bitvec![usize, Lsb0; 1, 0];
 
-        let result = propagator.propagate(&mut grid, vec![(1, 0, 0)], &rules);
+        let result = propagator
+            .propagate(&mut grid, vec![(1, 0, 0)], &rules)
+            .await;
         assert!(result.is_ok());
 
         // Check neighbors (0,0,0) and (2,0,0)
@@ -224,8 +229,9 @@ mod tests {
         let mut grid_clamped = PossibilityGrid::new(3, 1, 1, 2);
         let mut propagator_clamped = CpuConstraintPropagator::new(BoundaryCondition::Finite);
         *grid_clamped.get_mut(1, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 0]; // Collapse T0
-        let result_clamped =
-            propagator_clamped.propagate(&mut grid_clamped, vec![(1, 0, 0)], &rules_clamped);
+        let result_clamped = propagator_clamped
+            .propagate(&mut grid_clamped, vec![(1, 0, 0)], &rules_clamped)
+            .await;
         assert!(
             matches!(
                 result_clamped,
@@ -237,8 +243,8 @@ mod tests {
         // No need to check neighbor states if it's a contradiction
     }
 
-    #[test]
-    fn test_propagate_contradiction() {
+    #[tokio::test]
+    async fn test_propagate_contradiction() {
         // Rule: T0 can only be next to T0 (+X), T1 only next to T1 (+X)
         let rules = AdjacencyRules::from_allowed_tuples(2, 6, vec![(0, 0, 0), (0, 1, 1)]);
         let mut grid = PossibilityGrid::new(2, 1, 1, 2);
@@ -251,20 +257,24 @@ mod tests {
 
         // Propagate from (0,0,0). It requires neighbor (1,0,0) to be T0.
         // But (1,0,0) is already T1. Contradiction!
-        let result = propagator.propagate(&mut grid, vec![(0, 0, 0)], &rules);
+        let result = propagator
+            .propagate(&mut grid, vec![(0, 0, 0)], &rules)
+            .await;
         assert!(matches!(
             result,
             Err(PropagationError::Contradiction(1, 0, 0))
         ));
     }
 
-    #[test]
-    fn test_propagate_periodic() {
+    #[tokio::test]
+    async fn test_propagate_periodic() {
         let rules = create_rules_for_tests();
         let mut grid = PossibilityGrid::new(3, 1, 1, 2);
         let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Periodic);
         *grid.get_mut(0, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 0]; // Start with T0
-        let result = propagator.propagate(&mut grid, vec![(0, 0, 0)], &rules);
+        let result = propagator
+            .propagate(&mut grid, vec![(0, 0, 0)], &rules)
+            .await;
         // Source T0, axis 1 (-X). Rule (1,1,0). T0 supports nothing. Supported=[0,0].
         // Intersect neighbor [1,1] with [0,0] -> Contradiction at neighbor (2,0,0).
         assert!(
@@ -275,37 +285,39 @@ mod tests {
         // No need to check neighbor states if it's a contradiction
     }
 
-    #[test]
-    fn test_propagate_constraints() {
+    #[tokio::test]
+    async fn test_propagate_constraints() {
         let _rules = create_rules_for_tests();
         // TODO: Add actual assertions for constraint propagation
         // For now, just ensure it compiles and runs without panic
     }
 
-    #[test]
-    fn test_no_propagation_needed() {
+    #[tokio::test]
+    async fn test_no_propagation_needed() {
         let rules = create_rules_for_tests();
         let mut grid = PossibilityGrid::new(2, 1, 1, 2);
         let grid_before = grid.clone();
         let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Finite);
 
         // Propagate with empty update list
-        let result = propagator.propagate(&mut grid, vec![], &rules);
+        let result = propagator.propagate(&mut grid, vec![], &rules).await;
         assert!(result.is_ok());
 
         // Grid should remain unchanged
         assert_eq!(grid, grid_before);
     }
 
-    #[test]
-    fn test_propagate_no_change() {
+    #[tokio::test]
+    async fn test_propagate_no_change() {
         let (mut grid, rules) = setup_basic_test();
         let _grid_before = grid.clone(); // Keep clone for potential debugging, but don't assert equality
         let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Finite);
         let initial_updates = vec![(0, 0, 0)]; // Update a cell
 
         // Propagate. With the specific rules, changes ARE expected.
-        let result = propagator.propagate(&mut grid, initial_updates, &rules);
+        let result = propagator
+            .propagate(&mut grid, initial_updates, &rules)
+            .await;
         assert!(
             result.is_ok(),
             "Propagation failed unexpectedly: {:?}",
@@ -315,8 +327,8 @@ mod tests {
         // We could add specific assertions about the expected state of neighbors if needed.
     }
 
-    #[test]
-    fn cpu_propagator_consistency_check_integration() {
+    #[tokio::test]
+    async fn cpu_propagator_consistency_check_integration() {
         // This test integrates the consistency check within the CPU propagator context
         let _rules = create_rules_for_tests();
         let mut _grid = PossibilityGrid::new(3, 3, 1, 2); // Use underscore if grid isn't used yet

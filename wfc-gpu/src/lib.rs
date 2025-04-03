@@ -51,6 +51,13 @@ pub enum GpuError {
     /// Failed to map a GPU buffer for CPU access (e.g., reading results).
     #[error("Failed to map GPU buffer: {0}")]
     BufferMapFailed(#[from] wgpu::BufferAsyncError),
+    /// Error specifically during buffer mapping (distinct from BufferMapFailed?).
+    /// Often used when checking the result of a `map_async` callback.
+    #[error("Buffer mapping error: {0:?}")]
+    BufferMapError(wgpu::BufferMapError),
+    /// Generic internal error, often for logic errors or unexpected states.
+    #[error("Internal GPU logic error: {0}")]
+    InternalError(String),
     /// A generic GPU operation error with a custom message.
     #[error("GPU operation failed: {0}")]
     Other(String),

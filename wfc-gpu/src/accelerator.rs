@@ -1,4 +1,5 @@
 use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
+use async_trait::async_trait;
 use log::info;
 use std::sync::Arc;
 use wfc_core::{
@@ -206,28 +207,26 @@ impl GpuAccelerator {
 
 // --- Trait Implementations ---
 
+#[async_trait]
 impl ConstraintPropagator for GpuAccelerator {
     /// Delegates propagation to an internal `GpuConstraintPropagator` instance.
     ///
     /// Note: This creates a new `GpuConstraintPropagator` instance on each call.
     /// Consider optimizing if this becomes a bottleneck (e.g., store propagator instance).
-    fn propagate(
+    async fn propagate(
         &mut self,
         grid: &mut PossibilityGrid,
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        // Create a GpuConstraintPropagator using the accelerator's resources
-        let mut propagator = GpuConstraintPropagator::new(
-            self.device(),        // Pass cloned Arc<Device>
-            self.queue(),         // Pass cloned Arc<Queue>
-            self.pipelines(),     // Pass cloned Arc<ComputePipelines>
-            self.buffers(),       // Pass cloned Arc<GpuBuffers>
-            self.grid_dims(),     // Pass grid dimensions
-            self.boundary_mode(), // Pass boundary mode
-        );
-        // Delegate the actual work
-        propagator.propagate(grid, updated_coords, rules)
+        // Lock the state to get access to the propagator
+        let mut state_guard = self.state.lock().await;
+
+        // Await the inner propagator call
+        state_guard
+            .propagator
+            .propagate(grid, updated_coords, rules)
+            .await
     }
 }
 

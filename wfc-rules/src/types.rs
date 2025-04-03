@@ -396,7 +396,6 @@ impl AdjacencyRules {
 mod tests {
     use super::*;
     use crate::TileId; // Make sure TileId is in scope
-    use std::collections::HashSet;
 
     // Helper to create a basic AdjacencyRules for testing
     fn create_test_rules() -> AdjacencyRules {
@@ -518,6 +517,39 @@ mod tests {
         assert!(!rules.check(1, 0, 6)); // Check with invalid axis is false
     }
 
+    #[test]
+    fn test_tileset_new_valid() {
+        let weights = vec![1.0, 2.0];
+        let transformations = vec![
+            vec![Transformation::Identity, Transformation::Rot90],
+            vec![Transformation::Identity],
+        ];
+        let _tileset = TileSet::new(weights.clone(), transformations.clone()).unwrap();
+        // Add assertions or further checks if necessary
+    }
+
+    #[test]
+    fn test_adjacency_rules_from_allowed_tuples() {
+        let _tileset =
+            TileSet::new(vec![1.0, 1.0], vec![vec![Transformation::Identity]; 2]).unwrap();
+        let _rules = AdjacencyRules::from_allowed_tuples(
+            2, // num_transformed_tiles
+            6, // num_axes
+            vec![(0, 1, 0)],
+        );
+    }
+
+    #[test]
+    fn test_adjacency_rules_check() {
+        let _tileset =
+            TileSet::new(vec![1.0, 1.0], vec![vec![Transformation::Identity]; 2]).unwrap();
+        let rules = AdjacencyRules::from_allowed_tuples(
+            2,               // num_transformed_tiles
+            6,               // num_axes
+            vec![(0, 1, 0)], // Allow tile 0 next to tile 1 along axis 0 (+X)
+        );
+    }
+
     // Add more tests for AdjacencyRules if needed
 }
 
@@ -541,7 +573,7 @@ mod proptests {
             // Generate a vector of these tuples
             proptest::collection::vec(tuple_strategy, 0..num_tiles * num_tiles * num_axes).prop_map(
                 move |tuples| {
-                    let tileset = TileSet {
+                    let _tileset = TileSet {
                         weights: vec![1.0; num_tiles],
                         allowed_transformations: vec![
                             vec![Transformation::Identity; num_tiles];
@@ -607,7 +639,7 @@ mod proptests {
                 .filter(|(ax, t1, t2)| *ax < num_axes && *t1 < num_tiles && *t2 < num_tiles)
                 .collect();
 
-            let tileset = TileSet {
+            let _tileset = TileSet {
                 weights: vec![1.0; num_tiles],
                 allowed_transformations: vec![vec![Transformation::Identity; num_tiles]; num_tiles],
                 num_transformed_tiles: num_tiles,
