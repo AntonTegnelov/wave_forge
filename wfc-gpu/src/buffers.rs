@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
-use wfc_core::BoundaryMode;
+use wfc_core::BoundaryCondition;
 use wfc_rules::AdjacencyRules;
 use wgpu;
 use wgpu::util::DeviceExt;
@@ -145,10 +145,10 @@ impl GpuBuffers {
     ///   (e.g., size mismatch).
     pub fn new(
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        queue: &wgpu::Queue,
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
-        boundary_mode: BoundaryMode,
+        boundary_mode: BoundaryCondition,
     ) -> Result<Self, GpuError> {
         info!(
             "Creating GPU buffers with boundary mode: {:?}...",
@@ -254,8 +254,8 @@ impl GpuBuffers {
             num_axes: num_axes as u32,
             worklist_size: 0, // Initial worklist size is 0
             boundary_mode: match boundary_mode {
-                BoundaryMode::Clamped => 0,
-                BoundaryMode::Periodic => 1,
+                BoundaryCondition::Finite => 0,
+                BoundaryCondition::Periodic => 1,
             },
             _padding1: 0,
         };
@@ -993,10 +993,26 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use wfc_core::grid::PossibilityGrid;
-    use wfc_core::BoundaryMode;
+    use wfc_core::BoundaryCondition;
     use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
 
-    // Helper to create uniform rules
+    // Test utils defined locally
+    async fn setup_wgpu() -> (wgpu::Device, wgpu::Queue) {
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .expect("Failed to find an appropriate adapter");
+        adapter
+            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .await
+            .expect("Failed to create device")
+    }
+    fn create_simple_tileset(num_base_tiles: usize) -> Result<TileSet, TileSetError> {
+        let weights = vec![1.0; num_base_tiles];
+        let allowed_transforms = vec![vec![Transformation::Identity]; num_base_tiles];
+        TileSet::new(weights, allowed_transforms)
+    }
     fn create_uniform_rules(tileset: &TileSet) -> AdjacencyRules {
         let num_tiles = tileset.num_transformed_tiles();
         let num_axes = 6;
@@ -1011,123 +1027,33 @@ mod tests {
         AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_tuples)
     }
 
-    // Helper to create simple tileset
-    fn create_simple_tileset(num_base_tiles: usize) -> Result<TileSet, TileSetError> {
-        let weights = vec![1.0; num_base_tiles];
-        let allowed_transforms = vec![vec![Transformation::Identity]; num_base_tiles];
-        TileSet::new(weights, allowed_transforms)
-    }
-
-    // Mock device/queue setup
-    struct MockGpuResources {
-        device: Arc<wgpu::Device>,
-        queue: Arc<wgpu::Queue>,
-    }
-
-    async fn setup_mock_gpu() -> Option<MockGpuResources> {
-        // Standard setup using default adapter/device
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            dx12_shader_compiler: Default::default(),
-            gles_minor_version: wgpu::Gles3MinorVersion::default(),
-            flags: Default::default(),
-        });
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            })
-            .await?;
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    label: None,
-                },
-                None, // Trace path
-            )
-            .await
-            .ok()?;
-
-        Some(MockGpuResources {
-            device: Arc::new(device),
-            queue: Arc::new(queue),
-        })
-    }
-
-    #[tokio::test]
-    async fn test_buffer_creation_with_boundary_mode() {
-        let gpu_res = match setup_mock_gpu().await {
-            Some(res) => res,
-            None => {
-                println!("Skipping test_buffer_creation_with_boundary_mode: No suitable GPU adapter found.");
-                return;
-            }
-        };
-        let device = &gpu_res.device;
-        let queue = &gpu_res.queue;
-
-        let tileset = create_simple_tileset(2).unwrap();
+    #[test]
+    fn test_buffer_creation() {
+        let (device, queue) = pollster::block_on(setup_wgpu());
+        let tileset = create_simple_tileset(4).unwrap();
         let rules = create_uniform_rules(&tileset);
         let grid = PossibilityGrid::new(2, 2, 2, tileset.num_transformed_tiles());
-
-        let result_clamped = GpuBuffers::new(device, queue, &grid, &rules, BoundaryMode::Clamped);
-        assert!(result_clamped.is_ok());
-
-        let result_periodic = GpuBuffers::new(device, queue, &grid, &rules, BoundaryMode::Periodic);
+        // Pass references to device and queue
+        let result_finite =
+            GpuBuffers::new(&device, &queue, &grid, &rules, BoundaryCondition::Finite);
+        assert!(result_finite.is_ok());
+        let result_periodic =
+            GpuBuffers::new(&device, &queue, &grid, &rules, BoundaryCondition::Periodic);
         assert!(result_periodic.is_ok());
     }
 
     #[test]
-    fn test_buffer_creation() {
-        assert!(true); // Simple compile check
-    }
-
-    // Other tests (upload_updates, reset_functions, etc.) remain as placeholders
-    // because they require actual GPU interaction which is hard in unit tests.
-    #[test]
-    fn test_upload_updates() {
-        assert!(true);
-    }
-
-    #[test]
-    fn test_reset_functions() {
-        assert!(true);
-    }
-
-    #[test]
-    fn test_update_params_worklist_size() {
-        assert!(true);
-    }
-
-    #[tokio::test]
-    async fn test_download_smoke_tests() {
-        // Smoke tests for download functions (check they compile and run basic async flow)
-        let gpu_res = match setup_mock_gpu().await {
-            Some(res) => res,
-            None => {
-                println!("Skipping test_download_smoke_tests: No suitable GPU adapter found.");
-                return;
-            }
-        };
-        let device = &gpu_res.device;
-        let queue = &gpu_res.queue;
-
+    fn test_download_buffers() {
+        let (device, queue) = pollster::block_on(setup_wgpu());
         let tileset = create_simple_tileset(2).unwrap();
         let rules = create_uniform_rules(&tileset);
         let grid = PossibilityGrid::new(2, 2, 2, tileset.num_transformed_tiles());
-        let buffers = GpuBuffers::new(device, queue, &grid, &rules, BoundaryMode::Clamped).unwrap();
+        let buffers =
+            GpuBuffers::new(&device, &queue, &grid, &rules, BoundaryCondition::Finite).unwrap();
 
-        // Just call download functions, check if they return Result (don't care about value here)
-        let _ = buffers.download_entropy(device, queue).await;
-        let _ = buffers.download_min_entropy_info(device, queue).await;
-        let _ = buffers.download_contradiction_flag(device, queue).await;
-        let _ = buffers.download_contradiction_location(device, queue).await;
-        let _ = buffers.download_worklist_count(device, queue).await;
-        assert!(true); // If it reaches here without panic, basic flow is ok
+        assert!(pollster::block_on(buffers.download_entropy(&device, &queue)).is_ok());
+        assert!(pollster::block_on(buffers.download_contradiction_flag(&device, &queue)).is_ok());
+        assert!(pollster::block_on(buffers.download_possibilities(&device, &queue)).is_ok());
+        assert!(pollster::block_on(buffers.download_min_entropy_info(&device, &queue)).is_ok());
     }
 }

@@ -1,8 +1,13 @@
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
-use wfc_core::BoundaryMode;
+use wfc_core::BoundaryCondition;
 use wfc_gpu::buffers::GpuBuffers;
 use wfc_gpu::GpuError;
+use wfc_rules::{AdjacencyRules, TileSet, Transformation};
+use wgpu::Device;
+
+mod test_utils;
+use test_utils::{create_simple_tileset, create_uniform_rules, setup_wgpu};
 
 // Helper function to convert a flat allowed rules vector to allowed tuples
 // This replaces the old AdjacencyRules::new(num_tiles, num_axes, vec![true; ...]) calls
@@ -66,7 +71,7 @@ fn test_buffer_creation_sizes() {
 
     let device = Arc::new(device);
     let queue = Arc::new(queue);
-    let boundary_mode = BoundaryMode::Clamped;
+    let boundary_mode = BoundaryCondition::Finite;
 
     // Create buffers
     let buffers_result = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode);
@@ -147,7 +152,7 @@ fn test_reset_contradiction_flag() {
     // Dummy grid/rules needed for buffer creation
     let grid = PossibilityGrid::new(1, 1, 1, 1);
     let rules = create_uniform_rules(1, 6);
-    let boundary_mode = BoundaryMode::Clamped;
+    let boundary_mode = BoundaryCondition::Finite;
     let buffers = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode)
         .expect("Failed to create buffers");
 
@@ -172,7 +177,7 @@ fn test_update_params_worklist_size() {
     // Dummy grid/rules
     let grid = PossibilityGrid::new(1, 1, 1, 1);
     let rules = create_uniform_rules(1, 6);
-    let boundary_mode = BoundaryMode::Clamped;
+    let boundary_mode = BoundaryCondition::Finite;
     let buffers = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode)
         .expect("Failed to create buffers");
 
@@ -240,7 +245,7 @@ fn test_large_grid_buffer_creation() {
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
-        let boundary_mode = BoundaryMode::Clamped;
+        let boundary_mode = BoundaryCondition::Finite;
 
         // Attempt to create buffers
         match GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode) {
@@ -308,7 +313,7 @@ fn test_upload_grid_possibilities() {
 
     let device = Arc::new(device);
     let queue = Arc::new(queue);
-    let boundary_mode = BoundaryMode::Periodic;
+    let boundary_mode = BoundaryCondition::Periodic;
 
     // Create buffers
     let buffers_result = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode);
@@ -400,7 +405,7 @@ fn test_upload_rules() {
 
     let device = Arc::new(device);
     let queue = Arc::new(queue);
-    let boundary_mode = BoundaryMode::Clamped;
+    let boundary_mode = BoundaryCondition::Finite;
 
     // Create buffers
     let buffers_result = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode);
@@ -492,10 +497,10 @@ fn test_upload_initial_updates() {
 
     let device = Arc::new(device);
     let queue = Arc::new(queue);
-    let _boundary_mode = BoundaryMode::Clamped; // Prefix unused variable
+    let _boundary_mode = BoundaryCondition::Finite; // Prefix unused variable
 
     // Create buffers
-    match GpuBuffers::new(&device, &queue, &grid, &rules, BoundaryMode::Clamped) {
+    match GpuBuffers::new(&device, &queue, &grid, &rules, BoundaryCondition::Finite) {
         Ok(_buffers) => { // Prefix unused variable _buffers
              // Check if the buffer for initial updates exists and has the right size
              // (Further checks would involve reading back data, which is complex)

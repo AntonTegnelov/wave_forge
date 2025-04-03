@@ -78,6 +78,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // Specialization constant for number of u32s per cell
 override NUM_TILES_U32: u32 = 1u; // Default value, MUST be overridden by pipeline
 
+// Specialization constant for workgroup size (X dimension)
+override WORKGROUP_SIZE_X: u32 = 64u; // Default value, can be overridden by pipeline creation
+
 // Uniforms for grid dimensions, num_tiles etc.
 struct Params {
     grid_width: u32,
@@ -159,7 +162,7 @@ fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
 }
 
 @compute
-@workgroup_size(64, 1, 1) // Switch to simple 1D layout - much less error prone
+@workgroup_size(WORKGROUP_SIZE_X, 1, 1) // Use specialization constant
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Use flat 1D indexing - much more reliable
     let thread_idx = global_id.x;

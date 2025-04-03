@@ -5,9 +5,10 @@ use wfc_core::{
     entropy::{EntropyCalculator, EntropyError},
     grid::{EntropyGrid, PossibilityGrid},
     propagator::{ConstraintPropagator, PropagationError},
-    BoundaryMode,
+    BoundaryCondition,
 }; // Use Arc for shared GPU resources
-use wfc_rules::AdjacencyRules; // Added import
+use wfc_rules::AdjacencyRules; // Import from wfc_rules instead
+use wgpu; // Assuming wgpu is needed
 
 /// Manages the WGPU context and orchestrates GPU-accelerated WFC operations.
 ///
@@ -39,7 +40,7 @@ pub struct GpuAccelerator {
     pipelines: Arc<ComputePipelines>, // Changed to Arc
     buffers: Arc<GpuBuffers>,         // Changed to Arc
     grid_dims: (usize, usize, usize),
-    boundary_mode: BoundaryMode, // Store boundary mode
+    boundary_mode: BoundaryCondition, // Store boundary mode
 }
 
 // Import the concrete GPU implementations
@@ -76,7 +77,7 @@ impl GpuAccelerator {
     pub async fn new(
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
-        boundary_mode: BoundaryMode,
+        boundary_mode: BoundaryCondition,
     ) -> Result<Self, GpuError> {
         info!(
             "Entered GpuAccelerator::new with boundary mode {:?}",
@@ -198,7 +199,7 @@ impl GpuAccelerator {
     }
 
     /// Returns the boundary mode used by this accelerator.
-    pub fn boundary_mode(&self) -> BoundaryMode {
+    pub fn boundary_mode(&self) -> BoundaryCondition {
         self.boundary_mode
     }
 }

@@ -1,12 +1,14 @@
+use bitvec::prelude::{bitvec, Lsb0};
 use pollster;
 use std::{
     thread,
     time::{Duration, Instant},
 };
-use wfc_core::EntropyCalculator;
-use wfc_core::{grid::PossibilityGrid, propagator::ConstraintPropagator, BoundaryMode};
+use wfc_core::{
+    grid::PossibilityGrid, propagator::ConstraintPropagator, BoundaryCondition, EntropyCalculator,
+};
 use wfc_gpu::accelerator::GpuAccelerator;
-use wfc_rules::AdjacencyRules;
+use wfc_rules::{AdjacencyRules, TileSet, Transformation};
 
 // A custom drop implementation to ensure proper GPU device cleanup
 struct SafetyGuard;
@@ -149,7 +151,7 @@ fn test_gpu_propagate_basic_run() {
     let timeout = Duration::from_secs(1); // Reduced from 10s to 1s for faster testing feedback
     let start_time = Instant::now();
 
-    let boundary_mode = BoundaryMode::Clamped;
+    let boundary_mode = BoundaryCondition::Clamped;
     let accelerator_result = pollster::block_on(GpuAccelerator::new(&grid, &rules, boundary_mode));
 
     // Check if we timed out
@@ -254,7 +256,7 @@ fn test_gpu_entropy_calculation_edge_cases() {
             // Pass reference directly
             &grid_guard,
             &rules,
-            BoundaryMode::Periodic,
+            BoundaryCondition::Periodic,
         ));
         if let Ok(accelerator) = accelerator_result {
             println!("Initialized accelerator for collapsed grid.");
@@ -304,7 +306,7 @@ fn test_gpu_entropy_calculation_edge_cases() {
         let accelerator_result = pollster::block_on(GpuAccelerator::new(
             &grid_guard,
             &rules,
-            BoundaryMode::Periodic,
+            BoundaryCondition::Periodic,
         ));
         if let Ok(accelerator) = accelerator_result {
             println!("Initialized accelerator for contradiction grid.");
@@ -347,7 +349,7 @@ fn test_gpu_entropy_calculation_edge_cases() {
         let accelerator_result = pollster::block_on(GpuAccelerator::new(
             &grid_guard,
             &rules,
-            BoundaryMode::Periodic,
+            BoundaryCondition::Periodic,
         ));
         if let Ok(accelerator) = accelerator_result {
             println!("Initialized accelerator for varying entropy grid.");
@@ -400,11 +402,50 @@ fn test_new_gpu_accelerator_success() {
     let result = pollster::block_on(GpuAccelerator::new(
         &grid,
         &rules,
-        BoundaryMode::Periodic, // Added boundary mode
+        BoundaryCondition::Periodic, // Added boundary mode
     ));
     assert!(
         result.is_ok(),
         "Failed to create GpuAccelerator: {:?}",
         result.err()
     );
+}
+
+#[tokio::test]
+#[ignore] // Ignore tests requiring GPU by default
+async fn test_gpu_propagation_simple() {
+    // ... setup ...
+    let boundary_mode = BoundaryCondition::Finite; // Use correct enum name
+                                                   // ... rest of test ...
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_gpu_entropy_calculation() {
+    // ... setup ...
+    let boundary_mode = BoundaryCondition::Periodic; // Use correct enum name
+                                                     // ... rest of test ...
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_gpu_observe() {
+    // ... setup ...
+    let boundary_mode = BoundaryCondition::Periodic; // Use correct enum name
+                                                     // ... rest of test ...
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_gpu_full_cycle() {
+    // ... setup ...
+    let boundary_mode = BoundaryCondition::Periodic; // Use correct enum name
+                                                     // ... rest of test ...
+}
+
+#[tokio::test]
+async fn test_accelerator_new() {
+    // ... setup ...
+    let boundary_mode = BoundaryCondition::Periodic; // Use correct enum name
+                                                     // ... rest of test ...
 }

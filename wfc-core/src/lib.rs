@@ -1,13 +1,14 @@
 //! Core library for the Wave Function Collapse algorithm implementation.
 //! Defines the fundamental data structures and platform-agnostic logic.
 
-// Removed: use bitvec::prelude::*; (unused import)
-// use crate::grid::PossibilityGrid;
+// REMOVED: use bitvec::prelude::{BitVec, Lsb0};
 use rand::distributions::WeightedError;
+#[cfg(feature = "serde")] // Guard serde imports
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 use wfc_rules::TileSetError;
+// use bitvec::prelude::{BitVec, Lsb0}; // Add necessary bitvec imports
 
 // Module declarations (keep public if they contain public items)
 /// Entropy calculation logic and traits.
@@ -85,10 +86,20 @@ pub enum WfcError {
     /// An error occurred during entropy calculation.
     #[error("Entropy calculation error: {0}")]
     EntropyError(#[from] EntropyError),
+    /// WFC exceeded the configured maximum number of iterations.
+    #[error("Maximum iterations ({0}) reached")]
+    MaxIterationsReached(u64),
+    /// WFC run was interrupted by the external shutdown signal.
+    #[error("Shutdown signal received")]
+    ShutdownSignalReceived,
+    /// An error occurred during propagation (wrapper for PropagationError).
+    #[error("Propagation error: {0}")]
+    Propagation(PropagationError),
 }
 
 /// Information about the current state of the WFC algorithm execution.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProgressInfo {
     /// The total number of cells that have been collapsed.
     pub collapsed_cells: usize,
@@ -103,7 +114,8 @@ pub struct ProgressInfo {
 }
 
 /// Represents a saved state of the WFC algorithm for checkpointing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct WfcCheckpoint {
     /// The state of the possibility grid at the time of the checkpoint.
     pub grid: PossibilityGrid,
@@ -113,20 +125,16 @@ pub struct WfcCheckpoint {
     // Resuming will use a new RNG seed unless managed externally.
 }
 
-/// Defines how the WFC algorithm handles grid boundaries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))] // Conditionally derive clap::ValueEnum
-#[derive(Default)] // Add Default here
-pub enum BoundaryMode {
-    /// Tiles on the boundary must be compatible with a fixed 'boundary' tile (not implemented yet).
-    // Fixed(TileId),
-
-    /// The grid wraps around (periodic boundary conditions).
+/// Defines different boundary handling strategies for the grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+pub enum BoundaryCondition {
+    /// Edges wrap around (toroidal topology).
     Periodic,
-
-    /// The grid does not wrap; edges are treated as having no neighbors.
-    #[default] // Mark Clamped as the default
-    Clamped,
+    /// Grid boundaries act as hard walls; neighbors outside the grid are ignored.
+    #[default]
+    Finite,
 }
 
 /// Represents the execution mode (CPU or GPU) for WFC components.

@@ -54,6 +54,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // Specialization constant for number of u32s per cell
 override NUM_TILES_U32: u32 = 1u; // Default value, MUST be overridden by pipeline
 
+// Specialization constant for workgroup size (X dimension)
+override WORKGROUP_SIZE_X: u32 = 64u; // Default value, can be overridden by pipeline creation
+
 // Params struct containing grid dimensions
 struct Params {
     grid_width: u32,
@@ -112,7 +115,7 @@ fn count_set_bits(n: u32) -> u32 {
     return count;
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WORKGROUP_SIZE_X) // Use specialization constant
 fn main(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {

@@ -1,4 +1,7 @@
-use bitvec::prelude::*;
+// use crate::error::GridError; // REMOVED
+// use crate::GridError; // REMOVED
+use bitvec::prelude::{bitvec, BitVec, Lsb0};
+#[cfg(feature = "serde")] // Guard serde imports
 use serde::{Deserialize, Serialize};
 
 /// A generic 3-dimensional grid structure holding data of type `T`.
@@ -90,7 +93,8 @@ impl<T: Clone + Default> Grid<T> {
 /// Each cell contains a `BitVec`, where the index corresponds to a `TileId`.
 /// If the bit at index `i` is set (`true`), it means `TileId(i)` is still considered
 /// a possible tile for that cell. If the bit is unset (`false`), the tile has been eliminated.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)] // Removed direct Serialize/Deserialize
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))] // Guard derive macros
 pub struct PossibilityGrid {
     /// The width of the grid (X dimension).
     pub width: usize,
@@ -102,7 +106,6 @@ pub struct PossibilityGrid {
     /// This determines the length of the `BitVec` in each cell.
     num_tiles: usize,
     /// The flattened 1D vector storing the `BitVec` possibility state for each cell.
-    /// Use `get` and `get_mut` for safe access via 3D coordinates.
     data: Vec<BitVec>,
 }
 
@@ -136,8 +139,8 @@ impl PossibilityGrid {
             };
         }
         // Create a template BitVec with all possibilities set
-        let all_possible = bitvec![1; num_tiles];
-        // Initialize the data vector by cloning the template
+        let all_possible = bitvec![usize, Lsb0; 1; num_tiles]; // Use imported macro
+                                                               // Initialize the data vector by cloning the template
         let data = vec![all_possible; size];
         Self {
             width,
@@ -192,6 +195,74 @@ impl PossibilityGrid {
     pub fn get_mut(&mut self, x: usize, y: usize, z: usize) -> Option<&mut BitVec> {
         self.index(x, y, z)
             .and_then(move |idx| self.data.get_mut(idx))
+    }
+
+    /// Collapses a cell to a single specified tile.
+    ///
+    /// Sets the possibility `BitVec` for the cell at `(x, y, z)` to contain only
+    /// the `chosen_tile_id`.
+    ///
+    /// # Arguments
+    /// * `x`, `y`, `z` - Coordinates of the cell to collapse.
+    /// * `chosen_tile_id` - The ID (index) of the tile to collapse to.
+    ///
+    /// # Returns
+    /// * `Ok(())` if collapse was successful.
+    /// * `Err(String)` if coordinates are out of bounds or the chosen tile ID is invalid.
+    pub fn collapse(
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
+        chosen_tile_id: usize,
+    ) -> Result<(), String> {
+        if chosen_tile_id >= self.num_tiles {
+            return Err(format!(
+                "Chosen tile ID {} is out of bounds (num_tiles: {})",
+                chosen_tile_id, self.num_tiles
+            ));
+        }
+        if let Some(cell) = self.get_mut(x, y, z) {
+            cell.fill(false); // Clear all possibilities
+            cell.set(chosen_tile_id, true); // Set only the chosen one
+            Ok(())
+        } else {
+            Err(format!(
+                "Collapse coordinates ({}, {}, {}) out of bounds",
+                x, y, z
+            ))
+        }
+    }
+
+    /// Checks if the grid is fully collapsed (every cell has exactly one possibility).
+    /// Returns `Ok(true)` if fully collapsed, `Ok(false)` otherwise.
+    /// Returns `Err(String)` if a contradiction (zero possibilities) or access error occurs.
+    pub fn is_fully_collapsed(&self) -> Result<bool, String> {
+        let mut fully_collapsed = true;
+        for z in 0..self.depth {
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    if let Some(cell) = self.get(x, y, z) {
+                        let count = cell.count_ones();
+                        if count == 0 {
+                            return Err(format!("Contradiction found at ({}, {}, {})", x, y, z));
+                        }
+                        if count > 1 {
+                            fully_collapsed = false;
+                            // Optimization: can return early if we only care if *any* cell is not collapsed
+                            // return Ok(false);
+                        }
+                    } else {
+                        // Should not happen with valid indices
+                        return Err(format!(
+                            "Grid access out of bounds at ({}, {}, {})",
+                            x, y, z
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(fully_collapsed)
     }
 }
 
@@ -345,39 +416,51 @@ mod tests {
     }
 
     #[test]
-    fn test_possibility_grid_serialization() {
+    #[cfg(feature = "serde")] // Guard test with feature flag
+    fn test_possibility_grid_serialize_deserialize() {
         let mut grid = PossibilityGrid::new(2, 1, 1, 3);
-        // Modify the grid state slightly
-        grid.get_mut(0, 0, 0).unwrap().set(1, false);
-        grid.get_mut(1, 0, 0).unwrap().set(0, false);
-        grid.get_mut(1, 0, 0).unwrap().set(2, false);
+        *grid.get_mut(0, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 0, 1];
+        *grid.get_mut(1, 0, 0).unwrap() = bitvec![usize, Lsb0; 0, 1, 0];
 
-        // Serialize to JSON
         let serialized = serde_json::to_string(&grid).expect("Serialization failed");
-
-        // Deserialize back
         let deserialized: PossibilityGrid =
             serde_json::from_str(&serialized).expect("Deserialization failed");
 
-        // Compare fields
         assert_eq!(grid.width, deserialized.width);
         assert_eq!(grid.height, deserialized.height);
         assert_eq!(grid.depth, deserialized.depth);
-        assert_eq!(grid.num_tiles(), deserialized.num_tiles());
+        assert_eq!(grid.num_tiles, deserialized.num_tiles);
         assert_eq!(grid.data.len(), deserialized.data.len());
-
-        // Compare data content (BitVec comparison)
-        for i in 0..grid.data.len() {
-            assert_eq!(grid.data[i], deserialized.data[i]);
-        }
-
-        // Spot check modified values
-        assert!(!deserialized.get(0, 0, 0).unwrap()[1]);
+        assert_eq!(grid.get(0, 0, 0), deserialized.get(0, 0, 0));
+        assert_eq!(grid.get(1, 0, 0), deserialized.get(1, 0, 0));
+        // Check specific bits
         assert!(deserialized.get(0, 0, 0).unwrap()[0]);
+        assert!(!deserialized.get(0, 0, 0).unwrap()[1]);
         assert!(deserialized.get(0, 0, 0).unwrap()[2]);
-
         assert!(!deserialized.get(1, 0, 0).unwrap()[0]);
         assert!(deserialized.get(1, 0, 0).unwrap()[1]);
         assert!(!deserialized.get(1, 0, 0).unwrap()[2]);
+    }
+
+    #[test]
+    fn test_possibility_grid_is_fully_collapsed() {
+        let mut grid = PossibilityGrid::new(2, 1, 1, 3); // 2 cells, 3 tiles
+
+        // Initially not collapsed
+        assert_eq!(grid.is_fully_collapsed(), Ok(false));
+
+        // Collapse cell 0
+        grid.get_mut(0, 0, 0).unwrap().fill(false);
+        grid.get_mut(0, 0, 0).unwrap().set(1, true); // Set to tile 1
+        assert_eq!(grid.is_fully_collapsed(), Ok(false)); // Still not fully collapsed
+
+        // Collapse cell 1
+        grid.get_mut(1, 0, 0).unwrap().fill(false);
+        grid.get_mut(1, 0, 0).unwrap().set(2, true); // Set to tile 2
+        assert_eq!(grid.is_fully_collapsed(), Ok(true)); // Now fully collapsed
+
+        // Introduce contradiction
+        grid.get_mut(0, 0, 0).unwrap().fill(false);
+        assert!(grid.is_fully_collapsed().is_err());
     }
 }

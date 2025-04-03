@@ -4,13 +4,12 @@ use std::sync::Arc;
 use wfc_core::{
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    BoundaryMode,
+    BoundaryCondition,
 };
 use wfc_rules::AdjacencyRules;
 
 const MAX_PROPAGATION_ITERATIONS: u32 = 100; // Safeguard against infinite loops
 const PROPAGATION_BATCH_SIZE: usize = 4096; // Number of updates to process per GPU dispatch
-const PROPAGATION_WORKGROUP_SIZE: u32 = 64; // Match the value in propagate.wgsl
 
 /// GPU implementation of the ConstraintPropagator trait.
 #[derive(Debug, Clone)]
@@ -21,7 +20,7 @@ pub struct GpuConstraintPropagator {
     pub(crate) pipelines: Arc<ComputePipelines>,
     pub(crate) buffers: Arc<GpuBuffers>,
     pub(crate) grid_dims: (usize, usize, usize),
-    pub(crate) _boundary_mode: BoundaryMode,
+    pub(crate) _boundary_mode: BoundaryCondition,
     // State for ping-pong buffer index
     current_worklist_idx: usize,
 }
@@ -34,7 +33,7 @@ impl GpuConstraintPropagator {
         pipelines: Arc<ComputePipelines>,
         buffers: Arc<GpuBuffers>,
         grid_dims: (usize, usize, usize),
-        boundary_mode: BoundaryMode,
+        boundary_mode: BoundaryCondition,
     ) -> Self {
         Self {
             device,
@@ -302,9 +301,9 @@ impl ConstraintPropagator for GpuConstraintPropagator {
                     compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
                     compute_pass.set_bind_group(0, &propagation_bind_group, &[]);
 
-                    // Use the constant for workgroup size
-                    let workgroups_needed =
-                        std::cmp::max(1, batch_size.div_ceil(PROPAGATION_WORKGROUP_SIZE));
+                    // Use the dynamic workgroup size from the pipeline struct
+                    let workgroup_size = self.pipelines.propagation_workgroup_size;
+                    let workgroups_needed = std::cmp::max(1, batch_size.div_ceil(workgroup_size));
                     compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
                 } // End compute pass
 
@@ -416,7 +415,7 @@ mod tests {
     use crate::accelerator::GpuAccelerator;
     use crate::GpuError;
     use wfc_core::grid::PossibilityGrid;
-    use wfc_core::BoundaryMode;
+    use wfc_core::BoundaryCondition;
     use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
 
     // --- Test Setup Helpers ---
@@ -448,7 +447,7 @@ mod tests {
     async fn setup_test_accelerator(
         grid: &PossibilityGrid,
         rules: &AdjacencyRules,
-        boundary_mode: BoundaryMode,
+        boundary_mode: BoundaryCondition,
     ) -> Result<GpuAccelerator, GpuError> {
         // Only run if a GPU is available
         match GpuAccelerator::new(grid, rules, boundary_mode).await {
@@ -521,7 +520,7 @@ mod tests {
         let center_cell = initial_grid.get_mut(1, 0, 0).unwrap();
         center_cell.set(1, false); // Disallow Tile 1
 
-        let boundary_mode = BoundaryMode::Clamped;
+        let boundary_mode = BoundaryCondition::Finite;
         let mut accelerator =
             match setup_test_accelerator(&initial_grid, &rules, boundary_mode).await {
                 Ok(acc) => acc,
@@ -570,7 +569,7 @@ mod tests {
         let cell_0 = initial_grid.get_mut(0, 0, 0).unwrap();
         cell_0.set(1, false); // Disallow Tile 1
 
-        let boundary_mode = BoundaryMode::Periodic;
+        let boundary_mode = BoundaryCondition::Periodic;
         let mut accelerator =
             match setup_test_accelerator(&initial_grid, &rules, boundary_mode).await {
                 Ok(acc) => acc,

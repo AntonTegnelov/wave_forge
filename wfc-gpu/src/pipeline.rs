@@ -1,12 +1,47 @@
 use crate::GpuError;
+use log;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use wgpu;
+// Added imports for caching
+use once_cell::sync::Lazy;
+use seahash::SeaHasher;
+use std::hash::{Hash, Hasher};
+
+// --- Cache Definitions ---
+
+// Key for shader module cache: based on shader source code
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct ShaderCacheKey {
+    source_hash: u64,
+}
+
+// Key for pipeline cache: includes shader details and configuration
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct PipelineCacheKey {
+    shader_key: ShaderCacheKey,
+    entry_point: String,
+}
+
+// Static caches using Lazy and Mutex for thread-safe initialization and access
+static SHADER_MODULE_CACHE: Lazy<Mutex<HashMap<ShaderCacheKey, Arc<wgpu::ShaderModule>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+static COMPUTE_PIPELINE_CACHE: Lazy<Mutex<HashMap<PipelineCacheKey, Arc<wgpu::ComputePipeline>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+// --- Helper Function to Hash Strings ---
+fn hash_string(s: &str) -> u64 {
+    let mut hasher = SeaHasher::new();
+    s.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Manages the WGPU compute pipelines required for WFC acceleration.
 ///
 /// This struct holds the compiled compute pipeline objects and their corresponding
 /// bind group layouts for both the entropy calculation and constraint propagation shaders.
+/// It also stores the dynamically determined workgroup sizes for optimal dispatch.
 /// It is typically created once during the initialization of the `GpuAccelerator`.
 #[derive(Clone, Debug)]
 pub struct ComputePipelines {
@@ -20,18 +55,27 @@ pub struct ComputePipelines {
     /// The layout describing the binding structure for the propagation pipeline's bind group.
     /// Required for creating bind groups compatible with `propagation_pipeline`.
     pub propagation_bind_group_layout: Arc<wgpu::BindGroupLayout>,
+    /// Dynamically determined optimal workgroup size (X-dimension) for the entropy shader.
+    pub entropy_workgroup_size: u32,
+    /// Dynamically determined optimal workgroup size (X-dimension) for the propagation shader.
+    pub propagation_workgroup_size: u32,
 }
 
 impl ComputePipelines {
     /// Creates new `ComputePipelines` by loading shaders and compiling them.
     ///
+    /// Uses caching to avoid recompiling shaders and pipelines if they have been created before
+    /// with the same configuration.
+    ///
     /// This function:
-    /// 1. Loads the WGSL source code for the entropy and propagation shaders.
-    /// 2. Creates `wgpu::ShaderModule` objects from the source code.
-    /// 3. Defines the `wgpu::BindGroupLayout` for each shader, specifying the types and bindings
+    /// 1. Queries device limits for optimal workgroup sizing.
+    /// 2. Loads the WGSL source code for the entropy and propagation shaders.
+    /// 3. Creates `wgpu::ShaderModule` objects from the source code.
+    /// 4. Defines the `wgpu::BindGroupLayout` for each shader, specifying the types and bindings
     ///    of the GPU buffers they expect (e.g., storage buffers, uniform buffers).
-    /// 4. Defines the `wgpu::PipelineLayout` using the bind group layouts.
-    /// 5. Creates the `wgpu::ComputePipeline` objects using the shader modules and pipeline layouts.
+    /// 5. Defines the `wgpu::PipelineLayout` using the bind group layouts.
+    /// 6. Creates the `wgpu::ComputePipeline` objects using the shader modules, pipeline layouts,
+    ///    and specialization constants (including the dynamically determined workgroup size).
     ///
     /// # Arguments
     ///
@@ -42,21 +86,61 @@ impl ComputePipelines {
     ///
     /// * `Ok(Self)` containing the initialized `ComputePipelines`.
     /// * `Err(GpuError)` if shader loading, compilation, or pipeline creation fails.
-    pub fn new(device: &wgpu::Device, num_tiles_u32: u32) -> Result<Self, GpuError> {
-        // Load shader code
+    pub fn new(device: &wgpu::Device, _num_tiles_u32: u32) -> Result<Self, GpuError> {
+        // Query device limits
+        let limits = device.limits();
+        let max_invocations = limits.max_compute_invocations_per_workgroup;
+        log::debug!(
+            "GPU max compute invocations per workgroup: {}",
+            max_invocations
+        );
+
+        // Determine workgroup size - NOTE: This is now informational only, not used for specialization
+        let chosen_workgroup_size_x = max_invocations.min(256).max(64);
+        log::info!(
+            "Chosen workgroup size X (informational): {}",
+            chosen_workgroup_size_x
+        );
+
+        // --- Get or Create Entropy Shader Module ---
         let entropy_shader_code = include_str!("shaders/entropy.wgsl");
+        let entropy_shader_key = ShaderCacheKey {
+            source_hash: hash_string(entropy_shader_code),
+        };
+
+        let entropy_shader = {
+            let mut cache = SHADER_MODULE_CACHE.lock().unwrap();
+            cache
+                .entry(entropy_shader_key.clone())
+                .or_insert_with(|| {
+                    log::debug!("Creating new shader module for entropy");
+                    Arc::new(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("Entropy Shader"),
+                        source: wgpu::ShaderSource::Wgsl(entropy_shader_code.into()),
+                    }))
+                })
+                .clone()
+        };
+
+        // --- Get or Create Propagation Shader Module ---
         let propagation_shader_code = include_str!("shaders/propagate.wgsl");
+        let propagation_shader_key = ShaderCacheKey {
+            source_hash: hash_string(propagation_shader_code),
+        };
 
-        // Create shader modules
-        let entropy_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Entropy Shader"),
-            source: wgpu::ShaderSource::Wgsl(entropy_shader_code.into()),
-        });
-
-        let propagation_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Propagation Shader"),
-            source: wgpu::ShaderSource::Wgsl(propagation_shader_code.into()),
-        });
+        let propagation_shader = {
+            let mut cache = SHADER_MODULE_CACHE.lock().unwrap();
+            cache
+                .entry(propagation_shader_key.clone())
+                .or_insert_with(|| {
+                    log::debug!("Creating new shader module for propagation");
+                    Arc::new(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("Propagation Shader"),
+                        source: wgpu::ShaderSource::Wgsl(propagation_shader_code.into()),
+                    }))
+                })
+                .clone()
+        };
 
         // --- Define Bind Group Layouts ---
 
@@ -226,45 +310,61 @@ impl ComputePipelines {
                 push_constant_ranges: &[],
             });
 
-        // --- Create Compute Pipelines ---
+        // --- Get or Create Entropy Pipeline ---
+        let entropy_pipeline_key = PipelineCacheKey {
+            shader_key: entropy_shader_key,
+            entry_point: "main_entropy".to_string(),
+        };
 
-        // Define the specialization constant value
-        let specialization_constants = HashMap::from([
-            // Value must be f64 according to wgpu docs
-            ("NUM_TILES_U32".to_string(), num_tiles_u32 as f64),
-        ]);
+        let entropy_pipeline = {
+            let mut cache = COMPUTE_PIPELINE_CACHE.lock().unwrap();
+            cache
+                .entry(entropy_pipeline_key.clone())
+                .or_insert_with(|| {
+                    log::debug!("Creating new compute pipeline for entropy");
+                    Arc::new(
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("Entropy Pipeline"),
+                            layout: Some(&entropy_pipeline_layout),
+                            module: &entropy_shader,
+                            entry_point: "main_entropy",
+                        }),
+                    )
+                })
+                .clone()
+        };
 
-        let entropy_pipeline = Arc::new(device.create_compute_pipeline(
-            &wgpu::ComputePipelineDescriptor {
-                label: Some("Entropy Pipeline"),
-                layout: Some(&entropy_pipeline_layout),
-                module: &entropy_shader,
-                entry_point: "main", // Assuming entry point is 'main'
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &specialization_constants,
-                    ..Default::default()
-                },
-            },
-        ));
+        // --- Get or Create Propagation Pipeline ---
+        let propagation_pipeline_key = PipelineCacheKey {
+            shader_key: propagation_shader_key,
+            entry_point: "main_propagate".to_string(),
+        };
 
-        let propagation_pipeline = Arc::new(device.create_compute_pipeline(
-            &wgpu::ComputePipelineDescriptor {
-                label: Some("Propagation Pipeline"),
-                layout: Some(&propagation_pipeline_layout),
-                module: &propagation_shader,
-                entry_point: "main", // Assuming entry point is 'main'
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &specialization_constants,
-                    ..Default::default()
-                },
-            },
-        ));
+        let propagation_pipeline = {
+            let mut cache = COMPUTE_PIPELINE_CACHE.lock().unwrap();
+            cache
+                .entry(propagation_pipeline_key.clone())
+                .or_insert_with(|| {
+                    log::debug!("Creating new compute pipeline for propagation");
+                    Arc::new(
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("Propagation Pipeline"),
+                            layout: Some(&propagation_pipeline_layout),
+                            module: &propagation_shader,
+                            entry_point: "main_propagate",
+                        }),
+                    )
+                })
+                .clone()
+        };
 
         Ok(Self {
             entropy_pipeline,
             propagation_pipeline,
             entropy_bind_group_layout,
             propagation_bind_group_layout,
+            entropy_workgroup_size: chosen_workgroup_size_x,
+            propagation_workgroup_size: chosen_workgroup_size_x,
         })
     }
 }

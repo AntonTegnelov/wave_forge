@@ -299,28 +299,13 @@ impl TileSet {
 /// Stores the rules efficiently for potentially sparse rule sets using a HashMap.
 #[derive(Debug, Clone)]
 pub struct AdjacencyRules {
-    num_tiles: usize, // Still stores total number of *transformed* tiles for validation
+    num_tiles: usize,
     num_axes: usize,
-    /// Stores only the allowed adjacencies `(axis, ttid1, ttid2) -> true`.
-    /// Absence means the adjacency is disallowed.
     allowed: HashMap<(usize, usize, usize), bool>,
-    // For faster iteration over allowed neighbours (optional optimization later):
-    // allowed_neighbors: HashMap<(usize, usize), HashSet<usize>>, // (axis, ttid1) -> HashSet<ttid2>
 }
 
 impl AdjacencyRules {
     /// Creates new `AdjacencyRules` from a list of allowed tuples.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_transformed_tiles` - The total number of unique transformed tile states.
-    /// * `num_axes` - The number of axes (directions) rules are defined for.
-    /// * `allowed_tuples` - An iterator providing tuples `(axis, transformed_tile1_id, transformed_tile2_id)`
-    ///   for all allowed adjacencies.
-    ///
-    /// # Returns
-    ///
-    /// A new `AdjacencyRules` instance.
     pub fn from_allowed_tuples(
         num_transformed_tiles: usize,
         num_axes: usize,
@@ -328,12 +313,8 @@ impl AdjacencyRules {
     ) -> Self {
         let mut allowed = HashMap::new();
         for (axis, ttid1, ttid2) in allowed_tuples {
-            // Validate inputs before inserting
             if axis < num_axes && ttid1 < num_transformed_tiles && ttid2 < num_transformed_tiles {
                 allowed.insert((axis, ttid1, ttid2), true);
-            } else {
-                // Optional: Log a warning about skipped invalid tuples
-                // log::warn!("Skipping invalid rule tuple: ({}, {}, {}) for num_tiles={}, num_axes={}", axis, ttid1, ttid2, num_transformed_tiles, num_axes);
             }
         }
         Self {
@@ -397,6 +378,18 @@ impl AdjacencyRules {
             _ => panic!("Invalid axis index: {}", axis),
         }
     }
+
+    /// Returns the weight associated with the *base tile* underlying the `transformed_tile_id`.
+    /// **Placeholder:** Currently returns 1.0. Requires access to TileSet for correct implementation.
+    pub fn get_tile_weight(&self, transformed_tile_id: usize) -> f32 {
+        // TODO: Implement correctly using TileSet access.
+        // This requires either storing Arc<TileSet> or passing TileSet reference.
+        if transformed_tile_id >= self.num_tiles {
+            return 0.0; // Invalid ID
+        }
+        // Placeholder:
+        1.0
+    }
 }
 
 #[cfg(test)]
@@ -425,6 +418,16 @@ mod tests {
             (5, 0, 0), // -Z: T0 -> T0
             (5, 1, 1), // -Z: T1 -> T1
         ];
+        let tileset = TileSet {
+            weights: vec![1.0; 2],
+            allowed_transformations: vec![vec![Transformation::Identity; 2]; 2],
+            num_transformed_tiles: 2,
+            transformed_tile_map: HashMap::new(),
+            reverse_transformed_map: vec![
+                (TileId(0), Transformation::Identity),
+                (TileId(1), Transformation::Identity),
+            ],
+        };
         AdjacencyRules::from_allowed_tuples(2, 6, allowed_rules)
     }
 
@@ -477,7 +480,6 @@ mod tests {
 
     #[test]
     fn test_from_allowed_tuples_duplicates() {
-        // Ensures duplicates are handled (HashSet should deduplicate)
         let allowed_rules = vec![
             (0, 0, 1),
             (0, 0, 1), // Duplicate
@@ -491,8 +493,6 @@ mod tests {
 
     #[test]
     fn test_from_allowed_tuples_invalid_tile_ids() {
-        // Behavior with invalid tile IDs in tuples (should they be ignored? error?)
-        // Current implementation ignores them because HashSet insert won't happen if num_tiles check fails
         let allowed_rules = vec![
             (0, 0, 1),
             (1, 2, 0), // Invalid tile ID 2 (num_tiles=2)
@@ -508,7 +508,6 @@ mod tests {
 
     #[test]
     fn test_from_allowed_tuples_invalid_axis() {
-        // Behavior with invalid axis IDs (should be ignored)
         let allowed_rules = vec![
             (0, 0, 1),
             (6, 1, 0), // Invalid axis 6
@@ -541,7 +540,22 @@ mod proptests {
 
             // Generate a vector of these tuples
             proptest::collection::vec(tuple_strategy, 0..num_tiles * num_tiles * num_axes).prop_map(
-                move |tuples| AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, tuples),
+                move |tuples| {
+                    let tileset = TileSet {
+                        weights: vec![1.0; num_tiles],
+                        allowed_transformations: vec![
+                            vec![Transformation::Identity; num_tiles];
+                            num_tiles
+                        ],
+                        num_transformed_tiles: num_tiles,
+                        transformed_tile_map: HashMap::new(),
+                        reverse_transformed_map: vec![
+                            (TileId(0), Transformation::Identity);
+                            num_tiles
+                        ],
+                    };
+                    AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, tuples)
+                },
             )
         })
     }
@@ -593,6 +607,13 @@ mod proptests {
                 .filter(|(ax, t1, t2)| *ax < num_axes && *t1 < num_tiles && *t2 < num_tiles)
                 .collect();
 
+            let tileset = TileSet {
+                weights: vec![1.0; num_tiles],
+                allowed_transformations: vec![vec![Transformation::Identity; num_tiles]; num_tiles],
+                num_transformed_tiles: num_tiles,
+                transformed_tile_map: HashMap::new(),
+                reverse_transformed_map: vec![(TileId(0), Transformation::Identity); num_tiles],
+            };
             let rules = AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, valid_tuples.clone());
 
             for (axis, t1, t2) in valid_tuples {

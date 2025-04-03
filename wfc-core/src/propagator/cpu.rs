@@ -1,7 +1,7 @@
 use crate::{
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    BoundaryMode,
+    BoundaryCondition,
 };
 use bitvec::prelude::*;
 use wfc_rules::AdjacencyRules;
@@ -9,15 +9,16 @@ use wfc_rules::AdjacencyRules;
 /// Simple CPU-based constraint propagator using a basic iterative approach.
 #[derive(Debug, Clone)]
 pub struct CpuConstraintPropagator {
-    boundary_mode: BoundaryMode,
+    boundary_condition: BoundaryCondition,
 }
 
 impl CpuConstraintPropagator {
-    pub fn new(boundary_mode: BoundaryMode) -> Self {
-        Self { boundary_mode }
+    pub fn new(boundary_condition: BoundaryCondition) -> Self {
+        Self { boundary_condition }
     }
 
-    // Helper to get neighbor coordinates, handling boundary conditions
+    /// Calculates the 1D index for a cell in a 3D grid.
+    #[allow(clippy::too_many_arguments)] // Allowed for now
     fn get_neighbor_coords(
         &self,
         x: usize,
@@ -42,8 +43,8 @@ impl CpuConstraintPropagator {
         let ny_raw = y as isize + dy;
         let nz_raw = z as isize + dz;
 
-        match self.boundary_mode {
-            BoundaryMode::Clamped => {
+        match self.boundary_condition {
+            BoundaryCondition::Finite => {
                 if nx_raw >= 0
                     && nx_raw < width as isize
                     && ny_raw >= 0
@@ -56,7 +57,7 @@ impl CpuConstraintPropagator {
                     None // Out of bounds for clamped mode
                 }
             }
-            BoundaryMode::Periodic => {
+            BoundaryCondition::Periodic => {
                 // Use modulo arithmetic for wrapping
                 let nx = nx_raw.rem_euclid(width as isize) as usize;
                 let ny = ny_raw.rem_euclid(height as isize) as usize;
@@ -159,6 +160,7 @@ impl ConstraintPropagator for CpuConstraintPropagator {
 mod tests {
     use super::*;
     use crate::grid::PossibilityGrid;
+    use crate::BoundaryCondition;
     use bitvec::prelude::bitvec;
     use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
 
@@ -200,7 +202,7 @@ mod tests {
     fn test_propagate_simple_clamped() {
         let rules = create_rules_for_tests();
         let mut grid = PossibilityGrid::new(3, 1, 1, 2);
-        let mut propagator = CpuConstraintPropagator::new(BoundaryMode::Clamped);
+        let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Finite);
 
         // Collapse center cell (1,0,0) to only allow Tile 0
         let center_cell = grid.get_mut(1, 0, 0).unwrap();
@@ -220,7 +222,7 @@ mod tests {
         // Revert the grid change for the assertion
         let rules_clamped = create_rules_for_tests();
         let mut grid_clamped = PossibilityGrid::new(3, 1, 1, 2);
-        let mut propagator_clamped = CpuConstraintPropagator::new(BoundaryMode::Clamped);
+        let mut propagator_clamped = CpuConstraintPropagator::new(BoundaryCondition::Finite);
         *grid_clamped.get_mut(1, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 0]; // Collapse T0
         let result_clamped =
             propagator_clamped.propagate(&mut grid_clamped, vec![(1, 0, 0)], &rules_clamped);
@@ -240,7 +242,7 @@ mod tests {
         // Rule: T0 can only be next to T0 (+X), T1 only next to T1 (+X)
         let rules = AdjacencyRules::from_allowed_tuples(2, 6, vec![(0, 0, 0), (0, 1, 1)]);
         let mut grid = PossibilityGrid::new(2, 1, 1, 2);
-        let mut propagator = CpuConstraintPropagator::new(BoundaryMode::Clamped);
+        let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Finite);
 
         // Set cell (0,0,0) to T0 only
         *grid.get_mut(0, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 0];
@@ -260,7 +262,7 @@ mod tests {
     fn test_propagate_periodic() {
         let rules = create_rules_for_tests();
         let mut grid = PossibilityGrid::new(3, 1, 1, 2);
-        let mut propagator = CpuConstraintPropagator::new(BoundaryMode::Periodic);
+        let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Periodic);
         *grid.get_mut(0, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 0]; // Start with T0
         let result = propagator.propagate(&mut grid, vec![(0, 0, 0)], &rules);
         // Source T0, axis 1 (-X). Rule (1,1,0). T0 supports nothing. Supported=[0,0].
@@ -285,7 +287,7 @@ mod tests {
         let rules = create_rules_for_tests();
         let mut grid = PossibilityGrid::new(2, 1, 1, 2);
         let grid_before = grid.clone();
-        let mut propagator = CpuConstraintPropagator::new(BoundaryMode::Clamped);
+        let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Finite);
 
         // Propagate with empty update list
         let result = propagator.propagate(&mut grid, vec![], &rules);
@@ -299,7 +301,7 @@ mod tests {
     fn test_propagate_no_change() {
         let (mut grid, rules) = setup_basic_test();
         let _grid_before = grid.clone(); // Keep clone for potential debugging, but don't assert equality
-        let mut propagator = CpuConstraintPropagator::new(BoundaryMode::Clamped);
+        let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Finite);
         let initial_updates = vec![(0, 0, 0)]; // Update a cell
 
         // Propagate. With the specific rules, changes ARE expected.
@@ -324,7 +326,7 @@ mod tests {
         // Intentionally create an inconsistent state if needed for testing check
         // grid.wave[some_index] = vec![false; rules.tile_count()]; // Example invalid state
 
-        // let mut propagator = CpuConstraintPropagator::new(BoundaryMode::Periodic);
+        // let mut propagator = CpuConstraintPropagator::new(BoundaryCondition::Periodic);
         // propagator.initialize(&grid, &rules);
 
         // Perform propagation which might internally use consistency checks
