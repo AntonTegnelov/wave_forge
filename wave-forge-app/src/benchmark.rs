@@ -2,22 +2,14 @@
 //! Now focuses solely on GPU performance.
 
 use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
-use crate::progress::ConsoleProgressReporter;
-use crate::{
-    config::{AppConfig, CliExecutionMode, VisualizationMode},
-    error::AppError,
-};
-use anyhow::{Error, Result as AnyhowResult};
+use crate::{config::AppConfig, error::AppError};
+use anyhow::Error;
 use csv;
-use log::{debug, info, warn};
 use std::{
     collections::HashMap,
     fs::File,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    }, // Consolidated sync imports
+    sync::{atomic::AtomicBool, Arc, Mutex}, // Consolidated sync imports
     time::{Duration, Instant},
 };
 use wfc_core::{
@@ -74,21 +66,21 @@ pub struct BenchmarkScenarioResult {
 
 /// Runs a single WFC benchmark based on the provided configuration.
 /// Handles both CPU and GPU paths.
-async fn run_single_wfc_benchmark(
+pub async fn run_single_wfc_benchmark(
     config: &AppConfig,
     tileset: &TileSet,
     rules: &AdjacencyRules,
     gpu_accelerator_arc: Option<Arc<GpuAccelerator>>,
 ) -> Result<BenchmarkResult, AppError> {
-    let core_execution_mode: ExecutionMode = config.execution_mode.into();
-    let core_boundary_mode: BoundaryMode = config.boundary_mode.into();
+    let core_execution_mode: ExecutionMode = config.execution_mode.clone().into();
+    let core_boundary_mode: BoundaryMode = config.boundary_mode.clone().into();
 
     let profiler = Profiler::new(&format!("{:?}", core_execution_mode));
     let _overall_guard = profiler.profile("total_benchmark_run");
 
     let mut grid =
         PossibilityGrid::new(config.width, config.height, config.depth, rules.num_tiles());
-    let total_cells = grid.width * grid.height * grid.depth;
+    let _total_cells = grid.width * grid.height * grid.depth;
 
     let latest_progress: Arc<Mutex<Option<ProgressInfo>>> = Arc::new(Mutex::new(None));
     let progress_callback = {

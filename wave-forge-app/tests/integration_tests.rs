@@ -45,11 +45,13 @@ fn test_basic_cpu_run() -> Result<(), Box<dyn std::error::Error>> {
         .arg("--depth")
         .arg("3")
         .arg("--output-path")
-        .arg(&output_file);
+        .arg(&output_file)
+        .arg("--execution-mode")
+        .arg("cpu");
 
     cmd.assert()
         .success()
-        .stderr(predicate::str::contains("GPU WFC completed successfully."));
+        .stderr(predicate::str::contains("WFC completed successfully."));
 
     // Check if output file was created (basic check)
     assert!(output_file.exists(), "Output file was not created");

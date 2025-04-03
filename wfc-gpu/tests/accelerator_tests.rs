@@ -1,10 +1,12 @@
+use pollster;
 use std::{
     thread,
     time::{Duration, Instant},
 };
+use wfc_core::EntropyCalculator;
 use wfc_core::{grid::PossibilityGrid, propagator::ConstraintPropagator, BoundaryMode};
 use wfc_gpu::accelerator::GpuAccelerator;
-use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
+use wfc_rules::AdjacencyRules;
 
 // A custom drop implementation to ensure proper GPU device cleanup
 struct SafetyGuard;
@@ -223,124 +225,186 @@ fn test_gpu_propagate_basic_run() {
 /// Each case tests a specific aspect of the GPU entropy calculation pipeline.
 #[test]
 fn test_gpu_entropy_calculation_edge_cases() {
-    // Create a safety guard to ensure cleanup on test exit
     let _guard = SafetyGuard;
 
-    // Set a shorter timeout to avoid long test runs when there's an issue
-    let timeout = Duration::from_millis(500);
-
-    // Test Case 1: Fully collapsed grid (all cells have exactly one possibility)
+    // Test Case 1: Fully collapsed grid
     {
         println!("Test Case 1: Fully collapsed grid");
-        // Keep the grid very small to avoid potential memory issues or long calculation times
         let width = 2;
         let height = 2;
         let depth = 1;
         let num_tiles = 2;
         let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
-
-        // Collapse each cell to a fixed pattern (tile index = (x+y+z) % num_tiles)
+        // Collapse each cell
         for z in 0..depth {
             for y in 0..height {
                 for x in 0..width {
                     let tile_id = (x + y + z) % num_tiles;
-
-                    // Clear all possibilities
-                    if let Some(cell) = grid.get_mut(x, y, z) {
-                        cell.fill(false);
-                        // Set only the chosen tile as possible
-                        cell.set(tile_id, true);
-                    }
+                    let cell = grid.get_mut(x, y, z).unwrap();
+                    cell.fill(false);
+                    cell.set(tile_id, true);
                 }
             }
         }
-
-        // Create simple rules to keep the test fast
         let rules = create_uniform_rules(num_tiles, 6);
 
-        // Don't actually perform GPU calculation to avoid potential hangs
-        // Just verify we can initialize the accelerator
-        println!("Initializing accelerator for collapsed grid...");
-        let start_time = Instant::now();
+        // Lock the grid to pass a reference for accelerator init
+        let grid_guard = grid; // No need for Arc/Mutex here if grid isn't shared
+        let accelerator_result = pollster::block_on(GpuAccelerator::new(
+            // Pass reference directly
+            &grid_guard,
+            &rules,
+            BoundaryMode::Periodic,
+        ));
+        if let Ok(accelerator) = accelerator_result {
+            println!("Initialized accelerator for collapsed grid.");
+            // calculate_entropy is not async, remove block_on
+            let entropy_res = accelerator.calculate_entropy(&grid_guard);
+            assert!(
+                entropy_res.is_ok(),
+                "Entropy calculation failed for collapsed grid: {:?}",
+                entropy_res.err()
+            );
+            let entropy_grid = entropy_res.unwrap();
+            // Select the lowest entropy cell using the calculated grid
+            let lowest_entropy_cell = accelerator.select_lowest_entropy_cell(&entropy_grid);
+            assert!(
+                lowest_entropy_cell.is_some(),
+                "Failed to select lowest entropy cell from the grid"
+            );
+            let coords = lowest_entropy_cell.unwrap();
 
-        if let Ok(_) = pollster::block_on(GpuAccelerator::new(&grid, &rules)) {
-            println!("Successfully initialized accelerator for collapsed grid");
+            assert_eq!(
+                coords,
+                (0, 0, 0),
+                "Lowest entropy not found at the expected cell"
+            );
         } else {
-            println!("Failed to initialize accelerator for collapsed grid - skipping");
-        }
-
-        if start_time.elapsed() > timeout {
-            println!("Initializing accelerator took too long - skipping remaining tests");
-            return;
+            println!(
+                "Skipping Test Case 1: Failed to init accelerator: {:?}",
+                accelerator_result.err()
+            );
         }
     }
 
-    // Test Case 2: Grid with contradictory cell - just report the case, don't run actual calculation
-    println!("Test Case 2: Grid with contradictory cell");
+    // Test Case 2: Grid with contradiction
+    {
+        println!("Test Case 2: Grid with contradiction");
+        let width = 2;
+        let height = 1;
+        let depth = 1;
+        let num_tiles = 2;
+        let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
+        // Create contradiction in cell (0,0,0)
+        grid.get_mut(0, 0, 0).unwrap().fill(false);
+        let rules = create_uniform_rules(num_tiles, 6);
 
-    // Test Case 3: Near maximum tile count (but not exceeding shader limit)
-    println!("Test Case 3: Near maximum tile count");
-    // Just report the case, don't run actual calculation which could be slow
+        // Lock the grid to pass a reference
+        let grid_guard = grid;
+        let accelerator_result = pollster::block_on(GpuAccelerator::new(
+            &grid_guard,
+            &rules,
+            BoundaryMode::Periodic,
+        ));
+        if let Ok(accelerator) = accelerator_result {
+            println!("Initialized accelerator for contradiction grid.");
+            // calculate_entropy is not async
+            let entropy_res = accelerator.calculate_entropy(&grid_guard);
+            println!("Entropy result for contradiction grid: {:?}", entropy_res);
+            // Expect error or specific value for contradiction
+        } else {
+            println!(
+                "Skipping Test Case 2: Failed to init accelerator: {:?}",
+                accelerator_result.err()
+            );
+        }
+    }
+
+    // Test Case 3: Grid with varying entropy
+    {
+        println!("Test Case 3: Grid with varying entropy");
+        let width = 3;
+        let height = 1;
+        let depth = 1;
+        let num_tiles = 4;
+        let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
+        // Set different possibility counts
+        // Cell 0: Fully collapsed (1 possibility)
+        let cell0 = grid.get_mut(0, 0, 0).unwrap();
+        cell0.fill(false);
+        cell0.set(0, true);
+        // Cell 1: Partially collapsed (2 possibilities)
+        let cell1 = grid.get_mut(1, 0, 0).unwrap();
+        cell1.fill(false);
+        cell1.set(0, true);
+        cell1.set(1, true);
+        // Cell 2: Fully open (4 possibilities) - default state
+
+        let rules = create_uniform_rules(num_tiles, 6);
+
+        // Lock the grid to pass a reference
+        let grid_guard = grid;
+        let accelerator_result = pollster::block_on(GpuAccelerator::new(
+            &grid_guard,
+            &rules,
+            BoundaryMode::Periodic,
+        ));
+        if let Ok(accelerator) = accelerator_result {
+            println!("Initialized accelerator for varying entropy grid.");
+            // calculate_entropy is not async
+            let entropy_res = accelerator.calculate_entropy(&grid_guard);
+            assert!(
+                entropy_res.is_ok(),
+                "Entropy calculation failed for varying entropy grid: {:?}",
+                entropy_res.err()
+            );
+            let entropy_grid = entropy_res.unwrap();
+            // Select the lowest entropy cell using the calculated grid
+            let lowest_entropy_cell = accelerator.select_lowest_entropy_cell(&entropy_grid);
+            assert!(
+                lowest_entropy_cell.is_some(),
+                "Failed to select lowest entropy cell from the grid"
+            );
+            let coords = lowest_entropy_cell.unwrap();
+
+            assert_eq!(
+                coords,
+                (0, 0, 0),
+                "Lowest entropy not found at the expected cell"
+            );
+        } else {
+            println!(
+                "Skipping Test Case 3: Failed to init accelerator: {:?}",
+                accelerator_result.err()
+            );
+        }
+    }
 }
 
-// Helper to create simple grid and rules for testing
+/// Helper function to create common test data
 fn create_test_data(num_tiles: usize, num_axes: usize) -> (PossibilityGrid, AdjacencyRules) {
-    let weights = vec![1.0; num_tiles];
-    let allowed_transforms = vec![vec![Transformation::Identity]; num_tiles];
-    let tileset = TileSet::new(weights, allowed_transforms).expect("Failed to create test tileset");
-
-    let grid = PossibilityGrid::new(4, 4, 1, tileset.num_transformed_tiles());
-
-    let mut allowed_tuples = Vec::new();
-    for axis in 0..num_axes {
-        for ttid1 in 0..tileset.num_transformed_tiles() {
-            for ttid2 in 0..tileset.num_transformed_tiles() {
-                allowed_tuples.push((axis, ttid1, ttid2));
-            }
-        }
-    }
-    let rules = AdjacencyRules::from_allowed_tuples(
-        tileset.num_transformed_tiles(),
-        num_axes,
-        allowed_tuples,
-    );
-
+    let width = 2;
+    let height = 2;
+    let depth = 1;
+    let grid = PossibilityGrid::new(width, height, depth, num_tiles);
+    let rules = create_uniform_rules(num_tiles, num_axes);
     (grid, rules)
 }
 
-// Temporarily comment out this test due to persistent E0061 error
-/*
-#[test]
-fn gpu_available() {
-    let available = pollster::block_on(async {
-        let instance = wgpu::Instance::new(Default::default());
-        instance
-            .request_adapter(&Default::default())
-            .await
-            .is_some()
-    });
-    if !available {
-        println!("Skipping GPU test: No suitable GPU adapter found.");
-        return;
-    }
-    // Test creating an accelerator
-    let (grid, rules) = create_test_data(2, 6);
-    let boundary_mode = BoundaryMode::Periodic;
-    if let Ok(_) = pollster::block_on(GpuAccelerator::new(&grid, &rules, boundary_mode)) {
-        println!("GPU Accelerator creation successful.");
-    } else {
-        panic!("GPU Accelerator creation failed even though adapter was found.");
-    }
-}
-*/
-
+/// Tests successful creation of `GpuAccelerator`.
+/// Requires a functional GPU adapter.
 #[test]
 fn test_new_gpu_accelerator_success() {
     let _guard = SafetyGuard;
     let (grid, rules) = create_test_data(2, 6);
-    if let Ok(_) = pollster::block_on(GpuAccelerator::new(&grid, &rules, BoundaryMode::Periodic)) {
-        // Success
-    } else {
-        panic!("GpuAccelerator::new failed unexpectedly");
-    }
+    let result = pollster::block_on(GpuAccelerator::new(
+        &grid,
+        &rules,
+        BoundaryMode::Periodic, // Added boundary mode
+    ));
+    assert!(
+        result.is_ok(),
+        "Failed to create GpuAccelerator: {:?}",
+        result.err()
+    );
 }

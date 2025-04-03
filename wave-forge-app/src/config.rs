@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
 use wfc_core;
-use wfc_core::BoundaryMode; // Corrected import path // Import the crate itself
+ // Corrected import path // Import the crate itself
 
 /// Represents the different visualization modes available.
 #[derive(ValueEnum, Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

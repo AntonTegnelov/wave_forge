@@ -1,36 +1,33 @@
 //! Handles the core execution logic for standard and benchmark modes.
 
-use crate::benchmark::{self, BenchmarkResult, BenchmarkScenarioResult};
-use crate::config::{AppConfig, ExecutionMode, ProgressLogLevel, RunConfig};
-use crate::error::AppError;
-use crate::output;
-use crate::setup::results::ExecutionResult;
-use crate::setup::visualization::VizMessage;
-use crate::state::AppState;
-use anyhow::{Context, Result};
-use log;
-use log::{debug, info, warn};
-use std::fs::OpenOptions;
-use std::io::{BufWriter, Write};
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
-use wfc_core::grid::PossibilityGrid;
-use wfc_core::runner;
-use wfc_core::{
-    entropy::{cpu::CpuEntropyCalculator, EntropyCalculator, SelectionStrategy},
-    propagator::{cpu::CpuConstraintPropagator, ConstraintPropagator},
-    runner::{self, ProgressCallback, WfcConfig},
-    BoundaryMode, ExecutionMode, ProgressInfo, WfcError,
+use crate::{
+    benchmark::{self, BenchmarkResult, BenchmarkScenarioResult},
+    config::{AppConfig, ProgressLogLevel},
+    error::AppError, output,
+    setup::visualization::VizMessage,
 };
-use wfc_gpu::accelerator::GpuAccelerator;
-use wfc_gpu::entropy::GpuEntropyCalculator;
-use wfc_gpu::propagator::GpuConstraintPropagator;
-use wfc_gpu::GpuError;
-use wfc_rules::loader::load_from_file;
-use wfc_rules::{AdjacencyRules, TileSet};
+use anyhow::{Context, Result};
+use log::{error, info};
+use std::{
+    fs::OpenOptions,
+    io::{BufWriter, Write},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Sender},
+        Arc, Mutex,
+    },
+    thread,
+    time::{Duration, Instant},
+};
+use wfc_core::{
+    entropy::EntropyCalculator,
+    grid::PossibilityGrid,
+    propagator::ConstraintPropagator,
+    runner::{self, ProgressCallback, WfcConfig},
+    BoundaryMode, ProgressInfo,
+};
+use wfc_gpu::{accelerator::GpuAccelerator, GpuError};
+use wfc_rules::{loader::load_from_file, AdjacencyRules, TileSet};
 use wgpu::Instance;
 
 // Helper function to parse "WxHxD" strings
@@ -86,15 +83,8 @@ fn calculate_std_dev(data: &[f64], mean: f64) -> Option<f64> {
 }
 // --- End Statistics Helper Functions ---
 
-// Structure to hold results for a complete scenario (multiple runs)
-// #[derive(Debug)]
-// struct BenchmarkScenarioResult { ... } // REMOVED
-
 pub async fn run_benchmark_mode(
     config: &AppConfig,
-    _initial_tileset: &TileSet,
-    _initial_rules: &AdjacencyRules,
-    _grid: &mut PossibilityGrid,
     _viz_tx: &Option<Sender<VizMessage>>,
     _snapshot_handle: &mut Option<thread::JoinHandle<()>>,
     _shutdown_signal: Arc<AtomicBool>,
@@ -194,6 +184,32 @@ pub async fn run_benchmark_mode(
 
             let mut scenario_run_results: Vec<Result<BenchmarkResult, AppError>> = Vec::new();
             let mut successful_times_ms: Vec<f64> = Vec::new();
+            let mut successful_iterations: Vec<u64> = Vec::new();
+            let mut successful_collapsed_cells: Vec<usize> = Vec::new();
+
+            // Prepare GPU Accelerator *once* per scenario if possible
+            // Requires grid/rules available here
+            let scenario_grid = PossibilityGrid::new(width, height, depth, tileset.weights.len());
+            let scenario_grid_snapshot = Arc::new(Mutex::new(scenario_grid.clone()));
+            let core_boundary_mode: BoundaryMode = config.boundary_mode.clone().into();
+
+            // Lock the grid snapshot to pass a reference to the inner grid
+            let grid_guard = scenario_grid_snapshot
+                .lock()
+                .expect("Benchmark grid lock failed");
+            let accelerator_res =
+                pollster::block_on(GpuAccelerator::new(&grid_guard, &rules, core_boundary_mode));
+            drop(grid_guard); // Drop the guard after the call
+
+            // Store the accelerator directly, not Arc
+            let accelerator = match accelerator_res {
+                Ok(acc) => acc,
+                Err(e) => {
+                    log::error!("Failed to initialize GPU accelerator for scenario {:?} ({}x{}x{}): {}. Skipping scenario.",
+                        rule_file_path.file_name().unwrap_or_default(), width, height, depth, e);
+                    continue; // Skip this scenario if GPU init fails
+                }
+            };
 
             for run_index in 0..config.benchmark_runs_per_scenario {
                 log::info!(
@@ -205,20 +221,32 @@ pub async fn run_benchmark_mode(
                     height,
                     depth
                 );
-                let mut bench_grid =
-                    PossibilityGrid::new(width, height, depth, tileset.weights.len());
+                // Grid is implicitly handled by accelerator in benchmark func
 
-                let result =
-                    benchmark::run_single_benchmark(&mut bench_grid, &tileset, &rules).await;
+                // Pass Some(Arc::new(accelerator.clone()))
+                let result = benchmark::run_single_wfc_benchmark(
+                    config,
+                    &tileset,
+                    &rules,
+                    Some(Arc::new(accelerator.clone())), // Wrap cloned accelerator
+                )
+                .await;
 
                 match &result {
                     Ok(bench_res) => {
                         log::info!(
-                            "  Run {} completed successfully in {:.3} ms",
+                            "  Run {} completed successfully in {:.3} ms ({} iterations)",
                             run_index + 1,
-                            bench_res.total_time.as_secs_f64() * 1000.0
+                            bench_res.total_time.as_secs_f64() * 1000.0, // Access is correct
+                            bench_res.iterations.unwrap_or(0)
                         );
                         successful_times_ms.push(bench_res.total_time.as_secs_f64() * 1000.0);
+                        if let Some(iters) = bench_res.iterations {
+                            successful_iterations.push(iters);
+                        }
+                        if let Some(cells) = bench_res.collapsed_cells {
+                            successful_collapsed_cells.push(cells);
+                        }
                     }
                     Err(e) => {
                         log::error!("  Run {} failed: {}", run_index + 1, e);
@@ -238,6 +266,7 @@ pub async fn run_benchmark_mode(
             let median_total_time_ms = calculate_median(&mut sorted_times);
             let stddev_total_time_ms =
                 avg_total_time_ms.and_then(|avg| calculate_std_dev(&successful_times_ms, avg));
+            // ADD similar calculations for iterations and collapsed_cells if needed
 
             all_scenario_results.push(BenchmarkScenarioResult {
                 rule_file: rule_file_path.clone(),
@@ -251,6 +280,7 @@ pub async fn run_benchmark_mode(
                 avg_total_time_ms,
                 median_total_time_ms,
                 stddev_total_time_ms,
+                // ADD other stats fields if BenchmarkScenarioResult is updated
             });
         }
     }
@@ -303,11 +333,10 @@ pub async fn run_benchmark_mode(
     // 5. Write to CSV if requested
     if let Some(csv_path) = &config.benchmark_csv_output {
         log::info!("Writing benchmark suite results to {:?}", csv_path);
-        // Use the new function from benchmark module
+        // Use the function from benchmark module
         match benchmark::write_scenario_results_to_csv(&all_scenario_results, csv_path) {
             Ok(_) => log::info!("Benchmark results successfully written to {:?}", csv_path),
             Err(e) => {
-                // Log the error but don't stop the main function from returning Ok
                 log::error!("Failed to write benchmark suite results to CSV: {}", e);
             }
         }
@@ -320,12 +349,12 @@ pub async fn run_standard_mode(
     config: &AppConfig,
     tileset: &TileSet,
     rules: &AdjacencyRules,
-    grid: &mut PossibilityGrid, // Mut ref needed for runner::run
+    grid: &mut PossibilityGrid, // Original grid to update on success
     viz_tx: &Option<Sender<VizMessage>>,
-    snapshot_handle: &mut Option<thread::JoinHandle<()>>, // Needs to be mutable to assign
+    snapshot_handle: &mut Option<thread::JoinHandle<()>>,
     shutdown_signal: Arc<AtomicBool>,
 ) -> Result<(), AppError> {
-    log::info!("Running WFC (GPU only)...");
+    log::info!("Running WFC standard mode...");
 
     // --- Setup Progress Log File ---
     let progress_log_writer = if let Some(path) = &config.progress_log_file {
@@ -340,7 +369,7 @@ pub async fn run_standard_mode(
         None
     };
 
-    let grid_snapshot = Arc::new(Mutex::new(grid.clone())); // Keep snapshot for Viz
+    let grid_snapshot = Arc::new(Mutex::new(grid.clone())); // Snapshot for Viz & GPU init
 
     // Setup visualization snapshot thread
     *snapshot_handle = if let Some(tx) = viz_tx {
@@ -390,11 +419,9 @@ pub async fn run_standard_mode(
     // Setup progress reporting
     let last_report_time = Arc::new(Mutex::new(Instant::now()));
     let report_interval = config.report_progress_interval;
-    let progress_log_level = config.progress_log_level.clone(); // Clone here
-    let progress_log_writer_clone = progress_log_writer.clone(); // Clone Arc for closure
-    let progress_callback: Option<Box<dyn Fn(ProgressInfo) + Send + Sync>> = if let Some(interval) =
-        report_interval
-    {
+    let progress_log_level = config.progress_log_level.clone();
+    let progress_log_writer_clone = progress_log_writer.clone();
+    let progress_callback: Option<ProgressCallback> = if let Some(interval) = report_interval {
         let last_report_time_clone = Arc::clone(&last_report_time);
         Some(Box::new(move |info: ProgressInfo| {
             let now = Instant::now();
@@ -445,42 +472,47 @@ pub async fn run_standard_mode(
                     }
                 }
             }
+            // Check shutdown signal within callback? Optional, runner already checks.
+            // if shutdown_signal.load(Ordering::SeqCst) { return Err(WfcError::Interrupted); }
+            Ok(())
         }))
     } else {
         None
     };
 
-    // Initialize GPU - explicit match
-    let gpu_accelerator = {
-        let grid_guard = grid_snapshot.lock().expect("GPU init mutex poisoned"); // Use snapshot for GPU init
-        GpuAccelerator::new(&grid_guard, rules).await?
-    };
+    // --- Initialize GPU Accelerator ---
+    let core_boundary_mode: BoundaryMode = config.boundary_mode.clone().into();
+    // Lock the grid snapshot to pass a reference to the inner grid
+    let grid_guard = grid_snapshot
+        .lock()
+        .expect("Standard grid lock failed for GPU init");
+    let accelerator_res =
+        pollster::block_on(GpuAccelerator::new(&grid_guard, rules, core_boundary_mode));
+    drop(grid_guard); // Drop the guard after the call
 
-    // Now create the specific propagator and calculator
-    let tileset_arc = Arc::new(tileset.clone()); // Clone for CPU calculator
-    let strategy = SelectionStrategy::FirstMinimum; // Default strategy
-
-    // Create the appropriate propagator and entropy calculator based on mode
-    let (propagator, entropy_calc): (
-        Box<dyn ConstraintPropagator + Send + Sync>,
-        Box<dyn EntropyCalculator + Send + Sync>,
-    ) = match mode {
-        ExecutionMode::Cpu => (
-            Box::new(CpuConstraintPropagator::new(boundary_mode)),
-            Box::new(CpuEntropyCalculator::new(tileset_arc.clone(), strategy)), // Pass args
-        ),
-        ExecutionMode::Gpu => {
-            let gpu_accelerator = pollster::block_on(
-                GpuAccelerator::new(&grid_guard, &rules, boundary_mode), // Args: &Grid, &Rules, BoundaryMode
-            )?;
-            let accelerator_arc = Arc::new(gpu_accelerator);
-            (Box::new(accelerator_arc.clone()), Box::new(accelerator_arc))
+    let gpu_accelerator = match accelerator_res {
+        Ok(acc) => acc,
+        Err(e) => {
+            error!("Failed to initialize GPU accelerator: {}", e);
+            return Err(AppError::GpuInitializationError(e));
         }
     };
 
-    // Run WFC
-    log::info!("Running WFC on GPU...");
-    // Clone the grid state *before* passing it to the runner
+    // --- Setup WfcConfig for runner ---
+    let wfc_config = WfcConfig {
+        boundary_mode: core_boundary_mode,
+        progress_callback,
+        shutdown_signal: shutdown_signal.clone(),
+        initial_checkpoint: None,
+        checkpoint_interval: None,
+        checkpoint_path: None,
+        max_iterations: config.max_iterations,
+        seed: config.seed,
+    };
+
+    // --- Run WFC using the runner ---
+    log::info!("Starting WFC core algorithm on GPU...");
+    // Clone the grid state *before* passing it to the runner, runner needs mutable grid
     let mut runner_grid = {
         let grid_guard = grid_snapshot
             .lock()
@@ -488,206 +520,52 @@ pub async fn run_standard_mode(
         grid_guard.clone()
     };
 
-    let wfc_result = runner::run(
-        &mut runner_grid, // Pass the mutable clone
+    // Clone the accelerator itself to create owned instances for the Box
+    let propagator: Box<dyn ConstraintPropagator + Send + Sync> = Box::new(gpu_accelerator.clone());
+    let entropy_calc: Box<dyn EntropyCalculator + Send + Sync> = Box::new(gpu_accelerator); // Move the original
+
+    let wfc_run_result = runner::run(
+        &mut runner_grid,
         tileset,
         rules,
         propagator,
         entropy_calc,
-        BoundaryMode::Periodic, // Using Periodic boundary mode as default
-        progress_callback.map(|cb| {
-            Box::new(move |info: ProgressInfo| -> Result<(), WfcError> {
-                cb(info);
-                Ok(())
-            }) as Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>
-        }),
-        shutdown_signal,
-        None, // No initial checkpoint
-        None, // No checkpoint interval
-        None, // No checkpoint path
-        None, // No max iterations
+        &wfc_config,
     );
 
-    match wfc_result {
+    log::info!("WFC core algorithm finished.");
+
+    // --- Process Result ---
+    match wfc_run_result {
         Ok(_) => {
-            log::info!("GPU WFC completed successfully.");
-            // Update the original grid/snapshot with the final successful state
-            {
-                let mut final_grid_guard = grid_snapshot
-                    .lock()
-                    .expect("Final grid update mutex poisoned");
-                *final_grid_guard = runner_grid; // Overwrite shared grid with runner's result
-                                                 // Send final update AFTER updating the shared state
-                if let Some(tx) = viz_tx {
-                    let _ = tx.send(VizMessage::UpdateGrid(Box::new(final_grid_guard.clone())));
+            info!("WFC completed successfully.");
+            // Update the original grid with the final state from runner_grid
+            *grid = runner_grid;
+
+            // --- Save Output ---
+            if !config.output_path.as_os_str().is_empty() {
+                info!("Saving final grid to: {}", config.output_path.display());
+                // Use the output module function
+                if let Err(e) = output::save_grid_to_file(grid, &config.output_path) {
+                    error!("Failed to save output grid: {}", e);
+                    // Use the renamed SaveError variant
+                    return Err(AppError::SaveError(e));
+                } else {
+                    info!("Output grid saved successfully.");
                 }
+            } else {
+                info!("Output path not specified, skipping save.");
             }
-            // Save grid (use the updated shared grid for saving)
-            {
-                let grid_to_save = grid_snapshot.lock().expect("Save grid mutex poisoned");
-                output::save_grid_to_file(&grid_to_save, config.output_path.as_path())?
-            }
+            Ok(())
         }
         Err(e) => {
-            log::error!("GPU WFC failed: {}", e);
-            return Err(e.into());
+            error!("WFC failed: {}", e);
+            // Check if the error was due to cancellation
+            if shutdown_signal.load(Ordering::SeqCst) {
+                Err(AppError::Cancelled)
+            } else {
+                Err(AppError::WfcError(e))
+            }
         }
-    };
-
-    Ok(())
-}
-
-pub fn run_wfc_interactive(
-    app_state: Arc<Mutex<AppState>>,
-    run_config: RunConfig,
-    progress_callback: Option<Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>>,
-    shutdown_signal: Arc<AtomicBool>,
-) -> Result<ExecutionResult, AppError> {
-    info!("Entering run_wfc_interactive...");
-    let start_time = Instant::now();
-
-    let state_guard = app_state.lock().expect("AppState lock poisoned");
-    let grid_lock = state_guard
-        .possibility_grid
-        .as_ref()
-        .ok_or(AppError::Config("WFC grid not initialized".to_string()))?
-        .clone();
-    let tileset = state_guard
-        .tileset
-        .as_ref()
-        .ok_or(AppError::Config("WFC tileset not initialized".to_string()))?
-        .clone();
-    let rules = state_guard
-        .rules
-        .as_ref()
-        .ok_or(AppError::Config("WFC rules not initialized".to_string()))?
-        .clone();
-    drop(state_guard); // Release AppState lock
-
-    let mut grid_guard = grid_lock.write().expect("Grid write lock failed");
-    let boundary_mode = run_config.boundary_mode;
-    let tileset_arc = Arc::new(tileset.clone());
-    let strategy = run_config.selection_strategy;
-    let mode = run_config.mode;
-
-    // Create the appropriate propagator and entropy calculator based on mode
-    let (propagator, entropy_calc): (
-        Box<dyn ConstraintPropagator + Send + Sync>,
-        Box<dyn EntropyCalculator + Send + Sync>,
-    ) = match mode {
-        ExecutionMode::Cpu => (
-            Box::new(CpuConstraintPropagator::new(boundary_mode)),
-            Box::new(CpuEntropyCalculator::new(tileset_arc.clone(), strategy)),
-        ),
-        ExecutionMode::Gpu => {
-            let gpu_accelerator = pollster::block_on(
-                GpuAccelerator::new(&grid_guard, &rules, boundary_mode), // Ensure boundary_mode is passed
-            )?;
-            let accelerator_arc = Arc::new(gpu_accelerator);
-            (Box::new(accelerator_arc.clone()), Box::new(accelerator_arc))
-        }
-    };
-
-    // Prepare configuration for the runner
-    let config = WfcConfig {
-        boundary_mode,
-        progress_callback,
-        shutdown_signal,
-        initial_checkpoint: None, // Assuming no checkpoint load here
-        checkpoint_interval: run_config.checkpoint_interval,
-        checkpoint_path: run_config.checkpoint_path.clone(),
-        max_iterations: run_config.max_iterations,
-    };
-
-    // Run WFC core logic
-    info!("Starting WFC run...");
-    let wfc_result = run(
-        &mut grid_guard, // Arg 1: &mut Grid
-        &tileset,        // Arg 2: &TileSet
-        &rules,          // Arg 3: &Rules
-        propagator,      // Arg 4: Box<dyn Propagator>
-        entropy_calc,    // Arg 5: Box<dyn Calculator>
-        &config,         // Arg 6: &Config
-    );
-    drop(grid_guard); // Release grid lock after run completes
-
-    let elapsed = start_time.elapsed();
-    info!(
-        "WFC run finished in {:?}. Result: {:?}",
-        elapsed, wfc_result
-    );
-
-    match wfc_result {
-        Ok(_) => Ok(ExecutionResult::Success {
-            duration: elapsed,
-            // Add final grid state or other metrics if needed
-        }),
-        Err(e) => Ok(ExecutionResult::Failure {
-            duration: elapsed,
-            error: e,
-        }),
     }
-}
-
-#[must_use]
-pub async fn setup_and_run_wfc(
-    config: AppConfig,
-    tileset: TileSet,
-    rules: AdjacencyRules,
-) -> Result<PossibilityGrid, AppError> {
-    // ... conversions, grid init, gpu init ...
-
-    // --- Select WFC Components (CPU or GPU) ---
-    // ... (remains same) ...
-
-    // --- Setup Visualization (if enabled) ---
-    // ... (remains same) ...
-
-    // --- Setup Progress Reporting ---
-    // ... (remains same) ...
-
-    // --- Prepare WFC Runner Configuration ---
-    let shutdown_signal = Arc::new(AtomicBool::new(false));
-
-    let progress_callback: Option<ProgressCallback> =
-        progress_reporter.as_ref().map(|reporter_arc| {
-            let reporter = reporter_arc.clone();
-            // Use ProgressInfo directly here
-            let callback: ProgressCallback = Box::new(move |info: ProgressInfo| {
-                if let Err(e) = reporter.report(&info) {
-                    log::error!("Progress reporting failed: {}", e);
-                }
-                Ok(())
-            });
-            callback
-        });
-
-    // ... wfc_config setup ...
-    // ... Run WFC Algorithm ...
-
-    // --- Handle Result ---
-    let final_grid = match wfc_result {
-        Ok(()) => {
-            // ... (success path) ...
-        }
-        Err(e) => {
-            // Use WfcError directly here
-            log::error!("WFC failed: {}", e);
-            print_profiler_summary(&profiler);
-            return Err(AppError::WfcCore(e));
-        }
-    };
-
-    // --- Output Saving ---
-    let output_guard = profiler.profile("output_saving");
-    info!("Saving result to {:?}...", config.output_path);
-    // Pass &PathBuf directly to save_grid_to_file
-    save_grid_to_file(&final_grid, &config.output_path).context("Failed to save output grid")?;
-    drop(output_guard);
-    print_profiler_summary(&profiler);
-
-    // --- Visualization Loop ---
-    // ... (remains same) ...
-
-    Ok(final_grid)
 }

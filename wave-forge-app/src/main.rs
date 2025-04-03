@@ -125,9 +125,6 @@ async fn main() -> Result<()> {
     let run_result = if config.benchmark_mode {
         setup::execution::run_benchmark_mode(
             &config,
-            &tileset,
-            &rules,
-            &mut grid,
             &viz_tx,
             &mut snapshot_handle,
             shutdown_signal.clone(),
