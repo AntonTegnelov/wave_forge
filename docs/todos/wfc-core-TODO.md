@@ -51,7 +51,7 @@
 - [x] Support serialization of grid states for saving/loading
 - [x] Create checkpoint system to pause/resume WFC algorithm execution
 - [x] Enhance visualization hooks beyond simple progress callbacks
-- [ ] Add boundary condition options (periodic, fixed, etc.)
+- [ ] Add boundary condition options (periodic, fixed, etc.) -> Parameter added, implementation needed in propagator
 
 ## Architecture Improvements
 

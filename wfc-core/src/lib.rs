@@ -103,3 +103,12 @@ pub struct WfcCheckpoint {
     // Note: RNG state is not saved currently.
     // Resuming will use a new RNG seed unless managed externally.
 }
+
+/// Represents the boundary handling mode for the WFC grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundaryMode {
+    /// The grid edges wrap around (toroidal topology).
+    Periodic,
+    /// Propagation stops at the grid edges.
+    Clamped,
+}

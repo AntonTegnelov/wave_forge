@@ -1,7 +1,7 @@
 use crate::entropy::EntropyCalculator;
 use crate::grid::PossibilityGrid;
 use crate::propagator::{ConstraintPropagator, PropagationError};
-use crate::{ProgressInfo, WfcCheckpoint, WfcError};
+use crate::{BoundaryMode, ProgressInfo, WfcCheckpoint, WfcError};
 use log::{debug, error, info, warn};
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::thread_rng;
@@ -37,6 +37,7 @@ use wfc_rules::{AdjacencyRules, TileId, TileSet};
 /// * `rules`: A reference to the `AdjacencyRules` defining valid neighbor constraints.
 /// * `propagator`: An instance of the chosen `ConstraintPropagator` implementation.
 /// * `entropy_calculator`: An instance of the chosen `EntropyCalculator` implementation.
+/// * `boundary_mode`: The boundary mode to use for the propagation.
 /// * `progress_callback`: An optional closure that receives `ProgressInfo` updates during the run.
 ///                        This allows external monitoring or UI updates.
 /// * `shutdown_signal`: A shared atomic boolean indicating whether the run should stop.
@@ -62,13 +63,17 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     rules: &AdjacencyRules,
     mut propagator: P,
     entropy_calculator: E,
+    boundary_mode: BoundaryMode,
     progress_callback: Option<Box<dyn Fn(ProgressInfo) + Send + Sync>>,
     shutdown_signal: Arc<AtomicBool>,
     initial_checkpoint: Option<WfcCheckpoint>,
     checkpoint_interval: Option<u64>,
     checkpoint_path: Option<PathBuf>,
 ) -> Result<(), WfcError> {
-    info!("Starting WFC run...");
+    info!(
+        "Starting WFC run with boundary mode: {:?}...",
+        boundary_mode
+    );
     let start_time = Instant::now();
     let mut iterations = 0;
 
@@ -429,9 +434,4 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         iterations
     );
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    // ... tests ...
 }
