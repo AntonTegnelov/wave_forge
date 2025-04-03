@@ -1,4 +1,5 @@
-use crate::{AdjacencyRules, LoadError, TileId, TileSet, TileSetError};
+use crate::types::{AdjacencyRules, TileId, TileSet, TileSetError, Transformation};
+use crate::LoadError;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -110,17 +111,36 @@ pub fn parse_ron_rules(ron_content: &str) -> Result<(TileSet, AdjacencyRules), L
 
     // 3. Create TileSet from tile weights, handling the Result
     let weights: Vec<f32> = rule_file.tiles.iter().map(|t| t.weight).collect();
-    let tileset = TileSet::new(weights).map_err(|e| match e {
+    // Generate default transformations (Identity only for each tile)
+    let default_transformations = vec![vec![Transformation::Identity]; weights.len()];
+
+    let tileset = TileSet::new(weights, default_transformations).map_err(|e| {
         // Convert TileSetError to LoadError::InvalidData for consistency
-        TileSetError::EmptyWeights => {
-            LoadError::InvalidData("TileSet weights cannot be empty.".to_string())
+        match e {
+            TileSetError::EmptyWeights => {
+                LoadError::InvalidData("TileSet weights cannot be empty.".to_string())
+            }
+            TileSetError::NonPositiveWeight(idx, val) => LoadError::InvalidData(format!(
+                "Tile '{}' (index {}) has non-positive weight: {}",
+                rule_file.tiles.get(idx).map_or("unknown", |t| &t.name),
+                idx,
+                val
+            )),
+            // Handle new TileSet errors related to transformations
+            // Treat these as InvalidData as they stem from potentially bad input causing internal issues
+            TileSetError::TransformationWeightMismatch(_, _) => LoadError::InvalidData(
+                "Internal consistency error: Mismatch between weights and generated transformations."
+                    .to_string(),
+            ),
+            TileSetError::EmptyTransformations(idx) => LoadError::InvalidData(format!(
+                "Internal consistency error: Generated empty default transformations for tile index {}.",
+                idx
+            )),
+            TileSetError::MissingIdentityTransformation(idx) => LoadError::InvalidData(format!(
+                "Internal consistency error: Missing Identity in default transformations for tile index {}.",
+                idx
+            )),
         }
-        TileSetError::NonPositiveWeight(idx, val) => LoadError::InvalidData(format!(
-            "Tile '{}' (index {}) has non-positive weight: {}",
-            rule_file.tiles.get(idx).map_or("unknown", |t| &t.name),
-            idx,
-            val
-        )),
     })?;
 
     // 4. Convert named adjacency rules into the flattened boolean format

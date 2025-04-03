@@ -25,28 +25,28 @@
   - [x] Optimize grid representation for GPU memory layout (coalescence)
   - [x] Add comprehensive benchmarking tools to compare CPU vs GPU performance
 
-- [ ] Phase 2: Performance optimization
+- [x] Phase 2: Performance optimization
 
   - [x] Implement batched update processing for constraint propagation
   - [x] Minimize CPU-GPU data transfers during algorithm steps
   - [x] Optimize workgroup sizes and memory access patterns in shaders
   - [x] Add shader specialization for different grid sizes and tile counts
 
-- [ ] Phase 3: Transition plan
+- [x] Phase 3: Transition plan
 
   - [x] Deprecate CPU implementations with warning messages
   - [x] Provide migration guide documentation
   - [x] Update all examples to use GPU implementation by default
   - [x] Create final benchmark suite demonstrating performance gains
 
-- [ ] Phase 4: Cleanup
+- [x] Phase 4: Cleanup
   - [x] Remove CPU-specific implementations and refactor core API
   - [x] Consolidate all computation code into the GPU-based module
   - [x] Remove CPU-only optimizations and simplify codebase
 
 ## Missing Features
 
-- [ ] Implement tile symmetry handling (rotation/reflection support in `TileSet`)
+- [x] Implement tile symmetry handling (rotation/reflection support in TileSet)
 - [ ] Add rule generation helpers based on symmetry/transformation principles
 - [ ] Support serialization of grid states for saving/loading
 - [ ] Create checkpoint system to pause/resume WFC algorithm execution
