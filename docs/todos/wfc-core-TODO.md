@@ -36,7 +36,7 @@
 
   - [x] Deprecate CPU implementations with warning messages
   - [x] Provide migration guide documentation
-  - [ ] Update all examples to use GPU implementation by default
+  - [x] Update all examples to use GPU implementation by default
   - [ ] Create final benchmark suite demonstrating performance gains
 
 - [ ] Phase 4: Cleanup
