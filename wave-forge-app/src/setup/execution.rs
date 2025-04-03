@@ -1,6 +1,6 @@
 //! Handles the core execution logic for standard and benchmark modes.
 
-use crate::benchmark::{self, BenchmarkResult, BenchmarkResultTuple};
+use crate::benchmark::{self, BenchmarkResult, BenchmarkScenarioResult};
 use crate::config::{AppConfig, ProgressLogLevel};
 use crate::error::AppError;
 use crate::output;
@@ -46,20 +46,41 @@ fn parse_dimension_string(dim_str: &str) -> Result<(usize, usize, usize), AppErr
     Ok((w, h, d))
 }
 
-// Structure to hold results for a complete scenario (multiple runs)
-#[derive(Debug)]
-struct BenchmarkScenarioResult {
-    rule_file: PathBuf,
-    width: usize,
-    height: usize,
-    depth: usize,
-    num_tiles: usize,
-    runs: usize,
-    successful_runs: usize,
-    failed_runs: usize,
-    avg_total_time_ms: Option<f64>,
-    individual_results: Vec<Result<BenchmarkResult, AppError>>,
+// --- Statistics Helper Functions ---
+fn calculate_median(data: &mut [f64]) -> Option<f64> {
+    if data.is_empty() {
+        return None;
+    }
+    data.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = data.len() / 2;
+    if data.len() % 2 == 0 {
+        Some((data[mid - 1] + data[mid]) / 2.0)
+    } else {
+        Some(data[mid])
+    }
 }
+
+fn calculate_std_dev(data: &[f64], mean: f64) -> Option<f64> {
+    let n = data.len();
+    if n < 2 {
+        // Standard deviation requires at least 2 data points
+        return None;
+    }
+    let variance = data
+        .iter()
+        .map(|value| {
+            let diff = mean - value;
+            diff * diff
+        })
+        .sum::<f64>()
+        / (n - 1) as f64; // Use n-1 for sample standard deviation
+    Some(variance.sqrt())
+}
+// --- End Statistics Helper Functions ---
+
+// Structure to hold results for a complete scenario (multiple runs)
+// #[derive(Debug)]
+// struct BenchmarkScenarioResult { ... } // REMOVED
 
 pub async fn run_benchmark_mode(
     config: &AppConfig,
@@ -207,6 +228,10 @@ pub async fn run_benchmark_mode(
             } else {
                 None
             };
+            let mut sorted_times = successful_times_ms.clone();
+            let median_total_time_ms = calculate_median(&mut sorted_times);
+            let stddev_total_time_ms =
+                avg_total_time_ms.and_then(|avg| calculate_std_dev(&successful_times_ms, avg));
 
             all_scenario_results.push(BenchmarkScenarioResult {
                 rule_file: rule_file_path.clone(),
@@ -218,6 +243,8 @@ pub async fn run_benchmark_mode(
                 successful_runs,
                 failed_runs,
                 avg_total_time_ms,
+                median_total_time_ms,
+                stddev_total_time_ms,
                 individual_results: scenario_run_results,
             });
         }
@@ -226,9 +253,9 @@ pub async fn run_benchmark_mode(
     // 4. Report Summary
     println!("\n--- GPU Benchmark Suite Summary ---");
     println!("GPU: {} ({:?})", adapter_info.name, adapter_info.backend);
-    println!("---------------------------------------------------------------------------------------------------");
-    println!("Rule File             | Size (WxHxD) | Tiles | Runs | Success | Failed | Avg Time (ms) | Notes");
-    println!("----------------------|--------------|-------|------|---------|--------|---------------|-------");
+    println!("-------------------------------------------------------------------------------------------------------------------------------");
+    println!("Rule File             | Size (WxHxD) | Tiles | Runs | Success | Failed | Avg Time (ms) | Median (ms) | Std Dev (ms) | Notes");
+    println!("----------------------|--------------|-------|------|---------|--------|---------------|-------------|--------------|-------");
 
     for scenario_res in &all_scenario_results {
         let rule_name = scenario_res
@@ -244,9 +271,17 @@ pub async fn run_benchmark_mode(
             .avg_total_time_ms
             .map(|t| format!("{:.3}", t))
             .unwrap_or_else(|| "N/A".to_string());
+        let median_time_str = scenario_res
+            .median_total_time_ms
+            .map(|t| format!("{:.3}", t))
+            .unwrap_or_else(|| "N/A".to_string());
+        let stddev_time_str = scenario_res
+            .stddev_total_time_ms
+            .map(|t| format!("{:.3}", t))
+            .unwrap_or_else(|| "N/A".to_string());
 
         println!(
-            "{:<21} | {:<12} | {:<5} | {:<4} | {:<7} | {:<6} | {:<13} |",
+            "{:<21} | {:<12} | {:<5} | {:<4} | {:<7} | {:<6} | {:<13} | {:<11} | {:<12} |",
             rule_name,
             size_str,
             scenario_res.num_tiles,
@@ -254,12 +289,23 @@ pub async fn run_benchmark_mode(
             scenario_res.successful_runs,
             scenario_res.failed_runs,
             avg_time_str,
+            median_time_str,
+            stddev_time_str,
         );
     }
-    println!("---------------------------------------------------------------------------------------------------");
+    println!("-------------------------------------------------------------------------------------------------------------------------------");
 
+    // 5. Write to CSV if requested
     if let Some(csv_path) = &config.benchmark_csv_output {
-        log::warn!("CSV output for benchmark suite results is not yet fully implemented in benchmark::write_results_to_csv. Skipping CSV writing.");
+        log::info!("Writing benchmark suite results to {:?}", csv_path);
+        // Use the new function from benchmark module
+        match benchmark::write_scenario_results_to_csv(&all_scenario_results, csv_path) {
+            Ok(_) => log::info!("Benchmark results successfully written to {:?}", csv_path),
+            Err(e) => {
+                // Log the error but don't stop the main function from returning Ok
+                log::error!("Failed to write benchmark suite results to CSV: {}", e);
+            }
+        }
     }
 
     Ok(())

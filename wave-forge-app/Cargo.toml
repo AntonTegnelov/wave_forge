@@ -11,8 +11,9 @@ path = "src/main.rs"
 wfc-core = { path = "../wfc-core" }
 wfc-rules = { path = "../wfc-rules" }
 wfc-gpu = { path = "../wfc-gpu" }
+wgpu = { version = "0.20", features = ["naga"] }
 
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 rayon = "1.8"
 log = "0.4"
 env_logger = "0.11"

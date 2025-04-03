@@ -21,10 +21,11 @@ use wfc_gpu::{entropy::GpuEntropyCalculator, propagator::GpuConstraintPropagator
 use anyhow::{Error, Result};
 use std::collections::HashMap;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
+use csv;
 use log; // Import AppError
 
 /// Structure to hold benchmark results for a single GPU run.
@@ -54,8 +55,21 @@ pub struct BenchmarkResult {
     pub memory_usage: Option<usize>,
 }
 
-/// Type alias for storing benchmark results along with grid dimensions.
-pub type BenchmarkResultTuple = ((usize, usize, usize), Result<BenchmarkResult, Error>);
+/// Structure to hold aggregated results for a complete benchmark scenario (multiple runs).
+#[derive(Debug)]
+pub struct BenchmarkScenarioResult {
+    pub rule_file: PathBuf,
+    pub width: usize,
+    pub height: usize,
+    pub depth: usize,
+    pub num_tiles: usize,
+    pub runs: usize,
+    pub successful_runs: usize,
+    pub failed_runs: usize,
+    pub avg_total_time_ms: Option<f64>,
+    pub median_total_time_ms: Option<f64>,
+    pub stddev_total_time_ms: Option<f64>,
+}
 
 /// Runs the WFC algorithm using the GPU implementation
 /// and collects timing and result information.
@@ -230,78 +244,70 @@ fn get_memory_usage() -> Result<usize, Error> {
     }
 }
 
-/// Writes the collected benchmark results to a CSV file.
-/// (Adapted for GPU-only results)
+/// Writes the collected aggregated benchmark scenario results to a CSV file.
 ///
 /// # Arguments
 ///
-/// * `results` - A slice of `BenchmarkResultTuple` containing the results to write.
+/// * `scenario_results` - A slice of `BenchmarkScenarioResult` containing the aggregated results.
 /// * `path` - The path to the output CSV file.
 ///
 /// # Returns
 ///
 /// * `Ok(())` if writing to CSV is successful.
 /// * `Err(Error)` if there is an error creating the file or writing the data.
-pub fn write_results_to_csv(results: &[BenchmarkResultTuple], path: &Path) -> Result<(), Error> {
+pub fn write_scenario_results_to_csv(
+    scenario_results: &[BenchmarkScenarioResult],
+    path: &Path,
+) -> Result<(), Error> {
     let file = File::create(path)?;
     let mut wtr = csv::Writer::from_writer(file);
 
-    // Write header row
+    // Write header row matching console output
     wtr.write_record([
+        "Rule File",
         "Width",
         "Height",
         "Depth",
         "Num Tiles",
-        "Total Time (ms)",
-        "Iterations",
-        "Collapsed Cells",
-        "Result",
-        "Memory Usage (bytes)",
+        "Total Runs",
+        "Successful Runs",
+        "Failed Runs",
+        "Avg Time (ms)",
+        "Median Time (ms)",
+        "Std Dev Time (ms)",
     ])?;
 
-    // Write data rows
-    for ((w, h, d), result_item) in results {
-        match result_item {
-            Ok(result) => {
-                wtr.write_record([
-                    w.to_string(),
-                    h.to_string(),
-                    d.to_string(),
-                    result.num_tiles.to_string(),
-                    result.total_time.as_millis().to_string(),
-                    result.iterations.map_or("".to_string(), |i| i.to_string()),
-                    result
-                        .collapsed_cells
-                        .map_or("".to_string(), |c| c.to_string()),
-                    if result.wfc_result.is_ok() {
-                        "Ok".to_string()
-                    } else {
-                        format!("Fail({:?})", result.wfc_result.clone().err().unwrap())
-                    },
-                    result
-                        .memory_usage
-                        .map_or("".to_string(), |m| m.to_string()),
-                ])?;
-            }
-            Err(e) => {
-                // Write a row indicating the error for this size
-                wtr.write_record([
-                    w.to_string(),
-                    h.to_string(),
-                    d.to_string(),
-                    "N/A".to_string(), // Num tiles unknown if setup failed
-                    "N/A".to_string(),
-                    "N/A".to_string(),
-                    "N/A".to_string(),
-                    format!("Error({})", e),
-                    "N/A".to_string(),
-                ])?;
-            }
-        }
+    for scenario in scenario_results {
+        wtr.write_record([
+            scenario
+                .rule_file
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_else(|| scenario.rule_file.to_string_lossy())
+                .to_string(),
+            scenario.width.to_string(),
+            scenario.height.to_string(),
+            scenario.depth.to_string(),
+            scenario.num_tiles.to_string(),
+            scenario.runs.to_string(),
+            scenario.successful_runs.to_string(),
+            scenario.failed_runs.to_string(),
+            scenario
+                .avg_total_time_ms
+                .map(|t| format!("{:.6}", t))
+                .unwrap_or_else(|| "".to_string()),
+            scenario
+                .median_total_time_ms
+                .map(|t| format!("{:.6}", t))
+                .unwrap_or_else(|| "".to_string()),
+            scenario
+                .stddev_total_time_ms
+                .map(|t| format!("{:.6}", t))
+                .unwrap_or_else(|| "".to_string()),
+        ])?;
     }
 
     wtr.flush()?;
-    log::info!("Benchmark results written to: {:?}", path);
     Ok(())
 }
 

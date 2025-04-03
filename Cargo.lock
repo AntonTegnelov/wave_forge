@@ -2193,6 +2193,7 @@ dependencies = [
  "wfc-core",
  "wfc-gpu",
  "wfc-rules",
+ "wgpu",
  "winapi",
 ]
 
