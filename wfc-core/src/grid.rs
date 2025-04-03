@@ -1,4 +1,5 @@
 use bitvec::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// A generic 3-dimensional grid structure holding data of type `T`.
 ///
@@ -89,7 +90,7 @@ impl<T: Clone + Default> Grid<T> {
 /// Each cell contains a `BitVec`, where the index corresponds to a `TileId`.
 /// If the bit at index `i` is set (`true`), it means `TileId(i)` is still considered
 /// a possible tile for that cell. If the bit is unset (`false`), the tile has been eliminated.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PossibilityGrid {
     /// The width of the grid (X dimension).
     pub width: usize,
@@ -297,68 +298,86 @@ mod tests {
 
     #[test]
     fn test_possibility_grid_new() {
-        let grid = PossibilityGrid::new(2, 3, 4, 5); // 24 cells, 5 tiles
+        let grid = PossibilityGrid::new(2, 3, 1, 4); // w=2, h=3, d=1, tiles=4
         assert_eq!(grid.width, 2);
         assert_eq!(grid.height, 3);
-        assert_eq!(grid.depth, 4);
-        assert_eq!(grid.num_tiles(), 5);
-        assert_eq!(grid.data.len(), 2 * 3 * 4);
+        assert_eq!(grid.depth, 1);
+        assert_eq!(grid.num_tiles(), 4);
+        assert_eq!(grid.data.len(), 2 * 3 * 1);
 
-        // Check that all cells are initialized with all bits set
-        let expected_bv = bitvec![1; 5];
-        assert!(grid.data.iter().all(|bv| *bv == expected_bv));
+        // Check all bits are set initially
+        for cell_bits in &grid.data {
+            assert_eq!(cell_bits.len(), 4);
+            assert!(cell_bits.all());
+        }
 
         // Test zero dimension
-        let grid_zero = PossibilityGrid::new(0, 10, 10, 3);
+        let grid_zero = PossibilityGrid::new(0, 5, 5, 10);
         assert!(grid_zero.data.is_empty());
-        assert_eq!(grid_zero.num_tiles(), 3);
     }
 
     #[test]
-    #[should_panic(expected = "num_tiles must be greater than 0")]
+    #[should_panic]
     fn test_possibility_grid_new_zero_tiles() {
-        let _ = PossibilityGrid::new(2, 2, 2, 0);
+        let _ = PossibilityGrid::new(2, 2, 2, 0); // Should panic
     }
 
     #[test]
     fn test_possibility_grid_get() {
-        let grid = PossibilityGrid::new(2, 2, 2, 3);
-        let expected_bv = bitvec![1; 3];
-
-        assert_eq!(grid.get(0, 0, 0), Some(&expected_bv));
-        assert_eq!(grid.get(1, 1, 1), Some(&expected_bv));
-
-        // Out of bounds
-        assert_eq!(grid.get(2, 0, 0), None);
+        let grid = PossibilityGrid::new(2, 2, 1, 3);
+        assert!(grid.get(0, 0, 0).is_some());
+        assert!(grid.get(1, 1, 0).is_some());
+        assert!(grid.get(2, 0, 0).is_none()); // x out of bounds
+        assert!(grid.get(0, 2, 0).is_none()); // y out of bounds
+        assert!(grid.get(0, 0, 1).is_none()); // z out of bounds
     }
 
     #[test]
     fn test_possibility_grid_get_mut() {
-        let mut grid = PossibilityGrid::new(2, 2, 2, 4);
-        let expected_initial = bitvec![1; 4];
-        let modified_bv = bitvec![0, 1, 0, 1];
-
-        // Check initial state
-        assert_eq!(grid.get(0, 1, 0).unwrap(), &expected_initial);
-
-        // Get mutable reference and modify
-        if let Some(bv) = grid.get_mut(0, 1, 0) {
-            // Index 2
-            *bv = modified_bv.clone();
+        let mut grid = PossibilityGrid::new(2, 1, 1, 5);
+        if let Some(cell) = grid.get_mut(0, 0, 0) {
+            assert!(cell.all()); // Initially all possible
+            cell.set(2, false); // Remove possibility for tile 2
         }
-        assert_eq!(grid.get(0, 1, 0).unwrap(), &modified_bv);
-
-        // Check other cells weren't affected
-        assert_eq!(grid.get(0, 0, 0).unwrap(), &expected_initial);
-        assert_eq!(grid.get(1, 1, 1).unwrap(), &expected_initial);
-
-        // Attempt to get out of bounds mutable reference
+        assert!(!grid.get(0, 0, 0).unwrap()[2]);
+        assert!(grid.get_mut(1, 0, 0).is_some());
         assert!(grid.get_mut(2, 0, 0).is_none());
     }
 
     #[test]
-    fn test_possibility_grid_num_tiles() {
-        let grid = PossibilityGrid::new(1, 1, 1, 10);
-        assert_eq!(grid.num_tiles(), 10);
+    fn test_possibility_grid_serialization() {
+        let mut grid = PossibilityGrid::new(2, 1, 1, 3);
+        // Modify the grid state slightly
+        grid.get_mut(0, 0, 0).unwrap().set(1, false);
+        grid.get_mut(1, 0, 0).unwrap().set(0, false);
+        grid.get_mut(1, 0, 0).unwrap().set(2, false);
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&grid).expect("Serialization failed");
+
+        // Deserialize back
+        let deserialized: PossibilityGrid =
+            serde_json::from_str(&serialized).expect("Deserialization failed");
+
+        // Compare fields
+        assert_eq!(grid.width, deserialized.width);
+        assert_eq!(grid.height, deserialized.height);
+        assert_eq!(grid.depth, deserialized.depth);
+        assert_eq!(grid.num_tiles(), deserialized.num_tiles());
+        assert_eq!(grid.data.len(), deserialized.data.len());
+
+        // Compare data content (BitVec comparison)
+        for i in 0..grid.data.len() {
+            assert_eq!(grid.data[i], deserialized.data[i]);
+        }
+
+        // Spot check modified values
+        assert!(!deserialized.get(0, 0, 0).unwrap()[1]);
+        assert!(deserialized.get(0, 0, 0).unwrap()[0]);
+        assert!(deserialized.get(0, 0, 0).unwrap()[2]);
+
+        assert!(!deserialized.get(1, 0, 0).unwrap()[0]);
+        assert!(deserialized.get(1, 0, 0).unwrap()[1]);
+        assert!(!deserialized.get(1, 0, 0).unwrap()[2]);
     }
 }

@@ -7,11 +7,13 @@ edition = "2021"
 
 [dependencies]
 wfc-rules = { path = "../wfc-rules" } # Added for rule/tileset types
-bitvec = "1.0"
+bitvec = { version = "1.0", features = ["serde"] } # Enable serde feature for bitvec
 rayon = "1.8" # Added for parallel entropy calculation
 float-ord = "0.3" # Corrected name (was float_ord)
 log = "0.4"
 rand = "0.8" # Added for random tile selection during collapse
 thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] } # Add serde dependency
 
 [dev-dependencies]
+serde_json = "1.0" # Add serde_json for testing serialization

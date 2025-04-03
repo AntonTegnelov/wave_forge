@@ -48,7 +48,7 @@
 
 - [x] Implement tile symmetry handling (rotation/reflection support in TileSet)
 - [x] Add rule generation helpers based on symmetry/transformation principles
-- [ ] Support serialization of grid states for saving/loading
+- [x] Support serialization of grid states for saving/loading
 - [ ] Create checkpoint system to pause/resume WFC algorithm execution
 - [ ] Enhance visualization hooks beyond simple progress callbacks
 - [ ] Add boundary condition options (periodic, fixed, etc.)
