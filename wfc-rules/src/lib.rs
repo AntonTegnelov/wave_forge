@@ -4,13 +4,15 @@ use thiserror::Error;
 
 /// Contains format-specific parsing logic (e.g., RON).
 pub mod formats;
+/// Contains logic for generating expanded rules based on symmetry.
+pub mod generator;
 /// Contains the main rule loading functions.
 pub mod loader;
 /// Contains the core types (TileId, TileSet, AdjacencyRules).
 pub mod types;
 
 /// Re-export core types for easier access
-pub use types::{AdjacencyRules, TileId, TileSet, TileSetError};
+pub use types::{AdjacencyRules, TileId, TileSet, TileSetError, Transformation};
 
 /// Errors that can occur when loading or parsing adjacency rules.
 #[derive(Error, Debug)]

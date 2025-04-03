@@ -2,7 +2,7 @@
 // Removed unused: use std::fs;
 // Removed unused: use tempfile::tempdir;
 use wfc_rules::loader::load_from_file;
-use wfc_rules::{LoadError, TileId}; // Removed unused: AdjacencyRules, TileSet, TileSetError
+use wfc_rules::{LoadError, TileId, Transformation}; // Removed unused: AdjacencyRules, TileSet, TileSetError
 
 // Helper function to create the full path to test data
 fn test_data_path(filename: &str) -> std::path::PathBuf {
@@ -23,26 +23,40 @@ fn test_load_valid_simple() {
 
     // Verify TileSet
     assert_eq!(tileset.weights.len(), 2);
+    assert_eq!(tileset.allowed_transformations.len(), 2);
+    assert!(tileset.allowed_transformations[0].contains(&Transformation::Identity));
+    assert_eq!(tileset.allowed_transformations[0].len(), 1);
+    assert!(tileset.allowed_transformations[1].contains(&Transformation::Identity));
+    assert_eq!(tileset.allowed_transformations[1].len(), 1);
     assert!((tileset.weights[0] - 1.0).abs() < f32::EPSILON);
     assert!((tileset.weights[1] - 2.0).abs() < f32::EPSILON);
 
+    // Get transformed IDs for base tiles (Identity transformation)
+    let ttid_a = tileset
+        .get_transformed_id(TileId(0), Transformation::Identity)
+        .expect("Failed to get transformed ID for Tile A");
+    let ttid_b = tileset
+        .get_transformed_id(TileId(1), Transformation::Identity)
+        .expect("Failed to get transformed ID for Tile B");
+
     // Verify AdjacencyRules
-    assert_eq!(rules.num_tiles(), 2);
+    // Since valid_simple.ron doesn't define transformations, TileSet creates Identity only.
+    // The generator should only produce rules for Identity transforms.
+    // num_tiles should reflect only the base tiles * their Identity transforms (so, still 2).
+    assert_eq!(tileset.num_transformed_tiles(), 2);
+    assert_eq!(rules.num_tiles(), tileset.num_transformed_tiles());
     assert_eq!(rules.num_axes(), 6);
 
-    let tile_a = TileId(0);
-    let tile_b = TileId(1);
+    // Check some allowed rules using transformed IDs
+    assert!(rules.check(ttid_a, ttid_a, 0)); // A-A +x
+    assert!(rules.check(ttid_b, ttid_b, 3)); // B-B -y
+    assert!(rules.check(ttid_a, ttid_b, 0)); // A-B +x
+    assert!(rules.check(ttid_b, ttid_a, 1)); // B-A -x
 
-    // Check some allowed rules
-    assert!(rules.check(tile_a, tile_a, 0)); // A-A +x
-    assert!(rules.check(tile_b, tile_b, 3)); // B-B -y
-    assert!(rules.check(tile_a, tile_b, 0)); // A-B +x
-    assert!(rules.check(tile_b, tile_a, 1)); // B-A -x
-
-    // Check some disallowed rules
-    assert!(!rules.check(tile_a, tile_b, 1)); // A-B -x (not explicitly defined)
-    assert!(!rules.check(tile_b, tile_a, 0)); // B-A +x (not explicitly defined)
-    assert!(!rules.check(tile_a, tile_b, 2)); // A-B +y
+    // Check some disallowed rules using transformed IDs
+    assert!(!rules.check(ttid_a, ttid_b, 1)); // A-B -x (not explicitly defined)
+    assert!(!rules.check(ttid_b, ttid_a, 0)); // B-A +x (not explicitly defined)
+    assert!(!rules.check(ttid_a, ttid_b, 2)); // A-B +y
 }
 
 #[test]

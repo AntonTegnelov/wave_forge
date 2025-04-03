@@ -3,6 +3,8 @@ use crate::LoadError;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::generator::generate_transformed_rules; // Import generator
+
 // --- Structs mirroring the RON format ---
 
 /// Represents the data for a single tile as defined in the RON file.
@@ -143,10 +145,9 @@ pub fn parse_ron_rules(ron_content: &str) -> Result<(TileSet, AdjacencyRules), L
         }
     })?;
 
-    // 4. Convert named adjacency rules into the flattened boolean format
-    let num_tiles = rule_file.tiles.len();
+    // 4. Convert named adjacency rules into a list of BASE rules
     let num_axes = 6; // Assuming 3D standard axes
-    let mut allowed = vec![false; num_axes * num_tiles * num_tiles]; // Initialize to false
+    let mut base_rules = Vec::new();
 
     for (t1_name, t2_name, axis_name) in &rule_file.adjacency {
         // Get TileIds from names
@@ -160,22 +161,18 @@ pub fn parse_ron_rules(ron_content: &str) -> Result<(TileSet, AdjacencyRules), L
         // Get axis index from name
         let axis_index = axis_name_to_index(axis_name)?;
 
-        // Calculate the flat index
-        // Formula: axis * num_tiles * num_tiles + tile1.0 * num_tiles + tile2.0
-        let flat_index = axis_index * num_tiles * num_tiles + tile1_id.0 * num_tiles + tile2_id.0;
-
-        // Set the corresponding entry to true
-        if flat_index >= allowed.len() {
-            // Should not happen with valid TileIds and axis_index, but check defensively
-            return Err(LoadError::InvalidData(format!(
-                 "Internal error: Calculated rule index out of bounds for rule ({:?}, {:?}, axis {})",
-                 tile1_id, tile2_id, axis_index
-             )));
-        }
-        allowed[flat_index] = true;
+        base_rules.push((tile1_id, tile2_id, axis_index));
     }
 
-    let rules = AdjacencyRules::new(num_tiles, num_axes, allowed);
+    // 5. Generate the full transformed rule set
+    let allowed_transformed = generate_transformed_rules(&base_rules, &tileset, num_axes);
+
+    // 6. Create AdjacencyRules using the transformed rules
+    let rules = AdjacencyRules::new(
+        tileset.num_transformed_tiles(),
+        num_axes,
+        allowed_transformed,
+    );
 
     Ok((tileset, rules))
 }

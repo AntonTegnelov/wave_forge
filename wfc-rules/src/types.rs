@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use thiserror::Error;
 
 /// Represents a unique identifier for a tile.
@@ -15,6 +16,73 @@ pub enum Transformation {
     Rot180,
     Rot270,
     // Future: FlipX, FlipY, etc.
+}
+
+impl Transformation {
+    /// Calculates the resulting axis index after applying the transformation.
+    /// Assumes a standard 3D axis convention:
+    /// 0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
+    /// Only handles Z-axis rotations currently.
+    /// Panics if axis index is out of bounds (0-5).
+    pub fn transform_axis(self, axis: usize) -> usize {
+        match self {
+            Transformation::Identity => axis, // No change
+            Transformation::Rot90 => match axis {
+                0 => 2,        // +X -> +Y
+                1 => 3,        // -X -> -Y
+                2 => 1,        // +Y -> -X
+                3 => 0,        // -Y -> +X
+                4 | 5 => axis, // Z axes unchanged
+                _ => panic!("Invalid axis index: {}", axis),
+            },
+            Transformation::Rot180 => match axis {
+                0 => 1,        // +X -> -X
+                1 => 0,        // -X -> +X
+                2 => 3,        // +Y -> -Y
+                3 => 2,        // -Y -> +Y
+                4 | 5 => axis, // Z axes unchanged
+                _ => panic!("Invalid axis index: {}", axis),
+            },
+            Transformation::Rot270 => match axis {
+                0 => 3,        // +X -> -Y
+                1 => 2,        // -X -> +Y
+                2 => 0,        // +Y -> +X
+                3 => 1,        // -Y -> -X
+                4 | 5 => axis, // Z axes unchanged
+                _ => panic!("Invalid axis index: {}", axis),
+            },
+            // Add cases for FlipX, FlipY etc. later
+        }
+    }
+
+    /// Returns the inverse transformation.
+    pub fn inverse(self) -> Transformation {
+        match self {
+            Transformation::Identity => Transformation::Identity,
+            Transformation::Rot90 => Transformation::Rot270,
+            Transformation::Rot180 => Transformation::Rot180,
+            Transformation::Rot270 => Transformation::Rot90,
+            // Add inverses for other transformations later
+        }
+    }
+
+    /// Combines this transformation with another (applies other then self).
+    /// This is equivalent to matrix multiplication order: self * other.
+    pub fn combine(self, other: Transformation) -> Transformation {
+        // For rotations, this is simple addition modulo 4
+        // Identity=0, Rot90=1, Rot180=2, Rot270=3
+        let self_val = self as usize;
+        let other_val = other as usize;
+        let combined_val = (self_val + other_val) % 4;
+        match combined_val {
+            0 => Transformation::Identity,
+            1 => Transformation::Rot90,
+            2 => Transformation::Rot180,
+            3 => Transformation::Rot270,
+            _ => unreachable!(), // Should not happen due to modulo 4
+        }
+        // This logic needs extension if non-rotation transforms are added.
+    }
 }
 
 /// Errors that can occur during TileSet creation or validation.
@@ -45,17 +113,20 @@ pub enum TileSetError {
 
 /// Stores information about the set of tiles used in WFC.
 ///
-/// Includes the weights associated with each tile and the allowed symmetry
-/// transformations for each tile.
+/// Includes the weights associated with each tile, the allowed symmetry
+/// transformations for each tile, and mappings for transformed tile states.
 #[derive(Debug, Clone)]
 pub struct TileSet {
-    /// Relative weights for each tile. Higher weight means higher probability of being chosen.
-    /// The index corresponds to the `TileId(index)`. Assumed to be the weight of the base tile.
+    /// Relative weights for each base tile.
     pub weights: Vec<f32>,
     /// Allowed symmetry transformations for each base tile.
-    /// The outer index corresponds to the `TileId(index)`.
-    /// Each inner list must contain at least `Transformation::Identity`.
     pub allowed_transformations: Vec<Vec<Transformation>>,
+    /// Total number of unique transformed tile states (base tile + allowed transformation).
+    num_transformed_tiles: usize,
+    /// Maps (Base TileId, Transformation) to a unique TransformedTileId (usize index).
+    transformed_tile_map: HashMap<(TileId, Transformation), usize>,
+    /// Maps a TransformedTileId (usize index) back to (Base TileId, Transformation).
+    reverse_transformed_map: Vec<(TileId, Transformation)>,
 }
 
 impl TileSet {
@@ -90,7 +161,11 @@ impl TileSet {
             ));
         }
 
-        // Check weights and transformations
+        let mut num_transformed_tiles = 0;
+        let mut transformed_tile_map = HashMap::new();
+        let mut reverse_transformed_map = Vec::new();
+
+        // Check weights and transformations, and build mappings
         for (index, (weight, transformations)) in weights
             .iter()
             .zip(allowed_transformations.iter())
@@ -107,14 +182,59 @@ impl TileSet {
             if !transformations.contains(&Transformation::Identity) {
                 return Err(TileSetError::MissingIdentityTransformation(index));
             }
-            // Future: Add validation for duplicate transformations?
+
+            // Add mappings for this base tile and its allowed transformations
+            let base_tile_id = TileId(index);
+            for &transformation in transformations {
+                // TODO: Check for duplicate transformations within the inner vec?
+                let transformed_id = num_transformed_tiles;
+                if transformed_tile_map
+                    .insert((base_tile_id, transformation), transformed_id)
+                    .is_some()
+                {
+                    // This should not happen if input `allowed_transformations` has unique transforms per tile
+                    // but could indicate an issue if the input is malformed.
+                    // Consider adding a specific error variant for this internal consistency check.
+                    panic!("Internal error: Duplicate transformation detected during mapping.");
+                }
+                reverse_transformed_map.push((base_tile_id, transformation));
+                num_transformed_tiles += 1;
+            }
         }
 
-        // All checks passed
         Ok(Self {
             weights,
             allowed_transformations,
+            num_transformed_tiles,
+            transformed_tile_map,
+            reverse_transformed_map,
         })
+    }
+
+    /// Gets the total number of unique transformed tile states.
+    pub fn num_transformed_tiles(&self) -> usize {
+        self.num_transformed_tiles
+    }
+
+    /// Gets the unique `TransformedTileId` (usize index) for a given base tile and transformation.
+    /// Returns `None` if the transformation is not allowed for the base tile.
+    pub fn get_transformed_id(
+        &self,
+        base_id: TileId,
+        transformation: Transformation,
+    ) -> Option<usize> {
+        self.transformed_tile_map
+            .get(&(base_id, transformation))
+            .copied()
+    }
+
+    /// Gets the base tile and transformation corresponding to a `TransformedTileId` (usize index).
+    /// Returns `None` if the index is out of bounds.
+    pub fn get_base_tile_and_transform(
+        &self,
+        transformed_id: usize,
+    ) -> Option<(TileId, Transformation)> {
+        self.reverse_transformed_map.get(transformed_id).copied()
     }
 
     /// Gets the weight for a specific `TileId`.
@@ -155,14 +275,14 @@ impl AdjacencyRules {
     /// # Panics
     ///
     /// Panics if the length of `allowed` is not equal to `num_axes * num_tiles * num_tiles`.
-    pub fn new(num_tiles: usize, num_axes: usize, allowed: Vec<bool>) -> Self {
+    pub fn new(num_transformed_tiles: usize, num_axes: usize, allowed: Vec<bool>) -> Self {
         assert_eq!(
             allowed.len(),
-            num_axes * num_tiles * num_tiles,
-            "Provided 'allowed' vector has incorrect size."
+            num_axes * num_transformed_tiles * num_transformed_tiles,
+            "Provided 'allowed' vector has incorrect size for transformed tiles."
         );
         Self {
-            num_tiles,
+            num_tiles: num_transformed_tiles, // Store the total transformed count here
             num_axes,
             allowed,
         }
@@ -185,21 +305,26 @@ impl AdjacencyRules {
         &self.allowed
     }
 
-    /// Checks if `tile2` is allowed to be placed adjacent to `tile1` along the specified `axis`.
+    /// Checks if `transformed_tile2_id` is allowed to be placed adjacent to `transformed_tile1_id` along the specified `axis`.
     ///
     /// Performs bounds checks internally and returns `false` if indices are out of range.
     /// Uses inline attribute for potential performance optimization in tight loops.
     #[inline]
-    pub fn check(&self, tile1: TileId, tile2: TileId, axis: usize) -> bool {
-        // Use checked indexing instead of asserts to avoid panics in release builds if used incorrectly.
-        if tile1.0 >= self.num_tiles || tile2.0 >= self.num_tiles || axis >= self.num_axes {
-            // Consider logging a warning here in debug builds?
+    pub fn check(
+        &self,
+        transformed_tile1_id: usize,
+        transformed_tile2_id: usize,
+        axis: usize,
+    ) -> bool {
+        if transformed_tile1_id >= self.num_tiles
+            || transformed_tile2_id >= self.num_tiles
+            || axis >= self.num_axes
+        {
             return false; // Treat out-of-bounds as disallowed.
         }
-
-        let index = axis * self.num_tiles * self.num_tiles + tile1.0 * self.num_tiles + tile2.0;
-
-        // Use .get() for safe access to the vector.
+        let index = axis * self.num_tiles * self.num_tiles
+            + transformed_tile1_id * self.num_tiles
+            + transformed_tile2_id;
         *self.allowed.get(index).unwrap_or(&false)
     }
 }
@@ -293,21 +418,21 @@ mod tests {
             ],
         );
 
-        assert!(rules.check(TileId(0), TileId(1), 0)); // Axis 0: T0 -> T1 (true)
-        assert!(!rules.check(TileId(0), TileId(2), 0)); // Axis 0: T0 -> T2 (false)
-        assert!(rules.check(TileId(1), TileId(2), 0)); // Axis 0: T1 -> T2 (true)
+        assert!(rules.check(0, 1, 0)); // Axis 0: T0 -> T1 (true)
+        assert!(!rules.check(0, 2, 0)); // Axis 0: T0 -> T2 (false)
+        assert!(rules.check(1, 2, 0)); // Axis 0: T1 -> T2 (true)
 
-        assert!(!rules.check(TileId(0), TileId(1), 1)); // Axis 1: T0 -> T1 (false)
-        assert!(rules.check(TileId(2), TileId(2), 1)); // Axis 1: T2 -> T2 (true)
+        assert!(!rules.check(0, 1, 1)); // Axis 1: T0 -> T1 (false)
+        assert!(rules.check(2, 2, 1)); // Axis 1: T2 -> T2 (true)
     }
 
     #[test]
     fn adjacency_check_out_of_bounds() {
         let rules = AdjacencyRules::new(2, 1, vec![true, false, false, true]); // 2 tiles, 1 axis
 
-        assert!(!rules.check(TileId(0), TileId(2), 0)); // Tile 2 out of bounds
-        assert!(!rules.check(TileId(2), TileId(0), 0)); // Tile 2 out of bounds
-        assert!(!rules.check(TileId(0), TileId(0), 1)); // Axis 1 out of bounds
+        assert!(!rules.check(0, 2, 0)); // Tile 2 out of bounds
+        assert!(!rules.check(2, 0, 0)); // Tile 2 out of bounds
+        assert!(!rules.check(0, 0, 1)); // Axis 1 out of bounds
     }
 
     // Add more tests for AdjacencyRules if needed
