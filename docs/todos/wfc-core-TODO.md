@@ -71,7 +71,7 @@
 - [x] Add boundary condition options (periodic, fixed, etc.) -> Parameter added, implementation needed in propagator
 - [x] Implement tile transformations (rotation, reflection) in `TileSet` and rule generation. (Note: `Transformation::combine` logic for flips is incomplete)
 - [x] Add support for weighted tile selection during collapse.
-- [ ] Implement more sophisticated entropy selection strategies (e.g., Hilbert curve, random lowest).
+- [x] Implement entropy selection strategies (FirstMinimum, RandomLowest) for `CpuEntropyCalculator`. (GPU/Hilbert still TODO).
 - [ ] Consider alternative propagation algorithms (e.g., AC-4).
 - [ ] Add checkpointing/resuming functionality to the `runner`.
 - [ ] Add progress reporting callback to the `runner`.

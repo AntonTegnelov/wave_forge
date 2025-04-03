@@ -1,6 +1,19 @@
 use crate::grid::{EntropyGrid, PossibilityGrid};
 use thiserror::Error;
 
+// Declare cpu module
+pub mod cpu;
+
+/// Strategy for selecting among cells with the same lowest entropy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionStrategy {
+    /// Choose the first cell encountered with the minimum entropy (deterministic).
+    FirstMinimum,
+    /// Choose randomly among all cells sharing the minimum positive entropy.
+    RandomLowest,
+    // TODO: HilbertCurve,
+}
+
 /// Errors related to entropy calculation or selection.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum EntropyError {
