@@ -6,6 +6,8 @@ use wfc_core::{
 };
 use wgpu;
 
+const ENTROPY_WORKGROUP_SIZE: u32 = 64; // Match the value in entropy.wgsl
+
 /// GPU implementation for entropy calculation.
 ///
 /// This struct holds references to the necessary GPU resources (device, queue,
@@ -119,13 +121,13 @@ impl EntropyCalculator for GpuEntropyCalculator {
             compute_pass.set_bind_group(0, &bind_group, &[]);
 
             // Dispatch - Calculate workgroup counts
-            // Entropy shader uses workgroup_size(64)
-            let workgroup_size = 64u32;
-            let workgroups_needed = num_cells.div_ceil(workgroup_size as usize) as u32;
+            // Use constant for workgroup size
+            let workgroups_needed = num_cells.div_ceil(ENTROPY_WORKGROUP_SIZE as usize) as u32;
 
             log::debug!(
-                "Dispatching entropy shader with {} workgroups of size 64",
-                workgroups_needed
+                "Dispatching entropy shader with {} workgroups of size {}",
+                workgroups_needed,
+                ENTROPY_WORKGROUP_SIZE
             );
             compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
         } // End compute pass scope

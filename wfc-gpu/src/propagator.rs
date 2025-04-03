@@ -9,6 +9,7 @@ use wfc_rules::AdjacencyRules;
 
 const MAX_PROPAGATION_ITERATIONS: u32 = 100; // Safeguard against infinite loops
 const PROPAGATION_BATCH_SIZE: usize = 4096; // Number of updates to process per GPU dispatch
+const PROPAGATION_WORKGROUP_SIZE: u32 = 64; // Match the value in propagate.wgsl
 
 /// GPU implementation of the ConstraintPropagator trait.
 /// Holds references to GPU resources needed for constraint propagation.
@@ -300,8 +301,9 @@ impl ConstraintPropagator for GpuConstraintPropagator {
                     compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
                     compute_pass.set_bind_group(0, &propagation_bind_group, &[]);
 
-                    let workgroup_size = 64u32;
-                    let workgroups_needed = std::cmp::max(1, batch_size.div_ceil(workgroup_size));
+                    // Use the constant for workgroup size
+                    let workgroups_needed =
+                        std::cmp::max(1, batch_size.div_ceil(PROPAGATION_WORKGROUP_SIZE));
                     compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
                 } // End compute pass
 
