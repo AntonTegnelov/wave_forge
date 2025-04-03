@@ -29,6 +29,13 @@ pub struct WfcConfig {
     pub seed: Option<u64>,
 }
 
+impl WfcConfig {
+    /// Creates a new builder for `WfcConfig`.
+    pub fn builder() -> WfcConfigBuilder {
+        WfcConfigBuilder::default()
+    }
+}
+
 impl Default for WfcConfig {
     fn default() -> Self {
         Self {
@@ -40,6 +47,88 @@ impl Default for WfcConfig {
             checkpoint_path: None,
             max_iterations: None,
             seed: None,
+        }
+    }
+}
+
+/// Builder for `WfcConfig`.
+///
+/// Allows for a more ergonomic construction of `WfcConfig` instances.
+#[derive(Default)]
+pub struct WfcConfigBuilder {
+    boundary_mode: BoundaryMode,
+    progress_callback: Option<ProgressCallback>,
+    shutdown_signal: Option<Arc<AtomicBool>>, // Optional, default is created if None
+    initial_checkpoint: Option<WfcCheckpoint>,
+    checkpoint_interval: Option<u64>,
+    checkpoint_path: Option<PathBuf>,
+    max_iterations: Option<u64>,
+    seed: Option<u64>,
+}
+
+impl WfcConfigBuilder {
+    /// Sets the boundary mode for the WFC algorithm.
+    pub fn boundary_mode(mut self, mode: BoundaryMode) -> Self {
+        self.boundary_mode = mode;
+        self
+    }
+
+    /// Sets the progress callback function.
+    pub fn progress_callback(mut self, callback: ProgressCallback) -> Self {
+        self.progress_callback = Some(callback);
+        self
+    }
+
+    /// Provides an external shutdown signal.
+    /// If not provided, a new signal will be created.
+    pub fn shutdown_signal(mut self, signal: Arc<AtomicBool>) -> Self {
+        self.shutdown_signal = Some(signal);
+        self
+    }
+
+    /// Sets the initial checkpoint to load state from.
+    pub fn initial_checkpoint(mut self, checkpoint: WfcCheckpoint) -> Self {
+        self.initial_checkpoint = Some(checkpoint);
+        self
+    }
+
+    /// Sets the interval (in iterations) for saving checkpoints.
+    pub fn checkpoint_interval(mut self, interval: u64) -> Self {
+        self.checkpoint_interval = Some(interval);
+        self
+    }
+
+    /// Sets the path for saving checkpoints.
+    pub fn checkpoint_path(mut self, path: PathBuf) -> Self {
+        self.checkpoint_path = Some(path);
+        self
+    }
+
+    /// Sets the maximum number of iterations allowed.
+    pub fn max_iterations(mut self, max: u64) -> Self {
+        self.max_iterations = Some(max);
+        self
+    }
+
+    /// Sets the seed for the random number generator.
+    pub fn seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Builds the `WfcConfig` instance.
+    pub fn build(self) -> WfcConfig {
+        WfcConfig {
+            boundary_mode: self.boundary_mode,
+            progress_callback: self.progress_callback,
+            shutdown_signal: self
+                .shutdown_signal
+                .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
+            initial_checkpoint: self.initial_checkpoint,
+            checkpoint_interval: self.checkpoint_interval,
+            checkpoint_path: self.checkpoint_path,
+            max_iterations: self.max_iterations,
+            seed: self.seed,
         }
     }
 }

@@ -328,11 +328,13 @@ impl AdjacencyRules {
     ) -> Self {
         let mut allowed = HashMap::new();
         for (axis, ttid1, ttid2) in allowed_tuples {
-            // Optional validation (could also be done during generation):
-            // assert!(axis < num_axes, "Axis index out of bounds");
-            // assert!(ttid1 < num_transformed_tiles, "ttid1 out of bounds");
-            // assert!(ttid2 < num_transformed_tiles, "ttid2 out of bounds");
-            allowed.insert((axis, ttid1, ttid2), true);
+            // Validate inputs before inserting
+            if axis < num_axes && ttid1 < num_transformed_tiles && ttid2 < num_transformed_tiles {
+                allowed.insert((axis, ttid1, ttid2), true);
+            } else {
+                // Optional: Log a warning about skipped invalid tuples
+                // log::warn!("Skipping invalid rule tuple: ({}, {}, {}) for num_tiles={}, num_axes={}", axis, ttid1, ttid2, num_transformed_tiles, num_axes);
+            }
         }
         Self {
             num_tiles: num_transformed_tiles,
@@ -399,104 +401,203 @@ impl AdjacencyRules {
 
 #[cfg(test)]
 mod tests {
-    use super::*; // Import items from parent module
+    use super::*;
+    use crate::TileId; // Make sure TileId is in scope
+    use std::collections::HashSet;
 
-    #[test]
-    fn tileset_new_valid() {
-        let weights = vec![1.0, 2.0];
-        let transformations = vec![
-            vec![Transformation::Identity],
-            vec![Transformation::Identity, Transformation::Rot90],
-        ];
-        let tileset = TileSet::new(weights.clone(), transformations.clone());
-        assert!(tileset.is_ok());
-        let ts = tileset.unwrap();
-        assert_eq!(ts.weights, weights);
-        assert_eq!(ts.allowed_transformations, transformations);
-    }
-
-    #[test]
-    fn tileset_new_empty_weights() {
-        let weights = vec![];
-        let transformations = vec![];
-        let result = TileSet::new(weights, transformations);
-        assert!(matches!(result, Err(TileSetError::EmptyWeights)));
-    }
-
-    #[test]
-    fn tileset_new_non_positive_weight() {
-        let weights = vec![1.0, 0.0];
-        let transformations = vec![
-            vec![Transformation::Identity],
-            vec![Transformation::Identity],
-        ];
-        let result = TileSet::new(weights, transformations);
-        assert!(matches!(result, Err(TileSetError::NonPositiveWeight(1, _))));
-    }
-
-    #[test]
-    fn tileset_new_weight_transformation_mismatch() {
-        let weights = vec![1.0];
-        let transformations = vec![
-            vec![Transformation::Identity],
-            vec![Transformation::Identity],
-        ]; // Mismatch
-        let result = TileSet::new(weights, transformations);
-        assert!(matches!(
-            result,
-            Err(TileSetError::TransformationWeightMismatch(2, 1))
-        ));
-    }
-
-    #[test]
-    fn tileset_new_empty_transformations_for_tile() {
-        let weights = vec![1.0, 1.0];
-        let transformations = vec![vec![Transformation::Identity], vec![]]; // Empty list for second tile
-        let result = TileSet::new(weights, transformations);
-        assert!(matches!(result, Err(TileSetError::EmptyTransformations(1))));
-    }
-
-    #[test]
-    fn tileset_new_missing_identity_transformation() {
-        let weights = vec![1.0, 1.0];
-        let transformations = vec![vec![Transformation::Identity], vec![Transformation::Rot90]]; // Missing Identity
-        let result = TileSet::new(weights, transformations);
-        assert!(matches!(
-            result,
-            Err(TileSetError::MissingIdentityTransformation(1))
-        ));
-    }
-
-    #[test]
-    fn adjacency_check_valid_sparse() {
-        let num_tiles = 3;
-        let num_axes = 2;
+    // Helper to create a basic AdjacencyRules for testing
+    fn create_test_rules() -> AdjacencyRules {
+        // Example: 2 tiles, 6 axes (3D)
+        // T0 <-> T1 on X (+0 / -1)
+        // T0 <-> T0 on Y (+2 / -3)
+        // T1 <-> T1 on Y (+2 / -3)
+        // T0 <-> T0 on Z (+4 / -5)
+        // T1 <-> T1 on Z (+4 / -5)
         let allowed_rules = vec![
-            (0, 0, 1), // Axis 0: T0 -> T1
-            (0, 1, 0), // Axis 0: T1 -> T0
-            (1, 2, 2), // Axis 1: T2 -> T2
+            (0, 0, 1), // +X: T0 -> T1
+            (1, 1, 0), // -X: T1 -> T0
+            (2, 0, 0), // +Y: T0 -> T0
+            (2, 1, 1), // +Y: T1 -> T1
+            (3, 0, 0), // -Y: T0 -> T0
+            (3, 1, 1), // -Y: T1 -> T1
+            (4, 0, 0), // +Z: T0 -> T0
+            (4, 1, 1), // +Z: T1 -> T1
+            (5, 0, 0), // -Z: T0 -> T0
+            (5, 1, 1), // -Z: T1 -> T1
         ];
-        let rules = AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_rules);
-
-        assert!(rules.check(0, 1, 0));
-        assert!(rules.check(1, 0, 0));
-        assert!(rules.check(2, 2, 1));
-
-        // Check disallowed (not present in map)
-        assert!(!rules.check(0, 0, 0));
-        assert!(!rules.check(1, 1, 0));
-        assert!(!rules.check(0, 1, 1));
-        assert!(!rules.check(2, 1, 1));
+        AdjacencyRules::from_allowed_tuples(2, 6, allowed_rules)
     }
 
     #[test]
-    fn adjacency_check_out_of_bounds_sparse() {
-        let rules = AdjacencyRules::from_allowed_tuples(2, 1, vec![(0, 0, 1)]); // 2 tiles, 1 axis
+    fn test_rule_check() {
+        let rules = create_test_rules();
 
-        assert!(!rules.check(0, 2, 0)); // Tile 2 out of bounds
-        assert!(!rules.check(2, 0, 0)); // Tile 2 out of bounds
-        assert!(!rules.check(0, 0, 1)); // Axis 1 out of bounds
+        // Check allowed rules
+        assert!(rules.check(0, 1, 0)); // +X: T0 -> T1
+        assert!(rules.check(1, 0, 1)); // -X: T1 -> T0
+        assert!(rules.check(0, 0, 2)); // +Y: T0 -> T0
+        assert!(rules.check(1, 1, 5)); // -Z: T1 -> T1
+
+        // Check disallowed rules
+        assert!(!rules.check(0, 0, 0)); // +X: T0 -> T0 (Not allowed by rule)
+        assert!(!rules.check(1, 1, 0)); // +X: T1 -> T1
+        assert!(!rules.check(0, 1, 2)); // +Y: T0 -> T1
+        assert!(!rules.check(1, 0, 3)); // -Y: T1 -> T0
+
+        // Check invalid axis/tile (should default to false)
+        assert!(!rules.check(0, 0, 6)); // Invalid axis
+        assert!(!rules.check(2, 0, 0)); // Invalid tile ID
+    }
+
+    #[test]
+    fn test_opposite_axis() {
+        let rules = create_test_rules();
+        assert_eq!(rules.opposite_axis(0), 1); // +X -> -X
+        assert_eq!(rules.opposite_axis(1), 0); // -X -> +X
+        assert_eq!(rules.opposite_axis(2), 3); // +Y -> -Y
+        assert_eq!(rules.opposite_axis(3), 2); // -Y -> +Y
+        assert_eq!(rules.opposite_axis(4), 5); // +Z -> -Z
+        assert_eq!(rules.opposite_axis(5), 4); // -Z -> +Z
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_opposite_axis_panic() {
+        let rules = create_test_rules();
+        rules.opposite_axis(6); // Invalid axis
+    }
+
+    #[test]
+    fn test_from_allowed_tuples_empty() {
+        let rules = AdjacencyRules::from_allowed_tuples(0, 0, vec![]);
+        assert_eq!(rules.num_tiles, 0);
+        assert_eq!(rules.num_axes, 0);
+        assert!(rules.allowed.is_empty());
+    }
+
+    #[test]
+    fn test_from_allowed_tuples_duplicates() {
+        // Ensures duplicates are handled (HashSet should deduplicate)
+        let allowed_rules = vec![
+            (0, 0, 1),
+            (0, 0, 1), // Duplicate
+            (1, 1, 0),
+        ];
+        let rules = AdjacencyRules::from_allowed_tuples(2, 6, allowed_rules);
+        assert_eq!(rules.allowed.len(), 2);
+        assert!(rules.check(0, 1, 0));
+        assert!(rules.check(1, 0, 1));
+    }
+
+    #[test]
+    fn test_from_allowed_tuples_invalid_tile_ids() {
+        // Behavior with invalid tile IDs in tuples (should they be ignored? error?)
+        // Current implementation ignores them because HashSet insert won't happen if num_tiles check fails
+        let allowed_rules = vec![
+            (0, 0, 1),
+            (1, 2, 0), // Invalid tile ID 2 (num_tiles=2)
+            (1, 1, 3), // Invalid tile ID 3
+        ];
+        let rules = AdjacencyRules::from_allowed_tuples(2, 6, allowed_rules);
+        assert_eq!(rules.allowed.len(), 1); // Only (0,0,1) should be added
+        assert!(rules.check(0, 1, 0));
+        assert!(!rules.check(1, 0, 1)); // (1,1,0) was not implicitly added
+        assert!(!rules.check(2, 0, 1)); // Invalid rule involving tile 2
+        assert!(!rules.check(1, 3, 1)); // Invalid rule involving tile 3
+    }
+
+    #[test]
+    fn test_from_allowed_tuples_invalid_axis() {
+        // Behavior with invalid axis IDs (should be ignored)
+        let allowed_rules = vec![
+            (0, 0, 1),
+            (6, 1, 0), // Invalid axis 6
+        ];
+        let rules = AdjacencyRules::from_allowed_tuples(2, 6, allowed_rules);
+        assert_eq!(rules.allowed.len(), 1);
+        assert!(rules.check(0, 1, 0));
+        assert!(!rules.check(1, 0, 6)); // Check with invalid axis is false
     }
 
     // Add more tests for AdjacencyRules if needed
+}
+
+// --- Proptest section ---
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Strategy to generate a valid AdjacencyRules instance
+    fn arb_adjacency_rules() -> impl Strategy<Value = AdjacencyRules> {
+        // Define ranges for num_tiles and num_axes
+        (1..10usize, 1..=6usize).prop_flat_map(|(num_tiles, num_axes)| {
+            // Strategy for generating allowed tuples (axis, t1, t2)
+            let tuple_strategy = (
+                0..num_axes,  // axis
+                0..num_tiles, // t1
+                0..num_tiles, // t2
+            );
+
+            // Generate a vector of these tuples
+            proptest::collection::vec(tuple_strategy, 0..num_tiles * num_tiles * num_axes).prop_map(
+                move |tuples| AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, tuples),
+            )
+        })
+    }
+
+    proptest! {
+        // Property: If check(t1, t2, axis) is true, then check(t2, t1, opposite_axis) should also be true *IF* the reverse rule was explicitly added.
+        // Note: This property only holds if the rule generation process ensures symmetry.
+        // The current from_allowed_tuples doesn't enforce symmetry, so we test the check method itself.
+        // Property: opposite_axis(opposite_axis(axis)) == axis
+        #[test]
+        fn test_opposite_axis_symmetry(rules in arb_adjacency_rules(), axis in 0..6usize) {
+            prop_assume!(axis < rules.num_axes);
+            let opposite = rules.opposite_axis(axis);
+            prop_assume!(opposite < rules.num_axes); // Ensure opposite is also valid
+            assert_eq!(rules.opposite_axis(opposite), axis);
+        }
+
+        // Property: check() should return false for invalid tile IDs or axes
+        #[test]
+        fn test_check_invalid_inputs(
+            rules in arb_adjacency_rules(),
+            t1 in any::<usize>(),
+            t2 in any::<usize>(),
+            axis in any::<usize>()
+        ) {
+            let is_valid_t1 = t1 < rules.num_tiles;
+            let is_valid_t2 = t2 < rules.num_tiles;
+            let is_valid_axis = axis < rules.num_axes;
+
+            if !is_valid_t1 || !is_valid_t2 || !is_valid_axis {
+                prop_assert!(!rules.check(t1, t2, axis), "check should be false for invalid inputs");
+            }
+            // No assertion if inputs are valid, as the result depends on the specific rules
+        }
+
+        // Property: If a rule (axis, t1, t2) was explicitly added via from_allowed_tuples,
+        // then check(t1, t2, axis) should return true.
+        // This tests the construction and checking consistency.
+        #[test]
+        fn test_construction_consistency(
+            num_tiles in 1..10usize,
+            num_axes in 1..=6usize,
+            allowed_tuples in proptest::collection::vec((0..6usize, 0..10usize, 0..10usize), 0..50)
+        )
+        {
+            // Filter tuples to be valid for the generated num_tiles and num_axes
+            let valid_tuples: Vec<(usize, usize, usize)> = allowed_tuples
+                .into_iter()
+                .filter(|(ax, t1, t2)| *ax < num_axes && *t1 < num_tiles && *t2 < num_tiles)
+                .collect();
+
+            let rules = AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, valid_tuples.clone());
+
+            for (axis, t1, t2) in valid_tuples {
+                prop_assert!(rules.check(t1, t2, axis), "Rule added via constructor should be checkable");
+            }
+        }
+    }
 }

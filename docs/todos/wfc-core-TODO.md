@@ -63,7 +63,7 @@
 
 ## Code Quality Enhancements
 
-- [ ] Add property-based tests (e.g., using proptest) for rule consistency
+- [x] Add property-based tests (e.g., using proptest) for rule consistency
 - [ ] Implement fuzzing for edge case discovery
 
 ## Core Logic

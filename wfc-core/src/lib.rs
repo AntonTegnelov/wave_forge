@@ -113,12 +113,19 @@ pub struct WfcCheckpoint {
     // Resuming will use a new RNG seed unless managed externally.
 }
 
-/// Represents the boundary handling mode for the WFC grid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Defines how the WFC algorithm handles grid boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))] // Conditionally derive clap::ValueEnum
+#[derive(Default)] // Add Default here
 pub enum BoundaryMode {
-    /// The grid edges wrap around (toroidal topology).
+    /// Tiles on the boundary must be compatible with a fixed 'boundary' tile (not implemented yet).
+    // Fixed(TileId),
+
+    /// The grid wraps around (periodic boundary conditions).
     Periodic,
-    /// Propagation stops at the grid edges.
+
+    /// The grid does not wrap; edges are treated as having no neighbors.
+    #[default] // Mark Clamped as the default
     Clamped,
 }
 
