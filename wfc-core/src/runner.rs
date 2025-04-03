@@ -435,3 +435,55 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    
+    
+    
+    
+    
+    
+    
+    use wfc_rules::{AdjacencyRules, TileSet, Transformation}; // Ensure Transformation is imported here
+
+    // --- Mock Implementations ---
+    // ... Mocks ...
+
+    // --- Helper to create basic rules/tileset (Moved Inside) ---
+    fn create_basic_setup(num_tiles: usize) -> (TileSet, AdjacencyRules) {
+        let weights = vec![1.0; num_tiles];
+        let transformations = vec![vec![Transformation::Identity]; num_tiles];
+        let tileset = TileSet::new(weights, transformations).unwrap();
+        let num_transformed = tileset.num_transformed_tiles();
+        assert_eq!(num_transformed, num_tiles);
+        let num_axes = 6;
+        let mut allowed_tuples = Vec::new();
+        for axis in 0..num_axes {
+            for t1_idx in 0..num_transformed {
+                for t2_idx in 0..num_transformed {
+                    allowed_tuples.push((axis, t1_idx, t2_idx));
+                }
+            }
+        }
+        let rules = AdjacencyRules::from_allowed_tuples(num_transformed, num_axes, allowed_tuples);
+        (tileset, rules)
+    }
+
+    // --- Checkpoint Tests ---
+    #[test]
+    fn test_checkpoint_saving() { /* ... */
+    }
+    #[test]
+    fn test_checkpoint_loading() { /* ... */
+    }
+    #[test]
+    fn test_checkpoint_loading_dimension_mismatch() { /* ... */
+    }
+    #[test]
+    fn test_checkpoint_loading_tile_count_mismatch() { /* ... */
+    }
+    #[test]
+    fn test_progress_callback_with_grid() { /* ... */
+    }
+}

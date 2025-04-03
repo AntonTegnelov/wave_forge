@@ -247,68 +247,71 @@ impl TileSet {
 
 /// Represents adjacency rules between tiles for different axes.
 ///
-/// Stores the rules efficiently in a flattened boolean vector for fast lookup
-/// and easy transfer to GPU buffers.
-/// The indexing scheme assumes `allowed[axis][tile1][tile2]` layout.
+/// Stores the rules efficiently for potentially sparse rule sets using a HashMap.
 #[derive(Debug, Clone)]
 pub struct AdjacencyRules {
-    num_tiles: usize,
+    num_tiles: usize, // Still stores total number of *transformed* tiles for validation
     num_axes: usize,
-    /// Flattened vector storing allowed adjacencies.
-    /// Indexing: `axis * num_tiles * num_tiles + tile1.0 * num_tiles + tile2.0`
-    allowed: Vec<bool>,
+    /// Stores only the allowed adjacencies `(axis, ttid1, ttid2) -> true`.
+    /// Absence means the adjacency is disallowed.
+    allowed: HashMap<(usize, usize, usize), bool>,
+    // For faster iteration over allowed neighbours (optional optimization later):
+    // allowed_neighbors: HashMap<(usize, usize), HashSet<usize>>, // (axis, ttid1) -> HashSet<ttid2>
 }
 
 impl AdjacencyRules {
-    /// Creates new `AdjacencyRules`.
-    ///
-    /// Initializes the rules based on the provided `allowed` vector,
-    /// which must be pre-flattened according to the scheme:
-    /// `allowed[axis * num_tiles * num_tiles + tile1.0 * num_tiles + tile2.0]`
+    /// Creates new `AdjacencyRules` from a list of allowed tuples.
     ///
     /// # Arguments
     ///
-    /// * `num_tiles` - The total number of unique tile types.
-    /// * `num_axes` - The number of axes (directions) rules are defined for (e.g., 6 for 3D).
-    /// * `allowed` - The flattened boolean vector representing allowed adjacencies.
+    /// * `num_transformed_tiles` - The total number of unique transformed tile states.
+    /// * `num_axes` - The number of axes (directions) rules are defined for.
+    /// * `allowed_tuples` - An iterator providing tuples `(axis, transformed_tile1_id, transformed_tile2_id)`
+    ///   for all allowed adjacencies.
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics if the length of `allowed` is not equal to `num_axes * num_tiles * num_tiles`.
-    pub fn new(num_transformed_tiles: usize, num_axes: usize, allowed: Vec<bool>) -> Self {
-        assert_eq!(
-            allowed.len(),
-            num_axes * num_transformed_tiles * num_transformed_tiles,
-            "Provided 'allowed' vector has incorrect size for transformed tiles."
-        );
+    /// A new `AdjacencyRules` instance.
+    pub fn from_allowed_tuples(
+        num_transformed_tiles: usize,
+        num_axes: usize,
+        allowed_tuples: impl IntoIterator<Item = (usize, usize, usize)>,
+    ) -> Self {
+        let mut allowed = HashMap::new();
+        for (axis, ttid1, ttid2) in allowed_tuples {
+            // Optional validation (could also be done during generation):
+            // assert!(axis < num_axes, "Axis index out of bounds");
+            // assert!(ttid1 < num_transformed_tiles, "ttid1 out of bounds");
+            // assert!(ttid2 < num_transformed_tiles, "ttid2 out of bounds");
+            allowed.insert((axis, ttid1, ttid2), true);
+        }
         Self {
-            num_tiles: num_transformed_tiles, // Store the total transformed count here
+            num_tiles: num_transformed_tiles,
             num_axes,
             allowed,
         }
     }
 
-    /// Gets the number of different tile types these rules apply to.
+    /// Gets the total number of unique transformed tile states used in these rules.
     pub fn num_tiles(&self) -> usize {
         self.num_tiles
     }
 
-    /// Gets the number of axes/directions these rules are defined for (e.g., 6 for 3D +/- X/Y/Z).
+    /// Gets the number of axes/directions these rules are defined for.
     pub fn num_axes(&self) -> usize {
         self.num_axes
     }
 
-    /// Provides read-only access to the internal flattened boolean vector representing allowed adjacencies.
-    ///
-    /// This is primarily intended for scenarios like GPU buffer packing where direct access to the raw rule data is needed.
-    pub fn get_allowed_rules(&self) -> &Vec<bool> {
+    /// Provides read-only access to the internal HashMap storing allowed adjacencies.
+    /// Useful for debugging or advanced analysis.
+    pub fn get_allowed_rules_map(&self) -> &HashMap<(usize, usize, usize), bool> {
         &self.allowed
     }
 
     /// Checks if `transformed_tile2_id` is allowed to be placed adjacent to `transformed_tile1_id` along the specified `axis`.
     ///
     /// Performs bounds checks internally and returns `false` if indices are out of range.
-    /// Uses inline attribute for potential performance optimization in tight loops.
+    /// Returns `true` only if the specific rule `(axis, ttid1, ttid2)` exists in the map.
     #[inline]
     pub fn check(
         &self,
@@ -320,12 +323,11 @@ impl AdjacencyRules {
             || transformed_tile2_id >= self.num_tiles
             || axis >= self.num_axes
         {
-            return false; // Treat out-of-bounds as disallowed.
+            return false;
         }
-        let index = axis * self.num_tiles * self.num_tiles
-            + transformed_tile1_id * self.num_tiles
-            + transformed_tile2_id;
-        *self.allowed.get(index).unwrap_or(&false)
+        // Check if the key (rule) exists in the map. Absence means false.
+        self.allowed
+            .contains_key(&(axis, transformed_tile1_id, transformed_tile2_id))
     }
 }
 
@@ -400,35 +402,30 @@ mod tests {
     }
 
     #[test]
-    fn adjacency_check_valid() {
-        let rules = AdjacencyRules::new(
-            3,
-            2,
-            vec![
-                // 3 tiles, 2 axes
-                // Axis 0
-                // T0 -> T0, T1, T2
-                true, true, false, // T1 -> T0, T1, T2
-                true, true, true, // T2 -> T0, T1, T2
-                false, true, true, // Axis 1
-                // T0 -> T0, T1, T2
-                true, false, false, // T1 -> T0, T1, T2
-                false, true, false, // T2 -> T0, T1, T2
-                false, false, true,
-            ],
-        );
+    fn adjacency_check_valid_sparse() {
+        let num_tiles = 3;
+        let num_axes = 2;
+        let allowed_rules = vec![
+            (0, 0, 1), // Axis 0: T0 -> T1
+            (0, 1, 0), // Axis 0: T1 -> T0
+            (1, 2, 2), // Axis 1: T2 -> T2
+        ];
+        let rules = AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_rules);
 
-        assert!(rules.check(0, 1, 0)); // Axis 0: T0 -> T1 (true)
-        assert!(!rules.check(0, 2, 0)); // Axis 0: T0 -> T2 (false)
-        assert!(rules.check(1, 2, 0)); // Axis 0: T1 -> T2 (true)
+        assert!(rules.check(0, 1, 0));
+        assert!(rules.check(1, 0, 0));
+        assert!(rules.check(2, 2, 1));
 
-        assert!(!rules.check(0, 1, 1)); // Axis 1: T0 -> T1 (false)
-        assert!(rules.check(2, 2, 1)); // Axis 1: T2 -> T2 (true)
+        // Check disallowed (not present in map)
+        assert!(!rules.check(0, 0, 0));
+        assert!(!rules.check(1, 1, 0));
+        assert!(!rules.check(0, 1, 1));
+        assert!(!rules.check(2, 1, 1));
     }
 
     #[test]
-    fn adjacency_check_out_of_bounds() {
-        let rules = AdjacencyRules::new(2, 1, vec![true, false, false, true]); // 2 tiles, 1 axis
+    fn adjacency_check_out_of_bounds_sparse() {
+        let rules = AdjacencyRules::from_allowed_tuples(2, 1, vec![(0, 0, 1)]); // 2 tiles, 1 axis
 
         assert!(!rules.check(0, 2, 0)); // Tile 2 out of bounds
         assert!(!rules.check(2, 0, 0)); // Tile 2 out of bounds

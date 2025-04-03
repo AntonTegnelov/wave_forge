@@ -69,26 +69,25 @@ mod tests {
 
     // Helper function to create a simple 2-tile, 1-axis ruleset (3D compatible)
     fn setup_simple_rules_3d() -> AdjacencyRules {
-        let num_tiles = 2;
+        let num_tiles = 2; // These are transformed tile indices (assuming Identity only)
         let num_axes = 6;
-        let n_sq = num_tiles * num_tiles;
-        let mut allowed = vec![false; num_axes * n_sq];
+        // Specify allowed rules as tuples (axis, ttid1, ttid2)
+        let mut allowed_tuples = Vec::new();
 
         // Allow 0 -> 1 along +X (axis 0)
-        let index_fwd = 0 * n_sq + 0 * num_tiles + 1;
-        allowed[index_fwd] = true;
+        allowed_tuples.push((0, 0, 1));
         // Allow 1 -> 0 along -X (axis 1)
-        let index_bwd = 1 * n_sq + 1 * num_tiles + 0;
-        allowed[index_bwd] = true;
+        allowed_tuples.push((1, 1, 0));
 
         // Allow self-adjacency along other axes (Y, Z) for simplicity
         for axis in 2..num_axes {
-            for tile in 0..num_tiles {
-                let index_self = axis * n_sq + tile * num_tiles + tile;
-                allowed[index_self] = true;
+            for tile_idx in 0..num_tiles {
+                // tile_idx is the transformed tile index (0 or 1)
+                allowed_tuples.push((axis, tile_idx, tile_idx));
             }
         }
-        AdjacencyRules::new(num_tiles, num_axes, allowed)
+        // Use the new constructor
+        AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_tuples)
     }
 
     // --- Test cases for propagation logic (GPU or GPU) ---

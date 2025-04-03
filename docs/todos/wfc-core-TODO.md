@@ -55,7 +55,7 @@
 
 ## Architecture Improvements
 
-- [ ] Refactor `AdjacencyRules` to use more memory-efficient storage for sparse rule sets
+- [x] Refactor `AdjacencyRules` to use more memory-efficient storage for sparse rule sets
 - [ ] Simplify error propagation in `runner.rs` with better Result chaining
 - [ ] Break down the `run` function in runner.rs to improve separation of concerns
 - [ ] Make hard-coded values configurable (iteration limits, contradiction handling)

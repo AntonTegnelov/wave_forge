@@ -164,14 +164,14 @@ pub fn parse_ron_rules(ron_content: &str) -> Result<(TileSet, AdjacencyRules), L
         base_rules.push((tile1_id, tile2_id, axis_index));
     }
 
-    // 5. Generate the full transformed rule set
-    let allowed_transformed = generate_transformed_rules(&base_rules, &tileset, num_axes);
+    // 5. Generate the full transformed rule set (now returns tuples)
+    let allowed_transformed_tuples = generate_transformed_rules(&base_rules, &tileset, num_axes);
 
-    // 6. Create AdjacencyRules using the transformed rules
-    let rules = AdjacencyRules::new(
+    // 6. Create AdjacencyRules using the transformed rule tuples
+    let rules = AdjacencyRules::from_allowed_tuples(
         tileset.num_transformed_tiles(),
         num_axes,
-        allowed_transformed,
+        allowed_transformed_tuples, // Pass the tuples directly
     );
 
     Ok((tileset, rules))
