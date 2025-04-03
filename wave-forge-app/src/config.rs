@@ -83,6 +83,27 @@ pub struct AppConfig {
     #[arg(long, default_value_t = false)]
     pub benchmark_mode: bool,
 
+    /// Optional: Path to save benchmark results as a CSV file.
+    /// Only used if benchmark_mode is also enabled.
+    #[arg(long, value_name = "CSV_FILE")]
+    pub benchmark_csv_output: Option<PathBuf>,
+
+    /// Optional: List of rule files to use for benchmark scenarios.
+    /// If empty, uses the single --rule-file.
+    #[arg(long = "bench-rule-files", value_name = "FILE", num_args = 1.., value_delimiter = ',', required = false)]
+    #[serde(default)]
+    pub benchmark_rule_files: Vec<PathBuf>,
+
+    /// Optional: List of grid sizes (WxHxD) for benchmark scenarios (e.g., "8x8x8,16x16x16").
+    /// If empty, uses the default --width, --height, --depth.
+    #[arg(long = "bench-grid-sizes", value_name = "WxHxD", num_args = 1.., value_delimiter = ',', required = false)]
+    #[serde(default)]
+    pub benchmark_grid_sizes: Vec<String>,
+
+    /// Number of times to run each benchmark scenario for statistical analysis.
+    #[arg(long = "bench-runs", default_value_t = 1)]
+    pub benchmark_runs_per_scenario: usize,
+
     /// Report progress updates every specified interval (e.g., "1s", "500ms").
     #[arg(long, value_name = "DURATION", value_parser = humantime::parse_duration)]
     pub report_progress_interval: Option<Duration>,
@@ -90,6 +111,10 @@ pub struct AppConfig {
     /// Log level to use for progress reporting.
     #[arg(long, value_enum, default_value_t = ProgressLogLevel::Info)]
     pub progress_log_level: ProgressLogLevel,
+
+    /// Optional: Path to save progress updates to a file.
+    #[arg(long, value_name = "LOG_FILE")]
+    pub progress_log_file: Option<PathBuf>,
 
     /// Global log level for the application (overrides RUST_LOG if provided).
     #[arg(long, value_enum, default_value_t = GlobalLogLevel::Info)]
@@ -102,15 +127,6 @@ pub struct AppConfig {
     /// Key to toggle visualization on/off during runtime (single character).
     #[arg(long, default_value = "T")]
     pub visualization_toggle_key: char,
-
-    /// Optional: Path to save benchmark results as a CSV file.
-    /// Only used if benchmark_mode is also enabled.
-    #[arg(long, value_name = "CSV_FILE")]
-    pub benchmark_csv_output: Option<PathBuf>,
-
-    /// Optional: Path to save progress updates to a file.
-    #[arg(long, value_name = "LOG_FILE")]
-    pub progress_log_file: Option<PathBuf>,
 }
 
 #[cfg(test)]

@@ -1,14 +1,15 @@
 //! Handles the core execution logic for standard and benchmark modes.
 
-use crate::benchmark::{self, BenchmarkResultTuple};
+use crate::benchmark::{self, BenchmarkResult, BenchmarkResultTuple};
 use crate::config::{AppConfig, ProgressLogLevel};
 use crate::error::AppError;
 use crate::output;
 use crate::setup::visualization::VizMessage;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use log;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -20,85 +21,245 @@ use wfc_core::ProgressInfo;
 use wfc_gpu::accelerator::GpuAccelerator;
 use wfc_gpu::entropy::GpuEntropyCalculator;
 use wfc_gpu::propagator::GpuConstraintPropagator;
+use wfc_rules::loader::load_from_file;
 use wfc_rules::{AdjacencyRules, TileSet};
+use wgpu::Instance;
+
+// Helper function to parse "WxHxD" strings
+fn parse_dimension_string(dim_str: &str) -> Result<(usize, usize, usize), AppError> {
+    let parts: Vec<&str> = dim_str.split('x').collect();
+    if parts.len() != 3 {
+        return Err(AppError::Config(format!(
+            "Invalid dimension string format: '{}'. Expected WxHxD.",
+            dim_str
+        )));
+    }
+    let w = parts[0].parse::<usize>().map_err(|_| {
+        AppError::Config(format!("Invalid width in dimension string: '{}'", dim_str))
+    })?;
+    let h = parts[1].parse::<usize>().map_err(|_| {
+        AppError::Config(format!("Invalid height in dimension string: '{}'", dim_str))
+    })?;
+    let d = parts[2].parse::<usize>().map_err(|_| {
+        AppError::Config(format!("Invalid depth in dimension string: '{}'", dim_str))
+    })?;
+    Ok((w, h, d))
+}
+
+// Structure to hold results for a complete scenario (multiple runs)
+#[derive(Debug)]
+struct BenchmarkScenarioResult {
+    rule_file: PathBuf,
+    width: usize,
+    height: usize,
+    depth: usize,
+    num_tiles: usize,
+    runs: usize,
+    successful_runs: usize,
+    failed_runs: usize,
+    avg_total_time_ms: Option<f64>,
+    individual_results: Vec<Result<BenchmarkResult, AppError>>,
+}
 
 pub async fn run_benchmark_mode(
     config: &AppConfig,
-    tileset: &TileSet,
-    rules: &AdjacencyRules,
-    _grid: &mut PossibilityGrid,          // Prefixed unused
-    _viz_tx: &Option<Sender<VizMessage>>, // Prefixed unused
-    _snapshot_handle: &mut Option<thread::JoinHandle<()>>, // Prefixed unused
-    _shutdown_signal: Arc<AtomicBool>,    // Prefixed unused
+    _initial_tileset: &TileSet,
+    _initial_rules: &AdjacencyRules,
+    _grid: &mut PossibilityGrid,
+    _viz_tx: &Option<Sender<VizMessage>>,
+    _snapshot_handle: &mut Option<thread::JoinHandle<()>>,
+    _shutdown_signal: Arc<AtomicBool>,
 ) -> Result<(), AppError> {
-    log::info!("Benchmark mode enabled (GPU only).");
-
-    // Define benchmark scenarios (dimensions)
-    let benchmark_dimensions = [
-        (8, 8, 8),    // Small
-        (16, 16, 16), // Medium
-    ];
-    log::info!("Running benchmarks for sizes: {:?}", benchmark_dimensions);
-
-    // Store results for final report (simplified)
-    let mut benchmark_results: Vec<BenchmarkResultTuple> = Vec::new();
-
-    for &(width, height, depth) in &benchmark_dimensions {
-        log::info!(
-            "Starting GPU benchmark for size: {}x{}x{}",
-            width,
-            height,
-            depth
-        );
-        // Need a *new* grid for each benchmark run to start fresh
-        let mut bench_grid = PossibilityGrid::new(width, height, depth, tileset.weights.len());
-        let result = benchmark::run_single_benchmark(&mut bench_grid, tileset, rules).await?;
-        benchmark_results.push(((width, height, depth), Ok(result)));
-    }
-
-    // Report Summary (Remains the same)
-    println!("\n--- GPU Benchmark Summary ---");
-    println!(
-        "Rule File: {:?}",
-        config.rule_file.file_name().unwrap_or_default()
+    log::info!(
+        "Benchmark mode enabled (GPU only). Runs per scenario: {}",
+        config.benchmark_runs_per_scenario
     );
-    println!("Num Tiles: {}", tileset.weights.len());
-    println!("------------------------------------------------------------");
-    println!("Size (WxHxD)    | Total Time | Iterations | Collapsed Cells | Result");
-    println!("----------------|------------|------------|-----------------|----------");
-    for ((w, h, d), result_item) in &benchmark_results {
-        let size_str = format!("{}x{}x{}", w, h, d);
-        match result_item {
-            Ok(gpu_result) => {
-                println!(
-                    "{:<15} | {:<10?} | {:<10} | {:<15} | {:<8}",
-                    size_str,
-                    gpu_result.total_time,
-                    gpu_result
-                        .iterations
-                        .map_or_else(|| "N/A".to_string(), |i| i.to_string()),
-                    gpu_result
-                        .collapsed_cells
-                        .map_or_else(|| "N/A".to_string(), |c| c.to_string()),
-                    if gpu_result.wfc_result.is_ok() {
-                        "Ok"
-                    } else {
-                        "Fail"
-                    }
-                );
-            }
+    if config.benchmark_runs_per_scenario == 0 {
+        log::warn!("Benchmark runs per scenario is 0, no benchmarks will be executed.");
+        return Ok(());
+    }
+
+    // 1. Get GPU Adapter Info
+    let instance = Instance::default();
+    let adapter_info = match instance
+        .request_adapter(&wgpu::RequestAdapterOptions::default())
+        .await
+    {
+        Some(adapter) => adapter.get_info(),
+        None => {
+            return Err(AppError::GpuError(
+                "Failed to find suitable GPU adapter".to_string(),
+            ));
+        }
+    };
+    log::info!(
+        "Using GPU: {} ({:?})",
+        adapter_info.name,
+        adapter_info.backend
+    );
+
+    // 2. Determine Benchmark Scenarios
+    let rule_files_to_run = if config.benchmark_rule_files.is_empty() {
+        log::info!(
+            "No specific benchmark rule files provided, using default: {:?}",
+            config.rule_file
+        );
+        vec![config.rule_file.clone()]
+    } else {
+        log::info!(
+            "Using benchmark rule files: {:?}",
+            config.benchmark_rule_files
+        );
+        config.benchmark_rule_files.clone()
+    };
+
+    let dimensions_to_run: Vec<(usize, usize, usize)> = if config.benchmark_grid_sizes.is_empty() {
+        log::info!(
+            "No specific benchmark grid sizes provided, using default: {}x{}x{}",
+            config.width,
+            config.height,
+            config.depth
+        );
+        vec![(config.width, config.height, config.depth)]
+    } else {
+        log::info!(
+            "Using benchmark grid sizes: {:?}",
+            config.benchmark_grid_sizes
+        );
+        config
+            .benchmark_grid_sizes
+            .iter()
+            .map(|s| parse_dimension_string(s))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    // 3. Run Benchmarks
+    let mut all_scenario_results: Vec<BenchmarkScenarioResult> = Vec::new();
+
+    for rule_file_path in &rule_files_to_run {
+        log::info!("Loading rules from: {:?}", rule_file_path);
+        let (tileset, rules) = match load_from_file(rule_file_path) {
+            Ok(data) => data,
             Err(e) => {
-                println!("{:<15} | Error running benchmark: {} |", size_str, e);
+                log::error!(
+                    "Failed to load rule file {:?}: {}. Skipping scenario.",
+                    rule_file_path,
+                    e
+                );
+                continue;
             }
+        };
+        log::info!(
+            "Rules loaded: {} tiles, {} axes",
+            tileset.weights.len(),
+            rules.num_axes()
+        );
+
+        for &(width, height, depth) in &dimensions_to_run {
+            log::info!(
+                "Starting benchmark scenario: Rule='{:?}', Size={}x{}x{}, Runs={}",
+                rule_file_path.file_name().unwrap_or_default(),
+                width,
+                height,
+                depth,
+                config.benchmark_runs_per_scenario
+            );
+
+            let mut scenario_run_results: Vec<Result<BenchmarkResult, AppError>> = Vec::new();
+            let mut successful_times_ms: Vec<f64> = Vec::new();
+
+            for run_index in 0..config.benchmark_runs_per_scenario {
+                log::info!(
+                    "  Run {}/{} for scenario (Rule='{:?}', Size={}x{}x{})...",
+                    run_index + 1,
+                    config.benchmark_runs_per_scenario,
+                    rule_file_path.file_name().unwrap_or_default(),
+                    width,
+                    height,
+                    depth
+                );
+                let mut bench_grid =
+                    PossibilityGrid::new(width, height, depth, tileset.weights.len());
+
+                let result =
+                    benchmark::run_single_benchmark(&mut bench_grid, &tileset, &rules).await;
+
+                match &result {
+                    Ok(bench_res) => {
+                        log::info!(
+                            "  Run {} completed successfully in {:.3} ms",
+                            run_index + 1,
+                            bench_res.total_time.as_secs_f64() * 1000.0
+                        );
+                        successful_times_ms.push(bench_res.total_time.as_secs_f64() * 1000.0);
+                    }
+                    Err(e) => {
+                        log::error!("  Run {} failed: {}", run_index + 1, e);
+                    }
+                }
+                scenario_run_results.push(result);
+            }
+
+            let successful_runs = successful_times_ms.len();
+            let failed_runs = config.benchmark_runs_per_scenario - successful_runs;
+            let avg_total_time_ms = if successful_runs > 0 {
+                Some(successful_times_ms.iter().sum::<f64>() / successful_runs as f64)
+            } else {
+                None
+            };
+
+            all_scenario_results.push(BenchmarkScenarioResult {
+                rule_file: rule_file_path.clone(),
+                width,
+                height,
+                depth,
+                num_tiles: tileset.weights.len(),
+                runs: config.benchmark_runs_per_scenario,
+                successful_runs,
+                failed_runs,
+                avg_total_time_ms,
+                individual_results: scenario_run_results,
+            });
         }
     }
-    println!("------------------------------------------------------------");
 
-    // Write to CSV if requested
+    // 4. Report Summary
+    println!("\n--- GPU Benchmark Suite Summary ---");
+    println!("GPU: {} ({:?})", adapter_info.name, adapter_info.backend);
+    println!("---------------------------------------------------------------------------------------------------");
+    println!("Rule File             | Size (WxHxD) | Tiles | Runs | Success | Failed | Avg Time (ms) | Notes");
+    println!("----------------------|--------------|-------|------|---------|--------|---------------|-------");
+
+    for scenario_res in &all_scenario_results {
+        let rule_name = scenario_res
+            .rule_file
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_else(|| scenario_res.rule_file.to_string_lossy());
+        let size_str = format!(
+            "{}x{}x{}",
+            scenario_res.width, scenario_res.height, scenario_res.depth
+        );
+        let avg_time_str = scenario_res
+            .avg_total_time_ms
+            .map(|t| format!("{:.3}", t))
+            .unwrap_or_else(|| "N/A".to_string());
+
+        println!(
+            "{:<21} | {:<12} | {:<5} | {:<4} | {:<7} | {:<6} | {:<13} |",
+            rule_name,
+            size_str,
+            scenario_res.num_tiles,
+            scenario_res.runs,
+            scenario_res.successful_runs,
+            scenario_res.failed_runs,
+            avg_time_str,
+        );
+    }
+    println!("---------------------------------------------------------------------------------------------------");
+
     if let Some(csv_path) = &config.benchmark_csv_output {
-        if let Err(e) = benchmark::write_results_to_csv(&benchmark_results, csv_path) {
-            log::error!("Failed to write benchmark results to CSV: {}", e);
-        }
+        log::warn!("CSV output for benchmark suite results is not yet fully implemented in benchmark::write_results_to_csv. Skipping CSV writing.");
     }
 
     Ok(())
