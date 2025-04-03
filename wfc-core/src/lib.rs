@@ -2,6 +2,8 @@
 //! Defines the fundamental data structures and platform-agnostic logic.
 
 // Removed: use bitvec::prelude::*; (unused import)
+// use crate::grid::PossibilityGrid;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 use wfc_rules::TileSetError;
@@ -71,17 +73,31 @@ pub enum WfcError {
     /// An unknown or unspecified error occurred.
     #[error("Unknown WFC error")]
     Unknown,
+    /// Error related to loading or validating a checkpoint.
+    #[error("Checkpoint error: {0}")]
+    CheckpointError(String),
 }
 
 /// Information about the current state of the WFC algorithm execution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ProgressInfo {
-    /// The current iteration number.
-    pub iteration: usize,
     /// The total number of cells that have been collapsed.
     pub collapsed_cells: usize,
     /// The total number of cells in the grid.
     pub total_cells: usize,
     /// Time elapsed since the WFC run started.
     pub elapsed_time: Duration,
+    /// The number of iterations completed so far.
+    pub iterations: u64,
+}
+
+/// Represents a saved state of the WFC algorithm for checkpointing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WfcCheckpoint {
+    /// The state of the possibility grid at the time of the checkpoint.
+    pub grid: PossibilityGrid,
+    /// The number of iterations completed when the checkpoint was saved.
+    pub iterations: u64,
+    // Note: RNG state is not saved currently.
+    // Resuming will use a new RNG seed unless managed externally.
 }
