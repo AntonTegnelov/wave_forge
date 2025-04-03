@@ -23,7 +23,7 @@
     - [x] Create dedicated `GpuConstraintPropagator` implementation in wfc-gpu
   - [x] Implement GPU-based constraint propagation algorithm
   - [x] Optimize grid representation for GPU memory layout (coalescence)
-  - [ ] Add comprehensive benchmarking tools to compare CPU vs GPU performance
+  - [x] Add comprehensive benchmarking tools to compare CPU vs GPU performance
 
 - [ ] Phase 2: Performance optimization
 
