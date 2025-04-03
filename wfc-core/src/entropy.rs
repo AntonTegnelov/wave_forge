@@ -1,35 +1,23 @@
 use crate::grid::{EntropyGrid, PossibilityGrid};
 
-/// Trait defining the interface for calculating cell entropy and finding the minimum.
+/// Trait for selecting the next cell to collapse based on entropy.
 ///
-/// Entropy is a measure of uncertainty or "mixedness" within a cell's possibility state.
-/// Lower entropy generally indicates fewer possible tiles, making the cell a good candidate
-/// for collapsing next in the WFC algorithm.
-pub trait EntropyCalculator {
-    /// Calculates the entropy for every cell in the `PossibilityGrid`.
-    ///
-    /// Returns an `EntropyGrid` (a `Grid<f32>`) where each cell contains the calculated
-    /// entropy value based on the corresponding cell's `BitVec` in the input `grid`.
-    /// The specific entropy calculation method depends on the implementing type.
+/// Implementors of this trait define a strategy for choosing the cell
+/// with the lowest entropy, which is a core step in the WFC algorithm.
+pub trait EntropyCalculator: Send + Sync {
+    /// Calculates the entropy for each cell in the grid.
     ///
     /// # Arguments
     ///
-    /// * `grid` - The `PossibilityGrid` containing the current possibility state.
+    /// * `grid` - The current state of the possibility grid.
     ///
     /// # Returns
     ///
-    /// An `EntropyGrid` with the calculated entropy for each cell.
-    #[must_use]
-    fn calculate_entropy(&self, grid: &PossibilityGrid) -> EntropyGrid;
+    /// * `Result<EntropyGrid, String>` - An `EntropyGrid` containing the calculated
+    ///   entropy for each cell, or an error message if calculation fails.
+    fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, String>;
 
-    /// Finds the coordinates of the cell with the lowest positive entropy.
-    ///
-    /// Iterates through the `entropy_grid`, ignoring cells with entropy <= 0 (already collapsed
-    /// or potentially in a contradictory state), and returns the `(x, y, z)` coordinates
-    /// of the cell with the minimum positive entropy value.
-    ///
-    /// Returns `None` if all cells have entropy <= 0 (i.e., the grid is fully collapsed or in an error state).
-    /// Ties may be broken arbitrarily (often by picking the first one found).
+    /// Selects the cell with the lowest non-zero entropy.
     ///
     /// # Arguments
     ///
@@ -37,71 +25,13 @@ pub trait EntropyCalculator {
     ///
     /// # Returns
     ///
-    /// * `Some((x, y, z))` - Coordinates of the cell with the lowest positive entropy.
-    /// * `None` - If no cell with positive entropy is found.
-    #[must_use]
-    fn find_lowest_entropy(&self, entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)>;
-}
-
-/// A basic CPU-based implementation of the `EntropyCalculator` trait.
-/// Calculates entropy using the Shannon entropy formula: H = -sum(p_i * log2(p_i))
-/// assuming uniform probability for each possible tile.
-#[derive(Debug, Default)]
-#[deprecated(
-    since = "0.2.0",
-    note = "Use GpuAccelerator components for better performance"
-)]
-pub struct SimpleEntropyCalculator;
-
-impl SimpleEntropyCalculator {
-    /// Creates a new `SimpleEntropyCalculator`.
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl EntropyCalculator for SimpleEntropyCalculator {
-    /// Calculates the entropy for every cell in the `PossibilityGrid`.
-    ///
-    /// Returns an `EntropyGrid` (a `Grid<f32>`) where each cell contains the calculated
-    /// entropy value based on the corresponding cell's `BitVec` in the input `grid`.
-    /// The specific entropy calculation method depends on the implementing type.
-    ///
-    /// # Arguments
-    ///
-    /// * `grid` - The `PossibilityGrid` containing the current possibility state.
-    ///
-    /// # Returns
-    ///
-    /// An `EntropyGrid` with the calculated entropy for each cell.
-    #[must_use]
-    fn calculate_entropy(&self, grid: &PossibilityGrid) -> EntropyGrid {
-        // Implementation of calculate_entropy method
-        unimplemented!()
-    }
-
-    /// Finds the coordinates of the cell with the lowest positive entropy.
-    ///
-    /// Iterates through the `entropy_grid`, ignoring cells with entropy <= 0 (already collapsed
-    /// or potentially in a contradictory state), and returns the `(x, y, z)` coordinates
-    /// of the cell with the minimum positive entropy value.
-    ///
-    /// Returns `None` if all cells have entropy <= 0 (i.e., the grid is fully collapsed or in an error state).
-    /// Ties may be broken arbitrarily (often by picking the first one found).
-    ///
-    /// # Arguments
-    ///
-    /// * `entropy_grid` - The grid containing pre-calculated entropy values.
-    ///
-    /// # Returns
-    ///
-    /// * `Some((x, y, z))` - Coordinates of the cell with the lowest positive entropy.
-    /// * `None` - If no cell with positive entropy is found.
-    #[must_use]
-    fn find_lowest_entropy(&self, entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)> {
-        // Implementation of find_lowest_entropy method
-        unimplemented!()
-    }
+    /// * `Option<(usize, usize, usize)>` - The coordinates (x, y, z) of the cell
+    ///   with the lowest entropy, or `None` if all cells are collapsed (entropy 0)
+    ///   or if the grid is empty.
+    fn select_lowest_entropy_cell(
+        &self,
+        entropy_grid: &EntropyGrid,
+    ) -> Option<(usize, usize, usize)>;
 }
 
 #[cfg(test)]
@@ -118,7 +48,7 @@ mod tests {
     // Mock Calculator (if needed for tests independent of CPU/GPU impl)
     struct MockEntropyCalculator;
     impl EntropyCalculator for MockEntropyCalculator {
-        fn calculate_entropy(&self, grid: &PossibilityGrid) -> EntropyGrid {
+        fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, String> {
             // Simple mock: return grid where entropy = count_ones()
             let mut entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
             for z in 0..grid.depth {
@@ -131,10 +61,13 @@ mod tests {
                     }
                 }
             }
-            entropy_grid
+            Ok(entropy_grid)
         }
 
-        fn find_lowest_entropy(&self, entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)> {
+        fn select_lowest_entropy_cell(
+            &self,
+            entropy_grid: &EntropyGrid,
+        ) -> Option<(usize, usize, usize)> {
             // Simple mock: find first cell with entropy > 1.0
             for z in 0..entropy_grid.depth {
                 for y in 0..entropy_grid.height {
@@ -156,13 +89,13 @@ mod tests {
         *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0, 0]; // 1 possibility
         *grid.get_mut(1, 0, 0).unwrap() = bitvec![0, 1, 1]; // 2 possibilities
 
-        let entropy_grid = calculator.calculate_entropy(&grid);
+        let entropy_grid = calculator.calculate_entropy(&grid).unwrap();
         assert_eq!(entropy_grid.get(0, 0, 0), Some(&1.0));
         assert_eq!(entropy_grid.get(1, 0, 0), Some(&2.0));
     }
 
     #[test]
-    fn test_mock_find_lowest_entropy() {
+    fn test_mock_select_lowest_entropy_cell() {
         let calculator = MockEntropyCalculator;
         let mut entropy_grid = EntropyGrid::new(2, 2, 1);
         *entropy_grid.get_mut(0, 0, 0).unwrap() = 1.0;
@@ -170,13 +103,13 @@ mod tests {
         *entropy_grid.get_mut(0, 1, 0).unwrap() = 2.0; // First > 1.0
         *entropy_grid.get_mut(1, 1, 0).unwrap() = 3.0;
 
-        let lowest = calculator.find_lowest_entropy(&entropy_grid);
+        let lowest = calculator.select_lowest_entropy_cell(&entropy_grid);
         assert_eq!(lowest, Some((0, 1, 0)));
 
         // Test case where all are <= 1.0
         *entropy_grid.get_mut(0, 1, 0).unwrap() = 1.0;
         *entropy_grid.get_mut(1, 1, 0).unwrap() = 1.0;
-        let lowest = calculator.find_lowest_entropy(&entropy_grid);
+        let lowest = calculator.select_lowest_entropy_cell(&entropy_grid);
         assert_eq!(lowest, None);
     }
 
