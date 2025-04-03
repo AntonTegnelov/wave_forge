@@ -168,13 +168,12 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     }
     // Recalculate collapsed count after initial propagation
     {
-        let current_grid = &*grid; // Reborrow immutably
-                                   // Use local dimensions in recalculation
+        let current_grid = &*grid; // Borrow immutably
         collapsed_cells_count = (0..depth)
             .flat_map(|z| {
                 (0..height).flat_map(move |y| {
                     (0..width).map(move |x| {
-                        current_grid
+                        current_grid // Use immutable borrow
                             .get(x, y, z)
                             .map_or(0, |c| if c.count_ones() == 1 { 1 } else { 0 })
                     })
@@ -183,8 +182,8 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
             .sum();
     }
     debug!(
-        "After initial setup/load/propagation: {}/{} cells collapsed.",
-        collapsed_cells_count, total_cells
+        "After initial setup/load/propagation: {}/{} cells collapsed. Starting main loop at iter {}.",
+        collapsed_cells_count, total_cells, iterations
     );
 
     loop {
@@ -227,109 +226,46 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
             return Err(WfcError::Interrupted);
         }
 
-        // --- Check if finished ---
+        // --- Check if finished (before iteration) ---
         if collapsed_cells_count >= total_cells {
             info!("All cells collapsed.");
+            // Final callback before breaking
+            if let Some(ref callback) = progress_callback {
+                let progress_info = ProgressInfo {
+                    total_cells,
+                    collapsed_cells: collapsed_cells_count,
+                    iterations: iterations - 1, // Use previous iter count
+                    elapsed_time: start_time.elapsed(),
+                    grid_state: grid.clone(),
+                };
+                callback(progress_info);
+            }
             break;
         }
 
-        // --- 1. Find Lowest Entropy Cell ---
-        debug!("Iteration {}: Calculating entropy...", iterations);
-        let entropy_grid = entropy_calculator
-            .calculate_entropy(grid)
-            .map_err(|e| WfcError::InternalError(format!("Entropy calculation failed: {}", e)))?;
-        let lowest_entropy_coords = entropy_calculator.select_lowest_entropy_cell(&entropy_grid);
-
-        if let Some((x, y, z)) = lowest_entropy_coords {
-            debug!("Found lowest entropy cell at ({}, {}, {})", x, y, z);
-
-            // --- 2. Collapse the Cell ---
-            let cell_to_collapse = grid.get_mut(x, y, z).ok_or_else(|| {
-                error!(
-                    "Internal Error: Lowest entropy coords ({},{},{}) are out of bounds!",
-                    x, y, z
-                );
-                WfcError::GridError("Lowest entropy cell coordinates out of bounds".to_string())
-            })?;
-            assert_eq!(
-                cell_to_collapse.len(),
-                num_tiles,
-                "Grid cell bitvec length mismatch"
-            );
-
-            let possible_tile_indices: Vec<usize> = cell_to_collapse.iter_ones().collect();
-
-            if possible_tile_indices.is_empty() {
-                error!("Contradiction detected at ({}, {}, {}): No possible tiles left (collapse phase).", x, y, z);
-                return Err(WfcError::Contradiction(x, y, z));
-            }
-
-            if possible_tile_indices.len() > 1 {
-                // Choose a tile to collapse to using weights from the TileSet.
-                let weights_result: Result<Vec<f32>, _> = possible_tile_indices
-                    .iter()
-                    .map(|&index| {
-                        tileset.get_weight(TileId(index)).ok_or_else(|| {
-                            error!(
-                                "Internal Error: TileId({}) out of bounds for TileSet weights.",
-                                index
-                            );
-                            WfcError::ConfigurationError(format!(
-                                "Weight missing for possible tile index {} at ({}, {}, {}).",
-                                index, x, y, z
-                            ))
+        // --- Perform one iteration ---
+        match perform_iteration(
+            grid,
+            tileset,
+            rules,
+            &mut propagator,
+            &entropy_calculator, // Pass by reference
+            iterations,
+        ) {
+            Ok(Some(_collapsed_coords)) => {
+                // Recalculate collapsed count after successful iteration
+                let current_grid = &*grid; // Borrow immutably
+                collapsed_cells_count = (0..depth)
+                    .flat_map(|z| {
+                        (0..height).flat_map(move |y| {
+                            (0..width).map(move |x| {
+                                current_grid // Use immutable borrow
+                                    .get(x, y, z)
+                                    .map_or(0, |c| if c.count_ones() == 1 { 1 } else { 0 })
+                            })
                         })
                     })
-                    .collect();
-
-                let weights = weights_result?; // Propagate potential error
-
-                if weights.is_empty() || weights.iter().all(|&w| w <= 0.0) {
-                    error!("Internal Error: No valid positive weights for possible tiles {:?} at ({}, {}, {}).", possible_tile_indices, x, y, z);
-                    return Err(WfcError::ConfigurationError(
-                        "No valid positive weights for collapse choice".to_string(),
-                    ));
-                }
-
-                // Use WeightedIndex distribution for weighted random choice
-                let dist = WeightedIndex::new(&weights).map_err(|e| {
-                    error!(
-                        "Failed to create WeightedIndex distribution at ({}, {}, {}): {}",
-                        x, y, z, e
-                    );
-                    WfcError::InternalError(format!("WeightedIndex creation failed: {}", e))
-                })?;
-
-                let mut rng = thread_rng();
-                let chosen_weighted_index = dist.sample(&mut rng);
-                let chosen_tile_index = possible_tile_indices[chosen_weighted_index];
-
-                debug!(
-                    "Iter {}: Collapsing cell ({}, {}, {}) to tile index {} (weight {})",
-                    iterations, x, y, z, chosen_tile_index, weights[chosen_weighted_index]
-                );
-
-                // Update the grid cell state directly
-                cell_to_collapse.fill(false);
-                cell_to_collapse.set(chosen_tile_index, true);
-                collapsed_cells_count += 1;
-
-                // --- 3. Propagate Constraints ---
-                debug!(
-                    "Iter {}: Propagating constraints from ({}, {}, {})...",
-                    iterations, x, y, z
-                );
-                if let Err(prop_err) = propagator.propagate(grid, vec![(x, y, z)], rules) {
-                    error!(
-                        "Iter {}: Propagation failed after collapsing ({}, {}, {}): {:?}",
-                        iterations, x, y, z, prop_err
-                    );
-                    if let PropagationError::Contradiction(cx, cy, cz) = prop_err {
-                        return Err(WfcError::Contradiction(cx, cy, cz));
-                    }
-                    return Err(WfcError::from(prop_err));
-                }
-                debug!("Iter {}: Propagation successful.", iterations);
+                    .sum();
 
                 // --- Progress Callback ---
                 if let Some(ref callback) = progress_callback {
@@ -338,86 +274,71 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                         collapsed_cells: collapsed_cells_count,
                         iterations,
                         elapsed_time: start_time.elapsed(),
-                        grid_state: grid.clone(), // Clone the grid state
+                        grid_state: grid.clone(),
                     };
                     callback(progress_info);
                 }
-            } else if possible_tile_indices.len() == 1 {
-                debug!(
-                    "Iter {}: Cell ({}, {}, {}) was already collapsed. Skipping collapse.",
-                    iterations, x, y, z
-                );
-            } else {
-                error!(
-                    "Iter {}: Contradiction detected at ({}, {}, {}) during cell processing.",
-                    iterations, x, y, z
-                );
-                return Err(WfcError::Contradiction(x, y, z));
             }
-        } else {
-            if collapsed_cells_count >= total_cells {
-                info!(
-                    "Iter {}: All cells confirmed collapsed. Finalizing.",
-                    iterations
-                );
-                break;
-            } else {
-                warn!(
-                    "Iter {}: No lowest entropy cell found, but {} cells remain uncollapsed. Checking state...",
-                    iterations, total_cells - collapsed_cells_count
-                );
-                // Re-run propagation on *all* cells to ensure consistency before erroring
-                debug!(
-                    "Iter {}: Re-running propagation on all cells before potential error.",
-                    iterations
-                );
-                if let Err(prop_err) = propagator.propagate(grid, all_coords.clone(), rules) {
-                    error!(
-                        "Iter {}: Propagation failed during final check: {:?}",
-                        iterations, prop_err
-                    );
-                    if let PropagationError::Contradiction(cx, cy, cz) = prop_err {
-                        return Err(WfcError::Contradiction(cx, cy, cz));
-                    }
-                    return Err(WfcError::from(prop_err));
-                }
-                // Re-check collapsed count after final propagation
-                let current_grid = &*grid; // Borrow immutably before the closure
-                let final_collapsed_count: usize = (0..depth)
-                    .flat_map(|z| {
-                        (0..height).flat_map(move |y| {
-                            (0..width).map(move |x| {
-                                current_grid
-                                    .get(x, y, z) // Use the immutable reference
-                                    .map_or(0, |c| if c.count_ones() == 1 { 1 } else { 0 })
-                            })
-                        })
-                    })
-                    .sum();
-
-                if final_collapsed_count >= total_cells {
+            Ok(None) => {
+                // No cell found to collapse, check if grid is actually fully collapsed
+                if collapsed_cells_count >= total_cells {
                     info!(
-                        "Iter {}: All cells confirmed collapsed after final propagation check. Finalizing.",
+                        "Iter {}: No cell to collapse, grid fully collapsed. Finalizing.",
                         iterations
                     );
-                    break;
+                    // Final callback before breaking
+                    if let Some(ref callback) = progress_callback {
+                        let progress_info = ProgressInfo {
+                            total_cells,
+                            collapsed_cells: collapsed_cells_count,
+                            iterations,
+                            elapsed_time: start_time.elapsed(),
+                            grid_state: grid.clone(),
+                        };
+                        callback(progress_info);
+                    }
+                    break; // Success
                 } else {
-                    error!(
-                        "Iter {}: No lowest entropy cell found, and {} cells remain uncollapsed after final check.",
-                        iterations,
-                        total_cells - final_collapsed_count
+                    warn!(
+                        "Iter {}: No lowest entropy cell found, but {} cells remain uncollapsed. Checking state...",
+                        iterations, total_cells - collapsed_cells_count
                     );
-                    return Err(WfcError::IncompleteCollapse);
+                    // Re-run propagation on all cells to ensure consistency
+                    if let Err(prop_err) = propagator.propagate(grid, all_coords.clone(), rules) {
+                        error!(
+                            "Iter {}: Propagation failed during final check: {:?}",
+                            iterations, prop_err
+                        );
+                        return Err(WfcError::from(prop_err));
+                    }
+                    let current_grid = &*grid; // Borrow immutably
+                    let final_collapsed_count: usize = (0..depth)
+                        .flat_map(|z| {
+                            (0..height).flat_map(move |y| {
+                                (0..width).map(move |x| {
+                                    current_grid // USE current_grid here
+                                        .get(x, y, z)
+                                        .map_or(0, |c| if c.count_ones() == 1 { 1 } else { 0 })
+                                })
+                            })
+                        })
+                        .sum();
+                    if final_collapsed_count >= total_cells {
+                        info!("Iter {}: Grid confirmed fully collapsed after final propagation check.", iterations);
+                        break; // Success
+                    } else {
+                        error!(
+                             "Iter {}: Incomplete collapse: {} cells remain uncollapsed after final check.",
+                             iterations, total_cells - final_collapsed_count
+                         );
+                        return Err(WfcError::IncompleteCollapse);
+                    }
                 }
             }
+            Err(e) => return Err(e), // Propagate errors (Contradiction, Config, etc.)
         }
 
-        debug!(
-            "End of iteration {}. Collapsed cells: {}/{}",
-            iterations, collapsed_cells_count, total_cells
-        );
-
-        // Safeguard against infinite loops (optional, adjust limit as needed)
+        // Safeguard against infinite loops
         let max_iterations = (total_cells as u64) * 10; // Cast total_cells to u64
         if iterations > max_iterations {
             error!(
@@ -436,15 +357,91 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     Ok(())
 }
 
+// Helper function for a single WFC iteration
+fn perform_iteration<'a, P: ConstraintPropagator, E: EntropyCalculator>(
+    grid: &'a mut PossibilityGrid,
+    tileset: &TileSet,
+    rules: &AdjacencyRules,
+    propagator: &mut P,
+    entropy_calculator: &E,
+    iteration: u64,
+) -> Result<Option<(usize, usize, usize)>, WfcError> {
+    // Returns Some(collapsed_coords) or None if no cell found, or Err
+    debug!("Iteration {}: Calculating entropy...", iteration);
+    let entropy_grid = entropy_calculator.calculate_entropy(grid)?;
+    let lowest_entropy_coords = entropy_calculator.select_lowest_entropy_cell(&entropy_grid);
+
+    if let Some((x, y, z)) = lowest_entropy_coords {
+        debug!("Found lowest entropy cell at ({}, {}, {})", x, y, z);
+        let cell_to_collapse = grid.get_mut(x, y, z).ok_or_else(|| {
+            WfcError::GridError(format!(
+                "Lowest entropy cell ({},{},{}) out of bounds",
+                x, y, z
+            ))
+        })?;
+
+        let possible_tile_indices: Vec<usize> = cell_to_collapse.iter_ones().collect();
+
+        if possible_tile_indices.is_empty() {
+            return Err(WfcError::Contradiction(x, y, z));
+        }
+
+        if possible_tile_indices.len() > 1 {
+            let weights_result: Result<Vec<f32>, _> = possible_tile_indices
+                .iter()
+                .map(|&index| {
+                    tileset.get_weight(TileId(index)).ok_or_else(|| {
+                        WfcError::ConfigurationError(format!(
+                            "Weight missing for tile index {} at ({}, {}, {}).",
+                            index, x, y, z
+                        ))
+                    })
+                })
+                .collect();
+            let weights = weights_result?;
+
+            if weights.is_empty() || weights.iter().all(|&w| w <= 0.0) {
+                return Err(WfcError::ConfigurationError(
+                    "No valid positive weights for collapse choice".to_string(),
+                ));
+            }
+
+            let dist = WeightedIndex::new(&weights)?;
+            let mut rng = thread_rng();
+            let chosen_weighted_index = dist.sample(&mut rng);
+            let chosen_tile_index = possible_tile_indices[chosen_weighted_index];
+
+            debug!(
+                "Iter {}: Collapsing cell ({}, {}, {}) to tile index {} (weight {})",
+                iteration, x, y, z, chosen_tile_index, weights[chosen_weighted_index]
+            );
+
+            cell_to_collapse.fill(false);
+            cell_to_collapse.set(chosen_tile_index, true);
+
+            debug!(
+                "Iter {}: Propagating constraints from ({}, {}, {})...",
+                iteration, x, y, z
+            );
+            propagator.propagate(grid, vec![(x, y, z)], rules)?;
+            debug!("Iter {}: Propagation successful.", iteration);
+            Ok(Some((x, y, z))) // Indicate a collapse happened
+        } else {
+            // Already collapsed
+            debug!(
+                "Iter {}: Cell ({}, {}, {}) was already collapsed. Skipping.",
+                iteration, x, y, z
+            );
+            Ok(Some((x, y, z))) // Still considered progress, return coords
+        }
+    } else {
+        Ok(None) // No cell found to collapse
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    
-    
-    
-    
-    
-    
-    
+
     use wfc_rules::{AdjacencyRules, TileSet, Transformation}; // Ensure Transformation is imported here
 
     // --- Mock Implementations ---

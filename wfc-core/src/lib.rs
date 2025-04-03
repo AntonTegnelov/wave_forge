@@ -3,6 +3,7 @@
 
 // Removed: use bitvec::prelude::*; (unused import)
 // use crate::grid::PossibilityGrid;
+use rand::distributions::WeightedError;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
@@ -26,6 +27,8 @@ pub mod tile;
 
 /// Trait defining the interface for entropy calculation strategies.
 pub use crate::entropy::EntropyCalculator;
+/// Error type for entropy calculation.
+pub use crate::entropy::EntropyError;
 /// Grid specifically storing entropy values (f32).
 pub use crate::grid::EntropyGrid;
 /// Generic 3D grid structure.
@@ -40,7 +43,7 @@ pub use crate::propagator::PropagationError;
 pub use crate::runner::run;
 
 /// Errors that can occur during the Wave Function Collapse algorithm.
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug)]
 pub enum WfcError {
     /// Propagation failed due to finding a cell with no possible tiles remaining.
     /// Includes the (x, y, z) coordinates of the contradictory cell.
@@ -76,6 +79,12 @@ pub enum WfcError {
     /// Error related to loading or validating a checkpoint.
     #[error("Checkpoint error: {0}")]
     CheckpointError(String),
+    /// Error occurred during weighted random selection.
+    #[error("Weighted selection error: {0}")]
+    WeightedChoiceError(#[from] WeightedError),
+    /// An error occurred during entropy calculation.
+    #[error("Entropy calculation error: {0}")]
+    EntropyError(#[from] EntropyError),
 }
 
 /// Information about the current state of the WFC algorithm execution.

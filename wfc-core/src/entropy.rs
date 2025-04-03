@@ -1,4 +1,22 @@
 use crate::grid::{EntropyGrid, PossibilityGrid};
+use thiserror::Error;
+
+/// Errors related to entropy calculation or selection.
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum EntropyError {
+    #[error("Failed to access grid cell during entropy calculation at ({0}, {1}, {2})")]
+    GridAccessError(usize, usize, usize),
+    #[error("Logarithm of zero encountered during entropy calculation for cell ({0}, {1}, {2})")]
+    LogOfZero(usize, usize, usize),
+    #[error(
+        "Invalid weight encountered (<= 0) during entropy calculation for cell ({0}, {1}, {2})"
+    )]
+    InvalidWeight(usize, usize, usize),
+    #[error("Entropy calculation resulted in NaN for cell ({0}, {1}, {2})")]
+    NaNResult(usize, usize, usize),
+    #[error("Other entropy calculation error: {0}")]
+    Other(String),
+}
 
 /// Trait for selecting the next cell to collapse based on entropy.
 ///
@@ -13,9 +31,9 @@ pub trait EntropyCalculator: Send + Sync {
     ///
     /// # Returns
     ///
-    /// * `Result<EntropyGrid, String>` - An `EntropyGrid` containing the calculated
+    /// * `Result<EntropyGrid, EntropyError>` - An `EntropyGrid` containing the calculated
     ///   entropy for each cell, or an error message if calculation fails.
-    fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, String>;
+    fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError>;
 
     /// Selects the cell with the lowest non-zero entropy.
     ///
@@ -48,16 +66,23 @@ mod tests {
     // Mock Calculator (if needed for tests independent of CPU/GPU impl)
     struct MockEntropyCalculator;
     impl EntropyCalculator for MockEntropyCalculator {
-        fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, String> {
-            // Simple mock: return grid where entropy = count_ones()
+        fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
             let mut entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
             for z in 0..grid.depth {
                 for y in 0..grid.height {
                     for x in 0..grid.width {
-                        if let Some(cell) = grid.get(x, y, z) {
-                            let count = cell.count_ones();
-                            *entropy_grid.get_mut(x, y, z).unwrap() = count as f32;
-                        }
+                        let cell = grid
+                            .get(x, y, z)
+                            .ok_or(EntropyError::GridAccessError(x, y, z))?;
+                        let count = cell.count_ones();
+                        let entropy_cell =
+                            entropy_grid
+                                .get_mut(x, y, z)
+                                .ok_or(EntropyError::Other(format!(
+                                    "Failed to access entropy grid cell ({},{},{})",
+                                    x, y, z
+                                )))?;
+                        *entropy_cell = count as f32;
                     }
                 }
             }
@@ -89,7 +114,9 @@ mod tests {
         *grid.get_mut(0, 0, 0).unwrap() = bitvec![1, 0, 0]; // 1 possibility
         *grid.get_mut(1, 0, 0).unwrap() = bitvec![0, 1, 1]; // 2 possibilities
 
-        let entropy_grid = calculator.calculate_entropy(&grid).unwrap();
+        let entropy_grid_result = calculator.calculate_entropy(&grid);
+        assert!(entropy_grid_result.is_ok());
+        let entropy_grid = entropy_grid_result.unwrap();
         assert_eq!(entropy_grid.get(0, 0, 0), Some(&1.0));
         assert_eq!(entropy_grid.get(1, 0, 0), Some(&2.0));
     }
