@@ -77,4 +77,4 @@
 - [x] Add progress reporting callback to the `runner`. (Implemented)
 - [x] Refactor `runner` for clarity and potential parallelization (internal steps).
 - [/] Add comprehensive unit tests for `propagator`, `entropy`, `runner`. (Added some runner tests; propagator tests still problematic)
-- [ ] Add integration tests for the overall WFC process.
+- [x] Add integration tests for the overall WFC process.
