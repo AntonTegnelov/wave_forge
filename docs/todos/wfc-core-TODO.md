@@ -34,7 +34,7 @@
 
 - [ ] Phase 3: Transition plan
 
-  - [ ] Deprecate CPU implementations with warning messages
+  - [x] Deprecate CPU implementations with warning messages
   - [ ] Provide migration guide documentation
   - [ ] Update all examples to use GPU implementation by default
   - [ ] Create final benchmark suite demonstrating performance gains

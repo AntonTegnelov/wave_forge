@@ -43,6 +43,67 @@ pub trait EntropyCalculator {
     fn find_lowest_entropy(&self, entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)>;
 }
 
+/// A basic CPU-based implementation of the `EntropyCalculator` trait.
+/// Calculates entropy using the Shannon entropy formula: H = -sum(p_i * log2(p_i))
+/// assuming uniform probability for each possible tile.
+#[derive(Debug, Default)]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use GpuAccelerator components for better performance"
+)]
+pub struct SimpleEntropyCalculator;
+
+impl SimpleEntropyCalculator {
+    /// Creates a new `SimpleEntropyCalculator`.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl EntropyCalculator for SimpleEntropyCalculator {
+    /// Calculates the entropy for every cell in the `PossibilityGrid`.
+    ///
+    /// Returns an `EntropyGrid` (a `Grid<f32>`) where each cell contains the calculated
+    /// entropy value based on the corresponding cell's `BitVec` in the input `grid`.
+    /// The specific entropy calculation method depends on the implementing type.
+    ///
+    /// # Arguments
+    ///
+    /// * `grid` - The `PossibilityGrid` containing the current possibility state.
+    ///
+    /// # Returns
+    ///
+    /// An `EntropyGrid` with the calculated entropy for each cell.
+    #[must_use]
+    fn calculate_entropy(&self, grid: &PossibilityGrid) -> EntropyGrid {
+        // Implementation of calculate_entropy method
+        unimplemented!()
+    }
+
+    /// Finds the coordinates of the cell with the lowest positive entropy.
+    ///
+    /// Iterates through the `entropy_grid`, ignoring cells with entropy <= 0 (already collapsed
+    /// or potentially in a contradictory state), and returns the `(x, y, z)` coordinates
+    /// of the cell with the minimum positive entropy value.
+    ///
+    /// Returns `None` if all cells have entropy <= 0 (i.e., the grid is fully collapsed or in an error state).
+    /// Ties may be broken arbitrarily (often by picking the first one found).
+    ///
+    /// # Arguments
+    ///
+    /// * `entropy_grid` - The grid containing pre-calculated entropy values.
+    ///
+    /// # Returns
+    ///
+    /// * `Some((x, y, z))` - Coordinates of the cell with the lowest positive entropy.
+    /// * `None` - If no cell with positive entropy is found.
+    #[must_use]
+    fn find_lowest_entropy(&self, entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)> {
+        // Implementation of find_lowest_entropy method
+        unimplemented!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
