@@ -12,7 +12,35 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use wfc_rules::{AdjacencyRules, TileId, TileSet};
+use wfc_rules::{AdjacencyRules, TileSet};
+
+/// Alias for the complex progress callback function type.
+pub type ProgressCallback = Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>;
+
+/// Configuration options for the WFC runner.
+pub struct WfcConfig {
+    pub boundary_mode: BoundaryMode,
+    pub progress_callback: Option<ProgressCallback>,
+    pub shutdown_signal: Arc<AtomicBool>,
+    pub initial_checkpoint: Option<WfcCheckpoint>,
+    pub checkpoint_interval: Option<u64>,
+    pub checkpoint_path: Option<PathBuf>,
+    pub max_iterations: Option<u64>,
+}
+
+impl Default for WfcConfig {
+    fn default() -> Self {
+        Self {
+            boundary_mode: BoundaryMode::Clamped,
+            progress_callback: None,
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
+            initial_checkpoint: None,
+            checkpoint_interval: None,
+            checkpoint_path: None,
+            max_iterations: None,
+        }
+    }
+}
 
 /// Runs the core Wave Function Collapse (WFC) algorithm loop.
 ///
@@ -37,14 +65,7 @@ use wfc_rules::{AdjacencyRules, TileId, TileSet};
 /// * `rules`: A reference to the `AdjacencyRules` defining valid neighbor constraints.
 /// * `propagator`: An instance of the chosen `ConstraintPropagator` implementation.
 /// * `entropy_calculator`: An instance of the chosen `EntropyCalculator` implementation.
-/// * `boundary_mode`: The boundary mode to use for the propagation.
-/// * `progress_callback`: An optional closure that receives `ProgressInfo` updates during the run.
-///                        This allows external monitoring or UI updates.
-/// * `shutdown_signal`: A shared atomic boolean indicating whether the run should stop.
-/// * `initial_checkpoint`: An optional checkpoint to load before starting the run.
-/// * `checkpoint_interval`: An optional interval to save checkpoints every N iterations.
-/// * `checkpoint_path`: An optional file path to save checkpoints to.
-/// * `max_iterations`: An optional maximum number of iterations to run.
+/// * `config`: Configuration settings for the run (`WfcConfig`).
 ///
 /// # Returns
 ///
@@ -64,23 +85,17 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     rules: &AdjacencyRules,
     mut propagator: P,
     entropy_calculator: E,
-    boundary_mode: BoundaryMode,
-    progress_callback: Option<Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>>,
-    shutdown_signal: Arc<AtomicBool>,
-    initial_checkpoint: Option<WfcCheckpoint>,
-    checkpoint_interval: Option<u64>,
-    checkpoint_path: Option<PathBuf>,
-    max_iterations: Option<u64>,
+    config: &WfcConfig, // Use config struct
 ) -> Result<(), WfcError> {
     info!(
         "Starting WFC run with boundary mode: {:?}...",
-        boundary_mode
+        config.boundary_mode
     );
     let start_time = Instant::now();
     let mut iterations = 0;
 
     // --- Checkpoint Loading ---
-    if let Some(checkpoint) = initial_checkpoint {
+    if let Some(checkpoint) = &config.initial_checkpoint {
         info!(
             "Loading state from checkpoint (Iteration {})...",
             checkpoint.iterations
@@ -110,7 +125,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
             ));
         }
 
-        *grid = checkpoint.grid; // Load grid state
+        *grid = checkpoint.grid.clone(); // Load grid state (clone from config)
         iterations = checkpoint.iterations; // Load iteration count
         info!("Checkpoint loaded successfully.");
     }
@@ -188,13 +203,12 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         collapsed_cells_count, total_cells, iterations
     );
 
-    // Determine the iteration limit
-    let iteration_limit = match max_iterations {
+    // Determine the iteration limit from config
+    let iteration_limit = match config.max_iterations {
         Some(limit) => limit,
         None => (total_cells as u64).saturating_mul(10), // Default limit calculation
     };
     if iteration_limit > 0 {
-        // Only log if limit is meaningful
         info!("WFC run iteration limit set to: {}", iteration_limit);
     }
 
@@ -202,7 +216,8 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         iterations += 1;
 
         // --- Checkpoint Saving Logic ---
-        if let (Some(interval), Some(path)) = (checkpoint_interval, &checkpoint_path) {
+        if let (Some(interval), Some(path)) = (config.checkpoint_interval, &config.checkpoint_path)
+        {
             if interval > 0 && iterations % interval == 0 {
                 debug!(
                     "Iter {}: Reached checkpoint interval. Saving state...",
@@ -232,8 +247,8 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         }
         // --- End Checkpoint Saving Logic ---
 
-        // --- Check for shutdown signal ---
-        if shutdown_signal.load(Ordering::Relaxed) {
+        // --- Check for shutdown signal from config ---
+        if config.shutdown_signal.load(Ordering::Relaxed) {
             warn!("Shutdown signal received, stopping WFC run prematurely.");
             return Err(WfcError::Interrupted);
         }
@@ -242,7 +257,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         if collapsed_cells_count >= total_cells {
             info!("All cells collapsed.");
             // Final callback before breaking
-            if let Some(ref callback) = progress_callback {
+            if let Some(ref callback) = config.progress_callback {
                 let progress_info = ProgressInfo {
                     total_cells,
                     collapsed_cells: collapsed_cells_count,
@@ -250,7 +265,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                     elapsed_time: start_time.elapsed(),
                     grid_state: grid.clone(),
                 };
-                let _ = callback(progress_info);
+                callback(progress_info)?;
             }
             break;
         }
@@ -280,7 +295,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                     .sum();
 
                 // --- Progress Callback ---
-                if let Some(ref callback) = progress_callback {
+                if let Some(ref callback) = config.progress_callback {
                     let progress_info = ProgressInfo {
                         total_cells,
                         collapsed_cells: collapsed_cells_count,
@@ -288,7 +303,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                         elapsed_time: start_time.elapsed(),
                         grid_state: grid.clone(),
                     };
-                    let _ = callback(progress_info);
+                    callback(progress_info)?;
                 }
             }
             Ok(None) => {
@@ -299,7 +314,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                         iterations
                     );
                     // Final callback before breaking
-                    if let Some(ref callback) = progress_callback {
+                    if let Some(ref callback) = config.progress_callback {
                         let progress_info = ProgressInfo {
                             total_cells,
                             collapsed_cells: collapsed_cells_count,
@@ -307,7 +322,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                             elapsed_time: start_time.elapsed(),
                             grid_state: grid.clone(),
                         };
-                        let _ = callback(progress_info);
+                        callback(progress_info)?;
                     }
                     break; // Success
                 } else {
@@ -370,8 +385,8 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
 }
 
 // Helper function for a single WFC iteration
-fn perform_iteration<'a, P: ConstraintPropagator, E: EntropyCalculator>(
-    grid: &'a mut PossibilityGrid,
+fn perform_iteration<P: ConstraintPropagator, E: EntropyCalculator>(
+    grid: &mut PossibilityGrid,
     tileset: &TileSet,
     rules: &AdjacencyRules,
     propagator: &mut P,
@@ -399,15 +414,22 @@ fn perform_iteration<'a, P: ConstraintPropagator, E: EntropyCalculator>(
         }
 
         if possible_tile_indices.len() > 1 {
-            let weights_result: Result<Vec<f32>, _> = possible_tile_indices
+            // Collect weights corresponding to the *base tiles* of the possible transformed tiles.
+            let weights_result: Result<Vec<f32>, WfcError> = possible_tile_indices
                 .iter()
-                .map(|&index| {
-                    tileset.get_weight(TileId(index)).ok_or_else(|| {
-                        WfcError::ConfigurationError(format!(
-                            "Weight missing for tile index {} at ({}, {}, {}).",
-                            index, x, y, z
-                        ))
-                    })
+                .map(|&ttid| { // ttid is the TransformedTileId (index in BitVec)
+                    // 1. Get the base tile ID for this transformed tile ID
+                    let (base_id, _transform) = tileset.get_base_tile_and_transform(ttid)
+                        .ok_or_else(|| WfcError::InternalError(format!(
+                            "Failed to map transformed tile ID {} back to base tile at ({},{},{}).",
+                            ttid, x, y, z
+                        )))?;
+                    // 2. Get the weight associated with that base tile ID
+                    tileset.get_weight(base_id)
+                        .ok_or_else(|| WfcError::ConfigurationError(format!(
+                            "Weight missing for base tile ID {} (derived from ttid {}) at ({}, {}, {}).",
+                            base_id.0, ttid, x, y, z
+                        )))
                 })
                 .collect();
             let weights = weights_result?;
@@ -518,7 +540,48 @@ mod tests {
         TileSet::new(weights, allowed_transforms)
     }
 
-    // --- Tests ---
+    // Helper function to create default config for tests
+    fn test_config() -> WfcConfig {
+        WfcConfig {
+            ..Default::default()
+        }
+    }
+
+    // Helper to create config with specific path/interval
+    fn checkpoint_test_config(path: PathBuf, interval: u64) -> WfcConfig {
+        WfcConfig {
+            checkpoint_path: Some(path),
+            checkpoint_interval: Some(interval),
+            max_iterations: Some(10), // Add a limit for timeout test
+            ..Default::default()
+        }
+    }
+
+    // Helper to create config with initial checkpoint
+    fn load_checkpoint_test_config(checkpoint: WfcCheckpoint) -> WfcConfig {
+        WfcConfig {
+            initial_checkpoint: Some(checkpoint),
+            ..Default::default()
+        }
+    }
+
+    // Helper to create config with progress callback
+    fn progress_test_config(callback: ProgressCallback) -> WfcConfig {
+        WfcConfig {
+            progress_callback: Some(callback),
+            max_iterations: Some(2), // Limit iterations for test
+            ..Default::default()
+        }
+    }
+
+    // Helper to create config with max iterations
+    fn max_iter_test_config(max_iters: u64) -> WfcConfig {
+        WfcConfig {
+            max_iterations: Some(max_iters),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_checkpoint_saving() {
         let grid_dim = 2;
@@ -532,6 +595,7 @@ mod tests {
         let checkpoint_interval = Some(5u64);
         let dir = tempdir().unwrap();
         let checkpoint_path = dir.path().join("checkpoint.bin");
+        let config = checkpoint_test_config(checkpoint_path.clone(), 5);
 
         // Mocks: Force timeout
         entropy_calculator
@@ -547,17 +611,11 @@ mod tests {
 
         let result = run(
             &mut grid,
-            &tileset, // Pass reference
-            &rules,   // Pass reference
+            &tileset,
+            &rules,
             propagator,
             entropy_calculator,
-            BoundaryMode::Clamped,
-            None,
-            shutdown.clone(),
-            None,
-            checkpoint_interval,
-            Some(checkpoint_path.clone()),
-            Some(10), // Max iterations
+            &config,
         );
         assert!(
             matches!(result, Err(WfcError::TimeoutOrInfiniteLoop)),
@@ -586,6 +644,7 @@ mod tests {
             grid: checkpoint_grid,
             iterations: initial_iterations,
         };
+        let config = load_checkpoint_test_config(checkpoint_data);
 
         // Mocks: Complete after loading
         entropy_calculator
@@ -603,17 +662,11 @@ mod tests {
 
         let result = run(
             &mut target_grid,
-            &tileset, // Pass reference
-            &rules,   // Pass reference
+            &tileset,
+            &rules,
             propagator,
             entropy_calculator,
-            BoundaryMode::Clamped,
-            None,
-            shutdown.clone(),
-            Some(checkpoint_data),
-            None,
-            None,
-            None,
+            &config,
         );
         assert!(
             matches!(result, Err(WfcError::IncompleteCollapse)),
@@ -646,20 +699,15 @@ mod tests {
             grid: checkpoint_grid,
             iterations: 10,
         };
+        let config = load_checkpoint_test_config(checkpoint_data);
 
         let result = run(
             &mut target_grid,
-            &tileset, // Pass reference
-            &rules,   // Pass reference
+            &tileset,
+            &rules,
             propagator,
             entropy_calculator,
-            BoundaryMode::Clamped,
-            None,
-            shutdown.clone(),
-            Some(checkpoint_data),
-            None,
-            None,
-            None,
+            &config,
         );
         assert!(
             matches!(result, Err(WfcError::CheckpointError(_))),
@@ -687,20 +735,15 @@ mod tests {
             grid: checkpoint_grid,
             iterations: 10,
         };
+        let config = load_checkpoint_test_config(checkpoint_data);
 
         let result = run(
             &mut target_grid,
-            &tileset_target, // Pass reference
-            &rules_target,   // Pass reference
+            &tileset_target,
+            &rules_target,
             propagator,
             entropy_calculator,
-            BoundaryMode::Clamped,
-            None,
-            shutdown.clone(),
-            Some(checkpoint_data),
-            None,
-            None,
-            None,
+            &config,
         );
         assert!(
             matches!(result, Err(WfcError::CheckpointError(_))),
@@ -745,43 +788,26 @@ mod tests {
             .times(3) // Expect 3 calls (initial + iteration 1 + final check)
             .returning(|_, _, _| Ok(())); // Expect call, return Ok
 
-        // Define the actual progress callback closure
-        let progress_callback = move |info: ProgressInfo| {
+        let progress_callback: ProgressCallback = Box::new(move |info: ProgressInfo| {
             println!(
                 "Progress CB: Iter {}, Cells {}/{}",
                 info.iterations, info.collapsed_cells, info.total_cells
             );
             progress_called_clone.store(true, Ordering::SeqCst);
-            // Callback now matches the expected signature (returns Result<(), WfcError>)
             Ok(())
-        };
+        });
+        let config = progress_test_config(progress_callback);
 
         let _result = run(
             &mut grid,
-            &tileset, // Pass reference
-            &rules,   // Pass reference
+            &tileset,
+            &rules,
             propagator,
             entropy_calculator,
-            BoundaryMode::Clamped,
-            // Box the closure matching the expected Fn trait signature
-            Some(Box::new(progress_callback)),
-            shutdown.clone(),
-            None,
-            None,
-            None,
-            Some(2), // Max iterations limit (increased to 2)
+            &config,
         );
-
-        // The run should now result in IncompleteCollapse due to mocks
-        assert!(
-            matches!(_result, Err(WfcError::IncompleteCollapse)),
-            "Expected IncompleteCollapse result, got {:?}",
-            _result
-        );
-        assert!(
-            progress_called.load(Ordering::SeqCst),
-            "Progress callback was not called"
-        );
+        assert!(matches!(_result, Err(WfcError::IncompleteCollapse)));
+        assert!(progress_called.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -794,7 +820,7 @@ mod tests {
         let mut propagator = MockPropagator::new();
         let mut entropy_calculator = MockEntropyCalculator::new();
         let shutdown = Arc::new(AtomicBool::new(false));
-        let max_iterations = 5u64;
+        let config = max_iter_test_config(5);
 
         // Mocks: Always find cell, never finish
         entropy_calculator
@@ -807,17 +833,11 @@ mod tests {
 
         let result = run(
             &mut grid,
-            &tileset, // Pass reference
-            &rules,   // Pass reference
+            &tileset,
+            &rules,
             propagator,
             entropy_calculator,
-            BoundaryMode::Clamped,
-            None,
-            shutdown.clone(),
-            None,
-            None,
-            None,
-            Some(max_iterations),
+            &config,
         );
         assert!(
             matches!(result, Err(WfcError::TimeoutOrInfiniteLoop)),
@@ -836,6 +856,10 @@ mod tests {
         let mut propagator = MockPropagator::new();
         let mut entropy_calculator = MockEntropyCalculator::new();
         let shutdown = Arc::new(AtomicBool::new(false));
+        let config = WfcConfig {
+            max_iterations: None,
+            ..Default::default()
+        };
 
         // Mocks: Finish after one iteration
         entropy_calculator
@@ -857,17 +881,11 @@ mod tests {
 
         let result = run(
             &mut grid,
-            &tileset, // Pass reference
-            &rules,   // Pass reference
+            &tileset,
+            &rules,
             propagator,
             entropy_calculator,
-            BoundaryMode::Clamped,
-            None,
-            shutdown.clone(),
-            None,
-            None,
-            None,
-            None, // max_iterations is None
+            &config,
         );
         assert!(
             matches!(result, Err(WfcError::IncompleteCollapse)),
