@@ -79,16 +79,18 @@ pub struct GpuBuffers {
     /// **Staging Buffer**: Used for downloading the minimum entropy info.
     /// Usage: `MAP_READ | COPY_DST`
     staging_min_entropy_info_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Input buffer for propagation, storing flat indices of updated cells.
-    /// Written to by the CPU (`upload_updates`), read by the propagation shader.
-    /// Usage: `STORAGE | COPY_DST`
-    pub updates_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Output buffer for propagation worklist (potentially unused/future work).
-    /// Usage: `STORAGE | COPY_SRC`
-    pub output_worklist_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Atomic counter for the output worklist (potentially unused/future work).
+    /// **GPU Buffer A**: Worklist buffer for propagation (ping-pong A).
+    /// Stores flat indices of updated cells. Usage depends on iteration.
     /// Usage: `STORAGE | COPY_DST | COPY_SRC`
-    pub output_worklist_count_buf: Arc<wgpu::Buffer>,
+    pub worklist_buf_a: Arc<wgpu::Buffer>,
+    /// **GPU Buffer B**: Worklist buffer for propagation (ping-pong B).
+    /// Stores flat indices of updated cells. Usage depends on iteration.
+    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    pub worklist_buf_b: Arc<wgpu::Buffer>,
+    /// **GPU Buffer**: Atomic counter for the *output* worklist size in the current propagation step.
+    /// Reset before each step, read after to know size for next step.
+    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    pub worklist_count_buf: Arc<wgpu::Buffer>,
     /// **GPU Buffer**: Flag (u32) set by the propagation shader if a contradiction is detected.
     /// 0 = no contradiction, 1 = contradiction.
     /// Usage: `STORAGE | COPY_DST | COPY_SRC`
@@ -225,8 +227,7 @@ impl GpuBuffers {
         // Input worklist (updates) can contain up to num_cells indices
         let updates_buffer_size = (num_cells * std::mem::size_of::<u32>()) as u64;
         // Output worklist can also contain up to num_cells indices
-        let output_worklist_buffer_size = updates_buffer_size;
-        let output_worklist_count_buffer_size = std::mem::size_of::<u32>() as u64;
+        let worklist_count_buffer_size = std::mem::size_of::<u32>() as u64;
         let contradiction_buffer_size = std::mem::size_of::<u32>() as u64;
         let min_entropy_info_buffer_size = (2 * std::mem::size_of::<u32>()) as u64; // Size for [f32_bits, u32_index]
         let contradiction_location_buffer_size = std::mem::size_of::<u32>() as u64;
@@ -267,27 +268,30 @@ impl GpuBuffers {
             mapped_at_creation: false,
         }));
 
-        let updates_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Updates Worklist"),
-            size: updates_buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        let worklist_buf_a = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Worklist Buffer A"),
+            size: updates_buffer_size, // Max possible size
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST // For initial upload
+                | wgpu::BufferUsages::COPY_SRC, // If direct copy between worklists is needed (less likely now)
             mapped_at_creation: false,
         }));
 
-        let output_worklist_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Output Worklist"),
-            size: output_worklist_buffer_size,
-            // Needs STORAGE for shader write, COPY_SRC if read back needed
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }));
-
-        let output_worklist_count_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Output Worklist Count"),
-            size: output_worklist_count_buffer_size,
+        let worklist_buf_b = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Worklist Buffer B"),
+            size: updates_buffer_size, // Max possible size
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }));
+
+        let worklist_count_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Worklist Count Buffer"),
+            size: worklist_count_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST // For reset
+                | wgpu::BufferUsages::COPY_SRC, // For download
             mapped_at_creation: false,
         }));
 
@@ -366,54 +370,54 @@ impl GpuBuffers {
             staging_entropy_buf,
             min_entropy_info_buf,
             staging_min_entropy_info_buf,
-            updates_buf,
-            params_uniform_buf,
-            output_worklist_buf,
-            output_worklist_count_buf,
+            worklist_buf_a,
+            worklist_buf_b,
+            worklist_count_buf,
             contradiction_flag_buf,
             staging_contradiction_flag_buf,
             contradiction_location_buf,
             staging_contradiction_location_buf,
+            params_uniform_buf,
         })
     }
 
-    /// Uploads a list of updated cell indices (flat 1D indices) to the `updates_buf` GPU buffer.
-    ///
-    /// This buffer serves as the input worklist for the propagation compute shader.
-    ///
-    /// # Arguments
-    ///
-    /// * `queue` - The WGPU `Queue` used to write to the buffer.
-    /// * `updates` - A slice of `u32` representing the flat indices of cells whose possibilities have changed.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` if the upload is successful.
-    /// * `Err(GpuError::BufferOperationError)` if the size of the `updates` data exceeds the buffer capacity.
-    pub fn upload_updates(&self, queue: &wgpu::Queue, updates: &[u32]) -> Result<(), GpuError> {
+    /// Uploads initial update list to a specific worklist buffer.
+    pub fn upload_initial_updates(
+        &self,
+        queue: &wgpu::Queue,
+        updates: &[u32],
+        buffer_index: usize,
+    ) -> Result<(), GpuError> {
         if updates.is_empty() {
-            debug!("No updates to upload.");
+            debug!("No initial updates to upload.");
             return Ok(());
         }
+        let target_buffer = if buffer_index == 0 {
+            &self.worklist_buf_a
+        } else {
+            &self.worklist_buf_b
+        };
+
         let update_data = bytemuck::cast_slice(updates);
-        if update_data.len() as u64 > self.updates_buf.size() {
+        if update_data.len() as u64 > target_buffer.size() {
             error!(
-                "Update data size ({}) exceeds updates buffer size ({}).",
+                "Initial update data size ({}) exceeds worklist buffer size ({}).",
                 update_data.len(),
-                self.updates_buf.size()
+                target_buffer.size()
             );
             return Err(GpuError::BufferOperationError(format!(
-                "Update data size ({}) exceeds updates buffer size ({})",
+                "Initial update data size ({}) exceeds worklist buffer size ({})",
                 update_data.len(),
-                self.updates_buf.size()
+                target_buffer.size()
             )));
         }
         debug!(
-            "Uploading {} updates ({} bytes) to GPU.",
+            "Uploading {} initial updates ({} bytes) to worklist buffer {}.",
             updates.len(),
-            update_data.len()
+            update_data.len(),
+            buffer_index
         );
-        queue.write_buffer(&self.updates_buf, 0, update_data);
+        queue.write_buffer(target_buffer, 0, update_data);
         Ok(())
     }
 
@@ -462,7 +466,7 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Resets the `output_worklist_count_buf` on the GPU to 0.
+    /// Resets the `worklist_count_buf` on the GPU to 0.
     ///
     /// Used if implementing iterative GPU propagation where the shader generates a new worklist.
     ///
@@ -473,13 +477,9 @@ impl GpuBuffers {
     /// # Returns
     ///
     /// * `Ok(())` always.
-    pub fn reset_output_worklist_count(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
-        debug!("Resetting output worklist count buffer on GPU.");
-        queue.write_buffer(
-            &self.output_worklist_count_buf,
-            0,
-            bytemuck::cast_slice(&[0u32]),
-        );
+    pub fn reset_worklist_count(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
+        debug!("Resetting worklist count buffer on GPU.");
+        queue.write_buffer(&self.worklist_count_buf, 0, bytemuck::cast_slice(&[0u32]));
         Ok(())
     }
 
@@ -825,7 +825,7 @@ impl GpuBuffers {
         }
     }
 
-    /// Asynchronously downloads the output worklist count from the GPU.
+    /// Asynchronously downloads the worklist count from the GPU `worklist_count_buf`.
     ///
     /// This is used after a propagation shader dispatch to determine how many cells
     /// were modified and added to the output worklist for the next iteration.
@@ -839,26 +839,25 @@ impl GpuBuffers {
     ///
     /// * `Ok(u32)` - The number of items in the output worklist.
     /// * `Err(GpuError)` - If buffer copying or mapping fails.
-    pub async fn download_output_worklist_count(
+    pub async fn download_worklist_count(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<u32, GpuError> {
-        let size = self.output_worklist_count_buf.size();
+        let size = self.worklist_count_buf.size();
         let staging_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            // Create staging buffer
-            label: Some("Staging Output Worklist Count"),
+            label: Some("Staging Worklist Count"),
             size,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Download Output Worklist Count Encoder"),
+            label: Some("Download Worklist Count Encoder"),
         });
 
         encoder.copy_buffer_to_buffer(
-            &self.output_worklist_count_buf, // Source GPU buffer
+            &self.worklist_count_buf, // Source GPU buffer
             0,
             &staging_buffer, // Destination staging buffer
             0,
