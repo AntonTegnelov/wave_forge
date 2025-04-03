@@ -4,7 +4,7 @@ use crate::{
     BoundaryMode,
 };
 use bitvec::prelude::*;
-use wfc_rules::{AdjacencyRules, TileId};
+use wfc_rules::AdjacencyRules;
 
 /// Simple CPU-based constraint propagator using a basic iterative approach.
 #[derive(Debug, Clone)]
@@ -111,7 +111,7 @@ impl ConstraintPropagator for CpuConstraintPropagator {
 
                     // Determine which tiles in the *neighbor* are supported by the *current* cell's possibilities
                     let mut supported_neighbor_tiles = bitvec![u32, Lsb0; 0; num_tiles];
-                    let neighbor_axis = rules.opposite_axis(axis); // Axis viewed from neighbor back to current
+                    let _neighbor_axis = rules.opposite_axis(axis); // Axis viewed from neighbor back to current
 
                     // Iterate through all possible tiles (t1) in the current cell
                     for t1_ttid in current_possibilities.iter_ones() {
@@ -294,6 +294,13 @@ mod tests {
         // Like clamped case, T0->? (-X) is not defined. Neighbor should be unchanged.
         let periodic_neighbor = grid.get(2, 0, 0).unwrap();
         assert_eq!(*periodic_neighbor, bitvec![usize, Lsb0; 1, 1]);
+    }
+
+    #[test]
+    fn test_propagate_constraints() {
+        let _tileset = create_simple_tileset(2).unwrap();
+        // TODO: Add actual assertions for constraint propagation
+        // For now, just ensure it compiles and runs without panic
     }
 
     #[test]

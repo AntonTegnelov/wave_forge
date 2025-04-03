@@ -160,3 +160,153 @@ impl EntropyCalculator for CpuEntropyCalculator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid::PossibilityGrid;
+    use bitvec::prelude::bitvec;
+    use std::sync::Arc;
+    use wfc_rules::{TileSet, TileSetError, Transformation};
+
+    // Helper to create a simple TileSet for testing
+    fn create_test_tileset(weights: Vec<f32>) -> Result<TileSet, TileSetError> {
+        let num_base_tiles = weights.len();
+        let allowed_transforms = vec![vec![Transformation::Identity]; num_base_tiles];
+        TileSet::new(weights, allowed_transforms)
+    }
+
+    #[test]
+    fn test_calculate_cell_entropy_multiple_possibilities() {
+        let tileset = Arc::new(create_test_tileset(vec![1.0, 1.0, 1.0]).unwrap()); // 3 tiles, equal weight
+        let calculator = CpuEntropyCalculator::new(tileset, SelectionStrategy::FirstMinimum);
+        let possibilities = bitvec![usize, Lsb0; 1, 1, 1]; // All 3 possible
+        let entropy = calculator.calculate_cell_entropy(&possibilities);
+        assert!(entropy.is_ok());
+        // Expected: log2(3) approx 1.58496
+        // Using ln(): ln(3) approx 1.0986
+        assert!((entropy.unwrap() - 1.0986).abs() < 1e-4);
+
+        let possibilities_two = bitvec![usize, Lsb0; 1, 0, 1]; // Tiles 0 and 2 possible
+        let entropy_two = calculator.calculate_cell_entropy(&possibilities_two);
+        assert!(entropy_two.is_ok());
+        // Expected: log2(2) = 1.0
+        // Using ln(): ln(2) approx 0.6931
+        assert!((entropy_two.unwrap() - 0.6931).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_calculate_cell_entropy_collapsed() {
+        let tileset = Arc::new(create_test_tileset(vec![1.0, 2.0]).unwrap());
+        let calculator = CpuEntropyCalculator::new(tileset, SelectionStrategy::FirstMinimum);
+        let possibilities = bitvec![usize, Lsb0; 0, 1]; // Only Tile 1 possible
+        let entropy = calculator.calculate_cell_entropy(&possibilities);
+        assert!(entropy.is_ok());
+        assert_eq!(entropy.unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_calculate_cell_entropy_contradiction() {
+        let tileset = Arc::new(create_test_tileset(vec![1.0, 1.0]).unwrap());
+        let calculator = CpuEntropyCalculator::new(tileset, SelectionStrategy::FirstMinimum);
+        let possibilities = bitvec![usize, Lsb0; 0, 0]; // No possibilities
+        let entropy_result = calculator.calculate_cell_entropy(&possibilities);
+        assert!(entropy_result.is_ok());
+        let entropy_value = entropy_result.unwrap();
+        assert!(entropy_value.is_infinite() && entropy_value.is_sign_negative());
+    }
+
+    #[test]
+    fn test_calculate_cell_entropy_weighted() {
+        let tileset = Arc::new(create_test_tileset(vec![1.0, 3.0]).unwrap()); // Tile 1 is 3x more likely
+        let calculator = CpuEntropyCalculator::new(tileset, SelectionStrategy::FirstMinimum);
+        let possibilities = bitvec![usize, Lsb0; 1, 1]; // Both possible
+        let entropy = calculator.calculate_cell_entropy(&possibilities);
+        assert!(entropy.is_ok());
+        // Expected: - (1/4 * log2(1/4) + 3/4 * log2(3/4)) approx 0.81128
+        // Using ln(): ln(1+3) - (1*ln(1) + 3*ln(3))/(1+3) = ln(4) - (3*ln(3))/4 approx 0.5623
+        assert!((entropy.unwrap() - 0.5623).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_calculate_entropy_full_grid() {
+        let tileset = Arc::new(create_test_tileset(vec![1.0, 1.0]).unwrap());
+        let calculator =
+            CpuEntropyCalculator::new(tileset.clone(), SelectionStrategy::FirstMinimum);
+        let mut grid = PossibilityGrid::new(2, 1, 1, 2);
+        *grid.get_mut(0, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 0]; // Collapsed
+        *grid.get_mut(1, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 1]; // Both possible
+
+        let entropy_grid_result = calculator.calculate_entropy(&grid);
+        assert!(entropy_grid_result.is_ok());
+        let entropy_grid = entropy_grid_result.unwrap();
+        assert_eq!(entropy_grid.get(0, 0, 0), Some(&0.0));
+        assert!((entropy_grid.get(1, 0, 0).unwrap() - 0.6931).abs() < 1e-4); // ln(2)
+    }
+
+    #[test]
+    fn test_select_lowest_first_minimum() {
+        let tileset = Arc::new(create_test_tileset(vec![1.0; 3]).unwrap());
+        let calculator = CpuEntropyCalculator::new(tileset, SelectionStrategy::FirstMinimum);
+        let mut entropy_grid = EntropyGrid::new(2, 2, 1);
+        *entropy_grid.get_mut(0, 0, 0).unwrap() = 0.5;
+        *entropy_grid.get_mut(1, 0, 0).unwrap() = 0.2; // Lowest
+        *entropy_grid.get_mut(0, 1, 0).unwrap() = 0.2; // Also lowest
+        *entropy_grid.get_mut(1, 1, 0).unwrap() = 0.8;
+
+        let selection = calculator.select_lowest_entropy_cell(&entropy_grid);
+        // Iteration order is likely X, Y, Z. So (1,0,0) should be found first.
+        assert_eq!(selection, Some((1, 0, 0)));
+    }
+
+    #[test]
+    fn test_select_lowest_random() {
+        let tileset = Arc::new(create_test_tileset(vec![1.0; 3]).unwrap());
+        let calculator = CpuEntropyCalculator::new(tileset, SelectionStrategy::RandomLowest);
+        let mut entropy_grid = EntropyGrid::new(2, 2, 1);
+        *entropy_grid.get_mut(0, 0, 0).unwrap() = 0.5;
+        *entropy_grid.get_mut(1, 0, 0).unwrap() = 0.2; // Lowest
+        *entropy_grid.get_mut(0, 1, 0).unwrap() = 0.2; // Also lowest
+        *entropy_grid.get_mut(1, 1, 0).unwrap() = 0.8;
+
+        // Run multiple times to increase chance of seeing both lowest cells selected
+        let mut seen_1_0_0 = false;
+        let mut seen_0_1_0 = false;
+        for _ in 0..100 {
+            let selection = calculator.select_lowest_entropy_cell(&entropy_grid);
+            assert!(selection.is_some());
+            let coords = selection.unwrap();
+            assert!(coords == (1, 0, 0) || coords == (0, 1, 0));
+            if coords == (1, 0, 0) {
+                seen_1_0_0 = true;
+            }
+            if coords == (0, 1, 0) {
+                seen_0_1_0 = true;
+            }
+            if seen_1_0_0 && seen_0_1_0 {
+                break;
+            }
+        }
+        assert!(
+            seen_1_0_0 && seen_0_1_0,
+            "RandomLowest did not select both minimum cells over 100 trials"
+        );
+    }
+
+    #[test]
+    fn test_select_lowest_all_collapsed_or_contradiction() {
+        let tileset = Arc::new(create_test_tileset(vec![1.0; 2]).unwrap());
+        let calculator = CpuEntropyCalculator::new(tileset, SelectionStrategy::FirstMinimum);
+        let mut entropy_grid = EntropyGrid::new(2, 1, 1);
+        *entropy_grid.get_mut(0, 0, 0).unwrap() = 0.0; // Collapsed
+        *entropy_grid.get_mut(1, 0, 0).unwrap() = f32::NEG_INFINITY; // Contradiction
+
+        let selection = calculator.select_lowest_entropy_cell(&entropy_grid);
+        assert_eq!(selection, None);
+
+        // Test with only collapsed cells
+        *entropy_grid.get_mut(1, 0, 0).unwrap() = 0.0;
+        let selection_all_zero = calculator.select_lowest_entropy_cell(&entropy_grid);
+        assert_eq!(selection_all_zero, None);
+    }
+}

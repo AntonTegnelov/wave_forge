@@ -13,24 +13,21 @@ const PROPAGATION_BATCH_SIZE: usize = 4096; // Number of updates to process per 
 const PROPAGATION_WORKGROUP_SIZE: u32 = 64; // Match the value in propagate.wgsl
 
 /// GPU implementation of the ConstraintPropagator trait.
-/// Holds references to GPU resources needed for constraint propagation.
-#[derive(Clone)] // Make it cloneable if needed
+#[derive(Debug, Clone)]
 pub struct GpuConstraintPropagator {
-    // References to shared GPU resources
+    // References to shared GPU resources (Reverted to hold individual components)
     pub(crate) device: Arc<wgpu::Device>,
     pub(crate) queue: Arc<wgpu::Queue>,
-    pub(crate) pipelines: Arc<ComputePipelines>, // Assume ComputePipelines is shareable/Clone
-    pub(crate) buffers: Arc<GpuBuffers>,         // Assume GpuBuffers is shareable/Clone
+    pub(crate) pipelines: Arc<ComputePipelines>,
+    pub(crate) buffers: Arc<GpuBuffers>,
     pub(crate) grid_dims: (usize, usize, usize),
-    pub(crate) boundary_mode: BoundaryMode,
-    // Add state for ping-pong buffer index
+    pub(crate) _boundary_mode: BoundaryMode,
+    // State for ping-pong buffer index
     current_worklist_idx: usize,
 }
 
 impl GpuConstraintPropagator {
     /// Creates a new `GpuConstraintPropagator`.
-    ///
-    /// This typically takes resources initialized elsewhere (e.g., by a main GPU manager).
     pub fn new(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
@@ -45,8 +42,8 @@ impl GpuConstraintPropagator {
             pipelines,
             buffers,
             grid_dims,
-            boundary_mode,
-            current_worklist_idx: 0, // Start with buffer A
+            _boundary_mode: boundary_mode,
+            current_worklist_idx: 0,
         }
     }
 
@@ -413,18 +410,14 @@ impl ConstraintPropagator for GpuConstraintPropagator {
     }
 }
 
-// Ensure necessary types (ComputePipelines, GpuBuffers) are cloneable and fields are accessible
-// No code here, just a comment
-
 #[cfg(test)]
 mod tests {
-    use super::*; // Import items from parent module
+    use super::*;
     use crate::accelerator::GpuAccelerator;
     use crate::GpuError;
-    use bitvec::prelude::bitvec;
-    use std::sync::Arc;
-    use wfc_core::{grid::PossibilityGrid, BoundaryMode};
-    use wfc_rules::{AdjacencyRules, TileId, TileSet, TileSetError, Transformation};
+    use wfc_core::grid::PossibilityGrid;
+    use wfc_core::BoundaryMode;
+    use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
 
     // --- Test Setup Helpers ---
 

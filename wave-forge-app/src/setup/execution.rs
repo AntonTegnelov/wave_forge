@@ -1,12 +1,15 @@
 //! Handles the core execution logic for standard and benchmark modes.
 
 use crate::benchmark::{self, BenchmarkResult, BenchmarkScenarioResult};
-use crate::config::{AppConfig, ProgressLogLevel};
+use crate::config::{AppConfig, ExecutionMode, ProgressLogLevel, RunConfig};
 use crate::error::AppError;
 use crate::output;
+use crate::setup::results::ExecutionResult;
 use crate::setup::visualization::VizMessage;
+use crate::state::AppState;
 use anyhow::{Context, Result};
 use log;
+use log::{debug, info, warn};
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::sync::atomic::AtomicBool;
@@ -16,7 +19,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 use wfc_core::grid::PossibilityGrid;
 use wfc_core::runner;
-use wfc_core::{BoundaryMode, ProgressInfo, WfcError};
+use wfc_core::{
+    entropy::cpu::CpuEntropyCalculator, entropy::SelectionStrategy,
+    propagator::cpu::CpuConstraintPropagator, run, runner::WfcConfig, BoundaryMode,
+    ConstraintPropagator, EntropyCalculator, ProgressInfo, WfcError,
+};
 use wfc_gpu::accelerator::GpuAccelerator;
 use wfc_gpu::entropy::GpuEntropyCalculator;
 use wfc_gpu::propagator::GpuConstraintPropagator;
@@ -449,20 +456,26 @@ pub async fn run_standard_mode(
     };
 
     // Now create the specific propagator and calculator
-    let propagator = GpuConstraintPropagator::new(
-        gpu_accelerator.device(),
-        gpu_accelerator.queue(),
-        gpu_accelerator.pipelines(),
-        gpu_accelerator.buffers(),
-        gpu_accelerator.grid_dims(),
-    );
-    let entropy_calc = GpuEntropyCalculator::new(
-        gpu_accelerator.device(),
-        gpu_accelerator.queue(),
-        (*gpu_accelerator.pipelines()).clone(), // Clone required here
-        (*gpu_accelerator.buffers()).clone(),   // Clone required here
-        gpu_accelerator.grid_dims(),
-    );
+    let tileset_arc = Arc::new(tileset.clone()); // Clone for CPU calculator
+    let strategy = SelectionStrategy::FirstMinimum; // Default strategy
+
+    // Create the appropriate propagator and entropy calculator based on mode
+    let (propagator, entropy_calc): (
+        Box<dyn ConstraintPropagator + Send + Sync>,
+        Box<dyn EntropyCalculator + Send + Sync>,
+    ) = match mode {
+        ExecutionMode::Cpu => (
+            Box::new(CpuConstraintPropagator::new(boundary_mode)),
+            Box::new(CpuEntropyCalculator::new(tileset_arc.clone(), strategy)), // Pass args
+        ),
+        ExecutionMode::Gpu => {
+            let gpu_accelerator = pollster::block_on(
+                GpuAccelerator::new(&grid_guard, &rules, boundary_mode), // Args: &Grid, &Rules, BoundaryMode
+            )?;
+            let accelerator_arc = Arc::new(gpu_accelerator);
+            (Box::new(accelerator_arc.clone()), Box::new(accelerator_arc))
+        }
+    };
 
     // Run WFC
     log::info!("Running WFC on GPU...");
@@ -521,4 +534,96 @@ pub async fn run_standard_mode(
     };
 
     Ok(())
+}
+
+pub fn run_wfc_interactive(
+    app_state: Arc<Mutex<AppState>>,
+    run_config: RunConfig,
+    progress_callback: Option<Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>>,
+    shutdown_signal: Arc<AtomicBool>,
+) -> Result<ExecutionResult, AppError> {
+    info!("Entering run_wfc_interactive...");
+    let start_time = Instant::now();
+
+    let state_guard = app_state.lock().expect("AppState lock poisoned");
+    let grid_lock = state_guard
+        .possibility_grid
+        .as_ref()
+        .ok_or(AppError::Config("WFC grid not initialized".to_string()))?
+        .clone();
+    let tileset = state_guard
+        .tileset
+        .as_ref()
+        .ok_or(AppError::Config("WFC tileset not initialized".to_string()))?
+        .clone();
+    let rules = state_guard
+        .rules
+        .as_ref()
+        .ok_or(AppError::Config("WFC rules not initialized".to_string()))?
+        .clone();
+    drop(state_guard); // Release AppState lock
+
+    let mut grid_guard = grid_lock.write().expect("Grid write lock failed");
+    let boundary_mode = run_config.boundary_mode;
+    let tileset_arc = Arc::new(tileset.clone());
+    let strategy = run_config.selection_strategy;
+    let mode = run_config.mode;
+
+    // Create the appropriate propagator and entropy calculator based on mode
+    let (propagator, entropy_calc): (
+        Box<dyn ConstraintPropagator + Send + Sync>,
+        Box<dyn EntropyCalculator + Send + Sync>,
+    ) = match mode {
+        ExecutionMode::Cpu => (
+            Box::new(CpuConstraintPropagator::new(boundary_mode)),
+            Box::new(CpuEntropyCalculator::new(tileset_arc.clone(), strategy)),
+        ),
+        ExecutionMode::Gpu => {
+            let gpu_accelerator = pollster::block_on(
+                GpuAccelerator::new(&grid_guard, &rules, boundary_mode), // Ensure boundary_mode is passed
+            )?;
+            let accelerator_arc = Arc::new(gpu_accelerator);
+            (Box::new(accelerator_arc.clone()), Box::new(accelerator_arc))
+        }
+    };
+
+    // Prepare configuration for the runner
+    let config = WfcConfig {
+        boundary_mode,
+        progress_callback,
+        shutdown_signal,
+        initial_checkpoint: None, // Assuming no checkpoint load here
+        checkpoint_interval: run_config.checkpoint_interval,
+        checkpoint_path: run_config.checkpoint_path.clone(),
+        max_iterations: run_config.max_iterations,
+    };
+
+    // Run WFC core logic
+    info!("Starting WFC run...");
+    let wfc_result = run(
+        &mut grid_guard, // Arg 1: &mut Grid
+        &tileset,        // Arg 2: &TileSet
+        &rules,          // Arg 3: &Rules
+        propagator,      // Arg 4: Box<dyn Propagator>
+        entropy_calc,    // Arg 5: Box<dyn Calculator>
+        &config,         // Arg 6: &Config
+    );
+    drop(grid_guard); // Release grid lock after run completes
+
+    let elapsed = start_time.elapsed();
+    info!(
+        "WFC run finished in {:?}. Result: {:?}",
+        elapsed, wfc_result
+    );
+
+    match wfc_result {
+        Ok(_) => Ok(ExecutionResult::Success {
+            duration: elapsed,
+            // Add final grid state or other metrics if needed
+        }),
+        Err(e) => Ok(ExecutionResult::Failure {
+            duration: elapsed,
+            error: e,
+        }),
+    }
 }

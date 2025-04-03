@@ -90,7 +90,7 @@ impl<T: Clone + Default> Grid<T> {
 /// Each cell contains a `BitVec`, where the index corresponds to a `TileId`.
 /// If the bit at index `i` is set (`true`), it means `TileId(i)` is still considered
 /// a possible tile for that cell. If the bit is unset (`false`), the tile has been eliminated.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PossibilityGrid {
     /// The width of the grid (X dimension).
     pub width: usize,

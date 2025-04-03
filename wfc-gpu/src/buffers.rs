@@ -51,6 +51,7 @@ pub struct GpuParamsUniform {
 ///
 /// It also includes corresponding staging buffers (prefixed `staging_`) used for efficiently
 /// transferring data between the CPU and GPU, particularly for downloading results.
+#[derive(Debug)] // Add Debug derive
 #[allow(dead_code)] // Allow unused fields/methods during development
 #[derive(Clone)] // Derive Clone
 pub struct GpuBuffers {

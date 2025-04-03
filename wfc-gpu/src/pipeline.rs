@@ -8,7 +8,7 @@ use wgpu;
 /// This struct holds the compiled compute pipeline objects and their corresponding
 /// bind group layouts for both the entropy calculation and constraint propagation shaders.
 /// It is typically created once during the initialization of the `GpuAccelerator`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ComputePipelines {
     /// The compiled compute pipeline for the entropy calculation shader (`entropy.wgsl`).
     pub entropy_pipeline: Arc<wgpu::ComputePipeline>,

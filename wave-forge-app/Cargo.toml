@@ -29,9 +29,12 @@ winapi = { version = "0.3", features = ["psapi", "processthreadsapi"], optional 
 figment = { version = "0.10", features = ["toml", "env"] } # For configuration file loading
 serde = { version = "1.0", features = ["derive"] } # Add serde for deserialization
 thiserror = "1.0" # Added thiserror
+pollster = "0.3" # Add pollster
+console-subscriber = { version = "0.2", optional = true } # Add console-subscriber
 
 [features]
-default = []
+default = ["console_subscriber"]
+console_subscriber = ["tokio/tracing", "dep:console-subscriber"]
 winapi = ["dep:winapi"]
 gpu = [] # Added gpu feature
 
@@ -40,7 +43,6 @@ assert_cmd = "2.0"
 predicates = "3.0"
 tempfile = "3.8"
 criterion = "0.5"
-pollster = "0.3" # For blocking on async GPU setup in benches
 
 [[bench]]
 name = "wfc_comparison"

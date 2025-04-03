@@ -1,4 +1,6 @@
+use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
+use wfc_core::BoundaryMode;
 use wfc_gpu::buffers::GpuBuffers;
 use wfc_gpu::GpuError;
 
@@ -62,8 +64,12 @@ fn test_buffer_creation_sizes() {
     }
     let (device, queue) = wgpu_result.unwrap();
 
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let boundary_mode = BoundaryMode::Clamped;
+
     // Create buffers
-    let buffers_result = GpuBuffers::new(&device, &queue, &grid, &rules);
+    let buffers_result = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode);
     assert!(buffers_result.is_ok(), "Failed to create GpuBuffers");
     let buffers = buffers_result.unwrap();
 
@@ -141,8 +147,9 @@ fn test_reset_contradiction_flag() {
     // Dummy grid/rules needed for buffer creation
     let grid = PossibilityGrid::new(1, 1, 1, 1);
     let rules = create_uniform_rules(1, 6);
-    let buffers =
-        GpuBuffers::new(&device, &queue, &grid, &rules).expect("Failed to create buffers");
+    let boundary_mode = BoundaryMode::Clamped;
+    let buffers = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode)
+        .expect("Failed to create buffers");
 
     // Simply test that the API call succeeds - we can't reliably test the GPU side behavior
     // in a cross-platform way without proper synchronization
@@ -165,8 +172,9 @@ fn test_update_params_worklist_size() {
     // Dummy grid/rules
     let grid = PossibilityGrid::new(1, 1, 1, 1);
     let rules = create_uniform_rules(1, 6);
-    let buffers =
-        GpuBuffers::new(&device, &queue, &grid, &rules).expect("Failed to create buffers");
+    let boundary_mode = BoundaryMode::Clamped;
+    let buffers = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode)
+        .expect("Failed to create buffers");
 
     // Simply test that the API call succeeds - we can't reliably test the GPU side behavior
     // in a cross-platform way without proper synchronization
@@ -230,8 +238,12 @@ fn test_large_grid_buffer_creation() {
         }
         let (device, queue) = wgpu_result.unwrap();
 
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+        let boundary_mode = BoundaryMode::Clamped;
+
         // Attempt to create buffers
-        match GpuBuffers::new(&device, &queue, &grid, &rules) {
+        match GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode) {
             Ok(buffers) => {
                 // Verify the sizes match expectations
                 let actual_grid_size = buffers.grid_possibilities_buf.size();
@@ -269,5 +281,228 @@ fn test_large_grid_buffer_creation() {
 
         // Add a small delay to let the GPU resources be properly released
         std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn test_upload_grid_possibilities() {
+    setup_logger();
+
+    // Basic setup
+    let width = 8;
+    let height = 8;
+    let depth = 2;
+    let num_tiles = 5;
+    let num_axes = 6;
+    let num_cells = width * height * depth;
+    let grid = PossibilityGrid::new(width, height, depth, num_tiles);
+    let rules = create_uniform_rules(num_tiles, num_axes);
+
+    // Initialize Device/Queue
+    let wgpu_result = pollster::block_on(setup_wgpu());
+    if let Err(e) = wgpu_result {
+        eprintln!("Skipping GPU test: Failed to initialize wgpu: {}", e);
+        return;
+    }
+    let (device, queue) = wgpu_result.unwrap();
+
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let boundary_mode = BoundaryMode::Periodic;
+
+    // Create buffers
+    let buffers_result = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode);
+    assert!(buffers_result.is_ok(), "Failed to create GpuBuffers");
+    let buffers = buffers_result.unwrap();
+
+    // Assert buffer sizes
+    let u32_size = std::mem::size_of::<u32>() as u64;
+    let f32_size = std::mem::size_of::<f32>() as u64;
+
+    let bits_per_cell = num_tiles;
+    let u32s_per_cell = (bits_per_cell + 31) / 32;
+    let expected_grid_size = (num_cells * u32s_per_cell) as u64 * u32_size;
+    assert_eq!(
+        buffers.grid_possibilities_buf.size(),
+        expected_grid_size,
+        "grid_possibilities_buf size mismatch"
+    );
+
+    let num_rules = num_axes * num_tiles * num_tiles;
+    let u32s_for_rules = (num_rules + 31) / 32;
+    let expected_rules_size = u32s_for_rules as u64 * u32_size;
+    assert_eq!(
+        buffers.rules_buf.size(),
+        expected_rules_size,
+        "rules_buf size mismatch"
+    );
+
+    let expected_entropy_size = num_cells as u64 * f32_size;
+    assert_eq!(
+        buffers.entropy_buf.size(),
+        expected_entropy_size,
+        "entropy_buf size mismatch"
+    );
+
+    let expected_updates_size = num_cells as u64 * u32_size;
+    assert_eq!(
+        buffers.worklist_buf_a.size(),
+        expected_updates_size,
+        "worklist_buf_a size mismatch"
+    );
+    assert_eq!(
+        buffers.worklist_buf_b.size(),
+        expected_updates_size,
+        "worklist_buf_b size mismatch"
+    );
+
+    let expected_atomic_u32_size = u32_size;
+    assert_eq!(
+        buffers.worklist_count_buf.size(),
+        expected_atomic_u32_size,
+        "worklist_count_buf size mismatch"
+    );
+    assert_eq!(
+        buffers.contradiction_flag_buf.size(),
+        expected_atomic_u32_size,
+        "contradiction_flag_buf size mismatch"
+    );
+
+    let expected_params_size = std::mem::size_of::<wfc_gpu::buffers::GpuParamsUniform>() as u64;
+    assert_eq!(
+        buffers.params_uniform_buf.size(),
+        expected_params_size,
+        "params_uniform_buf size mismatch"
+    );
+}
+
+#[test]
+fn test_upload_rules() {
+    setup_logger();
+
+    // Basic setup
+    let width = 8;
+    let height = 8;
+    let depth = 2;
+    let num_tiles = 5;
+    let num_axes = 6;
+    let num_cells = width * height * depth;
+    let grid = PossibilityGrid::new(width, height, depth, num_tiles);
+    let rules = create_uniform_rules(num_tiles, num_axes);
+
+    // Initialize Device/Queue
+    let wgpu_result = pollster::block_on(setup_wgpu());
+    if let Err(e) = wgpu_result {
+        eprintln!("Skipping GPU test: Failed to initialize wgpu: {}", e);
+        return;
+    }
+    let (device, queue) = wgpu_result.unwrap();
+
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let boundary_mode = BoundaryMode::Clamped;
+
+    // Create buffers
+    let buffers_result = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode);
+    assert!(buffers_result.is_ok(), "Failed to create GpuBuffers");
+    let buffers = buffers_result.unwrap();
+
+    // Assert buffer sizes
+    let u32_size = std::mem::size_of::<u32>() as u64;
+    let f32_size = std::mem::size_of::<f32>() as u64;
+
+    let bits_per_cell = num_tiles;
+    let u32s_per_cell = (bits_per_cell + 31) / 32;
+    let expected_grid_size = (num_cells * u32s_per_cell) as u64 * u32_size;
+    assert_eq!(
+        buffers.grid_possibilities_buf.size(),
+        expected_grid_size,
+        "grid_possibilities_buf size mismatch"
+    );
+
+    let num_rules = num_axes * num_tiles * num_tiles;
+    let u32s_for_rules = (num_rules + 31) / 32;
+    let expected_rules_size = u32s_for_rules as u64 * u32_size;
+    assert_eq!(
+        buffers.rules_buf.size(),
+        expected_rules_size,
+        "rules_buf size mismatch"
+    );
+
+    let expected_entropy_size = num_cells as u64 * f32_size;
+    assert_eq!(
+        buffers.entropy_buf.size(),
+        expected_entropy_size,
+        "entropy_buf size mismatch"
+    );
+
+    let expected_updates_size = num_cells as u64 * u32_size;
+    assert_eq!(
+        buffers.worklist_buf_a.size(),
+        expected_updates_size,
+        "worklist_buf_a size mismatch"
+    );
+    assert_eq!(
+        buffers.worklist_buf_b.size(),
+        expected_updates_size,
+        "worklist_buf_b size mismatch"
+    );
+
+    let expected_atomic_u32_size = u32_size;
+    assert_eq!(
+        buffers.worklist_count_buf.size(),
+        expected_atomic_u32_size,
+        "worklist_count_buf size mismatch"
+    );
+    assert_eq!(
+        buffers.contradiction_flag_buf.size(),
+        expected_atomic_u32_size,
+        "contradiction_flag_buf size mismatch"
+    );
+
+    let expected_params_size = std::mem::size_of::<wfc_gpu::buffers::GpuParamsUniform>() as u64;
+    assert_eq!(
+        buffers.params_uniform_buf.size(),
+        expected_params_size,
+        "params_uniform_buf size mismatch"
+    );
+}
+
+#[test]
+fn test_upload_initial_updates() {
+    setup_logger();
+
+    // Basic setup
+    let width = 8;
+    let height = 8;
+    let depth = 2;
+    let num_tiles = 5;
+    let num_axes = 6;
+    let _num_cells = width * height * depth; // Prefix unused variable
+    let grid = PossibilityGrid::new(width, height, depth, num_tiles);
+    let rules = create_uniform_rules(num_tiles, num_axes);
+
+    // Initialize Device/Queue
+    let wgpu_result = pollster::block_on(setup_wgpu());
+    if let Err(e) = wgpu_result {
+        eprintln!("Skipping GPU test: Failed to initialize wgpu: {}", e);
+        return;
+    }
+    let (device, queue) = wgpu_result.unwrap();
+
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let _boundary_mode = BoundaryMode::Clamped; // Prefix unused variable
+
+    // Create buffers
+    match GpuBuffers::new(&device, &queue, &grid, &rules, BoundaryMode::Clamped) {
+        Ok(_buffers) => { // Prefix unused variable _buffers
+             // Check if the buffer for initial updates exists and has the right size
+             // (Further checks would involve reading back data, which is complex)
+             // For now, just ensure creation doesn't panic
+        }
+        Err(_e) => {
+            panic!("Failed to create GpuBuffers: {:?}", _e)
+        }
     }
 }

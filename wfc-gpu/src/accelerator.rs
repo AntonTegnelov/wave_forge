@@ -30,7 +30,7 @@ use wfc_rules::AdjacencyRules; // Added import
 /// Data synchronization between CPU (`PossibilityGrid`) and GPU (`GpuBuffers`) is handled
 /// internally by the respective trait method implementations.
 #[allow(dead_code)] // Allow unused fields while implementation is pending
-#[derive(Clone)] // Derive Clone
+#[derive(Clone, Debug)] // Add Debug
 pub struct GpuAccelerator {
     instance: Arc<wgpu::Instance>, // Wrap in Arc
     adapter: Arc<wgpu::Adapter>,   // Wrap in Arc
@@ -218,12 +218,12 @@ impl ConstraintPropagator for GpuAccelerator {
     ) -> Result<(), PropagationError> {
         // Create a GpuConstraintPropagator using the accelerator's resources
         let mut propagator = GpuConstraintPropagator::new(
-            self.device(),        // Clone Arc<Device>
-            self.queue(),         // Clone Arc<Queue>
-            self.pipelines(),     // Clone Arc<ComputePipelines>
-            self.buffers(),       // Clone Arc<GpuBuffers>
-            self.grid_dims(),     // Copy grid dimensions
-            self.boundary_mode(), // Get boundary mode
+            self.device(),        // Pass cloned Arc<Device>
+            self.queue(),         // Pass cloned Arc<Queue>
+            self.pipelines(),     // Pass cloned Arc<ComputePipelines>
+            self.buffers(),       // Pass cloned Arc<GpuBuffers>
+            self.grid_dims(),     // Pass grid dimensions
+            self.boundary_mode(), // Pass boundary mode
         );
         // Delegate the actual work
         propagator.propagate(grid, updated_coords, rules)

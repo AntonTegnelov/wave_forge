@@ -5,29 +5,27 @@ use crate::error::AppError;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wfc_core::{
-    // Core components needed
-    grid::PossibilityGrid,
-    runner::run,
-    BoundaryMode,
-    ProgressInfo,
-    WfcError,
+    entropy::cpu::CpuEntropyCalculator, entropy::SelectionStrategy, grid::PossibilityGrid,
+    propagator::cpu::CpuConstraintPropagator, run, runner::WfcConfig, BoundaryMode,
+    ConstraintPropagator, EntropyCalculator, ProgressInfo, WfcError,
 };
-use wfc_rules::{AdjacencyRules, TileSet}; // Use wfc-rules types
+use wfc_rules::{AdjacencyRules, TileId, TileSet, TileSetError, Transformation};
 
 // GPU implementation is now mandatory for benchmarks
 use wfc_gpu::accelerator::GpuAccelerator;
-use wfc_gpu::{entropy::GpuEntropyCalculator, propagator::GpuConstraintPropagator}; // Corrected import paths
+use wfc_gpu::{entropy::GpuEntropyCalculator, propagator::GpuConstraintPropagator};
 
 // Use anyhow for application-level errors
 use anyhow::{Error, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
 use csv;
 use log; // Import AppError
+use pollster; // Add pollster import
 
 /// Represents the aggregated results of a single benchmark run.
 #[derive(Debug)]
@@ -116,49 +114,60 @@ pub async fn run_single_benchmark(
     // Profile GPU initialization
     let gpu_accelerator = {
         let _guard = profiler.profile("gpu_accelerator_init");
-        GpuAccelerator::new(grid, rules).await?
+        GpuAccelerator::new(grid, rules, BoundaryMode::Periodic).await?
     };
 
-    // Create the specific propagator and calculator instances using resources from the accelerator
-    let propagator = GpuConstraintPropagator::new(
-        gpu_accelerator.device(),
-        gpu_accelerator.queue(),
-        gpu_accelerator.pipelines(),
-        gpu_accelerator.buffers(),
-        gpu_accelerator.grid_dims(),
-    );
-    let entropy_calc = GpuEntropyCalculator::new(
-        gpu_accelerator.device(),
-        gpu_accelerator.queue(),
-        (*gpu_accelerator.pipelines()).clone(),
-        (*gpu_accelerator.buffers()).clone(),
-        gpu_accelerator.grid_dims(),
-    );
+    // --- Setup based on execution mode ---
+    let boundary_mode = BoundaryMode::Periodic; // Or get from args/config
+    let tileset_arc = Arc::new(tileset.clone()); // Clone tileset into Arc for CPU calc
+    let strategy = SelectionStrategy::FirstMinimum; // Default strategy
 
-    let shutdown_signal = Arc::new(AtomicBool::new(false)); // Create default signal
+    let (propagator, entropy_calc): (
+        Box<dyn ConstraintPropagator + Send + Sync>,
+        Box<dyn EntropyCalculator + Send + Sync>,
+    ) = match ExecutionMode::Gpu {
+        ExecutionMode::Cpu => {
+            log::info!("Using CPU propagator and entropy calculator.");
+            let prop = CpuConstraintPropagator::new(boundary_mode);
+            let calc = CpuEntropyCalculator::new(tileset_arc.clone(), strategy); // Pass args
+            (Box::new(prop), Box::new(calc))
+        }
+        ExecutionMode::Gpu => {
+            log::info!("Using GPU accelerator for propagation and entropy calculation.");
+            // Block on the async GpuAccelerator::new function
+            let gpu_accelerator = pollster::block_on(GpuAccelerator::new(
+                grid,                   // Pass grid reference
+                rules,                  // Pass rules reference
+                BoundaryMode::Periodic, // Pass boundary mode
+            ))
+            .map_err(|e| anyhow::anyhow!("Failed to create GPU accelerator: {}", e))?;
+
+            // Wrap the accelerator in Arc for sharing
+            let accelerator_arc = Arc::new(gpu_accelerator);
+
+            // Use the same Arc<GpuAccelerator> for both traits
+            (Box::new(accelerator_arc.clone()), Box::new(accelerator_arc))
+        }
+    };
+
+    // Prepare configuration for the runner
+    let config = WfcConfig {
+        boundary_mode: BoundaryMode::Periodic, // Set the determined boundary mode
+        progress_callback: None,               // No progress for benchmark
+        shutdown_signal: Arc::new(AtomicBool::new(false)), // Dummy signal
+        // Set other fields to None or defaults as appropriate for benchmark
+        initial_checkpoint: None,
+        checkpoint_interval: None,
+        checkpoint_path: None,
+        max_iterations: None,
+    };
+
+    log::info!("Running WFC ({:?})...", ExecutionMode::Gpu);
 
     // Profile the actual WFC run
     let _run_guard = profiler.profile("gpu_wfc_run");
 
-    let wfc_result = run(
-        grid,
-        tileset,
-        rules,
-        propagator,
-        entropy_calc,
-        BoundaryMode::Periodic, // Using Periodic boundary mode as default
-        progress_callback.map(|cb| {
-            Box::new(move |info: ProgressInfo| -> Result<(), WfcError> {
-                cb(info);
-                Ok(())
-            }) as Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>
-        }),
-        shutdown_signal.clone(),
-        None, // No initial checkpoint
-        None, // No checkpoint interval
-        None, // No checkpoint path
-        None, // No max iterations
-    );
+    let wfc_result = run(grid, tileset, rules, propagator, entropy_calc, &config);
 
     let total_time = start_time.elapsed();
 
