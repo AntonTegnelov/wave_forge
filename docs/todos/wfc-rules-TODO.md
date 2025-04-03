@@ -3,7 +3,7 @@
 ## Format Handling Improvements
 
 - [ ] Create a proper trait/interface for format parsers to implement
-- [ ] Implement full support for bitcode serialization format (https://crates.io/crates/bitcode/0.6.5)
+- [ ] Implement full support for bitcode serialization format as default (https://crates.io/crates/bitcode)
 - [ ] Re-enable and implement JSON format support
 - [ ] Create a clear extension path for new formats
 - [ ] Separate format-specific parsing from validation logic
@@ -19,7 +19,6 @@
 
 - [ ] Add methods to load rules from string/memory instead of just files
 - [ ] Separate parsing logic from deserialization for better testability
-- [ ] Make axis handling extensible to support non-3D spaces
 - [ ] Add support for loading directly from embedded resources
 
 ## Documentation and Testing
@@ -33,12 +32,10 @@
 
 - [ ] Avoid allocating entire adjacency matrix; use sparse representation
 - [ ] Reduce string allocations and HashMaps during parsing
-- [ ] Implement binary format support for efficient storage and loading
 
 ## New Features
 
 - [ ] Add support for tile symmetry and rotation rules
-- [ ] Make dimensionality (2D/3D) configurable
 - [ ] Add adjacency rule visualization/verification tools
 - [ ] Create helper functions for common rule patterns
 

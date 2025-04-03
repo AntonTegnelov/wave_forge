@@ -1,4 +1,5 @@
 use crate::GpuError;
+use bitvec::field::BitField;
 use bytemuck::{Pod, Zeroable};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
@@ -153,59 +154,88 @@ impl GpuBuffers {
         let num_tiles = rules.num_tiles();
         let num_axes = rules.num_axes();
 
-        // --- Pack Possibilities (SoA Layout for Coalescence) ---
-        let bits_per_cell = num_tiles;
-        let u32s_per_cell = (bits_per_cell + 31) / 32; // Ceiling division
-                                                       // Allocate space for SoA layout: num_chunks * num_cells
-        let mut packed_possibilities: Vec<u32> = vec![0u32; u32s_per_cell * num_cells];
-
-        for (cell_idx, cell_bitvec) in initial_grid.get_cell_data().iter().enumerate() {
-            for (i, bit) in cell_bitvec.iter().by_vals().enumerate() {
-                if bit {
-                    let u32_chunk_idx = i / 32;
-                    let bit_idx = i % 32;
-                    if u32_chunk_idx < u32s_per_cell {
-                        // Calculate SoA index: chunk_index * num_cells + cell_index
-                        let packed_idx = u32_chunk_idx * num_cells + cell_idx;
-                        if packed_idx < packed_possibilities.len() {
-                            // Bounds check
-                            packed_possibilities[packed_idx] |= 1 << bit_idx;
-                        } else {
-                            // This should ideally not happen if allocation is correct
-                            error!("SoA packing error: index out of bounds (cell {}, chunk {}, packed_idx {})", cell_idx, u32_chunk_idx, packed_idx);
-                            return Err(GpuError::BufferOperationError(
-                                "SoA packing index out of bounds".to_string(),
-                            ));
+        // --- Pack Initial Grid State (Possibilities) ---
+        let u32s_per_cell = (num_tiles + 31) / 32;
+        let mut packed_possibilities = Vec::with_capacity(num_cells * u32s_per_cell);
+        for z in 0..depth {
+            for y in 0..height {
+                for x in 0..width {
+                    if let Some(cell_possibilities) = initial_grid.get(x, y, z) {
+                        if cell_possibilities.len() != num_tiles {
+                            let err_msg = format!(
+                                "Possibility grid cell ({}, {}, {}) has unexpected length: {} (expected {})",
+                                x, y, z, cell_possibilities.len(), num_tiles
+                            );
+                            error!("{}", err_msg);
+                            return Err(GpuError::BufferOperationError(err_msg));
                         }
+                        // Pack the BitSlice into u32s
+                        let iter = cell_possibilities.chunks_exact(32);
+                        let remainder = iter.remainder();
+                        for chunk in iter {
+                            packed_possibilities.push(chunk.load_le::<u32>());
+                        }
+                        if !remainder.is_empty() {
+                            let mut last_u32 = 0u32;
+                            for (i, bit) in remainder.iter().by_vals().enumerate() {
+                                if bit {
+                                    last_u32 |= 1 << i;
+                                }
+                            }
+                            packed_possibilities.push(last_u32);
+                        }
+                    } else {
+                        // Handle potential error if get returns None unexpectedly
+                        let err_msg =
+                            format!("Failed to get possibility grid cell ({}, {}, {})", x, y, z);
+                        error!("{}", err_msg);
+                        return Err(GpuError::BufferOperationError(err_msg));
                     }
                 }
             }
         }
-        // Validate size calculation consistency
+
         if packed_possibilities.len() != num_cells * u32s_per_cell {
-            error!(
-                "SoA packing size mismatch: calculated {}, expected {}",
-                packed_possibilities.len(),
-                num_cells * u32s_per_cell
+            let err_msg = format!(
+                "Internal Error: Packed possibilities size mismatch. Expected {}, Got {}. Grid dims: ({},{},{}), Num Tiles: {}, u32s/cell: {}",
+                num_cells * u32s_per_cell, packed_possibilities.len(), width, height, depth, num_tiles, u32s_per_cell
             );
-            return Err(GpuError::BufferOperationError(
-                "SoA packing size mismatch".to_string(),
-            ));
+            error!("{}", err_msg);
+            return Err(GpuError::BufferOperationError(err_msg));
         }
 
         let grid_buffer_size = (packed_possibilities.len() * std::mem::size_of::<u32>()) as u64;
 
         // --- Pack Rules ---
-        let num_rules = num_axes * num_tiles * num_tiles;
-        let u32s_for_rules = (num_rules + 31) / 32;
+        // Iterate through all combinations (axis, ttid1, ttid2) and check if allowed
+        let num_rules_total = num_axes * num_tiles * num_tiles;
+        let u32s_for_rules = (num_rules_total + 31) / 32; // ceil(num_rules_total / 32)
         let mut packed_rules = vec![0u32; u32s_for_rules];
-        for (i, &allowed) in rules.get_allowed_rules().iter().enumerate() {
-            if allowed {
-                let u32_idx = i / 32;
-                let bit_idx = i % 32;
-                packed_rules[u32_idx] |= 1 << bit_idx;
+
+        let mut rule_idx = 0;
+        for axis in 0..num_axes {
+            for ttid1 in 0..num_tiles {
+                for ttid2 in 0..num_tiles {
+                    if rules.check(ttid1, ttid2, axis) {
+                        let u32_idx = rule_idx / 32;
+                        let bit_idx = rule_idx % 32;
+                        if u32_idx < packed_rules.len() {
+                            packed_rules[u32_idx] |= 1 << bit_idx;
+                        }
+                    }
+                    rule_idx += 1;
+                }
             }
         }
+
+        // Optional sanity check (should always pass if loops are correct)
+        if rule_idx != num_rules_total {
+            warn!(
+                "Rule packing index mismatch: iterated {} rules, expected {}",
+                rule_idx, num_rules_total
+            );
+        }
+
         let _rules_buffer_size = (packed_rules.len() * std::mem::size_of::<u32>()) as u64;
 
         // --- Create Uniform Buffer Data ---

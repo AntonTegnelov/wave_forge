@@ -1,7 +1,22 @@
 use wfc_core::grid::PossibilityGrid;
 use wfc_gpu::buffers::GpuBuffers;
 use wfc_gpu::GpuError;
-use wfc_rules::AdjacencyRules;
+
+// Helper function to convert a flat allowed rules vector to allowed tuples
+// This replaces the old AdjacencyRules::new(num_tiles, num_axes, vec![true; ...]) calls
+fn create_uniform_rules(num_tiles: usize, num_axes: usize) -> wfc_rules::AdjacencyRules {
+    // Create a vector of all possible allowed tuples for a uniform ruleset
+    // where all adjacencies are allowed
+    let mut allowed_tuples = Vec::with_capacity(num_axes * num_tiles * num_tiles);
+    for axis in 0..num_axes {
+        for ttid1 in 0..num_tiles {
+            for ttid2 in 0..num_tiles {
+                allowed_tuples.push((axis, ttid1, ttid2));
+            }
+        }
+    }
+    wfc_rules::AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_tuples)
+}
 
 // Helper to initialize logging for tests
 fn setup_logger() {
@@ -37,11 +52,7 @@ fn test_buffer_creation_sizes() {
     let num_axes = 6;
     let num_cells = width * height * depth;
     let grid = PossibilityGrid::new(width, height, depth, num_tiles);
-    let rules = AdjacencyRules::new(
-        num_tiles,
-        num_axes,
-        vec![true; num_axes * num_tiles * num_tiles],
-    );
+    let rules = create_uniform_rules(num_tiles, num_axes);
 
     // Initialize Device/Queue
     let wgpu_result = pollster::block_on(setup_wgpu());
@@ -129,7 +140,7 @@ fn test_reset_contradiction_flag() {
 
     // Dummy grid/rules needed for buffer creation
     let grid = PossibilityGrid::new(1, 1, 1, 1);
-    let rules = AdjacencyRules::new(1, 6, vec![true; 6]);
+    let rules = create_uniform_rules(1, 6);
     let buffers =
         GpuBuffers::new(&device, &queue, &grid, &rules).expect("Failed to create buffers");
 
@@ -153,7 +164,7 @@ fn test_update_params_worklist_size() {
 
     // Dummy grid/rules
     let grid = PossibilityGrid::new(1, 1, 1, 1);
-    let rules = AdjacencyRules::new(1, 6, vec![true; 6]);
+    let rules = create_uniform_rules(1, 6);
     let buffers =
         GpuBuffers::new(&device, &queue, &grid, &rules).expect("Failed to create buffers");
 
@@ -209,11 +220,7 @@ fn test_large_grid_buffer_creation() {
         // Initialize basic grid and rules
         let grid = PossibilityGrid::new(width, height, depth, num_tiles);
         let num_axes = 6; // Standard 3D (x,y,z) * 2 directions
-        let rules = AdjacencyRules::new(
-            num_tiles,
-            num_axes,
-            vec![true; num_axes * num_tiles * num_tiles],
-        );
+        let rules = create_uniform_rules(num_tiles, num_axes);
 
         // Initialize Device/Queue
         let wgpu_result = pollster::block_on(setup_wgpu());

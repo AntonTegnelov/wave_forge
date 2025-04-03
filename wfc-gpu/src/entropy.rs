@@ -1,8 +1,11 @@
-use crate::{buffers::GpuBuffers, pipeline::ComputePipelines};
+use crate::buffers::GpuBuffers;
+use crate::pipeline::ComputePipelines;
+use log;
 use std::sync::Arc;
 use wfc_core::{
     entropy::EntropyCalculator,
     grid::{EntropyGrid, Grid, PossibilityGrid},
+    EntropyError,
 };
 use wgpu;
 
@@ -61,7 +64,7 @@ impl EntropyCalculator for GpuEntropyCalculator {
     /// An `EntropyGrid` containing the entropy values calculated by the GPU. If reading the results
     /// from the GPU fails, an empty grid with the correct dimensions is returned, and an error is logged.
     #[must_use]
-    fn calculate_entropy(&self, _grid: &PossibilityGrid) -> Result<EntropyGrid, String> {
+    fn calculate_entropy(&self, _grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
         // Assuming grid state is primarily managed on the GPU via self.buffers.grid_possibilities_buf
         // _grid parameter is technically unused as we read directly from the GPU buffer.
         // Consider changing the trait or method signature if this becomes an issue.
@@ -72,9 +75,10 @@ impl EntropyCalculator for GpuEntropyCalculator {
 
         // Reset the min entropy buffer before dispatch
         if let Err(e) = self.buffers.reset_min_entropy_info(&self.queue) {
-            let err_msg = format!("Failed to reset min entropy info buffer: {}", e);
+            let err_msg = format!("GPU Error: Failed to reset min entropy info buffer: {}", e);
             log::error!("{}", err_msg);
-            return Err(err_msg);
+            // Use EntropyError::Other for GPU specific errors
+            return Err(EntropyError::Other(err_msg));
         }
 
         // 1. Create Command Encoder (uses Arc<Device>)
@@ -137,7 +141,6 @@ impl EntropyCalculator for GpuEntropyCalculator {
 
         // 5. Download results (uses Arc<Device>, Arc<Queue>)
         log::debug!("Downloading entropy results...");
-        // Access download method via Arc<Buffers>, pass Arc<Device> and Arc<Queue>
         let entropy_data_result =
             pollster::block_on(self.buffers.download_entropy(&self.device, &self.queue));
 
@@ -149,14 +152,13 @@ impl EntropyCalculator for GpuEntropyCalculator {
                 );
                 if entropy_data.len() != num_cells {
                     let err_msg = format!(
-                        "GPU entropy result size mismatch: expected {}, got {}",
+                        "GPU Error: Entropy result size mismatch: expected {}, got {}",
                         num_cells,
                         entropy_data.len()
                     );
                     log::error!("{}", err_msg);
-                    // Return an error or a grid with potentially wrong data?
-                    // For consistency with trait, returning Err seems better.
-                    Err(err_msg)
+                    // Use EntropyError::Other
+                    Err(EntropyError::Other(err_msg))
                 } else {
                     // 6. Create Grid from the downloaded data
                     Ok(Grid {
@@ -168,9 +170,10 @@ impl EntropyCalculator for GpuEntropyCalculator {
                 }
             }
             Err(e) => {
-                let err_msg = format!("Failed to download entropy results: {}", e);
+                let err_msg = format!("GPU Error: Failed to download entropy results: {}", e);
                 log::error!("{}", err_msg);
-                Err(err_msg)
+                // Use EntropyError::Other
+                Err(EntropyError::Other(err_msg))
             }
         }
     }

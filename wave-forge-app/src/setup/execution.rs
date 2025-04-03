@@ -16,7 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use wfc_core::grid::PossibilityGrid;
 use wfc_core::runner;
-use wfc_core::ProgressInfo;
+use wfc_core::{BoundaryMode, ProgressInfo, WfcError};
 use wfc_gpu::accelerator::GpuAccelerator;
 use wfc_gpu::entropy::GpuEntropyCalculator;
 use wfc_gpu::propagator::GpuConstraintPropagator;
@@ -416,7 +416,7 @@ pub async fn run_standard_mode(
                 };
                 let msg = format!(
                     "Progress: Iter {}, Collapsed {}/{} ({:.1}%), Elapsed: {:.2?}, Rate: {:.1} cells/s",
-                    info.iteration, info.collapsed_cells, info.total_cells, percentage, info.elapsed_time, collapse_rate
+                    info.iterations, info.collapsed_cells, info.total_cells, percentage, info.elapsed_time, collapse_rate
                 );
                 // Use the cloned progress_log_level
                 match progress_log_level {
@@ -480,8 +480,18 @@ pub async fn run_standard_mode(
         rules,
         propagator,
         entropy_calc,
-        progress_callback,
+        BoundaryMode::Periodic, // Using Periodic boundary mode as default
+        progress_callback.map(|cb| {
+            Box::new(move |info: ProgressInfo| -> Result<(), WfcError> {
+                cb(info);
+                Ok(())
+            }) as Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>
+        }),
         shutdown_signal,
+        None, // No initial checkpoint
+        None, // No checkpoint interval
+        None, // No checkpoint path
+        None, // No max iterations
     );
 
     match wfc_result {

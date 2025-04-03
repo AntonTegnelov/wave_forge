@@ -5,7 +5,6 @@ use std::{
 use wfc_core::grid::PossibilityGrid;
 use wfc_core::propagator::ConstraintPropagator;
 use wfc_gpu::accelerator::GpuAccelerator;
-use wfc_rules::AdjacencyRules; // Ensure accelerator is public or crate-visible
 
 // A custom drop implementation to ensure proper GPU device cleanup
 struct SafetyGuard;
@@ -31,6 +30,22 @@ impl Drop for SafetyGuard {
 ///
 /// Each test is structured to detect and report GPU initialization or execution failures.
 
+/// Helper function to convert a flat allowed rules vector to allowed tuples
+/// This replaces the old AdjacencyRules::new(num_tiles, num_axes, vec![true; ...]) calls
+fn create_uniform_rules(num_tiles: usize, num_axes: usize) -> wfc_rules::AdjacencyRules {
+    // Create a vector of all possible allowed tuples for a uniform ruleset
+    // where all adjacencies are allowed
+    let mut allowed_tuples = Vec::with_capacity(num_axes * num_tiles * num_tiles);
+    for axis in 0..num_axes {
+        for ttid1 in 0..num_tiles {
+            for ttid2 in 0..num_tiles {
+                allowed_tuples.push((axis, ttid1, ttid2));
+            }
+        }
+    }
+    wfc_rules::AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_tuples)
+}
+
 /// Tests the basic GPU entropy calculation pathway.
 ///
 /// This test only verifies that we can:
@@ -55,9 +70,7 @@ fn test_gpu_calculate_entropy_basic_run() {
 
     // Create simple rules: Allow all adjacencies in 6 directions (3 axes)
     let num_axes = 6;
-    let num_rules = num_axes * num_tiles * num_tiles;
-    let allowed_rules = vec![true; num_rules]; // All true
-    let _rules = AdjacencyRules::new(num_tiles, num_axes, allowed_rules);
+    let _rules = create_uniform_rules(num_tiles, num_axes);
 
     // Initialize GPU with a direct approach and manual timeout
     println!("Starting GPU accelerator initialization...");
@@ -127,7 +140,7 @@ fn test_gpu_propagate_basic_run() {
     let depth = 1;
     let num_tiles = 2;
     let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
-    let rules = AdjacencyRules::new(num_tiles, 6, vec![true; 6 * num_tiles * num_tiles]); // All allowed
+    let rules = create_uniform_rules(num_tiles, 6); // All allowed
 
     // Initialize GPU Accelerator with timeout
     println!("Entering GpuAccelerator::new for propagate test...");
@@ -241,7 +254,7 @@ fn test_gpu_entropy_calculation_edge_cases() {
         }
 
         // Create simple rules to keep the test fast
-        let rules = AdjacencyRules::new(num_tiles, 6, vec![true; 6 * num_tiles * num_tiles]);
+        let rules = create_uniform_rules(num_tiles, 6);
 
         // Don't actually perform GPU calculation to avoid potential hangs
         // Just verify we can initialize the accelerator

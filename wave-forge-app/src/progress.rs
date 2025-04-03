@@ -93,7 +93,7 @@ impl ProgressReporter for ConsoleProgressReporter {
 
             log::info!(
                 "Progress: Iter: {} | Collapsed: {}/{} ({:.1}%) | Elapsed: {}{}",
-                info.iteration,
+                info.iterations,
                 info.collapsed_cells,
                 info.total_cells,
                 percentage,
@@ -135,20 +135,22 @@ mod tests {
     fn test_console_reporter_basic_flow() {
         let mut reporter = ConsoleProgressReporter::new(Duration::from_millis(50));
         let info1 = ProgressInfo {
-            iteration: 10,
+            iterations: 10,
             collapsed_cells: 50,
             total_cells: 1000,
             elapsed_time: Duration::from_secs(1),
+            grid_state: wfc_core::grid::PossibilityGrid::new(1, 1, 1, 1),
         };
         let res1 = reporter.report(&info1);
         assert!(res1.is_ok());
 
         // Second report immediately after should be throttled
         let info2 = ProgressInfo {
-            iteration: 11,
+            iterations: 11,
             collapsed_cells: 55,
             total_cells: 1000,
             elapsed_time: Duration::from_secs(1),
+            grid_state: wfc_core::grid::PossibilityGrid::new(1, 1, 1, 1),
         };
         let res2 = reporter.report(&info2);
         assert!(res2.is_ok());
@@ -157,10 +159,11 @@ mod tests {
         thread::sleep(Duration::from_millis(60));
 
         let info3 = ProgressInfo {
-            iteration: 20,
+            iterations: 20,
             collapsed_cells: 100,
             total_cells: 1000,
             elapsed_time: Duration::from_secs(2),
+            grid_state: wfc_core::grid::PossibilityGrid::new(1, 1, 1, 1),
         };
         let res3 = reporter.report(&info3);
         assert!(res3.is_ok());
@@ -170,10 +173,11 @@ mod tests {
     fn test_console_reporter_zero_cells() {
         let mut reporter = ConsoleProgressReporter::new(Duration::from_millis(50));
         let info = ProgressInfo {
-            iteration: 0,
+            iterations: 0,
             collapsed_cells: 0,
             total_cells: 0,
             elapsed_time: Duration::from_secs(0),
+            grid_state: wfc_core::grid::PossibilityGrid::new(1, 1, 1, 1),
         };
         let res = reporter.report(&info);
         assert!(res.is_ok());

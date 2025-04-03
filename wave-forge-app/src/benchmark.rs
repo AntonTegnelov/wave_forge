@@ -8,6 +8,7 @@ use wfc_core::{
     // Core components needed
     grid::PossibilityGrid,
     runner::run,
+    BoundaryMode,
     ProgressInfo,
     WfcError,
 };
@@ -28,12 +29,10 @@ use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
 use csv;
 use log; // Import AppError
 
-/// Structure to hold benchmark results for a single GPU run.
-///
-/// Contains timing information, grid parameters, and the final result of the WFC run.
-#[derive(Debug, Clone)]
+/// Represents the aggregated results of a single benchmark run.
+#[derive(Debug)]
 pub struct BenchmarkResult {
-    /// Width of the grid used in the benchmark.
+    /// Width of the grid used.
     pub grid_width: usize,
     /// Height of the grid used in the benchmark.
     pub grid_height: usize,
@@ -46,7 +45,7 @@ pub struct BenchmarkResult {
     /// The result of the WFC run (`Ok(())` on success, `Err(WfcError)` on failure).
     pub wfc_result: Result<(), WfcError>,
     /// Number of iterations completed before finishing or failing. `None` if run failed very early or callback wasn't invoked.
-    pub iterations: Option<usize>,
+    pub iterations: Option<u64>,
     /// Number of cells collapsed before finishing or failing. `None` if run failed very early or callback wasn't invoked.
     pub collapsed_cells: Option<usize>,
     /// Profiling data per code section, if collected
@@ -147,8 +146,18 @@ pub async fn run_single_benchmark(
         rules,
         propagator,
         entropy_calc,
-        progress_callback,
-        shutdown_signal.clone(), // Pass the signal
+        BoundaryMode::Periodic, // Using Periodic boundary mode as default
+        progress_callback.map(|cb| {
+            Box::new(move |info: ProgressInfo| -> Result<(), WfcError> {
+                cb(info);
+                Ok(())
+            }) as Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>
+        }),
+        shutdown_signal.clone(),
+        None, // No initial checkpoint
+        None, // No checkpoint interval
+        None, // No checkpoint path
+        None, // No max iterations
     );
 
     let total_time = start_time.elapsed();
@@ -181,7 +190,7 @@ pub async fn run_single_benchmark(
         num_tiles: rules.num_tiles(),
         total_time,
         wfc_result: wfc_result.map_err(|e| e.into()),
-        iterations: final_progress.as_ref().map(|p| p.iteration),
+        iterations: final_progress.as_ref().map(|p| p.iterations),
         collapsed_cells: final_progress.as_ref().map(|p| p.collapsed_cells),
         profile_metrics: Some(profiler.get_metrics()),
         memory_usage,

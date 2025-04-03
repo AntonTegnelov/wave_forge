@@ -44,6 +44,7 @@ use wfc_rules::{AdjacencyRules, TileId, TileSet};
 /// * `initial_checkpoint`: An optional checkpoint to load before starting the run.
 /// * `checkpoint_interval`: An optional interval to save checkpoints every N iterations.
 /// * `checkpoint_path`: An optional file path to save checkpoints to.
+/// * `max_iterations`: An optional maximum number of iterations to run.
 ///
 /// # Returns
 ///
@@ -64,11 +65,12 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
     mut propagator: P,
     entropy_calculator: E,
     boundary_mode: BoundaryMode,
-    progress_callback: Option<Box<dyn Fn(ProgressInfo) + Send + Sync>>,
+    progress_callback: Option<Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>>,
     shutdown_signal: Arc<AtomicBool>,
     initial_checkpoint: Option<WfcCheckpoint>,
     checkpoint_interval: Option<u64>,
     checkpoint_path: Option<PathBuf>,
+    max_iterations: Option<u64>,
 ) -> Result<(), WfcError> {
     info!(
         "Starting WFC run with boundary mode: {:?}...",
@@ -186,6 +188,16 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         collapsed_cells_count, total_cells, iterations
     );
 
+    // Determine the iteration limit
+    let iteration_limit = match max_iterations {
+        Some(limit) => limit,
+        None => (total_cells as u64).saturating_mul(10), // Default limit calculation
+    };
+    if iteration_limit > 0 {
+        // Only log if limit is meaningful
+        info!("WFC run iteration limit set to: {}", iteration_limit);
+    }
+
     loop {
         iterations += 1;
 
@@ -238,7 +250,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                     elapsed_time: start_time.elapsed(),
                     grid_state: grid.clone(),
                 };
-                callback(progress_info);
+                let _ = callback(progress_info);
             }
             break;
         }
@@ -276,7 +288,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                         elapsed_time: start_time.elapsed(),
                         grid_state: grid.clone(),
                     };
-                    callback(progress_info);
+                    let _ = callback(progress_info);
                 }
             }
             Ok(None) => {
@@ -295,7 +307,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                             elapsed_time: start_time.elapsed(),
                             grid_state: grid.clone(),
                         };
-                        callback(progress_info);
+                        let _ = callback(progress_info);
                     }
                     break; // Success
                 } else {
@@ -339,11 +351,11 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
         }
 
         // Safeguard against infinite loops
-        let max_iterations = (total_cells as u64) * 10; // Cast total_cells to u64
-        if iterations > max_iterations {
+        if iteration_limit > 0 && iterations > iteration_limit {
+            // Check against the determined limit
             error!(
                 "Maximum iterations ({}) exceeded. Assuming infinite loop.",
-                max_iterations
+                iteration_limit
             );
             return Err(WfcError::TimeoutOrInfiniteLoop);
         }
@@ -441,46 +453,426 @@ fn perform_iteration<'a, P: ConstraintPropagator, E: EntropyCalculator>(
 
 #[cfg(test)]
 mod tests {
+    // --- Imports ---
+    use super::*;
+    use crate::{
+        entropy::{EntropyCalculator, EntropyError},
+        grid::{EntropyGrid, PossibilityGrid},
+        propagator::{ConstraintPropagator, PropagationError},
+        BoundaryMode, ProgressInfo, WfcCheckpoint, WfcError,
+    };
+    use mockall::{mock, predicate::*};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use tempfile::tempdir;
+    use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
 
-    use wfc_rules::{AdjacencyRules, TileSet, Transformation}; // Ensure Transformation is imported here
+    // --- Mocks ---
+    mock! {
+        pub EntropyCalculator {}
+        impl EntropyCalculator for EntropyCalculator {
+             fn calculate_entropy(
+                &self,
+                grid: &PossibilityGrid,
+             ) -> Result<EntropyGrid, EntropyError>;
+             fn select_lowest_entropy_cell(
+                &self,
+                entropy_grid: &EntropyGrid,
+            ) -> Option<(usize, usize, usize)>;
+        }
+    }
 
-    // --- Mock Implementations ---
-    // ... Mocks ...
+    mock! {
+        pub Propagator {}
+        impl ConstraintPropagator for Propagator {
+            fn propagate(
+                &mut self,
+                grid: &mut PossibilityGrid,
+                updated_coords: Vec<(usize, usize, usize)>,
+                rules: &AdjacencyRules,
+            ) -> Result<(), PropagationError>;
+        }
+    }
 
-    // --- Helper to create basic rules/tileset (Moved Inside) ---
-    fn create_basic_setup(num_tiles: usize) -> (TileSet, AdjacencyRules) {
-        let weights = vec![1.0; num_tiles];
-        let transformations = vec![vec![Transformation::Identity]; num_tiles];
-        let tileset = TileSet::new(weights, transformations).unwrap();
-        let num_transformed = tileset.num_transformed_tiles();
-        assert_eq!(num_transformed, num_tiles);
-        let num_axes = 6;
+    // Helper to create a uniform AdjacencyRules
+    fn create_uniform_rules(tileset: &TileSet) -> AdjacencyRules {
+        let num_tiles = tileset.num_transformed_tiles();
+        let num_axes = 6; // Assuming 3D
         let mut allowed_tuples = Vec::new();
         for axis in 0..num_axes {
-            for t1_idx in 0..num_transformed {
-                for t2_idx in 0..num_transformed {
-                    allowed_tuples.push((axis, t1_idx, t2_idx));
+            for ttid1 in 0..num_tiles {
+                for ttid2 in 0..num_tiles {
+                    allowed_tuples.push((axis, ttid1, ttid2));
                 }
             }
         }
-        let rules = AdjacencyRules::from_allowed_tuples(num_transformed, num_axes, allowed_tuples);
-        (tileset, rules)
+        AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_tuples)
     }
 
-    // --- Checkpoint Tests ---
-    #[test]
-    fn test_checkpoint_saving() { /* ... */
+    // Helper to create a simple TileSet
+    fn create_simple_tileset(num_base_tiles: usize) -> Result<TileSet, TileSetError> {
+        let weights = vec![1.0; num_base_tiles];
+        let allowed_transforms = vec![vec![Transformation::Identity]; num_base_tiles];
+        TileSet::new(weights, allowed_transforms)
     }
+
+    // --- Tests ---
     #[test]
-    fn test_checkpoint_loading() { /* ... */
+    fn test_checkpoint_saving() {
+        let grid_dim = 2;
+        let tileset = create_simple_tileset(2).expect("Failed to create tileset");
+        let num_transformed_tiles = tileset.num_transformed_tiles();
+        let mut grid = PossibilityGrid::new(grid_dim, grid_dim, grid_dim, num_transformed_tiles);
+        let rules = create_uniform_rules(&tileset);
+        let mut propagator = MockPropagator::new();
+        let mut entropy_calculator = MockEntropyCalculator::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let checkpoint_interval = Some(5u64);
+        let dir = tempdir().unwrap();
+        let checkpoint_path = dir.path().join("checkpoint.bin");
+
+        // Mocks: Force timeout
+        entropy_calculator
+            .expect_calculate_entropy()
+            .returning(move |_| Ok(EntropyGrid::new(grid_dim, grid_dim, grid_dim)));
+        entropy_calculator
+            .expect_select_lowest_entropy_cell()
+            .returning(|_| Some((0, 0, 0))); // Always find a cell
+        propagator
+            .expect_propagate()
+            // Expect propagate to be called (with some Vec, we don't care which here)
+            .returning(|_, _, _| Ok(())); // Return Ok(()) to continue loop
+
+        let result = run(
+            &mut grid,
+            &tileset, // Pass reference
+            &rules,   // Pass reference
+            propagator,
+            entropy_calculator,
+            BoundaryMode::Clamped,
+            None,
+            shutdown.clone(),
+            None,
+            checkpoint_interval,
+            Some(checkpoint_path.clone()),
+            Some(10), // Max iterations
+        );
+        assert!(
+            matches!(result, Err(WfcError::TimeoutOrInfiniteLoop)),
+            "Expected Timeout error, got {:?}",
+            result
+        );
+        assert!(checkpoint_path.exists(), "Checkpoint file was not created");
     }
+
     #[test]
-    fn test_checkpoint_loading_dimension_mismatch() { /* ... */
+    fn test_checkpoint_loading() {
+        let grid_dim = 2;
+        let tileset = create_simple_tileset(2).expect("Failed to create tileset");
+        let num_transformed_tiles = tileset.num_transformed_tiles();
+        let mut target_grid =
+            PossibilityGrid::new(grid_dim, grid_dim, grid_dim, num_transformed_tiles);
+        let rules = create_uniform_rules(&tileset);
+        let mut propagator = MockPropagator::new();
+        let mut entropy_calculator = MockEntropyCalculator::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let initial_iterations = 10u64;
+        let checkpoint_grid =
+            PossibilityGrid::new(grid_dim, grid_dim, grid_dim, num_transformed_tiles);
+        let checkpoint_data = WfcCheckpoint {
+            grid: checkpoint_grid,
+            iterations: initial_iterations,
+        };
+
+        // Mocks: Complete after loading
+        entropy_calculator
+            .expect_calculate_entropy()
+            .times(1)
+            .returning(move |_| Ok(EntropyGrid::new(grid_dim, grid_dim, grid_dim)));
+        entropy_calculator
+            .expect_select_lowest_entropy_cell()
+            .times(1)
+            .returning(|_| None); // Return None to finish
+        propagator
+            .expect_propagate()
+            .times(2) // Expect 2 calls (initial + final check)
+            .returning(|_, _, _| Ok(()));
+
+        let result = run(
+            &mut target_grid,
+            &tileset, // Pass reference
+            &rules,   // Pass reference
+            propagator,
+            entropy_calculator,
+            BoundaryMode::Clamped,
+            None,
+            shutdown.clone(),
+            Some(checkpoint_data),
+            None,
+            None,
+            None,
+        );
+        assert!(
+            matches!(result, Err(WfcError::IncompleteCollapse)),
+            "Expected Err(IncompleteCollapse) after loading empty checkpoint and immediate mock stop, got {:?}",
+            result
+        );
     }
+
     #[test]
-    fn test_checkpoint_loading_tile_count_mismatch() { /* ... */
+    fn test_checkpoint_loading_dimension_mismatch() {
+        let grid_dim = 2;
+        let target_grid_dim = 3;
+        let tileset = create_simple_tileset(2).expect("Failed to create tileset");
+        let num_transformed_tiles = tileset.num_transformed_tiles();
+
+        let mut target_grid = PossibilityGrid::new(
+            target_grid_dim,
+            target_grid_dim,
+            target_grid_dim,
+            num_transformed_tiles,
+        );
+        let rules = create_uniform_rules(&tileset);
+        let propagator = MockPropagator::new();
+        let entropy_calculator = MockEntropyCalculator::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let checkpoint_grid =
+            PossibilityGrid::new(grid_dim, grid_dim, grid_dim, num_transformed_tiles);
+        let checkpoint_data = WfcCheckpoint {
+            grid: checkpoint_grid,
+            iterations: 10,
+        };
+
+        let result = run(
+            &mut target_grid,
+            &tileset, // Pass reference
+            &rules,   // Pass reference
+            propagator,
+            entropy_calculator,
+            BoundaryMode::Clamped,
+            None,
+            shutdown.clone(),
+            Some(checkpoint_data),
+            None,
+            None,
+            None,
+        );
+        assert!(
+            matches!(result, Err(WfcError::CheckpointError(_))),
+            "Expected CheckpointError for dimension mismatch, got {:?}",
+            result
+        );
     }
+
     #[test]
-    fn test_progress_callback_with_grid() { /* ... */
+    fn test_checkpoint_loading_tile_count_mismatch() {
+        let grid_dim = 2;
+        let tileset_chkp = create_simple_tileset(2).expect("Tileset Chkp Failed");
+        let num_tiles_chkp = tileset_chkp.num_transformed_tiles();
+        let tileset_target = create_simple_tileset(3).expect("Tileset Target Failed");
+        let num_tiles_target = tileset_target.num_transformed_tiles();
+
+        let mut target_grid = PossibilityGrid::new(grid_dim, grid_dim, grid_dim, num_tiles_target);
+        let rules_target = create_uniform_rules(&tileset_target);
+        let propagator = MockPropagator::new();
+        let entropy_calculator = MockEntropyCalculator::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let checkpoint_grid = PossibilityGrid::new(grid_dim, grid_dim, grid_dim, num_tiles_chkp);
+        let checkpoint_data = WfcCheckpoint {
+            grid: checkpoint_grid,
+            iterations: 10,
+        };
+
+        let result = run(
+            &mut target_grid,
+            &tileset_target, // Pass reference
+            &rules_target,   // Pass reference
+            propagator,
+            entropy_calculator,
+            BoundaryMode::Clamped,
+            None,
+            shutdown.clone(),
+            Some(checkpoint_data),
+            None,
+            None,
+            None,
+        );
+        assert!(
+            matches!(result, Err(WfcError::CheckpointError(_))),
+            "Expected CheckpointError for tile count mismatch, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_progress_callback_with_grid() {
+        let grid_dim = 2;
+        let tileset = create_simple_tileset(2).expect("Failed to create tileset");
+        let num_transformed_tiles = tileset.num_transformed_tiles();
+        let mut grid = PossibilityGrid::new(grid_dim, grid_dim, grid_dim, num_transformed_tiles);
+        let rules = create_uniform_rules(&tileset);
+        let mut propagator = MockPropagator::new();
+        let mut entropy_calculator = MockEntropyCalculator::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let progress_called = Arc::new(AtomicBool::new(false));
+        let progress_called_clone = progress_called.clone();
+
+        // Mocks
+        entropy_calculator
+            .expect_calculate_entropy()
+            .times(2) // Expect 2 calls
+            .returning(move |_| Ok(EntropyGrid::new(grid_dim, grid_dim, grid_dim)));
+
+        let mut select_calls = 0;
+        entropy_calculator
+            .expect_select_lowest_entropy_cell()
+            .times(2) // Expect 2 calls
+            .returning(move |_| {
+                select_calls += 1;
+                if select_calls <= 1 {
+                    Some((0, 0, 0)) // Find a cell on first call
+                } else {
+                    None // Finish on second call
+                }
+            });
+        propagator
+            .expect_propagate()
+            .times(3) // Expect 3 calls (initial + iteration 1 + final check)
+            .returning(|_, _, _| Ok(())); // Expect call, return Ok
+
+        // Define the actual progress callback closure
+        let progress_callback = move |info: ProgressInfo| {
+            println!(
+                "Progress CB: Iter {}, Cells {}/{}",
+                info.iterations, info.collapsed_cells, info.total_cells
+            );
+            progress_called_clone.store(true, Ordering::SeqCst);
+            // Callback now matches the expected signature (returns Result<(), WfcError>)
+            Ok(())
+        };
+
+        let _result = run(
+            &mut grid,
+            &tileset, // Pass reference
+            &rules,   // Pass reference
+            propagator,
+            entropy_calculator,
+            BoundaryMode::Clamped,
+            // Box the closure matching the expected Fn trait signature
+            Some(Box::new(progress_callback)),
+            shutdown.clone(),
+            None,
+            None,
+            None,
+            Some(2), // Max iterations limit (increased to 2)
+        );
+
+        // The run should now result in IncompleteCollapse due to mocks
+        assert!(
+            matches!(_result, Err(WfcError::IncompleteCollapse)),
+            "Expected IncompleteCollapse result, got {:?}",
+            _result
+        );
+        assert!(
+            progress_called.load(Ordering::SeqCst),
+            "Progress callback was not called"
+        );
+    }
+
+    #[test]
+    fn test_max_iterations_limit() {
+        let grid_dim = 2;
+        let tileset = create_simple_tileset(2).expect("Failed to create tileset");
+        let num_transformed_tiles = tileset.num_transformed_tiles();
+        let mut grid = PossibilityGrid::new(grid_dim, grid_dim, grid_dim, num_transformed_tiles);
+        let rules = create_uniform_rules(&tileset);
+        let mut propagator = MockPropagator::new();
+        let mut entropy_calculator = MockEntropyCalculator::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let max_iterations = 5u64;
+
+        // Mocks: Always find cell, never finish
+        entropy_calculator
+            .expect_calculate_entropy()
+            .returning(move |_| Ok(EntropyGrid::new(grid_dim, grid_dim, grid_dim)));
+        entropy_calculator
+            .expect_select_lowest_entropy_cell()
+            .returning(|_| Some((0, 0, 0)));
+        propagator.expect_propagate().returning(|_, _, _| Ok(()));
+
+        let result = run(
+            &mut grid,
+            &tileset, // Pass reference
+            &rules,   // Pass reference
+            propagator,
+            entropy_calculator,
+            BoundaryMode::Clamped,
+            None,
+            shutdown.clone(),
+            None,
+            None,
+            None,
+            Some(max_iterations),
+        );
+        assert!(
+            matches!(result, Err(WfcError::TimeoutOrInfiniteLoop)),
+            "Expected TimeoutOrInfiniteLoop error, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_max_iterations_disabled() {
+        let grid_dim = 2;
+        let tileset = create_simple_tileset(2).expect("Failed to create tileset");
+        let num_transformed_tiles = tileset.num_transformed_tiles();
+        let mut grid = PossibilityGrid::new(grid_dim, grid_dim, grid_dim, num_transformed_tiles);
+        let rules = create_uniform_rules(&tileset);
+        let mut propagator = MockPropagator::new();
+        let mut entropy_calculator = MockEntropyCalculator::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        // Mocks: Finish after one iteration
+        entropy_calculator
+            .expect_calculate_entropy()
+            .times(1) // Expect 1 call
+            .returning(move |_| Ok(EntropyGrid::new(grid_dim, grid_dim, grid_dim)));
+
+        entropy_calculator
+            .expect_select_lowest_entropy_cell()
+            .times(1) // Expect 1 call
+            .returning(move |_| {
+                None // Return None immediately to finish
+            });
+
+        propagator
+            .expect_propagate()
+            .times(2) // Expect 2 calls (initial + final check)
+            .returning(|_, _, _| Ok(()));
+
+        let result = run(
+            &mut grid,
+            &tileset, // Pass reference
+            &rules,   // Pass reference
+            propagator,
+            entropy_calculator,
+            BoundaryMode::Clamped,
+            None,
+            shutdown.clone(),
+            None,
+            None,
+            None,
+            None, // max_iterations is None
+        );
+        assert!(
+            matches!(result, Err(WfcError::IncompleteCollapse)),
+            "Expected IncompleteCollapse result, got {:?}",
+            result
+        );
     }
 }
