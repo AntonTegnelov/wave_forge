@@ -8,13 +8,16 @@ use thiserror::Error;
 pub struct TileId(pub usize); // Simple wrapper for now
 
 /// Represents a symmetry transformation applied to a tile.
-/// Currently supports rotations.
+/// Currently supports rotations and reflections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Transformation {
     Identity,
     Rot90,
     Rot180,
     Rot270,
+    FlipX,
+    FlipY,
+    FlipZ,
     // Future: FlipX, FlipY, etc.
 }
 
@@ -22,36 +25,51 @@ impl Transformation {
     /// Calculates the resulting axis index after applying the transformation.
     /// Assumes a standard 3D axis convention:
     /// 0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
-    /// Only handles Z-axis rotations currently.
-    /// Panics if axis index is out of bounds (0-5).
     pub fn transform_axis(self, axis: usize) -> usize {
         match self {
-            Transformation::Identity => axis, // No change
+            Transformation::Identity => axis,
             Transformation::Rot90 => match axis {
-                0 => 2,        // +X -> +Y
-                1 => 3,        // -X -> -Y
-                2 => 1,        // +Y -> -X
-                3 => 0,        // -Y -> +X
-                4 | 5 => axis, // Z axes unchanged
-                _ => panic!("Invalid axis index: {}", axis),
+                0 => 2,
+                1 => 3,
+                2 => 1,
+                3 => 0,
+                4 | 5 => axis,
+                _ => panic!("Invalid axis"),
             },
             Transformation::Rot180 => match axis {
-                0 => 1,        // +X -> -X
-                1 => 0,        // -X -> +X
-                2 => 3,        // +Y -> -Y
-                3 => 2,        // -Y -> +Y
-                4 | 5 => axis, // Z axes unchanged
-                _ => panic!("Invalid axis index: {}", axis),
+                0 => 1,
+                1 => 0,
+                2 => 3,
+                3 => 2,
+                4 | 5 => axis,
+                _ => panic!("Invalid axis"),
             },
             Transformation::Rot270 => match axis {
-                0 => 3,        // +X -> -Y
-                1 => 2,        // -X -> +Y
-                2 => 0,        // +Y -> +X
-                3 => 1,        // -Y -> -X
-                4 | 5 => axis, // Z axes unchanged
-                _ => panic!("Invalid axis index: {}", axis),
+                0 => 3,
+                1 => 2,
+                2 => 0,
+                3 => 1,
+                4 | 5 => axis,
+                _ => panic!("Invalid axis"),
             },
-            // Add cases for FlipX, FlipY etc. later
+            Transformation::FlipX => match axis {
+                0 => 1,
+                1 => 0,
+                2..=5 => axis,
+                _ => panic!("Invalid axis"),
+            },
+            Transformation::FlipY => match axis {
+                2 => 3,
+                3 => 2,
+                0 | 1 | 4 | 5 => axis,
+                _ => panic!("Invalid axis"),
+            },
+            Transformation::FlipZ => match axis {
+                4 => 5,
+                5 => 4,
+                0..=3 => axis,
+                _ => panic!("Invalid axis"),
+            },
         }
     }
 
@@ -62,26 +80,57 @@ impl Transformation {
             Transformation::Rot90 => Transformation::Rot270,
             Transformation::Rot180 => Transformation::Rot180,
             Transformation::Rot270 => Transformation::Rot90,
-            // Add inverses for other transformations later
+            Transformation::FlipX => Transformation::FlipX, // Reflections are self-inverse
+            Transformation::FlipY => Transformation::FlipY,
+            Transformation::FlipZ => Transformation::FlipZ,
         }
     }
 
-    /// Combines this transformation with another (applies other then self).
-    /// This is equivalent to matrix multiplication order: self * other.
+    /// Combines this transformation with another (applies `other` then `self`).
+    /// Equivalent to matrix multiplication: `self * other`.
+    /// NOTE: Combination logic for reflections is currently unimplemented.
     pub fn combine(self, other: Transformation) -> Transformation {
-        // For rotations, this is simple addition modulo 4
-        // Identity=0, Rot90=1, Rot180=2, Rot270=3
-        let self_val = self as usize;
-        let other_val = other as usize;
-        let combined_val = (self_val + other_val) % 4;
-        match combined_val {
-            0 => Transformation::Identity,
-            1 => Transformation::Rot90,
-            2 => Transformation::Rot180,
-            3 => Transformation::Rot270,
-            _ => unreachable!(), // Should not happen due to modulo 4
+        match (self, other) {
+            // Identity cases
+            (Transformation::Identity, _) => other,
+            (_, Transformation::Identity) => self,
+
+            // Rotation * Rotation
+            (
+                Transformation::Rot90 | Transformation::Rot180 | Transformation::Rot270,
+                Transformation::Rot90 | Transformation::Rot180 | Transformation::Rot270,
+            ) => {
+                let self_val = match self {
+                    Transformation::Rot90 => 1,
+                    Transformation::Rot180 => 2,
+                    Transformation::Rot270 => 3,
+                    _ => 0,
+                };
+                let other_val = match other {
+                    Transformation::Rot90 => 1,
+                    Transformation::Rot180 => 2,
+                    Transformation::Rot270 => 3,
+                    _ => 0,
+                };
+                match (self_val + other_val) % 4 {
+                    0 => Transformation::Identity,
+                    1 => Transformation::Rot90,
+                    2 => Transformation::Rot180,
+                    3 => Transformation::Rot270,
+                    _ => unreachable!(),
+                }
+            }
+
+            // Any combination involving a Flip is currently unimplemented
+            (Transformation::FlipX, _)
+            | (_, Transformation::FlipX)
+            | (Transformation::FlipY, _)
+            | (_, Transformation::FlipY)
+            | (Transformation::FlipZ, _)
+            | (_, Transformation::FlipZ) => {
+                panic!("Transformation::combine is not implemented for reflections yet.");
+            }
         }
-        // This logic needs extension if non-rotation transforms are added.
     }
 }
 

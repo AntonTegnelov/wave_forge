@@ -32,7 +32,7 @@ pub fn generate_transformed_rules(
     num_axes: usize,
 ) -> Vec<(usize, usize, usize)> {
     let num_transformed_tiles = tileset.num_transformed_tiles();
-    let mut allowed_tuples = Vec::new();
+    let mut allowed_tuples_set = std::collections::HashSet::new();
 
     debug!(
         "Generating transformed rules: num_base_tiles={}, num_transformed_tiles={}, num_axes={}",
@@ -42,6 +42,16 @@ pub fn generate_transformed_rules(
     );
 
     for &(base1_id, base2_id, base_axis) in base_rules {
+        if base_axis >= num_axes {
+            log::warn!(
+                "Skipping base rule {:?} -> {:?} along invalid axis {}",
+                base1_id,
+                base2_id,
+                base_axis
+            );
+            continue;
+        }
+
         let transforms1 = tileset
             .allowed_transformations
             .get(base1_id.0)
@@ -63,15 +73,25 @@ pub fn generate_transformed_rules(
                     .get_transformed_id(base2_id, required_tform2)
                     .expect("Failed to get transformed ID (tile2)");
 
+                if transformed_axis >= num_axes {
+                    log::error!("Derived rule {:?} -> {:?} resulted in invalid transformed axis {} from base axis {} and transform {:?}",
+                                ttid1, ttid2, transformed_axis, base_axis, tform1);
+                    continue;
+                }
+
                 debug!(
                     "Rule derived: ({:?}, {:?}) + ({:?}, {:?}) along axis {} (orig base axis {}) -> Add tuple ({}, {}, {})",
                     base1_id, tform1, base2_id, required_tform2, transformed_axis, base_axis, transformed_axis, ttid1, ttid2
                 );
-                allowed_tuples.push((transformed_axis, ttid1, ttid2));
+                allowed_tuples_set.insert((transformed_axis, ttid1, ttid2));
             }
         }
     }
-    debug!("Generated {} allowed rule tuples.", allowed_tuples.len());
+    let allowed_tuples: Vec<(usize, usize, usize)> = allowed_tuples_set.into_iter().collect();
+    debug!(
+        "Generated {} unique allowed rule tuples.",
+        allowed_tuples.len()
+    );
     allowed_tuples
 }
 
@@ -246,5 +266,87 @@ mod tests {
             .unwrap();
         let idx_trans2 = (0, ttid1_r180, ttid0_r180);
         assert!(allowed_tuples.contains(&idx_trans2));
+    }
+
+    #[test]
+    fn generator_with_flips() {
+        // Tile 0: Identity, FlipX
+        // Tile 1: Identity, FlipX
+        let tileset = create_test_tileset(
+            vec![1.0, 1.0],
+            vec![
+                vec![Transformation::Identity, Transformation::FlipX],
+                vec![Transformation::Identity, Transformation::FlipX],
+            ],
+        );
+        let num_transformed = tileset.num_transformed_tiles();
+        assert_eq!(num_transformed, 4); // T0_Id, T0_FX, T1_Id, T1_FX
+
+        // Base Rule: T0(Id) -> T1(Id) along Axis 0 (+X)
+        let base_rules = vec![(TileId(0), TileId(1), 0)];
+        let num_axes = 6;
+
+        let allowed_tuples = generate_transformed_rules(&base_rules, &tileset, num_axes);
+
+        let ttid0_id = tileset
+            .get_transformed_id(TileId(0), Transformation::Identity)
+            .unwrap();
+        let ttid0_fx = tileset
+            .get_transformed_id(TileId(0), Transformation::FlipX)
+            .unwrap();
+        let ttid1_id = tileset
+            .get_transformed_id(TileId(1), Transformation::Identity)
+            .unwrap();
+        let ttid1_fx = tileset
+            .get_transformed_id(TileId(1), Transformation::FlipX)
+            .unwrap();
+
+        // Expected rules based on tform2 == tform1 simplification:
+        // 1. T0_Id -> T1_Id along Axis 0 (+X) (from tform1 = Identity)
+        //    transformed_axis = Identity.transform_axis(0) = 0
+        let expected1 = (0, ttid0_id, ttid1_id);
+        assert!(
+            allowed_tuples.contains(&expected1),
+            "Flip test missing rule 1"
+        );
+
+        // 2. T0_FX -> T1_FX along Axis 1 (-X) (from tform1 = FlipX)
+        //    transformed_axis = FlipX.transform_axis(0) = 1
+        let expected2 = (1, ttid0_fx, ttid1_fx);
+        assert!(
+            allowed_tuples.contains(&expected2),
+            "Flip test missing rule 2"
+        );
+
+        assert_eq!(
+            allowed_tuples.len(),
+            2,
+            "Flip test generated unexpected number of rules"
+        );
+
+        // --- Test with a rule along an axis unaffected by FlipX (e.g., Axis 2, +Y) ---
+        // Base Rule: T0(Id) -> T1(Id) along Axis 2 (+Y)
+        let base_rules_y = vec![(TileId(0), TileId(1), 2)];
+        let allowed_tuples_y = generate_transformed_rules(&base_rules_y, &tileset, num_axes);
+
+        // Expected rules:
+        // 1. T0_Id -> T1_Id along Axis 2 (+Y) (tform1 = Identity, transformed_axis = Identity.transform_axis(2) = 2)
+        let expected_y1 = (2, ttid0_id, ttid1_id);
+        assert!(
+            allowed_tuples_y.contains(&expected_y1),
+            "Flip+Y test missing rule 1"
+        );
+        // 2. T0_FX -> T1_FX along Axis 2 (+Y) (tform1 = FlipX, transformed_axis = FlipX.transform_axis(2) = 2)
+        let expected_y2 = (2, ttid0_fx, ttid1_fx);
+        assert!(
+            allowed_tuples_y.contains(&expected_y2),
+            "Flip+Y test missing rule 2"
+        );
+
+        assert_eq!(
+            allowed_tuples_y.len(),
+            2,
+            "Flip+Y test generated unexpected number of rules"
+        );
     }
 }
