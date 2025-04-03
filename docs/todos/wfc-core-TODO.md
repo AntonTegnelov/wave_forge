@@ -50,7 +50,7 @@
 - [x] Add rule generation helpers based on symmetry/transformation principles
 - [x] Support serialization of grid states for saving/loading
 - [x] Create checkpoint system to pause/resume WFC algorithm execution
-- [ ] Enhance visualization hooks beyond simple progress callbacks
+- [x] Enhance visualization hooks beyond simple progress callbacks
 - [ ] Add boundary condition options (periodic, fixed, etc.)
 
 ## Architecture Improvements

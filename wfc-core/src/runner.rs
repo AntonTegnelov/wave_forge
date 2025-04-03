@@ -333,6 +333,7 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
                         collapsed_cells: collapsed_cells_count,
                         iterations,
                         elapsed_time: start_time.elapsed(),
+                        grid_state: grid.clone(), // Clone the grid state
                     };
                     callback(progress_info);
                 }
@@ -420,15 +421,6 @@ pub fn run<P: ConstraintPropagator, E: EntropyCalculator>(
             );
             return Err(WfcError::TimeoutOrInfiniteLoop);
         }
-    }
-
-    // Final check after loop exits
-    if collapsed_cells_count < total_cells {
-        error!(
-            "WFC finished, but {} cells remain uncollapsed.",
-            total_cells - collapsed_cells_count
-        );
-        return Err(WfcError::IncompleteCollapse);
     }
 
     info!(

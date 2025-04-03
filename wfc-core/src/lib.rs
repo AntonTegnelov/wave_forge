@@ -89,6 +89,8 @@ pub struct ProgressInfo {
     pub elapsed_time: Duration,
     /// The number of iterations completed so far.
     pub iterations: u64,
+    /// A clone of the possibility grid state at the time of the callback.
+    pub grid_state: PossibilityGrid,
 }
 
 /// Represents a saved state of the WFC algorithm for checkpointing.
