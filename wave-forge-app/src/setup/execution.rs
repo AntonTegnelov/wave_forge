@@ -5,11 +5,10 @@ use crate::config::{AppConfig, ProgressLogLevel};
 use crate::error::AppError;
 use crate::output;
 use crate::setup::visualization::VizMessage;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use log;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -21,6 +20,7 @@ use wfc_core::ProgressInfo;
 use wfc_gpu::accelerator::GpuAccelerator;
 use wfc_gpu::entropy::GpuEntropyCalculator;
 use wfc_gpu::propagator::GpuConstraintPropagator;
+use wfc_gpu::GpuError;
 use wfc_rules::loader::load_from_file;
 use wfc_rules::{AdjacencyRules, TileSet};
 use wgpu::Instance;
@@ -108,9 +108,7 @@ pub async fn run_benchmark_mode(
     {
         Some(adapter) => adapter.get_info(),
         None => {
-            return Err(AppError::GpuError(
-                "Failed to find suitable GPU adapter".to_string(),
-            ));
+            return Err(GpuError::AdapterRequestFailed.into());
         }
     };
     log::info!(
@@ -245,7 +243,6 @@ pub async fn run_benchmark_mode(
                 avg_total_time_ms,
                 median_total_time_ms,
                 stddev_total_time_ms,
-                individual_results: scenario_run_results,
             });
         }
     }

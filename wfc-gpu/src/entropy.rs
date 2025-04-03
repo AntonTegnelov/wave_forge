@@ -61,7 +61,7 @@ impl EntropyCalculator for GpuEntropyCalculator {
     /// An `EntropyGrid` containing the entropy values calculated by the GPU. If reading the results
     /// from the GPU fails, an empty grid with the correct dimensions is returned, and an error is logged.
     #[must_use]
-    fn calculate_entropy(&self, _grid: &PossibilityGrid) -> EntropyGrid {
+    fn calculate_entropy(&self, _grid: &PossibilityGrid) -> Result<EntropyGrid, String> {
         // Assuming grid state is primarily managed on the GPU via self.buffers.grid_possibilities_buf
         // _grid parameter is technically unused as we read directly from the GPU buffer.
         // Consider changing the trait or method signature if this becomes an issue.
@@ -71,11 +71,10 @@ impl EntropyCalculator for GpuEntropyCalculator {
         let num_cells = width * height * depth;
 
         // Reset the min entropy buffer before dispatch
-        // Use clone of Arc<Queue>
         if let Err(e) = self.buffers.reset_min_entropy_info(&self.queue) {
-            log::error!("Failed to reset min entropy info buffer: {}", e);
-            // Return an empty/error grid
-            return EntropyGrid::new(width, height, depth);
+            let err_msg = format!("Failed to reset min entropy info buffer: {}", e);
+            log::error!("{}", err_msg);
+            return Err(err_msg);
         }
 
         // 1. Create Command Encoder (uses Arc<Device>)
@@ -149,34 +148,29 @@ impl EntropyCalculator for GpuEntropyCalculator {
                     entropy_data.len()
                 );
                 if entropy_data.len() != num_cells {
-                    log::error!(
+                    let err_msg = format!(
                         "GPU entropy result size mismatch: expected {}, got {}",
                         num_cells,
                         entropy_data.len()
                     );
-                    // Return an empty/error grid or panic? For now, create with potentially wrong data.
-                    // Construct Grid directly since data is public
-                    Grid {
-                        width,
-                        height,
-                        depth,
-                        data: entropy_data, // Might be truncated/wrong size
-                    }
+                    log::error!("{}", err_msg);
+                    // Return an error or a grid with potentially wrong data?
+                    // For consistency with trait, returning Err seems better.
+                    Err(err_msg)
                 } else {
                     // 6. Create Grid from the downloaded data
-                    // Construct Grid directly since data is public
-                    Grid {
+                    Ok(Grid {
                         width,
                         height,
                         depth,
                         data: entropy_data,
-                    }
+                    })
                 }
             }
             Err(e) => {
-                log::error!("Failed to download entropy results: {}", e);
-                // Return a default/error grid
-                EntropyGrid::new(width, height, depth) // Creates grid with default (0.0) values
+                let err_msg = format!("Failed to download entropy results: {}", e);
+                log::error!("{}", err_msg);
+                Err(err_msg)
             }
         }
     }
@@ -200,7 +194,10 @@ impl EntropyCalculator for GpuEntropyCalculator {
     /// * `Some((x, y, z))` - Coordinates of the cell with the lowest positive entropy found by the GPU.
     /// * `None` - If no cell with positive entropy was found (e.g., grid fully collapsed or error).
     #[must_use]
-    fn find_lowest_entropy(&self, _entropy_grid: &EntropyGrid) -> Option<(usize, usize, usize)> {
+    fn select_lowest_entropy_cell(
+        &self,
+        _entropy_grid: &EntropyGrid,
+    ) -> Option<(usize, usize, usize)> {
         // GPU reduction happens during calculate_entropy. Here we just download the result.
         // _entropy_grid parameter is unused because the min info is read directly from its GPU buffer.
         log::debug!("Downloading GPU minimum entropy info...");

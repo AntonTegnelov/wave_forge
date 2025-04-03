@@ -87,21 +87,21 @@ fn test_buffer_creation_sizes() {
 
     let expected_updates_size = num_cells as u64 * u32_size;
     assert_eq!(
-        buffers.updates_buf.size(),
+        buffers.worklist_buf_a.size(),
         expected_updates_size,
-        "updates_buf size mismatch"
+        "worklist_buf_a size mismatch"
     );
     assert_eq!(
-        buffers.output_worklist_buf.size(),
+        buffers.worklist_buf_b.size(),
         expected_updates_size,
-        "output_worklist_buf size mismatch"
-    ); // Should match updates_buf
+        "worklist_buf_b size mismatch"
+    );
 
     let expected_atomic_u32_size = u32_size;
     assert_eq!(
-        buffers.output_worklist_count_buf.size(),
+        buffers.worklist_count_buf.size(),
         expected_atomic_u32_size,
-        "output_worklist_count_buf size mismatch"
+        "worklist_count_buf size mismatch"
     );
     assert_eq!(
         buffers.contradiction_flag_buf.size(),
