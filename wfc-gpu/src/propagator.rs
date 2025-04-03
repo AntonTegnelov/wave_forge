@@ -7,6 +7,9 @@ use wfc_core::{
 };
 use wfc_rules::AdjacencyRules;
 
+const MAX_PROPAGATION_ITERATIONS: u32 = 100; // Safeguard against infinite loops
+const PROPAGATION_BATCH_SIZE: usize = 4096; // Number of updates to process per GPU dispatch
+
 /// GPU implementation of the ConstraintPropagator trait.
 /// Holds references to GPU resources needed for constraint propagation.
 #[derive(Clone)] // Make it cloneable if needed
@@ -103,258 +106,342 @@ impl ConstraintPropagator for GpuConstraintPropagator {
         }
 
         let mut iteration = 0;
-        const MAX_ITERATIONS: u32 = 100; // Safeguard against infinite loops
+        let mut total_dispatches = 0;
 
         // --- 2. Iterative Propagation Loop ---
-        loop {
+        while !current_worklist.is_empty() {
             iteration += 1;
-            log::debug!("GPU Propagation Iteration: {}", iteration);
-            if iteration > MAX_ITERATIONS {
+            log::debug!(
+                "GPU Propagation Iteration: {}, Worklist Size: {}",
+                iteration,
+                current_worklist.len()
+            );
+            if iteration > MAX_PROPAGATION_ITERATIONS {
                 log::error!(
                     "GPU propagation exceeded max iterations ({}), assuming divergence.",
-                    MAX_ITERATIONS
+                    MAX_PROPAGATION_ITERATIONS
                 );
                 return Err(PropagationError::GpuCommunicationError(
                     "Propagation exceeded max iterations".to_string(),
                 ));
             }
 
-            let worklist_size = current_worklist.len() as u32;
-            log::debug!("  Worklist size: {}", worklist_size);
-            if worklist_size == 0 {
-                log::debug!("  Worklist empty, propagation complete.");
-                break; // No more work
-            }
+            let mut next_worklist_indices = Vec::new(); // Collect indices for the *next* iteration
+            let mut contradiction_found_in_iteration = false;
+            let mut contradiction_location = u32::MAX;
 
-            // --- 2a. Upload Current Worklist & Reset Buffers ---
-            // Use Arc references
-            self.buffers
-                .upload_updates(&self.queue, &current_worklist)
-                .map_err(|e| {
-                    PropagationError::GpuCommunicationError(format!(
-                        "Failed to upload updates: {}",
-                        e
-                    ))
-                })?;
-
-            self.buffers
-                .reset_contradiction_flag(&self.queue)
-                .map_err(|e| {
-                    PropagationError::GpuCommunicationError(format!(
-                        "Failed to reset contradiction flag: {}",
-                        e
-                    ))
-                })?;
-
-            self.buffers
-                .reset_contradiction_location(&self.queue)
-                .map_err(|e| {
-                    PropagationError::GpuCommunicationError(format!(
-                        "Failed to reset contradiction location: {}",
-                        e
-                    ))
-                })?;
-
-            self.buffers
-                .reset_output_worklist_count(&self.queue)
-                .map_err(|e| {
-                    PropagationError::GpuCommunicationError(format!(
-                        "Failed to reset output worklist count: {}",
-                        e
-                    ))
-                })?;
-
-            // --- 2b. Update Uniforms ---
-            self.buffers
-                .update_params_worklist_size(&self.queue, worklist_size)
-                .map_err(|e| {
-                    PropagationError::GpuCommunicationError(format!(
-                        "Failed to update worklist size uniform: {}",
-                        e
-                    ))
-                })?;
-
-            // --- 2c. Create Command Encoder & Bind Group ---
-            // Use Arc references
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some(&format!("Propagation Encoder Iter {}", iteration)),
-                });
-
-            let propagation_bind_group =
-                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("Propagation Bind Group Iter {}", iteration)),
-                    layout: &self.pipelines.propagation_bind_group_layout, // Access via Arc
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.buffers.grid_possibilities_buf.as_entire_binding(), // Access via Arc
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: self.buffers.rules_buf.as_entire_binding(), // Access via Arc
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: self.buffers.updates_buf.as_entire_binding(), // Access via Arc
-                        }, // Input worklist
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: self.buffers.output_worklist_buf.as_entire_binding(), // Access via Arc
-                        }, // Output worklist
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: self.buffers.params_uniform_buf.as_entire_binding(), // Access via Arc
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 5,
-                            resource: self.buffers.output_worklist_count_buf.as_entire_binding(), // Access via Arc
-                        }, // Output count
-                        wgpu::BindGroupEntry {
-                            binding: 6,
-                            resource: self.buffers.contradiction_flag_buf.as_entire_binding(), // Access via Arc
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 7,
-                            resource: self.buffers.contradiction_location_buf.as_entire_binding(), // Access via Arc
-                        },
-                    ],
-                });
-
-            // --- 2d. Dispatch Compute ---
-            {
-                let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some(&format!("Propagation Compute Pass Iter {}", iteration)),
-                    timestamp_writes: None,
-                });
-                compute_pass.set_pipeline(&self.pipelines.propagation_pipeline); // Access via Arc
-                compute_pass.set_bind_group(0, &propagation_bind_group, &[]);
-
-                let workgroup_size = 64u32;
-                let workgroups_needed = std::cmp::max(1, worklist_size.div_ceil(workgroup_size));
+            // Process the current worklist in batches
+            for batch in current_worklist.chunks(PROPAGATION_BATCH_SIZE) {
+                total_dispatches += 1;
+                let batch_size = batch.len() as u32;
                 log::trace!(
-                    "Dispatching iter {} with {} workgroups.",
-                    iteration,
-                    workgroups_needed
+                    "  Dispatching Batch ({} updates), Total Dispatches: {}",
+                    batch_size,
+                    total_dispatches
                 );
-                compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
-            } // End compute pass
 
-            // --- 2e. Submit and Wait ---
-            // Use Arc references
-            self.queue.submit(std::iter::once(encoder.finish()));
-            // Wait for GPU to finish before checking results and preparing next iteration
-            self.device.poll(wgpu::Maintain::Wait);
-
-            // --- 2f. Check for Contradiction ---
-            // Use Arc references
-            let contradiction_detected = pollster::block_on(
+                // --- 2a. Upload Current Batch & Reset Buffers ---
                 self.buffers
-                    .download_contradiction_flag(&self.device, &self.queue),
-            )
-            .map_err(|e| {
-                PropagationError::GpuCommunicationError(format!(
-                    "Failed to download contradiction flag: {}",
-                    e
-                ))
-            })?;
+                    .upload_updates(&self.queue, batch)
+                    .map_err(|e| {
+                        PropagationError::GpuCommunicationError(format!(
+                            "Failed to upload update batch: {}",
+                            e
+                        ))
+                    })?;
 
-            if contradiction_detected {
-                log::warn!(
-                    "GPU propagation contradiction detected in iteration {}.",
-                    iteration
-                );
-                // Use Arc references
-                let location_index = pollster::block_on(
-                    self.buffers
-                        .download_contradiction_location(&self.device, &self.queue),
-                )
-                .unwrap_or(u32::MAX); // Default to MAX if download fails
-
-                if location_index != u32::MAX {
-                    let (width, height, _depth) = self.grid_dims; // Use stored dims
-                    let z = location_index / (width * height) as u32;
-                    let rem = location_index % (width * height) as u32;
-                    let y = rem / width as u32;
-                    let x = rem % width as u32;
-                    log::error!("Contradiction location: ({}, {}, {})", x, y, z);
-                    return Err(PropagationError::Contradiction(
-                        x as usize, y as usize, z as usize,
-                    ));
-                } else {
-                    log::error!("Contradiction detected, but location unknown.");
-                    return Err(PropagationError::Contradiction(0, 0, 0)); // Generic contradiction
-                }
-            }
-
-            // --- 2g. Prepare for Next Iteration ---
-            // Use Arc references
-            let output_count = pollster::block_on(
                 self.buffers
-                    .download_output_worklist_count(&self.device, &self.queue),
-            )
-            .map_err(|e| {
-                PropagationError::GpuCommunicationError(format!(
-                    "Failed to download output worklist count: {}",
-                    e
-                ))
-            })?;
+                    .reset_contradiction_flag(&self.queue)
+                    .map_err(|e| {
+                        PropagationError::GpuCommunicationError(format!(
+                            "Failed to reset contradiction flag: {}",
+                            e
+                        ))
+                    })?;
 
-            log::debug!("  Output worklist count: {}", output_count);
+                self.buffers
+                    .reset_contradiction_location(&self.queue)
+                    .map_err(|e| {
+                        PropagationError::GpuCommunicationError(format!(
+                            "Failed to reset contradiction location: {}",
+                            e
+                        ))
+                    })?;
 
-            if output_count == 0 {
-                log::debug!("  No new updates generated, propagation stable.");
-                break; // Stable state reached
-            }
+                self.buffers
+                    .reset_output_worklist_count(&self.queue)
+                    .map_err(|e| {
+                        PropagationError::GpuCommunicationError(format!(
+                            "Failed to reset output worklist count: {}",
+                            e
+                        ))
+                    })?;
 
-            // Copy output worklist to input worklist buffer for the next iteration
-            // Use Arc references
-            let copy_size = (output_count as u64 * std::mem::size_of::<u32>() as u64)
-                .min(self.buffers.updates_buf.size()); // Don't copy more than the buffer size
+                // --- 2b. Update Uniforms ---
+                self.buffers
+                    .update_params_worklist_size(&self.queue, batch_size)
+                    .map_err(|e| {
+                        PropagationError::GpuCommunicationError(format!(
+                            "Failed to update worklist size uniform: {}",
+                            e
+                        ))
+                    })?;
 
-            if copy_size > 0 {
-                let mut copy_encoder =
+                // --- 2c. Create Command Encoder & Bind Group ---
+                let mut encoder =
                     self.device
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some(&format!("Worklist Copy Encoder Iter {}", iteration)),
+                            label: Some(&format!("Propagation Encoder Iter {} Batch", iteration)),
                         });
-                copy_encoder.copy_buffer_to_buffer(
-                    &self.buffers.output_worklist_buf, // Access via Arc
-                    0,
-                    &self.buffers.updates_buf, // Access via Arc
-                    0,
-                    copy_size,
+
+                let propagation_bind_group =
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some(&format!("Propagation Bind Group Iter {} Batch", iteration)),
+                        layout: &self.pipelines.propagation_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: self.buffers.rules_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: self.buffers.updates_buf.as_entire_binding(),
+                            }, // Input worklist (current batch)
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: self.buffers.output_worklist_buf.as_entire_binding(),
+                            }, // Output worklist (for *next* iteration)
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: self.buffers.params_uniform_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: self
+                                    .buffers
+                                    .output_worklist_count_buf
+                                    .as_entire_binding(),
+                            }, // Output count
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 7,
+                                resource: self
+                                    .buffers
+                                    .contradiction_location_buf
+                                    .as_entire_binding(),
+                            },
+                        ],
+                    });
+
+                // --- 2d. Dispatch Compute ---
+                {
+                    let mut compute_pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some(&format!(
+                                "Propagation Compute Pass Iter {} Batch",
+                                iteration
+                            )),
+                            timestamp_writes: None,
+                        });
+                    compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
+                    compute_pass.set_bind_group(0, &propagation_bind_group, &[]);
+
+                    let workgroup_size = 64u32;
+                    let workgroups_needed = std::cmp::max(1, batch_size.div_ceil(workgroup_size));
+                    compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
+                } // End compute pass
+
+                // --- 2e. Submit and Wait ---
+                self.queue.submit(std::iter::once(encoder.finish()));
+                self.device.poll(wgpu::Maintain::Wait);
+
+                // --- 2f. Check for Contradiction (after this batch) ---
+                let contradiction_in_batch = pollster::block_on(
+                    self.buffers
+                        .download_contradiction_flag(&self.device, &self.queue),
+                )
+                .map_err(|e| {
+                    PropagationError::GpuCommunicationError(format!(
+                        "Failed to download contradiction flag: {}",
+                        e
+                    ))
+                })?;
+
+                if contradiction_in_batch {
+                    log::warn!(
+                        "Contradiction detected during GPU propagation (Iteration {}, Batch Dispatch {})!",
+                        iteration, total_dispatches
+                    );
+                    contradiction_found_in_iteration = true;
+                    // Download location
+                    contradiction_location = pollster::block_on(
+                        self.buffers
+                            .download_contradiction_location(&self.device, &self.queue),
+                    )
+                    .map_err(|e| {
+                        PropagationError::GpuCommunicationError(format!(
+                            "Failed to download contradiction location: {}",
+                            e
+                        ))
+                    })?;
+                    break; // Stop processing batches for this iteration if contradiction found
+                }
+
+                // --- 2g. Download Output Worklist Count (for this batch) ---
+                let output_count = pollster::block_on(
+                    self.buffers
+                        .download_output_worklist_count(&self.device, &self.queue),
+                )
+                .map_err(|e| {
+                    PropagationError::GpuCommunicationError(format!(
+                        "Failed to download output worklist count: {}",
+                        e
+                    ))
+                })?;
+
+                // --- 2h. Download Output Worklist Indices (for this batch) ---
+                if output_count > 0 {
+                    let output_indices = self
+                        .download_output_worklist(output_count as usize)
+                        .map_err(|e| {
+                            PropagationError::GpuCommunicationError(format!(
+                                "Failed to download output worklist indices: {}",
+                                e
+                            ))
+                        })?;
+                    next_worklist_indices.extend(output_indices);
+                }
+            } // End batch loop
+
+            // --- Check Contradiction after all batches for the iteration ---
+            if contradiction_found_in_iteration {
+                // Convert flat index to 3D coordinates
+                let (x, y, z) = if contradiction_location != u32::MAX {
+                    let (grid_w, grid_h, _) = self.grid_dims;
+                    let z_coord = contradiction_location / (grid_w * grid_h) as u32;
+                    let rem = contradiction_location % (grid_w * grid_h) as u32;
+                    let y_coord = rem / grid_w as u32;
+                    let x_coord = rem % grid_w as u32;
+                    (x_coord as usize, y_coord as usize, z_coord as usize)
+                } else {
+                    (0, 0, 0) // Default/fallback location if specific one wasn't captured
+                };
+                log::error!(
+                    "GPU Propagation failed due to contradiction at ({}, {}, {}).",
+                    x,
+                    y,
+                    z
                 );
-                self.queue.submit(std::iter::once(copy_encoder.finish()));
-                self.device.poll(wgpu::Maintain::Wait); // Ensure copy completes
+                return Err(PropagationError::Contradiction(x, y, z));
             }
 
-            // Re-thinking: We MUST update the `worklist_size` uniform *before* dispatch.
-            // The `updates_buf` *is* the input buffer.
-            // So, the copy MUST happen before the next loop iteration starts.
-            // The size for the next iteration *is* `output_count`.
+            // --- Prepare for Next Iteration ---
+            // Deduplicate indices collected from all batches
+            next_worklist_indices.sort_unstable();
+            next_worklist_indices.dedup();
+            current_worklist = next_worklist_indices;
+        } // End while loop
 
-            // We don't need to re-create the `current_worklist` Vec. We just need the count.
-            // The size for the next iteration is set here.
-            // The loop condition `worklist_size == 0` handles termination.
-            // The `updates_buf` now contains the worklist for the next iteration.
-
-            // We need to update the CPU-side worklist representation for the size check in the next loop iteration.
-            // Resize the vector to match the number of items copied to the GPU buffer for the next iteration.
-            // This doesn't involve reading back GPU data, just tracking the size.
-            current_worklist.resize(output_count as usize, 0); // Update size for next loop check
-        } // End loop
-
-        log::info!(
-            "GPU iterative propagation finished successfully after {} iterations in {:?}.",
+        let duration = propagate_start.elapsed();
+        log::debug!(
+            "GPU iterative propagation finished in {:?} ({} iterations, {} dispatches).",
+            duration,
             iteration,
-            propagate_start.elapsed()
+            total_dispatches
         );
         Ok(())
+    }
+} // <<< END of impl ConstraintPropagator for GpuConstraintPropagator
+
+// Helper needed to download the output worklist
+impl GpuConstraintPropagator {
+    async fn download_output_worklist_async(
+        &self,
+        count: usize,
+    ) -> Result<Vec<u32>, PropagationError> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let buffer_size = (count * std::mem::size_of::<u32>()) as u64;
+        if buffer_size > self.buffers.output_worklist_buf.size() {
+            return Err(PropagationError::GpuCommunicationError(format!(
+                "Requested output worklist download size ({}) exceeds buffer size ({})",
+                buffer_size,
+                self.buffers.output_worklist_buf.size()
+            )));
+        }
+
+        // Create a temporary staging buffer for download
+        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Staging Output Worklist Download"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Output Worklist Download Encoder"),
+            });
+
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.output_worklist_buf, // Source: GPU output worklist
+            0,
+            &staging_buffer, // Destination: Staging buffer
+            0,
+            buffer_size,
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map the staging buffer
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender
+                .send(result)
+                .expect("Failed to send map result for output worklist");
+        });
+
+        self.device.poll(wgpu::Maintain::Wait); // Wait for GPU
+
+        match receiver.receive().await {
+            Some(Ok(())) => {
+                let data = buffer_slice.get_mapped_range();
+                let result: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
+                drop(data); // Unmap before buffer is potentially dropped
+                staging_buffer.unmap();
+                Ok(result)
+            }
+            Some(Err(e)) => {
+                staging_buffer.unmap(); // Attempt unmap on error
+                Err(PropagationError::GpuCommunicationError(format!(
+                    "Failed to map output worklist staging buffer: {}",
+                    e
+                )))
+            }
+            None => {
+                staging_buffer.unmap(); // Attempt unmap on error
+                Err(PropagationError::GpuCommunicationError(
+                    "Output worklist map future cancelled".to_string(),
+                ))
+            }
+        }
+    }
+
+    fn download_output_worklist(&self, count: usize) -> Result<Vec<u32>, PropagationError> {
+        pollster::block_on(self.download_output_worklist_async(count))
     }
 }
 
 // Ensure necessary types (ComputePipelines, GpuBuffers) are cloneable and fields are accessible
-// if they are defined in other modules. Add `pub` or `pub(crate)` as needed.
-// Make sure GpuError and PropagationError are accessible.
+// No code here, just a comment
