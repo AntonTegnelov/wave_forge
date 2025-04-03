@@ -75,6 +75,6 @@
 - [ ] Consider alternative propagation algorithms (e.g., AC-4). (Deferred)
 - [x] Add checkpointing/resuming functionality to the `runner`. (Basic iteration-based implemented)
 - [x] Add progress reporting callback to the `runner`. (Implemented)
-- [ ] Refactor `runner` for clarity and potential parallelization (internal steps).
+- [x] Refactor `runner` for clarity and potential parallelization (internal steps).
 - [ ] Add comprehensive unit tests for `propagator`, `entropy`, `runner`.
 - [ ] Add integration tests for the overall WFC process.

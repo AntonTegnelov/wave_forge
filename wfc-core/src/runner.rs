@@ -133,6 +133,142 @@ impl WfcConfigBuilder {
     }
 }
 
+// Helper struct to hold the state initialized before the main loop
+struct RunState {
+    iterations: u64,
+    collapsed_cells_count: usize,
+    iteration_limit: u64,
+    total_cells: usize,
+    width: usize,
+    height: usize,
+    depth: usize,
+}
+
+// Helper function to perform initialization steps
+fn initialize_run_state(
+    grid: &mut PossibilityGrid,
+    rules: &AdjacencyRules,
+    propagator: &mut Box<dyn ConstraintPropagator + Send + Sync>,
+    config: &WfcConfig,
+) -> Result<RunState, WfcError> {
+    let mut iterations = 0;
+
+    // --- Checkpoint Loading ---
+    if let Some(checkpoint) = &config.initial_checkpoint {
+        info!(
+            "Loading state from checkpoint (Iteration {})...",
+            checkpoint.iterations
+        );
+        // Validate checkpoint grid compatibility
+        if grid.width != checkpoint.grid.width
+            || grid.height != checkpoint.grid.height
+            || grid.depth != checkpoint.grid.depth
+        {
+            return Err(WfcError::CheckpointError(
+                "Grid dimension mismatch".to_string(),
+            ));
+        }
+        if grid.num_tiles() != checkpoint.grid.num_tiles() {
+            return Err(WfcError::CheckpointError(
+                "Grid tile count mismatch".to_string(),
+            ));
+        }
+        *grid = checkpoint.grid.clone();
+        iterations = checkpoint.iterations;
+        info!("Checkpoint loaded successfully.");
+    }
+
+    let width = grid.width;
+    let height = grid.height;
+    let depth = grid.depth;
+    let total_cells = width * height * depth;
+    let mut collapsed_cells_count = 0;
+    let num_tiles = grid.num_tiles();
+
+    // Pre-calculate initial collapsed count
+    for z in 0..depth {
+        for y in 0..height {
+            for x in 0..width {
+                if let Some(cell) = grid.get(x, y, z) {
+                    assert_eq!(cell.len(), num_tiles, "Grid cell bitvec length mismatch");
+                    let count = cell.count_ones();
+                    if count == 0 {
+                        error!("Initial contradiction found at ({}, {}, {})", x, y, z);
+                        return Err(WfcError::Contradiction(x, y, z));
+                    } else if count == 1 {
+                        collapsed_cells_count += 1;
+                    }
+                } else {
+                    error!(
+                        "Failed to access grid cell ({}, {}, {}) during init check",
+                        x, y, z
+                    );
+                    return Err(WfcError::GridError("Failed to access cell".to_string()));
+                }
+            }
+        }
+    }
+    debug!(
+        "Initial state: {}/{} cells collapsed.",
+        collapsed_cells_count, total_cells
+    );
+
+    // Run initial propagation
+    let all_coords: Vec<(usize, usize, usize)> = (0..depth)
+        .flat_map(|z| (0..height).flat_map(move |y| (0..width).map(move |x| (x, y, z))))
+        .collect();
+    debug!(
+        "Running initial propagation for all {} cells...",
+        all_coords.len()
+    );
+    if let Err(prop_err) = propagator.propagate(grid, all_coords.clone(), rules) {
+        error!("Initial propagation failed: {:?}", prop_err);
+        if let PropagationError::Contradiction(cx, cy, cz) = prop_err {
+            return Err(WfcError::Contradiction(cx, cy, cz));
+        }
+        return Err(WfcError::from(prop_err));
+    }
+
+    // Recalculate collapsed count after initial propagation
+    {
+        let current_grid = &*grid;
+        collapsed_cells_count = (0..depth)
+            .flat_map(|z| {
+                (0..height).flat_map(move |y| {
+                    (0..width).map(move |x| {
+                        current_grid
+                            .get(x, y, z)
+                            .map_or(0, |c| if c.count_ones() == 1 { 1 } else { 0 })
+                    })
+                })
+            })
+            .sum();
+    }
+    debug!(
+        "After initial setup/load/propagation: {}/{} cells collapsed. Starting main loop at iter {}.",
+        collapsed_cells_count, total_cells, iterations
+    );
+
+    // Determine the iteration limit
+    let iteration_limit = match config.max_iterations {
+        Some(limit) => limit,
+        None => (total_cells as u64).saturating_mul(10), // Default limit
+    };
+    if iteration_limit > 0 {
+        info!("WFC run iteration limit set to: {}", iteration_limit);
+    }
+
+    Ok(RunState {
+        iterations,
+        collapsed_cells_count,
+        iteration_limit,
+        total_cells,
+        width,
+        height,
+        depth,
+    })
+}
+
 /// Runs the core Wave Function Collapse (WFC) algorithm loop.
 ///
 /// This function orchestrates the WFC process:
@@ -183,125 +319,17 @@ pub fn run(
         config.boundary_mode
     );
     let start_time = Instant::now();
-    let mut iterations = 0;
 
-    // --- Checkpoint Loading ---
-    if let Some(checkpoint) = &config.initial_checkpoint {
-        info!(
-            "Loading state from checkpoint (Iteration {})...",
-            checkpoint.iterations
-        );
-        // Validate checkpoint grid compatibility
-        if grid.width != checkpoint.grid.width
-            || grid.height != checkpoint.grid.height
-            || grid.depth != checkpoint.grid.depth
-        {
-            error!(
-                "Checkpoint grid dimensions ({}, {}, {}) mismatch the target grid dimensions ({}, {}, {}).",
-                checkpoint.grid.width, checkpoint.grid.height, checkpoint.grid.depth,
-                grid.width, grid.height, grid.depth
-            );
-            return Err(WfcError::CheckpointError(
-                "Grid dimension mismatch".to_string(),
-            ));
-        }
-        if grid.num_tiles() != checkpoint.grid.num_tiles() {
-            error!(
-                "Checkpoint grid num_tiles ({}) mismatch the rules num_tiles ({}).",
-                checkpoint.grid.num_tiles(),
-                grid.num_tiles()
-            );
-            return Err(WfcError::CheckpointError(
-                "Grid tile count mismatch".to_string(),
-            ));
-        }
-
-        *grid = checkpoint.grid.clone(); // Load grid state (clone from config)
-        iterations = checkpoint.iterations; // Load iteration count
-        info!("Checkpoint loaded successfully.");
-    }
-    // --- End Checkpoint Loading ---
-
-    let width = grid.width;
-    let height = grid.height;
-    let depth = grid.depth;
-    let total_cells = width * height * depth;
-    let mut collapsed_cells_count = 0;
-    let num_tiles = grid.num_tiles();
-
-    // Pre-calculate initial collapsed count using local dimensions
-    for z in 0..depth {
-        for y in 0..height {
-            for x in 0..width {
-                if let Some(cell) = grid.get(x, y, z) {
-                    assert_eq!(cell.len(), num_tiles, "Grid cell bitvec length mismatch");
-                    let count = cell.count_ones();
-                    if count == 0 {
-                        error!("Initial contradiction found at ({}, {}, {})", x, y, z);
-                        return Err(WfcError::Contradiction(x, y, z));
-                    } else if count == 1 {
-                        collapsed_cells_count += 1;
-                    }
-                } else {
-                    error!(
-                        "Failed to access grid cell ({}, {}, {}) during init check",
-                        x, y, z
-                    );
-                    return Err(WfcError::GridError("Failed to access cell".to_string()));
-                }
-            }
-        }
-    }
-    debug!(
-        "Initial state: {}/{} cells collapsed.",
-        collapsed_cells_count, total_cells
-    );
-
-    // Run initial propagation based on any pre-collapsed cells or initial constraints.
-    // Use local dimensions for coordinate generation
-    let all_coords: Vec<(usize, usize, usize)> = (0..depth)
-        .flat_map(|z| (0..height).flat_map(move |y| (0..width).map(move |x| (x, y, z))))
-        .collect();
-    debug!(
-        "Running initial propagation for all {} cells...",
-        all_coords.len()
-    );
-    // Clone all_coords for the initial propagation
-    if let Err(prop_err) = propagator.propagate(grid, all_coords.clone(), rules) {
-        error!("Initial propagation failed: {:?}", prop_err);
-        if let PropagationError::Contradiction(cx, cy, cz) = prop_err {
-            return Err(WfcError::Contradiction(cx, cy, cz));
-        }
-        return Err(WfcError::from(prop_err));
-    }
-    // Recalculate collapsed count after initial propagation
-    {
-        let current_grid = &*grid; // Borrow immutably
-        collapsed_cells_count = (0..depth)
-            .flat_map(|z| {
-                (0..height).flat_map(move |y| {
-                    (0..width).map(move |x| {
-                        current_grid // Use immutable borrow
-                            .get(x, y, z)
-                            .map_or(0, |c| if c.count_ones() == 1 { 1 } else { 0 })
-                    })
-                })
-            })
-            .sum();
-    }
-    debug!(
-        "After initial setup/load/propagation: {}/{} cells collapsed. Starting main loop at iter {}.",
-        collapsed_cells_count, total_cells, iterations
-    );
-
-    // Determine the iteration limit from config
-    let iteration_limit = match config.max_iterations {
-        Some(limit) => limit,
-        None => (total_cells as u64).saturating_mul(10), // Default limit calculation
-    };
-    if iteration_limit > 0 {
-        info!("WFC run iteration limit set to: {}", iteration_limit);
-    }
+    // --- Initialization ---
+    let run_state = initialize_run_state(grid, rules, &mut propagator, config)?;
+    let mut iterations = run_state.iterations;
+    let mut collapsed_cells_count = run_state.collapsed_cells_count;
+    let iteration_limit = run_state.iteration_limit;
+    let total_cells = run_state.total_cells;
+    let width = run_state.width;
+    let height = run_state.height;
+    let depth = run_state.depth;
+    // --- End Initialization ---
 
     loop {
         iterations += 1;
@@ -332,32 +360,35 @@ pub fn run(
                             ),
                         }
                     }
-                    Err(e) => warn!("Failed to create checkpoint file at {:?}: {}", path, e),
+                    Err(e) => warn!("Failed to create checkpoint file {:?}: {}", path, e),
                 }
             }
         }
-        // --- End Checkpoint Saving Logic ---
 
-        // --- Check for shutdown signal from config ---
+        // --- Progress Callback ---
+        if let Some(ref callback) = config.progress_callback {
+            // Check if the callback interval is met (or if it's the first/last iteration?)
+            // For simplicity, maybe call it every iteration or tie it to checkpoint interval?
+            // Let's assume call every iteration for now, could be configurable later.
+            let progress_info = ProgressInfo {
+                total_cells,
+                collapsed_cells: collapsed_cells_count,
+                iterations: iterations - 1, // Iteration completed
+                elapsed_time: start_time.elapsed(),
+                grid_state: grid.clone(), // Clone grid state for callback
+            };
+            callback(progress_info)?;
+        }
+
+        // --- Check for Shutdown Signal ---
         if config.shutdown_signal.load(Ordering::Relaxed) {
-            warn!("Shutdown signal received, stopping WFC run prematurely.");
+            warn!("Shutdown signal received. Aborting WFC run.");
             return Err(WfcError::Interrupted);
         }
 
         // --- Check if finished (before iteration) ---
         if collapsed_cells_count >= total_cells {
             info!("All cells collapsed.");
-            // Final callback before breaking
-            if let Some(ref callback) = config.progress_callback {
-                let progress_info = ProgressInfo {
-                    total_cells,
-                    collapsed_cells: collapsed_cells_count,
-                    iterations: iterations - 1, // Use previous iter count
-                    elapsed_time: start_time.elapsed(),
-                    grid_state: grid.clone(),
-                };
-                callback(progress_info)?;
-            }
             break;
         }
 
@@ -377,25 +408,17 @@ pub fn run(
                     .flat_map(|z| {
                         (0..height).flat_map(move |y| {
                             (0..width).map(move |x| {
-                                current_grid // Use immutable borrow
-                                    .get(x, y, z)
-                                    .map_or(0, |c| if c.count_ones() == 1 { 1 } else { 0 })
+                                current_grid.get(x, y, z).map_or(0, |c| {
+                                    if c.count_ones() == 1 {
+                                        1
+                                    } else {
+                                        0
+                                    }
+                                })
                             })
                         })
                     })
                     .sum();
-
-                // --- Progress Callback ---
-                if let Some(ref callback) = config.progress_callback {
-                    let progress_info = ProgressInfo {
-                        total_cells,
-                        collapsed_cells: collapsed_cells_count,
-                        iterations,
-                        elapsed_time: start_time.elapsed(),
-                        grid_state: grid.clone(),
-                    };
-                    callback(progress_info)?;
-                }
             }
             Ok(None) => {
                 // No cell found to collapse, check if grid is actually fully collapsed
@@ -404,17 +427,6 @@ pub fn run(
                         "Iter {}: No cell to collapse, grid fully collapsed. Finalizing.",
                         iterations
                     );
-                    // Final callback before breaking
-                    if let Some(ref callback) = config.progress_callback {
-                        let progress_info = ProgressInfo {
-                            total_cells,
-                            collapsed_cells: collapsed_cells_count,
-                            iterations,
-                            elapsed_time: start_time.elapsed(),
-                            grid_state: grid.clone(),
-                        };
-                        callback(progress_info)?;
-                    }
                     break; // Success
                 } else {
                     warn!(
@@ -422,6 +434,11 @@ pub fn run(
                         iterations, total_cells - collapsed_cells_count
                     );
                     // Re-run propagation on all cells to ensure consistency
+                    let all_coords: Vec<(usize, usize, usize)> = (0..depth)
+                        .flat_map(|z| {
+                            (0..height).flat_map(move |y| (0..width).map(move |x| (x, y, z)))
+                        })
+                        .collect();
                     if let Err(prop_err) = propagator.propagate(grid, all_coords.clone(), rules) {
                         error!(
                             "Iter {}: Propagation failed during final check: {:?}",
@@ -456,9 +473,8 @@ pub fn run(
             Err(e) => return Err(e), // Propagate errors (Contradiction, Config, etc.)
         }
 
-        // Safeguard against infinite loops
+        // --- Check iteration limit ---
         if iteration_limit > 0 && iterations > iteration_limit {
-            // Check against the determined limit
             error!(
                 "Maximum iterations ({}) exceeded. Assuming infinite loop.",
                 iteration_limit
@@ -467,10 +483,11 @@ pub fn run(
         }
     }
 
+    // If loop exits normally (break called)
+    let duration = start_time.elapsed();
     info!(
-        "WFC run finished in {:?} after {} iterations.",
-        start_time.elapsed(),
-        iterations
+        "WFC run finished successfully in {:?} after {} iterations.",
+        duration, iterations
     );
     Ok(())
 }
