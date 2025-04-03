@@ -72,8 +72,8 @@
 - [x] Implement tile transformations (rotation, reflection) in `TileSet` and rule generation. (Note: `Transformation::combine` logic for flips is incomplete)
 - [x] Add support for weighted tile selection during collapse.
 - [x] Implement entropy selection strategies (FirstMinimum, RandomLowest) for `CpuEntropyCalculator`. (GPU/Hilbert still TODO).
-- [ ] Consider alternative propagation algorithms (e.g., AC-4).
-- [ ] Add checkpointing/resuming functionality to the `runner`.
+- [ ] Consider alternative propagation algorithms (e.g., AC-4). (Deferred)
+- [x] Add checkpointing/resuming functionality to the `runner`. (Basic iteration-based implemented)
 - [ ] Add progress reporting callback to the `runner`.
 - [ ] Refactor `runner` for clarity and potential parallelization (internal steps).
 - [ ] Add comprehensive unit tests for `propagator`, `entropy`, `runner`.
