@@ -213,6 +213,14 @@ mod tests {
         AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, allowed_tuples)
     }
 
+    // Test setup helper
+    fn setup_basic_test() -> (PossibilityGrid, AdjacencyRules) {
+        let grid = PossibilityGrid::new(3, 3, 1, 2);
+        let _tileset = create_simple_tileset(2).unwrap();
+        let rules = create_simple_rules(&_tileset);
+        (grid, rules)
+    }
+
     #[test]
     fn test_propagate_simple_clamped() {
         let tileset = create_simple_tileset(2).unwrap();
@@ -317,5 +325,21 @@ mod tests {
 
         // Grid should remain unchanged
         assert_eq!(grid, grid_before);
+    }
+
+    #[test]
+    fn test_propagate_no_change() {
+        let (mut grid, rules) = setup_basic_test();
+        let grid_before = grid.clone();
+        let mut propagator = CpuConstraintPropagator::new(BoundaryMode::Clamped);
+        let initial_updates = vec![(0, 0, 0)]; // Update a cell
+
+        // Propagate (assuming rules allow everything, no change expected)
+        let result = propagator.propagate(&mut grid, initial_updates, &rules);
+        assert!(result.is_ok());
+        assert_eq!(
+            grid, grid_before,
+            "Grid should not change if rules are permissive"
+        );
     }
 }

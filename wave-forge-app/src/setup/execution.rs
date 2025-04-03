@@ -20,9 +20,10 @@ use std::time::{Duration, Instant};
 use wfc_core::grid::PossibilityGrid;
 use wfc_core::runner;
 use wfc_core::{
-    entropy::cpu::CpuEntropyCalculator, entropy::SelectionStrategy,
-    propagator::cpu::CpuConstraintPropagator, run, runner::WfcConfig, BoundaryMode,
-    ConstraintPropagator, EntropyCalculator, ProgressInfo, WfcError,
+    entropy::{cpu::CpuEntropyCalculator, EntropyCalculator, SelectionStrategy},
+    propagator::{cpu::CpuConstraintPropagator, ConstraintPropagator},
+    runner::{self, ProgressCallback, WfcConfig},
+    BoundaryMode, ExecutionMode, ProgressInfo, WfcError,
 };
 use wfc_gpu::accelerator::GpuAccelerator;
 use wfc_gpu::entropy::GpuEntropyCalculator;
@@ -626,4 +627,67 @@ pub fn run_wfc_interactive(
             error: e,
         }),
     }
+}
+
+#[must_use]
+pub async fn setup_and_run_wfc(
+    config: AppConfig,
+    tileset: TileSet,
+    rules: AdjacencyRules,
+) -> Result<PossibilityGrid, AppError> {
+    // ... conversions, grid init, gpu init ...
+
+    // --- Select WFC Components (CPU or GPU) ---
+    // ... (remains same) ...
+
+    // --- Setup Visualization (if enabled) ---
+    // ... (remains same) ...
+
+    // --- Setup Progress Reporting ---
+    // ... (remains same) ...
+
+    // --- Prepare WFC Runner Configuration ---
+    let shutdown_signal = Arc::new(AtomicBool::new(false));
+
+    let progress_callback: Option<ProgressCallback> =
+        progress_reporter.as_ref().map(|reporter_arc| {
+            let reporter = reporter_arc.clone();
+            // Use ProgressInfo directly here
+            let callback: ProgressCallback = Box::new(move |info: ProgressInfo| {
+                if let Err(e) = reporter.report(&info) {
+                    log::error!("Progress reporting failed: {}", e);
+                }
+                Ok(())
+            });
+            callback
+        });
+
+    // ... wfc_config setup ...
+    // ... Run WFC Algorithm ...
+
+    // --- Handle Result ---
+    let final_grid = match wfc_result {
+        Ok(()) => {
+            // ... (success path) ...
+        }
+        Err(e) => {
+            // Use WfcError directly here
+            log::error!("WFC failed: {}", e);
+            print_profiler_summary(&profiler);
+            return Err(AppError::WfcCore(e));
+        }
+    };
+
+    // --- Output Saving ---
+    let output_guard = profiler.profile("output_saving");
+    info!("Saving result to {:?}...", config.output_path);
+    // Pass &PathBuf directly to save_grid_to_file
+    save_grid_to_file(&final_grid, &config.output_path).context("Failed to save output grid")?;
+    drop(output_guard);
+    print_profiler_summary(&profiler);
+
+    // --- Visualization Loop ---
+    // ... (remains same) ...
+
+    Ok(final_grid)
 }

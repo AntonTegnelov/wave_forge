@@ -114,10 +114,17 @@ pub struct WfcCheckpoint {
 }
 
 /// Represents the boundary handling mode for the WFC grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoundaryMode {
     /// The grid edges wrap around (toroidal topology).
     Periodic,
     /// Propagation stops at the grid edges.
     Clamped,
+}
+
+/// Represents the execution mode (CPU or GPU) for WFC components.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionMode {
+    Cpu,
+    Gpu,
 }

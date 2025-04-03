@@ -6,6 +6,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
+use wfc_core;
+use wfc_core::BoundaryMode; // Corrected import path // Import the crate itself
 
 /// Represents the different visualization modes available.
 #[derive(ValueEnum, Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
@@ -51,6 +53,22 @@ impl Default for GlobalLogLevel {
     }
 }
 
+/// Defines the execution backend for WFC (CLI/Config version).
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum CliExecutionMode {
+    #[default]
+    Cpu,
+    Gpu,
+}
+
+/// Defines the boundary mode for WFC (CLI/Config version).
+#[derive(ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum CliBoundaryMode {
+    #[default]
+    Clamped,
+    Periodic,
+}
+
 /// Configuration for the Wave Forge application.
 #[derive(Parser, Debug, Deserialize, Serialize)]
 #[command(author, version, about, long_about = None)]
@@ -79,7 +97,19 @@ pub struct AppConfig {
     #[arg(short, long, value_name = "FILE", default_value = "output.txt")]
     pub output_path: PathBuf,
 
-    /// Run in benchmark mode (now GPU only).
+    /// Execution mode (CPU or GPU).
+    #[arg(long, value_enum, default_value_t = CliExecutionMode::Cpu)]
+    pub execution_mode: CliExecutionMode,
+
+    /// Boundary handling mode for the grid.
+    #[arg(long, value_enum, default_value_t = CliBoundaryMode::Clamped)]
+    pub boundary_mode: CliBoundaryMode,
+
+    /// Optional maximum number of iterations for the WFC algorithm.
+    #[arg(long)]
+    pub max_iterations: Option<u64>,
+
+    /// Run in benchmark mode.
     #[arg(long, default_value_t = false)]
     pub benchmark_mode: bool,
 
@@ -127,6 +157,24 @@ pub struct AppConfig {
     /// Key to toggle visualization on/off during runtime (single character).
     #[arg(long, default_value = "T")]
     pub visualization_toggle_key: char,
+}
+
+impl From<CliExecutionMode> for wfc_core::ExecutionMode {
+    fn from(cli_mode: CliExecutionMode) -> Self {
+        match cli_mode {
+            CliExecutionMode::Cpu => wfc_core::ExecutionMode::Cpu,
+            CliExecutionMode::Gpu => wfc_core::ExecutionMode::Gpu,
+        }
+    }
+}
+
+impl From<CliBoundaryMode> for wfc_core::BoundaryMode {
+    fn from(cli_mode: CliBoundaryMode) -> Self {
+        match cli_mode {
+            CliBoundaryMode::Clamped => wfc_core::BoundaryMode::Clamped,
+            CliBoundaryMode::Periodic => wfc_core::BoundaryMode::Periodic,
+        }
+    }
 }
 
 #[cfg(test)]

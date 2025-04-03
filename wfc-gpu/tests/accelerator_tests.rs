@@ -4,7 +4,7 @@ use std::{
 };
 use wfc_core::{grid::PossibilityGrid, propagator::ConstraintPropagator, BoundaryMode};
 use wfc_gpu::accelerator::GpuAccelerator;
-use wfc_rules::{AdjacencyRules, TileSet, Transformation};
+use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
 
 // A custom drop implementation to ensure proper GPU device cleanup
 struct SafetyGuard;
@@ -285,15 +285,12 @@ fn test_gpu_entropy_calculation_edge_cases() {
 
 // Helper to create simple grid and rules for testing
 fn create_test_data(num_tiles: usize, num_axes: usize) -> (PossibilityGrid, AdjacencyRules) {
-    // Create tileset
     let weights = vec![1.0; num_tiles];
     let allowed_transforms = vec![vec![Transformation::Identity]; num_tiles];
     let tileset = TileSet::new(weights, allowed_transforms).expect("Failed to create test tileset");
 
-    // Create grid
     let grid = PossibilityGrid::new(4, 4, 1, tileset.num_transformed_tiles());
 
-    // Create uniform rules
     let mut allowed_tuples = Vec::new();
     for axis in 0..num_axes {
         for ttid1 in 0..tileset.num_transformed_tiles() {
@@ -336,3 +333,14 @@ fn gpu_available() {
     }
 }
 */
+
+#[test]
+fn test_new_gpu_accelerator_success() {
+    let _guard = SafetyGuard;
+    let (grid, rules) = create_test_data(2, 6);
+    if let Ok(_) = pollster::block_on(GpuAccelerator::new(&grid, &rules, BoundaryMode::Periodic)) {
+        // Success
+    } else {
+        panic!("GpuAccelerator::new failed unexpectedly");
+    }
+}

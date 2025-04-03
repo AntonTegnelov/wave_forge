@@ -1,31 +1,35 @@
 //! Benchmarking utilities for WFC GPU performance.
 //! Now focuses solely on GPU performance.
 
-use crate::error::AppError;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use wfc_core::{
-    entropy::cpu::CpuEntropyCalculator, entropy::SelectionStrategy, grid::PossibilityGrid,
-    propagator::cpu::CpuConstraintPropagator, run, runner::WfcConfig, BoundaryMode,
-    ConstraintPropagator, EntropyCalculator, ProgressInfo, WfcError,
-};
-use wfc_rules::{AdjacencyRules, TileId, TileSet, TileSetError, Transformation};
-
-// GPU implementation is now mandatory for benchmarks
-use wfc_gpu::accelerator::GpuAccelerator;
-use wfc_gpu::{entropy::GpuEntropyCalculator, propagator::GpuConstraintPropagator};
-
-// Use anyhow for application-level errors
-use anyhow::{Error, Result};
-use std::collections::HashMap;
-use std::fs::File;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
+use crate::progress::ConsoleProgressReporter;
+use crate::{
+    config::{AppConfig, CliExecutionMode, VisualizationMode},
+    error::AppError,
+};
+use anyhow::{Error, Result as AnyhowResult};
 use csv;
-use log; // Import AppError
-use pollster; // Add pollster import
+use log::{debug, info, warn};
+use std::{
+    collections::HashMap,
+    fs::File,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    }, // Consolidated sync imports
+    time::{Duration, Instant},
+};
+use wfc_core::{
+    entropy::cpu::CpuEntropyCalculator,
+    entropy::{EntropyCalculator, SelectionStrategy},
+    grid::PossibilityGrid,
+    propagator::{ConstraintPropagator, CpuConstraintPropagator},
+    runner::{self, WfcConfig},
+    BoundaryMode, ExecutionMode, ProgressInfo, WfcError,
+};
+use wfc_gpu::accelerator::GpuAccelerator;
+use wfc_rules::{AdjacencyRules, TileSet};
 
 /// Represents the aggregated results of a single benchmark run.
 #[derive(Debug)]
@@ -68,137 +72,110 @@ pub struct BenchmarkScenarioResult {
     pub stddev_total_time_ms: Option<f64>,
 }
 
-/// Runs the WFC algorithm using the GPU implementation
-/// and collects timing and result information.
-///
-/// # Arguments
-///
-/// * `grid` - A mutable reference to the `PossibilityGrid` to run the algorithm on.
-/// * `tileset` - A reference to the `TileSet` containing tile information.
-/// * `rules` - A reference to the `AdjacencyRules` defining constraints.
-///
-/// # Returns
-///
-/// * `Ok(BenchmarkResult)` containing the details of the benchmark run.
-/// * `Err(Error)` if GPU initialization or the WFC run fails.
-///
-pub async fn run_single_benchmark(
-    grid: &mut PossibilityGrid,
+/// Runs a single WFC benchmark based on the provided configuration.
+/// Handles both CPU and GPU paths.
+async fn run_single_wfc_benchmark(
+    config: &AppConfig,
     tileset: &TileSet,
     rules: &AdjacencyRules,
+    gpu_accelerator_arc: Option<Arc<GpuAccelerator>>,
 ) -> Result<BenchmarkResult, AppError> {
-    // Create a profiler for this benchmark run
-    let profiler = Profiler::new("GPU");
+    let core_execution_mode: ExecutionMode = config.execution_mode.into();
+    let core_boundary_mode: BoundaryMode = config.boundary_mode.into();
 
-    // Start overall timing
-    let _overall_guard = profiler.profile("total_execution");
-    let start_time = Instant::now();
-    let latest_progress = Arc::new(Mutex::new(None::<ProgressInfo>));
+    let profiler = Profiler::new(&format!("{:?}", core_execution_mode));
+    let _overall_guard = profiler.profile("total_benchmark_run");
 
-    // Prepare the progress callback
+    let mut grid =
+        PossibilityGrid::new(config.width, config.height, config.depth, rules.num_tiles());
+    let total_cells = grid.width * grid.height * grid.depth;
+
+    let latest_progress: Arc<Mutex<Option<ProgressInfo>>> = Arc::new(Mutex::new(None));
     let progress_callback = {
         let progress_clone = Arc::clone(&latest_progress);
-        let callback = move |info: ProgressInfo| {
+        let callback: runner::ProgressCallback = Box::new(move |info| {
             let mut progress_guard = progress_clone.lock().unwrap();
             *progress_guard = Some(info);
-        };
-        Some(Box::new(callback) as Box<dyn Fn(ProgressInfo) + Send + Sync>)
+            Ok(())
+        });
+        Some(callback)
     };
 
-    // Get initial memory usage (if supported on platform)
+    let start_time = Instant::now();
     let initial_memory_res = get_memory_usage().map_err(|e| AppError::Anyhow(e));
 
-    // GPU Path Only
-    log::info!("Running GPU Benchmark...");
-
-    // Profile GPU initialization
-    let gpu_accelerator = {
-        let _guard = profiler.profile("gpu_accelerator_init");
-        GpuAccelerator::new(grid, rules, BoundaryMode::Periodic).await?
-    };
-
-    // --- Setup based on execution mode ---
-    let boundary_mode = BoundaryMode::Periodic; // Or get from args/config
-    let tileset_arc = Arc::new(tileset.clone()); // Clone tileset into Arc for CPU calc
-    let strategy = SelectionStrategy::FirstMinimum; // Default strategy
-
+    let tileset_arc = Arc::new(tileset.clone());
     let (propagator, entropy_calc): (
         Box<dyn ConstraintPropagator + Send + Sync>,
         Box<dyn EntropyCalculator + Send + Sync>,
-    ) = match ExecutionMode::Gpu {
+    ) = match core_execution_mode {
         ExecutionMode::Cpu => {
-            log::info!("Using CPU propagator and entropy calculator.");
-            let prop = CpuConstraintPropagator::new(boundary_mode);
-            let calc = CpuEntropyCalculator::new(tileset_arc.clone(), strategy); // Pass args
-            (Box::new(prop), Box::new(calc))
+            let _guard = profiler.profile("cpu_component_setup");
+            (
+                Box::new(CpuConstraintPropagator::new(core_boundary_mode)),
+                Box::new(CpuEntropyCalculator::new(
+                    tileset_arc,
+                    SelectionStrategy::FirstMinimum,
+                )),
+            )
         }
         ExecutionMode::Gpu => {
-            log::info!("Using GPU accelerator for propagation and entropy calculation.");
-            // Block on the async GpuAccelerator::new function
-            let gpu_accelerator = pollster::block_on(GpuAccelerator::new(
-                grid,                   // Pass grid reference
-                rules,                  // Pass rules reference
-                BoundaryMode::Periodic, // Pass boundary mode
-            ))
-            .map_err(|e| anyhow::anyhow!("Failed to create GPU accelerator: {}", e))?;
-
-            // Wrap the accelerator in Arc for sharing
-            let accelerator_arc = Arc::new(gpu_accelerator);
-
-            // Use the same Arc<GpuAccelerator> for both traits
-            (Box::new(accelerator_arc.clone()), Box::new(accelerator_arc))
+            let _guard = profiler.profile("gpu_component_setup");
+            let accelerator_arc = match gpu_accelerator_arc {
+                Some(arc) => arc.clone(),
+                None => {
+                    return Err(AppError::Anyhow(anyhow::anyhow!(
+                        "GPU accelerator Arc missing in GPU benchmark mode"
+                    )));
+                }
+            };
+            (
+                Box::new((*accelerator_arc).clone()),
+                Box::new((*accelerator_arc).clone()),
+            )
         }
     };
 
-    // Prepare configuration for the runner
-    let config = WfcConfig {
-        boundary_mode: BoundaryMode::Periodic, // Set the determined boundary mode
-        progress_callback: None,               // No progress for benchmark
-        shutdown_signal: Arc::new(AtomicBool::new(false)), // Dummy signal
-        // Set other fields to None or defaults as appropriate for benchmark
+    let wfc_config = WfcConfig {
+        boundary_mode: core_boundary_mode,
+        progress_callback,
+        shutdown_signal: Arc::new(AtomicBool::new(false)),
         initial_checkpoint: None,
         checkpoint_interval: None,
         checkpoint_path: None,
-        max_iterations: None,
+        max_iterations: config.max_iterations,
+        seed: config.seed,
     };
 
-    log::info!("Running WFC ({:?})...", ExecutionMode::Gpu);
+    log::info!("Running WFC Benchmark ({:?})...", core_execution_mode);
+    let _run_guard = profiler.profile("wfc_run");
+    let wfc_result = runner::run(
+        &mut grid,
+        tileset,
+        rules,
+        propagator,
+        entropy_calc,
+        &wfc_config,
+    );
+    let duration = start_time.elapsed();
+    drop(_run_guard);
 
-    // Profile the actual WFC run
-    let _run_guard = profiler.profile("gpu_wfc_run");
-
-    let wfc_result = run(grid, tileset, rules, propagator, entropy_calc, &config);
-
-    let total_time = start_time.elapsed();
-
-    // Get final memory usage (if supported)
     let final_memory_res = get_memory_usage().map_err(|e| AppError::Anyhow(e));
-
-    // Calculate memory usage only if both results are Ok
     let memory_usage = match (initial_memory_res, final_memory_res) {
-        (Ok(initial), Ok(final_memory_val)) => {
-            if final_memory_val >= initial {
-                Some(final_memory_val - initial)
-            } else {
-                Some(0) // Handle potential decrease
-            }
-        }
-        _ => None, // One or both memory reads failed
+        (Ok(initial), Ok(final_val)) => Some(final_val.saturating_sub(initial)),
+        _ => None,
     };
 
-    // Retrieve the last captured progress info
     let final_progress = latest_progress.lock().unwrap().clone();
-
-    // Print profiling results
     print_profiler_summary(&profiler);
 
     Ok(BenchmarkResult {
-        grid_width: grid.width,
-        grid_height: grid.height,
-        grid_depth: grid.depth,
+        grid_width: config.width,
+        grid_height: config.height,
+        grid_depth: config.depth,
         num_tiles: rules.num_tiles(),
-        total_time,
-        wfc_result: wfc_result.map_err(|e| e.into()),
+        total_time: duration,
+        wfc_result,
         iterations: final_progress.as_ref().map(|p| p.iterations),
         collapsed_cells: final_progress.as_ref().map(|p| p.collapsed_cells),
         profile_metrics: Some(profiler.get_metrics()),
