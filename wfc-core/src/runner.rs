@@ -2,6 +2,7 @@ use crate::{
     entropy::EntropyCalculator, propagator::ConstraintPropagator, BoundaryMode, PossibilityGrid,
     ProgressInfo, PropagationError, WfcCheckpoint, WfcError,
 };
+use bitvec::prelude::{bitvec, Lsb0};
 use log::{debug, error, info, warn};
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::thread_rng;
@@ -134,6 +135,7 @@ impl WfcConfigBuilder {
 }
 
 // Helper struct to hold the state initialized before the main loop
+#[derive(Debug)]
 struct RunState {
     iterations: u64,
     collapsed_cells_count: usize,
@@ -789,6 +791,141 @@ mod tests {
             result,
             Err(WfcError::Contradiction(_, _, _)) | Err(WfcError::PropagationError(_))
         ));
+    }
+
+    // --- New Tests for initialize_run_state ---
+    #[test]
+    fn test_init_state_basic() {
+        let mut grid = setup_grid();
+        let rules = setup_rules();
+        let propagator_concrete = Box::new(CpuConstraintPropagator::new(BoundaryMode::Clamped));
+        let mut propagator: Box<dyn ConstraintPropagator + Send + Sync> = propagator_concrete;
+        let config = WfcConfig::default();
+
+        let result = initialize_run_state(&mut grid, &rules, &mut propagator, &config);
+        assert!(result.is_ok());
+        let state = result.unwrap();
+        assert_eq!(state.iterations, 0);
+        // Initial count depends on propagation, check > 0? Or specific value if rules are known?
+        // With uniform rules, initial propagation shouldn't collapse anything.
+        assert_eq!(state.collapsed_cells_count, 0);
+        assert!(state.iteration_limit > 0);
+        assert_eq!(
+            state.total_cells,
+            TEST_GRID_DIM * TEST_GRID_DIM * TEST_GRID_DIM
+        );
+    }
+
+    #[test]
+    fn test_init_state_initial_contradiction() {
+        let mut grid = setup_grid();
+        let rules = setup_rules();
+        let propagator_concrete = Box::new(CpuConstraintPropagator::new(BoundaryMode::Clamped));
+        let mut propagator: Box<dyn ConstraintPropagator + Send + Sync> = propagator_concrete;
+        let config = WfcConfig::default();
+
+        // Force a contradiction
+        *grid.get_mut(0, 0, 0).unwrap() = bitvec![usize, Lsb0; 0; TEST_NUM_TILES];
+
+        let result = initialize_run_state(&mut grid, &rules, &mut propagator, &config);
+        assert!(matches!(result, Err(WfcError::Contradiction(0, 0, 0))));
+    }
+
+    #[test]
+    fn test_init_state_propagation_contradiction() {
+        let mut grid = setup_grid();
+        // Rules that cause contradiction on propagation (+X: T0->T1, T1->T0)
+        // Lack of rules on Y/Z causes contradiction first when propagating from (0,0,0)
+        let rules =
+            AdjacencyRules::from_allowed_tuples(TEST_NUM_TILES, 6, vec![(0, 0, 1), (0, 1, 0)]);
+        let propagator_concrete = Box::new(CpuConstraintPropagator::new(BoundaryMode::Clamped));
+        let mut propagator: Box<dyn ConstraintPropagator + Send + Sync> = propagator_concrete;
+        let config = WfcConfig::default();
+
+        // Collapse one cell to trigger propagation
+        *grid.get_mut(0, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 0]; // Set to T0
+
+        let result = initialize_run_state(&mut grid, &rules, &mut propagator, &config);
+        // Expect contradiction at (0,1,0) because T0 at (0,0,0) supports nothing on axis 2 (+Y)
+        assert!(
+            matches!(result, Err(WfcError::Contradiction(0, 1, 0))),
+            "Expected contradiction at (0,1,0), got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_init_state_checkpoint_load() {
+        let mut grid = setup_grid();
+        let rules = setup_rules();
+        let propagator_concrete = Box::new(CpuConstraintPropagator::new(BoundaryMode::Clamped));
+        let mut propagator: Box<dyn ConstraintPropagator + Send + Sync> = propagator_concrete;
+
+        let mut checkpoint_grid = grid.clone();
+        *checkpoint_grid.get_mut(1, 1, 1).unwrap() = bitvec![usize, Lsb0; 1, 0]; // Modify
+        let checkpoint = WfcCheckpoint {
+            grid: checkpoint_grid.clone(),
+            iterations: 42,
+        };
+        let config = WfcConfig {
+            initial_checkpoint: Some(checkpoint),
+            ..Default::default()
+        };
+
+        let result = initialize_run_state(&mut grid, &rules, &mut propagator, &config);
+        assert!(result.is_ok());
+        let state = result.unwrap();
+        assert_eq!(state.iterations, 42);
+        // Grid should match checkpoint grid
+        assert_eq!(grid.get(1, 1, 1), checkpoint_grid.get(1, 1, 1));
+        // TODO: Check collapsed count after propagation based on loaded state?
+    }
+
+    #[test]
+    fn test_init_state_checkpoint_dim_mismatch() {
+        let mut grid = setup_grid(); // 3x3x3
+        let rules = setup_rules();
+        let propagator_concrete = Box::new(CpuConstraintPropagator::new(BoundaryMode::Clamped));
+        let mut propagator: Box<dyn ConstraintPropagator + Send + Sync> = propagator_concrete;
+
+        let checkpoint_grid = PossibilityGrid::new(2, 2, 2, TEST_NUM_TILES); // Different size
+        let checkpoint = WfcCheckpoint {
+            grid: checkpoint_grid,
+            iterations: 5,
+        };
+        let config = WfcConfig {
+            initial_checkpoint: Some(checkpoint),
+            ..Default::default()
+        };
+
+        let result = initialize_run_state(&mut grid, &rules, &mut propagator, &config);
+        assert!(matches!(result, Err(WfcError::CheckpointError(_))));
+    }
+
+    #[test]
+    fn test_init_state_checkpoint_tiles_mismatch() {
+        let mut grid = setup_grid(); // TEST_NUM_TILES
+        let rules = setup_rules();
+        let propagator_concrete = Box::new(CpuConstraintPropagator::new(BoundaryMode::Clamped));
+        let mut propagator: Box<dyn ConstraintPropagator + Send + Sync> = propagator_concrete;
+
+        let checkpoint_grid = PossibilityGrid::new(
+            TEST_GRID_DIM,
+            TEST_GRID_DIM,
+            TEST_GRID_DIM,
+            TEST_NUM_TILES + 1,
+        ); // Different tile count
+        let checkpoint = WfcCheckpoint {
+            grid: checkpoint_grid,
+            iterations: 5,
+        };
+        let config = WfcConfig {
+            initial_checkpoint: Some(checkpoint),
+            ..Default::default()
+        };
+
+        let result = initialize_run_state(&mut grid, &rules, &mut propagator, &config);
+        assert!(matches!(result, Err(WfcError::CheckpointError(_))));
     }
 
     // Add BoundaryMode to other test setups as needed...

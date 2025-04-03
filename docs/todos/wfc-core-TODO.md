@@ -76,5 +76,5 @@
 - [x] Add checkpointing/resuming functionality to the `runner`. (Basic iteration-based implemented)
 - [x] Add progress reporting callback to the `runner`. (Implemented)
 - [x] Refactor `runner` for clarity and potential parallelization (internal steps).
-- [ ] Add comprehensive unit tests for `propagator`, `entropy`, `runner`.
+- [/] Add comprehensive unit tests for `propagator`, `entropy`, `runner`. (Added some runner tests; propagator tests still problematic)
 - [ ] Add integration tests for the overall WFC process.
