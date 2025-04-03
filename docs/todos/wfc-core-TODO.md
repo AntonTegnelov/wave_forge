@@ -58,13 +58,13 @@
 - [x] Refactor `AdjacencyRules` to use more memory-efficient storage for sparse rule sets
 - [x] Simplify error propagation in `runner.rs` with better Result chaining
 - [x] Break down the `run` function in runner.rs to improve separation of concerns
-- [ ] Make hard-coded values configurable (iteration limits, contradiction handling)
-- [ ] Create builder pattern for configurating WFC algorithm parameters
+- [x] Make hard-coded values configurable (iteration limits, contradiction handling)
+- [x] Create builder pattern for configurating WFC algorithm parameters
 
 ## Code Quality Enhancements
 
 - [x] Add property-based tests (e.g., using proptest) for rule consistency
-- [ ] Implement fuzzing for edge case discovery
+- [x] Implement fuzzing for edge case discovery (Setup done, needs targets implemented/run)
 
 ## Core Logic
 
