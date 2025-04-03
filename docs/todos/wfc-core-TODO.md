@@ -41,7 +41,7 @@
 
 - [ ] Phase 4: Cleanup
   - [x] Remove CPU-specific implementations and refactor core API
-  - [ ] Consolidate all computation code into the GPU-based module
+  - [x] Consolidate all computation code into the GPU-based module
   - [ ] Remove CPU-only optimizations and simplify codebase
 
 ## Missing Features
