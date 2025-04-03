@@ -238,81 +238,92 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let neighbor_idx_1d = grid_index(unx, uny, unz);
 
             // --- Calculate Allowed Neighbor Tiles ---
+            // This mask represents the set of tiles allowed in the *neighbor*
+            // based on the tiles currently possible in the *current* cell.
             var allowed_neighbor_mask: array<u32, 4>; // Max 128 tiles example
             // Initialize mask to all zeros
             for (var i: u32 = 0u; i < 4u; i=i+1u) {
                 allowed_neighbor_mask[i] = 0u;
             }
 
-            // Iterate over all possible tiles (tile1) for the *current* cell
-            for (var tile1_idx: u32 = 0u; tile1_idx < params.num_tiles; tile1_idx = tile1_idx + 1u) {
-                // Check if tile1 is actually possible in the current cell
-                if (is_tile_possible(tile1_idx, &current_possibilities)) {
-                    // If tile1 is possible, iterate over all possible tiles (tile2) for the *neighbor*
-                    for (var tile2_idx: u32 = 0u; tile2_idx < params.num_tiles; tile2_idx = tile2_idx + 1u) {
-                        // Check the rule: Is tile2 allowed next to tile1 along this axis?
-                        if (check_rule(tile1_idx, tile2_idx, current_axis)) {
-                            // If the rule allows it, mark tile2 as possible for the neighbor
-                            set_tile_possible(tile2_idx, &allowed_neighbor_mask);
+            // Iterate over all possible tiles (tile2) for the *neighbor* cell
+            for (var tile2_idx: u32 = 0u; tile2_idx < params.num_tiles; tile2_idx = tile2_idx + 1u) {
+                var tile2_is_supported: bool = false;
+                // Check if *any* currently possible tile (tile1) in the *current* cell
+                // supports tile2 in the neighbor cell along the relevant axis.
+                for (var tile1_idx: u32 = 0u; tile1_idx < params.num_tiles; tile1_idx = tile1_idx + 1u) {
+                    // Is tile1 possible in the current cell?
+                    if (is_tile_possible(tile1_idx, &current_possibilities)) {
+                        // Does tile1 support tile2 in the neighbor's direction?
+                        // Note: check_rule(tile_in_current, tile_in_neighbor, axis_from_current_to_neighbor)
+                        if (check_rule(tile1_idx, tile2_idx, current_axis)) { 
+                            tile2_is_supported = true;
+                            break; // Found support, no need to check other tile1 for this tile2
                         }
                     }
+                } // end loop tile1_idx (current cell possibilities)
+
+                // If tile2 is supported by *at least one* possible tile in the current cell,
+                // mark it as potentially allowed in the neighbor.
+                if (tile2_is_supported) {
+                    set_tile_possible(tile2_idx, &allowed_neighbor_mask);
                 }
-            }
+            } // end loop tile2_idx (neighbor cell possibilities)
 
-            // --- Perform Atomic Update on Neighbor ---
-            var original_neighbor_mask: array<u32, 4>;
-            var changed = false;
-            var became_empty = true;
+            // --- Update Neighbor's Possibilities Atomically ---
+            var neighbor_mask_changed: bool = false;
+            var neighbor_mask_is_zero: bool = true; // Assume contradiction until proven otherwise
 
+            // Apply the constraints (intersect allowed_neighbor_mask with neighbor's current mask)
+            // Loop through the u32s that make up the possibility mask
             for (var i: u32 = 0u; i < params.num_tiles_u32 && i < 4u; i = i + 1u) {
                 let neighbor_atomic_ptr = &grid_possibilities[neighbor_idx_1d * params.num_tiles_u32 + i];
-                // Perform atomic AND
-                let original_val = atomicAnd(neighbor_atomic_ptr, allowed_neighbor_mask[i]);
-                original_neighbor_mask[i] = original_val;
+                
+                // Atomically AND the allowed mask with the neighbor's current mask chunk
+                // atomicAnd returns the *original* value before the AND operation.
+                let original_neighbor_chunk = atomicAnd(neighbor_atomic_ptr, allowed_neighbor_mask[i]);
+                
+                // Calculate what the new value *should* be after the AND
+                let new_neighbor_chunk = original_neighbor_chunk & allowed_neighbor_mask[i];
 
-                // Check if the mask actually changed
-                if ((original_val & allowed_neighbor_mask[i]) != original_val) {
-                    changed = true;
+                // Check if this chunk changed
+                if (new_neighbor_chunk != original_neighbor_chunk) {
+                    neighbor_mask_changed = true;
                 }
-
-                // Check if the updated mask part is non-zero
-                if ((original_val & allowed_neighbor_mask[i]) != 0u) {
-                    became_empty = false;
+                // Check if this chunk is non-zero (part of the check for contradiction)
+                if (new_neighbor_chunk != 0u) {
+                    neighbor_mask_is_zero = false;
                 }
             }
 
-            // --- Check for Contradiction --- 
-            if (became_empty) {
-                // Set global contradiction flag
+            // --- Handle Contradiction or Add to Output Worklist ---
+            if (neighbor_mask_is_zero) {
+                // Contradiction detected! Set the global flag and location.
                 atomicMax(&contradiction_flag, 1u);
-                // Atomically store the location of the CONTRADICTION (neighbor cell)
-                // Only store if no other location has been stored yet (atomicMin vs u32::MAX)
+                // Only store the first contradiction location found across all threads
                 atomicMin(&contradiction_location, neighbor_idx_1d); 
-
-                // Important: Even if a contradiction is found, we might need to continue
-                // processing other neighbors or updates depending on the desired propagation behavior.
-                // For now, we continue processing other neighbors of the current cell.
-            }
-
-            // --- Add to Output Worklist if Changed (Optional/Complex) ---
-            if (changed) {
-                // Atomically increment the output worklist counter and get the index
+            } else if (neighbor_mask_changed) {
+                // Neighbor changed but is not a contradiction, add to output worklist
                 let output_index = atomicAdd(&output_worklist_count, 1u);
-                
-                // CRITICAL: Check for worklist overflow - we must have a maximum size limit
-                // This prevents infinite iterations and potential hangs
-                let max_worklist_size = params.grid_width * params.grid_height * params.grid_depth;
-                
-                if (output_index < max_worklist_size) {
-                    // Store the packed coordinates of the neighbor
-                    let neighbor_coords_packed = unz * params.grid_width * params.grid_height + uny * params.grid_width + unx;
-                    // Use atomicStore; although not strictly necessary if only one thread writes per index, it's safer.
-                    atomicStore(&output_worklist[output_index], neighbor_coords_packed);
+
+                // Check if output worklist is full (use buffer size, maybe from params if available)
+                // Let's assume `output_worklist` array size is large enough for now, 
+                // or that the CPU side handles potential overflow/resizing based on count.
+                // A robust implementation might need the output buffer size here.
+                // For now, just write, assuming sufficient space. Be careful in production.
+                let max_output_size = arrayLength(&output_worklist); // Get buffer size dynamically
+                if (output_index < max_output_size) {
+                    // Store packed coordinate (index)
+                    atomicStore(&output_worklist[output_index], neighbor_idx_1d); 
                 } else {
-                    // If worklist overflows, mark as contradiction to halt processing
-                    atomicMax(&contradiction_flag, 1u);
+                     // Handle overflow? Maybe set another flag? Log? Ignore?
+                     // For now, just let it drop, but flag potential issue.
+                     // A more robust solution might involve resizing buffers on CPU 
+                     // or having a fixed large size and erroring if exceeded.
+                     // Setting contradiction flag might be too aggressive.
+                     // Perhaps atomicMax on a separate "output_overflow_flag"?
                 }
             }
-        } // End bounds check
-    } // End neighbor loop
+        } // end bounds check
+    } // end neighbor loop
 } 

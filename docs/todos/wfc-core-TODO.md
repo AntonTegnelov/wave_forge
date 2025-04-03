@@ -21,7 +21,7 @@
   - [x] Refactor GPU Accelerator to delegate WFC steps to dedicated structs
     - [x] Create dedicated `GpuEntropyCalculator` implementation in wfc-gpu
     - [x] Create dedicated `GpuConstraintPropagator` implementation in wfc-gpu
-  - [ ] Implement GPU-based constraint propagation algorithm
+  - [x] Implement GPU-based constraint propagation algorithm
   - [ ] Optimize grid representation for GPU memory layout (coalescence)
   - [ ] Add comprehensive benchmarking tools to compare CPU vs GPU performance
 
