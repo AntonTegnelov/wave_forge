@@ -152,26 +152,47 @@ impl GpuBuffers {
         let num_tiles = rules.num_tiles();
         let num_axes = rules.num_axes();
 
-        // --- Pack Possibilities (Manual Bit Packing) ---
+        // --- Pack Possibilities (SoA Layout for Coalescence) ---
         let bits_per_cell = num_tiles;
         let u32s_per_cell = (bits_per_cell + 31) / 32; // Ceiling division
-        let mut packed_possibilities: Vec<u32> = Vec::with_capacity(num_cells * u32s_per_cell);
+                                                       // Allocate space for SoA layout: num_chunks * num_cells
+        let mut packed_possibilities: Vec<u32> = vec![0u32; u32s_per_cell * num_cells];
 
-        for cell_bitvec in initial_grid.get_cell_data() {
-            let mut cell_data_u32 = vec![0u32; u32s_per_cell];
+        for (cell_idx, cell_bitvec) in initial_grid.get_cell_data().iter().enumerate() {
             for (i, bit) in cell_bitvec.iter().by_vals().enumerate() {
                 if bit {
-                    let u32_idx = i / 32;
+                    let u32_chunk_idx = i / 32;
                     let bit_idx = i % 32;
-                    if u32_idx < cell_data_u32.len() {
-                        // Ensure index is in bounds
-                        cell_data_u32[u32_idx] |= 1 << bit_idx;
+                    if u32_chunk_idx < u32s_per_cell {
+                        // Calculate SoA index: chunk_index * num_cells + cell_index
+                        let packed_idx = u32_chunk_idx * num_cells + cell_idx;
+                        if packed_idx < packed_possibilities.len() {
+                            // Bounds check
+                            packed_possibilities[packed_idx] |= 1 << bit_idx;
+                        } else {
+                            // This should ideally not happen if allocation is correct
+                            error!("SoA packing error: index out of bounds (cell {}, chunk {}, packed_idx {})", cell_idx, u32_chunk_idx, packed_idx);
+                            return Err(GpuError::BufferInitializationError(
+                                "SoA packing index out of bounds".to_string(),
+                            ));
+                        }
                     }
                 }
             }
-            packed_possibilities.extend_from_slice(&cell_data_u32);
         }
-        let _grid_buffer_size = (packed_possibilities.len() * std::mem::size_of::<u32>()) as u64;
+        // Validate size calculation consistency
+        if packed_possibilities.len() != num_cells * u32s_per_cell {
+            error!(
+                "SoA packing size mismatch: calculated {}, expected {}",
+                packed_possibilities.len(),
+                num_cells * u32s_per_cell
+            );
+            return Err(GpuError::BufferInitializationError(
+                "SoA packing size mismatch".to_string(),
+            ));
+        }
+
+        let grid_buffer_size = (packed_possibilities.len() * std::mem::size_of::<u32>()) as u64;
 
         // --- Pack Rules ---
         let num_rules = num_axes * num_tiles * num_tiles;
@@ -300,7 +321,7 @@ impl GpuBuffers {
         let staging_grid_possibilities_buf =
             Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Staging Grid Possibilities Buffer"),
-                size: _grid_buffer_size, // Use calculated size from packed_possibilities
+                size: grid_buffer_size,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));

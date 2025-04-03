@@ -174,9 +174,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         current_possibilities[i] = 0u;
     }
 
+    // Calculate number of cells for SoA indexing
+    let num_cells = params.grid_width * params.grid_height * params.grid_depth;
+
     // Only load as many as we need and are within bounds
     for (var i: u32 = 0u; i < params.num_tiles_u32 && i < 4u; i = i + 1u) {
-       current_possibilities[i] = atomicLoad(&grid_possibilities[current_cell_idx_1d * params.num_tiles_u32 + i]);
+       // SoA index: chunk_index * num_cells + cell_index
+       current_possibilities[i] = atomicLoad(&grid_possibilities[i * num_cells + current_cell_idx_1d]);
     }
 
     // --- Iterate through Neighbors ---
@@ -277,7 +281,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             // Apply the constraints (intersect allowed_neighbor_mask with neighbor's current mask)
             // Loop through the u32s that make up the possibility mask
             for (var i: u32 = 0u; i < params.num_tiles_u32 && i < 4u; i = i + 1u) {
-                let neighbor_atomic_ptr = &grid_possibilities[neighbor_idx_1d * params.num_tiles_u32 + i];
+                // SoA index: chunk_index * num_cells + cell_index
+                let neighbor_atomic_ptr = &grid_possibilities[i * num_cells + neighbor_idx_1d];
                 
                 // Atomically AND the allowed mask with the neighbor's current mask chunk
                 // atomicAnd returns the *original* value before the AND operation.

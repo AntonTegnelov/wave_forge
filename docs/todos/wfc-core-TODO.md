@@ -22,7 +22,7 @@
     - [x] Create dedicated `GpuEntropyCalculator` implementation in wfc-gpu
     - [x] Create dedicated `GpuConstraintPropagator` implementation in wfc-gpu
   - [x] Implement GPU-based constraint propagation algorithm
-  - [ ] Optimize grid representation for GPU memory layout (coalescence)
+  - [x] Optimize grid representation for GPU memory layout (coalescence)
   - [ ] Add comprehensive benchmarking tools to compare CPU vs GPU performance
 
 - [ ] Phase 2: Performance optimization

@@ -124,8 +124,28 @@ fn main(
         return;
     }
 
-    let possibility_mask = possibilities[index];
-    let possibilities_count = count_set_bits(possibility_mask);
+    // Possibilities are read from a separate, non-atomic buffer (`possibilities`)
+    // which should already be in the correct SoA layout if prepared correctly on CPU.
+    // Calculate number of cells for SoA indexing
+    let num_cells = params.grid_width * params.grid_height * params.grid_depth;
+
+    var total_possibility_mask: array<u32, 4>; // Max 128 tiles example
+    var possibilities_count: u32 = 0u;
+
+    // Read the relevant chunks for this cell using SoA indexing
+    // SAFETY: Check num_tiles_u32 <= 4 to prevent out-of-bounds access
+    if (params.num_tiles_u32 <= 4u) { 
+        for (var i: u32 = 0u; i < params.num_tiles_u32; i = i + 1u) {
+            // SoA Index: chunk_idx * num_cells + cell_idx
+            let chunk = possibilities[i * num_cells + index];
+            total_possibility_mask[i] = chunk;
+            possibilities_count = possibilities_count + count_set_bits(chunk);
+        }
+    } else {
+        // Handle error case: too many tiles for current static array size
+        // Mark entropy as 0 or a special value, or potentially flag an error if possible
+        possibilities_count = 0u; // Indicate error state or collapsed/contradiction
+    }
 
     var calculated_entropy = 0.0;
     if (possibilities_count == 1u) {
