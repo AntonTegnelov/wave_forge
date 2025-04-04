@@ -383,9 +383,7 @@ mod tests {
         let results = loop {
             futures::select! {
                 res = download_future.as_mut().fuse() => break res,
-                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
-                    device.poll(wgpu::Maintain::Wait);
-                }
+                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {},
             }
         }?;
 
@@ -447,9 +445,6 @@ mod tests {
                 Err(_) => return, // Skip test if GPU setup fails
             };
 
-        // Clone device Arc *before* the loop to avoid borrow conflict
-        let device_clone = accelerator.device();
-
         // Scope the mutable borrow
         {
             // Propagate the change from the center cell
@@ -463,10 +458,8 @@ mod tests {
             let prop_result = loop {
                 futures::select! {
                     res = propagate_future.as_mut().fuse() => break res,
-                    _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
-                        // Use the cloned device for polling - CHANGED to Wait
-                        device_clone.poll(wgpu::Maintain::Wait);
-                    }
+                    // Remove the explicit poll, rely on propagate future completing
+                    _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {},
                 }
             };
             assert!(prop_result.is_ok());
@@ -516,9 +509,6 @@ mod tests {
                 Err(_) => return, // Skip test if GPU setup fails
             };
 
-        // Clone device Arc *before* the loop to avoid borrow conflict
-        let device_clone = accelerator.device();
-
         // Scope the mutable borrow
         {
             // Propagate the change from cell (0, 0, 0)
@@ -532,10 +522,8 @@ mod tests {
             let prop_result = loop {
                 futures::select! {
                     res = propagate_future.as_mut().fuse() => break res,
-                    _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
-                        // Use the cloned device for polling - CHANGED to Wait
-                        device_clone.poll(wgpu::Maintain::Wait);
-                    }
+                    // Remove the explicit poll, rely on propagate future completing
+                    _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {},
                 }
             };
             assert!(prop_result.is_ok());
