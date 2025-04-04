@@ -378,17 +378,8 @@ mod tests {
             false, // download_contradiction_location
         );
 
-        // Pin the future and poll
-        pin_mut!(download_future);
-        let results = loop {
-            futures::select! {
-                res = download_future.as_mut().fuse() => break res,
-                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
-                    // Poll the device to ensure GPU work progresses
-                    device.poll(wgpu::Maintain::Poll);
-                }
-            }
-        }?;
+        // Just await the future directly
+        let results = download_future.await?;
 
         let packed_data = results
             .grid_possibilities
@@ -452,25 +443,15 @@ mod tests {
         {
             // Propagate the change from the center cell
             let updated_coords = vec![(1, 0, 0)];
-            let propagate_future =
-                accelerator // `propagate` borrows accelerator mutably
-                    .propagate(&mut initial_grid, updated_coords, &rules);
-
-            // Pin and poll for propagation result
-            pin_mut!(propagate_future);
-            let prop_result = loop {
-                futures::select! {
-                    res = propagate_future.as_mut().fuse() => break res,
-                    // Remove the explicit poll, rely on propagate future completing
-                    _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {},
-                }
-            };
+            let prop_result = accelerator // `propagate` borrows accelerator mutably
+                .propagate(&mut initial_grid, updated_coords, &rules)
+                .await; // Directly await the future
             assert!(prop_result.is_ok());
-        } // propagate_future (and mutable borrow) dropped here
+        } // propagate future (and mutable borrow) dropped here
 
         // Download the grid state after propagation
         let final_grid = download_grid_state(&accelerator, (width, height, depth), num_tiles)
-            .await
+            .await // Directly await the future
             .expect("Failed to download grid state");
 
         // Assertions for Clamped mode:
@@ -516,25 +497,15 @@ mod tests {
         {
             // Propagate the change from cell (0, 0, 0)
             let updated_coords = vec![(0, 0, 0)];
-            let propagate_future =
-                accelerator // `propagate` borrows accelerator mutably
-                    .propagate(&mut initial_grid, updated_coords, &rules);
-
-            // Pin and poll for propagation result
-            pin_mut!(propagate_future);
-            let prop_result = loop {
-                futures::select! {
-                    res = propagate_future.as_mut().fuse() => break res,
-                    // Remove the explicit poll, rely on propagate future completing
-                    _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {},
-                }
-            };
+            let prop_result = accelerator // `propagate` borrows accelerator mutably
+                .propagate(&mut initial_grid, updated_coords, &rules)
+                .await; // Directly await the future
             assert!(prop_result.is_ok());
-        } // propagate_future (and mutable borrow) dropped here
+        } // propagate future (and mutable borrow) dropped here
 
         // Download the grid state after propagation
         let final_grid = download_grid_state(&accelerator, (width, height, depth), num_tiles)
-            .await
+            .await // Directly await the future
             .expect("Failed to download grid state");
 
         // Assertions for Periodic mode:
