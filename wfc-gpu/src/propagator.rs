@@ -383,7 +383,10 @@ mod tests {
         let results = loop {
             futures::select! {
                 res = download_future.as_mut().fuse() => break res,
-                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {},
+                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
+                    // Poll the device to ensure GPU work progresses
+                    device.poll(wgpu::Maintain::Poll);
+                }
             }
         }?;
 
