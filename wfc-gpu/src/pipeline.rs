@@ -328,6 +328,7 @@ impl ComputePipelines {
                             layout: Some(&entropy_pipeline_layout),
                             module: &entropy_shader,
                             entry_point: "main_entropy",
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
                         }),
                     )
                 })
@@ -352,6 +353,7 @@ impl ComputePipelines {
                             layout: Some(&propagation_pipeline_layout),
                             module: &propagation_shader,
                             entry_point: "main_propagate",
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
                         }),
                     )
                 })
