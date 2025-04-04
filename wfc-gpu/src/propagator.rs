@@ -303,8 +303,6 @@ impl ConstraintPropagator for GpuConstraintPropagator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accelerator::GpuAccelerator;
-    use crate::test_utils::initialize_test_gpu;
     use futures::{pin_mut, FutureExt};
     use std::time::Duration;
     use tokio;
@@ -384,7 +382,7 @@ mod tests {
         pin_mut!(download_future);
         let results = loop {
             futures::select! {
-                res = download_future.fuse() => break res,
+                res = download_future.as_mut().fuse() => break res,
                 _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
                     device.poll(wgpu::Maintain::Poll);
                 }
@@ -449,23 +447,32 @@ mod tests {
                 Err(_) => return, // Skip test if GPU setup fails
             };
 
-        // Propagate the change from the center cell
-        let updated_coords = vec![(1, 0, 0)];
-        let propagate_future = accelerator.propagate(&mut initial_grid, updated_coords, &rules);
+        // Clone device Arc *before* the loop to avoid borrow conflict
+        let device_clone = accelerator.device();
 
-        // Pin and poll for propagation result
-        pin_mut!(propagate_future);
-        let prop_result = loop {
-            futures::select! {
-                res = propagate_future.fuse() => break res,
-                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
-                    accelerator.device().poll(wgpu::Maintain::Poll);
+        // Scope the mutable borrow
+        {
+            // Propagate the change from the center cell
+            let updated_coords = vec![(1, 0, 0)];
+            let propagate_future =
+                accelerator // `propagate` borrows accelerator mutably
+                    .propagate(&mut initial_grid, updated_coords, &rules);
+
+            // Pin and poll for propagation result
+            pin_mut!(propagate_future);
+            let prop_result = loop {
+                futures::select! {
+                    res = propagate_future.as_mut().fuse() => break res,
+                    _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
+                        // Use the cloned device for polling
+                        device_clone.poll(wgpu::Maintain::Poll);
+                    }
                 }
-            }
-        };
-        assert!(prop_result.is_ok());
+            };
+            assert!(prop_result.is_ok());
+        } // propagate_future (and mutable borrow) dropped here
 
-        // Download the grid state after propagation (this already uses the polling loop)
+        // Download the grid state after propagation
         let final_grid = download_grid_state(&accelerator, (width, height, depth), num_tiles)
             .await
             .expect("Failed to download grid state");
@@ -509,23 +516,32 @@ mod tests {
                 Err(_) => return, // Skip test if GPU setup fails
             };
 
-        // Propagate the change from cell (0, 0, 0)
-        let updated_coords = vec![(0, 0, 0)];
-        let propagate_future = accelerator.propagate(&mut initial_grid, updated_coords, &rules);
+        // Clone device Arc *before* the loop to avoid borrow conflict
+        let device_clone = accelerator.device();
 
-        // Pin and poll for propagation result
-        pin_mut!(propagate_future);
-        let prop_result = loop {
-            futures::select! {
-                res = propagate_future.fuse() => break res,
-                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
-                    accelerator.device().poll(wgpu::Maintain::Poll);
+        // Scope the mutable borrow
+        {
+            // Propagate the change from cell (0, 0, 0)
+            let updated_coords = vec![(0, 0, 0)];
+            let propagate_future =
+                accelerator // `propagate` borrows accelerator mutably
+                    .propagate(&mut initial_grid, updated_coords, &rules);
+
+            // Pin and poll for propagation result
+            pin_mut!(propagate_future);
+            let prop_result = loop {
+                futures::select! {
+                    res = propagate_future.as_mut().fuse() => break res,
+                    _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
+                        // Use the cloned device for polling
+                        device_clone.poll(wgpu::Maintain::Poll);
+                    }
                 }
-            }
-        };
-        assert!(prop_result.is_ok());
+            };
+            assert!(prop_result.is_ok());
+        } // propagate_future (and mutable borrow) dropped here
 
-        // Download the grid state after propagation (this already uses the polling loop)
+        // Download the grid state after propagation
         let final_grid = download_grid_state(&accelerator, (width, height, depth), num_tiles)
             .await
             .expect("Failed to download grid state");

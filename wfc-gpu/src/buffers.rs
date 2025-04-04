@@ -916,7 +916,7 @@ mod tests {
         pin_mut!(download_future);
         let results = loop {
             futures::select! {
-                res = download_future.fuse() => break res,
+                res = download_future.as_mut().fuse() => break res,
                 _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
                     // Poll the device regularly while waiting
                     device.poll(wgpu::Maintain::Poll);
