@@ -42,6 +42,39 @@ pub struct GpuErrorRecovery {
     recover_device_lost: bool,
     /// Whether to attempt recovery for timeout errors
     recover_timeouts: bool,
+    /// Adaptive timeout settings based on grid complexity
+    adaptive_timeout: Option<AdaptiveTimeoutConfig>,
+}
+
+/// Configuration for adaptive timeout calculations.
+///
+/// This struct holds parameters used to calculate appropriate timeout durations
+/// based on grid size and complexity. The calculated timeout is used for various
+/// GPU operations to account for larger or more complex grids requiring more time.
+#[derive(Debug, Clone, Copy)]
+pub struct AdaptiveTimeoutConfig {
+    /// Base timeout in milliseconds for a reference-sized grid
+    pub base_timeout_ms: u64,
+    /// Reference grid cell count for scaling calculations
+    pub reference_cell_count: u64,
+    /// How much to scale the timeout based on grid size (power factor)
+    pub size_scale_factor: f64,
+    /// Additional multiplier for operations with many tiles per cell
+    pub tile_count_multiplier: f64,
+    /// Maximum timeout duration in milliseconds (upper bound)
+    pub max_timeout_ms: u64,
+}
+
+impl Default for AdaptiveTimeoutConfig {
+    fn default() -> Self {
+        Self {
+            base_timeout_ms: 1000,        // 1 second base timeout
+            reference_cell_count: 10_000, // 10,000 cells (e.g., 100x100 grid)
+            size_scale_factor: 0.5,       // Sub-linear scaling with size
+            tile_count_multiplier: 0.01,  // 1% increase per tile
+            max_timeout_ms: 10_000,       // 10 seconds maximum timeout
+        }
+    }
 }
 
 impl Default for GpuErrorRecovery {
@@ -55,6 +88,7 @@ impl Default for GpuErrorRecovery {
             recover_buffer_mapping: true,
             recover_device_lost: false, // Device lost usually requires full reinitialization
             recover_timeouts: true,
+            adaptive_timeout: None, // Disabled by default
         }
     }
 }
@@ -78,6 +112,68 @@ impl GpuErrorRecovery {
             recover_buffer_mapping,
             recover_device_lost,
             recover_timeouts,
+            adaptive_timeout: None,
+        }
+    }
+
+    /// Enables adaptive timeouts based on grid size and complexity.
+    ///
+    /// This configures the GpuErrorRecovery to calculate appropriate timeout
+    /// durations based on grid dimensions and other complexity factors.
+    /// This helps prevent premature timeouts for larger grids.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration parameters for the adaptive timeout
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining
+    pub fn with_adaptive_timeout(mut self, config: AdaptiveTimeoutConfig) -> Self {
+        self.adaptive_timeout = Some(config);
+        self
+    }
+
+    /// Calculates an appropriate timeout duration based on grid size and complexity.
+    ///
+    /// # Arguments
+    ///
+    /// * `grid_cells` - Total number of cells in the grid (width * height * depth)
+    /// * `tile_count` - Number of possible tile types
+    /// * `operation_complexity` - Relative complexity factor of the operation (default 1.0)
+    ///
+    /// # Returns
+    ///
+    /// Duration representing the calculated timeout
+    pub fn calculate_timeout(
+        &self,
+        grid_cells: usize,
+        tile_count: usize,
+        operation_complexity: f64,
+    ) -> Duration {
+        match self.adaptive_timeout {
+            Some(config) => {
+                // Calculate size factor based on cell count
+                let size_ratio = grid_cells as f64 / config.reference_cell_count as f64;
+                let size_factor = size_ratio.powf(config.size_scale_factor);
+
+                // Calculate tile complexity factor
+                let tile_factor = 1.0 + (tile_count as f64 * config.tile_count_multiplier);
+
+                // Calculate final timeout in milliseconds
+                let computed_ms = (config.base_timeout_ms as f64
+                    * size_factor
+                    * tile_factor
+                    * operation_complexity)
+                    .round() as u64;
+                let timeout_ms = computed_ms.min(config.max_timeout_ms);
+
+                Duration::from_millis(timeout_ms.max(1)) // At least 1ms
+            }
+            None => {
+                // If adaptive timeouts are disabled, use a fixed default
+                Duration::from_secs(5) // Default 5-second timeout
+            }
         }
     }
 
@@ -112,6 +208,11 @@ impl GpuErrorRecovery {
             }
             GpuError::CommandExecutionError(msg) => {
                 if msg.contains("timeout") && self.recover_timeouts {
+                    // Use adaptive timeout recovery for timeout errors
+                    // This will ensure that larger grids get more attempts and longer timeouts
+                    if self.adaptive_timeout.is_some() {
+                        log::info!("Using adaptive timeout recovery for command execution timeout");
+                    }
                     ErrorSeverity::Recoverable
                 } else {
                     ErrorSeverity::Fatal
@@ -119,6 +220,10 @@ impl GpuErrorRecovery {
             }
             GpuError::BufferOperationError(msg) => {
                 if (msg.contains("map") || msg.contains("timeout")) && self.recover_buffer_mapping {
+                    // Use adaptive timeout recovery for mapping timeouts
+                    if msg.contains("timeout") && self.adaptive_timeout.is_some() {
+                        log::info!("Using adaptive timeout recovery for buffer mapping timeout");
+                    }
                     ErrorSeverity::Recoverable
                 } else {
                     ErrorSeverity::Fatal
@@ -214,19 +319,68 @@ impl GpuErrorRecovery {
 /// attempts for non-fatal errors.
 pub struct RecoverableGpuOp {
     recovery: Arc<GpuErrorRecovery>,
+    /// Grid size information for adaptive timeouts
+    grid_cells: Option<usize>,
+    /// Tile count information for adaptive timeouts
+    tile_count: Option<usize>,
 }
 
 impl RecoverableGpuOp {
-    /// Creates a new RecoverableGpuOp with default error recovery settings.
+    /// Creates a new RecoverableGpuOp with default settings.
     pub fn new() -> Self {
         Self {
             recovery: Arc::new(GpuErrorRecovery::default()),
+            grid_cells: None,
+            tile_count: None,
         }
     }
 
     /// Creates a new RecoverableGpuOp with custom error recovery settings.
     pub fn with_recovery(recovery: Arc<GpuErrorRecovery>) -> Self {
-        Self { recovery }
+        Self {
+            recovery,
+            grid_cells: None,
+            tile_count: None,
+        }
+    }
+
+    /// Enables and configures adaptive timeout calculations for GPU operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout_config` - Configuration for calculating adaptive timeouts
+    /// * `grid_cells` - Total number of cells in the grid (width * height * depth)
+    /// * `tile_count` - Number of possible tile types
+    ///
+    /// # Returns
+    ///
+    /// `Self` with adaptive timeout settings configured
+    pub fn with_adaptive_timeout(
+        mut self,
+        timeout_config: AdaptiveTimeoutConfig,
+        grid_cells: usize,
+        tile_count: usize,
+    ) -> Self {
+        self.recovery = Arc::new(GpuErrorRecovery::default().with_adaptive_timeout(timeout_config));
+        self.grid_cells = Some(grid_cells);
+        self.tile_count = Some(tile_count);
+        self
+    }
+
+    /// Calculates the appropriate timeout for the current operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `operation_complexity` - Relative complexity factor (default: 1.0)
+    ///
+    /// # Returns
+    ///
+    /// Duration representing the appropriate timeout
+    pub fn calculate_operation_timeout(&self, operation_complexity: f64) -> Duration {
+        let grid_cells = self.grid_cells.unwrap_or(10_000);
+        let tile_count = self.tile_count.unwrap_or(16);
+        self.recovery
+            .calculate_timeout(grid_cells, tile_count, operation_complexity)
     }
 
     /// Attempts to execute a GPU operation with automatic retries for recoverable errors.

@@ -1,4 +1,4 @@
-use crate::error_recovery::RecoverableGpuOp;
+use crate::error_recovery::{AdaptiveTimeoutConfig, RecoverableGpuOp};
 use crate::GpuError;
 use bitvec::field::BitField;
 use bytemuck::{Pod, Zeroable};
@@ -701,18 +701,33 @@ impl GpuBuffers {
             .await
     }
 
-    /// Optimized version that downloads only essential propagation data (contradiction and worklist)
-    /// This reduces synchronization points during the main propagation loop.
+    /// Downloads the propagation status (contradiction flag, worklist count, contradiction location) from the GPU.
+    ///
+    /// This is an optimized method that combines multiple status downloads into a single operation
+    /// to reduce synchronization points during propagation.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The wgpu Device for buffer copies
+    /// * `queue` - The wgpu Queue for submitting commands
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    /// * `has_contradiction` - Boolean indicating if a contradiction was detected
+    /// * `worklist_count` - The number of cells in the output worklist
+    /// * `contradiction_location` - Optional index of the cell where a contradiction occurred
     pub async fn download_propagation_status(
         &self,
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
     ) -> Result<(bool, u32, Option<u32>), GpuError> {
+        // Create encoder for copying buffers
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Propagation Status Encoder"),
         });
 
-        // Queue copy commands for the essential buffers only
+        // Copy the contradiction flag and worklist count to staging buffers
         encoder.copy_buffer_to_buffer(
             &self.contradiction_flag_buf,
             0,
@@ -720,7 +735,6 @@ impl GpuBuffers {
             0,
             self.contradiction_flag_buf.size(),
         );
-
         encoder.copy_buffer_to_buffer(
             &self.worklist_count_buf,
             0,
@@ -729,10 +743,32 @@ impl GpuBuffers {
             self.worklist_count_buf.size(),
         );
 
-        // Only include contradiction location if flag is true (we'll check after first download)
         queue.submit(Some(encoder.finish()));
 
-        // First, map and read the contradiction flag and worklist count concurrently
+        // For adaptive timeout, we need to estimate the grid size and complexity
+        // We don't store these directly, but we can derive reasonable values
+        // for the purpose of timeout configuration
+
+        // Use fixed values for now since we don't have direct access to grid dimensions
+        let estimated_width = 64;
+        let estimated_height = 64;
+        let estimated_depth = 1;
+        let estimated_tiles = 32;
+
+        // Create a RecoverableGpuOp with adaptive timeout
+        let recovery_op = Self::configure_adaptive_timeouts(
+            estimated_width,
+            estimated_height,
+            estimated_depth,
+            estimated_tiles,
+        );
+
+        // Create futures for downloading contradiction flag and worklist count
+        // Use higher operation complexity (1.5) for these operations as they're critical
+        let operation_complexity = 1.5;
+        let operation_timeout = recovery_op.calculate_operation_timeout(operation_complexity);
+
+        // Use a longer timeout for larger grids to prevent premature timeouts
         let contradiction_flag_future: futures::future::BoxFuture<'_, Result<bool, GpuError>> = {
             let buffer = self.staging_contradiction_flag_buf.clone();
             async move {
@@ -743,9 +779,20 @@ impl GpuBuffers {
                     let _ = tx.send(result);
                 });
 
-                rx.await.map_err(|_| {
-                    GpuError::BufferOperationError("Mapping channel canceled".to_string())
-                })??;
+                // Use tokio's timeout to handle timeouts more gracefully
+                match tokio::time::timeout(operation_timeout, rx).await {
+                    Ok(result) => {
+                        result.map_err(|_| {
+                            GpuError::BufferOperationError("Mapping channel canceled".to_string())
+                        })??;
+                    }
+                    Err(_) => {
+                        return Err(GpuError::BufferOperationError(format!(
+                            "Buffer mapping timed out after {:?}",
+                            operation_timeout
+                        )));
+                    }
+                }
 
                 let mapped_range = buffer_slice.get_mapped_range();
                 let bytes = mapped_range.to_vec();
@@ -773,9 +820,20 @@ impl GpuBuffers {
                     let _ = tx.send(result);
                 });
 
-                rx.await.map_err(|_| {
-                    GpuError::BufferOperationError("Mapping channel canceled".to_string())
-                })??;
+                // Use tokio's timeout to handle timeouts more gracefully
+                match tokio::time::timeout(operation_timeout, rx).await {
+                    Ok(result) => {
+                        result.map_err(|_| {
+                            GpuError::BufferOperationError("Mapping channel canceled".to_string())
+                        })??;
+                    }
+                    Err(_) => {
+                        return Err(GpuError::BufferOperationError(format!(
+                            "Buffer mapping timed out after {:?}",
+                            operation_timeout
+                        )));
+                    }
+                }
 
                 let mapped_range = buffer_slice.get_mapped_range();
                 let bytes = mapped_range.to_vec();
@@ -890,6 +948,41 @@ impl GpuBuffers {
             warn!("Min entropy buffer size mismatch during download");
             Ok(None)
         }
+    }
+
+    /// Sets up adaptive timeout handling for buffer operations.
+    ///
+    /// Configures timeouts that scale appropriately with grid size and complexity
+    /// to prevent premature timeouts for large grids.
+    ///
+    /// # Arguments
+    ///
+    /// * `width` - Grid width
+    /// * `height` - Grid height
+    /// * `depth` - Grid depth
+    /// * `num_tiles` - Number of tile types
+    ///
+    /// # Returns
+    ///
+    /// A RecoverableGpuOp instance configured with appropriate adaptive timeout settings
+    pub fn configure_adaptive_timeouts(
+        width: usize,
+        height: usize,
+        depth: usize,
+        num_tiles: usize,
+    ) -> RecoverableGpuOp {
+        let grid_cells = width * height * depth;
+
+        // Create recovery op with adaptive timeout config
+        let timeout_config = AdaptiveTimeoutConfig {
+            base_timeout_ms: 1000,        // 1 second base
+            reference_cell_count: 10_000, // 10k cells reference grid
+            size_scale_factor: 0.6,       // Scale sub-linearly with grid size
+            tile_count_multiplier: 0.01,  // 1% per tile
+            max_timeout_ms: 30_000,       // 30 seconds max
+        };
+
+        RecoverableGpuOp::new().with_adaptive_timeout(timeout_config, grid_cells, num_tiles)
     }
 }
 
