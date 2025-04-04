@@ -242,6 +242,87 @@ impl GpuAccelerator {
         self.propagator.params
     }
 
+    /// Retrieves the current intermediate grid state from the GPU.
+    ///
+    /// This method allows accessing partial or in-progress WFC results before the algorithm completes.
+    /// It downloads the current state of the grid possibilities from the GPU and converts them back
+    /// to a PossibilityGrid that can be used for visualization, analysis, or checkpointing.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing either the current `PossibilityGrid` state or a `GpuError`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `GpuError` if the GPU buffer download fails or if the data cannot be converted
+    /// to a valid `PossibilityGrid`.
+    pub async fn get_intermediate_result(&self) -> Result<PossibilityGrid, GpuError> {
+        let device = self.device();
+        let queue = self.queue();
+        let buffers = self.buffers();
+
+        // Download only the grid possibilities (we don't need entropy or other data)
+        let results = buffers
+            .download_results(
+                device, queue, false, // don't download entropy
+                false, // don't download min entropy info
+                true,  // download grid possibilities
+                false, // don't download worklist
+                false, // don't download worklist size
+                false, // don't download contradiction location
+            )
+            .await?;
+
+        // Extract grid possibilities from results
+        let grid_possibilities = match results.grid_possibilities {
+            Some(possibilities) => possibilities,
+            None => {
+                return Err(GpuError::BufferOperationError(
+                    "Failed to download grid possibilities from GPU".to_string(),
+                ))
+            }
+        };
+
+        // Create a new PossibilityGrid from the downloaded data
+        let (width, height, depth) = self.grid_dims;
+        let mut grid = PossibilityGrid::new(width, height, depth, self.num_tiles);
+
+        // Convert packed u32 array to bitvec representation
+        let u32s_per_cell = buffers.u32s_per_cell;
+        let mut cell_index = 0;
+
+        for z in 0..depth {
+            for y in 0..height {
+                for x in 0..width {
+                    if let Some(cell) = grid.get_mut(x, y, z) {
+                        // Clear the cell's initial state (all 1s)
+                        cell.fill(false);
+
+                        // Set the bits according to the GPU data
+                        let base_index = cell_index * u32s_per_cell;
+                        for i in 0..u32s_per_cell {
+                            if base_index + i < grid_possibilities.len() {
+                                let bits = grid_possibilities[base_index + i];
+                                for bit_pos in 0..32 {
+                                    let tile_idx = i * 32 + bit_pos;
+                                    if tile_idx < self.num_tiles {
+                                        let bit_value = ((bits >> bit_pos) & 1) == 1;
+                                        if bit_value {
+                                            cell.set(tile_idx, true);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    cell_index += 1;
+                }
+            }
+        }
+
+        Ok(grid)
+    }
+
     /// Enables parallel subgrid processing for large grids.
     ///
     /// When enabled, the Wave Function Collapse algorithm will divide large grids

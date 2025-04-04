@@ -678,7 +678,7 @@ impl GpuBuffers {
                 });
 
                 // Initialize empty results
-                let result = GpuDownloadResults {
+                let mut result = GpuDownloadResults {
                     entropy: None,
                     min_entropy_info: None,
                     contradiction_flag: None,
@@ -739,7 +739,157 @@ impl GpuBuffers {
                 debug!("GPU copy commands submitted for download.");
 
                 // Now map the staging buffers and process results
-                // This code will be implemented in the future
+                use futures::future::join_all;
+                use futures::FutureExt;
+                use std::convert::TryInto;
+                use tokio::sync::oneshot;
+
+                // For adaptive timeout
+                let operation_complexity = 2.0; // More complex for bulk downloads
+                let estimated_width = self.grid_dims.0;
+                let estimated_height = self.grid_dims.1;
+                let estimated_depth = self.grid_dims.2;
+                let estimated_tiles = self.num_tiles;
+                
+                let recovery_op = Self::configure_adaptive_timeouts(
+                    estimated_width,
+                    estimated_height,
+                    estimated_depth,
+                    estimated_tiles,
+                );
+                let operation_timeout = recovery_op.calculate_operation_timeout(operation_complexity);
+                
+                let mut futures = Vec::new();
+                
+                // Grid possibilities download (most important for progressive results)
+                if download_grid_possibilities {
+                    let buffer = self.staging_grid_possibilities_buf.clone();
+                    let expected_size = self.u32s_per_cell * self.num_cells;
+                    
+                    futures.push(async move {
+                        let buffer_slice = buffer.slice(..);
+                        let (tx, rx) = oneshot::channel();
+                        
+                        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                            let _ = tx.send(result);
+                        });
+                        
+                        match tokio::time::timeout(operation_timeout, rx).await {
+                            Ok(result) => {
+                                result.map_err(|_| {
+                                    GpuError::BufferOperationError("Mapping channel canceled".to_string())
+                                })??;
+                                
+                                let mapped_range = buffer_slice.get_mapped_range();
+                                let bytes = mapped_range.as_ref();
+                                
+                                // Convert bytes to u32 slice and then to Vec<u32>
+                                let u32_slice = unsafe {
+                                    std::slice::from_raw_parts(
+                                        bytes.as_ptr() as *const u32,
+                                        bytes.len() / std::mem::size_of::<u32>(),
+                                    )
+                                };
+                                
+                                // Validate the size
+                                if u32_slice.len() >= expected_size {
+                                    let grid_possibilities = u32_slice[..expected_size].to_vec();
+                                    Ok(("grid_possibilities", Box::new(grid_possibilities) as Box<dyn std::any::Any + Send>))
+                                } else {
+                                    Err(GpuError::BufferOperationError(format!(
+                                        "Grid possibilities buffer size mismatch: expected {} items, got {}",
+                                        expected_size,
+                                        u32_slice.len()
+                                    )))
+                                }
+                            },
+                            Err(_) => {
+                                Err(GpuError::BufferOperationError(format!(
+                                    "Grid possibilities buffer mapping timed out after {:?}",
+                                    operation_timeout
+                                )))
+                            }
+                        }
+                    }.boxed());
+                }
+                
+                // Worklist count download
+                if download_worklist_size {
+                    let buffer = self.staging_worklist_count_buf.clone();
+                    
+                    futures.push(async move {
+                        let buffer_slice = buffer.slice(..);
+                        let (tx, rx) = oneshot::channel();
+                        
+                        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                            let _ = tx.send(result);
+                        });
+                        
+                        rx.await.map_err(|_| {
+                            GpuError::BufferOperationError("Mapping channel canceled".to_string())
+                        })??;
+                        
+                        let mapped_range = buffer_slice.get_mapped_range();
+                        let bytes = mapped_range.to_vec();
+                        drop(mapped_range);
+                        buffer.unmap();
+                        
+                        if bytes.len() >= 4 {
+                            let count = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+                            Ok(("worklist_count", Box::new(count) as Box<dyn std::any::Any + Send>))
+                        } else {
+                            Err(GpuError::BufferOperationError(
+                                "Worklist count buffer size mismatch".to_string(),
+                            ))
+                        }
+                    }.boxed());
+                }
+                
+                // Process the futures
+                let download_results = join_all(futures).await;
+                
+                // Process the results
+                for download_result in download_results {
+                    match download_result {
+                        Ok((name, data)) => {
+                            match name {
+                                "grid_possibilities" => {
+                                    if let Some(grid_data) = data.downcast_ref::<Vec<u32>>() {
+                                        result.grid_possibilities = Some(grid_data.clone());
+                                    }
+                                }
+                                "worklist_count" => {
+                                    if let Some(count) = data.downcast_ref::<u32>() {
+                                        result.worklist_count = Some(*count);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Error downloading GPU data: {}", e);
+                            return Err(e);
+                        }
+                    }
+                }
+                
+                // Clean up for entropy buffer
+                if download_entropy {
+                    let buffer = self.staging_entropy_buf.clone();
+                    buffer.unmap();
+                }
+                
+                // Clean up for min entropy info buffer
+                if download_min_entropy_info {
+                    let buffer = self.staging_min_entropy_info_buf.clone();
+                    buffer.unmap();
+                }
+                
+                // Clean up for contradiction location buffer
+                if download_contradiction_location {
+                    let buffer = self.staging_contradiction_location_buf.clone();
+                    buffer.unmap();
+                }
 
                 Ok(result)
             })
