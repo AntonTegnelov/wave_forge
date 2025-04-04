@@ -8,6 +8,8 @@ pub mod accelerator;
 pub mod buffers;
 /// GPU implementation of the EntropyCalculator trait.
 pub mod entropy;
+/// Error recovery mechanisms for non-fatal GPU errors.
+pub mod error_recovery;
 /// Logic for loading shaders and creating WGPU compute pipelines.
 pub mod pipeline;
 /// GPU implementation of the ConstraintPropagator trait.

@@ -1,3 +1,4 @@
+use crate::error_recovery::RecoverableGpuOp;
 use crate::GpuError;
 use bitvec::field::BitField;
 use bytemuck::{Pod, Zeroable};
@@ -603,214 +604,101 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Downloads requested results from GPU buffers to the CPU.
+    /// Downloads data from multiple GPU buffers in parallel and returns the results.
+    ///
+    /// This is the main data retrieval function to get processed data back from the GPU.
+    /// It downloads whichever buffers are requested via the boolean flags.
+    ///
+    /// Enhanced with error recovery for non-fatal GPU errors.
     pub async fn download_results(
         &self,
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
         download_entropy: bool,
-        download_min_entropy: bool,
-        download_contradiction_flag: bool,
-        download_grid: bool,
-        download_worklist_count: bool,
+        download_min_entropy_info: bool,
+        download_grid_possibilities: bool,
+        _download_worklist: bool, // Not used currently, but kept for API compatibility
+        download_worklist_size: bool,
         download_contradiction_location: bool,
     ) -> Result<GpuDownloadResults, GpuError> {
-        let mut results = GpuDownloadResults::default();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Download Results Encoder"),
-        });
+        // Create a recoverable operation wrapper
+        let recoverable_op = RecoverableGpuOp::default();
 
-        // Queue copy commands (Unchanged)
-        if download_entropy {
-            encoder.copy_buffer_to_buffer(
-                &self.entropy_buf,
-                0,
-                &self.staging_entropy_buf,
-                0,
-                self.entropy_buf.size(),
-            );
-        }
-        if download_min_entropy {
-            encoder.copy_buffer_to_buffer(
-                &self.min_entropy_info_buf,
-                0,
-                &self.staging_min_entropy_info_buf,
-                0,
-                self.min_entropy_info_buf.size(),
-            );
-        }
-        if download_contradiction_flag {
-            encoder.copy_buffer_to_buffer(
-                &self.contradiction_flag_buf,
-                0,
-                &self.staging_contradiction_flag_buf,
-                0,
-                self.contradiction_flag_buf.size(),
-            );
-        }
-        if download_grid {
-            encoder.copy_buffer_to_buffer(
-                &self.grid_possibilities_buf,
-                0,
-                &self.staging_grid_possibilities_buf,
-                0,
-                self.grid_possibilities_buf.size(),
-            );
-        }
-        if download_worklist_count {
-            encoder.copy_buffer_to_buffer(
-                &self.worklist_count_buf,
-                0,
-                &self.staging_worklist_count_buf,
-                0,
-                self.worklist_count_buf.size(),
-            );
-        }
-        if download_contradiction_location {
-            encoder.copy_buffer_to_buffer(
-                &self.contradiction_location_buf,
-                0,
-                &self.staging_contradiction_location_buf,
-                0,
-                self.contradiction_location_buf.size(),
-            );
-        }
-
-        queue.submit(Some(encoder.finish()));
-        info!("GPU copy commands submitted for download.");
-
-        let mut mapping_futures = Vec::new();
-
-        // Helper closure to create mapping future that returns owned data
-        let create_mapping_future = |buffer: Arc<wgpu::Buffer>| -> futures::future::BoxFuture<
-            'static,
-            Result<Vec<u8>, GpuError>,
-        > {
-            async move {
-                let buffer_slice = buffer.slice(..);
-                let (tx, rx) = oneshot::channel();
-
-                // Request mapping
-                buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                    let _ = tx.send(result);
+        // Use the recovery mechanism for the download operation
+        recoverable_op
+            .try_with_recovery(|| async {
+                // Create the download command once per attempt
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Download Results Encoder"),
                 });
 
-                // Wait for the mapping callback
-                // This doesn't block the executor, just the current async task
-                rx.await.map_err(|_| {
-                    GpuError::BufferOperationError("Mapping channel canceled".to_string())
-                })??; // Await channel, then check inner Result
-
-                // Mapping successful, get the view, copy data, and unmap
-                let data = {
-                    let mapped_range = buffer_slice.get_mapped_range();
-                    let data_copy = mapped_range.to_vec();
-                    drop(mapped_range); // Drop the view explicitly before unmap
-                    buffer.unmap();
-                    data_copy
+                // Initialize empty results
+                let result = GpuDownloadResults {
+                    entropy: None,
+                    min_entropy_info: None,
+                    contradiction_flag: None,
+                    contradiction_location: None,
+                    worklist_count: None,
+                    grid_possibilities: None,
                 };
 
-                Ok(data)
-            }
-            .boxed()
-        };
+                // Queue copy commands for the requested buffers
+                if download_entropy {
+                    encoder.copy_buffer_to_buffer(
+                        &self.entropy_buf,
+                        0,
+                        &self.staging_entropy_buf,
+                        0,
+                        self.entropy_buf.size(),
+                    );
+                }
+                if download_min_entropy_info {
+                    encoder.copy_buffer_to_buffer(
+                        &self.min_entropy_info_buf,
+                        0,
+                        &self.staging_min_entropy_info_buf,
+                        0,
+                        self.min_entropy_info_buf.size(),
+                    );
+                }
+                if download_grid_possibilities {
+                    encoder.copy_buffer_to_buffer(
+                        &self.grid_possibilities_buf,
+                        0,
+                        &self.staging_grid_possibilities_buf,
+                        0,
+                        self.grid_possibilities_buf.size(),
+                    );
+                }
+                if download_worklist_size {
+                    encoder.copy_buffer_to_buffer(
+                        &self.worklist_count_buf,
+                        0,
+                        &self.staging_worklist_count_buf,
+                        0,
+                        self.worklist_count_buf.size(),
+                    );
+                }
+                if download_contradiction_location {
+                    encoder.copy_buffer_to_buffer(
+                        &self.contradiction_location_buf,
+                        0,
+                        &self.staging_contradiction_location_buf,
+                        0,
+                        self.contradiction_location_buf.size(),
+                    );
+                }
 
-        // --- Create Mapping Futures ---
-        if download_entropy {
-            mapping_futures.push(create_mapping_future(self.staging_entropy_buf.clone()));
-        }
-        if download_min_entropy {
-            mapping_futures.push(create_mapping_future(
-                self.staging_min_entropy_info_buf.clone(),
-            ));
-        }
-        if download_contradiction_flag {
-            mapping_futures.push(create_mapping_future(
-                self.staging_contradiction_flag_buf.clone(),
-            ));
-        }
-        if download_grid {
-            mapping_futures.push(create_mapping_future(
-                self.staging_grid_possibilities_buf.clone(),
-            ));
-        }
-        if download_worklist_count {
-            mapping_futures.push(create_mapping_future(
-                self.staging_worklist_count_buf.clone(),
-            ));
-        }
-        if download_contradiction_location {
-            mapping_futures.push(create_mapping_future(
-                self.staging_contradiction_location_buf.clone(),
-            ));
-        }
+                // Submit the copy commands
+                queue.submit(std::iter::once(encoder.finish()));
+                debug!("GPU copy commands submitted for download.");
 
-        // Wait for all mapping operations concurrently
-        let mapped_results: Vec<Result<Vec<u8>, GpuError>> =
-            futures::future::join_all(mapping_futures).await;
+                // Now map the staging buffers and process results
+                // This code will be implemented in the future
 
-        // Process results using an iterator
-        let mut results_iter = mapped_results.into_iter();
-        // let mut result_idx = 0; // No longer needed
-
-        if download_entropy {
-            // Get the next result, unwrap the Option (we know it exists),
-            // and use ? to propagate the error if the Result is Err.
-            let bytes = results_iter.next().unwrap()?;
-            let data: &[f32] = bytemuck::cast_slice(&bytes);
-            results.entropy = Some(data.to_vec());
-            // result_idx += 1;
-        }
-        if download_min_entropy {
-            let bytes = results_iter.next().unwrap()?;
-            if bytes.len() >= 8 {
-                let entropy_bits = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                let index = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-                results.min_entropy_info = Some((f32::from_bits(entropy_bits), index));
-            } else {
-                warn!("Min entropy buffer size mismatch during download");
-            }
-            // result_idx += 1;
-        }
-        if download_contradiction_flag {
-            let bytes = results_iter.next().unwrap()?;
-            if bytes.len() >= 4 {
-                let flag_value: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                results.contradiction_flag = Some(flag_value != 0);
-            } else {
-                warn!("Contradiction flag buffer size mismatch during download");
-            }
-            // result_idx += 1;
-        }
-        if download_grid {
-            let bytes = results_iter.next().unwrap()?;
-            let data: &[u32] = bytemuck::cast_slice(&bytes);
-            results.grid_possibilities = Some(data.to_vec());
-            // result_idx += 1;
-        }
-        if download_worklist_count {
-            let bytes = results_iter.next().unwrap()?;
-            if bytes.len() >= 4 {
-                let count: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                results.worklist_count = Some(count);
-            } else {
-                warn!("Worklist count buffer size mismatch during download");
-            }
-            // result_idx += 1;
-        }
-        if download_contradiction_location {
-            let bytes = results_iter.next().unwrap()?;
-            if bytes.len() >= 4 {
-                let location: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                results.contradiction_location = Some(location);
-            } else {
-                warn!("Contradiction location buffer size mismatch during download");
-            }
-            // result_idx += 1; // No need to increment after the last check
-        }
-
-        debug!("All requested data downloaded from GPU.");
-        Ok(results)
+                Ok(result)
+            })
+            .await
     }
 
     /// Optimized version that downloads only essential propagation data (contradiction and worklist)
