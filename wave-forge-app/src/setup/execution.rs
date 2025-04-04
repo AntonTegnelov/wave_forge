@@ -21,9 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 use wfc_core::{
-    entropy::EntropyCalculator,
     grid::PossibilityGrid,
-    propagator::propagator::ConstraintPropagator,
     runner::{self, ProgressCallback, WfcConfig},
     BoundaryCondition, ProgressInfo,
 };
@@ -348,7 +346,7 @@ pub async fn run_benchmark_mode(
 
 pub async fn run_standard_mode(
     config: &AppConfig,
-    tileset: &TileSet,
+    _tileset: &TileSet, // Prefix with underscore since it's not used directly
     rules: &AdjacencyRules,
     grid: &mut PossibilityGrid, // Original grid to update on success
     viz_tx: &Option<Sender<VizMessage>>,
@@ -501,7 +499,7 @@ pub async fn run_standard_mode(
 
     // --- Setup WfcConfig for runner ---
     let wfc_config = WfcConfig {
-        boundary_mode: core_boundary_mode,
+        boundary_condition: core_boundary_mode,
         progress_callback,
         shutdown_signal: shutdown_signal.clone(),
         initial_checkpoint: None,
@@ -521,23 +519,22 @@ pub async fn run_standard_mode(
         grid_guard.clone()
     };
 
-    // Clone the accelerator itself to create owned instances for the Box
-    let propagator: Box<dyn ConstraintPropagator + Send + Sync> = Box::new(gpu_accelerator.clone());
-    let entropy_calc: Box<dyn EntropyCalculator + Send + Sync> = Box::new(gpu_accelerator); // Move the original
+    // Clone the GPU accelerator to use directly in the run call
+    let accelerator_clone = gpu_accelerator.clone();
+    let entropy_clone = gpu_accelerator.clone();
 
     let wfc_run_result = runner::run(
         &mut runner_grid,
-        tileset,
         rules,
-        propagator,
-        entropy_calc,
-        &wfc_config,
+        accelerator_clone,
+        entropy_clone,
+        wfc_config,
     );
 
     log::info!("WFC core algorithm finished.");
 
     // --- Process Result ---
-    match wfc_run_result {
+    match wfc_run_result.await {
         Ok(_) => {
             info!("WFC completed successfully.");
             // Update the original grid with the final state from runner_grid

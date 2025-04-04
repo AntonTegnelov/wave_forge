@@ -18,8 +18,8 @@ pollster = "0.3.0"
 rayon = "1.10.0"
 seahash = "4.1.0"     # For hashing cache keys
 thiserror = "1.0.59"
-wgpu = "0.19.4" # Check for compatibility updates
-wgpu-profiler = "0.16.1" # Match wgpu version if possible
+wgpu = "0.20" # Check for compatibility updates
+wgpu-profiler = "0.17.0" # Match wgpu version if possible
 
 wfc-core = { path = "../wfc-core" }
 wfc-rules = { path = "../wfc-rules" }

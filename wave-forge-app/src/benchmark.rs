@@ -13,9 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 use wfc_core::{
-    entropy::{EntropyCalculator, SelectionStrategy},
     grid::PossibilityGrid,
-    propagator::propagator::ConstraintPropagator,
     runner::{self, WfcConfig},
     BoundaryCondition, ExecutionMode, ProgressInfo, WfcError,
 };
@@ -94,25 +92,13 @@ pub async fn run_single_wfc_benchmark(
     let start_time = Instant::now();
     let initial_memory_res = get_memory_usage().map_err(|e| AppError::Anyhow(e));
 
-    let tileset_arc = Arc::new(tileset.clone());
-    let (propagator, entropy_calc): (
-        Box<dyn ConstraintPropagator + Send + Sync>,
-        Box<dyn EntropyCalculator + Send + Sync>,
-    ) = match core_execution_mode {
-        ExecutionMode::Gpu => {
-            let _guard = profiler.profile("gpu_component_setup");
-            let accelerator_arc = match gpu_accelerator_arc {
-                Some(arc) => arc.clone(),
-                None => {
-                    return Err(AppError::Anyhow(anyhow::anyhow!(
-                        "GPU accelerator Arc missing in GPU benchmark mode"
-                    )));
-                }
-            };
-            (
-                Box::new((*accelerator_arc).clone()),
-                Box::new((*accelerator_arc).clone()),
-            )
+    let _tileset_arc = Arc::new(tileset.clone());
+    let accelerator = match gpu_accelerator_arc {
+        Some(arc) => arc,
+        None => {
+            return Err(AppError::Anyhow(anyhow::anyhow!(
+                "GPU accelerator Arc missing in GPU benchmark mode"
+            )));
         }
     };
 
@@ -129,7 +115,18 @@ pub async fn run_single_wfc_benchmark(
 
     log::info!("Running WFC Benchmark ({:?})...", core_execution_mode);
     let _run_guard = profiler.profile("wfc_run");
-    let wfc_result = runner::run(&mut grid, rules, propagator, entropy_calc, wfc_config);
+
+    // Get a clone of the actual GpuAccelerator from inside the Arc
+    let accelerator_clone = (*accelerator).clone();
+    let wfc_result = runner::run(
+        &mut grid,
+        rules,
+        accelerator_clone.clone(),
+        accelerator_clone,
+        wfc_config,
+    )
+    .await;
+
     let duration = start_time.elapsed();
     drop(_run_guard);
 

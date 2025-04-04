@@ -238,6 +238,12 @@ impl GpuAccelerator {
     pub fn num_tiles(&self) -> usize {
         self.num_tiles
     }
+
+    /// Returns the GPU parameters uniform.
+    pub fn params(&self) -> GpuParamsUniform {
+        // Return a copy of the params from the propagator
+        self.propagator.params
+    }
 }
 
 // --- Trait Implementations ---

@@ -12,9 +12,6 @@ use wfc_core::{
 };
 use wfc_rules::AdjacencyRules;
 
-const MAX_PROPAGATION_ITERATIONS: u32 = 100; // Safeguard against infinite loops
-const PROPAGATION_BATCH_SIZE: usize = 4096; // Number of updates to process per GPU dispatch
-
 /// GPU implementation of the ConstraintPropagator trait.
 #[derive(Debug, Clone)]
 pub struct GpuConstraintPropagator {
@@ -27,7 +24,7 @@ pub struct GpuConstraintPropagator {
     pub(crate) boundary_mode: BoundaryCondition,
     // State for ping-pong buffer index
     current_worklist_idx: usize,
-    params: GpuParamsUniform,
+    pub(crate) params: GpuParamsUniform,
 }
 
 impl GpuConstraintPropagator {
@@ -136,13 +133,14 @@ impl ConstraintPropagator for GpuConstraintPropagator {
             .collect();
 
         // Decide initial buffer index (e.g., 0 for buf_a)
-        let mut current_worklist_index = 0;
+        self.current_worklist_idx = 0; // Start with buffer A
+        let mut current_worklist_size = initial_updates.len() as u32;
+
         self.buffers
-            .upload_initial_updates(&self.queue, &initial_updates, current_worklist_index)
+            .upload_initial_updates(&self.queue, &initial_updates, self.current_worklist_idx)
             .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
 
         // Set initial worklist size in params uniform
-        let mut current_worklist_size = initial_updates.len() as u32;
         self.buffers
             .update_params_worklist_size(&self.queue, current_worklist_size)
             .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
@@ -157,14 +155,48 @@ impl ConstraintPropagator for GpuConstraintPropagator {
                 propagation_pass, current_worklist_size
             );
 
-            // Determine input/output buffers for this pass
-            // let input_worklist_bind_group = if current_worklist_index == 0 {
-            //     &self.pipelines.propagate_bind_group_a // Field doesn't exist
-            // } else {
-            //     &self.pipelines.propagate_bind_group_b // Field doesn't exist
-            // };
-            // TODO: Need to create/get appropriate bind group here
-            // let bind_group = ???
+            // Create bind group for current pass using our worklist binding methods
+            let input_worklist_resource = self.input_worklist_binding();
+            let output_worklist_resource = self.output_worklist_binding();
+
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("Propagation Bind Group Pass {}", propagation_pass)),
+                layout: &self.pipelines.propagation_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.buffers.rules_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: input_worklist_resource,
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: output_worklist_resource,
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.buffers.params_uniform_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: self.buffers.worklist_count_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: self.buffers.contradiction_location_buf.as_entire_binding(),
+                    },
+                ],
+            });
 
             // Reset output worklist count and contradiction flag/location
             self.buffers
@@ -188,9 +220,8 @@ impl ConstraintPropagator for GpuConstraintPropagator {
                     label: Some(&format!("Propagation Compute Pass {}", propagation_pass)),
                     timestamp_writes: None, // Add timestamps if needed
                 });
-                compute_pass.set_pipeline(&self.pipelines.propagation_pipeline); // Correct field name
-                                                                                 // compute_pass.set_bind_group(0, input_worklist_bind_group, &[]); // Commented out - bind group unavailable
-                                                                                 // compute_pass.set_bind_group(0, &bind_group, &[]); // Need to create bind group first
+                compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
+                compute_pass.set_bind_group(0, &bind_group, &[]);
 
                 // Calculate dispatch size based on worklist size
                 let workgroup_size = 64; // Should match shader
@@ -211,7 +242,7 @@ impl ConstraintPropagator for GpuConstraintPropagator {
                     true,  // contradiction_flag
                     false, // grid
                     true,  // worklist_count
-                    true,  // download_contradiction_location (Added)
+                    true,  // download_contradiction_location
                 )
                 .await
                 .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
@@ -246,7 +277,7 @@ impl ConstraintPropagator for GpuConstraintPropagator {
             );
 
             // Ping-pong buffers for next iteration
-            current_worklist_index = 1 - current_worklist_index;
+            self.current_worklist_idx = 1 - self.current_worklist_idx;
         }
 
         // Safety break check
