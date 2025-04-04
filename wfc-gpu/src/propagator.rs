@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use async_trait::async_trait;
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::sync::Arc;
 use wfc_core::{
     grid::PossibilityGrid,
@@ -169,7 +169,7 @@ impl GpuConstraintPropagator {
             return Ok(subgrid);
         }
 
-        info!(
+        debug!(
             "Processing subgrid region ({},{},{}) to ({},{},{}) with {} updates",
             region.start_x,
             region.start_y,
@@ -230,7 +230,7 @@ impl GpuConstraintPropagator {
         updated_coords: Vec<(usize, usize, usize)>,
         _rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        info!(
+        debug!(
             "Starting GPU propagation with {} initial update(s).",
             updated_coords.len()
         );
@@ -267,11 +267,15 @@ impl GpuConstraintPropagator {
         // Main propagation loop
         while propagation_pass < MAX_PROPAGATION_PASSES && current_worklist_size > 0 {
             propagation_pass += 1;
-            log::debug!(
-                "Starting propagation pass {} with {} cells in worklist.",
-                propagation_pass,
-                current_worklist_size
-            );
+
+            // Reduce logging frequency - only log every 5 passes or for large worklists
+            if propagation_pass % 5 == 0 || current_worklist_size > 1000 {
+                log::debug!(
+                    "Propagation pass {} with {} cells in worklist",
+                    propagation_pass,
+                    current_worklist_size
+                );
+            }
 
             // --- Create and Configure Bind Group for Current Pass ---
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -375,7 +379,7 @@ impl GpuConstraintPropagator {
             if new_worklist_size <= self.early_termination_threshold {
                 consecutive_passes_below_threshold += 1;
                 if consecutive_passes_below_threshold >= self.early_termination_consecutive_passes {
-                    info!("Early termination after {} passes: {} cells below threshold of {} for {} consecutive passes",
+                    debug!("Early termination after {} passes: {} cells below threshold of {} for {} consecutive passes",
                         propagation_pass, new_worklist_size, self.early_termination_threshold, consecutive_passes_below_threshold);
                     break;
                 }
@@ -402,7 +406,7 @@ impl GpuConstraintPropagator {
             );
         }
 
-        info!("Propagation completed after {} passes.", propagation_pass);
+        debug!("Propagation completed after {} passes.", propagation_pass);
         Ok(())
     }
 }

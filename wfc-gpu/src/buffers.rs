@@ -495,7 +495,6 @@ impl GpuBuffers {
     ///
     /// * `Ok(())` always (buffer writing is typically fire-and-forget, errors are harder to catch here).
     pub fn reset_min_entropy_info(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
-        debug!("Resetting min entropy info buffer on GPU.");
         let initial_data = [f32::MAX.to_bits(), u32::MAX]; // [min_entropy_f32_bits, min_index_u32]
         queue.write_buffer(
             &self.min_entropy_info_buf,
@@ -518,7 +517,6 @@ impl GpuBuffers {
     ///
     /// * `Ok(())` always.
     pub fn reset_contradiction_flag(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
-        debug!("Resetting contradiction flag buffer on GPU.");
         queue.write_buffer(
             &self.contradiction_flag_buf,
             0,
@@ -539,7 +537,6 @@ impl GpuBuffers {
     ///
     /// * `Ok(())` always.
     pub fn reset_worklist_count(&self, queue: &wgpu::Queue) -> Result<(), GpuError> {
-        debug!("Resetting worklist count buffer on GPU.");
         queue.write_buffer(&self.worklist_count_buf, 0, bytemuck::cast_slice(&[0u32]));
         Ok(())
     }
@@ -587,14 +584,6 @@ impl GpuBuffers {
         queue: &wgpu::Queue,
         worklist_size: u32,
     ) -> Result<(), GpuError> {
-        debug!(
-            "Updating params uniform buffer worklist_size to {} on GPU.",
-            worklist_size
-        );
-        // Calculate the offset of the worklist_size field within the GpuParamsUniform struct.
-        // WARNING: This assumes the layout defined in GpuParamsUniform.
-        // If the struct changes, this offset needs to be updated.
-        // grid_width, grid_height, grid_depth, num_tiles, num_axes are all u32.
         let offset = (5 * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
         queue.write_buffer(
             &self.params_uniform_buf,

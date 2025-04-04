@@ -211,7 +211,9 @@ impl GpuErrorRecovery {
                     // Use adaptive timeout recovery for timeout errors
                     // This will ensure that larger grids get more attempts and longer timeouts
                     if self.adaptive_timeout.is_some() {
-                        log::info!("Using adaptive timeout recovery for command execution timeout");
+                        log::debug!(
+                            "Using adaptive timeout recovery for command execution timeout"
+                        );
                     }
                     ErrorSeverity::Recoverable
                 } else {
@@ -222,7 +224,7 @@ impl GpuErrorRecovery {
                 if (msg.contains("map") || msg.contains("timeout")) && self.recover_buffer_mapping {
                     // Use adaptive timeout recovery for mapping timeouts
                     if msg.contains("timeout") && self.adaptive_timeout.is_some() {
-                        log::info!("Using adaptive timeout recovery for buffer mapping timeout");
+                        log::debug!("Using adaptive timeout recovery for buffer mapping timeout");
                     }
                     ErrorSeverity::Recoverable
                 } else {

@@ -105,17 +105,36 @@ impl GpuEntropyCalculator {
             let workgroup_size = self.pipelines.entropy_workgroup_size;
             let workgroups_needed = num_cells.div_ceil(workgroup_size as usize) as u32;
 
-            log::debug!(
-                "Dispatching entropy shader with {} workgroups of size {}",
-                workgroups_needed,
-                workgroup_size // Log the dynamic size
-            );
-            compute_pass.dispatch_workgroups(workgroups_needed, 1, 1);
+            let compute_pass_label = "Entropy Computation Pass";
+
+            // Dispatch the compute shader
+            {
+                let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some(compute_pass_label),
+                    timestamp_writes: None,
+                });
+                compute_pass.set_pipeline(&self.pipelines.entropy_pipeline);
+                compute_pass.set_bind_group(0, &bind_group, &[]);
+
+                // Calculate dispatch size
+                let workgroup_size = self.pipelines.entropy_workgroup_size;
+                let dispatch_x = (num_cells as u32 + workgroup_size - 1) / workgroup_size;
+
+                // Only log this for large grids or very verbose logging settings
+                if num_cells > 10000 {
+                    log::debug!(
+                        "Dispatching entropy shader with {} workgroups for {} cells",
+                        dispatch_x,
+                        num_cells
+                    );
+                }
+
+                compute_pass.dispatch_workgroups(dispatch_x, 1, 1);
+            }
         } // End compute pass scope
 
         // 4. Submit to Queue (uses Arc<Queue>)
         self.queue.submit(std::iter::once(encoder.finish()));
-        log::debug!("Entropy compute shader submitted.");
 
         // Download results asynchronously
         let download_results = self
@@ -163,7 +182,8 @@ impl GpuEntropyCalculator {
         &self,
         _entropy_grid: &EntropyGrid,
     ) -> Option<(usize, usize, usize)> {
-        log::debug!("Downloading GPU minimum entropy info...");
+        // Reduce verbosity - only log at trace level
+        log::trace!("Downloading GPU minimum entropy info...");
 
         // Download min entropy info asynchronously
         let min_entropy_result = self
@@ -182,7 +202,7 @@ impl GpuEntropyCalculator {
                         let z = flat_index as usize / (width * height);
                         let y = (flat_index as usize % (width * height)) / width;
                         let x = flat_index as usize % width;
-                        log::info!(
+                        log::debug!(
                             "GPU found lowest entropy ({}) at ({}, {}, {})",
                             min_entropy,
                             x,
