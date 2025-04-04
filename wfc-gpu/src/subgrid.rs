@@ -6,7 +6,7 @@
 
 use crate::GpuError;
 use std::cmp::min;
-use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
+use wfc_core::grid::PossibilityGrid;
 
 /// Represents a subgrid region within the main WFC grid
 #[derive(Debug, Clone, Copy)]
