@@ -757,13 +757,19 @@ impl GpuBuffers {
         let mut result_idx = 0;
 
         if download_entropy {
-            let bytes = mapped_results[result_idx]?;
-            let data: &[f32] = bytemuck::cast_slice(&bytes);
+            let bytes = match mapped_results[result_idx] {
+                Ok(ref data) => data,
+                Err(ref e) => return Err(e.clone()), // Clone the error to return
+            };
+            let data: &[f32] = bytemuck::cast_slice(bytes);
             results.entropy = Some(data.to_vec());
             result_idx += 1;
         }
         if download_min_entropy {
-            let bytes = mapped_results[result_idx]?;
+            let bytes = match mapped_results[result_idx] {
+                Ok(ref data) => data,
+                Err(ref e) => return Err(e.clone()),
+            };
             if bytes.len() >= 8 {
                 let entropy_bits = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
                 let index = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
@@ -774,7 +780,10 @@ impl GpuBuffers {
             result_idx += 1;
         }
         if download_contradiction_flag {
-            let bytes = mapped_results[result_idx]?;
+            let bytes = match mapped_results[result_idx] {
+                Ok(ref data) => data,
+                Err(ref e) => return Err(e.clone()),
+            };
             if bytes.len() >= 4 {
                 let flag_value: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
                 results.contradiction_flag = Some(flag_value != 0);
@@ -784,13 +793,19 @@ impl GpuBuffers {
             result_idx += 1;
         }
         if download_grid {
-            let bytes = mapped_results[result_idx]?;
-            let data: &[u32] = bytemuck::cast_slice(&bytes);
+            let bytes = match mapped_results[result_idx] {
+                Ok(ref data) => data,
+                Err(ref e) => return Err(e.clone()),
+            };
+            let data: &[u32] = bytemuck::cast_slice(bytes);
             results.grid_possibilities = Some(data.to_vec());
             result_idx += 1;
         }
         if download_worklist_count {
-            let bytes = mapped_results[result_idx]?;
+            let bytes = match mapped_results[result_idx] {
+                Ok(ref data) => data,
+                Err(ref e) => return Err(e.clone()),
+            };
             if bytes.len() >= 4 {
                 let count: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
                 results.worklist_count = Some(count);
@@ -800,7 +815,10 @@ impl GpuBuffers {
             result_idx += 1;
         }
         if download_contradiction_location {
-            let bytes = mapped_results[result_idx]?;
+            let bytes = match mapped_results[result_idx] {
+                Ok(ref data) => data,
+                Err(ref e) => return Err(e.clone()),
+            };
             if bytes.len() >= 4 {
                 let location: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
                 results.contradiction_location = Some(location);
@@ -839,12 +857,11 @@ enum DownloadedData {
 mod tests {
     use super::*;
     use crate::test_utils::initialize_test_gpu;
-    use futures::pin_mut;
     use std::sync::Arc;
+    use std::time::Duration;
     use tokio;
     use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
     use wfc_rules::AdjacencyRules;
-    use wgpu::util::DeviceExt;
 
     // Helper function to create uniform rules (copied from core)
     fn create_uniform_rules(num_transformed_tiles: usize, num_axes: usize) -> AdjacencyRules {
