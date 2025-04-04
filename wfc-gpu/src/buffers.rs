@@ -842,7 +842,10 @@ enum DownloadedData {
 mod tests {
     use super::*;
     use crate::test_utils::initialize_test_gpu;
+    use futures::pin_mut;
     use std::sync::Arc;
+    use std::time::Duration;
+    use tokio;
     use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
     use wfc_rules::AdjacencyRules;
 
@@ -913,7 +916,7 @@ mod tests {
         pin_mut!(download_future);
         let results = loop {
             futures::select! {
-                res = download_future.as_mut().fuse() => break res,
+                res = download_future.fuse() => break res,
                 _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
                     // Poll the device regularly while waiting
                     device.poll(wgpu::Maintain::Poll);

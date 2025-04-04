@@ -5,11 +5,8 @@ use crate::{
     pipeline::ComputePipelines,
 };
 use async_trait::async_trait;
-use futures;
-use futures::pin_mut;
 use log::{debug, info, warn};
 use std::sync::Arc;
-use std::time::Duration;
 use wfc_core::{
     grid::PossibilityGrid,
     propagator::propagator::{ConstraintPropagator, PropagationError},
@@ -308,7 +305,6 @@ mod tests {
     use super::*;
     use crate::accelerator::GpuAccelerator;
     use crate::test_utils::initialize_test_gpu;
-    use crate::GpuError;
     use futures::{pin_mut, FutureExt};
     use std::time::Duration;
     use tokio;
@@ -388,7 +384,7 @@ mod tests {
         pin_mut!(download_future);
         let results = loop {
             futures::select! {
-                res = download_future.as_mut().fuse() => break res,
+                res = download_future.fuse() => break res,
                 _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
                     device.poll(wgpu::Maintain::Poll);
                 }
@@ -461,7 +457,7 @@ mod tests {
         pin_mut!(propagate_future);
         let prop_result = loop {
             futures::select! {
-                res = propagate_future.as_mut().fuse() => break res,
+                res = propagate_future.fuse() => break res,
                 _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
                     accelerator.device().poll(wgpu::Maintain::Poll);
                 }
@@ -521,7 +517,7 @@ mod tests {
         pin_mut!(propagate_future);
         let prop_result = loop {
             futures::select! {
-                res = propagate_future.as_mut().fuse() => break res,
+                res = propagate_future.fuse() => break res,
                 _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
                     accelerator.device().poll(wgpu::Maintain::Poll);
                 }
