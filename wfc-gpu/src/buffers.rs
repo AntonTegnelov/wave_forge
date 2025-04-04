@@ -2,9 +2,12 @@ use crate::GpuError;
 use bitvec::field::BitField;
 use bytemuck::{Pod, Zeroable};
 use futures::channel::oneshot;
+use futures::pin_mut;
 use futures::{self, FutureExt};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio;
 use wfc_core::grid::PossibilityGrid;
 use wfc_core::BoundaryCondition;
 use wfc_rules::AdjacencyRules;
@@ -898,19 +901,30 @@ mod tests {
     async fn read_initial_possibilities_placeholder() {
         let (device, queue, _grid, buffers) = setup_test_environment(2, 2, 1, 4);
 
-        let results = buffers
-            .download_results(
-                device.clone(),
-                queue.clone(),
-                false,
-                false,
-                false,
-                true, // Download grid
-                false,
-                false,
-            )
-            .await
-            .expect("Failed to download results");
+        // Create the future but don't await immediately
+        let download_future = buffers.download_results(
+            device.clone(),
+            queue.clone(),
+            false,
+            false,
+            false,
+            true, // Download grid
+            false,
+            false,
+        );
+
+        // Pin the future and use select! with polling
+        pin_mut!(download_future);
+        let results = loop {
+            futures::select! {
+                res = download_future.as_mut().fuse() => break res,
+                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
+                    // Poll the device regularly while waiting
+                    device.poll(wgpu::Maintain::Poll);
+                }
+            }
+        }
+        .expect("Failed to download results");
 
         assert!(results.grid_possibilities.is_some());
         // TODO: Add actual value checks

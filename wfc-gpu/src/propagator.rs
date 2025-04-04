@@ -1,10 +1,15 @@
+use crate::accelerator::GpuAccelerator;
+use crate::GpuError;
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     pipeline::ComputePipelines,
 };
 use async_trait::async_trait;
+use futures;
+use futures::pin_mut;
 use log::{debug, info, warn};
 use std::sync::Arc;
+use std::time::Duration;
 use wfc_core::{
     grid::PossibilityGrid,
     propagator::propagator::{ConstraintPropagator, PropagationError},
@@ -350,28 +355,41 @@ mod tests {
     // Helper to download the grid state from GPU buffers
     async fn download_grid_state(
         accelerator: &GpuAccelerator,
-        grid_dims: (usize, usize, usize),
+        dims: (usize, usize, usize),
         num_tiles: usize,
     ) -> Result<PossibilityGrid, GpuError> {
-        let (width, height, depth) = grid_dims;
-        let results = accelerator
-            .buffers()
-            .download_results(
-                accelerator.device().clone(),
-                accelerator.queue().clone(),
-                false, // entropy
-                false, // min_entropy
-                false, // contradiction
-                true,  // possibilities
-                false, // worklist_count
-                false, // download_contradiction_location
-            )
-            .await?;
+        let device = accelerator.device(); // Clone Arc
+        let queue = accelerator.queue(); // Clone Arc
+        let buffers = accelerator.buffers(); // Clone Arc
+
+        // Use download_results to get the packed possibilities
+        let download_future = buffers.download_results(
+            device.clone(),
+            queue.clone(),
+            false, // entropy
+            false, // min_entropy
+            false, // contradiction_flag
+            true,  // grid
+            false, // worklist_count
+            false, // download_contradiction_location
+        );
+
+        // Pin the future and poll
+        pin_mut!(download_future);
+        let results = loop {
+            futures::select! {
+                res = download_future.as_mut().fuse() => break res,
+                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
+                    device.poll(wgpu::Maintain::Poll);
+                }
+            }
+        }?;
 
         let packed_data = results
             .grid_possibilities
-            .ok_or_else(|| GpuError::InternalError("Possibilities not downloaded".to_string()))?;
+            .ok_or_else(|| GpuError::InternalError("Grid data not downloaded".to_string()))?;
 
+        let (width, height, depth) = dims;
         let mut new_grid = PossibilityGrid::new(width, height, depth, num_tiles);
         let u32s_per_cell = (num_tiles + 31) / 32;
         let mut current_idx = 0;
@@ -427,12 +445,21 @@ mod tests {
 
         // Propagate the change from the center cell
         let updated_coords = vec![(1, 0, 0)];
-        let prop_result = accelerator
-            .propagate(&mut initial_grid, updated_coords, &rules)
-            .await;
+        let propagate_future = accelerator.propagate(&mut initial_grid, updated_coords, &rules);
+
+        // Pin and poll for propagation result
+        pin_mut!(propagate_future);
+        let prop_result = loop {
+            futures::select! {
+                res = propagate_future.as_mut().fuse() => break res,
+                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
+                    accelerator.device().poll(wgpu::Maintain::Poll);
+                }
+            }
+        };
         assert!(prop_result.is_ok());
 
-        // Download the grid state after propagation
+        // Download the grid state after propagation (this already uses the polling loop)
         let final_grid = download_grid_state(&accelerator, (width, height, depth), num_tiles)
             .await
             .expect("Failed to download grid state");
@@ -478,12 +505,21 @@ mod tests {
 
         // Propagate the change from cell (0, 0, 0)
         let updated_coords = vec![(0, 0, 0)];
-        let prop_result = accelerator
-            .propagate(&mut initial_grid, updated_coords, &rules)
-            .await;
+        let propagate_future = accelerator.propagate(&mut initial_grid, updated_coords, &rules);
+
+        // Pin and poll for propagation result
+        pin_mut!(propagate_future);
+        let prop_result = loop {
+            futures::select! {
+                res = propagate_future.as_mut().fuse() => break res,
+                _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
+                    accelerator.device().poll(wgpu::Maintain::Poll);
+                }
+            }
+        };
         assert!(prop_result.is_ok());
 
-        // Download the grid state after propagation
+        // Download the grid state after propagation (this already uses the polling loop)
         let final_grid = download_grid_state(&accelerator, (width, height, depth), num_tiles)
             .await
             .expect("Failed to download grid state");
