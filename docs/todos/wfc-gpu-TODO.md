@@ -26,7 +26,7 @@ This document outlines improvement opportunities for the GPU-accelerated Wave Fu
 - [x] **Advanced adjacency rules**: Support for weighted adjacency rules and more complex constraint types.
 - [x] **Debug visualization**: Add ability to visualize propagation steps, entropy heatmaps, and contradictions.
 - [x] **Progressive results**: Allow retrieving partial/intermediate results before algorithm completion.
-- [ ] **Backtracking support**: Implement backtracking capability when contradictions are found.
+- [x] **Backtracking support**: Implement backtracking capability when contradictions are found.
 - [ ] **Custom entropy heuristics**: Allow custom entropy calculation strategies beyond Shannon entropy.
 
 ## Architecture

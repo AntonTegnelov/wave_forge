@@ -24,6 +24,21 @@ pub type ProgressCallback = Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + S
 pub type ProgressiveResultsCallback =
     Box<dyn Fn(&PossibilityGrid, u64) -> Result<(), WfcError> + Send + Sync>;
 
+/// Information needed for backtracking when contradictions are encountered.
+#[derive(Clone, Debug)]
+pub struct BacktrackInfo {
+    /// The grid state before the choice was made
+    pub grid_state: PossibilityGrid,
+    /// The iteration number when this choice point was created
+    pub iteration: u64,
+    /// The coordinates of the cell that was collapsed
+    pub coords: (usize, usize, usize),
+    /// The tile index that was chosen
+    pub selected_tile: usize,
+    /// The potential tile indices that were available (including the one chosen)
+    pub available_tiles: Vec<usize>,
+}
+
 /// Configuration options for the WFC runner.
 pub struct WfcConfig {
     pub boundary_condition: BoundaryCondition,
@@ -35,6 +50,9 @@ pub struct WfcConfig {
     pub checkpoint_path: Option<PathBuf>,
     pub max_iterations: Option<u64>,
     pub seed: Option<u64>,
+    /// Maximum number of backtracking steps to try when a contradiction is found.
+    /// If None, backtracking is disabled.
+    pub max_backtrack_depth: Option<usize>,
 }
 
 impl WfcConfig {
@@ -56,6 +74,7 @@ impl Default for WfcConfig {
             checkpoint_path: None,
             max_iterations: None,
             seed: None,
+            max_backtrack_depth: None,
         }
     }
 }
@@ -74,6 +93,7 @@ pub struct WfcConfigBuilder {
     checkpoint_path: Option<PathBuf>,
     max_iterations: Option<u64>,
     seed: Option<u64>,
+    max_backtrack_depth: Option<usize>,
 }
 
 impl WfcConfigBuilder {
@@ -132,6 +152,12 @@ impl WfcConfigBuilder {
         self
     }
 
+    /// Sets the maximum number of backtracking steps to try when a contradiction is found.
+    pub fn max_backtrack_depth(mut self, depth: usize) -> Self {
+        self.max_backtrack_depth = Some(depth);
+        self
+    }
+
     /// Builds the `WfcConfig` instance.
     pub fn build(self) -> WfcConfig {
         WfcConfig {
@@ -146,17 +172,21 @@ impl WfcConfigBuilder {
             checkpoint_path: self.checkpoint_path,
             max_iterations: self.max_iterations,
             seed: self.seed,
+            max_backtrack_depth: self.max_backtrack_depth,
         }
     }
 }
 
-// Helper struct to hold the state initialized before the main loop
+// Helper struct to track WFC state during execution
 #[derive(Debug)]
 struct RunState {
     iterations: u64,
     collapsed_cells_count: usize,
     iteration_limit: u64,
     total_cells: usize,
+    // Track backtracking history and depth
+    backtrack_history: Vec<BacktrackInfo>,
+    current_backtrack_depth: usize,
 }
 
 // Helper function to perform initialization steps
@@ -246,6 +276,8 @@ fn initialize_run_state<
         collapsed_cells_count,
         iteration_limit,
         total_cells,
+        backtrack_history: Vec::new(),
+        current_backtrack_depth: 0,
     })
 }
 
@@ -314,6 +346,14 @@ pub async fn run<
 
     let seed = config.seed.unwrap_or_else(rand::random::<u64>);
 
+    let is_backtracking_enabled = config.max_backtrack_depth.is_some();
+    if is_backtracking_enabled {
+        info!(
+            "Backtracking enabled with max depth: {}",
+            config.max_backtrack_depth.unwrap()
+        );
+    }
+
     // --- Main Loop ---
     while state.collapsed_cells_count < state.total_cells {
         // Check iteration limit
@@ -348,7 +388,7 @@ pub async fn run<
         let iteration_duration = iteration_start_time.elapsed();
 
         match result {
-            Ok(Some(collapsed_coords)) => {
+            Ok(Some((collapsed_coords, backtrack_info))) => {
                 state.collapsed_cells_count += 1;
                 debug!(
                     "Iteration {} successful. Collapsed {:?}. Total collapsed: {}. Took: {:?}",
@@ -357,6 +397,20 @@ pub async fn run<
                     state.collapsed_cells_count,
                     iteration_duration
                 );
+
+                // If backtracking is enabled, store the choice point
+                if is_backtracking_enabled {
+                    state.backtrack_history.push(backtrack_info);
+                    // Trim history if it exceeds reasonable size
+                    if let Some(max_depth) = config.max_backtrack_depth {
+                        if state.backtrack_history.len() > max_depth * 2 {
+                            // Keep twice the max depth to allow for some history while avoiding excessive memory use
+                            state
+                                .backtrack_history
+                                .drain(0..state.backtrack_history.len() - max_depth);
+                        }
+                    }
+                }
 
                 // Call progress callback if provided
                 if let Some(callback) = &config.progress_callback {
@@ -385,6 +439,70 @@ pub async fn run<
                     state.iterations
                 );
                 break; // Should be fully collapsed
+            }
+            Err(WfcError::Contradiction(cx, cy, cz)) => {
+                error!(
+                    "Contradiction detected at ({}, {}, {}) during iteration {}",
+                    cx, cy, cz, state.iterations
+                );
+
+                // If backtracking is enabled and we have history, try to backtrack
+                if is_backtracking_enabled
+                    && !state.backtrack_history.is_empty()
+                    && state.current_backtrack_depth < config.max_backtrack_depth.unwrap_or(0)
+                {
+                    info!(
+                        "Attempting to backtrack... (depth: {}/{})",
+                        state.current_backtrack_depth + 1,
+                        config.max_backtrack_depth.unwrap_or(0)
+                    );
+
+                    // Get the most recent choice point
+                    let mut backtrack_point = state.backtrack_history.pop().unwrap();
+
+                    // Remove the tile that led to contradiction from available_tiles
+                    let chosen_tile = backtrack_point.selected_tile;
+                    backtrack_point
+                        .available_tiles
+                        .retain(|&t| t != chosen_tile);
+
+                    if !backtrack_point.available_tiles.is_empty() {
+                        // We have alternative tiles to try, restore grid state
+                        *grid = backtrack_point.grid_state.clone();
+
+                        // Reset iterations and collapsed count
+                        state.iterations = backtrack_point.iteration;
+
+                        // Recalculate collapsed cells count
+                        state.collapsed_cells_count = 0;
+                        for z in 0..grid.depth {
+                            for y in 0..grid.height {
+                                for x in 0..grid.width {
+                                    if let Some(cell) = grid.get(x, y, z) {
+                                        if cell.count_ones() == 1 {
+                                            state.collapsed_cells_count += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        state.current_backtrack_depth += 1;
+                        info!("Backtracked to iteration {} with {} possibilities remaining for cell {:?}",
+                             backtrack_point.iteration, backtrack_point.available_tiles.len(), backtrack_point.coords);
+
+                        // Continue algorithm execution
+                        continue;
+                    } else {
+                        // No alternatives available at this choice point, try next one if available
+                        info!("No alternative tiles available at this choice point, looking deeper...");
+                        state.current_backtrack_depth += 1;
+                        continue;
+                    }
+                }
+
+                // Either backtracking is disabled, we've exhausted history, or reached max depth
+                return Err(WfcError::Contradiction(cx, cy, cz));
             }
             Err(e) => {
                 error!("Error during iteration {}: {:?}", state.iterations, e);
@@ -436,6 +554,26 @@ pub async fn run<
 }
 
 /// Performs a single iteration of the WFC algorithm: observe, collapse, propagate.
+///
+/// This function encapsulates the core WFC iteration process:
+/// 1. Observe: Find the cell with the minimum entropy.
+/// 2. Collapse: Randomly select a state for the selected cell based on weights.
+/// 3. Propagate: Update affected cells using constraint rules.
+///
+/// # Arguments
+///
+/// * `grid`: The grid to update, contains cell possibility states.
+/// * `rules`: The rule set defining valid neighbor constraints.
+/// * `propagator`: The constraint propagation implementation.
+/// * `entropy_calculator`: The entropy calculation implementation.
+/// * `iteration`: Current iteration number for debugging & reporting.
+/// * `base_seed`: Base random seed, will be modified by coordinates for deterministic but varied selection.
+///
+/// # Returns
+///
+/// * `Ok(Some((x, y, z), backtrack_info))` - Successfully collapsed the cell at coordinates (x, y, z) with backtracking information.
+/// * `Ok(None)` - No more cells to collapse (either all collapsed or all remaining have contradictions).
+/// * `Err(WfcError)` - An error occurred during the iteration.
 async fn perform_iteration<
     P: ConstraintPropagator + Send + Sync,
     E: EntropyCalculator + Send + Sync,
@@ -446,28 +584,31 @@ async fn perform_iteration<
     entropy_calculator: &E,
     iteration: u64,
     base_seed: u64,
-) -> Result<Option<(usize, usize, usize)>, WfcError> {
-    let start_time = Instant::now();
-    debug!("Iteration {}: Starting observation phase.", iteration);
+) -> Result<Option<((usize, usize, usize), BacktrackInfo)>, WfcError> {
+    debug!("Starting iteration {}...", iteration);
 
-    // --- Observation: Find the cell with the lowest entropy ---
+    // 1. Observation Phase: Find the cell with lowest entropy
+    debug!("Observation phase...");
+    let start_observe = Instant::now();
+
+    // Calculate entropy for all cells
     let entropy_grid = entropy_calculator.calculate_entropy(grid)?;
 
-    let selected_coords = entropy_calculator.select_lowest_entropy_cell(&entropy_grid);
-
-    let observe_duration = start_time.elapsed();
-
-    let (x, y, z) = match selected_coords {
-        Some(coords) => {
+    // Select the cell with the minimum positive entropy
+    let selected_coords = match entropy_calculator.select_lowest_entropy_cell(&entropy_grid) {
+        Some((x, y, z)) => {
             debug!(
-                "Selected cell {:?} with lowest entropy. Observation took: {:?}",
-                coords, observe_duration
+                "Selected cell ({}, {}, {}) with entropy {}",
+                x,
+                y,
+                z,
+                entropy_grid.get(x, y, z).unwrap_or(&f32::MAX)
             );
-            coords
+            (x, y, z)
         }
         None => {
             // This means either fully collapsed or only contradictions remain (entropy <= 0)
-            debug!("Observation phase found no cells with positive entropy to collapse. Observation took: {:?}", observe_duration);
+            debug!("Observation phase found no cells with positive entropy to collapse. Observation took: {:?}", start_observe.elapsed());
             // Verify if actually fully collapsed or if it's a contradiction state not caught earlier
             match grid.is_fully_collapsed() {
                 Ok(true) => {
@@ -505,6 +646,10 @@ async fn perform_iteration<
         }
     };
 
+    let (x, y, z) = selected_coords;
+    let observe_duration = start_observe.elapsed();
+    debug!("Observation phase completed. Took: {:?}", observe_duration);
+
     // 2. Collapse Phase: Choose a state for the selected cell
     debug!("Collapse phase for cell {:?}...", (x, y, z));
     let start_collapse = Instant::now();
@@ -527,18 +672,23 @@ async fn perform_iteration<
         // This might indicate an issue if Observor selected it, unless Observor handles this.
         // Re-running observe might be an option, or just continuing if the grid state is valid.
         // For now, treat as success but didn't collapse *this* turn.
-        return Ok(selected_coords); // Return the coords, but indicate no *new* collapse happened effectively
-                                    // Alternative: return Ok(None) to signify no progress?
+        return Ok(None);
     }
+
+    // Create a clone of the grid state before collapse for backtracking purposes
+    let grid_before_collapse = grid.clone();
+
+    // Get the list of available tile indices for this cell
+    let available_tiles: Vec<usize> = possibilities_before.iter_ones().collect();
 
     // Use a deterministic RNG seeded based on coordinates and base seed
     let cell_seed = seed_from_coords(x, y, z, base_seed.wrapping_add(iteration));
     let mut rng = StdRng::seed_from_u64(cell_seed);
 
     // Prepare weights for WeightedIndex
-    let weights: Vec<f32> = possibilities_before
-        .iter_ones()
-        .map(|tile_index| rules.get_tile_weight(tile_index))
+    let weights: Vec<f32> = available_tiles
+        .iter()
+        .map(|&tile_index| rules.get_tile_weight(tile_index))
         .collect();
 
     if weights.is_empty() || weights.iter().all(|&w| w <= 0.0) {
@@ -553,56 +703,59 @@ async fn perform_iteration<
     let dist = match WeightedIndex::new(&weights) {
         Ok(d) => d,
         Err(e) => {
-            error!(
-                "Failed to create weighted distribution for collapse at {:?}: {}",
-                (x, y, z),
-                e
-            );
-            return Err(WfcError::InternalError(format!(
-                "Weighted distribution error at {:?}: {}",
-                (x, y, z),
-                e
-            )));
+            error!("Failed to create weighted distribution: {:?}", e);
+            return Err(WfcError::WeightedChoiceError(e));
         }
     };
 
-    // Sample the chosen tile index *within the subset of possibilities*
-    let chosen_subset_index = dist.sample(&mut rng);
-    let chosen_tile_id = match possibilities_before.iter_ones().nth(chosen_subset_index) {
-        Some(id) => id,
-        None => {
-            error!("Internal error during collapse: Failed to map chosen index back to tile ID.");
-            return Err(WfcError::InternalError(
-                "Collapse indexing error".to_string(),
-            ));
-        }
+    // Select a tile based on weighted distribution
+    let selected_index = dist.sample(&mut rng);
+    let selected_tile = available_tiles[selected_index];
+
+    // Create backtracking info
+    let backtrack_info = BacktrackInfo {
+        grid_state: grid_before_collapse,
+        iteration,
+        coords: (x, y, z),
+        selected_tile,
+        available_tiles: available_tiles.clone(),
     };
 
     debug!(
-        "Collapsing cell {:?} to tile ID {}",
-        (x, y, z),
-        chosen_tile_id
+        "Selected tile {} (weight: {}) for cell {:?}",
+        selected_tile,
+        weights[selected_index],
+        (x, y, z)
     );
 
-    // Perform the collapse on the grid
-    grid.collapse(x, y, z, chosen_tile_id)
-        .map_err(WfcError::InternalError)?;
+    // Update the grid to collapse this cell to the selected state
+    let mut new_state = bitvec::bitvec!(0; grid.num_tiles());
+    new_state.set(selected_tile, true);
+
+    if let Some(cell) = grid.get_mut(x, y, z) {
+        *cell = new_state;
+    } else {
+        return Err(WfcError::GridError(format!(
+            "Failed to update cell {:?}",
+            (x, y, z)
+        )));
+    }
 
     let collapse_duration = start_collapse.elapsed();
-    debug!("Collapse took: {:?}", collapse_duration);
+    debug!("Collapse phase completed. Took: {:?}", collapse_duration);
 
-    // 3. Propagation Phase: Propagate the consequences of the collapse
+    // 3. Propagation Phase: Update the affected cells
     debug!("Propagation phase...");
     let start_propagate = Instant::now();
 
+    // Perform constraint propagation
     let update_result = propagator.propagate(grid, vec![(x, y, z)], rules).await;
-
     let propagate_duration = start_propagate.elapsed();
 
     match update_result {
         Ok(_) => {
             debug!("Propagation successful. Took: {:?}", propagate_duration);
-            Ok(Some((x, y, z))) // Return the coords of the cell collapsed in this iteration
+            Ok(Some(((x, y, z), backtrack_info))) // Return coords and backtracking info
         }
         Err(PropagationError::Contradiction(cx, cy, cz)) => {
             error!(

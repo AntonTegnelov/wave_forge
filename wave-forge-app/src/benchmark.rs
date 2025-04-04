@@ -112,6 +112,7 @@ pub async fn run_single_wfc_benchmark(
         checkpoint_path: None,
         max_iterations: config.max_iterations,
         seed: config.seed,
+        max_backtrack_depth: None,
     };
 
     log::info!("Running WFC Benchmark ({:?})...", core_execution_mode);

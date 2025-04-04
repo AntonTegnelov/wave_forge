@@ -554,6 +554,7 @@ pub async fn run_standard_mode(
         checkpoint_path: None,
         max_iterations: config.max_iterations,
         seed: config.seed,
+        max_backtrack_depth: None, // Backtracking disabled by default
     };
 
     // --- Run WFC using the runner ---
