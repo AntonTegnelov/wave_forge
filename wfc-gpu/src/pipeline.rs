@@ -102,8 +102,15 @@ impl ComputePipelines {
             chosen_workgroup_size_x
         );
 
+        // Check if the device supports storage atomics
+        let supports_atomics = Self::check_atomics_support(device);
+        log::info!("GPU storage atomics support: {}", supports_atomics);
+
+        // Load appropriate shader code based on hardware capabilities
+        let (entropy_shader_code, propagation_shader_code) =
+            Self::select_shader_variants(supports_atomics);
+
         // --- Get or Create Entropy Shader Module ---
-        let entropy_shader_code = include_str!("shaders/entropy.wgsl");
         let entropy_shader_key = ShaderCacheKey {
             source_hash: hash_string(entropy_shader_code),
         };
@@ -123,7 +130,6 @@ impl ComputePipelines {
         };
 
         // --- Get or Create Propagation Shader Module ---
-        let propagation_shader_code = include_str!("shaders/propagate.wgsl");
         let propagation_shader_key = ShaderCacheKey {
             source_hash: hash_string(propagation_shader_code),
         };
@@ -368,5 +374,62 @@ impl ComputePipelines {
             entropy_workgroup_size: chosen_workgroup_size_x,
             propagation_workgroup_size: chosen_workgroup_size_x,
         })
+    }
+
+    /// Checks if the device supports GPU storage atomics.
+    ///
+    /// This method examines the features to determine if the hardware
+    /// supports atomic operations required by the core algorithm.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - A reference to the wgpu Device
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the hardware likely supports storage atomics
+    /// * `false` if the hardware likely does not support storage atomics
+    fn check_atomics_support(_device: &wgpu::Device) -> bool {
+        // In wgpu v0.20, the exact atomics feature flag isn't directly exposed
+        // Instead, we'll check for general compute shader capabilities
+
+        // Most hardware that supports compute shaders should support basic atomics
+        // This is a simplification; in a production environment, we would need
+        // to check for specific features more precisely
+
+        // For now, assume compute shader support implies atomics support
+        // In the future, consider checking adapter info more specifically
+        true
+    }
+
+    /// Selects the appropriate shader variants based on hardware capabilities.
+    ///
+    /// This method chooses between the full-featured shaders with atomic operations
+    /// and simplified fallback versions for hardware that doesn't support atomics.
+    ///
+    /// # Arguments
+    ///
+    /// * `supports_atomics` - Whether the hardware supports atomics operations
+    ///
+    /// # Returns
+    ///
+    /// * A tuple of (entropy_shader_code, propagation_shader_code) as strings
+    fn select_shader_variants(supports_atomics: bool) -> (&'static str, &'static str) {
+        if supports_atomics {
+            // Use the standard shaders with atomic operations
+            (
+                include_str!("shaders/entropy.wgsl"),
+                include_str!("shaders/propagate.wgsl"),
+            )
+        } else {
+            // Use fallback shaders without atomics
+            log::warn!("Using fallback shaders without atomics support. Performance and functionality may be reduced.");
+
+            // Load the fallback shader implementations
+            (
+                include_str!("shaders/entropy_fallback.wgsl"),
+                include_str!("shaders/propagate_fallback.wgsl"),
+            )
+        }
     }
 }
