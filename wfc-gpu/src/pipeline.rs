@@ -441,35 +441,8 @@ impl ComputePipelines {
         }
 
         // Fix all instances of numeric constant identifiers in different formats
-        // Exactly "const 1:" pattern
-        entropy_shader_code = entropy_shader_code.replace("const 1:", "const ONE:");
-        propagation_shader_code = propagation_shader_code.replace("const 1:", "const ONE:");
-
-        // With spaces after the colon
-        entropy_shader_code = entropy_shader_code.replace("const 1: ", "const ONE: ");
-        propagation_shader_code = propagation_shader_code.replace("const 1: ", "const ONE: ");
-
-        // Handle all numeric constant identifiers
-        for i in 1..10 {
-            // Various formats with different spacing
-            let patterns = [
-                format!("const {}: u32", i),
-                format!("const {}:u32", i),
-                format!("const {}: ", i),
-                format!("const {}:", i),
-            ];
-
-            let replace = if i == 1 {
-                format!("const ONE: u32")
-            } else {
-                format!("const VAL_{}: u32", i)
-            };
-
-            for pattern in patterns.iter() {
-                entropy_shader_code = entropy_shader_code.replace(pattern, &replace);
-                propagation_shader_code = propagation_shader_code.replace(pattern, &replace);
-            }
-        }
+        entropy_shader_code = Self::fix_numeric_constants(&entropy_shader_code);
+        propagation_shader_code = Self::fix_numeric_constants(&propagation_shader_code);
 
         // Replace the NUM_TILES_U32_VALUE placeholder with the actual value
         entropy_shader_code =
@@ -478,6 +451,68 @@ impl ComputePipelines {
             propagation_shader_code.replace("NUM_TILES_U32_VALUE", &num_tiles_u32.to_string());
 
         (entropy_shader_code, propagation_shader_code)
+    }
+
+    /// Fix all numeric constants in a WGSL shader string to ensure compliance with the WGSL spec.
+    /// WGSL does not allow numeric identifiers, so this function replaces them with named constants.
+    fn fix_numeric_constants(shader_code: &str) -> String {
+        let mut result = shader_code.to_string();
+
+        // Names to use for numeric constants
+        let names = [
+            "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN",
+        ];
+
+        // Process each numeric constant from 1 to 10
+        for i in 1..=10 {
+            let name = if i <= names.len() {
+                names[i - 1].to_string()
+            } else {
+                format!("VAL_{}", i)
+            };
+
+            // Various patterns with different spacing
+            let patterns = [
+                // Match const declarations
+                format!("const {}: u32", i),
+                format!("const {}:u32", i),
+                format!("const {}: ", i),
+                format!("const {}:", i),
+                // Match any other potential numeric identifiers
+                format!("fn {}(", i),
+                format!("var {}: ", i),
+                format!("let {}: ", i),
+                format!("var {}:", i),
+                format!("let {}:", i),
+            ];
+
+            // Replacement for constant declarations
+            let const_replacement = if i == 1 {
+                "const ONE: u32".to_string()
+            } else {
+                format!("const {}: u32", name)
+            };
+
+            // Replace all variants of constant declarations
+            for pattern in patterns.iter().take(4) {
+                result = result.replace(pattern, &const_replacement);
+            }
+
+            // Special handling for other identifier uses
+            for j in 4..patterns.len() {
+                let identifier_replacement = match j {
+                    4 => format!("fn {}(", name),
+                    5 => format!("var {}: ", name),
+                    6 => format!("let {}: ", name),
+                    7 => format!("var {}:", name),
+                    8 => format!("let {}:", name),
+                    _ => continue,
+                };
+                result = result.replace(&patterns[j], &identifier_replacement);
+            }
+        }
+
+        result
     }
 
     pub fn create_propagation_bind_groups(
