@@ -298,8 +298,8 @@ impl ConstraintPropagator for GpuConstraintPropagator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{pin_mut, FutureExt};
-    use std::time::Duration;
+    use crate::accelerator::GpuAccelerator;
+    use crate::GpuError;
     use tokio;
     use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
     use wfc_rules::{
