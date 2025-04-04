@@ -115,7 +115,7 @@ fn count_set_bits(n: u32) -> u32 {
     return count;
 }
 
-@compute @workgroup_size(WORKGROUP_SIZE_X) // Use specialization constant
+@compute @workgroup_size(64) // Use hardcoded size
 fn main(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
