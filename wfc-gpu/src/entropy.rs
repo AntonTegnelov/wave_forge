@@ -103,34 +103,18 @@ impl GpuEntropyCalculator {
             // Dispatch - Calculate workgroup counts
             // Use dynamic workgroup size from the pipeline struct
             let workgroup_size = self.pipelines.entropy_workgroup_size;
-            let workgroups_needed = num_cells.div_ceil(workgroup_size as usize) as u32;
+            let dispatch_x = num_cells.div_ceil(workgroup_size as usize) as u32;
 
-            let compute_pass_label = "Entropy Computation Pass";
-
-            // Dispatch the compute shader
-            {
-                let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some(compute_pass_label),
-                    timestamp_writes: None,
-                });
-                compute_pass.set_pipeline(&self.pipelines.entropy_pipeline);
-                compute_pass.set_bind_group(0, &bind_group, &[]);
-
-                // Calculate dispatch size
-                let workgroup_size = self.pipelines.entropy_workgroup_size;
-                let dispatch_x = (num_cells as u32 + workgroup_size - 1) / workgroup_size;
-
-                // Only log this for large grids or very verbose logging settings
-                if num_cells > 10000 {
-                    log::debug!(
-                        "Dispatching entropy shader with {} workgroups for {} cells",
-                        dispatch_x,
-                        num_cells
-                    );
-                }
-
-                compute_pass.dispatch_workgroups(dispatch_x, 1, 1);
+            // Only log this for large grids or very verbose logging settings
+            if num_cells > 10000 {
+                log::debug!(
+                    "Dispatching entropy shader with {} workgroups for {} cells",
+                    dispatch_x,
+                    num_cells
+                );
             }
+
+            compute_pass.dispatch_workgroups(dispatch_x, 1, 1);
         } // End compute pass scope
 
         // 4. Submit to Queue (uses Arc<Queue>)
