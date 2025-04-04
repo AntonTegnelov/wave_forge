@@ -15,9 +15,9 @@ use std::{
 use wfc_core::{
     entropy::{EntropyCalculator, SelectionStrategy},
     grid::PossibilityGrid,
-    propagator::ConstraintPropagator,
+    propagator::propagator::ConstraintPropagator,
     runner::{self, WfcConfig},
-    BoundaryMode, ExecutionMode, ProgressInfo, WfcError,
+    BoundaryCondition, ExecutionMode, ProgressInfo, WfcError,
 };
 use wfc_gpu::accelerator::GpuAccelerator;
 use wfc_rules::{AdjacencyRules, TileSet};
@@ -71,7 +71,7 @@ pub async fn run_single_wfc_benchmark(
     gpu_accelerator_arc: Option<Arc<GpuAccelerator>>,
 ) -> Result<BenchmarkResult, AppError> {
     let core_execution_mode: ExecutionMode = config.execution_mode.clone().into();
-    let core_boundary_mode: BoundaryMode = config.boundary_mode.clone().into();
+    let core_boundary_mode: BoundaryCondition = config.boundary_mode.clone().into();
 
     let profiler = Profiler::new(&format!("{:?}", core_execution_mode));
     let _overall_guard = profiler.profile("total_benchmark_run");
@@ -117,7 +117,7 @@ pub async fn run_single_wfc_benchmark(
     };
 
     let wfc_config = WfcConfig {
-        boundary_mode: core_boundary_mode,
+        boundary_condition: core_boundary_mode,
         progress_callback,
         shutdown_signal: Arc::new(AtomicBool::new(false)),
         initial_checkpoint: None,
@@ -129,14 +129,7 @@ pub async fn run_single_wfc_benchmark(
 
     log::info!("Running WFC Benchmark ({:?})...", core_execution_mode);
     let _run_guard = profiler.profile("wfc_run");
-    let wfc_result = runner::run(
-        &mut grid,
-        tileset,
-        rules,
-        propagator,
-        entropy_calc,
-        &wfc_config,
-    );
+    let wfc_result = runner::run(&mut grid, rules, propagator, entropy_calc, wfc_config);
     let duration = start_time.elapsed();
     drop(_run_guard);
 

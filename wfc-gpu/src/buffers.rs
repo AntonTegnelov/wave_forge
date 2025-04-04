@@ -709,16 +709,19 @@ impl GpuBuffers {
         if download_entropy {
             let buffer_clone = self.staging_entropy_buf.clone();
             mapping_futures.push(tokio::spawn(async move {
-                // Call free function directly
-                map_staging_buffer_to_vec(buffer_clone)
+                // Call with Self:: prefix
+                Self::map_staging_buffer_to_vec(buffer_clone)
                     .await
-                    .map(|bytes| DownloadedData::Entropy(bytemuck::cast_slice(&bytes).to_vec()))
+                    .map(|bytes| {
+                        let data: &[f32] = bytemuck::cast_slice(&bytes);
+                        DownloadedData::Entropy(data.to_vec())
+                    })
             }));
         }
         if download_min_entropy {
             let buffer_clone = self.staging_min_entropy_info_buf.clone();
             mapping_futures.push(tokio::spawn(async move {
-                map_staging_buffer_to_vec(buffer_clone)
+                Self::map_staging_buffer_to_vec(buffer_clone)
                     .await
                     .and_then(|bytes| {
                         if bytes.len() >= 8 {
@@ -739,48 +742,58 @@ impl GpuBuffers {
         if download_contradiction_flag {
             let buffer_clone = self.staging_contradiction_flag_buf.clone();
             mapping_futures.push(tokio::spawn(async move {
-                map_staging_buffer_to_vec(buffer_clone).await.map(|bytes| {
-                    if bytes.len() >= 4 {
-                        let flag_value: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                        DownloadedData::ContradictionFlag(flag_value != 0)
-                    } else {
-                        DownloadedData::ContradictionFlag(false)
-                    }
-                })
+                Self::map_staging_buffer_to_vec(buffer_clone)
+                    .await
+                    .map(|bytes| {
+                        if bytes.len() >= 4 {
+                            let flag_value: u32 =
+                                u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+                            DownloadedData::ContradictionFlag(flag_value != 0)
+                        } else {
+                            DownloadedData::ContradictionFlag(false)
+                        }
+                    })
             }));
         }
         if download_grid {
             let buffer_clone = self.staging_grid_possibilities_buf.clone();
             mapping_futures.push(tokio::spawn(async move {
-                map_staging_buffer_to_vec(buffer_clone).await.map(|bytes| {
-                    DownloadedData::GridPossibilities(bytemuck::cast_slice(&bytes).to_vec())
-                })
+                Self::map_staging_buffer_to_vec(buffer_clone)
+                    .await
+                    .map(|bytes| {
+                        let data: &[u32] = bytemuck::cast_slice(&bytes);
+                        DownloadedData::GridPossibilities(data.to_vec())
+                    })
             }));
         }
         if download_worklist_count {
             let buffer_clone = self.staging_worklist_count_buf.clone();
             mapping_futures.push(tokio::spawn(async move {
-                map_staging_buffer_to_vec(buffer_clone).await.map(|bytes| {
-                    if bytes.len() >= 4 {
-                        let count: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                        DownloadedData::WorklistCount(count)
-                    } else {
-                        DownloadedData::WorklistCount(0)
-                    }
-                })
+                Self::map_staging_buffer_to_vec(buffer_clone)
+                    .await
+                    .map(|bytes| {
+                        if bytes.len() >= 4 {
+                            let count: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+                            DownloadedData::WorklistCount(count)
+                        } else {
+                            DownloadedData::WorklistCount(0)
+                        }
+                    })
             }));
         }
         if download_contradiction_location {
             let buffer_clone = self.staging_contradiction_location_buf.clone();
             mapping_futures.push(tokio::spawn(async move {
-                map_staging_buffer_to_vec(buffer_clone).await.map(|bytes| {
-                    if bytes.len() >= 4 {
-                        let location: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                        DownloadedData::ContradictionLocation(location)
-                    } else {
-                        DownloadedData::ContradictionLocation(u32::MAX)
-                    }
-                })
+                Self::map_staging_buffer_to_vec(buffer_clone)
+                    .await
+                    .map(|bytes| {
+                        if bytes.len() >= 4 {
+                            let location: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+                            DownloadedData::ContradictionLocation(location)
+                        } else {
+                            DownloadedData::ContradictionLocation(u32::MAX)
+                        }
+                    })
             }));
         }
 
@@ -790,24 +803,36 @@ impl GpuBuffers {
 
         let final_results = loop {
             futures::select! { // Use select! macro
-                res = joined_futures.fuse() => break res.map_err(|e| GpuError::InternalError(format!("Task join error: {}", e)))?,
+                res = joined_futures.as_mut().fuse() => {
+                    match res {
+                        Ok(results) => break results,
+                        Err(e) => return Err(GpuError::InternalError(format!("Task join error: {}", e))),
+                    }
+                },
                 _ = tokio::time::sleep(Duration::from_millis(1)).fuse() => {
                     device.poll(wgpu::Maintain::Poll);
                 }
             }
-        }?;
+        };
 
-        // Process results (Unchanged)
+        // Process results
         for result_item in final_results {
-            match result_item? {
-                DownloadedData::Entropy(data) => results.entropy = Some(data),
-                DownloadedData::MinEntropyInfo(data) => results.min_entropy_info = Some(data),
-                DownloadedData::ContradictionFlag(data) => results.contradiction_flag = Some(data),
-                DownloadedData::GridPossibilities(data) => results.grid_possibilities = Some(data),
-                DownloadedData::WorklistCount(data) => results.worklist_count = Some(data),
-                DownloadedData::ContradictionLocation(data) => {
-                    results.contradiction_location = Some(data)
-                }
+            match result_item {
+                Ok(data) => match data {
+                    DownloadedData::Entropy(data) => results.entropy = Some(data),
+                    DownloadedData::MinEntropyInfo(data) => results.min_entropy_info = Some(data),
+                    DownloadedData::ContradictionFlag(data) => {
+                        results.contradiction_flag = Some(data)
+                    }
+                    DownloadedData::GridPossibilities(data) => {
+                        results.grid_possibilities = Some(data)
+                    }
+                    DownloadedData::WorklistCount(data) => results.worklist_count = Some(data),
+                    DownloadedData::ContradictionLocation(data) => {
+                        results.contradiction_location = Some(data)
+                    }
+                },
+                Err(e) => return Err(e),
             }
         }
 
@@ -840,7 +865,6 @@ enum DownloadedData {
 mod tests {
     use super::*;
     use crate::test_utils::initialize_test_gpu;
-    use bytemuck::{Pod, Zeroable};
     use std::sync::Arc;
     use std::time::Duration;
     use tokio;
@@ -1067,12 +1091,13 @@ mod tests {
 
         // Call the helper function that returns the future
         let map_future = GpuBuffers::map_staging_buffer_to_vec(staging_buffer.clone());
+        pin_mut!(map_future); // Pin the future so it can be used with select!
 
         // Poll the device while waiting for the future
         let result = loop {
             futures::select! {
-                res = map_future.fuse() => break res,
-                _ = tokio::time::sleep(Duration::from_millis(1)).fuse() => { // <<< USES Duration HERE
+                res = map_future.as_mut().fuse() => break res,
+                _ = tokio::time::sleep(Duration::from_millis(1)).fuse() => {
                     device.poll(wgpu::Maintain::Poll);
                 }
             }

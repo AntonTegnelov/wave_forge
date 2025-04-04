@@ -3,7 +3,8 @@
 use crate::{
     benchmark::{self, BenchmarkResult, BenchmarkScenarioResult},
     config::{AppConfig, ProgressLogLevel},
-    error::AppError, output,
+    error::AppError,
+    output,
     setup::visualization::VizMessage,
 };
 use anyhow::{Context, Result};
@@ -13,7 +14,7 @@ use std::{
     io::{BufWriter, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{Sender},
+        mpsc::Sender,
         Arc, Mutex,
     },
     thread,
@@ -22,9 +23,9 @@ use std::{
 use wfc_core::{
     entropy::EntropyCalculator,
     grid::PossibilityGrid,
-    propagator::ConstraintPropagator,
+    propagator::propagator::ConstraintPropagator,
     runner::{self, ProgressCallback, WfcConfig},
-    BoundaryMode, ProgressInfo,
+    BoundaryCondition, ProgressInfo,
 };
 use wfc_gpu::{accelerator::GpuAccelerator, GpuError};
 use wfc_rules::{loader::load_from_file, AdjacencyRules, TileSet};
@@ -191,7 +192,7 @@ pub async fn run_benchmark_mode(
             // Requires grid/rules available here
             let scenario_grid = PossibilityGrid::new(width, height, depth, tileset.weights.len());
             let scenario_grid_snapshot = Arc::new(Mutex::new(scenario_grid.clone()));
-            let core_boundary_mode: BoundaryMode = config.boundary_mode.clone().into();
+            let core_boundary_mode: BoundaryCondition = config.boundary_mode.clone().into();
 
             // Lock the grid snapshot to pass a reference to the inner grid
             let grid_guard = scenario_grid_snapshot
@@ -481,7 +482,7 @@ pub async fn run_standard_mode(
     };
 
     // --- Initialize GPU Accelerator ---
-    let core_boundary_mode: BoundaryMode = config.boundary_mode.clone().into();
+    let core_boundary_mode: BoundaryCondition = config.boundary_mode.clone().into();
     // Lock the grid snapshot to pass a reference to the inner grid
     let grid_guard = grid_snapshot
         .lock()

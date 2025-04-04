@@ -326,14 +326,14 @@ mod tests {
         let results = accelerator
             .buffers()
             .download_results(
-                &accelerator.device(),
-                &accelerator.queue(),
+                accelerator.device().clone(),
+                accelerator.queue().clone(),
                 false, // entropy
                 false, // min_entropy
                 false, // contradiction
                 true,  // possibilities
                 false, // worklist_count
-                num_tiles as u32,
+                false, // download_contradiction_location
             )
             .await?;
 

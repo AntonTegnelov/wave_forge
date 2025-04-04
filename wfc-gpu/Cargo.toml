@@ -26,8 +26,8 @@ wfc-rules = { path = "../wfc-rules" }
 
 # Add async-trait
 async-trait = "0.1"
-# Add tokio (just sync feature needed for Mutex based on errors)
-tokio = { version = "1", features = ["sync"] }
+# Add tokio (time feature needed for sleep in tests)
+tokio = { version = "1", features = ["sync", "time"] }
 
 [dev-dependencies]
 env_logger = "0.11.3"

@@ -166,11 +166,11 @@ impl From<CliExecutionMode> for wfc_core::ExecutionMode {
     }
 }
 
-impl From<CliBoundaryMode> for wfc_core::BoundaryMode {
+impl From<CliBoundaryMode> for wfc_core::BoundaryCondition {
     fn from(cli_mode: CliBoundaryMode) -> Self {
         match cli_mode {
-            CliBoundaryMode::Clamped => wfc_core::BoundaryMode::Clamped,
-            CliBoundaryMode::Periodic => wfc_core::BoundaryMode::Periodic,
+            CliBoundaryMode::Clamped => wfc_core::BoundaryCondition::Finite,
+            CliBoundaryMode::Periodic => wfc_core::BoundaryCondition::Periodic,
         }
     }
 }
