@@ -753,23 +753,20 @@ impl GpuBuffers {
         let mapped_results: Vec<Result<Vec<u8>, GpuError>> =
             futures::future::join_all(mapping_futures).await;
 
-        // Process results
-        let mut result_idx = 0;
+        // Process results using an iterator
+        let mut results_iter = mapped_results.into_iter();
+        // let mut result_idx = 0; // No longer needed
 
         if download_entropy {
-            let bytes = match mapped_results[result_idx] {
-                Ok(ref data) => data,
-                Err(ref e) => return Err(e.clone()), // Clone the error to return
-            };
-            let data: &[f32] = bytemuck::cast_slice(bytes);
+            // Get the next result, unwrap the Option (we know it exists),
+            // and use ? to propagate the error if the Result is Err.
+            let bytes = results_iter.next().unwrap()?;
+            let data: &[f32] = bytemuck::cast_slice(&bytes);
             results.entropy = Some(data.to_vec());
-            result_idx += 1;
+            // result_idx += 1;
         }
         if download_min_entropy {
-            let bytes = match mapped_results[result_idx] {
-                Ok(ref data) => data,
-                Err(ref e) => return Err(e.clone()),
-            };
+            let bytes = results_iter.next().unwrap()?;
             if bytes.len() >= 8 {
                 let entropy_bits = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
                 let index = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
@@ -777,48 +774,36 @@ impl GpuBuffers {
             } else {
                 warn!("Min entropy buffer size mismatch during download");
             }
-            result_idx += 1;
+            // result_idx += 1;
         }
         if download_contradiction_flag {
-            let bytes = match mapped_results[result_idx] {
-                Ok(ref data) => data,
-                Err(ref e) => return Err(e.clone()),
-            };
+            let bytes = results_iter.next().unwrap()?;
             if bytes.len() >= 4 {
                 let flag_value: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
                 results.contradiction_flag = Some(flag_value != 0);
             } else {
                 warn!("Contradiction flag buffer size mismatch during download");
             }
-            result_idx += 1;
+            // result_idx += 1;
         }
         if download_grid {
-            let bytes = match mapped_results[result_idx] {
-                Ok(ref data) => data,
-                Err(ref e) => return Err(e.clone()),
-            };
-            let data: &[u32] = bytemuck::cast_slice(bytes);
+            let bytes = results_iter.next().unwrap()?;
+            let data: &[u32] = bytemuck::cast_slice(&bytes);
             results.grid_possibilities = Some(data.to_vec());
-            result_idx += 1;
+            // result_idx += 1;
         }
         if download_worklist_count {
-            let bytes = match mapped_results[result_idx] {
-                Ok(ref data) => data,
-                Err(ref e) => return Err(e.clone()),
-            };
+            let bytes = results_iter.next().unwrap()?;
             if bytes.len() >= 4 {
                 let count: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
                 results.worklist_count = Some(count);
             } else {
                 warn!("Worklist count buffer size mismatch during download");
             }
-            result_idx += 1;
+            // result_idx += 1;
         }
         if download_contradiction_location {
-            let bytes = match mapped_results[result_idx] {
-                Ok(ref data) => data,
-                Err(ref e) => return Err(e.clone()),
-            };
+            let bytes = results_iter.next().unwrap()?;
             if bytes.len() >= 4 {
                 let location: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
                 results.contradiction_location = Some(location);
@@ -858,7 +843,6 @@ mod tests {
     use super::*;
     use crate::test_utils::initialize_test_gpu;
     use std::sync::Arc;
-    use std::time::Duration;
     use tokio;
     use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
     use wfc_rules::AdjacencyRules;
