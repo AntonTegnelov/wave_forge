@@ -6,8 +6,7 @@ use std::sync::Arc;
 use wfc_core::{
     entropy::{EntropyCalculator, EntropyError},
     grid::{EntropyGrid, PossibilityGrid},
-    propagator::{ConstraintPropagator, PropagationError},
-    BoundaryCondition,
+    propagator, BoundaryCondition,
 }; // Use Arc for shared GPU resources
 use wfc_rules::AdjacencyRules; // Import from wfc_rules instead
 use wgpu; // Assuming wgpu is needed // Import GpuParamsUniform
@@ -244,14 +243,14 @@ impl GpuAccelerator {
 // --- Trait Implementations ---
 
 #[async_trait]
-impl ConstraintPropagator for GpuAccelerator {
+impl propagator::propagator::ConstraintPropagator for GpuAccelerator {
     /// Delegates propagation to the stored `GpuConstraintPropagator` instance.
     async fn propagate(
         &mut self,
         grid: &mut PossibilityGrid,
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
-    ) -> Result<(), PropagationError> {
+    ) -> Result<(), wfc_core::propagator::propagator::PropagationError> {
         // Use the stored propagator
         self.propagator.propagate(grid, updated_coords, rules).await
     }

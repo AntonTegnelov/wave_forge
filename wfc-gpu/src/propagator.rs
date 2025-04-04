@@ -1,4 +1,3 @@
-use crate::accelerator::GpuAccelerator;
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     pipeline::ComputePipelines,
@@ -8,7 +7,7 @@ use log::{debug, info, warn};
 use std::sync::Arc;
 use wfc_core::{
     grid::PossibilityGrid,
-    propagator::{ConstraintPropagator, PropagationError},
+    propagator::propagator::{ConstraintPropagator, PropagationError},
     BoundaryCondition,
 };
 use wfc_rules::AdjacencyRules;
@@ -200,57 +199,57 @@ impl ConstraintPropagator for GpuConstraintPropagator {
             }
             self.queue.submit(Some(encoder.finish()));
 
-            // --- Download Results (Contradiction Flag/Location, New Worklist Count) ---
-            // Need to wait for GPU to finish before downloading
-            // This is a simplified blocking approach. Real implementation might use fences or events.
+            // --- Download results (Contradiction Flag, New Worklist Size) ---
             // Consider making download_results async if pollster is removed later.
-            let results = pollster::block_on(self.buffers.download_results(
-                &self.device,
-                &self.queue,
-                false,                 // entropy
-                false,                 // min_entropy
-                true,                  // contradiction
-                false,                 // possibilities
-                true,                  // worklist_count
-                self.params.num_tiles, // Pass num_tiles
-            ))
-            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+            let results = self
+                .buffers
+                .download_results(
+                    self.device.clone(),
+                    self.queue.clone(),
+                    false, // entropy
+                    false, // min_entropy
+                    true,  // contradiction_flag
+                    false, // grid
+                    true,  // worklist_count
+                    true,  // download_contradiction_location (Added)
+                )
+                .await
+                .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
             // Check for contradiction
-            if results.contradiction_flag.unwrap_or(false) {
+            if let Some(true) = results.contradiction_flag {
+                // If contradiction found, try to get location
                 let location_index = results.contradiction_location.unwrap_or(u32::MAX);
-                // Convert flat index back to (x, y, z)
-                if location_index != u32::MAX {
+                let (x, y, z) = if location_index != u32::MAX {
                     let width = self.params.grid_width as usize;
                     let height = self.params.grid_height as usize;
                     let z = location_index as usize / (width * height);
-                    let rem = location_index as usize % (width * height);
-                    let y = rem / width;
-                    let x = rem % width;
-                    warn!(
-                        "GPU propagation detected contradiction at ({}, {}, {})",
-                        x, y, z
-                    );
-                    return Err(PropagationError::Contradiction(x, y, z));
+                    let y = (location_index as usize % (width * height)) / width;
+                    let x = location_index as usize % width;
+                    (x, y, z)
                 } else {
-                    warn!("GPU propagation detected contradiction but location is unknown.");
-                    // Return a generic contradiction if location isn't set
-                    // TODO: How to determine coordinates if GPU doesn't write location?
-                    return Err(PropagationError::Contradiction(0, 0, 0)); // Placeholder
-                }
+                    (usize::MAX, usize::MAX, usize::MAX) // Indicate unknown location
+                };
+                warn!(
+                    "GPU propagation detected contradiction at index {} ({},{},{}).",
+                    location_index, x, y, z
+                );
+                return Err(PropagationError::Contradiction(x, y, z));
             }
 
-            // Update worklist size for next iteration
+            // Update worklist size for the next iteration
             current_worklist_size = results.worklist_count.unwrap_or(0);
-            if current_worklist_size > 0 {
-                self.buffers
-                    .update_params_worklist_size(&self.queue, current_worklist_size)
-                    .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-                // Swap worklist buffers for next pass
-                current_worklist_index = 1 - current_worklist_index;
-            }
+            log::trace!(
+                "GPU Propagation Iteration {}: New worklist size = {}",
+                propagation_pass,
+                current_worklist_size
+            );
+
+            // Ping-pong buffers for next iteration
+            current_worklist_index = 1 - current_worklist_index;
         }
 
+        // Safety break check
         if propagation_pass >= MAX_PROPAGATION_PASSES && current_worklist_size > 0 {
             warn!("GPU Propagation reached max passes ({}) with remaining worklist size {}. Potential infinite loop or slow convergence.", MAX_PROPAGATION_PASSES, current_worklist_size);
             // Decide whether to error or continue
@@ -268,7 +267,7 @@ impl ConstraintPropagator for GpuConstraintPropagator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accelerator::GpuAccelerator;
+    use crate::{accelerator::GpuAccelerator, GpuError};
     use wfc_core::grid::PossibilityGrid;
     use wfc_core::BoundaryCondition;
     use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};

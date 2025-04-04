@@ -15,6 +15,10 @@ pub mod propagator;
 /// Contains WGSL shader code as string constants or loading utilities.
 pub mod shaders; // Module to potentially help load shaders
 
+// Add test_utils module, conditionally compiled for tests
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 /// Errors related to GPU setup, buffer operations, shader compilation, and pipeline execution using WGPU.
 #[derive(Error, Debug)]
 pub enum GpuError {

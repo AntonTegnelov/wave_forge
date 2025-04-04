@@ -26,6 +26,8 @@ tempfile = "3"
 mockall = "0.12" # Add mockall
 proptest = "1.4" # Add proptest
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+env_logger = "0.11.3"
+pollster = "0.3.0" # Added pollster for blocking async calls in tests
 
 [features]
 default = []

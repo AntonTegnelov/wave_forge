@@ -140,56 +140,44 @@ impl EntropyCalculator for GpuEntropyCalculator {
         self.queue.submit(std::iter::once(encoder.finish()));
         log::debug!("Entropy compute shader submitted.");
 
-        // 5. Download results (uses Arc<Device>, Arc<Queue>)
-        log::debug!("Downloading entropy results via download_results...");
-        let download_results = pollster::block_on(self.buffers.download_results(
-            &self.device,
-            &self.queue,
-            true,           // Request entropy download
-            false,          // Don't need min entropy here
-            false,          // Don't need contradiction here
-            false,          // Don't need possibilities here
-            false,          // Don't need worklist count here
-            self.num_tiles, // Use the struct field for num_tiles
+        // Download results
+        let download_results_res = pollster::block_on(self.buffers.download_results(
+            self.device.clone(),
+            self.queue.clone(),
+            true,
+            true,
+            false,
+            false,
+            false,
+            false, // Flags
         ));
 
-        match download_results {
-            Ok(results) => {
-                if let Some(entropy_data) = results.entropy {
-                    log::debug!(
-                        "Entropy results downloaded successfully ({} floats).",
-                        entropy_data.len()
-                    );
-                    let (width, height, depth) = self.grid_dims;
-                    let num_cells = width * height * depth;
-                    if entropy_data.len() != num_cells {
-                        let err_msg = format!(
-                            "GPU Error: Entropy result size mismatch: expected {}, got {}",
-                            num_cells,
-                            entropy_data.len()
-                        );
-                        log::error!("{}", err_msg);
-                        Err(EntropyError::Other(err_msg))
-                    } else {
-                        Ok(Grid {
-                            width,
-                            height,
-                            depth,
-                            data: entropy_data,
-                        })
-                    }
-                } else {
-                    let err_msg =
-                        "GPU Error: Entropy data was requested but not returned".to_string();
-                    log::error!("{}", err_msg);
-                    Err(EntropyError::Other(err_msg))
-                }
-            }
-            Err(e) => {
-                let err_msg = format!("GPU Error: Failed to download entropy results: {}", e);
-                log::error!("{}", err_msg);
-                Err(EntropyError::Other(err_msg))
-            }
+        // Handle the outer Result first
+        let download_results = download_results_res
+            .map_err(|e| EntropyError::Other(format!("GPU download error: {}", e)))?;
+
+        // Now process the GpuDownloadResults
+        let gpu_entropy_data = download_results
+            .entropy
+            .ok_or_else(|| EntropyError::Other("GPU did not return entropy data".to_string()))?;
+
+        let entropy_grid = Grid {
+            width,
+            height,
+            depth,
+            data: gpu_entropy_data,
+        };
+
+        if entropy_grid.data.len() != num_cells {
+            let err_msg = format!(
+                "GPU Error: Entropy result size mismatch: expected {}, got {}",
+                num_cells,
+                entropy_grid.data.len()
+            );
+            log::error!("{}", err_msg);
+            Err(EntropyError::Other(err_msg))
+        } else {
+            Ok(entropy_grid)
         }
     }
 
@@ -218,51 +206,52 @@ impl EntropyCalculator for GpuEntropyCalculator {
     ) -> Option<(usize, usize, usize)> {
         log::debug!("Downloading GPU minimum entropy info via download_results...");
 
-        let download_results = pollster::block_on(self.buffers.download_results(
-            &self.device,
-            &self.queue,
-            false,          // Don't need entropy here
-            true,           // Request min entropy info
-            false,          // Don't need contradiction here
-            false,          // Don't need possibilities here
-            false,          // Don't need worklist count here
-            self.num_tiles, // Use the struct field for num_tiles
+        let download_results_res = pollster::block_on(self.buffers.download_results(
+            self.device.clone(),
+            self.queue.clone(),
+            false,
+            true,
+            false,
+            false,
+            false,
+            false, // Flags
         ));
 
-        match download_results {
-            Ok(results) => {
-                if let Some((min_entropy_val, min_index)) = results.min_entropy_info {
-                    log::debug!(
-                        "GPU min entropy info downloaded: value = {}, index = {}",
-                        min_entropy_val,
-                        min_index
-                    );
-                    if min_index != u32::MAX {
-                        let (width, height, _depth) = self.grid_dims;
-                        let z = min_index / (width * height) as u32;
-                        let rem = min_index % (width * height) as u32;
-                        let y = rem / width as u32;
-                        let x = rem % width as u32;
+        // Handle outer Result, map error to None for this function's signature
+        match download_results_res {
+            Ok(download_results) => {
+                if let Some((min_entropy, flat_index)) = download_results.min_entropy_info {
+                    if min_entropy > 0.0 && min_entropy < f32::MAX {
+                        // Check validity
+                        let width = self.grid_dims.0 as usize;
+                        let height = self.grid_dims.1 as usize;
+                        let z = flat_index as usize / (width * height);
+                        let y = (flat_index as usize % (width * height)) / width;
+                        let x = flat_index as usize % width;
                         log::info!(
                             "GPU found lowest entropy ({}) at ({}, {}, {})",
-                            min_entropy_val,
+                            min_entropy,
                             x,
                             y,
                             z
                         );
-                        Some((x as usize, y as usize, z as usize))
+                        Some((x, y, z))
                     } else {
-                        log::info!("GPU reported no cell with calculable entropy (all collapsed or empty?).");
+                        log::info!(
+                            "GPU reported no cell with calculable entropy (all collapsed or empty?)."
+                        );
                         None
                     }
                 } else {
-                    log::error!("GPU Error: Min entropy info was requested but not returned.");
-                    None
+                    log::error!(
+                        "GPU Error: Min entropy info was requested but not returned in results."
+                    );
+                    None // Download ok, but info missing
                 }
             }
             Err(e) => {
-                log::error!("Failed to download minimum entropy info: {}", e);
-                None
+                log::error!("Failed to download min entropy info for selection: {}", e);
+                None // Download failed
             }
         }
     }

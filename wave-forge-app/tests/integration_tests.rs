@@ -27,40 +27,7 @@ fn create_dummy_rules(dir: &tempfile::TempDir, filename: &str) -> std::path::Pat
     file_path
 }
 
-#[test]
-fn test_basic_cpu_run() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_dir = tempdir()?;
-    let rule_file = create_dummy_rules(&tmp_dir, "cpu_rules.ron");
-    let output_file = tmp_dir.path().join("cpu_output.txt");
-
-    let mut cmd = Command::cargo_bin("wave-forge")?;
-    cmd.env("RUST_LOG", "info"); // Set log level for test run
-
-    cmd.arg("--rule-file")
-        .arg(rule_file)
-        .arg("--width")
-        .arg("3")
-        .arg("--height")
-        .arg("3")
-        .arg("--depth")
-        .arg("3")
-        .arg("--output-path")
-        .arg(&output_file)
-        .arg("--execution-mode")
-        .arg("cpu");
-
-    cmd.assert()
-        .success()
-        .stderr(predicate::str::contains("WFC completed successfully."));
-
-    // Check if output file was created (basic check)
-    assert!(output_file.exists(), "Output file was not created");
-    // TODO: Check output file content?
-
-    Ok(())
-}
-
-// Only run GPU test if feature is enabled
+// GPU test
 #[cfg(feature = "gpu")]
 #[test]
 fn test_basic_gpu_run() -> Result<(), Box<dyn std::error::Error>> {
@@ -71,7 +38,6 @@ fn test_basic_gpu_run() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin("wave-forge")?;
     cmd.env("RUST_LOG", "info"); // Set log level for test run
 
-    // Run without --cpu-only to test GPU path
     cmd.arg("--rule-file")
         .arg(rule_file)
         .arg("--width")

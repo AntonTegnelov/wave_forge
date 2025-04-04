@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
 use wfc_core;
- // Corrected import path // Import the crate itself
+// Corrected import path // Import the crate itself
 
 /// Represents the different visualization modes available.
 #[derive(ValueEnum, Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
@@ -57,7 +57,6 @@ impl Default for GlobalLogLevel {
 #[derive(ValueEnum, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub enum CliExecutionMode {
     #[default]
-    Cpu,
     Gpu,
 }
 
@@ -97,8 +96,8 @@ pub struct AppConfig {
     #[arg(short, long, value_name = "FILE", default_value = "output.txt")]
     pub output_path: PathBuf,
 
-    /// Execution mode (CPU or GPU).
-    #[arg(long, value_enum, default_value_t = CliExecutionMode::Cpu)]
+    /// Execution mode (GPU).
+    #[arg(long, value_enum, default_value_t = CliExecutionMode::Gpu)]
     pub execution_mode: CliExecutionMode,
 
     /// Boundary handling mode for the grid.
@@ -162,7 +161,6 @@ pub struct AppConfig {
 impl From<CliExecutionMode> for wfc_core::ExecutionMode {
     fn from(cli_mode: CliExecutionMode) -> Self {
         match cli_mode {
-            CliExecutionMode::Cpu => wfc_core::ExecutionMode::Cpu,
             CliExecutionMode::Gpu => wfc_core::ExecutionMode::Gpu,
         }
     }

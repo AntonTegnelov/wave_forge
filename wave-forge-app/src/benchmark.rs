@@ -64,7 +64,6 @@ pub struct BenchmarkScenarioResult {
 }
 
 /// Runs a single WFC benchmark based on the provided configuration.
-/// Handles both CPU and GPU paths.
 pub async fn run_single_wfc_benchmark(
     config: &AppConfig,
     tileset: &TileSet,
@@ -100,16 +99,6 @@ pub async fn run_single_wfc_benchmark(
         Box<dyn ConstraintPropagator + Send + Sync>,
         Box<dyn EntropyCalculator + Send + Sync>,
     ) = match core_execution_mode {
-        ExecutionMode::Cpu => {
-            let _guard = profiler.profile("cpu_component_setup");
-            (
-                Box::new(CpuConstraintPropagator::new(core_boundary_mode)),
-                Box::new(CpuEntropyCalculator::new(
-                    tileset_arc,
-                    SelectionStrategy::FirstMinimum,
-                )),
-            )
-        }
         ExecutionMode::Gpu => {
             let _guard = profiler.profile("gpu_component_setup");
             let accelerator_arc = match gpu_accelerator_arc {

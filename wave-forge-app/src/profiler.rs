@@ -1,7 +1,7 @@
 //! Profiling utilities for identifying performance bottlenecks in the WFC algorithm.
 //!
 //! This module provides instrumentation for tracking execution time of different parts
-//! of the WFC algorithm and identifying hotspots in both CPU and GPU implementations.
+//! of the WFC algorithm and identifying hotspots.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 /// A simple profiler for tracking execution time of different sections of code.
 #[derive(Debug, Clone)]
 pub struct Profiler {
-    /// Name of the profiler instance (e.g., "CPU", "GPU")
+    /// Name of the profiler instance (e.g. "GPU")
     name: String,
     /// Metrics collected by the profiler, including time spent in different code sections
     metrics: Arc<Mutex<HashMap<String, ProfileMetric>>>,

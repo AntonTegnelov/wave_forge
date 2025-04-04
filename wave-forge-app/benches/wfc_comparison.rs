@@ -3,9 +3,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use wfc_core::{
-    entropy::cpu::CpuEntropyCalculator, grid::PossibilityGrid,
-    propagator::cpu::CpuConstraintPropagator, runner::run as wfc_run, BoundaryMode, ProgressInfo,
-    WfcCheckpoint, WfcError,
+    grid::PossibilityGrid, runner::run as wfc_run, BoundaryMode, ProgressInfo, WfcCheckpoint,
+    WfcError,
 };
 use wfc_gpu::accelerator::GpuAccelerator;
 use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
@@ -41,58 +40,9 @@ fn setup_wfc_data(
     Ok((tileset, rules, grid))
 }
 
-// Benchmark function for CPU
-fn bench_cpu(c: &mut Criterion) {
-    let mut group = c.benchmark_group("WFC CPU vs GPU");
-    let shutdown_signal = Arc::new(AtomicBool::new(false)); // Create shutdown signal
-
-    // Example sizes
-    for size in [(8, 8, 1), (16, 16, 1)].iter() {
-        let (width, height, depth) = *size;
-        let (tileset, rules, initial_grid) = setup_wfc_data(width, height, depth).unwrap();
-        let num_cells = (width * height * depth) as u64;
-
-        group.throughput(Throughput::Elements(num_cells)); // Measure throughput by cells processed
-
-        group.bench_with_input(
-            BenchmarkId::new("CPU", format!("{}x{}x{}", width, height, depth)),
-            size,
-            |b, _| {
-                // Clone necessary data for each iteration
-                let mut grid_clone = initial_grid.clone();
-                let rules_clone = rules.clone();
-                let tileset_clone = tileset.clone();
-
-                b.iter(|| {
-                    // Clone grid for each iteration inside b.iter
-                    let mut iter_grid_clone = grid_clone.clone();
-                    // Call wfc_run with all arguments
-                    let result = wfc_run(
-                        &mut iter_grid_clone, // Pass mutable grid clone
-                        &tileset_clone,
-                        &rules_clone,
-                        CpuConstraintPropagator::new(), // Create new instance
-                        CpuEntropyCalculator::new(),    // Create new instance
-                        BoundaryMode::Clamped,          // Default boundary mode for bench
-                        None::<Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>>, // No progress callback
-                        shutdown_signal.clone(), // Pass shutdown signal
-                        None::<WfcCheckpoint>,   // No initial checkpoint
-                        None,                    // No checkpoint interval
-                        None::<PathBuf>,         // No checkpoint path
-                        None,                    // No max iterations
-                    );
-                    // Use black_box to prevent optimization
-                    black_box(result);
-                });
-            },
-        );
-    }
-    group.finish();
-}
-
 // Benchmark function for GPU (requires async setup)
 fn bench_gpu(c: &mut Criterion) {
-    let mut group = c.benchmark_group("WFC CPU vs GPU");
+    let mut group = c.benchmark_group("WFC GPU");
     let shutdown_signal = Arc::new(AtomicBool::new(false)); // Create shutdown signal
 
     // GPU setup needs to happen outside the iteration loop, but accelerator setup depends on grid size
@@ -166,5 +116,5 @@ fn bench_gpu(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_cpu, bench_gpu);
+criterion_group!(benches, bench_gpu);
 criterion_main!(benches);

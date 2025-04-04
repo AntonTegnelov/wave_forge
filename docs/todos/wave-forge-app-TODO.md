@@ -1,15 +1,5 @@
 # Wave Forge Application - TODO List
 
-## GPU Migration
-
-- [x] Figure out everywhere that need to be adjusted. Mark them with comments and create a markdown doc that keeps all the places and what needs to be done
-- [x] Make all wave collapse operations GPU-based
-- [x] Implement the changes in the doc
-- [x] Remove CPU implementation entirely
-- [x] Refactor `main.rs` to remove CPU-specific code paths
-- [x] Update benchmarking to focus on GPU performance only
-- [x] Update documentation to reflect GPU-only approach
-
 ## General Improvements
 
 - [x] Standardize error handling approach across modules for consistency (using `thiserror` for library crates, `anyhow` for the application binary)

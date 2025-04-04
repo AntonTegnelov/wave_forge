@@ -181,6 +181,7 @@ fn test_gpu_propagate_basic_run() {
         accelerator.buffers(),   // Use getter
         accelerator.grid_dims(), // Use getter
         boundary_mode,           // Pass boundary_mode
+        accelerator.params(),    // Use getter
     );
 
     // Define initial updates (e.g., cell at (0,0,0) was just collapsed)

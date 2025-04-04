@@ -21,7 +21,7 @@ All visualization modes support these common parameters:
 
 ## Combined Configurations
 
-You can combine visualization with other features like benchmarking, GPU acceleration, or custom seeds:
+You can combine visualization with other features like benchmarking or custom seeds:
 
 ```bash
 # Terminal visualization with benchmarking
@@ -41,14 +41,6 @@ wave-forge-app \
   --visualization-mode simple2d \
   --report-progress-interval 50ms
 
-# Force CPU-only with terminal visualization
-wave-forge-app \
-  --rule-file examples/simple-pattern.ron \
-  --width 40 \
-  --height 40 \
-  --visualization-mode terminal \
-  --cpu-only
-```
 
 ## Usage Tips
 
@@ -60,3 +52,4 @@ wave-forge-app \
 ## Example Shell/Batch Scripts
 
 See the [examples directory](../../examples/) for ready-to-use shell/batch scripts that combine these configurations for common use cases.
+```
