@@ -23,7 +23,7 @@ use std::{
 use wfc_core::{
     grid::PossibilityGrid,
     runner::{self, ProgressCallback, WfcConfig},
-    BoundaryCondition, ProgressInfo,
+    BoundaryCondition, ProgressInfo, WfcError,
 };
 use wfc_gpu::{accelerator::GpuAccelerator, GpuError};
 use wfc_rules::{loader::load_from_file, AdjacencyRules, TileSet};
@@ -506,9 +506,48 @@ pub async fn run_standard_mode(
     };
 
     // --- Setup WfcConfig for runner ---
+    // Create an Arc clone of the GPU accelerator for progressive results callback
+    let gpu_accelerator_clone = gpu_accelerator.clone();
+
+    // Setup progressive results callback if visualization is enabled
+    let progressive_results_callback = if viz_tx.is_some() {
+        let grid_snapshot_clone = Arc::clone(&grid_snapshot);
+        let gpu_clone = gpu_accelerator_clone.clone();
+
+        // Explicitly cast the closure to the expected type
+        let callback: Box<dyn Fn(&PossibilityGrid, u64) -> Result<(), WfcError> + Send + Sync> =
+            Box::new(
+                move |_grid: &PossibilityGrid, iteration: u64| -> Result<(), WfcError> {
+                    // We'll fetch the latest state directly from GPU rather than using the provided grid
+                    // since the GPU might have more up-to-date information
+                    if iteration % 10 == 0 {
+                        // Only process every 10th iteration to reduce overhead
+                        // Use async_std to run the async method in a sync context
+                        match pollster::block_on(gpu_clone.get_intermediate_result()) {
+                            Ok(latest_grid) => {
+                                // Update the grid snapshot with the latest state from GPU
+                                if let Ok(mut guard) = grid_snapshot_clone.lock() {
+                                    *guard = latest_grid;
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to get intermediate result from GPU: {}", e);
+                            }
+                        }
+                    }
+                    Ok(())
+                },
+            );
+
+        Some(callback)
+    } else {
+        None
+    };
+
     let wfc_config = WfcConfig {
         boundary_condition: core_boundary_mode,
         progress_callback,
+        progressive_results_callback,
         shutdown_signal: shutdown_signal.clone(),
         initial_checkpoint: None,
         checkpoint_interval: None,

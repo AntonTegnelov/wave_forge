@@ -20,10 +20,15 @@ use wfc_rules::AdjacencyRules;
 /// Alias for the complex progress callback function type.
 pub type ProgressCallback = Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>;
 
+/// Alias for the progressive results callback function type.
+pub type ProgressiveResultsCallback =
+    Box<dyn Fn(&PossibilityGrid, u64) -> Result<(), WfcError> + Send + Sync>;
+
 /// Configuration options for the WFC runner.
 pub struct WfcConfig {
     pub boundary_condition: BoundaryCondition,
     pub progress_callback: Option<ProgressCallback>,
+    pub progressive_results_callback: Option<ProgressiveResultsCallback>,
     pub shutdown_signal: Arc<AtomicBool>,
     pub initial_checkpoint: Option<WfcCheckpoint>,
     pub checkpoint_interval: Option<u64>,
@@ -44,6 +49,7 @@ impl Default for WfcConfig {
         Self {
             boundary_condition: BoundaryCondition::Finite,
             progress_callback: None,
+            progressive_results_callback: None,
             shutdown_signal: Arc::new(AtomicBool::new(false)),
             initial_checkpoint: None,
             checkpoint_interval: None,
@@ -61,6 +67,7 @@ impl Default for WfcConfig {
 pub struct WfcConfigBuilder {
     boundary_condition: BoundaryCondition,
     progress_callback: Option<ProgressCallback>,
+    progressive_results_callback: Option<ProgressiveResultsCallback>,
     shutdown_signal: Option<Arc<AtomicBool>>, // Optional, default is created if None
     initial_checkpoint: Option<WfcCheckpoint>,
     checkpoint_interval: Option<u64>,
@@ -79,6 +86,12 @@ impl WfcConfigBuilder {
     /// Sets the progress callback function.
     pub fn progress_callback(mut self, callback: ProgressCallback) -> Self {
         self.progress_callback = Some(callback);
+        self
+    }
+
+    /// Sets the progressive results callback function.
+    pub fn progressive_results_callback(mut self, callback: ProgressiveResultsCallback) -> Self {
+        self.progressive_results_callback = Some(callback);
         self
     }
 
@@ -124,6 +137,7 @@ impl WfcConfigBuilder {
         WfcConfig {
             boundary_condition: self.boundary_condition,
             progress_callback: self.progress_callback,
+            progressive_results_callback: self.progressive_results_callback,
             shutdown_signal: self
                 .shutdown_signal
                 .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
@@ -358,6 +372,11 @@ pub async fn run<
                         warn!("Progress callback returned error: {:?}", cb_error);
                         // Optionally decide whether to continue or abort based on callback error
                     }
+                }
+
+                // Call progressive results callback if configured
+                if let Some(progressive_cb) = &config.progressive_results_callback {
+                    progressive_cb(grid, state.iterations)?;
                 }
             }
             Ok(None) => {

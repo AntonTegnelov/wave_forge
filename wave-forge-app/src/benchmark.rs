@@ -105,6 +105,7 @@ pub async fn run_single_wfc_benchmark(
     let wfc_config = WfcConfig {
         boundary_condition: core_boundary_mode,
         progress_callback,
+        progressive_results_callback: None,
         shutdown_signal: Arc::new(AtomicBool::new(false)),
         initial_checkpoint: None,
         checkpoint_interval: None,
