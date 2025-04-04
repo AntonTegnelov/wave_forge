@@ -39,6 +39,7 @@ fn test_large_tileset() {
         &grid,
         &rules,
         BoundaryCondition::Finite,
+        None, // No subgrid config
     ));
 
     // Check that we can successfully create the accelerator

@@ -428,46 +428,56 @@ impl ComputePipelines {
         true
     }
 
-    /// Selects the appropriate shader variants based on hardware capabilities.
-    ///
-    /// This method chooses between the full-featured shaders with atomic operations
-    /// and simplified fallback versions for hardware that doesn't support atomics.
-    /// It also replaces NUM_TILES_U32_VALUE in the shaders with the actual value.
-    ///
-    /// # Arguments
-    ///
-    /// * `supports_atomics` - Whether the hardware supports atomics operations
-    /// * `num_tiles_u32` - The number of u32s needed per cell based on tile count
-    ///
-    /// # Returns
-    ///
-    /// * A tuple of (entropy_shader_code, propagation_shader_code) as strings
+    /// Utility function to select shader variants based on hardware capabilities
     fn select_shader_variants(supports_atomics: bool, num_tiles_u32: u32) -> (String, String) {
-        let (entropy_shader_src, propagation_shader_src) = if supports_atomics {
-            // Use the standard shaders with atomic operations
-            (
-                include_str!("shaders/entropy.wgsl"),
-                include_str!("shaders/propagate.wgsl"),
-            )
-        } else {
-            // Use fallback shaders without atomics
-            log::warn!("Using fallback shaders without atomics support. Performance and functionality may be reduced.");
+        // Start with base versions of shader code
+        let mut entropy_shader_code = include_str!("./shaders/entropy.wgsl").to_string();
+        let mut propagation_shader_code = include_str!("./shaders/propagate.wgsl").to_string();
 
-            // Load the fallback shader implementations
-            (
-                include_str!("shaders/entropy_fallback.wgsl"),
-                include_str!("shaders/propagate_fallback.wgsl"),
-            )
-        };
+        // If atomics not supported, use fallback versions
+        if !supports_atomics {
+            entropy_shader_code = include_str!("./shaders/entropy_fallback.wgsl").to_string();
+            propagation_shader_code = include_str!("./shaders/propagate_fallback.wgsl").to_string();
+        }
+
+        // Fix all instances of numeric constant identifiers in different formats
+        // Exactly "const 1:" pattern
+        entropy_shader_code = entropy_shader_code.replace("const 1:", "const ONE:");
+        propagation_shader_code = propagation_shader_code.replace("const 1:", "const ONE:");
+
+        // With spaces after the colon
+        entropy_shader_code = entropy_shader_code.replace("const 1: ", "const ONE: ");
+        propagation_shader_code = propagation_shader_code.replace("const 1: ", "const ONE: ");
+
+        // Handle all numeric constant identifiers
+        for i in 1..10 {
+            // Various formats with different spacing
+            let patterns = [
+                format!("const {}: u32", i),
+                format!("const {}:u32", i),
+                format!("const {}: ", i),
+                format!("const {}:", i),
+            ];
+
+            let replace = if i == 1 {
+                format!("const ONE: u32")
+            } else {
+                format!("const VAL_{}: u32", i)
+            };
+
+            for pattern in patterns.iter() {
+                entropy_shader_code = entropy_shader_code.replace(pattern, &replace);
+                propagation_shader_code = propagation_shader_code.replace(pattern, &replace);
+            }
+        }
 
         // Replace the NUM_TILES_U32_VALUE placeholder with the actual value
-        let entropy_shader_modified =
-            entropy_shader_src.replace("NUM_TILES_U32_VALUE", &num_tiles_u32.to_string());
+        entropy_shader_code =
+            entropy_shader_code.replace("NUM_TILES_U32_VALUE", &num_tiles_u32.to_string());
+        propagation_shader_code =
+            propagation_shader_code.replace("NUM_TILES_U32_VALUE", &num_tiles_u32.to_string());
 
-        let propagation_shader_modified =
-            propagation_shader_src.replace("NUM_TILES_U32_VALUE", &num_tiles_u32.to_string());
-
-        (entropy_shader_modified, propagation_shader_modified)
+        (entropy_shader_code, propagation_shader_code)
     }
 
     pub fn create_propagation_bind_groups(

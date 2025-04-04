@@ -27,7 +27,7 @@ struct Params {
     _padding1: u32, // padding to align to 16 bytes
 };
 
-// Constants for axis directions
+// Axis enums for easier readability
 const AXIS_POS_X: u32 = 0u;
 const AXIS_NEG_X: u32 = 1u;
 const AXIS_POS_Y: u32 = 2u;
@@ -75,6 +75,9 @@ const NUM_TILES_U32: u32 = NUM_TILES_U32_VALUE;
 
 // Specialization constant for workgroup size (X dimension)
 const WORKGROUP_SIZE_X: u32 = 64u; // Hardcoded size
+
+// Numeric constants
+const ONE: u32 = 1u; // Placeholder, will be dynamically set in source
 
 // Helper function to get 1D index from 3D coords
 fn grid_index(x: u32, y: u32, z: u32) -> u32 {

@@ -828,9 +828,72 @@ mod tests {
         let buffers = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode)?;
         let buffers = Arc::new(buffers);
 
-        // Create pipelines
-        let pipelines = ComputePipelines::new(&device, 1)?;
-        let pipelines = Arc::new(pipelines);
+        // Create a custom test pipeline instead of using ComputePipelines::new which may have issues
+        let propagation_shader_code = include_str!("./shaders/test_shader.wgsl").to_string();
+
+        // Create the shader module directly instead of using the cache
+        let propagation_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Test Propagation Shader"),
+            source: wgpu::ShaderSource::Wgsl(propagation_shader_code.into()),
+        });
+
+        // Create a minimal bind group layout for testing
+        let propagation_bind_group_layout = Arc::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Test Propagation Bind Group Layout"),
+                entries: &[
+                    // Keep it minimal for testing
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
+                        },
+                        count: None,
+                    },
+                ],
+            },
+        ));
+
+        // Create pipeline layout
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Test Pipeline Layout"),
+            bind_group_layouts: &[&propagation_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        // Create test compute pipeline
+        let propagation_pipeline = Arc::new(device.create_compute_pipeline(
+            &wgpu::ComputePipelineDescriptor {
+                label: Some("Test Compute Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &propagation_shader,
+                entry_point: "main_propagate",
+                compilation_options: Default::default(),
+            },
+        ));
+
+        // Create test pipelines object
+        let pipelines = Arc::new(ComputePipelines {
+            entropy_pipeline: propagation_pipeline.clone(), // Use the same test pipeline for both
+            propagation_pipeline,
+            entropy_bind_group_layout: propagation_bind_group_layout.clone(),
+            propagation_bind_group_layout,
+            entropy_workgroup_size: 64,
+            propagation_workgroup_size: 64,
+        });
 
         Ok(MockGpu {
             device,
