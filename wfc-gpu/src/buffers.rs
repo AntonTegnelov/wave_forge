@@ -2,12 +2,9 @@ use crate::GpuError;
 use bitvec::field::BitField;
 use bytemuck::{Pod, Zeroable};
 use futures::channel::oneshot;
-use futures::pin_mut;
 use futures::{self, FutureExt};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio;
 use wfc_core::grid::PossibilityGrid;
 use wfc_core::BoundaryCondition;
 use wfc_rules::AdjacencyRules;
@@ -846,7 +843,6 @@ mod tests {
     use super::*;
     use crate::test_utils::initialize_test_gpu;
     use std::sync::Arc;
-    use tokio;
     use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
     use wfc_rules::AdjacencyRules;
 

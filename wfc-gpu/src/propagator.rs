@@ -15,7 +15,10 @@ use wfc_core::{
     propagator::propagator::{ConstraintPropagator, PropagationError},
     BoundaryCondition,
 };
-use wfc_rules::AdjacencyRules;
+use wfc_rules::{
+    types::{TileSet, TileSetError, Transformation},
+    AdjacencyRules,
+};
 
 /// GPU implementation of the ConstraintPropagator trait.
 #[derive(Debug, Clone)]
@@ -303,10 +306,17 @@ impl ConstraintPropagator for GpuConstraintPropagator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{accelerator::GpuAccelerator, GpuError};
-    use wfc_core::grid::PossibilityGrid;
-    use wfc_core::BoundaryCondition;
-    use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
+    use crate::accelerator::GpuAccelerator;
+    use crate::test_utils::initialize_test_gpu;
+    use crate::GpuError;
+    use futures::{pin_mut, FutureExt};
+    use std::time::Duration;
+    use tokio;
+    use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
+    use wfc_rules::{
+        types::{TileSet, TileSetError, Transformation},
+        AdjacencyRules,
+    };
 
     // --- Test Setup Helpers ---
 
