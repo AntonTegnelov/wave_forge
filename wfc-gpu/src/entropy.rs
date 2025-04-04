@@ -20,7 +20,7 @@ pub struct GpuEntropyCalculator {
     pub(crate) pipelines: Arc<ComputePipelines>,
     pub(crate) buffers: Arc<GpuBuffers>,
     pub(crate) grid_dims: (usize, usize, usize),
-    pub(crate) num_tiles: u32,
+    pub(crate) _num_tiles: u32,
 }
 
 impl GpuEntropyCalculator {
@@ -40,7 +40,7 @@ impl GpuEntropyCalculator {
             pipelines,
             buffers,
             grid_dims,
-            num_tiles,
+            _num_tiles: num_tiles,
         }
     }
 }

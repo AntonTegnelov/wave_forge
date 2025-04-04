@@ -812,26 +812,6 @@ impl GpuBuffers {
         debug!("All requested data downloaded from GPU.");
         Ok(results)
     }
-
-    /// Helper function to calculate the expected size of the possibility grid data in bytes.
-    fn get_possibility_data_size(&self, num_tiles: u32) -> u64 {
-        // Calculate size based on buffer size and number of tiles per u32
-        // This assumes the buffer holds data for all cells.
-        let _u32s_per_cell = (num_tiles + 31) / 32;
-        // The size should just be the buffer's actual size.
-        // Let's rely on the existing buffer size directly.
-        self.grid_possibilities_buf.size()
-    }
-}
-
-// Enum to help process results from try_join_all
-enum DownloadedData {
-    Entropy(Vec<f32>),
-    MinEntropyInfo((f32, u32)),
-    ContradictionFlag(bool),
-    GridPossibilities(Vec<u32>),
-    WorklistCount(u32),
-    ContradictionLocation(u32),
 }
 
 #[cfg(test)]
