@@ -1,27 +1,23 @@
 use futures::executor::block_on;
 use wgpu;
 
-/// Initializes a WGPU instance, adapter, device, and queue for testing purposes.
-///
-/// Panics if a suitable adapter or device cannot be found.
+// Initialize GPU for testing
+#[cfg(test)]
 pub fn initialize_test_gpu() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .expect("Failed to find suitable adapter");
+    let instance = wgpu::Instance::default();
+
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        .expect("Failed to get adapter");
 
     let (device, queue) = block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("Test Device"),
-            required_features: wgpu::Features::empty(), // Adjust features as needed by tests
-            required_limits: wgpu::Limits::default(),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
         },
-        None, // Trace path
+        None,
     ))
-    .expect("Failed to request device");
+    .expect("Failed to create device");
 
     (device, queue)
 }

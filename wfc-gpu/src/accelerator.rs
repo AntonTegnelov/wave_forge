@@ -340,3 +340,27 @@ impl EntropyCalculator for GpuAccelerator {
         calculator.select_lowest_entropy_cell(entropy_grid)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::subgrid::SubgridConfig;
+
+    // Just test that SubgridConfig API exists and works
+    #[test]
+    fn test_subgrid_config() {
+        // Create a test subgrid config
+        let config = SubgridConfig {
+            max_subgrid_size: 32,
+            overlap_size: 3,
+        };
+
+        // Check values
+        assert_eq!(config.max_subgrid_size, 32);
+        assert_eq!(config.overlap_size, 3);
+
+        // Check default values
+        let default_config = SubgridConfig::default();
+        assert_eq!(default_config.max_subgrid_size, 64);
+        assert_eq!(default_config.overlap_size, 2);
+    }
+}
