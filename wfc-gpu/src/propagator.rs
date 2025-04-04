@@ -3,7 +3,7 @@ use crate::{
     pipeline::ComputePipelines,
 };
 use async_trait::async_trait;
-use log::{debug, info, warn};
+use log::{info, warn};
 use std::sync::Arc;
 use wfc_core::{
     grid::PossibilityGrid,
@@ -22,6 +22,9 @@ pub struct GpuConstraintPropagator {
     // State for ping-pong buffer index
     current_worklist_idx: usize,
     pub(crate) params: GpuParamsUniform,
+    // Early termination settings
+    early_termination_threshold: u32,
+    early_termination_consecutive_passes: u32,
 }
 
 impl GpuConstraintPropagator {
@@ -42,7 +45,28 @@ impl GpuConstraintPropagator {
             buffers,
             current_worklist_idx: 0,
             params,
+            early_termination_threshold: 10, // Default: if fewer than 10 cells are affected, consider early termination
+            early_termination_consecutive_passes: 3, // Default: require 3 consecutive passes below threshold
         }
+    }
+
+    /// Sets the early termination parameters.
+    ///
+    /// Early termination stops the propagation process when the worklist size remains
+    /// below a certain threshold for a number of consecutive passes.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - The maximum number of cells that can be updated before considering termination.
+    /// * `consecutive_passes` - The number of consecutive passes that must be below the threshold.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_early_termination(mut self, threshold: u32, consecutive_passes: u32) -> Self {
+        self.early_termination_threshold = threshold;
+        self.early_termination_consecutive_passes = consecutive_passes;
+        self
     }
 
     /// Gets the binding resource for the current input worklist buffer.
@@ -143,19 +167,21 @@ impl ConstraintPropagator for GpuConstraintPropagator {
         let mut propagation_pass = 0;
         const MAX_PROPAGATION_PASSES: u32 = 100; // Safeguard against infinite loops
 
-        while current_worklist_size > 0 && propagation_pass < MAX_PROPAGATION_PASSES {
+        // Early termination tracking
+        let mut consecutive_passes_below_threshold = 0;
+
+        // Main propagation loop
+        while propagation_pass < MAX_PROPAGATION_PASSES && current_worklist_size > 0 {
             propagation_pass += 1;
-            debug!(
-                "Propagation Pass {}: Worklist size = {}",
-                propagation_pass, current_worklist_size
+            log::debug!(
+                "Starting propagation pass {} with {} cells in worklist.",
+                propagation_pass,
+                current_worklist_size
             );
 
-            // Create bind group for current pass using our worklist binding methods
-            let input_worklist_resource = self.input_worklist_binding();
-            let output_worklist_resource = self.output_worklist_binding();
-
+            // --- Create and Configure Bind Group for Current Pass ---
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("Propagation Bind Group Pass {}", propagation_pass)),
+                label: Some(&format!("Propagation Pass {} Bind Group", propagation_pass)),
                 layout: &self.pipelines.propagation_bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -168,11 +194,11 @@ impl ConstraintPropagator for GpuConstraintPropagator {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: input_worklist_resource,
+                        resource: self.input_worklist_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: output_worklist_resource,
+                        resource: self.output_worklist_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
@@ -262,6 +288,29 @@ impl ConstraintPropagator for GpuConstraintPropagator {
                 current_worklist_size
             );
 
+            // Early termination check
+            if current_worklist_size <= self.early_termination_threshold {
+                consecutive_passes_below_threshold += 1;
+                log::debug!(
+                    "Pass {} below early termination threshold ({}). Consecutive passes: {}",
+                    propagation_pass,
+                    current_worklist_size,
+                    consecutive_passes_below_threshold
+                );
+
+                if consecutive_passes_below_threshold >= self.early_termination_consecutive_passes {
+                    log::info!(
+                        "Early termination after {} passes. Worklist size: {}",
+                        propagation_pass,
+                        current_worklist_size
+                    );
+                    break;
+                }
+            } else {
+                // Reset counter if we're above threshold
+                consecutive_passes_below_threshold = 0;
+            }
+
             // Ping-pong buffers for next iteration
             self.current_worklist_idx = 1 - self.current_worklist_idx;
         }
@@ -283,5 +332,126 @@ impl ConstraintPropagator for GpuConstraintPropagator {
 
 #[cfg(test)]
 mod tests {
-    // Empty test module - will be implemented later
+    use super::*;
+    use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
+    use std::sync::Arc;
+    use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
+    use wfc_rules::AdjacencyRules;
+
+    // Mock GPU device for testing
+    struct MockGpu {
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        buffers: Arc<GpuBuffers>,
+        pipelines: Arc<ComputePipelines>,
+    }
+
+    // Helper to create a mock GPU environment for testing
+    async fn setup_mock_gpu() -> Result<MockGpu, GpuError> {
+        // Get a real device and queue for testing (using wgpu's default backends)
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
+            .await
+            .ok_or_else(|| GpuError::AdapterRequestFailed)?;
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Test Device"),
+                    required_features: wgpu::Features::empty(),
+                    // Request higher limits that match our storage buffer usage in propagation
+                    required_limits: wgpu::Limits {
+                        max_storage_buffers_per_shader_stage: 8,
+                        ..wgpu::Limits::downlevel_defaults()
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|e| GpuError::DeviceRequestFailed(e))?;
+
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
+        // For testing, we create minimal grid dimensions and rules
+        let grid_dims = (2, 2, 1);
+        let width = grid_dims.0;
+        let height = grid_dims.1;
+        let depth = grid_dims.2;
+        let num_tiles = 2;
+        let boundary_mode = BoundaryCondition::Finite;
+
+        // Create a simple grid with all possibilities enabled
+        let grid = PossibilityGrid::new(width, height, depth, num_tiles);
+
+        // Create simple adjacency rules where all tiles can be adjacent
+        let mut allowed_tuples = Vec::new();
+        for axis in 0..6 {
+            for tile1 in 0..num_tiles {
+                for tile2 in 0..num_tiles {
+                    allowed_tuples.push((axis, tile1, tile2));
+                }
+            }
+        }
+        let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, allowed_tuples);
+
+        // Create buffers
+        let buffers = GpuBuffers::new(&device, &queue, &grid, &rules, boundary_mode)?;
+        let buffers = Arc::new(buffers);
+
+        // Create pipelines
+        let pipelines = ComputePipelines::new(&device, 1)?;
+        let pipelines = Arc::new(pipelines);
+
+        Ok(MockGpu {
+            device,
+            queue,
+            buffers,
+            pipelines,
+        })
+    }
+
+    #[tokio::test]
+    async fn test_early_termination_configuration() {
+        // This is primarily a compilation test to ensure the with_early_termination method
+        // works as expected and the propagator can be configured.
+
+        if let Ok(mock_gpu) = setup_mock_gpu().await {
+            let params = GpuParamsUniform {
+                grid_width: 2,
+                grid_height: 2,
+                grid_depth: 1,
+                num_tiles: 2,
+                num_axes: 6,
+                worklist_size: 0,
+                boundary_mode: 0,
+                _padding1: 0,
+            };
+
+            let propagator = GpuConstraintPropagator::new(
+                mock_gpu.device,
+                mock_gpu.queue,
+                mock_gpu.pipelines,
+                mock_gpu.buffers,
+                (2, 2, 1),
+                BoundaryCondition::Finite,
+                params,
+            );
+
+            // Configure early termination
+            let propagator = propagator.with_early_termination(5, 2);
+
+            // Verify configuration
+            assert_eq!(propagator.early_termination_threshold, 5);
+            assert_eq!(propagator.early_termination_consecutive_passes, 2);
+        } else {
+            // Skip test if GPU creation fails (headless CI environments may not have GPU)
+            println!("Skipping test_early_termination_configuration due to GPU init failure");
+        }
+    }
 }

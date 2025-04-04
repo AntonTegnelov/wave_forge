@@ -9,7 +9,7 @@ This document outlines improvement opportunities for the GPU-accelerated Wave Fu
 - [x] **Pipeline and shader caching**: Add mechanism to cache compiled shaders and pipelines for faster reinitialization.
 - [x] **Optimize buffer synchronization**: Reduce CPU-GPU synchronization points and minimize buffer copies.
 - [ ] **Parallel subgrid processing**: Add support for dividing large grids into subgrids that can be processed independently.
-- [ ] **Early termination**: Add mechanism to stop propagation early if further passes yield minimal changes.
+- [x] **Early termination**: Add mechanism to stop propagation early if further passes yield minimal changes.
 
 ## Robustness
 
