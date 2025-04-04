@@ -701,139 +701,127 @@ impl GpuBuffers {
         }
 
         queue.submit(Some(encoder.finish()));
-        debug!("Submitted buffer copy commands to GPU queue.");
+        info!("GPU copy commands submitted for download.");
 
+        // Ensure GPU is idle before attempting to map buffers
+        device.poll(wgpu::Maintain::Wait);
+        info!("GPU polled, proceeding with buffer mapping.");
+
+        // Vector to hold futures for mapping operations
         let mut mapping_futures = Vec::new();
 
-        // --- Spawn mapping tasks ---
-        if download_entropy {
-            let buffer_clone = self.staging_entropy_buf.clone();
-            mapping_futures.push(tokio::spawn(async move {
-                // Call with Self:: prefix
-                Self::map_staging_buffer_to_vec(buffer_clone)
-                    .await
-                    .map(|bytes| {
-                        let data: &[f32] = bytemuck::cast_slice(&bytes);
-                        DownloadedData::Entropy(data.to_vec())
+        // Helper closure to create mapping future
+        let create_mapping_future = |buffer: Arc<wgpu::Buffer>| -> futures::future::BoxFuture<
+            'static,
+            Result<wgpu::BufferView, GpuError>,
+        > {
+            async move {
+                let (tx, rx) = oneshot::channel();
+                buffer
+                    .slice(..)
+                    .map_async(wgpu::MapMode::Read, move |result| {
+                        let _ = tx.send(result);
+                    });
+                // Polling might still be needed here occasionally for certain drivers/setups
+                // device.poll(wgpu::Maintain::Poll); // Keep polling minimal if Wait is used above
+                rx.await
+                    .map_err(|_| {
+                        GpuError::BufferOperationError("Mapping channel canceled".to_string())
+                    })?
+                    .map_err(|e| {
+                        GpuError::BufferOperationError(format!("Buffer mapping failed: {:?}", e))
                     })
-            }));
-        }
-        if download_min_entropy {
-            let buffer_clone = self.staging_min_entropy_info_buf.clone();
-            mapping_futures.push(tokio::spawn(async move {
-                Self::map_staging_buffer_to_vec(buffer_clone)
-                    .await
-                    .and_then(|bytes| {
-                        if bytes.len() >= 8 {
-                            let entropy_bits = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                            let index = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-                            Ok(DownloadedData::MinEntropyInfo((
-                                f32::from_bits(entropy_bits),
-                                index,
-                            )))
-                        } else {
-                            Err(GpuError::BufferOperationError(
-                                "Min entropy buffer size mismatch".to_string(),
-                            ))
-                        }
-                    })
-            }));
-        }
-        if download_contradiction_flag {
-            let buffer_clone = self.staging_contradiction_flag_buf.clone();
-            mapping_futures.push(tokio::spawn(async move {
-                Self::map_staging_buffer_to_vec(buffer_clone)
-                    .await
-                    .map(|bytes| {
-                        if bytes.len() >= 4 {
-                            let flag_value: u32 =
-                                u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                            DownloadedData::ContradictionFlag(flag_value != 0)
-                        } else {
-                            DownloadedData::ContradictionFlag(false)
-                        }
-                    })
-            }));
-        }
-        if download_grid {
-            let buffer_clone = self.staging_grid_possibilities_buf.clone();
-            mapping_futures.push(tokio::spawn(async move {
-                Self::map_staging_buffer_to_vec(buffer_clone)
-                    .await
-                    .map(|bytes| {
-                        let data: &[u32] = bytemuck::cast_slice(&bytes);
-                        DownloadedData::GridPossibilities(data.to_vec())
-                    })
-            }));
-        }
-        if download_worklist_count {
-            let buffer_clone = self.staging_worklist_count_buf.clone();
-            mapping_futures.push(tokio::spawn(async move {
-                Self::map_staging_buffer_to_vec(buffer_clone)
-                    .await
-                    .map(|bytes| {
-                        if bytes.len() >= 4 {
-                            let count: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                            DownloadedData::WorklistCount(count)
-                        } else {
-                            DownloadedData::WorklistCount(0)
-                        }
-                    })
-            }));
-        }
-        if download_contradiction_location {
-            let buffer_clone = self.staging_contradiction_location_buf.clone();
-            mapping_futures.push(tokio::spawn(async move {
-                Self::map_staging_buffer_to_vec(buffer_clone)
-                    .await
-                    .map(|bytes| {
-                        if bytes.len() >= 4 {
-                            let location: u32 = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                            DownloadedData::ContradictionLocation(location)
-                        } else {
-                            DownloadedData::ContradictionLocation(u32::MAX)
-                        }
-                    })
-            }));
-        }
-
-        // --- Await futures with polling ---
-        let joined_futures = futures::future::try_join_all(mapping_futures);
-        pin_mut!(joined_futures); // Pin future for select!
-
-        let final_results = loop {
-            futures::select! { // Use select! macro
-                res = joined_futures.as_mut().fuse() => {
-                    match res {
-                        Ok(results) => break results,
-                        Err(e) => return Err(GpuError::InternalError(format!("Task join error: {}", e))),
-                    }
-                },
-                _ = tokio::time::sleep(Duration::from_millis(1)).fuse() => {
-                    device.poll(wgpu::Maintain::Poll);
-                }
             }
+            .boxed()
         };
 
+        // --- Create Mapping Futures ---
+        if download_entropy {
+            mapping_futures.push(create_mapping_future(self.staging_entropy_buf.clone()));
+        }
+        if download_min_entropy {
+            mapping_futures.push(create_mapping_future(
+                self.staging_min_entropy_info_buf.clone(),
+            ));
+        }
+        if download_contradiction_flag {
+            mapping_futures.push(create_mapping_future(
+                self.staging_contradiction_flag_buf.clone(),
+            ));
+        }
+        if download_grid {
+            mapping_futures.push(create_mapping_future(
+                self.staging_grid_possibilities_buf.clone(),
+            ));
+        }
+        if download_worklist_count {
+            mapping_futures.push(create_mapping_future(
+                self.staging_worklist_count_buf.clone(),
+            ));
+        }
+        if download_contradiction_location {
+            mapping_futures.push(create_mapping_future(
+                self.staging_contradiction_location_buf.clone(),
+            ));
+        }
+
+        // Wait for all mapping operations concurrently
+        let mapped_results = futures::future::join_all(mapping_futures).await;
+
         // Process results
-        for result_item in final_results {
-            match result_item {
-                Ok(data) => match data {
-                    DownloadedData::Entropy(data) => results.entropy = Some(data),
-                    DownloadedData::MinEntropyInfo(data) => results.min_entropy_info = Some(data),
-                    DownloadedData::ContradictionFlag(data) => {
-                        results.contradiction_flag = Some(data)
-                    }
-                    DownloadedData::GridPossibilities(data) => {
-                        results.grid_possibilities = Some(data)
-                    }
-                    DownloadedData::WorklistCount(data) => results.worklist_count = Some(data),
-                    DownloadedData::ContradictionLocation(data) => {
-                        results.contradiction_location = Some(data)
-                    }
-                },
-                Err(e) => return Err(e),
+        let mut result_idx = 0;
+        if download_entropy {
+            let view = mapped_results[result_idx].as_ref().map_err(|e| e.clone())?;
+            let data: &[f32] = bytemuck::cast_slice(&view);
+            results.entropy = Some(data.to_vec());
+            result_idx += 1;
+        }
+        if download_min_entropy {
+            let view = mapped_results[result_idx].as_ref().map_err(|e| e.clone())?;
+            if view.len() >= 8 {
+                let entropy_bits = u32::from_le_bytes(view[0..4].try_into().unwrap());
+                let index = u32::from_le_bytes(view[4..8].try_into().unwrap());
+                results.min_entropy_info = Some((f32::from_bits(entropy_bits), index));
+            } else {
+                warn!("Min entropy buffer size mismatch during download");
             }
+            result_idx += 1;
+        }
+        if download_contradiction_flag {
+            let view = mapped_results[result_idx].as_ref().map_err(|e| e.clone())?;
+            if view.len() >= 4 {
+                let flag_value: u32 = u32::from_le_bytes(view[0..4].try_into().unwrap());
+                results.contradiction_flag = Some(flag_value != 0);
+            } else {
+                warn!("Contradiction flag buffer size mismatch during download");
+            }
+            result_idx += 1;
+        }
+        if download_grid {
+            let view = mapped_results[result_idx].as_ref().map_err(|e| e.clone())?;
+            let data: &[u32] = bytemuck::cast_slice(&view);
+            results.grid_possibilities = Some(data.to_vec());
+            result_idx += 1;
+        }
+        if download_worklist_count {
+            let view = mapped_results[result_idx].as_ref().map_err(|e| e.clone())?;
+            if view.len() >= 4 {
+                let count: u32 = u32::from_le_bytes(view[0..4].try_into().unwrap());
+                results.worklist_count = Some(count);
+            } else {
+                warn!("Worklist count buffer size mismatch during download");
+            }
+            result_idx += 1;
+        }
+        if download_contradiction_location {
+            let view = mapped_results[result_idx].as_ref().map_err(|e| e.clone())?;
+            if view.len() >= 4 {
+                let location: u32 = u32::from_le_bytes(view[0..4].try_into().unwrap());
+                results.contradiction_location = Some(location);
+            } else {
+                warn!("Contradiction location buffer size mismatch during download");
+            }
+            result_idx += 1;
         }
 
         debug!("All requested data downloaded from GPU.");
