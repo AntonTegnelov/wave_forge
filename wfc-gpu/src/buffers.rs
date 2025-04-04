@@ -679,10 +679,6 @@ impl GpuBuffers {
         queue.submit(Some(encoder.finish()));
         info!("GPU copy commands submitted for download.");
 
-        // Ensure GPU is idle before attempting to map buffers
-        device.poll(wgpu::Maintain::Wait);
-        info!("GPU polled, proceeding with buffer mapping.");
-
         let mut mapping_futures = Vec::new();
 
         // Helper closure to create mapping future that returns owned data
