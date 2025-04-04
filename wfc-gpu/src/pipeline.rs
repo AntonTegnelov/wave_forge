@@ -313,7 +313,7 @@ impl ComputePipelines {
         // --- Get or Create Entropy Pipeline ---
         let entropy_pipeline_key = PipelineCacheKey {
             shader_key: entropy_shader_key,
-            entry_point: "main_entropy".to_string(),
+            entry_point: "main".to_string(),
         };
 
         let entropy_pipeline = {
@@ -327,7 +327,7 @@ impl ComputePipelines {
                             label: Some("Entropy Pipeline"),
                             layout: Some(&entropy_pipeline_layout),
                             module: &entropy_shader,
-                            entry_point: "main_entropy",
+                            entry_point: "main",
                             compilation_options: wgpu::PipelineCompilationOptions::default(),
                         }),
                     )
