@@ -1,5 +1,3 @@
-use crate::accelerator::GpuAccelerator;
-use crate::GpuError;
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     pipeline::ComputePipelines,
@@ -12,10 +10,7 @@ use wfc_core::{
     propagator::propagator::{ConstraintPropagator, PropagationError},
     BoundaryCondition,
 };
-use wfc_rules::{
-    types::{TileSet, TileSetError, Transformation},
-    AdjacencyRules,
-};
+use wfc_rules::AdjacencyRules;
 
 /// GPU implementation of the ConstraintPropagator trait.
 #[derive(Debug, Clone)]
