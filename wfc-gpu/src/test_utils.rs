@@ -1,4 +1,4 @@
-use pollster;
+use futures::executor::block_on;
 use wgpu;
 
 /// Initializes a WGPU instance, adapter, device, and queue for testing purposes.
@@ -6,14 +6,14 @@ use wgpu;
 /// Panics if a suitable adapter or device cannot be found.
 pub fn initialize_test_gpu() -> (wgpu::Device, wgpu::Queue) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
     }))
     .expect("Failed to find suitable adapter");
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
+    let (device, queue) = block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("Test Device"),
             required_features: wgpu::Features::empty(), // Adjust features as needed by tests

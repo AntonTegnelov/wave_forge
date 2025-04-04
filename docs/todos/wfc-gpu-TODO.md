@@ -13,7 +13,7 @@ This document outlines improvement opportunities for the GPU-accelerated Wave Fu
 
 ## Robustness
 
-- [ ] **Improve asynchronous handling**: Replace blocking `pollster::block_on()` calls with proper async/await patterns.
+- [x] **Improve asynchronous handling**: Replace blocking `pollster::block_on()` calls with proper async/await patterns.
 - [ ] **Enhanced error recovery**: Implement recovery mechanisms for non-fatal GPU errors instead of terminating.
 - [ ] **Hardware feature validation**: Add explicit checks for required GPU features before attempting to use them.
 - [ ] **Shader fallbacks**: Provide simplified shader implementations for hardware that doesn't support atomics or other advanced features.

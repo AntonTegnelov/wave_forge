@@ -275,7 +275,6 @@ impl EntropyCalculator for GpuAccelerator {
             self.pipelines(),
             self.buffers(),
             self.grid_dims(),
-            self.num_tiles() as u32, // Add num_tiles
         );
         // Delegate the actual work
         calculator.calculate_entropy(grid)
@@ -296,7 +295,6 @@ impl EntropyCalculator for GpuAccelerator {
             self.pipelines(),
             self.buffers(),
             self.grid_dims(),
-            self.num_tiles() as u32, // Add num_tiles
         );
         // Delegate the actual work
         // Note: GpuEntropyCalculator::select_lowest_entropy_cell might need adjustment
