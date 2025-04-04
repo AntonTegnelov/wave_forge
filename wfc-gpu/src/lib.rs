@@ -20,8 +20,7 @@ pub mod shaders; // Module to potentially help load shaders
 pub mod subgrid;
 
 // Add test_utils module, conditionally compiled for tests
-#[cfg(test)]
-pub(crate) mod test_utils;
+pub mod test_utils;
 
 /// Errors related to GPU setup, buffer operations, shader compilation, and pipeline execution using WGPU.
 #[derive(Error, Debug)]

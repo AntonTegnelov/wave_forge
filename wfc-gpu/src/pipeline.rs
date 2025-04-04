@@ -86,7 +86,7 @@ impl ComputePipelines {
     ///
     /// * `Ok(Self)` containing the initialized `ComputePipelines`.
     /// * `Err(GpuError)` if shader loading, compilation, or pipeline creation fails.
-    pub fn new(device: &wgpu::Device, _num_tiles_u32: u32) -> Result<Self, GpuError> {
+    pub fn new(device: &wgpu::Device, num_tiles_u32: u32) -> Result<Self, GpuError> {
         // Query device limits
         let limits = device.limits();
         let max_invocations = limits.max_compute_invocations_per_workgroup;
@@ -108,11 +108,11 @@ impl ComputePipelines {
 
         // Load appropriate shader code based on hardware capabilities
         let (entropy_shader_code, propagation_shader_code) =
-            Self::select_shader_variants(supports_atomics);
+            Self::select_shader_variants(supports_atomics, num_tiles_u32);
 
         // --- Get or Create Entropy Shader Module ---
         let entropy_shader_key = ShaderCacheKey {
-            source_hash: hash_string(entropy_shader_code),
+            source_hash: hash_string(entropy_shader_code.as_str()),
         };
 
         let entropy_shader = {
@@ -131,7 +131,7 @@ impl ComputePipelines {
 
         // --- Get or Create Propagation Shader Module ---
         let propagation_shader_key = ShaderCacheKey {
-            source_hash: hash_string(propagation_shader_code),
+            source_hash: hash_string(propagation_shader_code.as_str()),
         };
 
         let propagation_shader = {
@@ -204,12 +204,21 @@ impl ComputePipelines {
             },
         ));
 
+        // --- Create Pipeline Layouts ---
+
+        let entropy_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Entropy Pipeline Layout"),
+                bind_group_layouts: &[&entropy_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
         // Layout for propagation shader
         let propagation_bind_group_layout = Arc::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("Propagation Bind Group Layout"),
                 entries: &[
-                    // grid_possibilities (read-write storage, atomic)
+                    // grid_possibilities (read-write storage)
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -242,7 +251,7 @@ impl ComputePipelines {
                         },
                         count: None,
                     },
-                    // output_worklist (read-write storage, atomic)
+                    // output_worklist (read-write storage)
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -264,7 +273,7 @@ impl ComputePipelines {
                         },
                         count: None,
                     },
-                    // output_worklist_count (atomic u32)
+                    // output_worklist_count (read-write storage)
                     wgpu::BindGroupLayoutEntry {
                         binding: 5,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -275,7 +284,7 @@ impl ComputePipelines {
                         },
                         count: None,
                     },
-                    // contradiction_flag (atomic u32)
+                    // contradiction_flag (read-write storage)
                     wgpu::BindGroupLayoutEntry {
                         binding: 6,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -286,7 +295,7 @@ impl ComputePipelines {
                         },
                         count: None,
                     },
-                    // contradiction_location (atomic u32)
+                    // contradiction_location (read-write storage)
                     wgpu::BindGroupLayoutEntry {
                         binding: 7,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -301,14 +310,6 @@ impl ComputePipelines {
             },
         ));
 
-        // --- Define Pipeline Layouts ---
-        let entropy_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Entropy Pipeline Layout"),
-                bind_group_layouts: &[&entropy_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
         let propagation_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Propagation Pipeline Layout"),
@@ -316,24 +317,44 @@ impl ComputePipelines {
                 push_constant_ranges: &[],
             });
 
-        // --- Get or Create Entropy Pipeline ---
+        // --- Create Pipeline Cache Keys ---
+
+        let entropy_entry_point = if supports_atomics {
+            "main_entropy"
+        } else {
+            "main"
+        };
+
+        let propagation_entry_point = if supports_atomics {
+            "main_propagate"
+        } else {
+            "main_propagate"
+        };
+
         let entropy_pipeline_key = PipelineCacheKey {
             shader_key: entropy_shader_key,
-            entry_point: "main".to_string(),
+            entry_point: entropy_entry_point.to_string(),
         };
+
+        let propagation_pipeline_key = PipelineCacheKey {
+            shader_key: propagation_shader_key,
+            entry_point: propagation_entry_point.to_string(),
+        };
+
+        // --- Create or Retrieve Compute Pipelines ---
 
         let entropy_pipeline = {
             let mut cache = COMPUTE_PIPELINE_CACHE.lock().unwrap();
             cache
-                .entry(entropy_pipeline_key.clone())
+                .entry(entropy_pipeline_key)
                 .or_insert_with(|| {
                     log::debug!("Creating new compute pipeline for entropy");
                     Arc::new(
                         device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                            label: Some("Entropy Pipeline"),
+                            label: Some("Entropy Compute Pipeline"),
                             layout: Some(&entropy_pipeline_layout),
                             module: &entropy_shader,
-                            entry_point: "main",
+                            entry_point: entropy_entry_point,
                             compilation_options: wgpu::PipelineCompilationOptions::default(),
                         }),
                     )
@@ -341,24 +362,18 @@ impl ComputePipelines {
                 .clone()
         };
 
-        // --- Get or Create Propagation Pipeline ---
-        let propagation_pipeline_key = PipelineCacheKey {
-            shader_key: propagation_shader_key,
-            entry_point: "main_propagate".to_string(),
-        };
-
         let propagation_pipeline = {
             let mut cache = COMPUTE_PIPELINE_CACHE.lock().unwrap();
             cache
-                .entry(propagation_pipeline_key.clone())
+                .entry(propagation_pipeline_key)
                 .or_insert_with(|| {
                     log::debug!("Creating new compute pipeline for propagation");
                     Arc::new(
                         device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                            label: Some("Propagation Pipeline"),
+                            label: Some("Propagation Compute Pipeline"),
                             layout: Some(&propagation_pipeline_layout),
                             module: &propagation_shader,
-                            entry_point: "main_propagate",
+                            entry_point: propagation_entry_point,
                             compilation_options: wgpu::PipelineCompilationOptions::default(),
                         }),
                     )
@@ -406,16 +421,18 @@ impl ComputePipelines {
     ///
     /// This method chooses between the full-featured shaders with atomic operations
     /// and simplified fallback versions for hardware that doesn't support atomics.
+    /// It also replaces NUM_TILES_U32_VALUE in the shaders with the actual value.
     ///
     /// # Arguments
     ///
     /// * `supports_atomics` - Whether the hardware supports atomics operations
+    /// * `num_tiles_u32` - The number of u32s needed per cell based on tile count
     ///
     /// # Returns
     ///
     /// * A tuple of (entropy_shader_code, propagation_shader_code) as strings
-    fn select_shader_variants(supports_atomics: bool) -> (&'static str, &'static str) {
-        if supports_atomics {
+    fn select_shader_variants(supports_atomics: bool, num_tiles_u32: u32) -> (String, String) {
+        let (entropy_shader_src, propagation_shader_src) = if supports_atomics {
             // Use the standard shaders with atomic operations
             (
                 include_str!("shaders/entropy.wgsl"),
@@ -430,6 +447,15 @@ impl ComputePipelines {
                 include_str!("shaders/entropy_fallback.wgsl"),
                 include_str!("shaders/propagate_fallback.wgsl"),
             )
-        }
+        };
+
+        // Replace the NUM_TILES_U32_VALUE placeholder with the actual value
+        let entropy_shader_modified =
+            entropy_shader_src.replace("NUM_TILES_U32_VALUE", &num_tiles_u32.to_string());
+
+        let propagation_shader_modified =
+            propagation_shader_src.replace("NUM_TILES_U32_VALUE", &num_tiles_u32.to_string());
+
+        (entropy_shader_modified, propagation_shader_modified)
     }
 }

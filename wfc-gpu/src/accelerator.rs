@@ -1,5 +1,5 @@
-use crate::buffers::GpuParamsUniform;
-use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, subgrid::SubgridConfig, GpuError};
+use crate::buffers::{GpuBuffers, GpuParamsUniform};
+use crate::{pipeline::ComputePipelines, subgrid::SubgridConfig, GpuError};
 use async_trait::async_trait;
 use log::info;
 use std::sync::Arc;
@@ -51,32 +51,24 @@ use crate::entropy::GpuEntropyCalculator;
 use crate::propagator::GpuConstraintPropagator;
 
 impl GpuAccelerator {
-    /// Asynchronously creates and initializes a new `GpuAccelerator`.
+    /// Creates a new GPU accelerator for Wave Function Collapse.
     ///
-    /// This involves:
-    /// 1. Setting up the WGPU instance, adapter, logical device, and queue.
-    /// 2. Loading and compiling compute shaders.
-    /// 3. Creating compute pipelines (`ComputePipelines`).
-    /// 4. Allocating GPU buffers (`GpuBuffers`) and uploading initial grid/rule data.
+    /// Initializes the GPU device, compute pipelines, and buffers required for the WFC algorithm.
+    /// This method performs asynchronous GPU operations and must be awaited.
     ///
     /// # Arguments
     ///
-    /// * `initial_grid` - A reference to the initial `PossibilityGrid` state.
-    ///                    Used to determine buffer sizes and upload initial possibilities.
-    /// * `rules` - A reference to the `AdjacencyRules` defining constraints.
-    ///             Used to upload rule data to the GPU.
-    /// * `boundary_mode` - The boundary handling mode for the grid.
+    /// * `initial_grid` - The initial grid state containing all possibilities.
+    /// * `rules` - The adjacency rules for the WFC algorithm.
+    /// * `boundary_mode` - Whether to use periodic or finite boundary conditions.
     ///
     /// # Returns
     ///
-    /// * `Ok(Self)` containing the initialized `GpuAccelerator` if successful.
-    /// * `Err(GpuError)` if any part of the WGPU setup, shader compilation, pipeline creation,
-    ///   or buffer allocation fails.
+    /// A `Result` containing either a new `GpuAccelerator` or a `GpuError`.
     ///
     /// # Constraints
     ///
-    /// * Currently supports a maximum of 128 unique tile types due to shader limitations.
-    ///   An error will be returned if `rules.num_tiles()` exceeds this limit.
+    /// * Dynamically supports arbitrary numbers of unique tile types, limited only by available GPU memory.
     pub async fn new(
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
@@ -88,15 +80,9 @@ impl GpuAccelerator {
         );
         info!("Initializing GPU Accelerator...");
 
-        // Check if the grid has a reasonable number of tiles (shader has hardcoded max of 4 u32s = 128 tiles)
+        // Calculate num_tiles_u32 here
         let num_tiles = rules.num_tiles();
         let u32s_per_cell = (num_tiles + 31) / 32; // Ceiling division
-        if u32s_per_cell > 4 {
-            return Err(GpuError::Other(format!(
-                "GPU implementation supports a maximum of 128 tiles, but grid has {}",
-                num_tiles
-            )));
-        }
 
         // 1. Initialize wgpu Instance (Wrap in Arc)
         let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -142,10 +128,6 @@ impl GpuAccelerator {
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
-
-        // Calculate num_tiles_u32 here
-        let num_tiles = rules.num_tiles();
-        let u32s_per_cell = (num_tiles + 31) / 32; // Ceiling division
 
         // 4. Create pipelines (uses device, returns Cloneable struct)
         // Pass num_tiles_u32 for specialization

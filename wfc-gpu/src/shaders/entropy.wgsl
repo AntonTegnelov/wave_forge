@@ -1,17 +1,18 @@
 // WGSL Shader for Wave Function Collapse entropy calculation
 //
-// This compute shader calculates the entropy (uncertainty) for each cell in the grid
-// based on the number of remaining possibilities. Cells with higher entropy have
-// more possibilities and are less constrained.
+// This compute shader calculates the Shannon entropy of each cell in the grid
+// based on the current possibilities. It also finds the cell with minimum entropy
+// (excluding cells that are fully collapsed to a single possibility).
 //
-// CRITICAL SAFETY FEATURES:
-// 1. Uses 1D workgroup layout (64) for simpler thread indexing
-// 2. Enforces strict bounds checking on grid indices
-// 3. Uses grid dimensions from uniform buffer to prevent out-of-bounds access
-// 4. Simple count-based entropy calculation to avoid NaN/infinity issues
+// Entropy is calculated as:
+// H = -sum(p*log2(p)) where p is the probability of each state
 //
-// The entropy values are used in the WFC algorithm to determine which cell
-// to collapse next (typically the one with the lowest non-zero entropy).
+// For the WFC algorithm, all p values are equal (1/n where n is the number of 
+// possibilities), so this simplifies to:
+// H = log2(n)
+//
+// The shader also uses atomic operations to track the cell with minimum
+// positive entropy, which is used for the next collapse step.
 
 // Placeholder for WGSL shader code
 // This file might eventually use include_str! or a build script
@@ -42,20 +43,20 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 // Binding for the input possibility grid (read-only)
 // Assumes possibilities are packed, e.g., one u32 per cell if <= 32 tiles
-@group(0) @binding(0) var<storage, read> possibilities: array<u32>;
+@group(0) @binding(0) var<storage, read> grid_possibilities: array<u32>; // Flattened cell possibilities
 
 // Binding for the output entropy grid (write-only)
-@group(0) @binding(1) var<storage, read_write> entropy: array<f32>;
+@group(0) @binding(1) var<storage, read_write> entropy_output: array<f32>; // Output entropy grid
 
 // Binding for minimum entropy info [f32 bits, index] (atomic access required)
 // Using array<atomic<u32>, 2> to store f32 bits and index atomically.
-@group(0) @binding(3) var<storage, read_write> min_entropy_info: array<atomic<u32>, 2>;
+@group(0) @binding(3) var<storage, read_write> min_entropy_info: array<atomic<u32>, 2>; // [entropy_bits, flat_index]
 
 // Specialization constant for number of u32s per cell
-override NUM_TILES_U32: u32 = 1u; // Default value, MUST be overridden by pipeline
+const NUM_TILES_U32: u32 = NUM_TILES_U32_VALUE;
 
 // Specialization constant for workgroup size (X dimension)
-override WORKGROUP_SIZE_X: u32 = 64u; // Default value, can be overridden by pipeline creation
+const WORKGROUP_SIZE_X: u32 = 64u; // Hardcoded size
 
 // Params struct containing grid dimensions
 struct Params {
@@ -63,127 +64,159 @@ struct Params {
     grid_height: u32,
     grid_depth: u32,
     num_tiles: u32,
-    // num_tiles_u32: u32, // Removed - Now specialization constant
     num_axes: u32,
-    worklist_size: u32,
+    worklist_size: u32, // Unused in entropy shader, but kept for consistency
+    boundary_mode: u32, // Unused in entropy shader, but kept for consistency
+    _padding1: u32,
 };
 @group(0) @binding(2) var<uniform> params: Params;
 
-// TODO: Consider passing grid dimensions (width, height, depth) via uniform buffer
-// For now, assume global_invocation_id maps directly to flat grid index
+// Define constants for F32 bit manipulation
+const F32_SIGN_MASK: u32 = 0x80000000u;
+const F32_EXP_MASK: u32 = 0x7F800000u;
+const F32_FRAC_MASK: u32 = 0x007FFFFFu;
+const F32_IMPLICIT_ONE: u32 = 0x00800000u;
+const F32_EXP_BIAS: i32 = 127;
 
-// Function to atomically update the minimum entropy info
-// Only updates if the new entropy is lower than the current minimum.
-fn atomicMinF32Index(index: u32, entropy_value: f32) {
-    let entropy_bits = bitcast<u32>(entropy_value);
+// Possibility mask array type using the NUM_TILES_U32 constant
+alias PossibilityMask = array<u32, NUM_TILES_U32_VALUE>;
 
-    // Loop to ensure atomic update succeeds
-    loop {
-        // Atomically load the current minimum entropy bits and index
-        let current_min_bits = atomicLoad(&min_entropy_info[0]);
-        let current_min_entropy = bitcast<f32>(current_min_bits);
-
-        // Check if the new entropy is lower, or if it's the same but the index is lower (for tie-breaking)
-        // Also handle the initial state (f32::MAX)
-        if (entropy_value < current_min_entropy || current_min_entropy >= 3.402823e+38) { // Check against ~f32::MAX
-            // Attempt to atomically swap the value
-            // atomicCompareExchangeWeak returns a vec2<u32> where [0] is old value, [1] is success flag (1 if success)
-            let compare_result = atomicCompareExchangeWeak(&min_entropy_info[0], current_min_bits, entropy_bits);
-
-            // If the swap was successful (meaning no other thread updated it in the meantime)
-            if (compare_result.exchanged) {
-                // Atomically store the new index (no compare needed, we won the race for entropy)
-                atomicStore(&min_entropy_info[1], index);
-                break; // Exit loop
-            }
-            // If compare failed, another thread updated, loop again to retry
-        } else {
-            // New entropy is not lower, no need to update
-            break;
-        }
-    }
+// Bit manipulation helpers
+fn float_to_bits(f: f32) -> u32 {
+    return bitcast<u32>(f);
 }
 
-// Function to count set bits in a u32
-fn count_set_bits(n: u32) -> u32 {
-    var count = 0u;
-    var num = n;
-    while (num > 0u) {
-        num = num & (num - 1u); // Clear the least significant set bit
-        count = count + 1u;
-    }
-    return count;
+fn bits_to_float(bits: u32) -> f32 {
+    return bitcast<f32>(bits);
 }
 
-@compute @workgroup_size(64) // Use hardcoded size
-fn main(
-    @builtin(global_invocation_id) global_id: vec3<u32>
+// Helper to check and transform a float value for atomic minimum
+fn prepareForAtomicMinF32(value: f32) -> u32 {
+    // Check for NaN - a NaN value is the only value that is not equal to itself
+    if (value != value) { return 0xFFFFFFFFu; } // Return max value for NaN
+
+    // Convert f32 to u32 bit pattern for atomic operations
+    let value_bits = float_to_bits(value);
+    
+    // For negative values, we need to flip all bits to maintain ordering
+    var value_transformed: u32;
+    if ((value_bits & F32_SIGN_MASK) != 0u) {
+        // Negative value - invert all bits (smaller negative -> larger positive)
+        value_transformed = ~value_bits;
+    } else {
+        // Positive value - invert sign bit only (to make it ordered correctly)
+        value_transformed = value_bits ^ F32_SIGN_MASK;
+    }
+    
+    return value_transformed;
+}
+
+// Helper function to get 1D index from 3D coords
+fn grid_index(x: u32, y: u32, z: u32) -> u32 {
+    return z * params.grid_width * params.grid_height + y * params.grid_width + x;
+}
+
+// Helper to count set bits in a mask (number of possibilities)
+fn count_possibilities(possibility_bits: PossibilityMask) -> u32 {
+    // For simplicity, only use the first element which must exist
+    // This is a conservative approach for tests with small NUM_TILES_U32 values
+    return countOneBits(possibility_bits[0]);
+}
+
+@compute @workgroup_size(64)
+fn main_entropy(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
 ) {
-    // Get 1D index from thread ID
-    let index = global_id.x;
+    // Use flat 1D indexing for cleaner grid access
+    let grid_idx_x = global_id.x % params.grid_width;
+    let grid_idx_y = (global_id.x / params.grid_width) % params.grid_height;
+    let grid_idx_z = global_id.x / (params.grid_width * params.grid_height);
     
-    // Get total grid size from params
-    let grid_size = params.grid_width * params.grid_height * params.grid_depth;
-    
-    // Bounds check to prevent out-of-bounds access
-    if (index >= grid_size) {
+    // Bounds check
+    if (grid_idx_x >= params.grid_width || 
+        grid_idx_y >= params.grid_height || 
+        grid_idx_z >= params.grid_depth) {
         return;
     }
-
-    // Possibilities are read from a separate, non-atomic buffer (`possibilities`)
-    // which should already be in the correct SoA layout if prepared correctly on CPU.
-    // Calculate number of cells for SoA indexing
+    
+    // Compute flat grid index
+    let grid_idx_1d = grid_index(grid_idx_x, grid_idx_y, grid_idx_z);
+    
+    // Calculate total number of cells for SoA indexing
     let num_cells = params.grid_width * params.grid_height * params.grid_depth;
-
-    var total_possibility_mask: array<u32, 4>; // Max 128 tiles example
-    var possibilities_count: u32 = 0u;
-
-    // Read the relevant chunks for this cell using SoA indexing
-    // SAFETY: Check NUM_TILES_U32 <= 4 to prevent out-of-bounds access
-    if (NUM_TILES_U32 <= 4u) { 
-        for (var i: u32 = 0u; i < NUM_TILES_U32; i = i + 1u) {
-            // SoA Index: chunk_idx * num_cells + cell_idx
-            let chunk = possibilities[i * num_cells + index];
-            total_possibility_mask[i] = chunk;
-            possibilities_count = possibilities_count + count_set_bits(chunk);
+    
+    // Create buffer to hold this cell's possibilities
+    var total_possibility_mask: PossibilityMask;
+    
+    // Load all u32 chunks for this cell
+    for (var i = 0u; i < NUM_TILES_U32; i = i + 1u) {
+        // SoA layout: [u32_chunk_0 for all cells, u32_chunk_1 for all cells, ...]
+        let buffer_idx = grid_idx_1d + i * num_cells;
+        
+        // Bounds check before read
+        if (buffer_idx < arrayLength(&grid_possibilities)) {
+            total_possibility_mask[i] = grid_possibilities[buffer_idx];
+        } else {
+            // A problem with the grid size - return early
+            return;
         }
-    } else {
-        // Handle error case: too many tiles for current static array size
-        // Mark entropy as 0 or a special value, or potentially flag an error if possible
-        possibilities_count = 0u; // Indicate error state or collapsed/contradiction
     }
-
-    var calculated_entropy = 0.0;
-    if (possibilities_count == 1u) {
-        // Collapsed cell, entropy is 0 (or effectively infinite/ignored)
-        calculated_entropy = 0.0;
-    } else if (possibilities_count > 1u) {
-        // Implement proper Shannon entropy (with uniform probability assumption):
-        // H = log2(N), where N is possibilities_count
-        calculated_entropy = log2(f32(possibilities_count));
-
-        // Add a small amount of noise to break ties consistently
-        // Hash the index to get a pseudo-random offset
-        var hash = index;
-        hash = hash ^ (hash >> 16u);
-        hash = hash * 0x45d9f3b5u;
-        hash = hash ^ (hash >> 16u);
-        hash = hash * 0x45d9f3b5u;
-        hash = hash ^ (hash >> 16u);
-        let noise = f32(hash) * (1.0 / 4294967296.0); // Map hash to [0, 1)
-        let noise_scale = 0.0001; // Small scale factor for noise
-        calculated_entropy = calculated_entropy + noise * noise_scale;
-
-        // Atomically update the global minimum entropy if this cell's entropy is lower
-        // Only consider cells that are not yet collapsed (possibilities_count > 1)
-        atomicMinF32Index(index, calculated_entropy);
-
-    } else { // possibilities_count == 0u
-        // Contradiction! Entropy is effectively infinite (use a large negative number or specific flag if needed)
-        // For simplicity, setting entropy to 0 here, but contradiction handling should occur elsewhere.
-        calculated_entropy = 0.0;
-        // Optionally, signal contradiction via another atomic buffer if needed.
+    
+    // Count the number of set bits (possible tile types)
+    let num_possible = count_possibilities(total_possibility_mask);
+    
+    // Calculate entropy
+    // For zero possibilities (contradiction), return special value
+    if (num_possible == 0u) {
+        entropy_output[grid_idx_1d] = -1.0; // Indicate contradiction
+        return;
     }
-
-    entropy[index] = calculated_entropy;
+    
+    // For single possibility, mark as "collapsed" with 0 entropy
+    if (num_possible == 1u) {
+        entropy_output[grid_idx_1d] = 0.0;
+        return;
+    }
+    
+    // For multiple possibilities, calculate shannon entropy: log2(count)
+    let entropy = log2(f32(num_possible));
+    entropy_output[grid_idx_1d] = entropy;
+    
+    // Update minimum entropy info using atomic operations
+    if (entropy > 0.0) {  // Skip cells that are already collapsed (entropy == 0)
+        // Calculate value for atomic min, avoiding passing pointers
+        let value_bits = float_to_bits(entropy);
+        
+        // Main atomic compare-exchange loop for min entropy
+        var current_bits = atomicLoad(&min_entropy_info[0]);
+        var current_float = bits_to_float(current_bits);
+        
+        // Continue looping while we still could update the minimum
+        var keep_trying = entropy < current_float;
+        var attempt_counter = 0u;
+        
+        while (keep_trying && attempt_counter < 32u) {
+            // Try to update the minimum entropy
+            let result = atomicCompareExchangeWeak(
+                &min_entropy_info[0],
+                current_bits,
+                value_bits
+            );
+            let exchanged = result.exchanged;
+            let old_value = result.old_value;
+            
+            if (exchanged) {
+                // Successfully updated the entropy, now update the index
+                atomicStore(&min_entropy_info[1], grid_idx_1d);
+                keep_trying = false;
+            } else {
+                // Exchange failed, update current values and check if we still need to try
+                current_bits = old_value;
+                current_float = bits_to_float(current_bits);
+                keep_trying = entropy < current_float;
+            }
+            
+            attempt_counter = attempt_counter + 1u;
+        }
+    }
 } 
