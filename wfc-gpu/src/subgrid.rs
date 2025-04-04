@@ -106,6 +106,8 @@ pub struct SubgridConfig {
     pub max_subgrid_size: usize,
     /// Overlap between adjacent subgrids in cells (to handle boundary interactions)
     pub overlap_size: usize,
+    /// Minimum size (in any dimension) to enable subgrid processing
+    pub min_size: usize,
 }
 
 impl Default for SubgridConfig {
@@ -113,6 +115,7 @@ impl Default for SubgridConfig {
         Self {
             max_subgrid_size: 64, // Default reasonable size for GPU processing
             overlap_size: 2,      // Default overlap to handle adjacency constraints
+            min_size: 128,        // Default minimum size to consider subgrid processing
         }
     }
 }
@@ -311,6 +314,7 @@ mod tests {
         let config = SubgridConfig {
             max_subgrid_size: 10,
             overlap_size: 1,
+            min_size: 128,
         };
 
         let subgrids = divide_into_subgrids(25, 15, 5, &config).unwrap();

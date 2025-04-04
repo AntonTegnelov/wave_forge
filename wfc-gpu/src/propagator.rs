@@ -1,12 +1,13 @@
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
+    debug_viz::{DebugVisualizer, GpuBuffersDebugExt},
     pipeline::ComputePipelines,
     subgrid::{
         divide_into_subgrids, extract_subgrid, merge_subgrids, SubgridConfig, SubgridRegion,
     },
 };
 use async_trait::async_trait;
-use log::{debug, info, warn};
+use log::{debug, info};
 use std::sync::Arc;
 use wfc_core::{
     grid::PossibilityGrid,
@@ -30,6 +31,8 @@ pub struct GpuConstraintPropagator {
     early_termination_consecutive_passes: u32,
     // Subgrid processing configuration
     subgrid_config: Option<SubgridConfig>,
+    // Debug visualization
+    debug_visualizer: Option<Arc<std::sync::Mutex<DebugVisualizer>>>,
 }
 
 impl GpuConstraintPropagator {
@@ -53,6 +56,7 @@ impl GpuConstraintPropagator {
             early_termination_threshold: 10, // Default: if fewer than 10 cells are affected, consider early termination
             early_termination_consecutive_passes: 3, // Default: require 3 consecutive passes below threshold
             subgrid_config: None,                    // Disabled by default
+            debug_visualizer: None,                  // Debug visualization disabled by default
         }
     }
 
@@ -99,6 +103,30 @@ impl GpuConstraintPropagator {
     /// `Self` for method chaining.
     pub fn without_parallel_subgrid_processing(mut self) -> Self {
         self.subgrid_config = None;
+        self
+    }
+
+    /// Sets the debug visualizer.
+    ///
+    /// # Arguments
+    ///
+    /// * `visualizer` - The debug visualizer to use for capturing algorithm state.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_debug_visualizer(mut self, visualizer: DebugVisualizer) -> Self {
+        self.debug_visualizer = Some(Arc::new(std::sync::Mutex::new(visualizer)));
+        self
+    }
+
+    /// Disables debug visualization.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn without_debug_visualization(mut self) -> Self {
+        self.debug_visualizer = None;
         self
     }
 
@@ -222,205 +250,417 @@ impl GpuConstraintPropagator {
         }
     }
 
-    /// Internal method for constraint propagation.
-    /// Extracted from the main propagate method to allow reuse for subgrid processing.
+    /// Performs the actual constraint propagation on the GPU.
     async fn propagate_internal(
         &mut self,
         _grid: &mut PossibilityGrid,
         updated_coords: Vec<(usize, usize, usize)>,
         _rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        debug!(
-            "Starting GPU propagation with {} initial update(s).",
-            updated_coords.len()
+        let (total_width, total_height, total_depth) = (
+            self.params.grid_width,
+            self.params.grid_height,
+            self.params.grid_depth,
         );
+        let total_cells = (total_width * total_height * total_depth) as usize;
 
-        // 1. Upload initial updates to the worklist buffer (e.g., worklist_buf_a)
-        let initial_updates: Vec<u32> = updated_coords
-            .into_iter()
-            .map(|(x, y, z)| {
-                (z * self.params.grid_height as usize * self.params.grid_width as usize
-                    + y * self.params.grid_width as usize
-                    + x) as u32
-            })
-            .collect();
-
-        // Decide initial buffer index (e.g., 0 for buf_a)
-        self.current_worklist_idx = 0; // Start with buffer A
-        let mut current_worklist_size = initial_updates.len() as u32;
-
-        self.buffers
-            .upload_initial_updates(&self.queue, &initial_updates, self.current_worklist_idx)
-            .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-
-        // Set initial worklist size in params uniform
-        self.buffers
-            .update_params_worklist_size(&self.queue, current_worklist_size)
-            .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-
-        let mut propagation_pass = 0;
-        const MAX_PROPAGATION_PASSES: u32 = 100; // Safeguard against infinite loops
-
-        // Early termination tracking
-        let mut consecutive_passes_below_threshold = 0;
-
-        // Main propagation loop
-        while propagation_pass < MAX_PROPAGATION_PASSES && current_worklist_size > 0 {
-            propagation_pass += 1;
-
-            // Reduce logging frequency - only log every 5 passes or for large worklists
-            if propagation_pass % 5 == 0 || current_worklist_size > 1000 {
-                log::debug!(
-                    "Propagation pass {} with {} cells in worklist",
-                    propagation_pass,
-                    current_worklist_size
-                );
+        // Convert (x,y,z) coordinates to flat indices
+        let mut updated_indices = Vec::with_capacity(updated_coords.len());
+        for (x, y, z) in updated_coords {
+            let x = x as u32;
+            let y = y as u32;
+            let z = z as u32;
+            if x < total_width && y < total_height && z < total_depth {
+                let idx = z * total_width * total_height + y * total_width + x;
+                updated_indices.push(idx);
             }
+        }
 
-            // --- Create and Configure Bind Group for Current Pass ---
+        // Prepare initial worklist
+        let worklist_size = updated_indices.len() as u32;
+        if worklist_size == 0 {
+            debug!("No cells to update, skipping propagation");
+            return Ok(());
+        }
+
+        debug!("Initial worklist size: {}", worklist_size);
+
+        // Reset buffers for this propagation step
+        self.buffers
+            .reset_contradiction_flag(&self.queue)
+            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+        self.buffers
+            .reset_contradiction_location(&self.queue)
+            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+        self.buffers
+            .reset_worklist_count(&self.queue)
+            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+
+        // Upload initial worklist indices to the active buffer
+        self.buffers
+            .upload_initial_updates(&self.queue, &updated_indices, self.current_worklist_idx)
+            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+
+        // Update params with the current worklist size
+        self.buffers
+            .update_params_worklist_size(&self.queue, worklist_size)
+            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+
+        // Determine dispatch size (ceiling division of total_cells by workgroup size)
+        let mut num_cells_to_process = worklist_size;
+        let workgroup_size = 64;
+        let mut dispatch_size = (num_cells_to_process + workgroup_size - 1) / workgroup_size;
+
+        // If dispatch_size is zero (e.g., empty worklist), use at least one workgroup
+        if dispatch_size == 0 {
+            dispatch_size = 1;
+        }
+
+        // Prepare bind group parameters for the propagation compute pass
+        let bind_group_layout = self
+            .pipelines
+            .get_propagation_bind_group_layout()
+            .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Propagation Command Encoder"),
+            });
+
+        // Run the iterative propagation algorithm until no more updates or we hit a limit
+        let mut iteration = 0;
+        let max_iterations = 100; // Safety limit to prevent infinite loops
+        let mut contradiction = false;
+        let mut contradiction_location = None;
+        let mut early_termination_count = 0;
+
+        while num_cells_to_process > 0 && iteration < max_iterations && !contradiction {
+            debug!(
+                "Propagation iteration {}: Processing {} cells",
+                iteration, num_cells_to_process
+            );
+
+            // Create a new bind group for this iteration
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("Propagation Pass {} Bind Group", propagation_pass)),
-                layout: &self.pipelines.propagation_bind_group_layout,
+                label: Some(&format!("Propagation Bind Group {}", iteration)),
+                layout: &bind_group_layout,
                 entries: &[
-                    // grid_possibilities (read-write storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                        resource: self.buffers.params_uniform_buf.as_entire_binding(),
                     },
-                    // adjacency_rules (read-only storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: self.buffers.adjacency_rules_buf.as_entire_binding(),
+                        resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
                     },
-                    // worklist (read-only storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: self.input_worklist_binding(),
+                        resource: self.buffers.adjacency_rules_buf.as_entire_binding(),
                     },
-                    // rule_weights (read-only storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: self.buffers.rule_weights_buf.as_entire_binding(),
+                        resource: self.input_worklist_binding(),
                     },
-                    // output_worklist (read-write storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 4,
                         resource: self.output_worklist_binding(),
                     },
-                    // params (uniform buffer)
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: self.buffers.params_uniform_buf.as_entire_binding(),
-                    },
-                    // output_worklist_count (read-write storage buffer)
-                    wgpu::BindGroupEntry {
-                        binding: 6,
                         resource: self.buffers.worklist_count_buf.as_entire_binding(),
                     },
-                    // contradiction_flag (read-write storage buffer)
                     wgpu::BindGroupEntry {
-                        binding: 7,
+                        binding: 6,
                         resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
                     },
-                    // contradiction_location (read-write storage buffer)
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: self.buffers.contradiction_location_buf.as_entire_binding(),
+                    },
                     wgpu::BindGroupEntry {
                         binding: 8,
-                        resource: self.buffers.contradiction_location_buf.as_entire_binding(),
+                        resource: self.buffers.rule_weights_buf.as_entire_binding(),
                     },
                 ],
             });
 
-            // Reset output worklist count and contradiction flag/location
-            self.buffers
-                .reset_worklist_count(&self.queue)
-                .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-            self.buffers
-                .reset_contradiction_flag(&self.queue)
-                .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-            self.buffers
-                .reset_contradiction_location(&self.queue)
-                .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-
-            // --- Dispatch Propagation Compute Shader ---
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some(&format!("Propagation Encoder Pass {}", propagation_pass)),
-                });
+            // Execute propagation pass
             {
                 let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some(&format!("Propagation Compute Pass {}", propagation_pass)),
-                    timestamp_writes: None, // Add timestamps if needed
+                    label: Some(&format!("Propagation Pass {}", iteration)),
+                    timestamp_writes: None,
                 });
-                compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
+
+                compute_pass.set_pipeline(
+                    self.pipelines
+                        .get_propagation_pipeline(
+                            self.device.features().contains(wgpu::Features::SHADER_I16),
+                        )
+                        .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?,
+                );
                 compute_pass.set_bind_group(0, &bind_group, &[]);
-
-                // Calculate dispatch size based on worklist size
-                let workgroup_size = self.pipelines.propagation_workgroup_size; // Use dynamic size
-                let dispatch_x = (current_worklist_size + workgroup_size - 1) / workgroup_size;
-                compute_pass.dispatch_workgroups(dispatch_x, 1, 1);
+                compute_pass.dispatch_workgroups(dispatch_size, 1, 1);
             }
-            self.queue.submit(Some(encoder.finish()));
 
-            // --- Download results (Contradiction Flag, New Worklist Size) ---
-            // Use the optimized propagation status download method to reduce synchronization points
-            let (has_contradiction, new_worklist_size, contradiction_location) = self
+            // Submit commands
+            self.queue.submit(std::iter::once(encoder.finish()));
+
+            // Create a new encoder for the next iteration
+            encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some(&format!("Propagation Command Encoder {}", iteration + 1)),
+                });
+
+            // Check for contradictions and get next worklist size
+            let (has_contradiction, next_worklist_size, contradiction_idx) = self
                 .buffers
-                .download_propagation_status(self.device.clone(), self.queue.clone())
+                .download_propagation_status(Arc::clone(&self.device), Arc::clone(&self.queue))
                 .await
                 .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
-            // Check for contradiction
-            if has_contradiction {
-                // If contradiction found, use the location if available
-                let location_index = contradiction_location.unwrap_or(u32::MAX);
-                let (x, y, z) = if location_index != u32::MAX {
-                    let width = self.params.grid_width as usize;
-                    let height = self.params.grid_height as usize;
-                    let z = location_index as usize / (width * height);
-                    let y = (location_index as usize % (width * height)) / width;
-                    let x = location_index as usize % width;
-                    (x, y, z)
-                } else {
-                    // If location is not available, default to (0,0,0)
-                    (0, 0, 0)
-                };
-                return Err(PropagationError::Contradiction(x, y, z));
+            // Take a debug snapshot after this propagation step
+            if let Some(visualizer) = &self.debug_visualizer {
+                if let Ok(mut vis) = visualizer.lock() {
+                    if vis.is_enabled() {
+                        let _ = self.buffers.take_debug_snapshot(
+                            Arc::clone(&self.device),
+                            Arc::clone(&self.queue),
+                            &mut vis,
+                        );
+                    }
+                }
             }
 
-            // Early termination check
-            if new_worklist_size <= self.early_termination_threshold {
-                consecutive_passes_below_threshold += 1;
-                if consecutive_passes_below_threshold >= self.early_termination_consecutive_passes {
-                    debug!("Early termination after {} passes: {} cells below threshold of {} for {} consecutive passes",
-                        propagation_pass, new_worklist_size, self.early_termination_threshold, consecutive_passes_below_threshold);
+            if has_contradiction {
+                contradiction = true;
+                contradiction_location = contradiction_idx;
+                debug!(
+                    "Contradiction detected at cell {}",
+                    contradiction_idx.unwrap_or(total_cells as u32)
+                );
+                break;
+            }
+
+            // Update worklist size and ping-pong buffer index
+            num_cells_to_process = next_worklist_size;
+            // Toggle the current index between 0 and 1
+            self.current_worklist_idx = 1 - self.current_worklist_idx;
+
+            debug!(
+                "Iteration {} completed: Next worklist size: {}",
+                iteration, num_cells_to_process
+            );
+
+            // Check for early termination condition (small worklist for multiple consecutive passes)
+            if num_cells_to_process <= self.early_termination_threshold {
+                early_termination_count += 1;
+                if early_termination_count >= self.early_termination_consecutive_passes {
+                    debug!(
+                        "Early termination after {} iterations: {} cells affected, below threshold {} for {} consecutive passes",
+                        iteration + 1,
+                        num_cells_to_process,
+                        self.early_termination_threshold,
+                        self.early_termination_consecutive_passes
+                    );
                     break;
                 }
             } else {
-                consecutive_passes_below_threshold = 0;
+                // Reset the counter if we have a larger worklist again
+                early_termination_count = 0;
             }
 
-            // Update worklist size for next pass
-            current_worklist_size = new_worklist_size;
+            // Prepare dispatch size for next iteration
+            dispatch_size = (num_cells_to_process + workgroup_size - 1) / workgroup_size;
+            if dispatch_size == 0 {
+                dispatch_size = 1;
+            }
 
-            // Update the params buffer with new worklist size
+            // Update params with new worklist size
             self.buffers
-                .update_params_worklist_size(&self.queue, current_worklist_size)
+                .update_params_worklist_size(&self.queue, num_cells_to_process)
+                .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+
+            iteration += 1;
+        }
+
+        debug!(
+            "Propagation completed after {} iterations{}",
+            iteration,
+            if contradiction {
+                format!(
+                    " with contradiction at cell {:?}",
+                    contradiction_location.map(|idx| {
+                        let _z = idx / (total_width * total_height);
+                        let _y = (idx % (total_width * total_height)) / total_width;
+                        let x = idx % total_width;
+                        x as usize
+                    })
+                )
+            } else {
+                String::new()
+            }
+        );
+
+        // If a contradiction was detected, propagate that information
+        if contradiction {
+            return Err(PropagationError::Contradiction(
+                contradiction_location
+                    .map(|idx| {
+                        let _z = idx / (total_width * total_height);
+                        let _y = (idx % (total_width * total_height)) / total_width;
+                        let x = idx % total_width;
+                        x as usize
+                    })
+                    .unwrap_or(0),
+                contradiction_location
+                    .map(|idx| {
+                        let _z = idx / (total_width * total_height);
+                        let y = (idx % (total_width * total_height)) / total_width;
+                        let _x = idx % total_width;
+                        y as usize
+                    })
+                    .unwrap_or(0),
+                contradiction_location
+                    .map(|idx| {
+                        let z = idx / (total_width * total_height);
+                        let _y = (idx % (total_width * total_height)) / total_width;
+                        let _x = idx % total_width;
+                        z as usize
+                    })
+                    .unwrap_or(0),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Propagate constraints using parallel subgrid processing
+    ///
+    /// This method divides the grid into subgrids, processes each independently,
+    /// and then merges the results back into the main grid.
+    ///
+    /// # Arguments
+    ///
+    /// * `grid` - The possibility grid to update
+    /// * `updated_coords` - The coordinates that have been updated
+    /// * `rules` - The adjacency rules for constraint propagation
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if propagation succeeded
+    /// * `Err(PropagationError)` if propagation failed (e.g., contradiction)
+    async fn propagate_with_subgrids(
+        &mut self,
+        grid: &mut PossibilityGrid,
+        updated_coords: Vec<(usize, usize, usize)>,
+        rules: &AdjacencyRules,
+    ) -> Result<(), PropagationError> {
+        let config = self.subgrid_config.clone().unwrap();
+
+        // Take initial snapshot if debug visualization is enabled
+        if let Some(visualizer) = &self.debug_visualizer {
+            if let Ok(mut vis) = visualizer.lock() {
+                if vis.is_enabled() {
+                    let _ = self.buffers.take_debug_snapshot(
+                        Arc::clone(&self.device),
+                        Arc::clone(&self.queue),
+                        &mut vis,
+                    );
+                }
+            }
+        }
+
+        // Divide the grid into subgrids
+        let subgrid_regions = divide_into_subgrids(grid.width, grid.height, grid.depth, &config)
+            .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
+
+        info!(
+            "Parallel subgrid processing: Divided {}x{}x{} grid into {} subgrids",
+            grid.width,
+            grid.height,
+            grid.depth,
+            subgrid_regions.len()
+        );
+
+        // Extract and process each subgrid
+        let mut processed_subgrids = Vec::new();
+        for region in &subgrid_regions {
+            // Extract the subgrid
+            let subgrid = extract_subgrid(grid, region)
                 .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
 
-            // Toggle worklist buffer for ping-pong pattern
-            self.current_worklist_idx = 1 - self.current_worklist_idx;
+            // Process the subgrid
+            let processed = self
+                .propagate_subgrid(grid, subgrid, region, updated_coords.clone(), rules)
+                .await?;
+
+            processed_subgrids.push((region.clone(), processed));
+
+            // Take a snapshot after each subgrid if debug visualization is enabled
+            if let Some(visualizer) = &self.debug_visualizer {
+                if let Ok(mut vis) = visualizer.lock() {
+                    if vis.is_enabled() {
+                        let _ = self.buffers.take_debug_snapshot(
+                            Arc::clone(&self.device),
+                            Arc::clone(&self.queue),
+                            &mut vis,
+                        );
+                    }
+                }
+            }
         }
 
-        if propagation_pass >= MAX_PROPAGATION_PASSES && current_worklist_size > 0 {
-            warn!(
-                "Propagation stopped after reaching maximum passes ({})",
-                MAX_PROPAGATION_PASSES
-            );
+        // Merge the processed subgrids back into the main grid
+        let merged_updates = merge_subgrids(grid, &processed_subgrids)
+            .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
+
+        info!(
+            "Parallel subgrid processing: Merged {} subgrids with {} updated cells",
+            processed_subgrids.len(),
+            merged_updates.len()
+        );
+
+        // Take a snapshot after merging if debug visualization is enabled
+        if let Some(visualizer) = &self.debug_visualizer {
+            if let Ok(mut vis) = visualizer.lock() {
+                if vis.is_enabled() {
+                    let _ = self.buffers.take_debug_snapshot(
+                        Arc::clone(&self.device),
+                        Arc::clone(&self.queue),
+                        &mut vis,
+                    );
+                }
+            }
         }
 
-        debug!("Propagation completed after {} passes.", propagation_pass);
+        // If we have any updates from the merge, we need to propagate them again
+        if !merged_updates.is_empty() {
+            // For the final pass, disable subgrid processing to avoid recursion
+            let original_config = self.subgrid_config.take();
+            let result = self.propagate(grid, merged_updates, rules).await;
+            self.subgrid_config = original_config;
+            return result;
+        }
+
         Ok(())
+    }
+
+    /// Initialize a GpuConstraintPropagator with most features enabled
+    pub fn init_default() -> Self {
+        // Reasonable defaults for most use cases
+        let _subgrid_config = SubgridConfig {
+            max_subgrid_size: 32,
+            overlap_size: 2,
+            min_size: 64,
+        };
+
+        // Other initialization code...
+        // ...
+        // (This is just a placeholder method - the real implementation would
+        // need actual device and other resources)
+        unimplemented!("This is just a stub method, not intended for actual use")
     }
 }
 
@@ -467,72 +707,48 @@ impl ConstraintPropagator for GpuConstraintPropagator {
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        // Check if parallel subgrid processing is enabled
+        // If subgrid processing is enabled and grid is large enough, use parallel subgrid processing
         if let Some(config) = &self.subgrid_config {
-            // Only use subgrid processing for sufficiently large grids
-            let grid_size = grid.width * grid.height * grid.depth;
-            let min_size_for_subgrids =
-                config.max_subgrid_size * config.max_subgrid_size * config.max_subgrid_size;
-
-            if grid_size >= min_size_for_subgrids {
-                // Divide the grid into subgrids
-                let subgrid_regions =
-                    divide_into_subgrids(grid.width, grid.height, grid.depth, config)
-                        .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-
-                info!(
-                    "Parallel subgrid processing: Divided {}x{}x{} grid into {} subgrids",
-                    grid.width,
-                    grid.height,
-                    grid.depth,
-                    subgrid_regions.len()
-                );
-
-                // Extract and process each subgrid
-                let mut processed_subgrids = Vec::new();
-                for region in &subgrid_regions {
-                    // Extract the subgrid
-                    let subgrid = extract_subgrid(grid, region)
-                        .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-
-                    // Process the subgrid
-                    let processed = self
-                        .propagate_subgrid(grid, subgrid, region, updated_coords.clone(), rules)
-                        .await?;
-
-                    processed_subgrids.push((region.clone(), processed));
-                }
-
-                // Merge the processed subgrids back into the main grid
-                let merged_updates = merge_subgrids(grid, &processed_subgrids)
-                    .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-
-                info!(
-                    "Parallel subgrid processing: Merged {} subgrids with {} updated cells",
-                    processed_subgrids.len(),
-                    merged_updates.len()
-                );
-
-                // If we have any updates from the merge, we need to propagate them again
-                if !merged_updates.is_empty() {
-                    // For the final pass, disable subgrid processing to avoid recursion
-                    let original_config = self.subgrid_config.take();
-                    let result = self.propagate(grid, merged_updates, rules).await;
-                    self.subgrid_config = original_config;
-                    return result;
-                }
-
-                return Ok(());
+            if grid.width >= config.min_size
+                && grid.height >= config.min_size
+                && grid.depth >= config.min_size
+            {
+                return self
+                    .propagate_with_subgrids(grid, updated_coords, rules)
+                    .await;
             }
         }
 
-        // If parallel processing is disabled or grid is too small, use standard propagation
-        // Since GPU buffers handle their own upload and download, we don't need to manually
-        // upload or download the grid. The internal propagation code will use the GPU buffers
-        // directly.
+        // Take initial snapshot if debug visualization is enabled
+        if let Some(visualizer) = &self.debug_visualizer {
+            if let Ok(mut vis) = visualizer.lock() {
+                if vis.is_enabled() {
+                    let _ = self.buffers.take_debug_snapshot(
+                        Arc::clone(&self.device),
+                        Arc::clone(&self.queue),
+                        &mut vis,
+                    );
+                }
+            }
+        }
 
-        // Run the internal propagation algorithm
-        self.propagate_internal(grid, updated_coords, rules).await
+        // Standard propagation approach
+        let result = self.propagate_internal(grid, updated_coords, rules).await;
+
+        // Take final snapshot if debug visualization is enabled
+        if let Some(visualizer) = &self.debug_visualizer {
+            if let Ok(mut vis) = visualizer.lock() {
+                if vis.is_enabled() {
+                    let _ = self.buffers.take_debug_snapshot(
+                        Arc::clone(&self.device),
+                        Arc::clone(&self.queue),
+                        &mut vis,
+                    );
+                }
+            }
+        }
+
+        result
     }
 }
 
@@ -669,6 +885,7 @@ mod tests {
         let subgrid_config = SubgridConfig {
             max_subgrid_size: 64,
             overlap_size: 2,
+            min_size: 128,
         };
 
         // Create a default config for comparison
@@ -677,9 +894,11 @@ mod tests {
         // Check the default values
         assert_eq!(default_config.max_subgrid_size, 64);
         assert_eq!(default_config.overlap_size, 2);
+        assert_eq!(default_config.min_size, 128);
 
         // Check our custom config
         assert_eq!(subgrid_config.max_subgrid_size, 64);
         assert_eq!(subgrid_config.overlap_size, 2);
+        assert_eq!(subgrid_config.min_size, 128);
     }
 }

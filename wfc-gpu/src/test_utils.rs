@@ -1,4 +1,5 @@
 use futures::executor::block_on;
+use std::sync::Arc;
 use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
 use wfc_rules::AdjacencyRules;
 use wgpu;
@@ -6,7 +7,7 @@ use wgpu;
 use crate::accelerator::GpuAccelerator;
 use crate::GpuError;
 
-// Initialize GPU for testing
+/// Initialize GPU for testing
 pub fn initialize_test_gpu() -> (wgpu::Device, wgpu::Queue) {
     let instance = wgpu::Instance::default();
 
@@ -24,6 +25,12 @@ pub fn initialize_test_gpu() -> (wgpu::Device, wgpu::Queue) {
     .expect("Failed to create device");
 
     (device, queue)
+}
+
+/// Create test device and queue wrapped in Arc for async sharing
+pub fn create_test_device_queue() -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
+    let (device, queue) = initialize_test_gpu();
+    (Arc::new(device), Arc::new(queue))
 }
 
 /// Test if a large tileset (over 128 tiles) can be initialized correctly
@@ -53,6 +60,7 @@ pub fn test_large_tileset_init(
         &grid,
         &rules,
         BoundaryCondition::Periodic,
+        None, // No subgrid config
     ));
 
     result

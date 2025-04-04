@@ -1,4 +1,5 @@
 use crate::buffers::{GpuBuffers, GpuParamsUniform};
+use crate::debug_viz::{DebugVisualizationConfig, DebugVisualizer, GpuBuffersDebugExt};
 use crate::{pipeline::ComputePipelines, subgrid::SubgridConfig, GpuError};
 use async_trait::async_trait;
 use log::info;
@@ -34,12 +35,22 @@ use wgpu; // Assuming wgpu is needed // Import GpuParamsUniform
 #[allow(dead_code)] // Allow unused fields while implementation is pending
 #[derive(Clone, Debug)] // Add Debug
 pub struct GpuAccelerator {
-    instance: Arc<wgpu::Instance>, // Wrap in Arc
-    adapter: Arc<wgpu::Adapter>,   // Wrap in Arc
+    /// WGPU instance.
+    instance: Arc<wgpu::Instance>,
+    /// WGPU adapter (connection to physical GPU).
+    adapter: Arc<wgpu::Adapter>,
+    /// WGPU logical device.
     device: Arc<wgpu::Device>,
+    /// WGPU command queue.
     queue: Arc<wgpu::Queue>,
-    pipelines: Arc<ComputePipelines>, // Changed to Arc
-    buffers: Arc<GpuBuffers>,         // Changed to Arc
+    /// Collection of compute pipelines for different WFC operations.
+    pipelines: Arc<ComputePipelines>,
+    /// Collection of GPU buffers holding grid state, rules, etc.
+    buffers: Arc<GpuBuffers>,
+    /// Configuration for subgrid processing (if used).
+    subgrid_config: Option<SubgridConfig>,
+    /// Debug visualizer for algorithm state
+    debug_visualizer: Option<DebugVisualizer>,
     grid_dims: (usize, usize, usize),
     boundary_mode: BoundaryCondition,    // Store boundary mode
     num_tiles: usize,                    // Add num_tiles
@@ -61,6 +72,7 @@ impl GpuAccelerator {
     /// * `initial_grid` - The initial grid state containing all possibilities.
     /// * `rules` - The adjacency rules for the WFC algorithm.
     /// * `boundary_mode` - Whether to use periodic or finite boundary conditions.
+    /// * `subgrid_config` - Optional configuration for subgrid processing.
     ///
     /// # Returns
     ///
@@ -73,6 +85,7 @@ impl GpuAccelerator {
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
         boundary_mode: BoundaryCondition,
+        subgrid_config: Option<SubgridConfig>,
     ) -> Result<Self, GpuError> {
         info!(
             "Entered GpuAccelerator::new with boundary mode {:?}",
@@ -181,6 +194,8 @@ impl GpuAccelerator {
             boundary_mode, // Store boundary_mode
             num_tiles,     // Initialize num_tiles
             propagator,    // Store the propagator
+            subgrid_config,
+            debug_visualizer: None,
         })
     }
 
@@ -247,7 +262,8 @@ impl GpuAccelerator {
         self.propagator = self
             .propagator
             .clone()
-            .with_parallel_subgrid_processing(config);
+            .with_parallel_subgrid_processing(config.clone());
+        self.subgrid_config = Some(config);
         self
     }
 
@@ -262,6 +278,49 @@ impl GpuAccelerator {
             .clone()
             .without_parallel_subgrid_processing();
         self
+    }
+
+    /// Enable debug visualization with the given configuration
+    pub fn enable_debug_visualization(&mut self, config: DebugVisualizationConfig) {
+        self.debug_visualizer = Some(DebugVisualizer::new(config));
+    }
+
+    /// Enable debug visualization with default settings
+    pub fn enable_default_debug_visualization(&mut self) {
+        self.debug_visualizer = Some(DebugVisualizer::default());
+    }
+
+    /// Disable debug visualization
+    pub fn disable_debug_visualization(&mut self) {
+        self.debug_visualizer = None;
+    }
+
+    /// Check if debug visualization is enabled
+    pub fn has_debug_visualization(&self) -> bool {
+        self.debug_visualizer.is_some()
+    }
+
+    /// Get a reference to the debug visualizer, if enabled
+    pub fn debug_visualizer(&self) -> Option<&DebugVisualizer> {
+        self.debug_visualizer.as_ref()
+    }
+
+    /// Get a mutable reference to the debug visualizer, if enabled
+    pub fn debug_visualizer_mut(&mut self) -> Option<&mut DebugVisualizer> {
+        self.debug_visualizer.as_mut()
+    }
+
+    /// Take a snapshot of the current state for visualization purposes
+    pub async fn take_debug_snapshot(&mut self) -> Result<(), GpuError> {
+        if let Some(visualizer) = &mut self.debug_visualizer {
+            let buffers = Arc::clone(&self.buffers);
+            let device = Arc::clone(&self.device);
+            let queue = Arc::clone(&self.queue);
+
+            buffers.take_debug_snapshot(device, queue, visualizer)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -334,15 +393,18 @@ mod tests {
         let config = SubgridConfig {
             max_subgrid_size: 32,
             overlap_size: 3,
+            min_size: 64,
         };
 
         // Check values
         assert_eq!(config.max_subgrid_size, 32);
         assert_eq!(config.overlap_size, 3);
+        assert_eq!(config.min_size, 64);
 
         // Check default values
         let default_config = SubgridConfig::default();
         assert_eq!(default_config.max_subgrid_size, 64);
         assert_eq!(default_config.overlap_size, 2);
+        assert_eq!(default_config.min_size, 128);
     }
 }

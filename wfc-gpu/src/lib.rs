@@ -6,6 +6,8 @@ use thiserror::Error;
 pub mod accelerator;
 /// Handles creation and management of WGPU buffers for grid state, rules, etc.
 pub mod buffers;
+/// Debug visualization tools for the algorithm's state.
+pub mod debug_viz;
 /// GPU implementation of the EntropyCalculator trait.
 pub mod entropy;
 /// Error recovery mechanisms for non-fatal GPU errors.

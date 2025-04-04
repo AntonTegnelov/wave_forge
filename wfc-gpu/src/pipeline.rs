@@ -589,4 +589,18 @@ impl ComputePipelines {
 
         [bind_group_0, bind_group_1]
     }
+
+    /// Gets the propagation bind group layout
+    pub fn get_propagation_bind_group_layout(&self) -> Result<&wgpu::BindGroupLayout, GpuError> {
+        Ok(&self.propagation_bind_group_layout)
+    }
+
+    /// Gets the appropriate propagation pipeline based on device features
+    pub fn get_propagation_pipeline(
+        &self,
+        _supports_shader_i16: bool,
+    ) -> Result<&wgpu::ComputePipeline, GpuError> {
+        // In future, this could return different pipeline variants based on features
+        Ok(&self.propagation_pipeline)
+    }
 }
