@@ -384,7 +384,7 @@ mod tests {
             futures::select! {
                 res = download_future.as_mut().fuse() => break res,
                 _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
-                    device.poll(wgpu::Maintain::Poll);
+                    device.poll(wgpu::Maintain::Wait);
                 }
             }
         }?;
@@ -464,8 +464,8 @@ mod tests {
                 futures::select! {
                     res = propagate_future.as_mut().fuse() => break res,
                     _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
-                        // Use the cloned device for polling
-                        device_clone.poll(wgpu::Maintain::Poll);
+                        // Use the cloned device for polling - CHANGED to Wait
+                        device_clone.poll(wgpu::Maintain::Wait);
                     }
                 }
             };
@@ -533,8 +533,8 @@ mod tests {
                 futures::select! {
                     res = propagate_future.as_mut().fuse() => break res,
                     _ = tokio::time::sleep(Duration::from_millis(10)).fuse() => {
-                        // Use the cloned device for polling
-                        device_clone.poll(wgpu::Maintain::Poll);
+                        // Use the cloned device for polling - CHANGED to Wait
+                        device_clone.poll(wgpu::Maintain::Wait);
                     }
                 }
             };
