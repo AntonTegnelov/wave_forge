@@ -302,6 +302,7 @@ pub struct AdjacencyRules {
     num_tiles: usize,
     num_axes: usize,
     allowed: HashMap<(usize, usize, usize), bool>,
+    weighted: HashMap<(usize, usize, usize), f32>,
 }
 
 impl AdjacencyRules {
@@ -321,6 +322,48 @@ impl AdjacencyRules {
             num_tiles: num_transformed_tiles,
             num_axes,
             allowed,
+            weighted: HashMap::new(),
+        }
+    }
+
+    /// Creates new `AdjacencyRules` with weighted rules from a list of allowed tuples with weights.
+    ///
+    /// # Arguments
+    ///
+    /// * `num_transformed_tiles` - Total number of unique transformed tile states used in these rules.
+    /// * `num_axes` - Number of axes/directions these rules are defined for.
+    /// * `weighted_tuples` - An iterator of tuples (axis, tile1_id, tile2_id, weight) where weight is a value in [0.0, 1.0].
+    ///
+    /// # Returns
+    ///
+    /// A new `AdjacencyRules` instance with weighted rules.
+    pub fn from_weighted_tuples(
+        num_transformed_tiles: usize,
+        num_axes: usize,
+        weighted_tuples: impl IntoIterator<Item = (usize, usize, usize, f32)>,
+    ) -> Self {
+        let mut allowed = HashMap::new();
+        let mut weighted = HashMap::new();
+
+        for (axis, ttid1, ttid2, weight) in weighted_tuples {
+            if axis < num_axes && ttid1 < num_transformed_tiles && ttid2 < num_transformed_tiles {
+                // Only add to allowed rules if weight > 0
+                if weight > 0.0 {
+                    allowed.insert((axis, ttid1, ttid2), true);
+
+                    // Only store weights different from 1.0 (default)
+                    if weight < 1.0 {
+                        weighted.insert((axis, ttid1, ttid2), weight);
+                    }
+                }
+            }
+        }
+
+        Self {
+            num_tiles: num_transformed_tiles,
+            num_axes,
+            allowed,
+            weighted,
         }
     }
 
@@ -379,6 +422,57 @@ impl AdjacencyRules {
         }
     }
 
+    /// Gets the weight of a specific adjacency rule.
+    ///
+    /// Returns a value in the range [0.0, 1.0] where:
+    /// - 0.0 means the adjacency is not allowed
+    /// - 1.0 means the adjacency is fully allowed (default)
+    /// - Values between 0.0 and 1.0 represent weighted constraints
+    ///
+    /// # Arguments
+    ///
+    /// * `transformed_tile1_id` - The ID of the first tile.
+    /// * `transformed_tile2_id` - The ID of the second tile.
+    /// * `axis` - The axis/direction of the adjacency.
+    ///
+    /// # Returns
+    ///
+    /// A value between 0.0 and 1.0 representing the weight of the rule.
+    #[inline]
+    pub fn get_weight(
+        &self,
+        transformed_tile1_id: usize,
+        transformed_tile2_id: usize,
+        axis: usize,
+    ) -> f32 {
+        if transformed_tile1_id >= self.num_tiles
+            || transformed_tile2_id >= self.num_tiles
+            || axis >= self.num_axes
+        {
+            return 0.0;
+        }
+
+        // If the adjacency is not allowed, return 0.0
+        if !self
+            .allowed
+            .contains_key(&(axis, transformed_tile1_id, transformed_tile2_id))
+        {
+            return 0.0;
+        }
+
+        // Return the weight or 1.0 if no weight is specified
+        self.weighted
+            .get(&(axis, transformed_tile1_id, transformed_tile2_id))
+            .copied()
+            .unwrap_or(1.0)
+    }
+
+    /// Provides read-only access to the internal HashMap storing weighted adjacencies.
+    /// Useful for debugging or advanced analysis.
+    pub fn get_weighted_rules_map(&self) -> &HashMap<(usize, usize, usize), f32> {
+        &self.weighted
+    }
+
     /// Returns the weight associated with the *base tile* underlying the `transformed_tile_id`.
     /// **Placeholder:** Currently returns 1.0. Requires access to TileSet for correct implementation.
     pub fn get_tile_weight(&self, transformed_tile_id: usize) -> f32 {
@@ -419,14 +513,58 @@ mod tests {
         AdjacencyRules::from_allowed_tuples(num_transformed_tiles, num_axes, allowed_tuples)
     }
 
+    /// Creates weighted adjacency rules: Tile `i` can be adjacent to Tile `i` and `i+1` with different weights
+    fn create_weighted_rules(tileset: &TileSet) -> AdjacencyRules {
+        let num_transformed_tiles = tileset.num_transformed_tiles();
+        let num_axes = 6; // Assuming 3D
+        let mut weighted_tuples = Vec::new();
+        for axis in 0..num_axes {
+            for ttid in 0..num_transformed_tiles {
+                // Same tile has weight 1.0 (full probability)
+                weighted_tuples.push((axis, ttid, ttid, 1.0));
+
+                // Next tile has weight 0.5 (partial probability)
+                if ttid + 1 < num_transformed_tiles {
+                    weighted_tuples.push((axis, ttid, ttid + 1, 0.5));
+                }
+            }
+        }
+        AdjacencyRules::from_weighted_tuples(num_transformed_tiles, num_axes, weighted_tuples)
+    }
+
     #[test]
     fn test_from_allowed_tuples_simple() {
         let tileset = create_basic_tileset(2).unwrap();
-        let _rules = create_simple_rules(&tileset);
-        // Add assertions here:
-        // e.g., assert!(rules.check(0, 0, 0));
-        //       assert!(rules.check(1, 1, 1));
-        //       assert!(!rules.check(0, 1, 0));
+        let rules = create_simple_rules(&tileset);
+
+        // Tile 0 can be adjacent to tile 0 along axis 0
+        assert!(rules.check(0, 0, 0));
+        // Tile 1 can be adjacent to tile 1 along axis a
+        assert!(rules.check(1, 1, 1));
+        // Tile 0 cannot be adjacent to tile 1 along axis 0
+        assert!(!rules.check(0, 1, 0));
+    }
+
+    #[test]
+    fn test_weighted_rules() {
+        let tileset = create_basic_tileset(3).unwrap();
+        let rules = create_weighted_rules(&tileset);
+
+        // Check rule existence
+        assert!(rules.check(0, 0, 0)); // Same tile rule exists
+        assert!(rules.check(0, 1, 0)); // Next tile rule exists
+        assert!(!rules.check(0, 2, 0)); // Skip tile rule doesn't exist
+
+        // Check weights
+        assert_eq!(rules.get_weight(0, 0, 0), 1.0); // Same tile has weight 1.0
+        assert_eq!(rules.get_weight(0, 1, 0), 0.5); // Next tile has weight 0.5
+        assert_eq!(rules.get_weight(0, 2, 0), 0.0); // Non-existent rule has weight 0.0
+
+        // Check weighted_rules map
+        let weighted_map = rules.get_weighted_rules_map();
+        assert!(!weighted_map.contains_key(&(0, 0, 0))); // Weight 1.0 not stored explicitly
+        assert!(weighted_map.contains_key(&(0, 0, 1))); // Weight 0.5 is stored
+        assert_eq!(weighted_map.get(&(0, 0, 1)), Some(&0.5f32)); // Correct weight value
     }
 }
 

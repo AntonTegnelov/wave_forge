@@ -251,9 +251,20 @@ impl ComputePipelines {
                         },
                         count: None,
                     },
-                    // output_worklist (read-write storage)
+                    // rule_weights (read-only storage)
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
+                        },
+                        count: None,
+                    },
+                    // output_worklist (read-write storage)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -264,7 +275,7 @@ impl ComputePipelines {
                     },
                     // params (uniform)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 4,
+                        binding: 5,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -275,7 +286,7 @@ impl ComputePipelines {
                     },
                     // output_worklist_count (read-write storage)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 5,
+                        binding: 6,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -286,7 +297,7 @@ impl ComputePipelines {
                     },
                     // contradiction_flag (read-write storage)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 6,
+                        binding: 7,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -297,7 +308,7 @@ impl ComputePipelines {
                     },
                     // contradiction_location (read-write storage)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 7,
+                        binding: 8,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -457,5 +468,125 @@ impl ComputePipelines {
             propagation_shader_src.replace("NUM_TILES_U32_VALUE", &num_tiles_u32.to_string());
 
         (entropy_shader_modified, propagation_shader_modified)
+    }
+
+    pub fn create_propagation_bind_groups(
+        &self,
+        device: &wgpu::Device,
+        grid_possibilities_buf: &wgpu::Buffer,
+        adjacency_rules_buf: &wgpu::Buffer,
+        rule_weights_buf: &wgpu::Buffer,
+        worklist_bufs: &[wgpu::Buffer; 2],
+        output_worklist_bufs: &[wgpu::Buffer; 2],
+        params_uniform_buf: &wgpu::Buffer,
+        worklist_count_bufs: &[wgpu::Buffer; 2],
+        contradiction_flag_buf: &wgpu::Buffer,
+        contradiction_location_buf: &wgpu::Buffer,
+    ) -> [wgpu::BindGroup; 2] {
+        let bind_group_0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Propagation Bind Group 0"),
+            layout: &self.propagation_bind_group_layout,
+            entries: &[
+                // grid_possibilities
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: grid_possibilities_buf.as_entire_binding(),
+                },
+                // adjacency_rules
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: adjacency_rules_buf.as_entire_binding(),
+                },
+                // worklist (current)
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: worklist_bufs[0].as_entire_binding(),
+                },
+                // rule_weights
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: rule_weights_buf.as_entire_binding(),
+                },
+                // output_worklist (next)
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: output_worklist_bufs[1].as_entire_binding(),
+                },
+                // params
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: params_uniform_buf.as_entire_binding(),
+                },
+                // output_worklist_count
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: worklist_count_bufs[1].as_entire_binding(),
+                },
+                // contradiction_flag
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: contradiction_flag_buf.as_entire_binding(),
+                },
+                // contradiction_location
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: contradiction_location_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let bind_group_1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Propagation Bind Group 1"),
+            layout: &self.propagation_bind_group_layout,
+            entries: &[
+                // grid_possibilities
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: grid_possibilities_buf.as_entire_binding(),
+                },
+                // adjacency_rules
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: adjacency_rules_buf.as_entire_binding(),
+                },
+                // worklist (current)
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: worklist_bufs[1].as_entire_binding(),
+                },
+                // rule_weights
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: rule_weights_buf.as_entire_binding(),
+                },
+                // output_worklist (next)
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: output_worklist_bufs[0].as_entire_binding(),
+                },
+                // params
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: params_uniform_buf.as_entire_binding(),
+                },
+                // output_worklist_count
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: worklist_count_bufs[0].as_entire_binding(),
+                },
+                // contradiction_flag
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: contradiction_flag_buf.as_entire_binding(),
+                },
+                // contradiction_location
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: contradiction_location_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        [bind_group_0, bind_group_1]
     }
 }

@@ -51,6 +51,7 @@ pub struct GpuParamsUniform {
 /// - Holding shader parameters (`params_uniform_buf`).
 /// - Managing worklists for propagation (`updates_buf`, `output_worklist_buf`, `output_worklist_count_buf`).
 /// - Communicating results and status flags (e.g., `contradiction_flag_buf`, `min_entropy_info_buf`).
+/// - Rule weights for weighted adjacency rules (`rule_weights_buf`).
 ///
 /// It also includes corresponding staging buffers (prefixed `staging_`) used for efficiently
 /// transferring data between the CPU and GPU, particularly for downloading results.
@@ -115,6 +116,28 @@ pub struct GpuBuffers {
     staging_contradiction_location_buf: Arc<wgpu::Buffer>,
     /// Staging buffers (used for CPU <-> GPU data transfer)
     staging_worklist_count_buf: Arc<wgpu::Buffer>,
+    /// **GPU Buffer**: Stores the packed adjacency rules.
+    pub adjacency_rules_buf: Arc<wgpu::Buffer>,
+    /// **GPU Buffer**: Stores the rule weights for weighted adjacency rules.
+    pub rule_weights_buf: Arc<wgpu::Buffer>,
+    /// Number of u32s needed per cell for bit-packed possibilities.
+    pub u32s_per_cell: usize,
+    /// Total number of cells in the grid.
+    pub num_cells: usize,
+    /// If using subgrids, original grid dimensions.
+    pub original_grid_dims: Option<(usize, usize, usize)>,
+    /// Current size of the worklist.
+    pub(crate) current_worklist_size: u32,
+    /// Current index of the active worklist buffer (0 or 1).
+    pub current_worklist_idx: usize,
+    /// Grid dimensions (width, height, depth).
+    pub(crate) grid_dims: (usize, usize, usize),
+    /// Total number of tile types.
+    pub(crate) num_tiles: usize,
+    /// Number of adjacency axes.
+    pub(crate) num_axes: usize,
+    /// Boundary condition for the grid (Finite or Periodic).
+    pub(crate) boundary_mode: BoundaryCondition,
 }
 
 /// Holds the results downloaded from the GPU after relevant compute passes.
@@ -143,6 +166,7 @@ impl GpuBuffers {
     /// - Contradiction flag (`contradiction_flag_buf`)
     /// - Contradiction location (`contradiction_location_buf`)
     /// - Staging buffers for efficient data transfer between CPU and GPU.
+    /// - Rule weights for weighted adjacency rules (`rule_weights_buf`)
     ///
     /// # Arguments
     ///
@@ -230,36 +254,39 @@ impl GpuBuffers {
         let grid_buffer_size = (packed_possibilities.len() * std::mem::size_of::<u32>()) as u64;
 
         // --- Pack Rules ---
-        // Iterate through all combinations (axis, ttid1, ttid2) and check if allowed
-        let num_rules_total = num_axes * num_tiles * num_tiles;
-        let u32s_for_rules = (num_rules_total + 31) / 32; // ceil(num_rules_total / 32)
-        let mut packed_rules = vec![0u32; u32s_for_rules];
+        // Each rule is represented by a bit in a u32 array
+        // Index pattern: axis * num_tiles * num_tiles + tile1 * num_tiles + tile2
+        let rule_bits_len = (num_axes * num_tiles * num_tiles + 31) / 32;
+        let mut packed_rules = vec![0u32; rule_bits_len];
 
-        let mut rule_idx = 0;
-        for axis in 0..num_axes {
-            for ttid1 in 0..num_tiles {
-                for ttid2 in 0..num_tiles {
-                    if rules.check(ttid1, ttid2, axis) {
-                        let u32_idx = rule_idx / 32;
-                        let bit_idx = rule_idx % 32;
-                        if u32_idx < packed_rules.len() {
-                            packed_rules[u32_idx] |= 1 << bit_idx;
-                        }
-                    }
-                    rule_idx += 1;
-                }
+        for ((axis, tile1, tile2), _allowed) in rules.get_allowed_rules_map() {
+            let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
+            let u32_idx = rule_idx / 32;
+            let bit_idx = rule_idx % 32;
+            packed_rules[u32_idx] |= 1 << bit_idx;
+        }
+
+        // --- Pack Rule Weights ---
+        // Each weighted rule is represented by two values:
+        // - rule_idx: The packed rule index (axis, tile1, tile2)
+        // - weight_bits: The f32 weight encoded as u32 bits
+        let mut weighted_rules = Vec::new();
+
+        for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
+            // Only add weights that are not 1.0 (since 1.0 is the default)
+            if *weight < 1.0 {
+                let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
+                weighted_rules.push(rule_idx as u32);
+                // Convert f32 to bit representation for storage
+                weighted_rules.push(weight.to_bits());
             }
         }
 
-        // Optional sanity check (should always pass if loops are correct)
-        if rule_idx != num_rules_total {
-            warn!(
-                "Rule packing index mismatch: iterated {} rules, expected {}",
-                rule_idx, num_rules_total
-            );
+        // If no weighted rules, add a placeholder entry to avoid empty buffer issues
+        if weighted_rules.is_empty() {
+            weighted_rules.push(0);
+            weighted_rules.push(1.0f32.to_bits());
         }
-
-        let _rules_buffer_size = (packed_rules.len() * std::mem::size_of::<u32>()) as u64;
 
         // --- Create Uniform Buffer Data ---
         let params = GpuParamsUniform {
@@ -421,6 +448,24 @@ impl GpuBuffers {
             mapped_at_creation: false,
         }));
 
+        // Create rules buffer
+        let adjacency_rules_buf = Arc::new(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("WFC Adjacency Rules Buffer"),
+                contents: bytemuck::cast_slice(&packed_rules),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            },
+        ));
+
+        // Create rule weights buffer
+        let rule_weights_buf = Arc::new(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("WFC Rule Weights Buffer"),
+                contents: bytemuck::cast_slice(&weighted_rules),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            },
+        ));
+
         info!("GPU buffers created successfully.");
         Ok(Self {
             grid_possibilities_buf,
@@ -439,6 +484,17 @@ impl GpuBuffers {
             staging_contradiction_location_buf,
             staging_worklist_count_buf,
             params_uniform_buf,
+            adjacency_rules_buf,
+            rule_weights_buf,
+            u32s_per_cell,
+            num_cells,
+            original_grid_dims: None,
+            current_worklist_size: 0,
+            current_worklist_idx: 0,
+            grid_dims: (width, height, depth),
+            num_tiles,
+            num_axes,
+            boundary_mode,
         })
     }
 

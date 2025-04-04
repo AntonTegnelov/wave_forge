@@ -282,36 +282,49 @@ impl GpuConstraintPropagator {
                 label: Some(&format!("Propagation Pass {} Bind Group", propagation_pass)),
                 layout: &self.pipelines.propagation_bind_group_layout,
                 entries: &[
+                    // grid_possibilities (read-write storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
                     },
+                    // adjacency_rules (read-only storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: self.buffers.rules_buf.as_entire_binding(),
+                        resource: self.buffers.adjacency_rules_buf.as_entire_binding(),
                     },
+                    // worklist (read-only storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: self.input_worklist_binding(),
                     },
+                    // rule_weights (read-only storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: self.output_worklist_binding(),
+                        resource: self.buffers.rule_weights_buf.as_entire_binding(),
                     },
+                    // output_worklist (read-write storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 4,
-                        resource: self.buffers.params_uniform_buf.as_entire_binding(),
+                        resource: self.output_worklist_binding(),
                     },
+                    // params (uniform buffer)
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                        resource: self.buffers.params_uniform_buf.as_entire_binding(),
                     },
+                    // output_worklist_count (read-write storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 6,
                         resource: self.buffers.worklist_count_buf.as_entire_binding(),
                     },
+                    // contradiction_flag (read-write storage buffer)
                     wgpu::BindGroupEntry {
                         binding: 7,
+                        resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                    },
+                    // contradiction_location (read-write storage buffer)
+                    wgpu::BindGroupEntry {
+                        binding: 8,
                         resource: self.buffers.contradiction_location_buf.as_entire_binding(),
                     },
                 ],

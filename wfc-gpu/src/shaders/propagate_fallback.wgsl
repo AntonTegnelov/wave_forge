@@ -9,20 +9,7 @@
 // This version is compatible with hardware that doesn't support atomics at the cost 
 // of reduced functionality and possibly requiring multiple shader dispatches from the host.
 
-// Example bindings (adjust based on actual buffer structures)
-@group(0) @binding(0) var<storage, read_write> grid_possibilities: array<u32>; // Non-atomic version
-@group(0) @binding(1) var<storage, read> adjacency_rules: array<u32>; // Flattened rules
-@group(0) @binding(2) var<storage, read> worklist: array<u32>; // Coordinates or indices of updated cells
-@group(0) @binding(4) var<uniform> params: Params;
-// No atomic buffers for worklist or contradiction flags in this fallback version
-
-// Hardcoded value for the number of u32s per cell, will be replaced at compilation time
-const NUM_TILES_U32: u32 = NUM_TILES_U32_VALUE;
-
-// Specialization constant for workgroup size (X dimension)
-const WORKGROUP_SIZE_X: u32 = 64u; // Hardcoded size
-
-// Uniforms for grid dimensions, num_tiles etc.
+// Struct defining shader parameters
 struct Params {
     grid_width: u32,
     grid_height: u32,
@@ -41,6 +28,47 @@ const AXIS_POS_Y: u32 = 2u;
 const AXIS_NEG_Y: u32 = 3u;
 const AXIS_POS_Z: u32 = 4u;
 const AXIS_NEG_Z: u32 = 5u;
+
+// Uniform buffer with parameters
+@group(0) @binding(0) var<uniform> params: Params;
+
+// Storage buffers for grid data - Structure of Array (SoA) layout
+// Each u32 contains up to 32 bits for tile possibilities
+@group(0) @binding(1) var<storage, read_write> grid_possibilities: array<u32>;
+
+// Storage buffer for adjacency rules (read-only)
+// Packed as bits in u32 array
+@group(0) @binding(2) var<storage, read> adjacency_rules: array<u32>;
+
+// Storage buffer for rule weights (read-only)
+// Contains pairs of (rule_idx, weight_bits) for rules with non-default weights
+@group(0) @binding(3) var<storage, read> rule_weights: array<u32>;
+
+// Storage buffer for worklist (read-only)
+// Contains 1D indices of cells to process
+@group(0) @binding(4) var<storage, read> worklist: array<u32>;
+
+// Storage buffer for output worklist (write-only)
+// Will contain indices of cells that need processing in next step
+@group(0) @binding(5) var<storage, read_write> output_worklist: array<u32>;
+
+// Atomic counter for output worklist (non-atomic in fallback)
+@group(0) @binding(6) var<storage, read_write> output_worklist_count: array<u32, 1>;
+
+// Atomic flag for contradiction detection (non-atomic in fallback)
+@group(0) @binding(7) var<storage, read_write> contradiction_flag: array<u32, 1>;
+
+// Atomic for tracking contradiction location (non-atomic in fallback)
+@group(0) @binding(8) var<storage, read_write> contradiction_location: array<u32, 1>;
+
+// Preprocessor-like constant for number of u32s per cell for possibilities
+const NUM_TILES_U32_VALUE: u32 = 1u; // Placeholder, will be dynamically set in source
+
+// Hardcoded value for the number of u32s per cell, will be replaced at compilation time
+const NUM_TILES_U32: u32 = NUM_TILES_U32_VALUE;
+
+// Specialization constant for workgroup size (X dimension)
+const WORKGROUP_SIZE_X: u32 = 64u; // Hardcoded size
 
 // Helper function to get 1D index from 3D coords
 fn grid_index(x: u32, y: u32, z: u32) -> u32 {
@@ -112,6 +140,38 @@ fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
 
     // Check the specific bit
     return (adjacency_rules[u32_idx] & (1u << bit_idx)) != 0u;
+}
+
+// Helper function to get rule weight
+// For non-weighted rules (the default), this returns 1.0
+// For weighted rules, this returns a value between 0.0 and 1.0
+fn get_rule_weight(tile1: u32, tile2: u32, axis: u32) -> f32 {
+    // First check if the rule exists at all
+    if (!check_rule(tile1, tile2, axis)) {
+        return 0.0;
+    }
+    
+    // Index into the weights array (if it exists)
+    // Since most rules have weight 1.0, we only store the ones that differ
+    let rule_idx = axis * params.num_tiles * params.num_tiles + tile1 * params.num_tiles + tile2;
+    
+    // Check if this rule has an entry in the weights buffer
+    // For now, we'll use a simple linear search approach
+    // Future optimization: Use a proper mapping structure
+    for (var i = 0u; i < arrayLength(&rule_weights); i += 2u) {
+        // Each weight entry consists of two u32s:
+        // - rule_idx: The packed rule index
+        // - weight_bits: The f32 weight encoded as bits
+        
+        if (rule_weights[i] == rule_idx) {
+            // Found it, get the weight
+            // Convert the bits back to float
+            return bitcast<f32>(rule_weights[i + 1u]);
+        }
+    }
+    
+    // Default weight for valid rules with no explicit weight
+    return 1.0;
 }
 
 @compute @workgroup_size(64) // Use hardcoded size
@@ -247,6 +307,8 @@ fn main_propagate(
             // For each potential tile in the neighbor cell
             for (var neighbor_tile: u32 = 0u; neighbor_tile < params.num_tiles; neighbor_tile = neighbor_tile + 1u) {
                 // Check if this neighbor tile is allowed according to the rule
+                // For weighted rules, we can use a threshold approach
+                // Any weight above 0.0 means the rule is valid (for now)
                 if (check_rule(current_tile, neighbor_tile, axis_idx)) {
                     // If allowed, mark this tile as possible in the allowed_neighbor_mask
                     set_tile_possible(neighbor_tile, &allowed_neighbor_mask);
