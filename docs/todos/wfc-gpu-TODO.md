@@ -7,7 +7,7 @@ This document outlines improvement opportunities for the GPU-accelerated Wave Fu
 - [x] **Implement multi-pass propagation**: Current implementation only performs a single propagation pass which may not fully resolve all constraints. Add support for iterative propagation with a work queue.
 - [x] **Dynamic workgroup sizing**: Replace hard-coded workgroup size (64) with dynamic sizing based on GPU capabilities for optimal performance across hardware.
 - [x] **Pipeline and shader caching**: Add mechanism to cache compiled shaders and pipelines for faster reinitialization.
-- [ ] **Optimize buffer synchronization**: Reduce CPU-GPU synchronization points and minimize buffer copies.
+- [x] **Optimize buffer synchronization**: Reduce CPU-GPU synchronization points and minimize buffer copies.
 - [ ] **Parallel subgrid processing**: Add support for dividing large grids into subgrids that can be processed independently.
 - [ ] **Early termination**: Add mechanism to stop propagation early if further passes yield minimal changes.
 

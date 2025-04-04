@@ -20,7 +20,6 @@ Welcome to the Wave Forge documentation. This repository contains detailed infor
 Wave Forge is a high-performance implementation of the Wave Function Collapse algorithm, designed for 3D terrain generation. It features:
 
 - GPU acceleration via compute shaders (WGPU)
-- Comprehensive benchmarking tools
 - Visualization capabilities
 - Flexible rule definition system
 

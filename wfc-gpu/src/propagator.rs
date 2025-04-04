@@ -226,26 +226,17 @@ impl ConstraintPropagator for GpuConstraintPropagator {
             self.queue.submit(Some(encoder.finish()));
 
             // --- Download results (Contradiction Flag, New Worklist Size) ---
-            // Consider making download_results async if pollster is removed later.
-            let results = self
+            // Use the optimized propagation status download method to reduce synchronization points
+            let (has_contradiction, new_worklist_size, contradiction_location) = self
                 .buffers
-                .download_results(
-                    self.device.clone(),
-                    self.queue.clone(),
-                    false, // entropy
-                    false, // min_entropy
-                    true,  // contradiction_flag
-                    false, // grid
-                    true,  // worklist_count
-                    true,  // download_contradiction_location
-                )
+                .download_propagation_status(self.device.clone(), self.queue.clone())
                 .await
                 .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
             // Check for contradiction
-            if let Some(true) = results.contradiction_flag {
-                // If contradiction found, try to get location
-                let location_index = results.contradiction_location.unwrap_or(u32::MAX);
+            if has_contradiction {
+                // If contradiction found, use the location if available
+                let location_index = contradiction_location.unwrap_or(u32::MAX);
                 let (x, y, z) = if location_index != u32::MAX {
                     let width = self.params.grid_width as usize;
                     let height = self.params.grid_height as usize;
@@ -264,7 +255,7 @@ impl ConstraintPropagator for GpuConstraintPropagator {
             }
 
             // Update worklist size for the next iteration
-            current_worklist_size = results.worklist_count.unwrap_or(0);
+            current_worklist_size = new_worklist_size;
             log::trace!(
                 "GPU Propagation Iteration {}: New worklist size = {}",
                 propagation_pass,

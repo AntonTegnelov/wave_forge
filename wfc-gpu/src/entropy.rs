@@ -204,23 +204,18 @@ impl EntropyCalculator for GpuEntropyCalculator {
         &self,
         _entropy_grid: &EntropyGrid,
     ) -> Option<(usize, usize, usize)> {
-        log::debug!("Downloading GPU minimum entropy info via download_results...");
+        log::debug!("Downloading GPU minimum entropy info...");
 
-        let download_results_res = pollster::block_on(self.buffers.download_results(
-            self.device.clone(),
-            self.queue.clone(),
-            false,
-            true,
-            false,
-            false,
-            false,
-            false, // Flags
-        ));
+        // Use the optimized minimum entropy download method to reduce synchronization
+        let min_entropy_result = pollster::block_on(
+            self.buffers
+                .download_min_entropy_info(self.device.clone(), self.queue.clone()),
+        );
 
         // Handle outer Result, map error to None for this function's signature
-        match download_results_res {
-            Ok(download_results) => {
-                if let Some((min_entropy, flat_index)) = download_results.min_entropy_info {
+        match min_entropy_result {
+            Ok(opt_info) => {
+                if let Some((min_entropy, flat_index)) = opt_info {
                     if min_entropy > 0.0 && min_entropy < f32::MAX {
                         // Check validity
                         let width = self.grid_dims.0 as usize;

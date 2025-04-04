@@ -27,7 +27,7 @@ OPTIONS:
         --depth <DEPTH>                       Depth of the output grid [default: 10]
         --seed <SEED>                         Optional seed for the random number generator
     -o, --output-path <FILE>                  Path to save the generated output grid [default: output.txt]
-        --benchmark-mode                      Run in benchmark mode (GPU performance only)
+        --benchmark-mode                      Run in benchmark mode
         --report-progress-interval <DURATION> Report progress updates every specified interval (e.g., "1s", "500ms")
         --progress-log-level <LEVEL>          Log level to use for progress reporting [default: info]
                                               [possible values: trace, debug, info, warn]
@@ -54,6 +54,7 @@ The project supports configurable progress reporting with two main settings:
      - `debug` - Detailed logging visible when debug logging is enabled
      - `info` - Standard logging level (default)
      - `warn` - Less frequent, higher priority logging
+       You can also configure the progress log level in the project's configuration file.
 
 These settings allow you to control both the frequency and visibility of progress updates. For example:
 
@@ -79,45 +80,6 @@ wave-forge-app --rule-file rules.ron
 RUST_LOG=debug wave-forge-app --rule-file rules.ron
 ```
 
-## Running Tests
-
-There are several ways to run tests in this project:
-
-1. Run tests for a specific crate:
-
-   ```
-   cargo test -p wfc-core
-   cargo test -p wfc-rules
-   cargo test -p wfc-gpu
-   cargo test -p wave-forge-app
-   ```
-
-2. Run tests for all workspace members:
-
-   ```
-   cargo test --workspace
-   ```
-
-Note: Tests involving the GPU (`wfc-gpu`, `wave-forge-app`) may require a compatible GPU and driver setup.
-
 ### Feature Flags
 
 - `winapi`: Enables platform-specific code, primarily for attempting to measure memory usage during benchmarks on Windows using the `winapi` crate. This feature is optional and the application will build and run without it, although memory usage reporting might be less accurate or unavailable on Windows.
-
-## Contributing
-
-_Information about contributing to the project._
-
-## Progress Reporting
-
-The project supports configurable progress reporting. You can adjust the log level to control the amount of information output during the generation process.
-
-## Command-line Arguments
-
-You can use the following command-line arguments to control the progress log level:
-
-- `--log-level <level>`: Set the log level. Valid values are `trace`, `debug`, `info`, `warn`, and `error`.
-
-## Configuration Options
-
-You can also configure the progress log level in the project's configuration file.
