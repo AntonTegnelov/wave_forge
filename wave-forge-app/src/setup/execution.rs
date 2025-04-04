@@ -196,8 +196,12 @@ pub async fn run_benchmark_mode(
             let grid_guard = scenario_grid_snapshot
                 .lock()
                 .expect("Benchmark grid lock failed");
-            let accelerator_res =
-                pollster::block_on(GpuAccelerator::new(&grid_guard, &rules, core_boundary_mode));
+            let accelerator_res = pollster::block_on(GpuAccelerator::new(
+                &grid_guard,
+                &rules,
+                core_boundary_mode,
+                None,
+            ));
             drop(grid_guard); // Drop the guard after the call
 
             // Store the accelerator directly, not Arc
@@ -485,8 +489,12 @@ pub async fn run_standard_mode(
     let grid_guard = grid_snapshot
         .lock()
         .expect("Standard grid lock failed for GPU init");
-    let accelerator_res =
-        pollster::block_on(GpuAccelerator::new(&grid_guard, rules, core_boundary_mode));
+    let accelerator_res = pollster::block_on(GpuAccelerator::new(
+        &grid_guard,
+        rules,
+        core_boundary_mode,
+        None,
+    ));
     drop(grid_guard); // Drop the guard after the call
 
     let gpu_accelerator = match accelerator_res {
