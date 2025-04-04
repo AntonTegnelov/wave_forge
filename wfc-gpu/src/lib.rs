@@ -16,6 +16,8 @@ pub mod pipeline;
 pub mod propagator;
 /// Contains WGSL shader code as string constants or loading utilities.
 pub mod shaders; // Module to potentially help load shaders
+/// Provides parallel subgrid processing for large grids.
+pub mod subgrid;
 
 // Add test_utils module, conditionally compiled for tests
 #[cfg(test)]

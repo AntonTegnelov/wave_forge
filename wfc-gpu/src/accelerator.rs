@@ -1,5 +1,5 @@
 use crate::buffers::GpuParamsUniform;
-use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
+use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, subgrid::SubgridConfig, GpuError};
 use async_trait::async_trait;
 use log::info;
 use std::sync::Arc;
@@ -243,6 +243,43 @@ impl GpuAccelerator {
     pub fn params(&self) -> GpuParamsUniform {
         // Return a copy of the params from the propagator
         self.propagator.params
+    }
+
+    /// Enables parallel subgrid processing for large grids.
+    ///
+    /// When enabled, the Wave Function Collapse algorithm will divide large grids
+    /// into smaller subgrids that can be processed independently, potentially
+    /// improving performance for large problem sizes.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The configuration for subgrid division and processing.
+    ///              If None, a default configuration will be used.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_parallel_subgrid_processing(&mut self, config: Option<SubgridConfig>) -> &mut Self {
+        // Create a propagator with parallel subgrid processing enabled
+        let config = config.unwrap_or_default();
+        self.propagator = self
+            .propagator
+            .clone()
+            .with_parallel_subgrid_processing(config);
+        self
+    }
+
+    /// Disables parallel subgrid processing.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn without_parallel_subgrid_processing(&mut self) -> &mut Self {
+        self.propagator = self
+            .propagator
+            .clone()
+            .without_parallel_subgrid_processing();
+        self
     }
 }
 
