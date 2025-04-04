@@ -17,12 +17,9 @@ pub mod entropy;
 pub mod grid;
 /// Constraint propagation logic and traits.
 pub mod propagator;
-/// Tile adjacency rule representation.
-pub mod rules;
+
 /// The core WFC algorithm runner.
 pub mod runner;
-/// Tile representation (ID, TileSet).
-pub mod tile;
 
 // Re-export core public items
 
@@ -37,9 +34,9 @@ pub use crate::grid::Grid;
 /// Grid specifically storing possibility bitsets for WFC.
 pub use crate::grid::PossibilityGrid;
 /// Trait defining the interface for constraint propagation strategies.
-pub use crate::propagator::ConstraintPropagator;
+pub use crate::propagator::propagator::ConstraintPropagator;
 /// Errors specific to the propagation phase.
-pub use crate::propagator::PropagationError;
+pub use crate::propagator::propagator::PropagationError;
 /// The main function to execute the Wave Function Collapse algorithm.
 pub use crate::runner::run;
 
@@ -137,9 +134,8 @@ pub enum BoundaryCondition {
     Finite,
 }
 
-/// Represents the execution mode (CPU or GPU) for WFC components.
+/// Represents the execution mode (GPU) for WFC components.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecutionMode {
-    Cpu,
     Gpu,
 }

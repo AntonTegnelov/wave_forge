@@ -1,3 +1,4 @@
+use crate::buffers::GpuParamsUniform;
 use crate::{buffers::GpuBuffers, pipeline::ComputePipelines, GpuError};
 use async_trait::async_trait;
 use log::info;
@@ -9,7 +10,7 @@ use wfc_core::{
     BoundaryCondition,
 }; // Use Arc for shared GPU resources
 use wfc_rules::AdjacencyRules; // Import from wfc_rules instead
-use wgpu; // Assuming wgpu is needed
+use wgpu; // Assuming wgpu is needed // Import GpuParamsUniform
 
 /// Manages the WGPU context and orchestrates GPU-accelerated WFC operations.
 ///
@@ -18,7 +19,7 @@ use wgpu; // Assuming wgpu is needed
 /// required for accelerating entropy calculation and constraint propagation.
 ///
 /// It implements the `EntropyCalculator` and `ConstraintPropagator` traits from `wfc-core`,
-/// providing GPU-accelerated alternatives to the CPU implementations.
+/// providing GPU-acceleration.
 ///
 /// # Initialization
 ///
@@ -41,7 +42,9 @@ pub struct GpuAccelerator {
     pipelines: Arc<ComputePipelines>, // Changed to Arc
     buffers: Arc<GpuBuffers>,         // Changed to Arc
     grid_dims: (usize, usize, usize),
-    boundary_mode: BoundaryCondition, // Store boundary mode
+    boundary_mode: BoundaryCondition,    // Store boundary mode
+    num_tiles: usize,                    // Add num_tiles
+    propagator: GpuConstraintPropagator, // Store the propagator
 }
 
 // Import the concrete GPU implementations
@@ -160,6 +163,32 @@ impl GpuAccelerator {
 
         let grid_dims = (initial_grid.width, initial_grid.height, initial_grid.depth);
 
+        // Create GpuParamsUniform
+        let params = GpuParamsUniform {
+            grid_width: grid_dims.0 as u32,
+            grid_height: grid_dims.1 as u32,
+            grid_depth: grid_dims.2 as u32,
+            num_tiles: num_tiles as u32,
+            num_axes: rules.num_axes() as u32,
+            worklist_size: 0, // Initial worklist size is 0 before first propagation
+            boundary_mode: match boundary_mode {
+                BoundaryCondition::Finite => 0,
+                BoundaryCondition::Periodic => 1,
+            },
+            _padding1: 0,
+        };
+
+        // Create the propagator instance
+        let propagator = GpuConstraintPropagator::new(
+            device.clone(),
+            queue.clone(),
+            pipelines.clone(),
+            buffers.clone(),
+            grid_dims,
+            boundary_mode,
+            params, // Pass the created params
+        );
+
         Ok(Self {
             instance,
             adapter,
@@ -169,6 +198,8 @@ impl GpuAccelerator {
             buffers,   // Store the Arc
             grid_dims,
             boundary_mode, // Store boundary_mode
+            num_tiles,     // Initialize num_tiles
+            propagator,    // Store the propagator
         })
     }
 
@@ -203,30 +234,26 @@ impl GpuAccelerator {
     pub fn boundary_mode(&self) -> BoundaryCondition {
         self.boundary_mode
     }
+
+    /// Returns the number of unique transformed tiles.
+    pub fn num_tiles(&self) -> usize {
+        self.num_tiles
+    }
 }
 
 // --- Trait Implementations ---
 
 #[async_trait]
 impl ConstraintPropagator for GpuAccelerator {
-    /// Delegates propagation to an internal `GpuConstraintPropagator` instance.
-    ///
-    /// Note: This creates a new `GpuConstraintPropagator` instance on each call.
-    /// Consider optimizing if this becomes a bottleneck (e.g., store propagator instance).
+    /// Delegates propagation to the stored `GpuConstraintPropagator` instance.
     async fn propagate(
         &mut self,
         grid: &mut PossibilityGrid,
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        // Lock the state to get access to the propagator
-        let mut state_guard = self.state.lock().await;
-
-        // Await the inner propagator call
-        state_guard
-            .propagator
-            .propagate(grid, updated_coords, rules)
-            .await
+        // Use the stored propagator
+        self.propagator.propagate(grid, updated_coords, rules).await
     }
 }
 
@@ -243,6 +270,7 @@ impl EntropyCalculator for GpuAccelerator {
             self.pipelines(),
             self.buffers(),
             self.grid_dims(),
+            self.num_tiles() as u32, // Add num_tiles
         );
         // Delegate the actual work
         calculator.calculate_entropy(grid)
@@ -263,6 +291,7 @@ impl EntropyCalculator for GpuAccelerator {
             self.pipelines(),
             self.buffers(),
             self.grid_dims(),
+            self.num_tiles() as u32, // Add num_tiles
         );
         // Delegate the actual work
         // Note: GpuEntropyCalculator::select_lowest_entropy_cell might need adjustment

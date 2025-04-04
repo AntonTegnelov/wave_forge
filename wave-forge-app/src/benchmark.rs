@@ -13,10 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 use wfc_core::{
-    entropy::cpu::CpuEntropyCalculator,
     entropy::{EntropyCalculator, SelectionStrategy},
     grid::PossibilityGrid,
-    propagator::{ConstraintPropagator, CpuConstraintPropagator},
+    propagator::ConstraintPropagator,
     runner::{self, WfcConfig},
     BoundaryMode, ExecutionMode, ProgressInfo, WfcError,
 };

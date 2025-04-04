@@ -51,10 +51,6 @@ pub enum GpuError {
     /// Failed to map a GPU buffer for CPU access (e.g., reading results).
     #[error("Failed to map GPU buffer: {0}")]
     BufferMapFailed(#[from] wgpu::BufferAsyncError),
-    /// Error specifically during buffer mapping (distinct from BufferMapFailed?).
-    /// Often used when checking the result of a `map_async` callback.
-    #[error("Buffer mapping error: {0:?}")]
-    BufferMapError(wgpu::BufferMapError),
     /// Generic internal error, often for logic errors or unexpected states.
     #[error("Internal GPU logic error: {0}")]
     InternalError(String),
@@ -62,3 +58,17 @@ pub enum GpuError {
     #[error("GPU operation failed: {0}")]
     Other(String),
 }
+
+// Removed manual From<wgpu::RequestDeviceError> impl as it conflicts with derive macro
+// impl From<wgpu::RequestDeviceError> for GpuError {
+//     fn from(error: wgpu::RequestDeviceError) -> Self {
+//         GpuError::DeviceRequestFailed(error)
+//     }
+// }
+
+// Cannot easily implement From<bytemuck::PodCastError> as it's not pub
+// impl From<bytemuck::PodCastError> for GpuError {
+//     fn from(error: bytemuck::PodCastError) -> Self {
+//         GpuError::BytemuckError(format!("Pod casting error: {}", error))
+//     }
+// }

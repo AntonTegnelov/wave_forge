@@ -23,15 +23,10 @@ _Purpose: Defines the fundamental data structures and the platform-agnostic WFC 
 - **File:** `wfc-core/src/propagator.rs`
   - [x] Define `ConstraintPropagator` trait (for DI).
     - Method: `propagate(&mut Grid<bitvec::BitVec>, updated_coords: Vec<(usize, usize, usize)>) -> Result<(), PropagationError>`
-  - [x] Implement a basic CPU-based `ConstraintPropagator`.
-    - [x] **Parallelism (CPU):** Explore using `rayon` to parallelize the processing of constraints for updated cells. _Requires careful synchronization or atomic operations to prevent data races when multiple threads update the same neighboring cell._ Consider strategies like chunking updates or using thread-safe data structures.
 - **File:** `wfc-core/src/entropy.rs`
   - [x] Define `EntropyCalculator` trait (for DI).
     - Method: `calculate_entropy(&Grid<bitvec::BitVec>) -> Grid<f32>`
     - Method: `find_lowest_entropy(&Grid<f32>) -> Option<(usize, usize, usize)>`
-  - [x] Implement a basic CPU-based `EntropyCalculator`.
-    - [x] **Parallelism (CPU) - Calculation:** Utilize `rayon` to parallelize entropy calculation across grid cells or chunks. Ensure thread-safe access if necessary (likely read-only access to the main grid suffices here).
-    - [x] **Parallelism (CPU) - Finding Minimum:** Use `rayon`'s parallel iterators and reduction operations (e.g., `min_by_key`) to efficiently find the cell with the lowest entropy from the calculated entropy grid.
 - **File:** `wfc-core/src/runner.rs` or `src/lib.rs`
   - [x] Implement the main WFC `run` function.
     - **DI:** Takes `&mut Grid`, `&TileSet`, `&AdjacencyRules`, `impl ConstraintPropagator`, `impl EntropyCalculator` as input.
@@ -54,9 +49,7 @@ _Purpose: Defines the fundamental data structures and the platform-agnostic WFC 
   - [x] Define public API / module structure.
 - **Testing:** `wfc-core/tests/`
   - [x] Add unit tests for grid manipulation.
-  - [x] Add unit tests for CPU entropy calculation.
-  - [x] Add unit tests for CPU propagation logic.
-  - [x] Add integration tests for the core WFC `run` function (using CPU components).
+  - [x] Add integration tests for the core WFC `run` function
 
 ## Crate: `wfc-rules` (Rule Loading & Parsing)
 
@@ -98,16 +91,16 @@ _Purpose: Implements GPU-accelerated versions of entropy calculation and propaga
   - [x] accelerator.rs: Enhance GPU contradiction reporting to include location (if feasible).
   - [x] pipeline.rs: Specify minimum binding size for entropy shader `grid_possibilities` buffer layout if necessary.
   - [x] entropy.wgsl: Implement proper Shannon entropy calculation instead of just possibility count.
-  - [x] propagate.wgsl: Verify `check_rule` uses the correct axis (`current_axis` vs `neighbor_axis`) based on CPU rule definition/structure.
+  - [x] propagate.wgsl: Verify `check_rule` uses the correct axis (`current_axis` vs `neighbor_axis`)
 - **Testing:** `wfc-gpu/tests/` (May require specific setup or be harder to unit test)
   - [x] Add tests for buffer creation and data transfer.
   - [x] Investigate and fixed GPU test deadlock in `test_update_params_worklist_size` (Simplified tests to only check API call success since GPU synchronization and buffer mapping is difficult to make reliably cross-platform without deadlocks)
-  - [x] accelerator.rs: Implement GPU reduction for finding lowest entropy (replace CPU placeholder).
+  - [x] accelerator.rs: Implement GPU reduction for finding lowest entropy.
   - [x] accelerator.rs: Map GpuError to PropagationError more appropriately where marked (`// TODO: Better error mapping`).
   - [x] accelerator.rs: Enhance GPU contradiction reporting to include location (if feasible).
   - [x] pipeline.rs: Specify minimum binding size for entropy shader `grid_possibilities` buffer layout if necessary.
   - [x] entropy.wgsl: Implement proper Shannon entropy calculation instead of just possibility count.
-  - [x] propagate.wgsl: Verify `check_rule` uses the correct axis (`current_axis` vs `neighbor_axis`) based on CPU rule definition/structure.
+  - [x] propagate.wgsl: Verify `check_rule` uses the correct axis (`current_axis` vs `neighbor_axis`)
 
 ## Crate: `wave-forge-app` (Main Binary - Orchestrator)
 
@@ -136,7 +129,6 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 
 - **File:** `wave-forge-app/src/benchmark.rs`
   - [x] Implement benchmarking infrastructure:
-    - [x] Add function to run both CPU and GPU implementations with identical input
     - [x] Record metrics: total runtime, memory usage, time per step, etc.
     - [x] Implement comparison and reporting of benchmark results
     - [x] Support different grid sizes and complexity levels for comprehensive testing
@@ -160,9 +152,8 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
   - [x] Parse arguments into `AppConfig`.
   - [x] Load rules using `wfc-rules::loader::load_from_file`.
   - [x] Initialize `wfc-core::Grid`.
-  - [x] **DI / Loose Coupling:** Based on `AppConfig`, instantiate the required components. The `wfc-core::runner::run` function only depends on the `EntropyCalculator` and `ConstraintPropagator` traits, ensuring it's decoupled from the specific implementation (CPU or GPU):
+  - [x] **DI / Loose Coupling:** Based on `AppConfig`, instantiate the required components. The `wfc-core::runner::run` function only depends on the `EntropyCalculator` and `ConstraintPropagator` traits, ensuring it's decoupled from the specific implementation (GPU):
     - If `use_gpu`: Initialize `wfc_gpu::GpuAccelerator`. Create trait objects (e.g., `Box<dyn EntropyCalculator>`) or use generics (`impl EntropyCalculator`) pointing to the GPU implementations provided by `wfc-gpu`.
-    - Else: Create trait objects or use generics pointing to the default CPU implementations provided by `wfc-core`.
   - [x] **Threading:** Use `rayon` to run them in parallel.
     - [x] Parallelize parts of a _single_ large grid generation
   - [x] If benchmark mode is enabled, run benchmarks using the benchmark infrastructure.
@@ -173,7 +164,6 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - **File:** `wave-forge-app/src/output.rs` (Simple Output)
   - [x] Implement function to save the final collapsed `Grid<TileId>` to a simple format (e.g., text, basic binary, RON).
 - **Testing:** `wave-forge-app/tests/`
-  - [x] Add integration tests for running the app with basic configs (CPU and GPU if possible).
   - [x] Add tests for argument parsing.
   - [x] Add tests for benchmark comparisons.
   - [x] Add tests for progress reporting.
@@ -187,7 +177,7 @@ _Purpose: Ties everything together, handles user input (CLI), manages threading,
 - [x] Add more comprehensive testing, especially for edge cases and GPU paths.
 - [x] Set up basic logging (`log`, `env_logger`).
 - [x] Profile and optimize bottlenecks (CPU and GPU).
-- [x] **Thread Safety (CPU):** Rigorously verify thread safety in `rayon`-based parallel implementations within `wfc-core` (e.g., avoiding data races on shared structures like `Grid`, ensuring proper synchronization if needed, handling error aggregation from parallel tasks).
+- [x] **Thread Safety:** Rigorously verify thread safety in `rayon`-based parallel implementations within `wfc-core` (e.g., avoiding data races on shared structures, ensuring proper synchronization if needed, handling error aggregation from parallel tasks).
 - [x] Add visualization toggle to CLI interface.
 - [x] Implement configurable logging levels for progress reporting.
 - [x] Add benchmark results to documentation.

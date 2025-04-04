@@ -1,8 +1,7 @@
+use crate::accelerator::GpuAccelerator;
 use crate::{
-    accelerator::GpuAcceleratorState,
-    buffers::{GpuBuffers, GpuDownloadResults, GpuParamsUniform},
-    pipeline::GpuPipelines,
-    GpuError,
+    buffers::{GpuBuffers, GpuParamsUniform},
+    pipeline::ComputePipelines,
 };
 use async_trait::async_trait;
 use log::{debug, info, warn};
@@ -23,36 +22,33 @@ pub struct GpuConstraintPropagator {
     // References to shared GPU resources (Reverted to hold individual components)
     pub(crate) device: Arc<wgpu::Device>,
     pub(crate) queue: Arc<wgpu::Queue>,
-    pub(crate) pipelines: Arc<GpuPipelines>,
+    pub(crate) pipelines: Arc<ComputePipelines>,
     pub(crate) buffers: Arc<GpuBuffers>,
     pub(crate) grid_dims: (usize, usize, usize),
-    pub(crate) _boundary_mode: BoundaryCondition,
+    pub(crate) boundary_mode: BoundaryCondition,
     // State for ping-pong buffer index
     current_worklist_idx: usize,
-    state: Arc<tokio::sync::Mutex<GpuAcceleratorState>>,
     params: GpuParamsUniform,
 }
 
 impl GpuConstraintPropagator {
     /// Creates a new `GpuConstraintPropagator`.
     pub fn new(
-        state: Arc<tokio::sync::Mutex<GpuAcceleratorState>>,
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
-        pipelines: Arc<GpuPipelines>,
+        pipelines: Arc<ComputePipelines>,
         buffers: Arc<GpuBuffers>,
         grid_dims: (usize, usize, usize),
         boundary_mode: BoundaryCondition,
         params: GpuParamsUniform,
     ) -> Self {
         Self {
-            state,
             device,
             queue,
             pipelines,
             buffers,
             grid_dims,
-            _boundary_mode: boundary_mode,
+            boundary_mode,
             current_worklist_idx: 0,
             params,
         }
@@ -163,13 +159,13 @@ impl ConstraintPropagator for GpuConstraintPropagator {
             );
 
             // Determine input/output buffers for this pass
-            let input_worklist_bind_group = if current_worklist_index == 0 {
-                &self.pipelines.propagate_bind_group_a
-            } else {
-                &self.pipelines.propagate_bind_group_b
-            };
-            // Output buffer index is the opposite of the input
-            let _output_worklist_index = 1 - current_worklist_index;
+            // let input_worklist_bind_group = if current_worklist_index == 0 {
+            //     &self.pipelines.propagate_bind_group_a // Field doesn't exist
+            // } else {
+            //     &self.pipelines.propagate_bind_group_b // Field doesn't exist
+            // };
+            // TODO: Need to create/get appropriate bind group here
+            // let bind_group = ???
 
             // Reset output worklist count and contradiction flag/location
             self.buffers
@@ -193,8 +189,9 @@ impl ConstraintPropagator for GpuConstraintPropagator {
                     label: Some(&format!("Propagation Compute Pass {}", propagation_pass)),
                     timestamp_writes: None, // Add timestamps if needed
                 });
-                compute_pass.set_pipeline(&self.pipelines.propagate_pipeline);
-                compute_pass.set_bind_group(0, input_worklist_bind_group, &[]);
+                compute_pass.set_pipeline(&self.pipelines.propagation_pipeline); // Correct field name
+                                                                                 // compute_pass.set_bind_group(0, input_worklist_bind_group, &[]); // Commented out - bind group unavailable
+                                                                                 // compute_pass.set_bind_group(0, &bind_group, &[]); // Need to create bind group first
 
                 // Calculate dispatch size based on worklist size
                 let workgroup_size = 64; // Should match shader
@@ -272,7 +269,6 @@ impl ConstraintPropagator for GpuConstraintPropagator {
 mod tests {
     use super::*;
     use crate::accelerator::GpuAccelerator;
-    use crate::GpuError;
     use wfc_core::grid::PossibilityGrid;
     use wfc_core::BoundaryCondition;
     use wfc_rules::{AdjacencyRules, TileSet, TileSetError, Transformation};
@@ -328,10 +324,23 @@ mod tests {
         num_tiles: usize,
     ) -> Result<PossibilityGrid, GpuError> {
         let (width, height, depth) = grid_dims;
-        let packed_data = accelerator
+        let results = accelerator
             .buffers()
-            .download_possibilities(&accelerator.device(), &accelerator.queue())
+            .download_results(
+                &accelerator.device(),
+                &accelerator.queue(),
+                false, // entropy
+                false, // min_entropy
+                false, // contradiction
+                true,  // possibilities
+                false, // worklist_count
+                num_tiles as u32,
+            )
             .await?;
+
+        let packed_data = results
+            .grid_possibilities
+            .ok_or_else(|| GpuError::InternalError("Possibilities not downloaded".to_string()))?;
 
         let mut new_grid = PossibilityGrid::new(width, height, depth, num_tiles);
         let u32s_per_cell = (num_tiles + 31) / 32;
@@ -388,7 +397,9 @@ mod tests {
 
         // Propagate the change from the center cell
         let updated_coords = vec![(1, 0, 0)];
-        let prop_result = accelerator.propagate(&mut initial_grid, updated_coords, &rules);
+        let prop_result = accelerator
+            .propagate(&mut initial_grid, updated_coords, &rules)
+            .await;
         assert!(prop_result.is_ok());
 
         // Download the grid state after propagation
@@ -437,7 +448,9 @@ mod tests {
 
         // Propagate the change from cell (0, 0, 0)
         let updated_coords = vec![(0, 0, 0)];
-        let prop_result = accelerator.propagate(&mut initial_grid, updated_coords, &rules);
+        let prop_result = accelerator
+            .propagate(&mut initial_grid, updated_coords, &rules)
+            .await;
         assert!(prop_result.is_ok());
 
         // Download the grid state after propagation
