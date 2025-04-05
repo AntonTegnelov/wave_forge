@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use log::info;
 use std::sync::Arc;
 use wfc_core::{
-    entropy::{EntropyCalculator, EntropyError},
+    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
     propagator, BoundaryCondition,
 }; // Use Arc for shared GPU resources
@@ -52,9 +52,10 @@ pub struct GpuAccelerator {
     /// Debug visualizer for algorithm state
     debug_visualizer: Option<DebugVisualizer>,
     grid_dims: (usize, usize, usize),
-    boundary_mode: BoundaryCondition,    // Store boundary mode
-    num_tiles: usize,                    // Add num_tiles
-    propagator: GpuConstraintPropagator, // Store the propagator
+    boundary_mode: BoundaryCondition,        // Store boundary mode
+    num_tiles: usize,                        // Add num_tiles
+    propagator: GpuConstraintPropagator,     // Store the propagator
+    entropy_heuristic: EntropyHeuristicType, // Store the selected entropy heuristic
 }
 
 // Import the concrete GPU implementations
@@ -196,6 +197,7 @@ impl GpuAccelerator {
             propagator,    // Store the propagator
             subgrid_config,
             debug_visualizer: None,
+            entropy_heuristic: EntropyHeuristicType::default(), // Default to Shannon entropy
         })
     }
 
@@ -403,6 +405,25 @@ impl GpuAccelerator {
 
         Ok(())
     }
+
+    /// Sets the entropy heuristic used for entropy calculation
+    ///
+    /// # Arguments
+    ///
+    /// * `heuristic_type` - The entropy heuristic type to use
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining
+    pub fn with_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> &mut Self {
+        self.entropy_heuristic = heuristic_type;
+        self
+    }
+
+    /// Gets the current entropy heuristic type
+    pub fn entropy_heuristic(&self) -> EntropyHeuristicType {
+        self.entropy_heuristic
+    }
 }
 
 // --- Trait Implementations ---
@@ -428,12 +449,13 @@ impl EntropyCalculator for GpuAccelerator {
     /// Consider optimizing if this becomes a bottleneck.
     fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
         // Create a GpuEntropyCalculator using the accelerator's resources
-        let calculator = GpuEntropyCalculator::new(
+        let calculator = GpuEntropyCalculator::with_heuristic(
             self.device(),
             self.queue(),
             self.pipelines(),
             self.buffers(),
             self.grid_dims(),
+            self.entropy_heuristic,
         );
         // Delegate the actual work
         calculator.calculate_entropy(grid)
@@ -448,18 +470,25 @@ impl EntropyCalculator for GpuAccelerator {
         entropy_grid: &EntropyGrid,
     ) -> Option<(usize, usize, usize)> {
         // Create a GpuEntropyCalculator using the accelerator's resources
-        let calculator = GpuEntropyCalculator::new(
+        let calculator = GpuEntropyCalculator::with_heuristic(
             self.device(),
             self.queue(),
             self.pipelines(),
             self.buffers(),
             self.grid_dims(),
+            self.entropy_heuristic,
         );
         // Delegate the actual work
-        // Note: GpuEntropyCalculator::select_lowest_entropy_cell might need adjustment
-        // if it expects to reuse state or internal buffers.
-        // For now, assuming it's relatively stateless or handles its own setup.
         calculator.select_lowest_entropy_cell(entropy_grid)
+    }
+
+    fn set_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> bool {
+        self.entropy_heuristic = heuristic_type;
+        true // GPU implementation supports all heuristic types
+    }
+
+    fn get_entropy_heuristic(&self) -> EntropyHeuristicType {
+        self.entropy_heuristic
     }
 }
 

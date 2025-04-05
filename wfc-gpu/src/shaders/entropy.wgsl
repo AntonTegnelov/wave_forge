@@ -219,4 +219,171 @@ fn main_entropy(
             attempt_counter = attempt_counter + 1u;
         }
     }
+}
+
+struct GridDimensions {
+    width: u32,
+    height: u32,
+    depth: u32,
+    padding: u32,
+};
+
+struct EntropyParams {
+    width: u32,
+    height: u32,
+    depth: u32,
+    padding1: u32,
+    heuristic_type: u32,
+    padding2: u32,
+    padding3: u32,
+    padding4: u32,
+}
+
+// Binding group 0: Grid state
+@group(0) @binding(0) var<storage, read> grid_possibilities: array<u32>;
+@group(0) @binding(1) var<storage, read> adjacency_rules: array<u32>;
+
+// Binding group 1: Output entropy grid and minimum tracker
+@group(1) @binding(0) var<storage, read_write> grid_entropy: array<f32>;
+@group(1) @binding(1) var<storage, read_write> min_entropy_cell: array<u32>;
+
+// Binding group 2: Entropy parameters
+@group(2) @binding(0) var<uniform> params: EntropyParams;
+
+// Other potential bindings for weighted count heuristic
+// @group(3) @binding(0) var<storage, read> tile_weights: array<f32>;
+
+const WORKGROUP_SIZE = 8;
+
+@compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
+fn compute_entropy(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let width = params.width;
+    let height = params.height;
+    let depth = params.depth;
+    
+    // Skip if outside grid dimensions
+    if (global_id.x >= width || global_id.y >= height || global_id.z >= depth) {
+        return;
+    }
+    
+    let flat_idx = flatten_3d_index(global_id.x, global_id.y, global_id.z);
+    let num_tile_types = get_num_tile_types();
+    let u32s_per_cell = get_u32s_per_cell(num_tile_types);
+    let cell_offset = flat_idx * u32(u32s_per_cell);
+    
+    // Get bit vector of possibilities for this cell
+    var bits: array<u32, 16>;  // Max 512 tile types (16 * 32 bits)
+    for (var i = 0u; i < u32(u32s_per_cell); i++) {
+        bits[i] = grid_possibilities[cell_offset + i];
+    }
+    
+    let n = count_possibilities(bits, num_tile_types);
+    var entropy: f32;
+    
+    // If the cell is already decided or has no possibilities, set entropy to -1 or a large value
+    if (n <= 1u) {
+        entropy = -1.0;  // -1 flags this as an invalid cell for selection
+        grid_entropy[flat_idx] = entropy;
+        return;
+    }
+    
+    // Calculate entropy based on the selected heuristic
+    switch(params.heuristic_type) {
+        case 0u: {
+            // Shannon entropy (default)
+            entropy = calculate_shannon_entropy(bits, num_tile_types, n);
+        }
+        case 1u: {
+            // Count heuristic (just number of possibilities)
+            entropy = f32(n);
+        }
+        case 2u: {
+            // Count simple (same as count but normalized)
+            entropy = f32(n) / f32(num_tile_types);
+        }
+        case 3u: {
+            // Weighted count (would need tile weights if implemented)
+            entropy = calculate_weighted_entropy(bits, num_tile_types);
+        }
+        default: {
+            // Fall back to Shannon if unknown
+            entropy = calculate_shannon_entropy(bits, num_tile_types, n);
+        }
+    }
+    
+    grid_entropy[flat_idx] = entropy;
+    
+    // Check if this is the minimum entropy cell
+    // We only update if our entropy is positive (> 0) and less than the current minimum
+    if (entropy > 0.0) {
+        // Atomic operation to check and update minimum
+        let old_min_entropy = atomic_min(&min_entropy_cell[0], bitcast<u32>(entropy));
+        
+        // If we successfully updated the minimum entropy
+        if (bitcast<f32>(old_min_entropy) > entropy) {
+            // Store the cell index (only overwrite if we're the new minimum)
+            min_entropy_cell[1] = flat_idx;
+        }
+    }
+}
+
+// Calculate Shannon entropy for a cell
+fn calculate_shannon_entropy(bits: array<u32, 16>, num_tile_types: u32, n: u32) -> f32 {
+    // For uniform distribution, Shannon entropy simplifies to log2(n)
+    // using equal probability p = 1/n for each possibility
+    // Shannon entropy = -sum(p * log2(p)) = -n * (1/n * log2(1/n)) = log2(n)
+    return log2(f32(n));
+}
+
+// Calculate weighted entropy for a cell
+fn calculate_weighted_entropy(bits: array<u32, 16>, num_tile_types: u32) -> f32 {
+    // Here we would use tile weights if they were available
+    // For now, just return a simple count-based calculation
+    let n = count_possibilities(bits, num_tile_types);
+    return f32(n);
+}
+
+// Count the number of possibilities (set bits)
+fn count_possibilities(bits: array<u32, 16>, num_tile_types: u32) -> u32 {
+    var count = 0u;
+    let num_complete_u32s = num_tile_types / 32u;
+    
+    // Count bits in complete u32s
+    for (var i = 0u; i < num_complete_u32s; i++) {
+        count += count_bits(bits[i]);
+    }
+    
+    // Count bits in the final partial u32
+    let remaining_bits = num_tile_types % 32u;
+    if (remaining_bits > 0u) {
+        let mask = (1u << remaining_bits) - 1u;
+        count += count_bits(bits[num_complete_u32s] & mask);
+    }
+    
+    return count;
+}
+
+// Helper to flatten 3D index to 1D
+fn flatten_3d_index(x: u32, y: u32, z: u32) -> u32 {
+    return (z * params.height + y) * params.width + x;
+}
+
+// Get number of u32s needed per cell
+fn get_u32s_per_cell(num_tile_types: u32) -> u32 {
+    return (num_tile_types + 31u) / 32u;  // Ceiling division
+}
+
+// Count bits in a u32
+fn count_bits(value: u32) -> u32 {
+    // Population count algorithm
+    var v = value;
+    v = v - ((v >> 1) & 0x55555555u);
+    v = (v & 0x33333333u) + ((v >> 2) & 0x33333333u);
+    return ((v + (v >> 4) & 0xF0F0F0Fu) * 0x1010101u) >> 24;
+}
+
+// Estimate the number of tile types from the adjacency rules buffer
+fn get_num_tile_types() -> u32 {
+    // First element in adjacency_rules should be the number of unique tiles
+    return adjacency_rules[0];
 } 
