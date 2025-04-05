@@ -126,7 +126,7 @@ impl DebugVisualizer {
             buffers.grid_dims,
             buffers.num_tiles,
             result,
-            buffers.current_worklist_size,
+            buffers.current_worklist_size as u32,
         );
 
         Ok(())

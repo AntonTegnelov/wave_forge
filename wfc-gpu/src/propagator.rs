@@ -229,10 +229,17 @@ impl GpuConstraintPropagator {
         self.buffers = temp_buffers;
         self.params = temp_params;
 
+        // Convert coordinates to indices for propagate_internal
+        let (width, height, _) = (subgrid.width, subgrid.height, subgrid.depth);
+        let local_updated_indices: Vec<u32> = local_updated_coords
+            .into_iter()
+            .map(|(x, y, z)| (x + y * width + z * width * height) as u32)
+            .collect();
+
         // Use the standard propagation logic on the subgrid
         let mut temp_subgrid = subgrid;
         match self
-            .propagate_internal(&mut temp_subgrid, local_updated_coords, rules)
+            .propagate_internal(&mut temp_subgrid, local_updated_indices, rules)
             .await
         {
             Ok(()) => {
@@ -254,7 +261,7 @@ impl GpuConstraintPropagator {
     async fn propagate_internal(
         &mut self,
         _grid: &mut PossibilityGrid,
-        updated_coords: Vec<(usize, usize, usize)>,
+        updated_indices: Vec<u32>,
         _rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
         let (total_width, total_height, total_depth) = (
@@ -263,18 +270,6 @@ impl GpuConstraintPropagator {
             self.params.grid_depth,
         );
         let total_cells = (total_width * total_height * total_depth) as usize;
-
-        // Convert (x,y,z) coordinates to flat indices
-        let mut updated_indices = Vec::with_capacity(updated_coords.len());
-        for (x, y, z) in updated_coords {
-            let x = x as u32;
-            let y = y as u32;
-            let z = z as u32;
-            if x < total_width && y < total_height && z < total_depth {
-                let idx = z * total_width * total_height + y * total_width + x;
-                updated_indices.push(idx);
-            }
-        }
 
         // Prepare initial worklist
         let worklist_size = updated_indices.len() as u32;
@@ -536,16 +531,16 @@ impl GpuConstraintPropagator {
         Ok(())
     }
 
-    /// Propagate constraints using parallel subgrid processing
+    /// Performs propagation using parallel subgrid processing.
     ///
-    /// This method divides the grid into subgrids, processes each independently,
+    /// This method divides the grid into smaller subgrids, processes each subgrid separately,
     /// and then merges the results back into the main grid.
     ///
     /// # Arguments
     ///
-    /// * `grid` - The possibility grid to update
-    /// * `updated_coords` - The coordinates that have been updated
-    /// * `rules` - The adjacency rules for constraint propagation
+    /// * `grid` - The grid to propagate.
+    /// * `updated_indices` - Indices of cells that have been updated.
+    /// * `rules` - The adjacency rules for propagation.
     ///
     /// # Returns
     ///
@@ -554,7 +549,7 @@ impl GpuConstraintPropagator {
     async fn propagate_with_subgrids(
         &mut self,
         grid: &mut PossibilityGrid,
-        updated_coords: Vec<(usize, usize, usize)>,
+        updated_indices: Vec<u32>,
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
         let config = self.subgrid_config.clone().unwrap();
@@ -571,6 +566,20 @@ impl GpuConstraintPropagator {
                 }
             }
         }
+
+        // Convert indices back to coordinates for subgrid processing
+        let (width, height, depth) = (grid.width, grid.height, grid.depth);
+        let updated_coords: Vec<(usize, usize, usize)> = updated_indices
+            .iter()
+            .map(|&idx| {
+                let idx = idx as usize;
+                let z = idx / (width * height);
+                let remainder = idx % (width * height);
+                let y = remainder / width;
+                let x = remainder % width;
+                (x, y, z)
+            })
+            .collect();
 
         // Divide the grid into subgrids
         let subgrid_regions = divide_into_subgrids(grid.width, grid.height, grid.depth, &config)
@@ -671,52 +680,34 @@ impl ConstraintPropagator for GpuConstraintPropagator {
     /// This method handles the propagation of changes across the grid based on
     /// the `updated_coords` provided. It leverages the GPU for parallel processing.
     ///
-    /// # Workflow:
-    ///
-    /// 1.  **Upload Updates**: Writes the `updated_coords` list to the dedicated `updated_cells_buf` on the GPU.
-    /// 2.  **Reset Contradiction Flag**: Clears the `contradiction_flag_buf` before running the shader.
-    /// 3.  **Shader Dispatch**: Executes the `propagate.wgsl` compute shader.
-    ///     -   The shader reads the updated cells.
-    ///     -   For each updated cell, it examines neighbors based on `rules_buf`.
-    ///     -   It calculates the intersection of allowed tiles and updates the main `grid_possibilities_buf`.
-    ///     -   If a contradiction (empty possibility set) is detected, it sets the `contradiction_flag_buf`.
-    ///     -   (Note: The current shader might perform a fixed number of iterations or a simplified propagation step).
-    /// 4.  **Synchronization**: Submits the command buffer and waits for the GPU to finish (implicitly via buffer mapping or explicit polling if needed).
-    /// 5.  **Check Contradiction**: Reads the `contradiction_flag_buf` back to the CPU.
-    /// 6.  **Return Result**: Returns `Ok(())` if the contradiction flag is not set, or `Err(PropagationError::Contradiction(x, y, z))`
-    ///     if a contradiction was detected (coordinates might be approximate or the first detected one).
-    ///
     /// # Arguments
     ///
-    /// * `grid`: Mutable reference to the CPU-side `PossibilityGrid`. This implementation will
-    ///            operate on the GPU buffers and synchronize changes back to the CPU grid.
-    /// * `updated_coords`: A vector of `(x, y, z)` coordinates indicating cells whose possibilities have recently changed
-    ///                     (e.g., due to a collapse) and need to be propagated from.
-    /// * `rules`: Reference to the `AdjacencyRules`.
+    /// * `grid` - The grid on which to propagate constraints.
+    /// * `updated_coords` - Cell coordinates that have been updated.
+    /// * `rules` - The adjacency rules that define valid cell states.
     ///
     /// # Returns
     ///
-    /// * `Ok(())` if the propagation shader executed successfully without detecting a contradiction.
-    /// * `Err(PropagationError::Contradiction(x, y, z))` if the shader detected and flagged a contradiction.
-    ///   The coordinates might indicate the first cell where the contradiction was found.
-    /// * `Err(PropagationError::Gpu*Error)` if a GPU-specific error occurs during buffer updates or shader execution,
-    ///   wrapped within the `PropagationError` enum.
+    /// * `Ok(())` if propagation completes successfully
+    /// * `Err(PropagationError)` if a contradiction is found or a GPU error occurs
     async fn propagate(
         &mut self,
         grid: &mut PossibilityGrid,
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        // If subgrid processing is enabled and grid is large enough, use parallel subgrid processing
-        if let Some(config) = &self.subgrid_config {
-            if grid.width >= config.min_size
-                && grid.height >= config.min_size
-                && grid.depth >= config.min_size
-            {
-                return self
-                    .propagate_with_subgrids(grid, updated_coords, rules)
-                    .await;
-            }
+        // Convert coordinates to indices
+        let (width, height, _) = (grid.width, grid.height, grid.depth);
+        let updated_indices: Vec<u32> = updated_coords
+            .into_iter()
+            .map(|(x, y, z)| (x + y * width + z * width * height) as u32)
+            .collect();
+
+        // Attempt parallel subgrid processing if configured
+        if self.subgrid_config.is_some() {
+            return self
+                .propagate_with_subgrids(grid, updated_indices, rules)
+                .await;
         }
 
         // Take initial snapshot if debug visualization is enabled
@@ -733,7 +724,7 @@ impl ConstraintPropagator for GpuConstraintPropagator {
         }
 
         // Standard propagation approach
-        let result = self.propagate_internal(grid, updated_coords, rules).await;
+        let result = self.propagate_internal(grid, updated_indices, rules).await;
 
         // Take final snapshot if debug visualization is enabled
         if let Some(visualizer) = &self.debug_visualizer {

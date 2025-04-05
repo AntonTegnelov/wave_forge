@@ -20,6 +20,8 @@ pub mod propagator;
 pub mod shaders; // Module to potentially help load shaders
 /// Provides parallel subgrid processing for large grids.
 pub mod subgrid;
+/// Handles synchronization between CPU and GPU.
+pub mod sync;
 
 // Add test_utils module, conditionally compiled for tests
 pub mod test_utils;
@@ -63,6 +65,12 @@ pub enum GpuError {
     /// Generic internal error, often for logic errors or unexpected states.
     #[error("Internal GPU logic error: {0}")]
     InternalError(String),
+    /// Buffer size mismatch error when uploading or downloading data.
+    #[error("Buffer size mismatch: {0}")]
+    BufferSizeMismatch(String),
+    /// Failed to map a buffer for reading or writing.
+    #[error("Failed to map buffer: {0}")]
+    BufferMappingFailed(String),
     /// A generic GPU operation error with a custom message.
     #[error("GPU operation failed: {0}")]
     Other(String),

@@ -10,10 +10,12 @@
 
 // Binding for the input possibility grid (read-only)
 // Assumes possibilities are packed, e.g., one u32 per cell if <= 32 tiles
-@group(0) @binding(0) var<storage, read> possibilities: array<u32>;
+@group(0) @binding(0) var<storage, read> grid_possibilities: array<u32>;
+@group(0) @binding(1) var<storage, read> rules: array<u32>;
 
 // Binding for the output entropy grid (write-only)
-@group(0) @binding(1) var<storage, read_write> entropy: array<f32>;
+@group(1) @binding(0) var<storage, read_write> entropy_grid: array<f32>;
+@group(1) @binding(1) var<storage, read_write> min_entropy_info: array<u32>;
 
 // No atomic buffer for minimum entropy in this fallback version
 
@@ -32,7 +34,7 @@ struct Params {
     num_axes: u32,
     worklist_size: u32,
 };
-@group(0) @binding(2) var<uniform> params: Params;
+@group(2) @binding(0) var<uniform> params: Params;
 
 // Possibility mask array type using the NUM_TILES_U32 constant
 alias PossibilityMask = array<u32, NUM_TILES_U32_VALUE>;
@@ -76,62 +78,95 @@ fn count_possibilities(possibility_bits: PossibilityMask) -> u32 {
     return countOneBits(possibility_bits[0]);
 }
 
-@compute @workgroup_size(64) // Use hardcoded size
-fn main(
-    @builtin(global_invocation_id) global_id: vec3<u32>
-) {
-    // Get 1D index from thread ID
-    let index = global_id.x;
+@compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    // Extract grid dimensions from params
+    let width = params.grid_width;
+    let height = params.grid_height;
+    let depth = params.grid_depth;
+    let heuristic_type = params.num_tiles;
     
-    // Get total grid size from params
-    let grid_size = params.grid_width * params.grid_height * params.grid_depth;
-    
-    // Bounds check to prevent out-of-bounds access
-    if (index >= grid_size) {
+    // Skip if outside grid bounds
+    if (global_id.x >= width || global_id.y >= height || global_id.z >= depth) {
         return;
     }
-
-    // Calculate number of cells for SoA indexing
-    let num_cells = params.grid_width * params.grid_height * params.grid_depth;
-
-    var total_possibility_mask: PossibilityMask;
-    var possibilities_count: u32 = 0u;
-
-    // Read the relevant chunks for this cell using SoA indexing
-    for (var i: u32 = 0u; i < NUM_TILES_U32; i = i + 1u) {
-        // SoA Index: chunk_idx * num_cells + cell_idx
-        let chunk = possibilities[i * num_cells + index];
-        total_possibility_mask[i] = chunk;
-        possibilities_count = possibilities_count + count_set_bits(chunk);
+    
+    // Get flat index in grid
+    let flat_idx = (global_id.z * height + global_id.y) * width + global_id.x;
+    
+    // Get number of tile types from rules buffer
+    let num_tiles = rules[0];
+    
+    // Calculate number of u32s per cell
+    let u32s_per_cell = (num_tiles + 31u) / 32u;
+    
+    // Calculate entropy for this cell
+    let cell_start = flat_idx * u32s_per_cell;
+    
+    // Count possibilities in this cell
+    var possibilities = 0u;
+    for (var i = 0u; i < u32s_per_cell; i = i + 1u) {
+        let bits = grid_possibilities[cell_start + i];
+        possibilities = possibilities + count_set_bits(bits);
     }
-
-    var calculated_entropy = 0.0;
-    if (possibilities_count == 1u) {
-        // Collapsed cell, entropy is 0
-        calculated_entropy = 0.0;
-    } else if (possibilities_count > 1u) {
-        // Implement proper Shannon entropy (with uniform probability assumption):
-        // H = log2(N), where N is possibilities_count
-        calculated_entropy = log2(f32(possibilities_count));
-
-        // Add a small amount of noise to break ties consistently
-        // Hash the index to get a pseudo-random offset
-        var hash = index;
-        hash = hash ^ (hash >> 16u);
-        hash = hash * 0x45d9f3b5u;
-        hash = hash ^ (hash >> 16u);
-        hash = hash * 0x45d9f3b5u;
-        hash = hash ^ (hash >> 16u);
-        let noise = f32(hash) * (1.0 / 4294967296.0); // Map hash to [0, 1)
-        let noise_scale = 0.0001; // Small scale factor for noise
-        calculated_entropy = calculated_entropy + noise * noise_scale;
-
-        // NO ATOMIC MINIMUM CALCULATION IN FALLBACK VERSION
-        // The minimum entropy cell will be found on the CPU
-    } else { // possibilities_count == 0u
-        // Contradiction! 
-        calculated_entropy = 0.0;
+    
+    var entropy: f32;
+    
+    // Calculate entropy based on heuristic type
+    if (possibilities <= 1u) {
+        // Zero or one possibility (collapsed or contradiction)
+        entropy = -1.0;
+    } else {
+        if (heuristic_type == 0u) {
+            // Shannon entropy: log2(n)
+            entropy = log2(f32(possibilities));
+        } else if (heuristic_type == 1u) {
+            // Count heuristic: n-1 (count minus 1)
+            entropy = f32(possibilities - 1u);
+        } else if (heuristic_type == 2u) {
+            // CountSimple: n/total (normalized count)
+            entropy = f32(possibilities) / f32(num_tiles);
+        } else if (heuristic_type == 3u) {
+            // WeightedCount: fall back to count for now
+            entropy = f32(possibilities - 1u);
+        } else {
+            // Default to Shannon entropy
+            entropy = log2(f32(possibilities));
+        }
     }
+    
+    // Write entropy to output grid
+    entropy_grid[flat_idx] = entropy;
+    
+    // Update minimum entropy if this is positive
+    if (entropy > 0.0) {
+        // Convert float to u32 in a way that preserves ordering
+        let entropy_bits = bitcast<u32>(entropy);
+        
+        // We'll use a simple atomic store for the minimum
+        // First read the current minimum value
+        var min_value = min_entropy_info[0];
+        var min_index = min_entropy_info[1];
+        
+        // Compare our entropy with the current minimum
+        if (entropy_bits < min_value || min_value == 0u) {
+            // Use atomic to make sure another thread doesn't update at the same time
+            atomicStore(&min_entropy_info[0], entropy_bits);
+            atomicStore(&min_entropy_info[1], flat_idx);
+        }
+    }
+}
 
-    entropy[index] = calculated_entropy;
+// Count number of 1 bits in a u32
+fn count_ones(x: u32) -> u32 {
+    // Simple bit counting for fallback implementation
+    var bits = x;
+    var count = 0u;
+    
+    for (var i = 0u; i < 32u; i = i + 1u) {
+        count = count + (bits & 1u);
+        bits = bits >> 1u;
+    }
+    
+    return count;
 } 
