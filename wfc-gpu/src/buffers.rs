@@ -41,104 +41,90 @@ pub struct GpuParamsUniform {
     pub _padding1: u32, // Ensure alignment to 16 bytes
 }
 
-/// Manages the collection of WGPU buffers required for GPU-accelerated WFC.
-///
-/// This struct encapsulates all GPU memory allocation and management for the algorithm,
-/// including buffers for:
-/// - Storing the possibility state of the grid (`grid_possibilities_buf`).
-/// - Storing the adjacency rules (`rules_buf`).
-/// - Storing calculated entropy values (`entropy_buf`).
-/// - Holding shader parameters (`params_uniform_buf`).
-/// - Managing worklists for propagation (`updates_buf`, `output_worklist_buf`, `output_worklist_count_buf`).
-/// - Communicating results and status flags (e.g., `contradiction_flag_buf`, `min_entropy_info_buf`).
-/// - Rule weights for weighted adjacency rules (`rule_weights_buf`).
-///
-/// It also includes corresponding staging buffers (prefixed `staging_`) used for efficiently
-/// transferring data between the CPU and GPU, particularly for downloading results.
-#[derive(Debug)] // Add Debug derive
-#[allow(dead_code)] // Allow unused fields/methods during development
-#[derive(Clone)] // Derive Clone
+/// Uniform buffer structure for entropy parameters
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct EntropyParamsUniform {
+    /// Width of the grid (X dimension).
+    pub grid_width: u32,
+    /// Height of the grid (Y dimension).
+    pub grid_height: u32,
+    /// Depth of the grid (Z dimension).
+    pub grid_depth: u32,
+    /// Padding to ensure alignment
+    pub _padding1: u32,
+    /// Entropy heuristic type (0=Shannon, 1=Count, 2=CountSimple, 3=WeightedCount)
+    pub heuristic_type: u32,
+    /// Padding to ensure alignment
+    pub _padding2: u32,
+    /// Padding to ensure alignment
+    pub _padding3: u32,
+    /// Padding to ensure alignment
+    pub _padding4: u32,
+}
+
+/// Stores all the GPU buffers needed for the WFC algorithm.
+/// 
+/// This struct maintains the state of all WGPU buffers required for the Wave Function Collapse
+/// algorithm's GPU acceleration, including grid data, entropy calculations, worklists for propagation,
+/// and various auxiliary buffers for things like contradiction detection.
+#[derive(Debug)]
 pub struct GpuBuffers {
-    /// **GPU Buffer**: Stores the possibility bitvector for each grid cell.
-    /// Each cell's possibilities are packed into `num_tiles_u32` elements.
-    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    /// Buffer holding the current state of all cell possibilities - the primary WFC grid state.
     pub grid_possibilities_buf: Arc<wgpu::Buffer>,
-    /// **Staging Buffer**: Used for downloading the final grid possibilities state to the CPU.
-    /// Usage: `MAP_READ | COPY_DST`
-    staging_grid_possibilities_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Stores the flattened adjacency rules, packed into u32s.
-    /// Read-only by shaders.
-    /// Usage: `STORAGE`
+    /// Staging buffer used during grid possibilities upload/download.
+    pub staging_grid_possibilities_buf: Arc<wgpu::Buffer>,
+    /// Buffer containing tile adjacency rules in a packed format for GPU access.
     pub rules_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Stores the calculated entropy value (f32) for each grid cell.
-    /// Written to by the entropy shader, read back to CPU.
-    /// Usage: `STORAGE | COPY_SRC`
+    /// Buffer for storing calculated entropy values for each cell.
     pub entropy_buf: Arc<wgpu::Buffer>,
-    /// **Staging Buffer**: Used for downloading the entropy grid to the CPU.
-    /// Usage: `MAP_READ | COPY_DST`
-    staging_entropy_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Stores the minimum positive entropy found and its index.
-    /// Layout: `[f32_entropy_bits: u32, flat_index: u32]`.
-    /// Written atomically by the entropy shader.
-    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    /// Staging buffer used during entropy value upload/download.
+    pub staging_entropy_buf: Arc<wgpu::Buffer>,
+    /// Buffer containing information about the minimum entropy found (value and cell index).
     pub min_entropy_info_buf: Arc<wgpu::Buffer>,
-    /// **Staging Buffer**: Used for downloading the minimum entropy info.
-    /// Usage: `MAP_READ | COPY_DST`
-    staging_min_entropy_info_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer A**: Worklist buffer for propagation (ping-pong A).
-    /// Stores flat indices of updated cells. Usage depends on iteration.
-    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    /// Staging buffer used during min entropy info upload/download.
+    pub staging_min_entropy_info_buf: Arc<wgpu::Buffer>,
+    /// First buffer for storing the worklist of cells to update in propagation (double-buffered design).
     pub worklist_buf_a: Arc<wgpu::Buffer>,
-    /// **GPU Buffer B**: Worklist buffer for propagation (ping-pong B).
-    /// Stores flat indices of updated cells. Usage depends on iteration.
-    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    /// Second buffer for storing the worklist of cells to update in propagation (double-buffered design).
     pub worklist_buf_b: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Atomic counter for the *output* worklist size in the current propagation step.
-    /// Reset before each step, read after to know size for next step.
-    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    /// Buffer for tracking the number of cells in the worklist.
     pub worklist_count_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Flag (u32) set by the propagation shader if a contradiction is detected.
-    /// 0 = no contradiction, 1 = contradiction.
-    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    /// Buffer containing a flag that is set when a contradiction is detected.
     pub contradiction_flag_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Uniform buffer holding `GpuParamsUniform`.
-    /// Usage: `UNIFORM | COPY_DST | COPY_SRC`
-    pub params_uniform_buf: Arc<wgpu::Buffer>,
-    /// **Staging Buffer**: Used for downloading the contradiction flag.
-    /// Usage: `MAP_READ | COPY_DST`
-    staging_contradiction_flag_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Stores the flat index of the first cell where a contradiction was detected.
-    /// Written atomically by the propagation shader.
-    /// Usage: `STORAGE | COPY_DST | COPY_SRC`
+    /// Staging buffer used during contradiction flag upload/download.
+    pub staging_contradiction_flag_buf: Arc<wgpu::Buffer>,
+    /// Buffer for storing the location (cell index) where a contradiction occurred.
     pub contradiction_location_buf: Arc<wgpu::Buffer>,
-    /// **Staging Buffer**: Used for downloading the contradiction location index.
-    /// Usage: `MAP_READ | COPY_DST`
-    staging_contradiction_location_buf: Arc<wgpu::Buffer>,
-    /// Staging buffers (used for CPU <-> GPU data transfer)
-    staging_worklist_count_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Stores the packed adjacency rules.
+    /// Staging buffer used during contradiction location upload/download.
+    pub staging_contradiction_location_buf: Arc<wgpu::Buffer>,
+    /// Staging buffer used during worklist count upload/download.
+    pub staging_worklist_count_buf: Arc<wgpu::Buffer>,
+    /// Uniform buffer containing GPU parameters like grid dimensions, tile count, etc.
+    pub params_uniform_buf: Arc<wgpu::Buffer>,
+    /// Buffer containing adjacency rules in a format optimized for the GPU.
     pub adjacency_rules_buf: Arc<wgpu::Buffer>,
-    /// **GPU Buffer**: Stores the rule weights for weighted adjacency rules.
+    /// Buffer containing weights for adjacency rules.
     pub rule_weights_buf: Arc<wgpu::Buffer>,
-    /// Number of u32s needed per cell for bit-packed possibilities.
+    /// Number of u32 words used to represent the possibilities for a single cell.
     pub u32s_per_cell: usize,
     /// Total number of cells in the grid.
     pub num_cells: usize,
-    /// If using subgrids, original grid dimensions.
+    /// Original grid dimensions, used for error recovery.
     pub original_grid_dims: Option<(usize, usize, usize)>,
     /// Current size of the worklist.
-    pub(crate) current_worklist_size: u32,
-    /// Current index of the active worklist buffer (0 or 1).
+    pub current_worklist_size: usize,
+    /// Current worklist buffer index (0 or 1 for worklist_buf_a or worklist_buf_b).
     pub current_worklist_idx: usize,
-    /// Grid dimensions (width, height, depth).
-    pub(crate) grid_dims: (usize, usize, usize),
-    /// Total number of tile types.
-    pub(crate) num_tiles: usize,
-    /// Number of adjacency axes.
-    pub(crate) num_axes: usize,
-    /// Boundary condition for the grid (Finite or Periodic).
-    pub(crate) boundary_mode: BoundaryCondition,
-    /// Uniform buffer for entropy calculation parameters
+    /// Current grid dimensions (width, height, depth).
+    pub grid_dims: (usize, usize, usize),
+    /// Number of tile types in the model.
+    pub num_tiles: usize,
+    /// Number of axes/directions in the adjacency rules.
+    pub num_axes: usize,
+    /// Boundary condition to apply (e.g., Wrap, Block).
+    pub boundary_mode: wfc_core::BoundaryCondition,
+    /// Uniform buffer for entropy calculation parameters.
     pub entropy_params_buffer: wgpu::Buffer,
 }
 
@@ -316,10 +302,10 @@ impl GpuBuffers {
         // --- Create Buffers --- (Wrap in Arc)
         let grid_possibilities_buf = Arc::new(device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
-                label: Some("Grid Possibilities"),
+                label: Some("WFC Grid Possibilities Buffer"),
                 contents: bytemuck::cast_slice(&packed_possibilities),
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
+                usage: wgpu::BufferUsages::STORAGE 
+                    | wgpu::BufferUsages::COPY_DST 
                     | wgpu::BufferUsages::COPY_SRC,
             },
         ));
@@ -339,7 +325,7 @@ impl GpuBuffers {
                 usage: wgpu::BufferUsages::UNIFORM
                     | wgpu::BufferUsages::COPY_DST
                     | wgpu::BufferUsages::COPY_SRC,
-            },
+            }
         ));
 
         let entropy_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
@@ -1108,51 +1094,90 @@ impl GpuBuffers {
         Ok((has_contradiction, worklist_count, contradiction_location))
     }
 
-    /// Downloads only the minimum entropy information from the GPU
-    /// This is an optimization to reduce synchronization points during the entropy calculation
+    /// Downloads the minimum entropy information from the GPU.
+    ///
+    /// This asynchronously maps the `min_entropy_info_buf` from the GPU to read the minimum entropy
+    /// found (as f32 bits) and the index of the cell with that entropy.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The WGPU `Device` to use for buffer mapping.
+    /// * `queue` - The WGPU `Queue` to use for command submission.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some((min_entropy, min_idx)))` with the minimum entropy value and its index.
+    /// * `Ok(None)` if no valid minimum was found.
+    /// * `Err(GpuError)` if mapping or downloading the buffer fails.
     pub async fn download_min_entropy_info(
         &self,
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
-    ) -> Result<Option<(f32, u32)>, GpuError> {
+    ) -> Result<Option<(f32, usize)>, GpuError> {
+        // Create a new command encoder for the operation
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Min Entropy Info Encoder"),
+            label: Some("Min Entropy Download Encoder"),
         });
 
+        // We need to do another GPU operation to ensure all prior GPU work is complete
+        // Create a temporary staging buffer to map
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Min Entropy Info Staging Buffer"),
+            size: 8, // 2 x 4 bytes (u32)
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Copy from the GPU buffer to the staging buffer
         encoder.copy_buffer_to_buffer(
             &self.min_entropy_info_buf,
             0,
-            &self.staging_min_entropy_info_buf,
+            &staging_buffer,
             0,
-            self.min_entropy_info_buf.size(),
+            8, // 8 bytes (2 x u32)
         );
 
-        queue.submit(Some(encoder.finish()));
+        // Submit the commands to the queue
+        queue.submit(std::iter::once(encoder.finish()));
 
-        let buffer = self.staging_min_entropy_info_buf.clone();
-        let buffer_slice = buffer.slice(..);
-        let (tx, rx) = oneshot::channel();
-
+        // Use a oneshot channel for async mapping
+        let (tx, rx) = futures::channel::oneshot::channel();
+        
+        // Start mapping the buffer with the callback
+        let buffer_slice = staging_buffer.slice(..);
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
 
-        rx.await.map_err(|_| {
-            GpuError::BufferOperationError("Mapping channel canceled".to_string())
-        })??;
-
-        let mapped_range = buffer_slice.get_mapped_range();
-        let bytes = mapped_range.to_vec();
-        drop(mapped_range);
-        buffer.unmap();
-
-        if bytes.len() >= 8 {
-            let entropy_bits = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-            let index = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-            Ok(Some((f32::from_bits(entropy_bits), index)))
-        } else {
-            warn!("Min entropy buffer size mismatch during download");
-            Ok(None)
+        // Wait for the mapping to complete
+        device.poll(wgpu::Maintain::Wait);
+        
+        // Wait for the callback to be called
+        match rx.await {
+            Ok(Ok(())) => {
+                // Get a view of the buffer data
+                let data = buffer_slice.get_mapped_range();
+                
+                // Convert the bytes to a slice of u32
+                let result: &[u32] = bytemuck::cast_slice(&data);
+                
+                // Convert the first u32 to f32 using the bits
+                let min_entropy = f32::from_bits(result[0]);
+                let min_idx = result[1] as usize;
+                
+                // Drop the buffer view so it can be unmapped
+                drop(data);
+                staging_buffer.unmap();
+                
+                // Check if we have a valid result
+                if min_entropy == f32::MAX || min_idx == u32::MAX as usize {
+                    Ok(None)
+                } else {
+                    Ok(Some((min_entropy, min_idx)))
+                }
+            }
+            Ok(Err(e)) => Err(GpuError::BufferMapFailed(e)),
+            Err(_) => Err(GpuError::BufferMappingFailed("Buffer mapping channel closed".to_string())),
         }
     }
 
@@ -1261,11 +1286,12 @@ impl GpuBuffers {
     /// # Arguments
     ///
     /// * `device` - The device to create staging buffers on.
+    /// * `queue` - The queue to submit the download to.
     ///
     /// # Returns
     ///
     /// A result containing the downloaded entropy values or an error.
-    pub fn download_entropy_buffer(&self, device: &wgpu::Device) -> Result<Vec<f32>, GpuError> {
+    pub fn download_entropy_buffer(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Vec<f32>, GpuError> {
         let buffer_size = self.num_cells * std::mem::size_of::<f32>();
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Entropy Download Staging Buffer"),
@@ -1286,7 +1312,8 @@ impl GpuBuffers {
             buffer_size as wgpu::BufferAddress,
         );
         
-        let submission_index = device.queue().submit(std::iter::once(encoder.finish()));
+        // Submit commands directly to the provided queue
+        queue.submit(std::iter::once(encoder.finish()));
         
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -1313,21 +1340,22 @@ impl GpuBuffers {
     /// # Arguments
     ///
     /// * `device` - The device to create staging buffers on.
+    /// * `queue` - The queue to submit the download to.
     ///
     /// # Returns
     ///
     /// A result containing the downloaded min entropy info or an error.
-    pub fn download_min_entropy_buffer(&self, device: &wgpu::Device) -> Result<Vec<u32>, GpuError> {
+    pub fn download_min_entropy_info_sync(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Vec<u32>, GpuError> {
         let buffer_size = 2 * std::mem::size_of::<u32>();
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Min Entropy Download Staging Buffer"),
+            label: Some("Min Entropy Info Download Staging Buffer"),
             size: buffer_size as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Min Entropy Download Encoder"),
+            label: Some("Min Entropy Info Download Encoder"),
         });
         
         encoder.copy_buffer_to_buffer(
@@ -1338,7 +1366,8 @@ impl GpuBuffers {
             buffer_size as wgpu::BufferAddress,
         );
         
-        let submission_index = device.queue().submit(std::iter::once(encoder.finish()));
+        // Submit commands directly to the provided queue
+        queue.submit(std::iter::once(encoder.finish()));
         
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -1357,80 +1386,6 @@ impl GpuBuffers {
             Ok(min_entropy_info)
         } else {
             Err(GpuError::BufferMappingFailed("Failed to map min entropy buffer for reading".to_string()))
-        }
-    }
-}
-
-impl Clone for GpuBuffers {
-    fn clone(&self) -> Self {
-        // Create a new buffer with the same parameters
-        // Note: This creates new GPU buffers - does not share the same memory!
-        let device = &self.grid_possibilities_buf.device();
-        
-        // Clone the grid buffer
-        let grid_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Cloned Grid Buffer"),
-            contents: &[], // Empty initially
-            usage: self.grid_possibilities_buf.usage(),
-        });
-        
-        // Clone the adjacency rules buffer
-        let adjacency_rules_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Cloned Adjacency Rules Buffer"),
-            contents: &[], // Empty initially
-            usage: self.rules_buf.usage(),
-        });
-        
-        // Clone the entropy buffer
-        let entropy_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Cloned Entropy Buffer"),
-            contents: &[], // Empty initially
-            usage: self.entropy_buf.usage(),
-        });
-        
-        // Clone the min entropy buffer
-        let min_entropy_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Cloned Min Entropy Buffer"),
-            contents: &[], // Empty initially
-            usage: self.min_entropy_info_buf.usage(),
-        });
-        
-        // Clone the output buffer
-        let output_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Cloned Output Buffer"),
-            contents: &[], // Empty initially
-            usage: self.worklist_count_buf.usage(),
-        });
-        
-        // Clone the entropy params buffer
-        let entropy_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Cloned Entropy Params Buffer"),
-            contents: &[], // Empty initially
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        
-        // Clone other buffers as needed...
-        
-        // Create bind groups with the new buffers
-        // Note: This would need to be updated with all the bind groups that exist in the original
-        
-        Self {
-            grid_possibilities_buf: grid_buffer,
-            adjacency_rules_buf: adjacency_rules_buffer,
-            entropy_buf: entropy_buffer,
-            min_entropy_info_buf: min_entropy_buffer,
-            worklist_count_buf: output_buffer,
-            // Add all other fields that need to be cloned
-            entropy_params_buffer,
-            grid_bind_group: self.grid_bind_group.clone(),
-            entropy_bind_group: self.entropy_bind_group.clone(),
-            output_bind_group: self.output_bind_group.clone(),
-            grid_dimensions: self.grid_dims,
-            u32s_per_cell: self.u32s_per_cell,
-            grid_cells: self.num_cells,
-            num_tiles: self.num_tiles,
-            num_axes: self.num_axes,
-            boundary_mode: self.boundary_mode,
         }
     }
 }
