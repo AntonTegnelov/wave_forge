@@ -56,4 +56,4 @@ This document outlines improvement opportunities for the GPU-accelerated Wave Fu
 
 - [x] **Shader validation**: Add validation tests for WGSL shaders.
 - [x] **Buffer allocation strategy documentation**: Document and explain buffer creation logic.
-- [ ] **Numerical stability analysis**: Assess and document entropy calculation numerical stability.
+- [x] **Numerical stability analysis**: Assess and document entropy calculation numerical stability.
