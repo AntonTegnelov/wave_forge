@@ -4,15 +4,15 @@ use crate::debug_viz::{DebugVisualizationConfig, DebugVisualizer, GpuBuffersDebu
 use crate::sync::GpuSynchronizer;
 use crate::{pipeline::ComputePipelines, subgrid::SubgridConfig, GpuError};
 use async_trait::async_trait;
+use bytemuck;
+use futures::channel::oneshot;
 use log::{debug, error, info, warn};
-use std::sync::Arc;
 use std::time::Instant;
 use wfc_core::{
-    common::{GridState, ProgressUpdate, WfcResult},
     entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
     propagator::{self, ConstraintPropagator, PropagationError},
-    BoundaryCondition,
+    BoundaryCondition, GridState, ProgressUpdate, WfcResult,
 };
 use wfc_rules::AdjacencyRules;
 use wgpu;
@@ -906,16 +906,91 @@ impl EntropyCalculator for GpuAccelerator {
         self.queue.submit(std::iter::once(encoder.finish()));
         log::debug!("Entropy compute shader submitted.");
 
-        // TODO: Next step is to download the results!
-        // For now, return a placeholder grid.
+        // --- Download Entropy Results ---
+        log::debug!("Downloading entropy results from GPU...");
+
+        let buffer_size = self.buffers.entropy_buf.size();
+        let num_elements = (buffer_size / std::mem::size_of::<f32>() as u64) as usize;
+        if num_elements != (grid.width * grid.height * grid.depth) {
+            return Err(EntropyError::Other(format!(
+                "Entropy buffer size mismatch: Expected {} elements, found {}",
+                grid.width * grid.height * grid.depth,
+                num_elements
+            )));
+        }
+
+        // 1. Create encoder for copy
+        let mut download_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Entropy Download Encoder"),
+                });
+
+        // 2. Queue copy command
+        download_encoder.copy_buffer_to_buffer(
+            &self.buffers.entropy_buf,
+            0,
+            &self.buffers.staging_entropy_buf,
+            0,
+            buffer_size,
+        );
+
+        // 3. Submit copy command
+        self.queue
+            .submit(std::iter::once(download_encoder.finish()));
+
+        // 4. Map staging buffer
+        let buffer_slice = self.buffers.staging_entropy_buf.slice(..);
+        let (tx, rx) = futures::channel::oneshot::channel(); // Need futures import
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        // 5. Wait for mapping (using pollster for sync context)
+        self.device.poll(wgpu::Maintain::Wait); // Ensure copy command completes
+        let map_result = pollster::block_on(async {
+            // Add a timeout for robustness?
+            rx.await
+        })
+        .map_err(|_| EntropyError::Other("Mapping channel canceled".to_string()))?;
+
+        map_result.map_err(|e| EntropyError::Other(format!("Buffer mapping failed: {:?}", e)))?;
+
+        let entropy_data: Vec<f32>;
+        {
+            // 6. Get mapped range and copy data
+            let mapped_range = buffer_slice.get_mapped_range();
+            let bytes = mapped_range.as_ref();
+            entropy_data = bytemuck::cast_slice::<u8, f32>(bytes).to_vec();
+            // Drop mapped_range explicitly before unmap
+            drop(mapped_range);
+        }
+
+        // 7. Unmap the buffer
+        self.buffers.staging_entropy_buf.unmap();
+
+        log::debug!(
+            "Entropy results downloaded successfully ({} elements).",
+            entropy_data.len()
+        );
+
+        // 8. Create EntropyGrid
+        if entropy_data.len() != num_elements {
+            return Err(EntropyError::Other(format!(
+                "Downloaded entropy data size mismatch: Expected {} elements, got {}",
+                num_elements,
+                entropy_data.len()
+            )));
+        }
+        let mut result_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
+        result_grid.data = entropy_data;
+
+        Ok(result_grid)
+
+        /* // Remove placeholder
         log::warn!("GPU Entropy calculation dispatched, but result download is not implemented yet. Returning placeholder.");
         let placeholder_entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
         Ok(placeholder_entropy_grid)
-
-        /* // Remove placeholder CPU calculation
-        let mut entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
-        // ... CPU calculation logic ...
-        Ok(entropy_grid)
         */
     }
 
