@@ -131,11 +131,33 @@ pub fn divide_into_subgrids(
     Ok(subgrids)
 }
 
-/// Extracts a subgrid from the main grid
+/// Extracts a subgrid from the main grid based on the specified region.
+///
+/// # Arguments
+/// * `grid` - The main `PossibilityGrid`.
+/// * `region` - The `SubgridRegion` defining the area to extract.
+///
+/// # Returns
+/// * `Ok(PossibilityGrid)` - A new grid containing the data from the specified region.
+/// * `Err(String)` - If the region is invalid or out of bounds.
 pub fn extract_subgrid(
     grid: &PossibilityGrid,
     region: &SubgridRegion,
-) -> Result<PossibilityGrid, GpuError> {
+) -> Result<PossibilityGrid, String> {
+    // Validate region boundaries
+    if region.x_offset + region.width > grid.width
+        || region.y_offset + region.height > grid.height
+        || region.z_offset + region.depth > grid.depth
+    {
+        return Err(format!(
+            "Subgrid region {:?} exceeds main grid dimensions ({}, {}, {})",
+            region, grid.width, grid.height, grid.depth
+        ));
+    }
+    if region.width == 0 || region.height == 0 || region.depth == 0 {
+        return Err("Subgrid region dimensions cannot be zero".to_string());
+    }
+
     // Create a new grid with the subgrid dimensions
     let mut subgrid =
         PossibilityGrid::new(region.width, region.height, region.depth, grid.num_tiles());
@@ -148,10 +170,22 @@ pub fn extract_subgrid(
                 let global_y = region.y_offset + y;
                 let global_z = region.z_offset + z;
 
+                // Get possibilities from the main grid
                 if let Some(possibilities) = grid.get(global_x, global_y, global_z) {
-                    if let Some(subgrid_possibilities) = subgrid.get_mut(x, y, z) {
-                        *subgrid_possibilities = possibilities.clone();
+                    // Set possibilities in the subgrid
+                    if let Err(e) = subgrid.set(x, y, z, *possibilities) {
+                        // This should not happen if dimensions are correct
+                        return Err(format!(
+                            "Failed to set subgrid cell ({},{},{}): {}",
+                            x, y, z, e
+                        ));
                     }
+                } else {
+                    // Should not happen if region validation passed
+                    return Err(format!(
+                        "Failed to get main grid cell ({},{},{})",
+                        global_x, global_y, global_z
+                    ));
                 }
             }
         }
