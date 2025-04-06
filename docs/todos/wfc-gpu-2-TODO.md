@@ -73,17 +73,17 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] Update `tests.rs`: Use centralized entropy calculation
     - [x] Update any code in `propagator.rs` that touches entropy calculation
 
-- [ ] **Pipeline management**:
+- [x] **Pipeline management**:
   - [ ] Modify `pipeline.rs`:
-    - [ ] Remove shader loading code
-    - [ ] Focus only on pipeline creation and binding
-  - [ ] Expand `shaders.rs`:
-    - [ ] Add shader loading & preprocessing logic from `pipeline.rs`
-    - [ ] Implement shader variant management
-  - [ ] **Update files using the pipeline management**:
-    - [ ] Update `accelerator.rs`: Use new shader loading interfaces
-    - [ ] Update `tests.rs`: Use new shader loading methods
-    - [ ] Update `debug_viz.rs`: If it uses shaders
+    - [x] Remove shader loading code
+    - [x] Focus only on pipeline creation and binding
+  - [x] Expand `shaders.rs`:
+    - [x] Add shader loading & preprocessing logic from `pipeline.rs`
+    - [x] Implement shader variant management
+  - [x] **Update files using the pipeline management**:
+    - [x] Update `accelerator.rs`: Use new shader loading interfaces
+    - [x] Update `tests.rs`: Use new shader loading methods
+    - [x] Update `debug_viz.rs`: If it uses shaders
 
 ## 3. Simplify Complex Structures
 
