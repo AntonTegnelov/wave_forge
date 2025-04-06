@@ -131,9 +131,10 @@ impl GpuAccelerator {
                 .request_device(
                     &wgpu::DeviceDescriptor {
                         label: Some("WFC GPU Device"),
-                        required_features: wgpu::Features::empty(),
+                        // Request features needed for detection proxy
+                        required_features: wgpu::Features::BUFFER_BINDING_ARRAY
+                            | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY,
                         required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
-                        // memory_hints: wgpu::MemoryHints::Performance, // Commented out - investigate feature/version issue later
                     },
                     None, // Optional trace path
                 )
@@ -146,9 +147,31 @@ impl GpuAccelerator {
         let device = Arc::new(device);
         let queue = Arc::new(queue);
 
+        // --- Determine Supported Features ---
+        // TODO: Integrate with ShaderRegistry / dedicated feature detection module
+        let supports_atomics = device
+            .features()
+            .contains(wgpu::Features::BUFFER_BINDING_ARRAY)
+            || device
+                .features()
+                .contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY);
+        log::info!(
+            "GPU supports potentially relevant features (atomics proxy): {}",
+            supports_atomics
+        );
+        let features = if supports_atomics {
+            vec!["atomics"]
+        } else {
+            vec![]
+        };
+
         // 4. Create pipelines (uses device, returns Cloneable struct)
-        // Pass num_tiles_u32 for specialization
-        let pipelines = Arc::new(ComputePipelines::new(&device, u32s_per_cell as u32)?); // Wrap in Arc
+        // Pass features vector to ComputePipelines::new
+        let pipelines = Arc::new(ComputePipelines::new(
+            &device,
+            u32s_per_cell as u32,
+            &features, // Pass detected features
+        )?);
 
         // 5. Create buffers (uses device & queue, returns Cloneable struct)
         let buffers = Arc::new(GpuBuffers::new(

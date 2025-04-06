@@ -36,7 +36,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] **Update files to use new shader system**:
     - [x] Update `lib.rs`: Add new module imports
     - [x] Update `pipeline.rs`: Use new shader compiler
-    - [ ] Update `accelerator.rs`: Reference shader registry for feature detection
+    - [x] Update `accelerator.rs`: Reference shader registry for feature detection
 
 - [ ] **Eliminate duplication across shader files**:
   - [ ] Eventually remove redundant files:

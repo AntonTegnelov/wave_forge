@@ -164,12 +164,17 @@ impl ComputePipelines {
     ///
     /// * `device` - A reference to the WGPU `Device` used for creating pipeline resources.
     /// * `num_tiles_u32` - The number of u32 chunks needed per cell, used for specialization.
+    /// * `features` - A slice of strings representing enabled GPU/shader features (e.g., ["atomics"]).
     ///
     /// # Returns
     ///
     /// * `Ok(Self)` containing the initialized `ComputePipelines`.
     /// * `Err(GpuError)` if shader loading, compilation, or pipeline creation fails.
-    pub fn new(device: &wgpu::Device, num_tiles_u32: u32) -> Result<Self, GpuError> {
+    pub fn new(
+        device: &wgpu::Device,
+        num_tiles_u32: u32,
+        features: &[&str],
+    ) -> Result<Self, GpuError> {
         // Create ShaderManager instance
         let shader_manager =
             ShaderManager::new().map_err(|e| GpuError::ShaderError(e.to_string()))?;
@@ -182,13 +187,13 @@ impl ComputePipelines {
             max_invocations
         );
 
-        // Determine workgroup size - NOTE: This is now informational only, not used for specialization
-        let chosen_workgroup_size_x = max_invocations.min(64).max(64); // Assuming 64 in shaders
+        // Determine workgroup size - NOTE: This is now informational only
+        let chosen_workgroup_size_x = max_invocations.min(64).max(64);
         log::info!("Assumed workgroup size X: {}", chosen_workgroup_size_x);
 
-        // Check feature support (e.g., atomics)
-        // Simplification: Check for features often associated with robust compute capabilities.
-        // A more precise check might involve specific atomic feature flags if available and stable across wgpu versions.
+        // Feature detection is now done in accelerator.rs
+        // Remove the feature detection logic here
+        /*
         let supports_atomics = device
             .features()
             .contains(wgpu::Features::BUFFER_BINDING_ARRAY)
@@ -204,19 +209,20 @@ impl ComputePipelines {
         } else {
             vec![]
         };
+        */
 
         // --- Compile Shaders using the compile_shader function ---
         let (entropy_shader, entropy_source_hash) = compile_shader(
             device,
             ShaderType::Entropy,
-            &features,
+            features,
             &shader_manager,
             num_tiles_u32,
         )?;
         let (propagation_shader, propagation_source_hash) = compile_shader(
             device,
             ShaderType::Propagation,
-            &features,
+            features,
             &shader_manager,
             num_tiles_u32,
         )?;
