@@ -38,77 +38,94 @@ impl Default for SubgridConfig {
     }
 }
 
-/// Divides a grid into subgrids based on the provided configuration
+/// Divides a large grid into smaller, potentially overlapping subgrids.
+///
+/// # Arguments
+/// * `grid_width`, `grid_height`, `grid_depth` - Dimensions of the original grid.
+/// * `config` - Configuration specifying max subgrid size, overlap, and minimum size for subgridding.
+///
+/// # Returns
+/// * `Ok(Vec<SubgridRegion>)` - A vector of subgrid regions if division is successful.
+/// * `Err(String)` - If configuration is invalid or grid is too small.
 pub fn divide_into_subgrids(
     grid_width: usize,
     grid_height: usize,
     grid_depth: usize,
     config: &SubgridConfig,
-) -> Result<Vec<SubgridRegion>, GpuError> {
-    // Validate input
-    if grid_width == 0 || grid_height == 0 || grid_depth == 0 {
-        return Err(GpuError::Other(
-            "Cannot divide a grid with zero dimension".to_string(),
-        ));
-    }
-
+) -> Result<Vec<SubgridRegion>, String> {
     if config.max_subgrid_size == 0 {
-        return Err(GpuError::Other("Subgrid size cannot be zero".to_string()));
+        return Err("max_subgrid_size must be greater than 0".to_string());
+    }
+    if config.overlap_size >= config.max_subgrid_size / 2 {
+        return Err("overlap_size must be less than half of max_subgrid_size".to_string());
     }
 
-    // Calculate number of divisions needed in each dimension
-    let x_divisions = grid_width.div_ceil(config.max_subgrid_size);
-    let y_divisions = grid_height.div_ceil(config.max_subgrid_size);
-    let z_divisions = grid_depth.div_ceil(config.max_subgrid_size);
+    // Determine if subgridding is needed based on min_size
+    if grid_width < config.min_size && grid_height < config.min_size && grid_depth < config.min_size
+    {
+        // Grid is small, return a single region covering the whole grid
+        return Ok(vec![SubgridRegion {
+            x_offset: 0,
+            y_offset: 0,
+            z_offset: 0,
+            width: grid_width,
+            height: grid_height,
+            depth: grid_depth,
+        }]);
+    }
 
-    // Create subgrids
     let mut subgrids = Vec::new();
+    let step_size = config.max_subgrid_size - config.overlap_size;
 
-    for z_idx in 0..z_divisions {
-        for y_idx in 0..y_divisions {
-            for x_idx in 0..x_divisions {
-                // Calculate base coordinates
-                let base_start_x = x_idx * config.max_subgrid_size;
-                let base_start_y = y_idx * config.max_subgrid_size;
-                let base_start_z = z_idx * config.max_subgrid_size;
+    for z_start in (0..grid_depth).step_by(step_size) {
+        for y_start in (0..grid_height).step_by(step_size) {
+            for x_start in (0..grid_width).step_by(step_size) {
+                // Calculate base end coordinates (exclusive)
+                let base_end_x = std::cmp::min(x_start + config.max_subgrid_size, grid_width);
+                let base_end_y = std::cmp::min(y_start + config.max_subgrid_size, grid_height);
+                let base_end_z = std::cmp::min(z_start + config.max_subgrid_size, grid_depth);
 
-                let base_end_x = min(base_start_x + config.max_subgrid_size, grid_width);
-                let base_end_y = min(base_start_y + config.max_subgrid_size, grid_height);
-                let base_end_z = min(base_start_z + config.max_subgrid_size, grid_depth);
+                // Determine actual region boundaries including overlap
+                // Start coordinates remain the same
+                let start_x = x_start;
+                let start_y = y_start;
+                let start_z = z_start;
 
-                // Add overlap while respecting grid boundaries
-                let start_x = if base_start_x >= config.overlap_size {
-                    base_start_x - config.overlap_size
-                } else {
-                    0
-                };
+                // End coordinates extend by overlap, clamped to grid boundaries
+                let end_x = std::cmp::min(base_end_x + config.overlap_size, grid_width);
+                let end_y = std::cmp::min(base_end_y + config.overlap_size, grid_height);
+                let end_z = std::cmp::min(base_end_z + config.overlap_size, grid_depth);
 
-                let start_y = if base_start_y >= config.overlap_size {
-                    base_start_y - config.overlap_size
-                } else {
-                    0
-                };
+                // Ensure width/height/depth are not zero
+                let width = end_x.saturating_sub(start_x);
+                let height = end_y.saturating_sub(start_y);
+                let depth = end_z.saturating_sub(start_z);
 
-                let start_z = if base_start_z >= config.overlap_size {
-                    base_start_z - config.overlap_size
-                } else {
-                    0
-                };
-
-                let end_x = min(base_end_x + config.overlap_size, grid_width);
-                let end_y = min(base_end_y + config.overlap_size, grid_height);
-                let end_z = min(base_end_z + config.overlap_size, grid_depth);
-
-                subgrids.push(SubgridRegion {
-                    x_offset: start_x,
-                    y_offset: start_y,
-                    z_offset: start_z,
-                    width: end_x - start_x,
-                    height: end_y - start_y,
-                    depth: end_z - start_z,
-                });
+                if width > 0 && height > 0 && depth > 0 {
+                    subgrids.push(SubgridRegion {
+                        x_offset: start_x,
+                        y_offset: start_y,
+                        z_offset: start_z,
+                        width,
+                        height,
+                        depth,
+                    });
+                }
             }
         }
+    }
+
+    if subgrids.is_empty() && (grid_width > 0 && grid_height > 0 && grid_depth > 0) {
+        // This should only happen if step_size calculation leads to no iterations.
+        // Add the whole grid as a single subgrid.
+        return Ok(vec![SubgridRegion {
+            x_offset: 0,
+            y_offset: 0,
+            z_offset: 0,
+            width: grid_width,
+            height: grid_height,
+            depth: grid_depth,
+        }]);
     }
 
     Ok(subgrids)
