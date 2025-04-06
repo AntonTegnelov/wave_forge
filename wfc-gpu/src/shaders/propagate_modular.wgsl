@@ -51,6 +51,11 @@
 // Atomic for tracking contradiction location
 @group(0) @binding(8) var<storage, read_write> contradiction_location: atomic<u32>;
 
+// --- Additional buffers for multi-pass propagation ---
+
+// Buffer to track changes per propagation pass
+@group(0) @binding(9) var<storage, read_write> pass_statistics: array<atomic<u32>>;
+
 // --- Helper functions specific to propagation ---
 
 // Loads a cell's possibility state from the grid
@@ -92,6 +97,10 @@ fn update_neighbor_possibilities(neighbor_idx: u32,
     // Check if we're making a change
     if (new_bits != neighbor_possibilities[0]) { 
         changed = true; 
+        
+        // Count bits removed for statistics
+        let removed_count = count_bits(neighbor_possibilities[0]) - count_bits(new_bits);
+        atomicAdd(&pass_statistics[1], removed_count); // Total possibilities removed
     }
     
     // Check if there are any possible tiles left
@@ -104,6 +113,9 @@ fn update_neighbor_possibilities(neighbor_idx: u32,
         if (new_bits == 0u && neighbor_possibilities[0] != 0u) {
             // Changed from some bits set to no bits - signal contradiction
             atomicStore(&contradiction_flag, 1u);
+            
+            // Increment contradiction counter
+            atomicAdd(&pass_statistics[2], 1u); // Contradiction count
         }
         
         // Update the grid
@@ -116,11 +128,19 @@ fn update_neighbor_possibilities(neighbor_idx: u32,
 
 // Adds a cell to the output worklist for future processing
 fn add_to_worklist(cell_idx: u32) {
+    // Get current output worklist index
     let worklist_idx = atomicAdd(&output_worklist_count, 1u);
     
-    // Bounds check for worklist
+    // Bounds check for worklist 
     if (worklist_idx < arrayLength(&output_worklist)) {
+        // Add cell to worklist
         output_worklist[worklist_idx] = cell_idx;
+        
+        // Update statistics for current pass
+        atomicAdd(&pass_statistics[0], 1u); // Total cells added
+    } else {
+        // Worklist overflow - signal for host to resize buffers
+        atomicStore(&pass_statistics[3], 1u); // Overflow flag
     }
 }
 
@@ -128,6 +148,15 @@ fn add_to_worklist(cell_idx: u32) {
 fn process_cell(cell_idx: u32, x: u32, y: u32, z: u32) {
     // Load current cell's possibilities
     let current_possibilities = load_cell_possibilities(cell_idx);
+    
+    // Skip fully collapsed cells (optimization)
+    let bit_count = count_bits(current_possibilities[0]);
+    if (bit_count <= 1u) {
+        return;
+    }
+    
+    // Track neighbors that have changed
+    var change_count = 0u;
     
     // Process each axis direction
     for (var axis_idx: u32 = 0u; axis_idx < params.num_axes; axis_idx = axis_idx + 1u) {
@@ -157,11 +186,25 @@ fn process_cell(cell_idx: u32, x: u32, y: u32, z: u32) {
         // Add to worklist if changes were made
         if (changed == 1u) {
             add_to_worklist(neighbor_idx);
+            change_count += 1u;
         }
         
         // Record contradiction location if found
         if (has_contradiction == 1u) {
             atomicMin(&contradiction_location, neighbor_idx);
+        }
+        
+        // Early termination check - only check periodically to reduce overhead
+        // Check if this is a contradiction check cycle
+        if (params.contradiction_check_frequency > 0u && 
+            thread_idx % params.contradiction_check_frequency == 0u) {
+            
+            // Check for contradiction
+            let has_contradiction = atomicLoad(&contradiction_flag);
+            if (has_contradiction == 1u) {
+                // Exit early if contradiction found
+                return;
+            }
         }
     }
 }
@@ -179,6 +222,17 @@ fn main_propagate(
     if (thread_idx >= params.worklist_size) {
         return;
     }
+    
+    // Reset statistics for first thread only
+    if (thread_idx == 0u) {
+        atomicStore(&pass_statistics[0], 0u); // Reset cells added
+        atomicStore(&pass_statistics[1], 0u); // Reset possibilities removed
+        atomicStore(&pass_statistics[2], 0u); // Reset contradiction count
+        atomicStore(&pass_statistics[3], 0u); // Reset overflow flag
+    }
+    
+    // Wait for all threads to synchronize (using workgroup barrier)
+    workgroupBarrier();
     
     // Get the cell to process from the worklist
     let cell_idx = worklist[thread_idx];

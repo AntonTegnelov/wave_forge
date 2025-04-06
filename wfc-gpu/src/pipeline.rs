@@ -317,6 +317,17 @@ impl ComputePipelines {
                         },
                         count: None,
                     },
+                    // pass_statistics (read-write storage)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: Some(std::num::NonZeroU64::new(16).unwrap()), // 4 u32 values = 16 bytes
+                        },
+                        count: None,
+                    },
                 ],
             },
         ));
@@ -522,6 +533,7 @@ impl ComputePipelines {
         worklist_count_bufs: &[wgpu::Buffer; 2],
         contradiction_flag_buf: &wgpu::Buffer,
         contradiction_location_buf: &wgpu::Buffer,
+        pass_statistics_buf: &wgpu::Buffer,
     ) -> [wgpu::BindGroup; 2] {
         let bind_group_0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Propagation Bind Group 0"),
@@ -571,6 +583,11 @@ impl ComputePipelines {
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: contradiction_location_buf.as_entire_binding(),
+                },
+                // pass_statistics
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: pass_statistics_buf.as_entire_binding(),
                 },
             ],
         });
@@ -623,6 +640,11 @@ impl ComputePipelines {
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: contradiction_location_buf.as_entire_binding(),
+                },
+                // pass_statistics
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: pass_statistics_buf.as_entire_binding(),
                 },
             ],
         });

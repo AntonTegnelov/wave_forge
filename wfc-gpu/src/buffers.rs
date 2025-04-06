@@ -140,6 +140,10 @@ pub struct GpuBuffers {
     pub adjacency_rules_buf: Arc<wgpu::Buffer>,
     /// Buffer containing weights for adjacency rules.
     pub rule_weights_buf: Arc<wgpu::Buffer>,
+    /// Buffer for storing statistics about each propagation pass.
+    pub pass_statistics_buf: Arc<wgpu::Buffer>,
+    /// Staging buffer used during pass statistics upload/download.
+    pub staging_pass_statistics_buf: Arc<wgpu::Buffer>,
     /// Number of u32 words used to represent the possibilities for a single cell.
     pub u32s_per_cell: usize,
     /// Total number of cells in the grid.
@@ -495,6 +499,22 @@ impl GpuBuffers {
             },
         ));
 
+        // Create pass statistics buffer for tracking propagation details
+        let pass_statistics_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pass Statistics Buffer"),
+            size: 4 * 4, // 4 u32 values: [cells_added, possibilities_removed, contradictions, overflow]
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }));
+
+        // Create staging buffer for pass statistics
+        let staging_pass_statistics_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Staging Pass Statistics Buffer"),
+            size: 4 * 4, // 4 u32 values
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        }));
+
         // Create entropy parameters buffer
         let entropy_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Entropy Parameters Buffer"),
@@ -523,6 +543,8 @@ impl GpuBuffers {
             params_uniform_buf,
             adjacency_rules_buf,
             rule_weights_buf,
+            pass_statistics_buf,
+            staging_pass_statistics_buf,
             u32s_per_cell,
             num_cells,
             original_grid_dims: None,
