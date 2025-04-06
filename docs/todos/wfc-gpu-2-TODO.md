@@ -50,7 +50,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
 
 ## 2. Clear Responsibility Boundaries
 
-- [ ] **Buffer management vs. synchronization**:
+- [x] **Buffer management vs. synchronization**:
 
   - [x] Modify `sync.rs`: Move all data transfer methods from `GpuBuffers` to `GpuSynchronizer`
   - [x] Modify `sync.rs`: Add new transfer methods for remaining buffer types

@@ -297,29 +297,24 @@ impl GpuConstraintPropagator {
 
         debug!("Initial worklist size: {}", worklist_size);
 
-        // Reset buffers for this propagation step
-        let synchronizer = GpuSynchronizer::new(
-            self.device.clone(),
-            self.queue.clone(),
-            self.buffers.clone(),
-        );
-        synchronizer
+        // Reset buffers using the instance's synchronizer
+        self.synchronizer
             .reset_contradiction_flag()
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-        synchronizer
+        self.synchronizer
             .reset_contradiction_location()
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-        synchronizer
+        self.synchronizer
             .reset_worklist_count()
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
-        // Upload initial worklist indices to the active buffer
-        synchronizer
+        // Upload initial worklist indices using the instance's synchronizer
+        self.synchronizer
             .upload_initial_updates(&updated_indices, self.current_worklist_idx)
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
-        // Update params with the current worklist size
-        synchronizer
+        // Update params using the instance's synchronizer
+        self.synchronizer
             .update_params_worklist_size(worklist_size)
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
@@ -430,21 +425,19 @@ impl GpuConstraintPropagator {
                     label: Some(&format!("Propagation Command Encoder {}", iteration + 1)),
                 });
 
-            // Check for contradictions and get next worklist size
+            // Check for contradictions and get next worklist size using the instance's synchronizer
             let (has_contradiction, next_worklist_size_opt, contradiction_idx) = {
-                // Download flag and location separately
                 let (flag, loc) = self
                     .synchronizer
                     .download_contradiction_status()
                     .await
                     .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-                // Download worklist count (assuming moved to synchronizer too)
                 let count = self
                     .synchronizer
                     .download_worklist_count()
-                    .await // TODO: Add download_worklist_count to synchronizer
+                    .await
                     .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-                (flag, Some(count), loc) // Combine results
+                (flag, Some(count), loc)
             };
 
             // Take a debug snapshot after this propagation step
@@ -500,7 +493,7 @@ impl GpuConstraintPropagator {
                 dispatch_size = 1;
             }
 
-            // Update params buffer with the new worklist size for the next potential iteration
+            // Update params buffer using the instance's synchronizer
             self.synchronizer
                 .update_params_worklist_size(num_cells_to_process)
                 .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
