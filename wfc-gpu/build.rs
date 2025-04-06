@@ -2,69 +2,128 @@
 
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+// --- Duplicated Definitions (needed because build.rs runs before crate is compiled) ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum BuildShaderType {
+    Entropy,
+    Propagation,
+}
+
+/// Duplicated logic from ShaderManager to avoid build dependency
+fn get_variant_filename(shader_type: BuildShaderType, features: &[&str]) -> String {
+    let base_name = match shader_type {
+        BuildShaderType::Entropy => "Entropy",
+        BuildShaderType::Propagation => "Propagation",
+    };
+    if features.is_empty() {
+        format!("{}.wgsl", base_name)
+    } else {
+        let mut sorted_features = features.to_vec();
+        sorted_features.sort_unstable();
+        format!("{}_{}.wgsl", base_name, sorted_features.join("_"))
+    }
+}
+
+// --- End Duplicated Definitions ---
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    // TODO: Add rerun triggers for all shader component files
-    // println!("cargo:rerun-if-changed=src/shaders/components/"); // Needs specific files or a helper
+    // Rerun if the registry file changes
+    let registry_path_str = "src/shaders/components/registry.json";
+    println!("cargo:rerun-if-changed={}", registry_path_str);
+    // TODO: Add rerun triggers for all *actual* shader component files listed in registry.json
     println!("cargo:rerun-if-changed=src/shaders/utils.wgsl");
     println!("cargo:rerun-if-changed=src/shaders/coords.wgsl");
     println!("cargo:rerun-if-changed=src/shaders/rules.wgsl");
-    // TODO: Add rerun trigger for registry.json when it exists
+    println!("cargo:rerun-if-changed=src/shaders/components/entropy_calculation.wgsl");
+    println!("cargo:rerun-if-changed=src/shaders/components/worklist_management.wgsl");
+    println!("cargo:rerun-if-changed=src/shaders/components/contradiction_detection.wgsl");
 
     println!("Running WFC-GPU build script...");
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
-    let variants_dir = Path::new(&out_dir).join("shaders/variants");
+    let variants_dir = Path::new(&out_dir).join("shaders").join("variants");
 
     // Ensure the target directory for compiled variants exists
     fs::create_dir_all(&variants_dir).expect("Failed to create variants output directory");
 
-    // TODO: Implement pre-build shader generation, compilation, and variant selection.
-    println!("cargo:rerun-if-changed=src/shaders/"); // Example: Rerun if shaders change
+    // --- Actual Build-Time Shader Generation ---
 
-    // --- Placeholder for Build-Time Shader Generation ---
-    // The following steps outline the intended logic. The actual implementation
-    // requires the ShaderRegistry and ShaderCompiler to be functional.
+    // 1. Initialize Registry
+    // Use the crate's code directly by specifying the path relative to Cargo.toml
+    // This requires adding the crate itself as a build-dependency in Cargo.toml
+    // For now, we assume the necessary types are available directly.
+    // We need to parse registry.json and use the compiler logic here.
+    // NOTE: Actually *using* crate::shader_registry::ShaderRegistry here is complex
+    // because build.rs runs before the crate is fully compiled.
+    // A common pattern is to duplicate simplified loading/compiling logic
+    // or use a separate helper crate.
+    // For this step, we will SIMULATE the process using placeholder logic.
 
-    // 1. Initialize Registry (Load component metadata)
-    // let registry = wfc_gpu::shader_registry::ShaderRegistry::new(); // Assuming this loads data
-    println!("[Build Script Stub] Would initialize ShaderRegistry here.");
+    println!("[Build Script] Simulating Shader Registry loading...");
+    let _registry_path = PathBuf::from(registry_path_str);
+    // let registry = wfc_gpu::shader_registry::ShaderRegistry::new(&registry_path)
+    //     .expect("Failed to load shader registry in build script");
+    // println!("[Build Script] Registry loaded (simulated).");
 
-    // 2. Initialize Compiler
+    // 2. Initialize Compiler (Simulated)
+    println!("[Build Script] Simulating Shader Compiler initialization...");
     // let compiler = wfc_gpu::shader_compiler::ShaderCompiler::new();
-    println!("[Build Script Stub] Would initialize ShaderCompiler here.");
 
-    // 3. Define Target Variants (Shader Type + Features)
-    // let targets = vec![
-    //     (wfc_gpu::shaders::ShaderType::Entropy, vec!["atomics"]),
-    //     (wfc_gpu::shaders::ShaderType::Entropy, vec![]), // Fallback
-    //     (wfc_gpu::shaders::ShaderType::Propagation, vec!["atomics"]),
-    //     (wfc_gpu::shaders::ShaderType::Propagation, vec![]), // Fallback
-    // ];
-    println!("[Build Script Stub] Would define target shader variants here.");
+    // 3. Define Target Variants (Example: Entropy with/without atomics)
+    // Use local BuildShaderType enum
+    let targets = vec![
+        (BuildShaderType::Entropy, vec!["atomics"]), // Request atomics version
+        (BuildShaderType::Entropy, vec![]),          // Request fallback version
+        (BuildShaderType::Propagation, vec!["atomics"]), // Request atomics version
+        (BuildShaderType::Propagation, vec![]),      // Request fallback version
+    ];
+    println!("[Build Script] Defined target variants: {:?}", targets);
 
-    // 4. Loop through targets, compile, and write to OUT_DIR
-    // for (shader_type, features) in targets {
-    //     println!("[Build Script Stub] Processing {:?} with {:?}", shader_type, features);
-    //     // TODO: Get specialization constants (e.g., NUM_TILES_U32_VALUE - how to determine these at build time?)
-    //     let specialization = std::collections::HashMap::new(); // Placeholder
+    // 4. Loop through targets, compile (simulated), and write to OUT_DIR
+    for (shader_type, features) in targets {
+        println!(
+            "[Build Script] Processing {:?} with features: {:?}",
+            shader_type, features
+        );
 
-    //     match compiler.compile(shader_type, &features, &specialization) {
-    //         Ok(compiled_source) => {
-    //             let variant_name = format!("{:?}_{}.wgsl", shader_type, features.join("_"));
-    //             let out_path = variants_dir.join(variant_name);
-    //             fs::write(&out_path, compiled_source)
-    //                 .expect(&format!("Failed to write compiled shader to {:?}", out_path));
-    //             println!("[Build Script Stub] Wrote compiled shader to {:?}", out_path);
-    //         }
-    //         Err(e) => {
-    //             // Panic or emit warning during build
-    //             panic!("Failed to compile shader variant {:?} with {:?}: {}", shader_type, features, e);
-    //         }
-    //     }
-    // }
+        // TODO: Determine required specialization constants (e.g., NUM_TILES_U32_VALUE)
+        // This might require reading config or passing build-time env vars.
+        let specialization: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new(); // Placeholder
 
-    println!("WFC-GPU build script finished (placeholders). Need to implement actual compilation.");
+        // Simulate compilation using the compiler (replace with actual call later)
+        println!(
+            "[Build Script Stub] Would call compiler.compile({:?}, {:?}, {:?})",
+            shader_type, features, specialization
+        );
+        // let compiled_source = compiler.compile(shader_type, &features, &specialization)
+        //     .expect(&format!("Failed to compile {:?} with {:?}", shader_type, features));
+
+        // --- Placeholder Source Generation --- (Remove once compiler works)
+        let placeholder_source = format!(
+            "// Placeholder for {:?} with features {:?}\n// Specialization: {:?}\nfn main() {{}}",
+            shader_type, features, specialization
+        );
+        let compiled_source = placeholder_source; // Use placeholder
+                                                  // --- End Placeholder Source Generation ---
+
+        // Determine output path
+        // Use local get_variant_filename function
+        let variant_filename = get_variant_filename(shader_type, &features);
+        let out_path = variants_dir.join(&variant_filename);
+
+        // Write the (placeholder) compiled shader
+        let error_msg = format!("Failed to write compiled shader to {:?}", out_path);
+        fs::write(&out_path, compiled_source).expect(&error_msg);
+        println!(
+            "[Build Script] Wrote placeholder shader variant to: {:?}",
+            out_path
+        );
+    }
+
+    println!("WFC-GPU build script finished generating placeholder shader variants.");
 }

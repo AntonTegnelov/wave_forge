@@ -3194,6 +3194,8 @@ dependencies = [
  "rand",
  "rayon",
  "seahash",
+ "serde",
+ "serde_json",
  "test-strategy",
  "thiserror",
  "tokio",

@@ -1,0 +1,40 @@
+{
+  "components": {
+    "Utils": {
+      "path": "src/shaders/utils.wgsl",
+      "dependencies": [],
+      "required_features": [],
+      "provided_features": []
+    },
+    "Coords": {
+      "path": "src/shaders/coords.wgsl",
+      "dependencies": [],
+      "required_features": [],
+      "provided_features": []
+    },
+    "Rules": {
+      "path": "src/shaders/rules.wgsl",
+      "dependencies": ["Utils"],
+      "required_features": [],
+      "provided_features": []
+    },
+    "EntropyCalculation": {
+      "path": "src/shaders/components/entropy_calculation.wgsl",
+      "dependencies": ["Utils", "Coords", "Rules"],
+      "required_features": [],
+      "provided_features": []
+    },
+    "WorklistManagement": {
+      "path": "src/shaders/components/worklist_management.wgsl",
+      "dependencies": ["Utils", "Coords"],
+      "required_features": [],
+      "provided_features": []
+    },
+    "ContradictionDetection": {
+      "path": "src/shaders/components/contradiction_detection.wgsl",
+      "dependencies": ["Utils", "Coords", "Rules"],
+      "required_features": [],
+      "provided_features": []
+    }
+  }
+} 
