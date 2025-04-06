@@ -171,12 +171,17 @@ impl GpuAccelerator {
             grid_depth: grid_dims.2 as u32,
             num_tiles: num_tiles as u32,
             num_axes: rules.num_axes() as u32,
-            worklist_size: 0, // Initial worklist size is 0 before first propagation
             boundary_mode: match boundary_mode {
                 BoundaryCondition::Finite => 0,
                 BoundaryCondition::Periodic => 1,
             },
-            _padding1: 0,
+            heuristic_type: 0,                  // Default to Shannon entropy
+            tie_breaking: 0,                    // Default to no tie-breaking
+            max_propagation_steps: 10000,       // Default max steps
+            contradiction_check_frequency: 100, // Check every 100 steps
+            worklist_size: 0, // Initial worklist size is 0 before first propagation
+            grid_element_count: (grid_dims.0 * grid_dims.1 * grid_dims.2) as u32,
+            _padding: 0, // Padding to ensure 16-byte alignment
         };
 
         // Create the propagator instance

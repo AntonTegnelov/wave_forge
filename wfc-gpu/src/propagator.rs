@@ -181,9 +181,14 @@ impl GpuConstraintPropagator {
             grid_depth: subgrid.depth as u32,
             num_tiles: self.params.num_tiles,
             num_axes: self.params.num_axes,
-            worklist_size: 0, // Will be set during propagation
             boundary_mode: self.params.boundary_mode,
-            _padding1: 0,
+            heuristic_type: self.params.heuristic_type,
+            tie_breaking: self.params.tie_breaking,
+            max_propagation_steps: self.params.max_propagation_steps,
+            contradiction_check_frequency: self.params.contradiction_check_frequency,
+            worklist_size: 0, // Will be set during propagation
+            grid_element_count: (subgrid.width * subgrid.height * subgrid.depth) as u32,
+            _padding: 0,
         };
 
         // Convert global coordinates to local subgrid coordinates
@@ -925,9 +930,14 @@ mod tests {
                 grid_depth: 1,
                 num_tiles: 2,
                 num_axes: 6,
-                worklist_size: 0,
                 boundary_mode: 0,
-                _padding1: 0,
+                heuristic_type: 0,
+                tie_breaking: 0,
+                max_propagation_steps: 1000,
+                contradiction_check_frequency: 100,
+                worklist_size: 0,
+                grid_element_count: 4, // 2x2x1
+                _padding: 0,
             };
 
             let propagator = GpuConstraintPropagator::new(
