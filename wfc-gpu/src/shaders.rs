@@ -90,24 +90,19 @@ impl ShaderManager {
 
         // TODO: Implement actual file loading once build.rs generates variants.
         // For now, return a placeholder error or empty string.
-        // match std::fs::read_to_string(&variant_path) {
-        //     Ok(source) => {
-        //         println!("[ShaderManager] Successfully loaded (stub): {}", variant_filename);
-        //         Ok(source)
-        //     }
-        //     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-        //         Err(ShaderError::VariantNotFound(variant_path.display().to_string()))
-        //     }
-        //     Err(e) => Err(ShaderError::IoError {
-        //         path: variant_path.display().to_string(),
-        //         source: e,
-        //     }),
-        // }
-
-        Err(ShaderError::NotImplemented(format!(
-            "Actual loading of '{}' is not implemented yet. Build script needs to generate variants.",
-            variant_filename
-        )))
+        match std::fs::read_to_string(&variant_path) {
+            Ok(source) => {
+                println!("[ShaderManager] Successfully loaded: {}", variant_filename);
+                Ok(source)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(
+                ShaderError::VariantNotFound(variant_path.display().to_string()),
+            ),
+            Err(e) => Err(ShaderError::IoError {
+                path: variant_path.display().to_string(),
+                source: e,
+            }),
+        }
     }
 
     /// Constructs the expected filename for a shader variant.
