@@ -62,16 +62,16 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] Update `propagator.rs`: Ensure correct use of `GpuSynchronizer`
     - [x] Update `entropy.rs`: Ensure correct use of `GpuSynchronizer` (GPU dispatch in `calculate_entropy` still TODO)
 
-- [ ] **Entropy calculation**:
+- [x] **Entropy calculation**:
 
-  - [ ] Modify `entropy.rs`:
-    - [ ] Enhance `GpuEntropyCalculator` to handle all entropy calculation logic
-  - [ ] Modify `accelerator.rs`:
-    - [ ] Remove direct entropy calculation implementation
-    - [ ] Change `EntropyCalculator` trait impl to delegate to `GpuEntropyCalculator`
-  - [ ] **Update files relying on entropy calculation**:
-    - [ ] Update `tests.rs`: Use centralized entropy calculation
-    - [ ] Update any code in `propagator.rs` that touches entropy calculation
+  - [x] Modify `entropy.rs`:
+    - [x] Enhance `GpuEntropyCalculator` to handle all entropy calculation logic
+  - [x] Modify `accelerator.rs`:
+    - [x] Remove direct entropy calculation implementation
+    - [x] Change `EntropyCalculator` trait impl to delegate to `GpuEntropyCalculator`
+  - [x] **Update files relying on entropy calculation**:
+    - [x] Update `tests.rs`: Use centralized entropy calculation
+    - [x] Update any code in `propagator.rs` that touches entropy calculation
 
 - [ ] **Pipeline management**:
   - [ ] Modify `pipeline.rs`:
