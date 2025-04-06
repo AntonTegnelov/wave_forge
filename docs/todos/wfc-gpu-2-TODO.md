@@ -21,7 +21,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] `rules.wgsl` - Adjacency rule handling
   - [x] **Update files to reference new components**:
     - [x] Update `pipeline.rs`: Add module component loading
-    - [ ] Update `shaders.rs`: Reference new component paths
+    - [x] Update `shaders.rs`: Reference new component paths
 
 - [ ] **Build shader assembly system**:
 
