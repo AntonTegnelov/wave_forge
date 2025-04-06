@@ -205,8 +205,7 @@ pub trait EntropyCalculator: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grid::{EntropyGrid, PossibilityGrid};
-    use bitvec::prelude::*;
+    use crate::grid::PossibilityGrid;
 
     // Mock Calculator
     struct MockEntropyCalculator;

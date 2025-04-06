@@ -8,8 +8,7 @@ use crate::{
 use log::{debug, trace};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
-use wfc_rules::AdjacencyRules;
-use wgpu::util::DeviceExt;
+use wgpu;
 
 /// Handles synchronization between CPU and GPU for Wave Function Collapse data.
 ///
@@ -369,16 +368,16 @@ impl Drop for GpuSynchronizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wfc_core::BoundaryCondition;
 
     // Helper function to create a test grid
+    #[allow(dead_code)]
     fn create_test_grid(
         width: usize,
         height: usize,
         depth: usize,
-        num_tiles: usize,
+        num_transformed_tiles: usize,
     ) -> PossibilityGrid {
-        let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
+        let mut grid = PossibilityGrid::new(width, height, depth, num_transformed_tiles);
 
         // Set some specific patterns for testing
         if let Some(cell) = grid.get_mut(0, 0, 0) {
@@ -394,7 +393,8 @@ mod tests {
         grid
     }
 
-    // Test setup to create necessary GPU resources for testing
+    // Helper to create a test GPU environment (async)
+    #[allow(dead_code)]
     async fn setup_test_gpu(
     ) -> Result<(Arc<wgpu::Device>, Arc<wgpu::Queue>, Arc<GpuBuffers>), GpuError> {
         // This test would require a GPU device, which may not be available in all testing environments

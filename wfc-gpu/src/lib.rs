@@ -101,12 +101,10 @@ pub enum GpuError {
 // Add tests module section at the end of the file
 #[cfg(test)]
 mod tests {
-    use bitvec::prelude::*;
-    use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
-    use wfc_rules::AdjacencyRules;
+    use wfc_core::grid::PossibilityGrid;
 
-    #[tokio::test]
-    async fn test_progressive_results() {
+    #[test]
+    fn test_progressive_results() {
         // Create a small grid for testing
         let width = 4;
         let height = 4;

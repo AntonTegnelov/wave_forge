@@ -1,13 +1,11 @@
 use crate::buffers::{EntropyParamsUniform, GpuBuffers};
 use crate::pipeline::ComputePipelines;
-use crate::GpuError;
-use futures::executor::block_on;
-use log::{debug, trace, warn};
+use log::{trace, warn};
+use pollster;
 use std::sync::Arc;
 use wfc_core::entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType};
 use wfc_core::grid::{EntropyGrid, PossibilityGrid};
 use wgpu;
-use wgpu::util::DeviceExt;
 
 /// GPU-accelerated entropy calculator for use in WFC algorithm.
 ///
@@ -315,16 +313,16 @@ impl GpuEntropyCalculator {
 
 impl EntropyCalculator for GpuEntropyCalculator {
     fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
-        // Use block_on from futures executor instead of pollster
-        block_on(self.calculate_entropy_async(grid))
+        // Use pollster instead of futures::executor::block_on
+        pollster::block_on(self.calculate_entropy_async(grid))
     }
 
     fn select_lowest_entropy_cell(
         &self,
         entropy_grid: &EntropyGrid,
     ) -> Option<(usize, usize, usize)> {
-        // Use block_on from futures executor instead of pollster
-        block_on(self.select_lowest_entropy_cell_async(entropy_grid))
+        // Use pollster instead of futures::executor::block_on
+        pollster::block_on(self.select_lowest_entropy_cell_async(entropy_grid))
     }
 
     fn set_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> bool {

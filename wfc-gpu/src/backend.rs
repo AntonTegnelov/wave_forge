@@ -217,7 +217,7 @@ impl GpuBackend for WgpuBackend {
                 "Failed to find GPU adapter".to_string(),
             ))?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
+        let (_device, _queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("WFC GPU Device"),
                 required_features: wgpu::Features::empty(),
@@ -280,19 +280,17 @@ impl ComputeCapable for WgpuBackend {
             "Device not initialized. Call initialize() first.".to_string(),
         ))?;
 
-        // Create a shader module from the shader code
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("WFC Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_code)),
+            label: Some("WFC GPU Compute Shader"),
+            source: wgpu::ShaderSource::Wgsl(shader_code.into()),
         });
 
-        // Create the compute pipeline with the required compilation_options field
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("WFC Compute Pipeline"),
-            layout: None, // Auto-generate layout from the shader
+        let _pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("WFC GPU Compute Pipeline"),
+            layout: None,
             module: &shader_module,
             entry_point,
-            compilation_options: Default::default(), // Add the missing field
+            compilation_options: Default::default(),
         });
 
         // Generate a unique ID for this pipeline

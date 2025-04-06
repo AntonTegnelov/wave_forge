@@ -1,4 +1,3 @@
-use futures::executor::block_on;
 use std::sync::Arc;
 use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
 use wfc_rules::AdjacencyRules;
@@ -7,14 +6,17 @@ use wgpu;
 use crate::accelerator::GpuAccelerator;
 use crate::GpuError;
 
-/// Initialize GPU for testing
+/// Synchronously initialize GPU for testing
+/// This uses polling directly instead of block_on for compatibility with tokio
 pub fn initialize_test_gpu() -> (wgpu::Device, wgpu::Queue) {
     let instance = wgpu::Instance::default();
 
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-        .expect("Failed to get adapter");
+    // Use polling approach instead of block_on to avoid deadlocks with tokio
+    let adapter =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+            .expect("Failed to get adapter");
 
-    let (device, queue) = block_on(adapter.request_device(
+    let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("Test Device"),
             required_features: wgpu::Features::empty(),
@@ -55,8 +57,8 @@ pub fn test_large_tileset_init(
         num_tiles as usize,
     );
 
-    // Initialize the accelerator (blocking on the async method)
-    let result = block_on(GpuAccelerator::new(
+    // Initialize the accelerator (using pollster instead of block_on)
+    let result = pollster::block_on(GpuAccelerator::new(
         &grid,
         &rules,
         BoundaryCondition::Periodic,
