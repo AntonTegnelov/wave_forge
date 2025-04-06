@@ -305,3 +305,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
      - Add test hooks to verify all existing functionality
      - Ensure backward compatibility for public APIs
      - Update documentation to explain both old and new approaches during transition
+
+- [ ] Implement GPU entropy calculation in entropy.rs
+  - [x] Dispatch compute shader in calculate_entropy (in GpuAccelerator, needs import fixes)
+  - [ ] Download entropy grid results

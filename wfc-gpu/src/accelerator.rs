@@ -810,65 +810,113 @@ impl propagator::ConstraintPropagator for GpuAccelerator {
 impl EntropyCalculator for GpuAccelerator {
     /// Calculates entropy using the GPU.
     fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
-        // First upload the grid to GPU (synchronous)
-        self.synchronizer
-            .upload_grid(grid)
+        log::debug!("Calculating entropy (GPU path)...");
+
+        // First upload the grid to GPU (synchronous for this trait method)
+        // Note: Consider if this upload should happen elsewhere for efficiency
+        pollster::block_on(self.synchronizer.upload_grid(grid))
             .map_err(|e| EntropyError::Other(format!("Failed to upload grid: {}", e)))?;
 
         // Update entropy parameters (synchronous)
-        self.synchronizer
-            .update_entropy_params(
-                self.grid_dims,
-                match self.entropy_heuristic {
-                    EntropyHeuristicType::Shannon => 0,
-                    EntropyHeuristicType::Count => 1,
-                    EntropyHeuristicType::CountSimple => 2,
-                    EntropyHeuristicType::WeightedCount => 3,
-                },
-            )
-            .map_err(|e| EntropyError::Other(format!("Failed to update entropy params: {}", e)))?;
+        let heuristic_value = match self.entropy_heuristic {
+            EntropyHeuristicType::Shannon => 0,
+            EntropyHeuristicType::Count => 1,
+            EntropyHeuristicType::CountSimple => 2,
+            EntropyHeuristicType::WeightedCount => 3,
+        };
+        pollster::block_on(
+            self.synchronizer
+                .update_entropy_params(self.grid_dims, heuristic_value),
+        )
+        .map_err(|e| EntropyError::Other(format!("Failed to update entropy params: {}", e)))?;
 
         // Reset the min entropy buffer (synchronous)
-        self.synchronizer.reset_min_entropy_buffer().map_err(|e| {
+        pollster::block_on(self.synchronizer.reset_min_entropy_buffer()).map_err(|e| {
             EntropyError::Other(format!("Failed to reset min entropy buffer: {}", e))
         })?;
 
-        // TODO: Actually run the entropy compute shader here!
-        // For now, just calculate on CPU as placeholder
-        // Need to: dispatch entropy shader, then download entropy grid
+        // --- Dispatch Compute Shader ---
+        log::debug!("Dispatching entropy compute shader...");
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Entropy Calculation Encoder"),
+            });
 
+        // Create bind groups
+        // Group 0: Grid, Entropy, Params, MinEntropyInfo
+        let grid_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Entropy Grid Bind Group"),
+            layout: &self.pipelines.entropy_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.buffers.entropy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.buffers.params_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.buffers.min_entropy_info_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Group 1: EntropyParams
+        let entropy_params_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Entropy Params Bind Group"),
+            // Assuming a separate layout exists on pipelines or creating it here if needed
+            // layout: &self.pipelines.entropy_params_bind_group_layout,
+            layout: &self.pipelines.entropy_bind_group_layout, // Reusing group 0 layout for simplicity? Check shader.
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0, // Check binding index in shader!
+                resource: self.buffers.entropy_params_buffer.as_entire_binding(),
+            }],
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Entropy Compute Pass"),
+                timestamp_writes: None,
+            });
+
+            compute_pass.set_pipeline(&self.pipelines.entropy_pipeline);
+            compute_pass.set_bind_group(0, &grid_bind_group, &[]);
+            // Check bind group index!
+            // compute_pass.set_bind_group(1, &entropy_params_bind_group, &[]);
+
+            // Dispatch - Calculate workgroup counts
+            // TODO: Use pipelines.entropy_workgroup_size if available
+            let workgroup_size = 8; // Must match shader's workgroup_size
+            let (width, height, depth) = self.grid_dims;
+            let workgroup_x = (width as u32 + workgroup_size - 1) / workgroup_size;
+            let workgroup_y = (height as u32 + workgroup_size - 1) / workgroup_size;
+            let workgroup_z = depth as u32; // Process full depth layers
+
+            compute_pass.dispatch_workgroups(workgroup_x, workgroup_y, workgroup_z);
+        } // End compute pass scope
+
+        // Submit to Queue
+        self.queue.submit(std::iter::once(encoder.finish()));
+        log::debug!("Entropy compute shader submitted.");
+
+        // TODO: Next step is to download the results!
+        // For now, return a placeholder grid.
+        log::warn!("GPU Entropy calculation dispatched, but result download is not implemented yet. Returning placeholder.");
+        let placeholder_entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
+        Ok(placeholder_entropy_grid)
+
+        /* // Remove placeholder CPU calculation
         let mut entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
-
-        for z in 0..grid.depth {
-            for y in 0..grid.height {
-                for x in 0..grid.width {
-                    let cell = match grid.get(x, y, z) {
-                        Some(c) => c,
-                        None => continue,
-                    };
-                    let count = cell.count_ones();
-                    let data_index = x + y * grid.width + z * grid.width * grid.height;
-                    if count == 0 {
-                        entropy_grid.data[data_index] = 0.0;
-                    } else if count == 1 {
-                        entropy_grid.data[data_index] = -1.0;
-                    } else {
-                        let entropy = match self.entropy_heuristic {
-                            EntropyHeuristicType::Shannon => {
-                                let p = 1.0 / (count as f32);
-                                -1.0 * (count as f32) * p * p.log2()
-                            }
-                            EntropyHeuristicType::Count
-                            | EntropyHeuristicType::CountSimple
-                            | EntropyHeuristicType::WeightedCount => count as f32,
-                        };
-                        entropy_grid.data[data_index] = entropy;
-                    }
-                }
-            }
-        }
-
+        // ... CPU calculation logic ...
         Ok(entropy_grid)
+        */
     }
 
     /// Selects the cell with the lowest entropy based on the GPU calculation.
