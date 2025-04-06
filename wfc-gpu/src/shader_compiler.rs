@@ -7,6 +7,8 @@
 //! by the WGPU backend.
 
 use crate::shaders::ShaderType;
+// Import build-time components from shader_registry
+use crate::shader_registry::{self, ShaderComponent};
 use crate::GpuError; // Or define a specific CompilationError
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -54,7 +56,8 @@ impl ShaderCompiler {
             shader_type, features, specialization
         );
 
-        let required_components = crate::shaders::get_required_components(shader_type);
+        // Use function from shader_registry module
+        let required_components = shader_registry::get_required_components(shader_type);
         println!("Required components: {:?}", required_components);
 
         let mut assembled_source = String::new();
@@ -75,7 +78,8 @@ impl ShaderCompiler {
         for component in required_components {
             // TODO: Implement recursive loading that handles #include directives
             // let component_source = self.load_and_process_component(component, &mut included_files, features, specialization)?;
-            let component_path = crate::shaders::get_component_path(component);
+            // Use function from shader_registry module
+            let component_path = shader_registry::get_component_path(component);
             assembled_source.push_str(&format!(
                 "// --- Component: {:?} from {} ---\n",
                 component, component_path
@@ -112,15 +116,16 @@ impl ShaderCompiler {
     }
 
     // TODO: Helper function placeholders for future implementation
-    /*
     fn load_and_process_component(
         &self,
+        // Type is now correctly found in shader_registry
         component: ShaderComponent,
         included_files: &mut HashSet<String>,
         features: &[&str],
         specialization: &HashMap<String, u32>,
     ) -> Result<String, CompilationError> {
-        let path_str = crate::shaders::get_component_path(component);
+        // Use function from shader_registry module
+        let path_str = shader_registry::get_component_path(component);
         if !included_files.insert(path_str.to_string()) {
             // Already included, skip (or handle differently if needed)
             return Ok(String::new());
@@ -137,8 +142,8 @@ impl ShaderCompiler {
                 // ... recursively call load_and_process_component ...
                 // ... append result ...
             } else if line.trim_start().starts_with("//#feature=") {
-                 // Handle feature flag
-                 // ... check if feature is in `features` list ...
+                // Handle feature flag
+                // ... check if feature is in `features` list ...
             } else {
                 processed_content.push_str(line);
                 processed_content.push('\n');
@@ -159,11 +164,11 @@ impl ShaderCompiler {
             let replacement = format!("const {}: u32 = {}; // Specialized", key, value);
             // Replace lines like "const FOO_VALUE: u32 = ...;" or similar patterns
             // This needs careful implementation to avoid incorrect replacements.
-            specialized_source = specialized_source.replace(&placeholder, &replacement); // Placeholder logic
+            specialized_source = specialized_source.replace(&placeholder, &replacement);
+            // Placeholder logic
         }
         Ok(specialized_source)
     }
-    */
 }
 
 // Map CompilationError to GpuError if needed, or handle separately

@@ -31,7 +31,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Create build script:
     - [x] `wfc-gpu/build.rs` - Pre-build shader generation
   - [ ] Modify `shaders.rs`:
-    - [ ] Expand from 12 lines to a full shader management system
+    - [x] Expand from 12 lines to a full shader management system
     - [ ] Implement the shader variant loading interface
   - [ ] **Update files to use new shader system**:
     - [ ] Update `lib.rs`: Add new module imports
