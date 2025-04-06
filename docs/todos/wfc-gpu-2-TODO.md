@@ -42,10 +42,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Eventually remove redundant files:
     - [x] `entropy_fallback.wgsl`, `entropy_modular.wgsl` (after component extraction)
     - [ ] `propagate_fallback.wgsl`, `propagate_modular.wgsl` (after component extraction)
-  - [ ] Create new component registry:
+  - [x] Create new component registry:
     - [x] `wfc-gpu/src/shaders/components/registry.json` - Component metadata & dependencies
   - [ ] **Update shader loading paths**:
-    - [ ] Update `pipeline.rs`: Remove direct inclusion of shader files
+    - [x] Update `pipeline.rs`: Remove direct inclusion of shader files
     - [ ] Update build scripts to use component registry
 
 ## 2. Clear Responsibility Boundaries
