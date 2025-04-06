@@ -7,6 +7,8 @@ use wgpu;
 use once_cell::sync::Lazy;
 use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
+// Import ShaderManager and related types
+use crate::shaders::{ShaderManager, ShaderType};
 
 // --- Cache Definitions ---
 
@@ -19,7 +21,7 @@ struct ShaderCacheKey {
 // Key for pipeline cache: includes shader details and configuration
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct PipelineCacheKey {
-    shader_key: ShaderCacheKey,
+    source_hash: u64,
     entry_point: String,
 }
 
@@ -41,6 +43,8 @@ fn hash_string(s: &str) -> u64 {
 
 // Placeholder function for loading shader components
 // In the future, this will interact with ShaderRegistry and ShaderCompiler
+// Remove this function as ShaderManager handles loading
+/*
 fn load_shader_source(shader_name: &str, features: &[&str]) -> Result<String, GpuError> {
     // Placeholder implementation: Read monolithic files for now until compiler exists
     // WARNING: This section needs to be replaced with the actual shader component loading and assembly logic.
@@ -69,46 +73,51 @@ fn load_shader_source(shader_name: &str, features: &[&str]) -> Result<String, Gp
         _ => Err(GpuError::ShaderError("Unknown shader name".to_string())),
     }
 }
+*/
 
 // Placeholder for future shader assembly/compilation
 // This would take component sources and assemble them based on features.
 fn compile_shader(
     device: &wgpu::Device,
-    shader_name: &str,
+    shader_type: ShaderType, // Use ShaderType enum
     features: &[&str],
-    _num_tiles_u32: u32, // May be needed for specialization in future compiler
-) -> Result<Arc<wgpu::ShaderModule>, GpuError> {
-    // 1. Load/Assemble source using a future ShaderCompiler based on name and features
-    let source_code = load_shader_source(shader_name, features)?;
+    shader_manager: &ShaderManager, // Pass ShaderManager instance
+    _num_tiles_u32: u32,            // May be needed for specialization in future compiler
+) -> Result<(Arc<wgpu::ShaderModule>, u64), GpuError> {
+    // 1. Load/Assemble source using ShaderManager
+    let source_code = shader_manager
+        .load_shader_variant(shader_type, features)
+        .map_err(|e| GpuError::ShaderError(e.to_string()))?;
 
     // TODO: Apply specialization constants (like NUM_TILES_U32_VALUE) using the compiler
     // let processed_source = future_shader_compiler.specialize(&source_code, num_tiles_u32);
 
     // 2. Check cache
+    let source_hash = hash_string(&source_code);
     let shader_key = ShaderCacheKey {
-        source_hash: hash_string(&source_code),
+        source_hash, // Use calculated hash
     };
     let mut cache = SHADER_MODULE_CACHE
         .lock()
         .map_err(|e| GpuError::MutexError(e.to_string()))?;
 
     if let Some(module) = cache.get(&shader_key) {
-        log::debug!("Shader cache hit for {}", shader_name);
-        return Ok(module.clone());
+        log::debug!("Shader cache hit for {:?}", shader_type);
+        return Ok((module.clone(), source_hash)); // Return cached module and hash
     }
 
     // 3. Create module if not in cache
     log::debug!(
-        "Shader cache miss for {}. Creating new module.",
-        shader_name
+        "Shader cache miss for {:?}. Creating new module.",
+        shader_type
     );
     let shader_module = Arc::new(device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(shader_name),
+        label: Some(&format!("{:?}_Shader", shader_type)),
         source: wgpu::ShaderSource::Wgsl(source_code.into()),
     }));
 
     cache.insert(shader_key, shader_module.clone());
-    Ok(shader_module)
+    Ok((shader_module, source_hash)) // Return new module and hash
 }
 
 /// Manages the WGPU compute pipelines required for WFC acceleration.
@@ -161,6 +170,10 @@ impl ComputePipelines {
     /// * `Ok(Self)` containing the initialized `ComputePipelines`.
     /// * `Err(GpuError)` if shader loading, compilation, or pipeline creation fails.
     pub fn new(device: &wgpu::Device, num_tiles_u32: u32) -> Result<Self, GpuError> {
+        // Create ShaderManager instance
+        let shader_manager =
+            ShaderManager::new().map_err(|e| GpuError::ShaderError(e.to_string()))?;
+
         // Query device limits
         let limits = device.limits();
         let max_invocations = limits.max_compute_invocations_per_workgroup;
@@ -192,9 +205,21 @@ impl ComputePipelines {
             vec![]
         };
 
-        // --- Compile Shaders using the (placeholder) compile_shader function ---
-        let entropy_shader = compile_shader(device, "entropy", &features, num_tiles_u32)?;
-        let propagation_shader = compile_shader(device, "propagate", &features, num_tiles_u32)?;
+        // --- Compile Shaders using the compile_shader function ---
+        let (entropy_shader, entropy_source_hash) = compile_shader(
+            device,
+            ShaderType::Entropy,
+            &features,
+            &shader_manager,
+            num_tiles_u32,
+        )?;
+        let (propagation_shader, propagation_source_hash) = compile_shader(
+            device,
+            ShaderType::Propagation,
+            &features,
+            &shader_manager,
+            num_tiles_u32,
+        )?;
 
         // --- Define Bind Group Layouts (Largely remains the same, but check bindings) ---
 
@@ -387,66 +412,64 @@ impl ComputePipelines {
                 push_constant_ranges: &[],
             });
 
-        // --- Create Compute Pipelines using cached/compiled modules ---
-        // NOTE: Specialization constants are currently embedded in the placeholder WGSL loading.
-        //       A real shader compiler would handle applying these.
-        let entropy_entry_point = "main_entropy"; // Assuming this is the entry point in assembled shader
+        // --- Create Compute Pipelines with Caching ---
+
+        // Entropy Pipeline
         let entropy_pipeline = {
             let pipeline_key = PipelineCacheKey {
-                shader_key: ShaderCacheKey {
-                    source_hash: hash_string(&load_shader_source("entropy", &features)?),
-                }, // Re-hash potentially specialized source
-                entry_point: entropy_entry_point.to_string(),
+                source_hash: entropy_source_hash,
+                entry_point: "main_entropy".to_string(),
             };
             let mut cache = COMPUTE_PIPELINE_CACHE
                 .lock()
                 .map_err(|e| GpuError::MutexError(e.to_string()))?;
-            cache
-                .entry(pipeline_key)
-                .or_insert_with(|| {
-                    log::debug!("Creating new compute pipeline for entropy");
-                    Arc::new(
-                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                            label: Some("Entropy Compute Pipeline"),
-                            layout: Some(&entropy_pipeline_layout),
-                            module: &entropy_shader,
-                            entry_point: entropy_entry_point,
-                            // TODO: Pass specialization constants here via `constants` field
-                            //       if the shader compiler doesn't handle embedding them.
-                            compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        }),
-                    )
-                })
-                .clone()
+
+            if let Some(pipeline) = cache.get(&pipeline_key) {
+                log::debug!("Compute pipeline cache hit for Entropy");
+                pipeline.clone()
+            } else {
+                log::debug!("Compute pipeline cache miss for Entropy. Creating pipeline.");
+                let pipeline = Arc::new(device.create_compute_pipeline(
+                    &wgpu::ComputePipelineDescriptor {
+                        label: Some("Entropy Pipeline"),
+                        layout: Some(&entropy_pipeline_layout),
+                        module: &entropy_shader,
+                        entry_point: "main_entropy",
+                        compilation_options: Default::default(),
+                    },
+                ));
+                cache.insert(pipeline_key, pipeline.clone());
+                pipeline
+            }
         };
 
-        let propagation_entry_point = "main_propagate"; // Assuming this is the entry point
+        // Propagation Pipeline
         let propagation_pipeline = {
             let pipeline_key = PipelineCacheKey {
-                shader_key: ShaderCacheKey {
-                    source_hash: hash_string(&load_shader_source("propagate", &features)?),
-                }, // Re-hash potentially specialized source
-                entry_point: propagation_entry_point.to_string(),
+                source_hash: propagation_source_hash,
+                entry_point: "main_propagate".to_string(),
             };
             let mut cache = COMPUTE_PIPELINE_CACHE
                 .lock()
                 .map_err(|e| GpuError::MutexError(e.to_string()))?;
-            cache
-                .entry(pipeline_key)
-                .or_insert_with(|| {
-                    log::debug!("Creating new compute pipeline for propagation");
-                    Arc::new(
-                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                            label: Some("Propagation Compute Pipeline"),
-                            layout: Some(&propagation_pipeline_layout),
-                            module: &propagation_shader,
-                            entry_point: propagation_entry_point,
-                            // TODO: Pass specialization constants here
-                            compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        }),
-                    )
-                })
-                .clone()
+
+            if let Some(pipeline) = cache.get(&pipeline_key) {
+                log::debug!("Compute pipeline cache hit for Propagation");
+                pipeline.clone()
+            } else {
+                log::debug!("Compute pipeline cache miss for Propagation. Creating pipeline.");
+                let pipeline = Arc::new(device.create_compute_pipeline(
+                    &wgpu::ComputePipelineDescriptor {
+                        label: Some("Propagation Pipeline"),
+                        layout: Some(&propagation_pipeline_layout),
+                        module: &propagation_shader,
+                        entry_point: "main_propagate",
+                        compilation_options: Default::default(),
+                    },
+                ));
+                cache.insert(pipeline_key, pipeline.clone());
+                pipeline
+            }
         };
 
         Ok(Self {
@@ -454,8 +477,8 @@ impl ComputePipelines {
             propagation_pipeline,
             entropy_bind_group_layout,
             propagation_bind_group_layout,
-            entropy_workgroup_size: chosen_workgroup_size_x, // Use assumed size
-            propagation_workgroup_size: chosen_workgroup_size_x, // Use assumed size
+            entropy_workgroup_size: chosen_workgroup_size_x,
+            propagation_workgroup_size: chosen_workgroup_size_x,
         })
     }
 
