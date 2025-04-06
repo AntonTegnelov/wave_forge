@@ -179,6 +179,16 @@ pub struct GpuDownloadResults {
     pub grid_possibilities: Option<Vec<u32>>,
 }
 
+/// Specifies which data to download from the GPU.
+pub struct DownloadRequest {
+    pub download_entropy: bool,
+    pub download_min_entropy_info: bool,
+    pub download_grid_possibilities: bool,
+    // pub download_worklist: bool, // Not used currently
+    pub download_worklist_size: bool,
+    pub download_contradiction_location: bool,
+}
+
 impl GpuBuffers {
     /// Creates and initializes all necessary GPU buffers for the WFC algorithm.
     ///
@@ -945,12 +955,7 @@ impl GpuBuffers {
         &self,
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
-        download_entropy: bool,
-        download_min_entropy_info: bool,
-        download_grid_possibilities: bool,
-        _download_worklist: bool, // Not used currently, but kept for API compatibility
-        download_worklist_size: bool,
-        download_contradiction_location: bool,
+        request: DownloadRequest,
     ) -> Result<GpuDownloadResults, GpuError> {
         // Create a recoverable operation wrapper
         let recoverable_op = RecoverableGpuOp::default();
@@ -974,7 +979,7 @@ impl GpuBuffers {
                 };
 
                 // Queue copy commands for the requested buffers
-                if download_entropy {
+                if request.download_entropy {
                     encoder.copy_buffer_to_buffer(
                         &self.entropy_buf,
                         0,
@@ -983,7 +988,7 @@ impl GpuBuffers {
                         self.entropy_buf.size(),
                     );
                 }
-                if download_min_entropy_info {
+                if request.download_min_entropy_info {
                     encoder.copy_buffer_to_buffer(
                         &self.min_entropy_info_buf,
                         0,
@@ -992,7 +997,7 @@ impl GpuBuffers {
                         self.min_entropy_info_buf.size(),
                     );
                 }
-                if download_grid_possibilities {
+                if request.download_grid_possibilities {
                     encoder.copy_buffer_to_buffer(
                         &self.grid_possibilities_buf,
                         0,
@@ -1001,7 +1006,7 @@ impl GpuBuffers {
                         self.grid_possibilities_buf.size(),
                     );
                 }
-                if download_worklist_size {
+                if request.download_worklist_size {
                     encoder.copy_buffer_to_buffer(
                         &self.worklist_count_buf,
                         0,
@@ -1010,7 +1015,7 @@ impl GpuBuffers {
                         self.worklist_count_buf.size(),
                     );
                 }
-                if download_contradiction_location {
+                if request.download_contradiction_location {
                     encoder.copy_buffer_to_buffer(
                         &self.contradiction_location_buf,
                         0,
@@ -1048,7 +1053,7 @@ impl GpuBuffers {
                 let mut futures = Vec::new();
                 
                 // Grid possibilities download (most important for progressive results)
-                if download_grid_possibilities {
+                if request.download_grid_possibilities {
                     let buffer = self.staging_grid_possibilities_buf.clone();
                     let expected_size = self.u32s_per_cell * self.num_cells;
                     
@@ -1100,7 +1105,7 @@ impl GpuBuffers {
                 }
                 
                 // Worklist count download
-                if download_worklist_size {
+                if request.download_worklist_size {
                     let buffer = self.staging_worklist_count_buf.clone();
                     
                     futures.push(async move {
@@ -1131,6 +1136,150 @@ impl GpuBuffers {
                     }.boxed());
                 }
                 
+                // Entropy download
+                if request.download_entropy {
+                    let buffer = self.staging_entropy_buf.clone();
+                    let expected_size = self.num_cells;
+                    
+                    futures.push(async move {
+                        let buffer_slice = buffer.slice(..);
+                        let (tx, rx) = oneshot::channel();
+                        
+                        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                            let _ = tx.send(result);
+                        });
+                        
+                        match tokio::time::timeout(operation_timeout, rx).await {
+                            Ok(result) => {
+                                result.map_err(|_| {
+                                    GpuError::BufferOperationError("Mapping channel canceled".to_string())
+                                })??;
+                                
+                                let mapped_range = buffer_slice.get_mapped_range();
+                                let bytes = mapped_range.as_ref();
+                                
+                                // Convert bytes to f32 slice and then to Vec<f32>
+                                let f32_slice = unsafe {
+                                    std::slice::from_raw_parts(
+                                        bytes.as_ptr() as *const f32,
+                                        bytes.len() / std::mem::size_of::<f32>(),
+                                    )
+                                };
+                                
+                                // Validate the size
+                                if f32_slice.len() >= expected_size {
+                                    let entropy_values = f32_slice[..expected_size].to_vec();
+                                    Ok(("entropy", Box::new(entropy_values) as Box<dyn std::any::Any + Send>))
+                                } else {
+                                    Err(GpuError::BufferOperationError(format!(
+                                        "Entropy buffer size mismatch: expected {} items, got {}",
+                                        expected_size,
+                                        f32_slice.len()
+                                    )))
+                                }
+                            },
+                            Err(_) => {
+                                Err(GpuError::BufferOperationError(format!(
+                                    "Entropy buffer mapping timed out after {:?}",
+                                    operation_timeout
+                                )))
+                            }
+                        }
+                    }.boxed());
+                }
+                
+                // Min entropy info download
+                if request.download_min_entropy_info {
+                    let buffer = self.staging_min_entropy_info_buf.clone();
+                    
+                    futures.push(async move {
+                        let buffer_slice = buffer.slice(..);
+                        let (tx, rx) = oneshot::channel();
+                        
+                        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                            let _ = tx.send(result);
+                        });
+                        
+                        match tokio::time::timeout(operation_timeout, rx).await {
+                            Ok(result) => {
+                                result.map_err(|_| {
+                                    GpuError::BufferOperationError("Mapping channel canceled".to_string())
+                                })??;
+                                
+                                let mapped_range = buffer_slice.get_mapped_range();
+                                let bytes = mapped_range.as_ref();
+                                
+                                // Convert bytes to u32 slice and then to Vec<u32>
+                                let u32_slice = unsafe {
+                                    std::slice::from_raw_parts(
+                                        bytes.as_ptr() as *const u32,
+                                        bytes.len() / std::mem::size_of::<u32>(),
+                                    )
+                                };
+                                
+                                // Validate the size
+                                if u32_slice.len() >= 2 {
+                                    let min_entropy = f32::from_bits(u32_slice[0]);
+                                    let min_idx = u32_slice[1] as usize;
+                                    Ok(("min_entropy_info", Box::new((min_entropy, min_idx)) as Box<dyn std::any::Any + Send>))
+                                } else {
+                                    Err(GpuError::BufferOperationError(format!(
+                                        "Min entropy buffer size mismatch: expected 2 items, got {}",
+                                        u32_slice.len()
+                                    )))
+                                }
+                            },
+                            Err(_) => {
+                                Err(GpuError::BufferOperationError(format!(
+                                    "Min entropy info buffer mapping timed out after {:?}",
+                                    operation_timeout
+                                )))
+                            }
+                        }
+                    }.boxed());
+                }
+                
+                // Contradiction flag download
+                if request.download_contradiction_location {
+                    let buffer = self.staging_contradiction_flag_buf.clone();
+                    
+                    futures.push(async move {
+                        let buffer_slice = buffer.slice(..);
+                        let (tx, rx) = oneshot::channel();
+                        
+                        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                            let _ = tx.send(result);
+                        });
+                        
+                        match tokio::time::timeout(operation_timeout, rx).await {
+                            Ok(result) => {
+                                result.map_err(|_| {
+                                    GpuError::BufferOperationError("Mapping channel canceled".to_string())
+                                })??;
+                                
+                                let mapped_range = buffer_slice.get_mapped_range();
+                                let bytes = mapped_range.to_vec();
+                                drop(mapped_range);
+                                buffer.unmap();
+                                
+                                let flag_value = if bytes.len() >= 4 {
+                                    u32::from_le_bytes(bytes[0..4].try_into().unwrap()) != 0
+                                } else {
+                                    false
+                                };
+
+                                Ok(("contradiction_flag", Box::new(flag_value) as Box<dyn std::any::Any + Send>))
+                            },
+                            Err(_) => {
+                                Err(GpuError::BufferOperationError(format!(
+                                    "Contradiction flag buffer mapping timed out after {:?}",
+                                    operation_timeout
+                                )))
+                            }
+                        }
+                    }.boxed());
+                }
+                
                 // Process the futures
                 let download_results = join_all(futures).await;
                 
@@ -1149,6 +1298,26 @@ impl GpuBuffers {
                                         result.worklist_count = Some(*count);
                                     }
                                 }
+                                "entropy" => {
+                                    if let Some(entropy_values) = data.downcast_ref::<Vec<f32>>() {
+                                        result.entropy = Some(entropy_values.clone());
+                                    }
+                                }
+                                "min_entropy_info" => {
+                                    if let Some((min_entropy, min_idx)) = data.downcast_ref::<(f32, usize)>() {
+                                        result.min_entropy_info = Some((*min_entropy, *min_idx as u32));
+                                    }
+                                }
+                                "contradiction_flag" => {
+                                    if let Some(flag_value) = data.downcast_ref::<bool>() {
+                                        result.contradiction_flag = Some(*flag_value);
+                                    }
+                                }
+                                "contradiction_location" => {
+                                    if let Some(location) = data.downcast_ref::<u32>() {
+                                        result.contradiction_location = Some(*location);
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -1160,19 +1329,19 @@ impl GpuBuffers {
                 }
                 
                 // Clean up for entropy buffer
-                if download_entropy {
+                if request.download_entropy {
                     let buffer = self.staging_entropy_buf.clone();
                     buffer.unmap();
                 }
                 
                 // Clean up for min entropy info buffer
-                if download_min_entropy_info {
+                if request.download_min_entropy_info {
                     let buffer = self.staging_min_entropy_info_buf.clone();
                     buffer.unmap();
                 }
                 
                 // Clean up for contradiction location buffer
-                if download_contradiction_location {
+                if request.download_contradiction_location {
                     let buffer = self.staging_contradiction_location_buf.clone();
                     buffer.unmap();
                 }
@@ -1770,12 +1939,13 @@ mod tests {
             let download_future = buffers.download_results(
                 device.clone(),
                 queue.clone(),
-                false,
-                false,
-                false,
-                true, // Download grid
-                false,
-                false,
+                DownloadRequest {
+                    download_entropy: false,
+                    download_min_entropy_info: false,
+                    download_grid_possibilities: false,
+                    download_worklist_size: true,
+                    download_contradiction_location: false,
+                },
             );
 
             // Pin the future and use select! with polling

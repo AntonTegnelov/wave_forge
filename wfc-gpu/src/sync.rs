@@ -2,7 +2,7 @@
 // This separates GPU synchronization concerns from algorithm logic
 
 use crate::{
-    buffers::{EntropyParamsUniform, GpuBuffers, GpuParamsUniform},
+    buffers::{DownloadRequest, EntropyParamsUniform, GpuBuffers, GpuParamsUniform},
     GpuError,
 };
 use log::{debug, trace};
@@ -129,18 +129,16 @@ impl GpuSynchronizer {
         let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
 
         // Download the data from the GPU buffer using download_results
+        let request = DownloadRequest {
+            download_entropy: false,
+            download_min_entropy_info: false,
+            download_grid_possibilities: true,
+            download_worklist_size: false,
+            download_contradiction_location: false,
+        };
         let results = self
             .buffers
-            .download_results(
-                self.device.clone(),
-                self.queue.clone(),
-                false, // Don't download entropy
-                false, // Don't download min entropy info
-                true,  // Download grid possibilities
-                false, // Don't download worklist
-                false, // Don't download worklist size
-                false, // Don't download contradiction location
-            )
+            .download_results(self.device.clone(), self.queue.clone(), request)
             .await
             .map_err(|e| GpuError::TransferError(format!("Failed to download grid data: {}", e)))?;
 
@@ -280,18 +278,16 @@ impl GpuSynchronizer {
     /// `Ok(min_info)` with the minimum entropy data if successful, or an error detailing what went wrong.
     pub async fn download_min_entropy_info(&self) -> Result<Option<(f32, u32)>, GpuError> {
         // Download the min entropy information using download_results
+        let request = DownloadRequest {
+            download_entropy: false,
+            download_min_entropy_info: true,
+            download_grid_possibilities: false,
+            download_worklist_size: false,
+            download_contradiction_location: false,
+        };
         let results = self
             .buffers
-            .download_results(
-                self.device.clone(),
-                self.queue.clone(),
-                false, // Don't download entropy
-                true,  // Download min entropy info
-                false, // Don't download grid possibilities
-                false, // Don't download worklist
-                false, // Don't download worklist size
-                false, // Don't download contradiction location
-            )
+            .download_results(self.device.clone(), self.queue.clone(), request)
             .await
             .map_err(|e| {
                 GpuError::TransferError(format!("Failed to download min entropy info: {}", e))

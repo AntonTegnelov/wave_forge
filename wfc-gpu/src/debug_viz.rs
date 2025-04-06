@@ -5,7 +5,7 @@
 //! - Entropy heatmaps: Visual representation of cell entropy distribution
 //! - Contradictions: Where and why contradictions occur during execution
 
-use crate::buffers::{GpuBuffers, GpuDownloadResults};
+use crate::buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults};
 use crate::GpuError;
 use pollster;
 use std::sync::Arc;
@@ -75,6 +75,12 @@ pub struct DebugVisualizer {
     enabled: bool,
 }
 
+impl Default for DebugVisualizer {
+    fn default() -> Self {
+        Self::new(DebugVisualizationConfig::default())
+    }
+}
+
 impl DebugVisualizer {
     /// Create a new debug visualizer with the given configuration
     pub fn new(config: DebugVisualizationConfig) -> Self {
@@ -87,8 +93,9 @@ impl DebugVisualizer {
     }
 
     /// Create a new debug visualizer with default configuration
-    pub fn default() -> Self {
-        Self::new(DebugVisualizationConfig::default())
+    #[deprecated(since = "0.1.0", note = "Use Default::default() instead")]
+    pub fn new_default() -> Self {
+        Self::default()
     }
 
     /// Take a snapshot of the current GPU state
@@ -108,17 +115,16 @@ impl DebugVisualizer {
         let _needs_worklist = self.config.viz_type == VisualizationType::PropagationSteps;
         let needs_contradiction = self.config.viz_type == VisualizationType::Contradictions;
 
+        let request = DownloadRequest {
+            download_entropy: needs_entropy,
+            download_min_entropy_info: false, // Not needed for viz
+            download_grid_possibilities: needs_grid,
+            download_worklist_size: false,
+            download_contradiction_location: needs_contradiction,
+        };
+
         let result = buffers
-            .download_results(
-                Arc::clone(&device),
-                Arc::clone(&queue),
-                needs_entropy,
-                false, // min_entropy_info not needed for viz
-                needs_grid,
-                false, // worklist data
-                false, // worklist size
-                needs_contradiction,
-            )
+            .download_results(Arc::clone(&device), Arc::clone(&queue), request)
             .await?;
 
         // Create and store the snapshot

@@ -144,6 +144,20 @@ pub struct ComputePipelines {
     pub propagation_workgroup_size: u32,
 }
 
+/// Groups the buffer resources needed for creating propagation bind groups.
+pub struct PropagationBindingResources<'a> {
+    pub grid_possibilities_buf: &'a wgpu::Buffer,
+    pub adjacency_rules_buf: &'a wgpu::Buffer,
+    pub rule_weights_buf: &'a wgpu::Buffer,
+    pub worklist_bufs: &'a [wgpu::Buffer; 2],
+    pub output_worklist_bufs: &'a [wgpu::Buffer; 2],
+    pub params_uniform_buf: &'a wgpu::Buffer,
+    pub worklist_count_bufs: &'a [wgpu::Buffer; 2],
+    pub contradiction_flag_buf: &'a wgpu::Buffer,
+    pub contradiction_location_buf: &'a wgpu::Buffer,
+    pub pass_statistics_buf: &'a wgpu::Buffer,
+}
+
 impl ComputePipelines {
     /// Creates new `ComputePipelines` by loading shaders and compiling them.
     ///
@@ -188,7 +202,7 @@ impl ComputePipelines {
         );
 
         // Determine workgroup size - NOTE: This is now informational only
-        let chosen_workgroup_size_x = max_invocations.min(64).max(64);
+        let chosen_workgroup_size_x = max_invocations.clamp(1, 64); // Clamp between 1 and 64
         log::info!("Assumed workgroup size X: {}", chosen_workgroup_size_x);
 
         // Feature detection is now done in accelerator.rs
@@ -491,16 +505,7 @@ impl ComputePipelines {
     pub fn create_propagation_bind_groups(
         &self,
         device: &wgpu::Device,
-        grid_possibilities_buf: &wgpu::Buffer,
-        adjacency_rules_buf: &wgpu::Buffer,
-        rule_weights_buf: &wgpu::Buffer,
-        worklist_bufs: &[wgpu::Buffer; 2],
-        output_worklist_bufs: &[wgpu::Buffer; 2],
-        params_uniform_buf: &wgpu::Buffer,
-        worklist_count_bufs: &[wgpu::Buffer; 2],
-        contradiction_flag_buf: &wgpu::Buffer,
-        contradiction_location_buf: &wgpu::Buffer,
-        pass_statistics_buf: &wgpu::Buffer,
+        resources: &PropagationBindingResources,
     ) -> [wgpu::BindGroup; 2] {
         let layout = self.get_propagation_bind_group_layout().unwrap(); // Assume layout exists
 
@@ -510,43 +515,43 @@ impl ComputePipelines {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: params_uniform_buf.as_entire_binding(),
+                    resource: resources.params_uniform_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: grid_possibilities_buf.as_entire_binding(),
+                    resource: resources.grid_possibilities_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: adjacency_rules_buf.as_entire_binding(),
+                    resource: resources.adjacency_rules_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: rule_weights_buf.as_entire_binding(),
+                    resource: resources.rule_weights_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: worklist_bufs[0].as_entire_binding(),
+                    resource: resources.worklist_bufs[0].as_entire_binding(),
                 }, // Input worklist
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: output_worklist_bufs[0].as_entire_binding(),
+                    resource: resources.output_worklist_bufs[0].as_entire_binding(),
                 }, // Output worklist
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: worklist_count_bufs[0].as_entire_binding(),
+                    resource: resources.worklist_count_bufs[0].as_entire_binding(),
                 }, // Output count
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: contradiction_flag_buf.as_entire_binding(),
+                    resource: resources.contradiction_flag_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
-                    resource: contradiction_location_buf.as_entire_binding(),
+                    resource: resources.contradiction_location_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
-                    resource: pass_statistics_buf.as_entire_binding(),
+                    resource: resources.pass_statistics_buf.as_entire_binding(),
                 },
             ],
         });
@@ -557,43 +562,43 @@ impl ComputePipelines {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: params_uniform_buf.as_entire_binding(),
+                    resource: resources.params_uniform_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: grid_possibilities_buf.as_entire_binding(),
+                    resource: resources.grid_possibilities_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: adjacency_rules_buf.as_entire_binding(),
+                    resource: resources.adjacency_rules_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: rule_weights_buf.as_entire_binding(),
+                    resource: resources.rule_weights_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: worklist_bufs[1].as_entire_binding(),
+                    resource: resources.worklist_bufs[1].as_entire_binding(),
                 }, // Input worklist (ping-pong)
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: output_worklist_bufs[1].as_entire_binding(),
+                    resource: resources.output_worklist_bufs[1].as_entire_binding(),
                 }, // Output worklist (ping-pong)
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: worklist_count_bufs[1].as_entire_binding(),
+                    resource: resources.worklist_count_bufs[1].as_entire_binding(),
                 }, // Output count (ping-pong)
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: contradiction_flag_buf.as_entire_binding(),
+                    resource: resources.contradiction_flag_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
-                    resource: contradiction_location_buf.as_entire_binding(),
+                    resource: resources.contradiction_location_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
-                    resource: pass_statistics_buf.as_entire_binding(),
+                    resource: resources.pass_statistics_buf.as_entire_binding(),
                 }, // Statistics buffer is shared
             ],
         });
