@@ -19,6 +19,9 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [ ] `utils.wgsl` - Keep only truly generic utilities
     - [ ] `coords.wgsl` - Coordinate system operations
     - [ ] `rules.wgsl` - Adjacency rule handling
+  - [ ] **Update files to reference new components**:
+    - [ ] Update `pipeline.rs`: Add module component loading
+    - [ ] Update `shaders.rs`: Reference new component paths
 
 - [ ] **Build shader assembly system**:
 
@@ -30,6 +33,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Modify `shaders.rs`:
     - [ ] Expand from 12 lines to a full shader management system
     - [ ] Implement the shader variant loading interface
+  - [ ] **Update files to use new shader system**:
+    - [ ] Update `lib.rs`: Add new module imports
+    - [ ] Update `pipeline.rs`: Use new shader compiler
+    - [ ] Update `accelerator.rs`: Reference shader registry for feature detection
 
 - [ ] **Eliminate duplication across shader files**:
   - [ ] Eventually remove redundant files:
@@ -37,6 +44,9 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [ ] `propagate_fallback.wgsl`, `propagate_modular.wgsl` (after component extraction)
   - [ ] Create new component registry:
     - [ ] `wfc-gpu/src/shaders/components/registry.json` - Component metadata & dependencies
+  - [ ] **Update shader loading paths**:
+    - [ ] Update `pipeline.rs`: Remove direct inclusion of shader files
+    - [ ] Update build scripts to use component registry
 
 ## 2. Clear Responsibility Boundaries
 
@@ -50,6 +60,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [ ] Refocus on buffer creation and management
   - [ ] Create new documentation file:
     - [ ] `wfc-gpu/docs/buffer_lifecycle.md` - Explain buffer ownership & synchronization
+  - [ ] **Update files to use new buffer management methods**:
+    - [ ] Update `accelerator.rs`: Use `GpuSynchronizer` for all data transfers
+    - [ ] Update `propagator.rs`: Use `GpuSynchronizer` for propagation data
+    - [ ] Update `entropy.rs`: Use `GpuSynchronizer` for entropy grid transfers
 
 - [ ] **Entropy calculation**:
 
@@ -58,6 +72,9 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Modify `accelerator.rs`:
     - [ ] Remove direct entropy calculation implementation
     - [ ] Change `EntropyCalculator` trait impl to delegate to `GpuEntropyCalculator`
+  - [ ] **Update files relying on entropy calculation**:
+    - [ ] Update `tests.rs`: Use centralized entropy calculation
+    - [ ] Update any code in `propagator.rs` that touches entropy calculation
 
 - [ ] **Pipeline management**:
   - [ ] Modify `pipeline.rs`:
@@ -66,6 +83,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Expand `shaders.rs`:
     - [ ] Add shader loading & preprocessing logic from `pipeline.rs`
     - [ ] Implement shader variant management
+  - [ ] **Update files using the pipeline management**:
+    - [ ] Update `accelerator.rs`: Use new shader loading interfaces
+    - [ ] Update `tests.rs`: Use new shader loading methods
+    - [ ] Update `debug_viz.rs`: If it uses shaders
 
 ## 3. Simplify Complex Structures
 
@@ -80,6 +101,12 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Modify existing `buffers.rs`:
     - [ ] Move code to appropriate new files
     - [ ] Convert to a facade for backward compatibility
+  - [ ] **Update files using GpuBuffers**:
+    - [ ] Update `accelerator.rs`: Import from new buffer modules
+    - [ ] Update `propagator.rs`: Use specific buffer modules
+    - [ ] Update `entropy.rs`: Use entropy-specific buffers
+    - [ ] Update `sync.rs`: Reference new buffer module structure
+    - [ ] Update all tests and validation code
 
 - [ ] **Revise `GpuAccelerator`**:
   - [ ] Modify `accelerator.rs`:
@@ -89,6 +116,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Create new coordination files:
     - [ ] `wfc-gpu/src/coordination/mod.rs` - Operational coordination interfaces
     - [ ] `wfc-gpu/src/coordination/propagation.rs` - Propagation strategy coordination
+  - [ ] **Update files using GpuAccelerator**:
+    - [ ] Update `lib.rs`: Export new coordinator traits
+    - [ ] Update `tests.rs`: Use new coordinator interfaces
+    - [ ] Update integration test files to use new abstractions
 
 ## 4. Advanced Shader Management
 
@@ -101,6 +132,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Create new JSON schema files:
     - [ ] `wfc-gpu/src/shaders/schemas/component.json` - Shader component metadata schema
     - [ ] `wfc-gpu/src/shaders/schemas/feature.json` - Feature capability flags schema
+  - [ ] **Update files using shader management**:
+    - [ ] Update `pipeline.rs`: Use component registry
+    - [ ] Update `build.rs`: Use schema validation
+    - [ ] Update any test files using shaders
 
 - [ ] **Feature-based shader optimization**:
 
@@ -111,6 +146,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Modify `backend.rs`:
     - [ ] Add capability reporting methods
     - [ ] Standardize feature detection across backends
+  - [ ] **Update files using feature detection**:
+    - [ ] Update `accelerator.rs`: Use feature detection for initialization
+    - [ ] Update `pipeline.rs`: Select shader variants based on features
+    - [ ] Update `shader_compiler.rs`: Include feature-specific code
 
 - [ ] **Build-time shader generation**:
   - [ ] Create new build time tools:
@@ -119,6 +158,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Implement caching in `build.rs`:
     - [ ] Shader hash-based caching
     - [ ] Incremental rebuilds of changed components only
+  - [ ] **Update project configuration**:
+    - [ ] Update `Cargo.toml`: Add build script and build dependencies
+    - [ ] Update `.gitignore`: Exclude generated shader variant files
+    - [ ] Update CI workflow files to handle shader generation
 
 ## 5. Unify Testing Strategy
 
@@ -130,12 +173,19 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Move module-specific tests:
     - [ ] From `tests.rs` to appropriate module test submodules
     - [ ] From `shader_validation_tests.rs` to `shaders.rs`
+  - [ ] **Update test importing files**:
+    - [ ] Update `lib.rs`: Change test module references
+    - [ ] Update each module file to include its own tests
 
 - [ ] **Improve shader testing**:
   - [ ] Create new test files:
     - [ ] `wfc-gpu/tests/shaders/component_tests.rs` - Test individual shader components
     - [ ] `wfc-gpu/tests/shaders/variant_tests.rs` - Test assembled shader variants
     - [ ] `wfc-gpu/tests/shaders/sandbox.rs` - Isolated shader testing environment
+  - [ ] **Update existing shader tests**:
+    - [ ] Update `shader_validation_tests.rs` (before moving to `shaders.rs`)
+    - [ ] Update any shader tests in `pipeline.rs`
+    - [ ] Update `Cargo.toml` to include new test directories
 
 ## 6. Consistent Error Handling
 
@@ -148,6 +198,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Modify existing error definitions:
     - [ ] `lib.rs` - Update `GpuError` to use new system
     - [ ] `backend.rs` - Update `BackendError` to use new system
+  - [ ] **Update files using error types**:
+    - [ ] Update all modules using `GpuError` or `BackendError`
+    - [ ] Update `accelerator.rs`, `propagator.rs`, `sync.rs`, `entropy.rs`
+    - [ ] Update all buffer modules to use new error system
 
 - [ ] **Error recovery improvements**:
   - [ ] Enhance `error_recovery.rs`:
@@ -158,6 +212,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [ ] `propagator.rs`
     - [ ] `sync.rs`
     - [ ] All new buffer modules
+  - [ ] **Update error-generating methods**:
+    - [ ] Update buffer methods to use recovery strategies
+    - [ ] Update shader loading to use recovery
+    - [ ] Update propagation to handle recoverable errors
 
 ## 7. Reduce Redundancy in Core Algorithm
 
@@ -169,6 +227,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Update implementation files:
     - [ ] `propagator.rs` - Use strategy pattern
     - [ ] `entropy.rs` - Use strategy pattern
+  - [ ] **Update files using algorithm logic**:
+    - [ ] Update `accelerator.rs`: Use strategy interfaces
+    - [ ] Update any test files that directly use algorithm logic
+    - [ ] Update `debug_viz.rs` if it interacts with algorithm
 
 - [ ] **Standardize workload division**:
   - [ ] Enhance `subgrid.rs`:
@@ -176,6 +238,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [ ] Add better coordination with main algorithm
   - [ ] Create new file:
     - [ ] `wfc-gpu/src/parallelism.rs` - Parallel execution strategies
+  - [ ] **Update files using workload division**:
+    - [ ] Update `accelerator.rs`: Use parallelism strategies
+    - [ ] Update `propagator.rs`: Implement parallelism interfaces
+    - [ ] Update benchmark files to test different workload strategies
 
 ## 8. Documentation & API Design
 
@@ -187,6 +253,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Add examples directory:
     - [ ] `wfc-gpu/examples/basic_usage.rs` - Simple usage example
     - [ ] `wfc-gpu/examples/advanced_features.rs` - Advanced features example
+  - [ ] **Update exports and visibility**:
+    - [ ] Update `lib.rs`: Adjust public exports
+    - [ ] Update module files to use correct visibility modifiers
+    - [ ] Ensure backward compatibility for existing users
 
 - [ ] **Technical documentation**:
   - [ ] Create documentation files:
@@ -195,6 +265,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Create diagrams:
     - [ ] `wfc-gpu/docs/diagrams/architecture.svg` - Overall architecture
     - [ ] `wfc-gpu/docs/diagrams/buffer_flow.svg` - Buffer lifecycle
+  - [ ] **Add internal documentation**:
+    - [ ] Add rustdoc comments to all public APIs
+    - [ ] Add architecture explanation to module headers
+    - [ ] Cross-reference between related components
 
 ## Implementation Strategy
 
@@ -203,19 +277,34 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
    - Begin with creating the shader component system:
      - Create basic component files in `wfc-gpu/src/shaders/components/`
      - Implement minimal shader registry in `shader_registry.rs`
+   - **Integration points**:
+     - Update `pipeline.rs` to use new component files
+     - Update `shaders.rs` with registry hooks
 
 2. **Progressive refinement**:
 
    - Implement buffer management changes:
      - Create new buffer module structure
      - Migrate buffer creation code first, then synchronization
+   - **Integration points**:
+     - Update `accelerator.rs` to use new buffer modules
+     - Update `sync.rs` to work with new buffer organization
+     - Adjust `propagator.rs` and `entropy.rs` to use specialized buffers
 
 3. **Measure impact**:
 
    - Create benchmarks:
      - `wfc-gpu/benches/propagation_bench.rs`
      - `wfc-gpu/benches/shader_compilation_bench.rs`
+   - **Integration points**:
+     - Add benchmark hooks in key operations
+     - Create performance tracking mechanisms
+     - Update `Cargo.toml` to include benchmark harness
 
 4. **Preserve existing improvements**:
    - Create regression test suite:
      - `wfc-gpu/tests/regression/features.rs` - Tests for all features from original TODO
+   - **Integration points**:
+     - Add test hooks to verify all existing functionality
+     - Ensure backward compatibility for public APIs
+     - Update documentation to explain both old and new approaches during transition
