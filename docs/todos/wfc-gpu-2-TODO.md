@@ -319,3 +319,5 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [x] Implement `extract_subgrid` function
   - [x] Implement `merge_subgrids` function
 - [ ] Propagator subgrid handling
+  - [x] Update `GpuConstraintPropagator::propagate` to call subgrid logic
+  - [ ] Implement `propagate_with_subgrids` helper function
