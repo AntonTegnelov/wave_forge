@@ -25,5 +25,5 @@
 - [x] **Dynamic buffer management**: Implement resizable buffers based on runtime requirements.
 - [x] **Proper resource cleanup**: Ensure all GPU resources are properly released using RAII patterns.
 - [x] **Abstract hardware specifics**: Create abstraction layers to handle different GPU backends/capabilities.
-- [ ] **Reduce Arc nesting**: Simplify ownership model where excessive Arc wrapping occurs.
+- [x] **Reduce Arc nesting**: Simplify ownership model where excessive Arc wrapping occurs.
 - [ ] **Modularize shader code**: Split large shader functions into more manageable, testable pieces.
