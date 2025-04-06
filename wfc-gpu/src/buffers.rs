@@ -660,28 +660,17 @@ impl GpuBuffers {
             self.worklist_buf_b = new_buffer_b;
         }
         
-        // Also resize the len buffers (much smaller, fixed size)
-        if !Self::is_buffer_sufficient(&self.worklist_len_buf_a, 4) || 
-           !Self::is_buffer_sufficient(&self.worklist_len_buf_b, 4) {
-            let new_len_buf_a = Self::resize_buffer(
+        // Also resize the worklist count buffer (much smaller, fixed size)
+        if !Self::is_buffer_sufficient(&self.worklist_count_buf, 4) {
+            let new_count_buf = Self::resize_buffer(
                 device,
-                &self.worklist_len_buf_a,
+                &self.worklist_count_buf,
                 4,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-                Some("Worklist Length Buffer A"),
+                Some("Worklist Count Buffer"),
                 config,
             );
-            self.worklist_len_buf_a = new_len_buf_a;
-            
-            let new_len_buf_b = Self::resize_buffer(
-                device,
-                &self.worklist_len_buf_b,
-                4,
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-                Some("Worklist Length Buffer B"),
-                config,
-            );
-            self.worklist_len_buf_b = new_len_buf_b;
+            self.worklist_count_buf = new_count_buf;
         }
         
         Ok(())
@@ -702,10 +691,8 @@ impl GpuBuffers {
         self.ensure_worklist_buffers(device, width, height, depth, config)?;
         
         // Update grid dimensions
-        self.num_cells = width * height * depth;
-        self.grid_width = width;
-        self.grid_height = height;
-        self.grid_depth = depth;
+        self.num_cells = (width * height * depth) as usize;
+        self.grid_dims = (width as usize, height as usize, depth as usize);
         
         Ok(())
     }
@@ -725,7 +712,7 @@ impl GpuBuffers {
         active_worklist_idx: u32,
     ) -> Result<(), String> {
         // Check if we need to auto-resize
-        if let Some(config) = &self.dynamic_buffer_config {
+        let should_resize = if let Some(config) = &self.dynamic_buffer_config {
             if config.auto_resize {
                 let required_size = (updates.len() * std::mem::size_of::<u32>()) as u64;
                 let active_buffer = if active_worklist_idx == 0 {
@@ -734,21 +721,30 @@ impl GpuBuffers {
                     &self.worklist_buf_b
                 };
 
-                if !Self::is_buffer_sufficient(active_buffer, required_size) {
-                    // Resize the appropriate worklist buffer
-                    self.ensure_worklist_buffers(
-                        device,
-                        self.grid_width,
-                        self.grid_height, 
-                        self.grid_depth,
-                        config,
-                    )?;
-                }
+                !Self::is_buffer_sufficient(active_buffer, required_size)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // If we need to resize, do it with a cloned config
+        if should_resize {
+            if let Some(config) = self.dynamic_buffer_config {
+                self.ensure_worklist_buffers(
+                    device,
+                    self.grid_dims.0 as u32,
+                    self.grid_dims.1 as u32,
+                    self.grid_dims.2 as u32,
+                    &config,
+                )?;
             }
         }
 
         // Proceed with upload
-        self.upload_initial_updates(queue, updates, active_worklist_idx)
+        self.upload_initial_updates(queue, updates, active_worklist_idx as usize)
+            .map_err(|e| e.to_string())
     }
 
     /// Uploads initial update list to a specific worklist buffer.
@@ -1948,7 +1944,7 @@ mod tests {
             large_width,
             large_height,
             large_depth,
-            num_tiles,
+            num_tiles as u32,
             &config,
         );
 
@@ -1962,7 +1958,7 @@ mod tests {
 
         // Calculate expected minimum sizes
         let large_num_cells = (large_width * large_height * large_depth) as usize;
-        let u32s_per_cell = ((num_tiles + 31) / 32) as usize;
+        let u32s_per_cell = ((num_tiles as u32 + 31) / 32) as usize;
         let expected_grid_size = (large_num_cells * u32s_per_cell * std::mem::size_of::<u32>()) as u64;
         let expected_entropy_size = (large_num_cells * std::mem::size_of::<f32>()) as u64;
         let expected_worklist_size = (large_num_cells * std::mem::size_of::<u32>()) as u64;
