@@ -1,143 +1,221 @@
 # WFC-GPU Refactoring Plan
 
-This document outlines a structured plan to refactor the wfc-gpu module, addressing code duplication and architectural issues while preserving the improvements from the original TODO list.
+This document outlines a specific plan to refactor the wfc-gpu module, addressing code duplication and architectural issues while preserving the improvements from the original TODO list.
 
 ## 1. Shader Modularization
 
 - [ ] **Create truly modular shader components**:
 
-  - [ ] Break down shaders into even smaller, single-purpose files
-  - [ ] Organize shader code by functionality (e.g., entropy calculation, propagation logic, utility functions)
-  - [ ] Create clear interfaces between shader components
+  - [ ] Create new directory structure in `wfc-gpu/src/shaders/`:
+    - `wfc-gpu/src/shaders/components/` - Base components
+    - `wfc-gpu/src/shaders/features/` - Feature-specific implementations
+    - `wfc-gpu/src/shaders/variants/` - Generated shader variants (build outputs)
+  - [ ] Extract from existing shaders into component files:
+    - [ ] `components/entropy_calculation.wgsl` (from entropy\*.wgsl)
+    - [ ] `components/worklist_management.wgsl` (from propagate\*.wgsl)
+    - [ ] `components/cell_collapse.wgsl` (new file)
+    - [ ] `components/contradiction_detection.wgsl` (from propagate\*.wgsl)
+  - [ ] Keep but refactor core utility files:
+    - [ ] `utils.wgsl` - Keep only truly generic utilities
+    - [ ] `coords.wgsl` - Coordinate system operations
+    - [ ] `rules.wgsl` - Adjacency rule handling
 
 - [ ] **Build shader assembly system**:
 
-  - [ ] Develop a shader preprocessing pipeline that assembles complete shaders from modular components
-  - [ ] Use conditional includes based on feature flags and hardware capabilities
-  - [ ] Generate optimal variants automatically at build time instead of maintaining separate versions
+  - [ ] Create new files:
+    - [ ] `wfc-gpu/src/shader_compiler.rs` - Shader preprocessing & assembly system
+    - [ ] `wfc-gpu/src/shader_registry.rs` - Registry for shader components & features
+  - [ ] Create build script:
+    - [ ] `wfc-gpu/build.rs` - Pre-build shader generation
+  - [ ] Modify `shaders.rs`:
+    - [ ] Expand from 12 lines to a full shader management system
+    - [ ] Implement the shader variant loading interface
 
 - [ ] **Eliminate duplication across shader files**:
-  - [ ] Ensure each function exists in exactly one place
-  - [ ] Create a dependency graph for shader components
-  - [ ] Standardize interfaces between shader modules
+  - [ ] Eventually remove redundant files:
+    - [ ] `entropy_fallback.wgsl`, `entropy_modular.wgsl` (after component extraction)
+    - [ ] `propagate_fallback.wgsl`, `propagate_modular.wgsl` (after component extraction)
+  - [ ] Create new component registry:
+    - [ ] `wfc-gpu/src/shaders/components/registry.json` - Component metadata & dependencies
 
 ## 2. Clear Responsibility Boundaries
 
 - [ ] **Buffer management vs. synchronization**:
 
-  - [ ] Move all buffer data transfer operations to `GpuSynchronizer`
-  - [ ] Limit `GpuBuffers` to storage and creation of buffers
-  - [ ] Create clear documentation of responsibility boundaries
+  - [ ] Modify `sync.rs`:
+    - [ ] Move all data transfer methods from `GpuBuffers` to `GpuSynchronizer`
+    - [ ] Add new transfer methods for remaining buffer types
+  - [ ] Modify `buffers.rs`:
+    - [ ] Remove data transfer methods
+    - [ ] Refocus on buffer creation and management
+  - [ ] Create new documentation file:
+    - [ ] `wfc-gpu/docs/buffer_lifecycle.md` - Explain buffer ownership & synchronization
 
 - [ ] **Entropy calculation**:
 
-  - [ ] Centralize entropy calculation in `GpuEntropyCalculator`
-  - [ ] Remove duplicate implementation from `GpuAccelerator`
-  - [ ] Make `GpuAccelerator` delegate to specialized components
+  - [ ] Modify `entropy.rs`:
+    - [ ] Enhance `GpuEntropyCalculator` to handle all entropy calculation logic
+  - [ ] Modify `accelerator.rs`:
+    - [ ] Remove direct entropy calculation implementation
+    - [ ] Change `EntropyCalculator` trait impl to delegate to `GpuEntropyCalculator`
 
 - [ ] **Pipeline management**:
-  - [ ] Move shader loading/compilation from `pipeline.rs` to `shaders.rs`
-  - [ ] Make `pipeline.rs` focus only on pipeline creation and binding
+  - [ ] Modify `pipeline.rs`:
+    - [ ] Remove shader loading code
+    - [ ] Focus only on pipeline creation and binding
+  - [ ] Expand `shaders.rs`:
+    - [ ] Add shader loading & preprocessing logic from `pipeline.rs`
+    - [ ] Implement shader variant management
 
 ## 3. Simplify Complex Structures
 
 - [ ] **Break up `GpuBuffers`**:
 
-  - [ ] Create specialized buffer groups (`GridBuffers`, `WorklistBuffers`, `EntropyBuffers`)
-  - [ ] Define clear interfaces between buffer groups
-  - [ ] Implement a facade pattern if needed for backward compatibility
+  - [ ] Create new files:
+    - [ ] `wfc-gpu/src/buffers/grid_buffers.rs` - Grid state buffers
+    - [ ] `wfc-gpu/src/buffers/worklist_buffers.rs` - Propagation worklist buffers
+    - [ ] `wfc-gpu/src/buffers/entropy_buffers.rs` - Entropy calculation buffers
+    - [ ] `wfc-gpu/src/buffers/rule_buffers.rs` - Adjacency rule buffers
+    - [ ] `wfc-gpu/src/buffers/mod.rs` - Facade implementation & common utilities
+  - [ ] Modify existing `buffers.rs`:
+    - [ ] Move code to appropriate new files
+    - [ ] Convert to a facade for backward compatibility
 
 - [ ] **Revise `GpuAccelerator`**:
-  - [ ] Convert to a coordinator that delegates to specialized components
-  - [ ] Remove direct implementation of traits, use composition instead
-  - [ ] Make the ownership model clearer with fewer nested `Arc`s
+  - [ ] Modify `accelerator.rs`:
+    - [ ] Convert to use composition rather than direct implementation
+    - [ ] Create delegation methods for all WFC operations
+    - [ ] Reduce Arc nesting
+  - [ ] Create new coordination files:
+    - [ ] `wfc-gpu/src/coordination/mod.rs` - Operational coordination interfaces
+    - [ ] `wfc-gpu/src/coordination/propagation.rs` - Propagation strategy coordination
 
 ## 4. Advanced Shader Management
 
 - [ ] **Implement shader component system in `shaders.rs`**:
 
-  - [ ] Create a component registry for shader modules
-  - [ ] Develop an intelligent shader assembly system
-  - [ ] Support conditional compilation based on feature requirements
+  - [ ] Expand `shaders.rs` to include:
+    - [ ] Component registry system
+    - [ ] Dependency resolution
+    - [ ] Feature flag handling
+  - [ ] Create new JSON schema files:
+    - [ ] `wfc-gpu/src/shaders/schemas/component.json` - Shader component metadata schema
+    - [ ] `wfc-gpu/src/shaders/schemas/feature.json` - Feature capability flags schema
 
 - [ ] **Feature-based shader optimization**:
 
-  - [ ] Create a capability detection system that maps hardware features to shader requirements
-  - [ ] Implement automatic selection of optimal shader components based on detected capabilities
-  - [ ] Build verification tools to ensure correctness of assembled shaders
+  - [ ] Create new files:
+    - [ ] `wfc-gpu/src/shader_features.rs` - Hardware capability detection
+    - [ ] `wfc-gpu/src/features/atomics.rs` - Atomics feature detection & handling
+    - [ ] `wfc-gpu/src/features/workgroups.rs` - Workgroup size optimization
+  - [ ] Modify `backend.rs`:
+    - [ ] Add capability reporting methods
+    - [ ] Standardize feature detection across backends
 
 - [ ] **Build-time shader generation**:
-  - [ ] Add support for pre-generating optimized shader variants during build
-  - [ ] Create shader caching to avoid redundant processing
-  - [ ] Develop tools for shader variant testing and verification
+  - [ ] Create new build time tools:
+    - [ ] `wfc-gpu/tools/shader_optimizer.rs` - Shader optimization tool
+    - [ ] `wfc-gpu/tools/shader_validator.rs` - Shader validation tool
+  - [ ] Implement caching in `build.rs`:
+    - [ ] Shader hash-based caching
+    - [ ] Incremental rebuilds of changed components only
 
 ## 5. Unify Testing Strategy
 
 - [ ] **Consolidate test modules**:
 
-  - [ ] Create a unified test framework in `test_utils.rs`
-  - [ ] Extract common test setup code to reduce duplication
-  - [ ] Organize tests by concern rather than by source file
+  - [ ] Enhance `test_utils.rs`:
+    - [ ] Move common test setup code from module-specific tests
+    - [ ] Create standardized test fixtures
+  - [ ] Move module-specific tests:
+    - [ ] From `tests.rs` to appropriate module test submodules
+    - [ ] From `shader_validation_tests.rs` to `shaders.rs`
 
 - [ ] **Improve shader testing**:
-  - [ ] Create component-level tests for shader modules
-  - [ ] Add validation tests for assembled shaders
-  - [ ] Create a shader sandbox environment for testing isolated components
+  - [ ] Create new test files:
+    - [ ] `wfc-gpu/tests/shaders/component_tests.rs` - Test individual shader components
+    - [ ] `wfc-gpu/tests/shaders/variant_tests.rs` - Test assembled shader variants
+    - [ ] `wfc-gpu/tests/shaders/sandbox.rs` - Isolated shader testing environment
 
 ## 6. Consistent Error Handling
 
 - [ ] **Unify error types**:
 
-  - [ ] Consolidate `GpuError` and `BackendError` into a cohesive system
-  - [ ] Use consistent error propagation patterns throughout
-  - [ ] Ensure proper context is maintained in error messages
+  - [ ] Create new error handling module:
+    - [ ] `wfc-gpu/src/error/mod.rs` - Unified error system
+    - [ ] `wfc-gpu/src/error/gpu_error.rs` - Enhanced GPU errors
+    - [ ] `wfc-gpu/src/error/io_error.rs` - File and resource errors
+  - [ ] Modify existing error definitions:
+    - [ ] `lib.rs` - Update `GpuError` to use new system
+    - [ ] `backend.rs` - Update `BackendError` to use new system
 
 - [ ] **Error recovery improvements**:
-  - [ ] Standardize use of `error_recovery.rs` across all operations
-  - [ ] Add structured recovery strategies for different error types
+  - [ ] Enhance `error_recovery.rs`:
+    - [ ] Add specialized recovery strategies for common errors
+    - [ ] Create standardized recovery interfaces
+  - [ ] Add error recovery support to all operation modules:
+    - [ ] `accelerator.rs`
+    - [ ] `propagator.rs`
+    - [ ] `sync.rs`
+    - [ ] All new buffer modules
 
 ## 7. Reduce Redundancy in Core Algorithm
 
 - [ ] **Extract core algorithm logic**:
 
-  - [ ] Create a clear separation between algorithm logic and GPU implementation
-  - [ ] Ensure implementation follows the same pattern for CPU and GPU versions
+  - [ ] Create new algorithm abstraction files:
+    - [ ] `wfc-gpu/src/algorithm/propagator_strategy.rs` - Core propagation logic
+    - [ ] `wfc-gpu/src/algorithm/entropy_strategy.rs` - Core entropy calculation
+  - [ ] Update implementation files:
+    - [ ] `propagator.rs` - Use strategy pattern
+    - [ ] `entropy.rs` - Use strategy pattern
 
 - [ ] **Standardize workload division**:
-  - [ ] Unify the subgrid handling approach
-  - [ ] Create consistent patterns for parallel execution
+  - [ ] Enhance `subgrid.rs`:
+    - [ ] Improve subgrid strategy implementation
+    - [ ] Add better coordination with main algorithm
+  - [ ] Create new file:
+    - [ ] `wfc-gpu/src/parallelism.rs` - Parallel execution strategies
 
 ## 8. Documentation & API Design
 
 - [ ] **Create clear API boundaries**:
 
-  - [ ] Define public vs internal APIs
-  - [ ] Document integration points clearly
-  - [ ] Add more comprehensive examples
+  - [ ] Create documentation files:
+    - [ ] `wfc-gpu/docs/api_boundaries.md` - Public vs private API
+    - [ ] `wfc-gpu/docs/integration_guide.md` - Integration points
+  - [ ] Add examples directory:
+    - [ ] `wfc-gpu/examples/basic_usage.rs` - Simple usage example
+    - [ ] `wfc-gpu/examples/advanced_features.rs` - Advanced features example
 
 - [ ] **Technical documentation**:
-  - [ ] Document buffer lifecycle and ownership
-  - [ ] Add architecture diagrams showing component relationships
-  - [ ] Create shader reference documentation
-  - [ ] Document the shader component system and assembly process
+  - [ ] Create documentation files:
+    - [ ] `wfc-gpu/docs/buffer_lifecycle.md` - Buffer management documentation
+    - [ ] `wfc-gpu/docs/shader_components.md` - Shader component system
+  - [ ] Create diagrams:
+    - [ ] `wfc-gpu/docs/diagrams/architecture.svg` - Overall architecture
+    - [ ] `wfc-gpu/docs/diagrams/buffer_flow.svg` - Buffer lifecycle
 
 ## Implementation Strategy
 
 1. **Start with low-risk changes**:
 
-   - Begin with creating the shader component system
-   - Build and test individual shader modules in isolation
+   - Begin with creating the shader component system:
+     - Create basic component files in `wfc-gpu/src/shaders/components/`
+     - Implement minimal shader registry in `shader_registry.rs`
 
 2. **Progressive refinement**:
 
-   - Implement the shader assembly system
-   - Gradually migrate to the modular approach while maintaining compatibility
+   - Implement buffer management changes:
+     - Create new buffer module structure
+     - Migrate buffer creation code first, then synchronization
 
 3. **Measure impact**:
 
-   - Create benchmarks to verify performance is maintained or improved
-   - Add metrics to track shader compilation time and runtime performance
+   - Create benchmarks:
+     - `wfc-gpu/benches/propagation_bench.rs`
+     - `wfc-gpu/benches/shader_compilation_bench.rs`
 
 4. **Preserve existing improvements**:
-   - Ensure all checked items in original TODO list remain implemented
-   - Validate that advanced features still work correctly with the new modular shader system
+   - Create regression test suite:
+     - `wfc-gpu/tests/regression/features.rs` - Tests for all features from original TODO
