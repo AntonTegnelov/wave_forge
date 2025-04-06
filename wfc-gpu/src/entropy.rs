@@ -208,8 +208,8 @@ impl GpuEntropyCalculator {
 
             // Dispatch - Calculate workgroup counts
             let workgroup_size = 8; // Must match shader's workgroup_size
-            let workgroup_x = (width + workgroup_size - 1) / workgroup_size;
-            let workgroup_y = (height + workgroup_size - 1) / workgroup_size;
+            let workgroup_x = width.div_ceil(workgroup_size);
+            let workgroup_y = height.div_ceil(workgroup_size);
             let workgroup_z = depth;
 
             compute_pass.dispatch_workgroups(
@@ -289,9 +289,7 @@ impl GpuEntropyCalculator {
         };
 
         // Check if we have valid results
-        if min_entropy_info.is_none() {
-            return None;
-        }
+        min_entropy_info?;
 
         let (min_entropy, min_idx) = min_entropy_info.unwrap();
 

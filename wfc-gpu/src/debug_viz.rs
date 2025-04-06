@@ -149,11 +149,7 @@ impl DebugVisualizer {
             } else {
                 None
             },
-            contradiction_locations: if let Some(loc) = results.contradiction_location {
-                Some(vec![loc])
-            } else {
-                None
-            },
+            contradiction_locations: results.contradiction_location.map(|loc| vec![loc]),
             dimensions,
             num_tiles,
         };

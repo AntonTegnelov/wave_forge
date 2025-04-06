@@ -21,7 +21,7 @@ thiserror = "1.0.59"
 wgpu = "0.20" # Check for compatibility updates
 wgpu-profiler = "0.17.0" # Match wgpu version if possible
 
-wfc-core = { path = "../wfc-core" }
+wfc-core = { path = "../wfc-core", features = ["serde"] }
 wfc-rules = { path = "../wfc-rules" }
 
 # Add async-trait

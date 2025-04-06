@@ -1,3 +1,4 @@
+#![allow(clippy::redundant_field_names)]
 use crate::buffers::{GpuBuffers, GpuParamsUniform};
 use crate::debug_viz::{DebugVisualizationConfig, DebugVisualizer, GpuBuffersDebugExt};
 use crate::sync::GpuSynchronizer;
@@ -8,8 +9,7 @@ use std::sync::Arc;
 use wfc_core::{
     entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
-    propagator::{self},
-    BoundaryCondition,
+    propagator, BoundaryCondition,
 }; // Use Arc for shared GPU resources
 use wfc_rules::AdjacencyRules; // Import from wfc_rules instead
 use wgpu; // Assuming wgpu is needed // Import GpuParamsUniform
@@ -382,63 +382,31 @@ impl GpuAccelerator {
 // --- Trait Implementations ---
 
 #[async_trait]
-impl propagator::propagator::ConstraintPropagator for GpuAccelerator {
+impl propagator::ConstraintPropagator for GpuAccelerator {
     /// Delegates propagation to the stored `GpuConstraintPropagator` instance.
     async fn propagate(
         &mut self,
         grid: &mut PossibilityGrid,
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
-    ) -> Result<(), wfc_core::propagator::propagator::PropagationError> {
-        // NOTE: This is a placeholder implementation until we can properly fix the Send issue
-        // Upload the current grid state to GPU
-        match self.synchronizer.upload_grid(grid) {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(
-                    wfc_core::propagator::propagator::PropagationError::GpuSetupError(format!(
-                        "Failed to upload grid: {}",
-                        e
-                    )),
-                );
-            }
-        }
+    ) -> Result<(), propagator::PropagationError> {
+        // Upload the current grid state to GPU (synchronous call)
+        self.synchronizer.upload_grid(grid).map_err(|e| {
+            propagator::PropagationError::GpuSetupError(format!("Failed to upload grid: {}", e))
+        })?;
 
-        // Call delegate synchronously to avoid the Send issue
-        let result = pollster::block_on(self.propagator.propagate(grid, updated_coords, rules));
+        // Call the actual GPU propagation logic (this part IS async)
+        let result = self.propagator.propagate(grid, updated_coords, rules).await;
 
         // If propagation succeeded, download the updated grid
         if result.is_ok() {
-            // Download synchronously to avoid the Send issue
-            match pollster::block_on(self.synchronizer.download_grid(grid)) {
-                Ok(updated_grid) => {
-                    // Update the input grid with the downloaded data
-                    let (width, height, depth) = (grid.width, grid.height, grid.depth);
-                    for z in 0..depth {
-                        for y in 0..height {
-                            for x in 0..width {
-                                if let (Some(src), Some(dst)) =
-                                    (updated_grid.get(x, y, z), grid.get_mut(x, y, z))
-                                {
-                                    dst.fill(false);
-                                    for (i, val) in src.iter().enumerate() {
-                                        if *val {
-                                            dst.set(i, true);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(
-                        wfc_core::propagator::propagator::PropagationError::GpuCommunicationError(
-                            format!("Failed to download grid: {}", e),
-                        ),
-                    );
-                }
-            }
+            // Download the results back to the CPU grid (this IS async)
+            self.synchronizer.download_grid(grid).await.map_err(|e| {
+                propagator::PropagationError::GpuCommunicationError(format!(
+                    "Failed to download grid: {}",
+                    e
+                ))
+            })?;
         }
 
         result
@@ -451,12 +419,12 @@ impl EntropyCalculator for GpuAccelerator {
     /// Note: This creates a new `GpuEntropyCalculator` instance on each call.
     /// Consider optimizing if this becomes a bottleneck.
     fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
-        // First upload the grid to GPU
+        // First upload the grid to GPU (synchronous)
         self.synchronizer
             .upload_grid(grid)
             .map_err(|e| EntropyError::Other(format!("Failed to upload grid: {}", e)))?;
 
-        // Update entropy parameters
+        // Update entropy parameters (synchronous)
         self.synchronizer
             .update_entropy_params(
                 self.grid_dims,
@@ -469,15 +437,17 @@ impl EntropyCalculator for GpuAccelerator {
             )
             .map_err(|e| EntropyError::Other(format!("Failed to update entropy params: {}", e)))?;
 
-        // Reset the min entropy buffer
+        // Reset the min entropy buffer (synchronous)
         self.synchronizer.reset_min_entropy_buffer().map_err(|e| {
             EntropyError::Other(format!("Failed to reset min entropy buffer: {}", e))
         })?;
 
-        // Create a new EntropyGrid with calculated values
+        // TODO: Actually run the entropy compute shader here!
+        // For now, just calculate on CPU as placeholder
+        // Need to: dispatch entropy shader, then download entropy grid
+
         let mut entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
 
-        // Fill with values based on possibility count
         for z in 0..grid.depth {
             for y in 0..grid.height {
                 for x in 0..grid.width {
@@ -485,31 +455,23 @@ impl EntropyCalculator for GpuAccelerator {
                         Some(c) => c,
                         None => continue,
                     };
-
                     let count = cell.count_ones();
+                    let data_index = x + y * grid.width + z * grid.width * grid.height;
                     if count == 0 {
-                        // No possibilities - this is a contradiction
-                        entropy_grid.data[x + y * grid.width + z * grid.width * grid.height] = 0.0;
+                        entropy_grid.data[data_index] = 0.0;
                     } else if count == 1 {
-                        // Already collapsed - mark with negative entropy
-                        entropy_grid.data[x + y * grid.width + z * grid.width * grid.height] = -1.0;
+                        entropy_grid.data[data_index] = -1.0;
                     } else {
-                        // Multiple possibilities - calculate Shannon entropy or use count
                         let entropy = match self.entropy_heuristic {
                             EntropyHeuristicType::Shannon => {
-                                // Shannon entropy calculation
                                 let p = 1.0 / (count as f32);
                                 -1.0 * (count as f32) * p * p.log2()
                             }
-                            EntropyHeuristicType::Count => count as f32,
-                            EntropyHeuristicType::CountSimple => count as f32,
-                            EntropyHeuristicType::WeightedCount => {
-                                // Simple weighted count (could be improved with actual weights)
-                                count as f32
-                            }
+                            EntropyHeuristicType::Count
+                            | EntropyHeuristicType::CountSimple
+                            | EntropyHeuristicType::WeightedCount => count as f32,
                         };
-                        entropy_grid.data[x + y * grid.width + z * grid.width * grid.height] =
-                            entropy;
+                        entropy_grid.data[data_index] = entropy;
                     }
                 }
             }
@@ -526,7 +488,7 @@ impl EntropyCalculator for GpuAccelerator {
         &self,
         entropy_grid: &EntropyGrid,
     ) -> Option<(usize, usize, usize)> {
-        // Find the cell with minimum positive entropy
+        // TODO: Download min_entropy_info buffer from GPU instead of CPU calculation
         let mut min_entropy = f32::MAX;
         let mut min_pos = None;
 
@@ -536,8 +498,6 @@ impl EntropyCalculator for GpuAccelerator {
                     let idx =
                         x + y * entropy_grid.width + z * entropy_grid.width * entropy_grid.height;
                     let entropy = entropy_grid.data[idx];
-
-                    // We want positive entropy values (not collapsed or contradictory cells)
                     if entropy > 0.0 && entropy < min_entropy {
                         min_entropy = entropy;
                         min_pos = Some((x, y, z));
@@ -545,7 +505,6 @@ impl EntropyCalculator for GpuAccelerator {
                 }
             }
         }
-
         min_pos
     }
 

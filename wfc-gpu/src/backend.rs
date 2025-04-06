@@ -168,6 +168,12 @@ pub struct WgpuBackend {
     buffers: std::collections::HashMap<String, Arc<wgpu::Buffer>>,
 }
 
+impl Default for WgpuBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WgpuBackend {
     /// Create a new WGPU backend
     ///
@@ -249,7 +255,7 @@ impl GpuBackend for WgpuBackend {
             let info = adapter.get_info();
             format!(
                 "Backend: {}, Device: {}, Driver: {}",
-                info.backend.to_string(),
+                info.backend,
                 info.name,
                 info.driver
             )

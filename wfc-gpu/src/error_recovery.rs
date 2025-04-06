@@ -407,25 +407,43 @@ impl RecoverableGpuOp {
         let mut result = op().await;
         let mut attempts = 1;
 
-        while let Err(error) = &result {
-            if let Some(delay) = self.recovery.record_error(error) {
-                warn!(
-                    "Recoverable GPU error on attempt {}/{}, retrying after {:?}: {}",
-                    attempts,
-                    self.recovery.max_retries + 1,
-                    delay,
-                    error
-                );
+        loop {
+            // Check if the result is an error *before* the await point
+            let error_string_opt: Option<String> = match &result {
+                Err(e) => Some(e.to_string()), // Convert error to String (Send + Sync)
+                Ok(_) => None,
+            };
 
-                // Implement delay with async sleep
-                tokio::time::sleep(delay).await;
+            if let Some(error_str) = error_string_opt {
+                // Need the actual error reference *here* to check recoverability
+                // This reference is NOT held across the await below
+                let should_retry = match &result {
+                    Err(actual_error_ref) => self.recovery.record_error(actual_error_ref),
+                    Ok(_) => None, // Should not happen if error_string_opt was Some
+                };
 
-                // Try the operation again
-                result = op().await;
-                attempts += 1;
+                if let Some(delay) = should_retry {
+                    warn!(
+                        "Recoverable GPU error on attempt {}/{}, retrying after {:?}: {}",
+                        attempts,
+                        self.recovery.max_retries + 1,
+                        delay,
+                        error_str // Log the error *string* after await
+                    );
+
+                    // Await point
+                    tokio::time::sleep(delay).await;
+
+                    // Re-run the operation
+                    result = op().await;
+                    attempts += 1;
+                } else {
+                    // Not recoverable or max retries exceeded
+                    break; // Exit loop, returning the current Err(result)
+                }
             } else {
-                // Error is not recoverable or max retries exceeded
-                break;
+                // Result is Ok
+                break; // Exit loop, returning the current Ok(result)
             }
         }
 
@@ -434,7 +452,6 @@ impl RecoverableGpuOp {
                 "GPU operation recovered successfully after {} attempts",
                 attempts
             );
-            // Reset error counter on successful recovery
             self.recovery.reset_error_count();
         }
 

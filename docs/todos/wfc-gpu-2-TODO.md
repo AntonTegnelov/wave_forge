@@ -19,8 +19,8 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] `utils.wgsl` - Keep only truly generic utilities
     - [x] `coords.wgsl` - Coordinate system operations
     - [x] `rules.wgsl` - Adjacency rule handling
-  - [ ] **Update files to reference new components**:
-    - [ ] Update `pipeline.rs`: Add module component loading
+  - [x] **Update files to reference new components**:
+    - [x] Update `pipeline.rs`: Add module component loading
     - [ ] Update `shaders.rs`: Reference new component paths
 
 - [ ] **Build shader assembly system**:

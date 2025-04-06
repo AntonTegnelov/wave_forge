@@ -1,5 +1,8 @@
 //! Provides GPU acceleration for the WFC algorithm using WGPU compute shaders.
 
+#![allow(clippy::derive_partial_eq_without_eq)]
+// Removed conflicting use statement
+// use crate::backend::BackendError;
 use thiserror::Error;
 
 /// Manages the WGPU context and implements the WFC traits using compute shaders.
@@ -81,7 +84,17 @@ pub enum GpuError {
     Other(String),
     /// An error from the backend abstraction layer.
     #[error("Backend error: {0}")]
-    BackendError(#[from] BackendError),
+    BackendError(BackendError),
+    /// Failed to lock a mutex.
+    #[error("Failed to lock a mutex: {0}")]
+    MutexError(String),
+}
+
+// Manual implementation of From<BackendError> for GpuError
+impl From<BackendError> for GpuError {
+    fn from(err: BackendError) -> Self {
+        GpuError::BackendError(err)
+    }
 }
 
 // Removed manual From<wgpu::RequestDeviceError> impl as it conflicts with derive macro

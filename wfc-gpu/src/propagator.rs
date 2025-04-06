@@ -11,9 +11,10 @@ use log::{debug, info};
 use std::sync::Arc;
 use wfc_core::{
     grid::PossibilityGrid,
-    propagator::propagator::{ConstraintPropagator, PropagationError},
+    propagator::{ConstraintPropagator, PropagationError},
 };
 use wfc_rules::AdjacencyRules;
+use wgpu;
 
 /// GPU implementation of the ConstraintPropagator trait.
 #[derive(Debug, Clone)]
@@ -309,7 +310,7 @@ impl GpuConstraintPropagator {
         // Determine dispatch size (ceiling division of total_cells by workgroup size)
         let mut num_cells_to_process = worklist_size;
         let workgroup_size = 64;
-        let mut dispatch_size = (num_cells_to_process + workgroup_size - 1) / workgroup_size;
+        let mut dispatch_size = num_cells_to_process.div_ceil(workgroup_size);
 
         // If dispatch_size is zero (e.g., empty worklist), use at least one workgroup
         if dispatch_size == 0 {
@@ -344,7 +345,7 @@ impl GpuConstraintPropagator {
             // Create a new bind group for this iteration
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("Propagation Bind Group {}", iteration)),
-                layout: &bind_group_layout,
+                layout: bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -472,7 +473,7 @@ impl GpuConstraintPropagator {
             }
 
             // Prepare dispatch size for next iteration
-            dispatch_size = (num_cells_to_process + workgroup_size - 1) / workgroup_size;
+            dispatch_size = num_cells_to_process.div_ceil(workgroup_size);
             if dispatch_size == 0 {
                 dispatch_size = 1;
             }
@@ -610,7 +611,7 @@ impl GpuConstraintPropagator {
                 .propagate_subgrid(grid, subgrid, region, updated_coords.clone(), rules)
                 .await?;
 
-            processed_subgrids.push((region.clone(), processed));
+            processed_subgrids.push((*region, processed));
 
             // Take a snapshot after each subgrid if debug visualization is enabled
             if let Some(visualizer) = &self.debug_visualizer {
@@ -812,7 +813,7 @@ mod tests {
                 None,
             )
             .await
-            .map_err(|e| GpuError::DeviceRequestFailed(e))?;
+            .map_err(GpuError::DeviceRequestFailed)?;
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);

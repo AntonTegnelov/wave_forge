@@ -2,7 +2,11 @@
 mod tests {
     use crate::accelerator::GpuAccelerator;
     use crate::test_utils::create_test_device_queue;
-    use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
+    use wfc_core::{
+        entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
+        grid::{EntropyGrid, PossibilityGrid},
+        propagator, BoundaryCondition,
+    };
     use wfc_rules::{AdjacencyRules, TileSet};
 
     #[tokio::test]

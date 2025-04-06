@@ -139,9 +139,9 @@ pub fn divide_into_subgrids(
     }
 
     // Calculate number of divisions needed in each dimension
-    let x_divisions = (grid_width + config.max_subgrid_size - 1) / config.max_subgrid_size;
-    let y_divisions = (grid_height + config.max_subgrid_size - 1) / config.max_subgrid_size;
-    let z_divisions = (grid_depth + config.max_subgrid_size - 1) / config.max_subgrid_size;
+    let x_divisions = grid_width.div_ceil(config.max_subgrid_size);
+    let y_divisions = grid_height.div_ceil(config.max_subgrid_size);
+    let z_divisions = grid_depth.div_ceil(config.max_subgrid_size);
 
     // Create subgrids
     let mut subgrids = Vec::new();

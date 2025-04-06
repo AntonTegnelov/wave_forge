@@ -31,4 +31,7 @@ pub enum LoadError {
     /// An unspecified error occurred during the loading process.
     #[error("Unknown loading error")]
     Unknown,
+    /// Required feature not enabled
+    #[error("Required feature not enabled: {0}")]
+    FeatureNotEnabled(String),
 }

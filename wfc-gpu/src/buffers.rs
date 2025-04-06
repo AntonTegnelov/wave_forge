@@ -287,7 +287,7 @@ impl GpuBuffers {
         let rule_bits_len = (num_axes * num_tiles * num_tiles + 31) / 32;
         let mut packed_rules = vec![0u32; rule_bits_len];
 
-        for ((axis, tile1, tile2), _allowed) in rules.get_allowed_rules_map() {
+        for (axis, tile1, tile2) in rules.get_allowed_rules_map().keys() {
             let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
             let u32_idx = rule_idx / 32;
             let bit_idx = rule_idx % 32;
@@ -751,7 +751,7 @@ impl GpuBuffers {
         // Check if we need to auto-resize
         let should_resize = if let Some(config) = &self.dynamic_buffer_config {
             if config.auto_resize {
-                let required_size = (updates.len() * std::mem::size_of::<u32>()) as u64;
+                let required_size = std::mem::size_of_val(updates) as u64;
                 let active_buffer = if active_worklist_idx == 0 {
                     &self.worklist_buf_a
                 } else {
@@ -1780,7 +1780,9 @@ mod tests {
 
             // Pin the future and use select! with polling
             pin_mut!(download_future);
-            let results = loop {
+            
+            
+            loop {
                 futures::select! {
                     res = download_future.as_mut().fuse() => break res,
                     _ = futures::future::ready(()).fuse() => {
@@ -1789,9 +1791,7 @@ mod tests {
                     }
                 }
             }
-            .expect("Failed to download results");
-            
-            results
+            .expect("Failed to download results")
         });
 
         assert!(results.grid_possibilities.is_some());

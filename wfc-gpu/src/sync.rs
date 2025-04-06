@@ -248,7 +248,7 @@ impl GpuSynchronizer {
         self.queue.write_buffer(
             &self.buffers.params_uniform_buf,
             0,
-            bytemuck::cast_slice(&[params.clone()]),
+            bytemuck::cast_slice(&[*params]),
         );
 
         Ok(())
