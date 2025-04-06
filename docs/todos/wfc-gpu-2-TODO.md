@@ -2,18 +2,24 @@
 
 This document outlines a structured plan to refactor the wfc-gpu module, addressing code duplication and architectural issues while preserving the improvements from the original TODO list.
 
-## 1. Shader Consolidation
+## 1. Shader Modularization
 
-- [ ] **Unify shader variants**: Consolidate duplicate shader files (entropy/propagate variants) into single files with feature toggles
+- [ ] **Create truly modular shader components**:
 
-  - [ ] Create a shader preprocessing system that handles feature flags
-  - [ ] Replace `_fallback` and `_modular` variants with conditional compilation in core files
-  - [ ] Maintain a clear mapping between feature flags and hardware capabilities
+  - [ ] Break down shaders into even smaller, single-purpose files
+  - [ ] Organize shader code by functionality (e.g., entropy calculation, propagation logic, utility functions)
+  - [ ] Create clear interfaces between shader components
 
-- [ ] **Modularize shader code**: Ensure proper code reuse across shaders
-  - [ ] Extract common utilities into properly imported modules
-  - [ ] Standardize include mechanism for shader code
-  - [ ] Remove duplicated functions like `count_ones` across files
+- [ ] **Build shader assembly system**:
+
+  - [ ] Develop a shader preprocessing pipeline that assembles complete shaders from modular components
+  - [ ] Use conditional includes based on feature flags and hardware capabilities
+  - [ ] Generate optimal variants automatically at build time instead of maintaining separate versions
+
+- [ ] **Eliminate duplication across shader files**:
+  - [ ] Ensure each function exists in exactly one place
+  - [ ] Create a dependency graph for shader components
+  - [ ] Standardize interfaces between shader modules
 
 ## 2. Clear Responsibility Boundaries
 
@@ -46,17 +52,24 @@ This document outlines a structured plan to refactor the wfc-gpu module, address
   - [ ] Remove direct implementation of traits, use composition instead
   - [ ] Make the ownership model clearer with fewer nested `Arc`s
 
-## 4. Centralize Shader Management
+## 4. Advanced Shader Management
 
-- [ ] **Activate `shaders.rs`**:
+- [ ] **Implement shader component system in `shaders.rs`**:
 
-  - [ ] Move shader loading logic from `pipeline.rs` to `shaders.rs`
-  - [ ] Create a shader registry system for managing variants
-  - [ ] Implement shader preprocessing (constants, includes) in a centralized way
+  - [ ] Create a component registry for shader modules
+  - [ ] Develop an intelligent shader assembly system
+  - [ ] Support conditional compilation based on feature requirements
 
-- [ ] **Shader feature detection**:
-  - [ ] Create a system to determine optimal shader variant based on hardware capabilities
-  - [ ] Consolidate feature detection code currently spread across modules
+- [ ] **Feature-based shader optimization**:
+
+  - [ ] Create a capability detection system that maps hardware features to shader requirements
+  - [ ] Implement automatic selection of optimal shader components based on detected capabilities
+  - [ ] Build verification tools to ensure correctness of assembled shaders
+
+- [ ] **Build-time shader generation**:
+  - [ ] Add support for pre-generating optimized shader variants during build
+  - [ ] Create shader caching to avoid redundant processing
+  - [ ] Develop tools for shader variant testing and verification
 
 ## 5. Unify Testing Strategy
 
@@ -67,8 +80,9 @@ This document outlines a structured plan to refactor the wfc-gpu module, address
   - [ ] Organize tests by concern rather than by source file
 
 - [ ] **Improve shader testing**:
-  - [ ] Merge `shader_validation_tests.rs` with proper tests in `shaders.rs`
-  - [ ] Create more comprehensive shader validation tests
+  - [ ] Create component-level tests for shader modules
+  - [ ] Add validation tests for assembled shaders
+  - [ ] Create a shader sandbox environment for testing isolated components
 
 ## 6. Consistent Error Handling
 
@@ -105,24 +119,25 @@ This document outlines a structured plan to refactor the wfc-gpu module, address
   - [ ] Document buffer lifecycle and ownership
   - [ ] Add architecture diagrams showing component relationships
   - [ ] Create shader reference documentation
+  - [ ] Document the shader component system and assembly process
 
 ## Implementation Strategy
 
 1. **Start with low-risk changes**:
 
-   - Begin with shader consolidation and modularization
-   - Improve tests to catch regressions early
+   - Begin with creating the shader component system
+   - Build and test individual shader modules in isolation
 
 2. **Progressive refinement**:
 
-   - Implement changes to one component at a time
-   - Maintain backward compatibility during transition
+   - Implement the shader assembly system
+   - Gradually migrate to the modular approach while maintaining compatibility
 
 3. **Measure impact**:
 
    - Create benchmarks to verify performance is maintained or improved
-   - Add metrics to track memory usage and resource allocation
+   - Add metrics to track shader compilation time and runtime performance
 
 4. **Preserve existing improvements**:
    - Ensure all checked items in original TODO list remain implemented
-   - Validate that advanced features still work correctly
+   - Validate that advanced features still work correctly with the new modular shader system
