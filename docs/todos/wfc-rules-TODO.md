@@ -4,8 +4,6 @@
 
 - [ ] Create a proper trait/interface for format parsers to implement
 - [ ] Implement full support for bitcode serialization format as default (https://crates.io/crates/bitcode)
-- [ ] Re-enable and implement JSON format support
-- [ ] Create a clear extension path for new formats
 - [ ] Separate format-specific parsing from validation logic
 
 ## Error Handling
