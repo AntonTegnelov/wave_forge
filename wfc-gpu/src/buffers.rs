@@ -63,6 +63,30 @@ pub struct EntropyParamsUniform {
     pub _padding4: u32,
 }
 
+/// DynamicBufferConfig contains settings for how buffers are resized
+#[derive(Debug, Clone, Copy)]
+pub struct DynamicBufferConfig {
+    /// Growth factor for buffer sizes when resizing
+    pub growth_factor: f32,
+    /// Minimum size (in bytes) of any buffer after resizing
+    pub min_buffer_size: u64,
+    /// Maximum size (in bytes) allowed for any buffer
+    pub max_buffer_size: u64,
+    /// Whether to automatically resize buffers when needed
+    pub auto_resize: bool,
+}
+
+impl Default for DynamicBufferConfig {
+    fn default() -> Self {
+        Self {
+            growth_factor: 1.5, // Grow by 50% when resizing
+            min_buffer_size: 1024, // Minimum 1KB buffer size
+            max_buffer_size: 1024 * 1024 * 1024, // Maximum 1GB buffer size
+            auto_resize: true, // Automatically resize by default
+        }
+    }
+}
+
 /// Stores all the GPU buffers needed for the WFC algorithm.
 /// 
 /// This struct maintains the state of all WGPU buffers required for the Wave Function Collapse
@@ -126,6 +150,8 @@ pub struct GpuBuffers {
     pub boundary_mode: wfc_core::BoundaryCondition,
     /// Uniform buffer for entropy calculation parameters.
     pub entropy_params_buffer: wgpu::Buffer,
+    /// Configuration for dynamic buffer management.
+    pub dynamic_buffer_config: Option<DynamicBufferConfig>,
 }
 
 /// Holds the results downloaded from the GPU after relevant compute passes.
@@ -492,7 +518,237 @@ impl GpuBuffers {
             num_axes,
             boundary_mode,
             entropy_params_buffer,
+            dynamic_buffer_config: None,
         })
+    }
+
+    /// Create a new buffer with the provided configuration
+    pub fn create_buffer(
+        device: &wgpu::Device,
+        size: u64,
+        usage: wgpu::BufferUsages,
+        label: Option<&str>,
+    ) -> Arc<wgpu::Buffer> {
+        let padded_size = size.max(1); // Ensure minimum size of 1
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label,
+            size: padded_size,
+            usage,
+            mapped_at_creation: false,
+        });
+        Arc::new(buffer)
+    }
+
+    /// Resize a buffer to a new size, returning the new buffer
+    pub fn resize_buffer(
+        device: &wgpu::Device,
+        old_buffer: &Arc<wgpu::Buffer>,
+        new_size: u64,
+        usage: wgpu::BufferUsages,
+        label: Option<&str>,
+        config: &DynamicBufferConfig,
+    ) -> Arc<wgpu::Buffer> {
+        let old_size = old_buffer.size();
+        
+        // Determine the new buffer size based on growth factor and bounds
+        let mut actual_new_size = (new_size as f64 * config.growth_factor as f64).ceil() as u64;
+        actual_new_size = actual_new_size.max(config.min_buffer_size);
+        actual_new_size = actual_new_size.min(config.max_buffer_size);
+        
+        // Create a new buffer with the calculated size
+        log::debug!("Resizing buffer from {} to {} bytes", old_size, actual_new_size);
+        Self::create_buffer(device, actual_new_size, usage, label)
+    }
+
+    /// Check if a buffer is sufficient for the required size
+    pub fn is_buffer_sufficient(
+        buffer: &Arc<wgpu::Buffer>,
+        required_size: u64,
+    ) -> bool {
+        buffer.size() >= required_size
+    }
+
+    /// Ensure the grid possibilities buffer is sufficient for the given dimensions
+    pub fn ensure_grid_possibilities_buffer(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        num_tiles: u32,
+        config: &DynamicBufferConfig,
+    ) -> Result<(), String> {
+        let num_cells = (width * height * depth) as usize;
+        let u32s_per_cell = ((num_tiles + 31) / 32) as usize; // Ceiling division to get number of u32s needed
+        let required_size = (num_cells * u32s_per_cell * std::mem::size_of::<u32>()) as u64;
+        
+        if !Self::is_buffer_sufficient(&self.grid_possibilities_buf, required_size) {
+            let new_buffer = Self::resize_buffer(
+                device,
+                &self.grid_possibilities_buf,
+                required_size,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                Some("Grid Possibilities Buffer"),
+                config,
+            );
+            self.grid_possibilities_buf = new_buffer;
+        }
+        
+        Ok(())
+    }
+
+    /// Ensure the entropy buffer is sufficient for the given dimensions
+    pub fn ensure_entropy_buffer(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        config: &DynamicBufferConfig,
+    ) -> Result<(), String> {
+        let num_cells = (width * height * depth) as usize;
+        let required_size = (num_cells * std::mem::size_of::<f32>()) as u64;
+        
+        if !Self::is_buffer_sufficient(&self.entropy_buf, required_size) {
+            let new_buffer = Self::resize_buffer(
+                device,
+                &self.entropy_buf,
+                required_size,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                Some("Entropy Buffer"),
+                config,
+            );
+            self.entropy_buf = new_buffer;
+        }
+        
+        Ok(())
+    }
+
+    /// Ensure the worklist buffers are sufficient for the given dimensions
+    pub fn ensure_worklist_buffers(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        config: &DynamicBufferConfig,
+    ) -> Result<(), String> {
+        let num_cells = (width * height * depth) as usize;
+        let required_size = (num_cells * std::mem::size_of::<u32>()) as u64;
+        
+        if !Self::is_buffer_sufficient(&self.worklist_buf_a, required_size) {
+            let new_buffer_a = Self::resize_buffer(
+                device,
+                &self.worklist_buf_a,
+                required_size,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                Some("Worklist Buffer A"),
+                config,
+            );
+            self.worklist_buf_a = new_buffer_a;
+        }
+        
+        if !Self::is_buffer_sufficient(&self.worklist_buf_b, required_size) {
+            let new_buffer_b = Self::resize_buffer(
+                device,
+                &self.worklist_buf_b,
+                required_size,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                Some("Worklist Buffer B"),
+                config,
+            );
+            self.worklist_buf_b = new_buffer_b;
+        }
+        
+        // Also resize the len buffers (much smaller, fixed size)
+        if !Self::is_buffer_sufficient(&self.worklist_len_buf_a, 4) || 
+           !Self::is_buffer_sufficient(&self.worklist_len_buf_b, 4) {
+            let new_len_buf_a = Self::resize_buffer(
+                device,
+                &self.worklist_len_buf_a,
+                4,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                Some("Worklist Length Buffer A"),
+                config,
+            );
+            self.worklist_len_buf_a = new_len_buf_a;
+            
+            let new_len_buf_b = Self::resize_buffer(
+                device,
+                &self.worklist_len_buf_b,
+                4,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                Some("Worklist Length Buffer B"),
+                config,
+            );
+            self.worklist_len_buf_b = new_len_buf_b;
+        }
+        
+        Ok(())
+    }
+
+    /// Resize all essential buffers for a given grid dimension
+    pub fn resize_for_grid(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        num_tiles: u32,
+        config: &DynamicBufferConfig,
+    ) -> Result<(), String> {
+        self.ensure_grid_possibilities_buffer(device, width, height, depth, num_tiles, config)?;
+        self.ensure_entropy_buffer(device, width, height, depth, config)?;
+        self.ensure_worklist_buffers(device, width, height, depth, config)?;
+        
+        // Update grid dimensions
+        self.num_cells = width * height * depth;
+        self.grid_width = width;
+        self.grid_height = height;
+        self.grid_depth = depth;
+        
+        Ok(())
+    }
+
+    /// Set the dynamic buffer configuration
+    pub fn with_dynamic_buffer_config(mut self, config: DynamicBufferConfig) -> Self {
+        self.dynamic_buffer_config = Some(config);
+        self
+    }
+
+    /// Upload initial updates with auto-resize if needed
+    pub fn upload_initial_updates_with_auto_resize(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        updates: &[u32],
+        active_worklist_idx: u32,
+    ) -> Result<(), String> {
+        // Check if we need to auto-resize
+        if let Some(config) = &self.dynamic_buffer_config {
+            if config.auto_resize {
+                let required_size = (updates.len() * std::mem::size_of::<u32>()) as u64;
+                let active_buffer = if active_worklist_idx == 0 {
+                    &self.worklist_buf_a
+                } else {
+                    &self.worklist_buf_b
+                };
+
+                if !Self::is_buffer_sufficient(active_buffer, required_size) {
+                    // Resize the appropriate worklist buffer
+                    self.ensure_worklist_buffers(
+                        device,
+                        self.grid_width,
+                        self.grid_height, 
+                        self.grid_depth,
+                        config,
+                    )?;
+                }
+            }
+        }
+
+        // Proceed with upload
+        self.upload_initial_updates(queue, updates, active_worklist_idx)
     }
 
     /// Uploads initial update list to a specific worklist buffer.
@@ -1650,5 +1906,116 @@ mod tests {
         // assert!(mapped_data_result.is_ok());
         // let mapped_data = mapped_data_result.unwrap();
         // assert_eq!(mapped_data, bytemuck::cast_slice::<u32, u8>(&test_data));
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_buffer_resizing() {
+        // Create a small grid
+        let small_width = 4;
+        let small_height = 4;
+        let small_depth = 1;
+        let num_tiles = 8;
+
+        // Set up the test environment with the small grid
+        let (device, queue, _, mut buffers) = setup_test_environment(
+            small_width,
+            small_height,
+            small_depth,
+            num_tiles,
+        );
+
+        // Now try to resize for a larger grid
+        let large_width = 16;
+        let large_height = 16;
+        let large_depth = 1;
+
+        // Configure dynamic buffer management
+        let config = DynamicBufferConfig {
+            growth_factor: 1.5,
+            min_buffer_size: 1024,
+            max_buffer_size: 1024 * 1024 * 1024,
+            auto_resize: true,
+        };
+
+        // Record the original buffer sizes
+        let original_grid_buf_size = buffers.grid_possibilities_buf.size();
+        let original_entropy_buf_size = buffers.entropy_buf.size();
+        let original_worklist_buf_size = buffers.worklist_buf_a.size();
+
+        // Resize all buffers
+        let result = buffers.resize_for_grid(
+            &device,
+            large_width,
+            large_height,
+            large_depth,
+            num_tiles,
+            &config,
+        );
+
+        // Verify resize was successful
+        assert!(result.is_ok(), "Buffer resize failed: {:?}", result.err());
+
+        // Verify the new buffer sizes
+        let new_grid_buf_size = buffers.grid_possibilities_buf.size();
+        let new_entropy_buf_size = buffers.entropy_buf.size();
+        let new_worklist_buf_size = buffers.worklist_buf_a.size();
+
+        // Calculate expected minimum sizes
+        let large_num_cells = (large_width * large_height * large_depth) as usize;
+        let u32s_per_cell = ((num_tiles + 31) / 32) as usize;
+        let expected_grid_size = (large_num_cells * u32s_per_cell * std::mem::size_of::<u32>()) as u64;
+        let expected_entropy_size = (large_num_cells * std::mem::size_of::<f32>()) as u64;
+        let expected_worklist_size = (large_num_cells * std::mem::size_of::<u32>()) as u64;
+
+        // Verify buffers were actually resized
+        assert!(
+            new_grid_buf_size > original_grid_buf_size,
+            "Grid buffer was not resized. Original: {}, New: {}",
+            original_grid_buf_size,
+            new_grid_buf_size
+        );
+        assert!(
+            new_entropy_buf_size > original_entropy_buf_size,
+            "Entropy buffer was not resized. Original: {}, New: {}",
+            original_entropy_buf_size,
+            new_entropy_buf_size
+        );
+        assert!(
+            new_worklist_buf_size > original_worklist_buf_size,
+            "Worklist buffer was not resized. Original: {}, New: {}",
+            original_worklist_buf_size,
+            new_worklist_buf_size
+        );
+
+        // Verify the new buffers are at least as large as required
+        assert!(
+            new_grid_buf_size >= expected_grid_size,
+            "Grid buffer too small. Expected: {} (or larger), Actual: {}",
+            expected_grid_size,
+            new_grid_buf_size
+        );
+        assert!(
+            new_entropy_buf_size >= expected_entropy_size,
+            "Entropy buffer too small. Expected: {} (or larger), Actual: {}",
+            expected_entropy_size,
+            new_entropy_buf_size
+        );
+        assert!(
+            new_worklist_buf_size >= expected_worklist_size,
+            "Worklist buffer too small. Expected: {} (or larger), Actual: {}",
+            expected_worklist_size,
+            new_worklist_buf_size
+        );
+
+        // Test the auto-resize feature with upload_initial_updates_with_auto_resize
+        let large_updates = vec![0u32; large_num_cells];
+        let result = buffers.upload_initial_updates_with_auto_resize(
+            &device,
+            &queue,
+            &large_updates,
+            0, // Use buffer A
+        );
+
+        assert!(result.is_ok(), "Auto-resize upload failed: {:?}", result.err());
     }
 }
