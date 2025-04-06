@@ -4,15 +4,18 @@ use crate::debug_viz::{DebugVisualizationConfig, DebugVisualizer, GpuBuffersDebu
 use crate::sync::GpuSynchronizer;
 use crate::{pipeline::ComputePipelines, subgrid::SubgridConfig, GpuError};
 use async_trait::async_trait;
-use log::{debug, info};
+use log::{debug, error, info, warn};
 use std::sync::Arc;
+use std::time::Instant;
 use wfc_core::{
+    common::{GridState, ProgressUpdate, WfcResult},
     entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
-    propagator, BoundaryCondition,
-}; // Use Arc for shared GPU resources
-use wfc_rules::AdjacencyRules; // Import from wfc_rules instead
-use wgpu; // Assuming wgpu is needed // Import GpuParamsUniform
+    propagator::{self, ConstraintPropagator, PropagationError},
+    BoundaryCondition,
+};
+use wfc_rules::AdjacencyRules;
+use wgpu;
 
 /// Manages the WGPU context and orchestrates GPU-accelerated WFC operations.
 ///
@@ -34,8 +37,8 @@ use wgpu; // Assuming wgpu is needed // Import GpuParamsUniform
 /// (or used directly) to perform entropy calculation and constraint propagation steps on the GPU.
 /// Data synchronization between CPU (`PossibilityGrid`) and GPU (`GpuBuffers`) is handled
 /// internally by the respective trait method implementations.
-#[allow(dead_code)] // Allow unused fields while implementation is pending
-#[derive(Clone, Debug)] // Add Debug
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
 pub struct GpuAccelerator {
     /// WGPU instance.
     instance: Arc<wgpu::Instance>,
@@ -54,12 +57,12 @@ pub struct GpuAccelerator {
     /// Debug visualizer for algorithm state
     debug_visualizer: Option<DebugVisualizer>,
     grid_dims: (usize, usize, usize),
-    boundary_mode: BoundaryCondition,        // Store boundary mode
-    num_tiles: usize,                        // Add num_tiles
-    propagator: GpuConstraintPropagator,     // Store the propagator
-    entropy_heuristic: EntropyHeuristicType, // Store the selected entropy heuristic
+    boundary_mode: BoundaryCondition,
+    num_tiles: usize,
+    propagator: GpuConstraintPropagator,
+    entropy_heuristic: EntropyHeuristicType,
     /// GPU synchronizer for handling data transfer between CPU and GPU
-    synchronizer: GpuSynchronizer, // Add synchronizer
+    synchronizer: GpuSynchronizer,
 }
 
 // Import the concrete GPU implementations
@@ -89,6 +92,7 @@ impl GpuAccelerator {
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
         boundary_mode: BoundaryCondition,
+        entropy_heuristic: EntropyHeuristicType,
         subgrid_config: Option<SubgridConfig>,
     ) -> Result<Self, GpuError> {
         info!(
@@ -198,13 +202,13 @@ impl GpuAccelerator {
                 BoundaryCondition::Finite => 0,
                 BoundaryCondition::Periodic => 1,
             },
-            heuristic_type: 0,                  // Default to Shannon entropy
-            tie_breaking: 0,                    // Default to no tie-breaking
-            max_propagation_steps: 10000,       // Default max steps
-            contradiction_check_frequency: 100, // Check every 100 steps
-            worklist_size: 0, // Initial worklist size is 0 before first propagation
+            heuristic_type: 0,
+            tie_breaking: 0,
+            max_propagation_steps: 10000,
+            contradiction_check_frequency: 100,
+            worklist_size: 0,
             grid_element_count: (grid_dims.0 * grid_dims.1 * grid_dims.2) as u32,
-            _padding: 0, // Padding to ensure 16-byte alignment
+            _padding: 0,
         };
 
         // Create the propagator instance
@@ -215,7 +219,7 @@ impl GpuAccelerator {
             buffers.clone(),
             grid_dims,
             boundary_mode,
-            params, // Pass the created params
+            params,
         );
 
         Ok(Self {
@@ -223,16 +227,16 @@ impl GpuAccelerator {
             adapter,
             device,
             queue,
-            pipelines, // Store the Arc
-            buffers,   // Store the Arc
+            pipelines,
+            buffers,
             grid_dims,
-            boundary_mode, // Store boundary_mode
-            num_tiles,     // Initialize num_tiles
-            propagator,    // Store the propagator
+            boundary_mode,
+            num_tiles,
+            propagator,
             subgrid_config,
             debug_visualizer: None,
-            entropy_heuristic: EntropyHeuristicType::default(), // Default to Shannon entropy
-            synchronizer,                                       // Store the synchronizer
+            entropy_heuristic,
+            synchronizer,
         })
     }
 
@@ -250,12 +254,12 @@ impl GpuAccelerator {
 
     /// Returns a clone of the Arc-wrapped ComputePipelines.
     pub fn pipelines(&self) -> Arc<ComputePipelines> {
-        self.pipelines.clone() // Clone the Arc
+        self.pipelines.clone()
     }
 
     /// Returns a clone of the Arc-wrapped GpuBuffers.
     pub fn buffers(&self) -> Arc<GpuBuffers> {
-        self.buffers.clone() // Clone the Arc
+        self.buffers.clone()
     }
 
     /// Returns the grid dimensions (width, height, depth).
@@ -275,7 +279,6 @@ impl GpuAccelerator {
 
     /// Returns the GPU parameters uniform.
     pub fn params(&self) -> GpuParamsUniform {
-        // Return a copy of the params from the propagator
         self.propagator.params
     }
 
@@ -420,6 +423,354 @@ impl GpuAccelerator {
     pub fn entropy_heuristic(&self) -> EntropyHeuristicType {
         self.entropy_heuristic
     }
+
+    /// Runs the WFC algorithm on the GPU asynchronously.
+    ///
+    /// # Arguments
+    /// * `grid` - The mutable `PossibilityGrid` to operate on.
+    /// * `rules` - The `AdjacencyRules` for the model.
+    /// * `max_iterations` - The maximum number of iterations before stopping.
+    /// * `callback` - A closure called periodically with progress updates.
+    ///
+    /// # Returns
+    /// A `Result` containing a `WfcResult` enum indicating success, contradiction, or max iterations,
+    /// or a `GpuError` if a GPU-specific error occurs.
+    #[allow(unused_variables)]
+    pub async fn run_with_callback<'grid, F>(
+        &mut self,
+        grid: &'grid mut PossibilityGrid,
+        rules: &AdjacencyRules,
+        max_iterations: usize,
+        mut callback: F,
+    ) -> Result<WfcResult, GpuError>
+    where
+        F: FnMut(ProgressUpdate<'grid>) + Send,
+    {
+        debug!("Starting GPU WFC run.");
+        let start_time = Instant::now();
+        let mut iterations = 0;
+        let max_iterations = max_iterations.unwrap_or(usize::MAX);
+
+        // Initial grid upload
+        self.synchronizer.upload_grid(grid)?;
+
+        loop {
+            if iterations >= max_iterations {
+                info!("Reached max iterations ({}), stopping.", max_iterations);
+                return Ok(WfcResult::MaxIterationsReached(iterations));
+            }
+            iterations += 1;
+
+            // --- 1. Calculate Entropy (GPU) ---
+            debug!("Iteration {}: Calculating entropy...", iterations);
+            // Important: Reset the min entropy buffer BEFORE calculating entropy
+            self.synchronizer
+                .reset_min_entropy_buffer()
+                .await
+                .map_err(GpuError::SynchronizerError)?;
+
+            // Placeholder: GPU Entropy calculation would go here.
+            // For now, we might need a CPU fallback or assume GPU did its work
+            // let entropy_result = self.calculate_entropy(grid).await?;
+            // debug!("Entropy calculation done.");
+
+            // --- 2. Select Lowest Entropy Cell (Download result from GPU) ---
+            debug!("Iteration {}: Selecting lowest entropy cell...", iterations);
+            let selection_result = self
+                .select_lowest_entropy_cell(self.entropy_heuristic)
+                .await;
+            // debug!("Cell selection done.");
+
+            let pos = match selection_result {
+                Ok(Some(p)) => {
+                    debug!("Selected cell: {:?}", p);
+                    p
+                }
+                Ok(None) => {
+                    // Grid is fully collapsed and consistent
+                    debug!("Grid fully collapsed successfully.");
+                    // TODO: Final download/sync?
+                    // Download final grid state?
+                    self.synchronizer
+                        .download_grid_state(grid)
+                        .await
+                        .map_err(GpuError::SynchronizerError)?;
+
+                    return Ok(WfcResult::Success(iterations));
+                }
+                Err(e) => {
+                    error!("Error during entropy selection/download: {:?}", e);
+                    // Attempt to download contradiction info
+                    match self.synchronizer.download_contradiction_status().await {
+                        Ok(Some(loc)) => {
+                            warn!(
+                                "Contradiction detected during cell selection at location: {:?}. Attempting grid download.",
+                                loc
+                            );
+                            // Download potentially partial/contradictory grid state for inspection
+                            let _ = self.synchronizer.download_grid_state(grid).await; // Ignore error here
+                            return Ok(WfcResult::Contradiction(loc.map(|l| l as usize)));
+                        }
+                        Ok(None) => {
+                            // No specific contradiction location found, return original error
+                            warn!("No specific contradiction location found, returning original selection error.");
+                            // It's likely a contradiction still, report it generically
+                            return Ok(WfcResult::Contradiction(None));
+                        }
+                        Err(sync_err) => {
+                            error!(
+                                "Error downloading contradiction status after selection error: {:?}",
+                                sync_err
+                            );
+                            // We know there was an error, report contradiction generically
+                            return Ok(WfcResult::Contradiction(None));
+                        }
+                    }
+                }
+            };
+
+            // Callback: Observing
+            callback(ProgressUpdate {
+                iterations,
+                elapsed_time: start_time.elapsed(),
+                current_state: GridState::Observing,
+                grid: &*grid, // Borrow grid for the callback
+                last_change: Some((pos.0, pos.1, pos.2)),
+            });
+
+            // --- 3. Collapse Cell (CPU Grid Update & Upload Changes) ---
+            debug!(
+                "Iteration {}: Collapsing cell at ({}, {}, {})...",
+                iterations, pos.0, pos.1, pos.2
+            );
+            // Get possibilities for the selected cell from the CPU grid
+            let possibilities = match grid.get_possibilities(pos.0, pos.1, pos.2) {
+                Some(p) => p,
+                None => {
+                    error!(
+                        "Attempted to collapse cell ({}, {}, {}) which is out of bounds.",
+                        pos.0, pos.1, pos.2
+                    );
+                    // This indicates a logic error somewhere (selection gave invalid coords?)
+                    return Err(GpuError::InternalError(
+                        "Selected cell coordinates are out of bounds.".to_string(),
+                    ));
+                }
+            };
+
+            // Find the first available tile_id to collapse to
+            let chosen_tile_id = possibilities
+                .iter()
+                .enumerate()
+                .find(|(_, &enabled)| enabled)
+                .map(|(id, _)| id);
+
+            let updated_coords = if let Some(tile_id) = chosen_tile_id {
+                match grid.collapse(pos.0, pos.1, pos.2, tile_id) {
+                    Ok(updates) => {
+                        debug!(
+                            "Collapsed cell ({}, {}, {}) to tile {}. Changes: {:?}",
+                            pos.0, pos.1, pos.2, tile_id, updates
+                        );
+                        // Upload these specific changes to the GPU
+                        self.synchronizer
+                            .upload_grid_changes(updates.as_slice()) // Pass slice of updates
+                            .await
+                            .map_err(GpuError::SynchronizerError)?;
+                        debug!("Uploaded collapse changes to GPU.");
+                        // The updates returned by grid.collapse are the initial worklist
+                        updates
+                            .iter()
+                            .map(|upd| (upd.x, upd.y, upd.z))
+                            .collect::<Vec<_>>() // Collect coords for propagation input
+                    }
+                    Err(e) => {
+                        // This might happen if the cell was *already* collapsed (e.g., by init)
+                        warn!(
+                            "CPU grid collapse failed for cell ({:?}): {}. This might be okay if pre-collapsed.",
+                            pos, e
+                        );
+                        // Even if CPU collapse fails, the GPU state might be different.
+                        // We selected based on GPU state, so proceed with propagation from that cell.
+                        // Upload the intended collapse *anyway*? Or just propagate from the selected cell?
+                        // Let's assume we still need to propagate from `pos`.
+                        // Create a single update for the selected cell to trigger propagation
+                        let single_update = grid.create_update(pos.0, pos.1, pos.2);
+                        if let Some(update_data) = single_update {
+                            self.synchronizer
+                                .upload_grid_changes(&[update_data]) // Pass slice of updates
+                                .await
+                                .map_err(GpuError::SynchronizerError)?;
+                            debug!(
+                                "Uploaded single cell update to GPU after CPU collapse warning."
+                            );
+                            vec![(pos.0, pos.1, pos.2)]
+                        } else {
+                            error!(
+                                "Failed to create update for selected cell {:?}, cannot proceed.",
+                                pos
+                            );
+                            return Err(GpuError::InternalError(format!(
+                                "Failed to create grid update for selected cell {:?}",
+                                pos
+                            )));
+                        }
+                    }
+                }
+            } else {
+                // This should ideally not happen if select_lowest_entropy_cell returned a valid pos
+                error!(
+                    "Selected cell ({:?}) has no possible tiles left according to CPU grid!",
+                    pos
+                );
+                // Indicates a potential divergence or earlier error. Report contradiction.
+                return Ok(WfcResult::Contradiction(Some(
+                    grid.coords_to_index(pos.0, pos.1, pos.2),
+                )));
+            };
+
+            // --- 4. Propagate Constraints (GPU) ---
+            if !updated_coords.is_empty() {
+                debug!(
+                    "Iteration {}: Propagating constraints from {} initial updates...",
+                    iterations,
+                    updated_coords.len()
+                );
+                // Call the propagator directly using the stored instance
+                match self
+                    .propagator // Use the stored propagator instance
+                    .propagate(
+                        &self.device, // Pass required resources
+                        &self.queue,
+                        &mut self.buffers,
+                        // `updated_coords` might need conversion if propagator expects different format
+                        // Assuming propagator handles Vec<(usize, usize, usize)> for now
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        debug!("Propagation successful.");
+                        // Download the contradiction status *after* propagation
+                        match self.synchronizer.download_contradiction_status().await {
+                            Ok(Some(loc)) => {
+                                warn!(
+                                    "Contradiction detected by GPU after propagation at {:?}.",
+                                    loc
+                                );
+                                // Download potentially partial/contradictory grid state
+                                let _ = self.synchronizer.download_grid_state(grid).await;
+                                callback(ProgressUpdate {
+                                    iterations,
+                                    elapsed_time: start_time.elapsed(),
+                                    current_state: GridState::Contradiction,
+                                    grid: &*grid,
+                                    last_change: Some((pos.0, pos.1, pos.2)),
+                                });
+                                return Ok(WfcResult::Contradiction(loc.map(|l| l as usize)));
+                            }
+                            Ok(None) => {
+                                // No contradiction found by GPU
+                                // Report progress after successful propagation
+                                // Need to download the grid state to show it in the callback
+                                self.synchronizer
+                                    .download_grid_state(grid)
+                                    .await
+                                    .map_err(GpuError::SynchronizerError)?;
+                                callback(ProgressUpdate {
+                                    iterations,
+                                    elapsed_time: start_time.elapsed(),
+                                    current_state: GridState::Propagated,
+                                    grid: &*grid,
+                                    last_change: Some((pos.0, pos.1, pos.2)),
+                                });
+                            }
+                        }
+                    }
+                    Err(prop_err) => {
+                        error!("Propagation failed with error: {:?}", prop_err);
+                        // Attempt to check GPU contradiction buffer anyway, just in case
+                        match self.synchronizer.download_contradiction_status().await {
+                            Ok(Some(loc)) => {
+                                warn!(
+                                    "Contradiction location found after propagation error: {:?}",
+                                    loc
+                                );
+                                let _ = self.synchronizer.download_grid_state(grid).await;
+                                callback(ProgressUpdate {
+                                    iterations,
+                                    elapsed_time: start_time.elapsed(),
+                                    current_state: GridState::Contradiction,
+                                    grid: &*grid,
+                                    last_change: Some((pos.0, pos.1, pos.2)),
+                                });
+                                return Ok(WfcResult::Contradiction(loc.map(|l| l as usize)));
+                            }
+                            Err(sync_err) => {
+                                error!(
+                                    "Error downloading contradiction status after propagation error: {:?}",
+                                    sync_err
+                                );
+                                // Return the original propagation error as GpuError
+                                return Err(GpuError::PropagationError(prop_err.to_string()));
+                            }
+                            Ok(None) => {
+                                // No specific contradiction, but propagation failed.
+                                warn!("Propagation failed, but no specific contradiction location found.");
+                                callback(ProgressUpdate {
+                                    iterations,
+                                    elapsed_time: start_time.elapsed(),
+                                    current_state: GridState::Error, // Indicate generic error state
+                                    grid: &*grid,
+                                    last_change: Some((pos.0, pos.1, pos.2)),
+                                });
+                                // Return the original propagation error as GpuError
+                                return Err(GpuError::PropagationError(prop_err.to_string()));
+                            }
+                        }
+                    }
+                }
+            } else {
+                // No updates were generated by the collapse (e.g., cell was already collapsed on CPU)
+                debug!(
+                    "Iteration {}: No updates generated by CPU collapse, skipping propagation.",
+                    iterations
+                );
+                // We still need to check if the grid is fully collapsed or if there's an issue.
+                // Checking contradiction status is redundant here as propagation didn't run.
+                // Re-running selection logic to see if grid is complete.
+                match self
+                    .select_lowest_entropy_cell(self.entropy_heuristic)
+                    .await
+                {
+                    Ok(None) => {
+                        debug!("Grid determined complete after no-update iteration.");
+                        self.synchronizer
+                            .download_grid_state(grid)
+                            .await
+                            .map_err(GpuError::SynchronizerError)?;
+                        return Ok(WfcResult::Success(iterations));
+                    }
+                    Ok(Some(_)) => {
+                        // Still cells to collapse, loop continues
+                        debug!("Grid not yet complete, continuing loop.");
+                    }
+                    Err(e) => {
+                        error!("Error re-selecting lowest entropy cell after no-update iteration: {:?}", e);
+                        // Assume it might be a contradiction discovered during selection
+                        match self.synchronizer.download_contradiction_status().await {
+                            Ok(Some(loc)) => {
+                                return Ok(WfcResult::Contradiction(loc.map(|l| l as usize)))
+                            }
+                            _ => return Ok(WfcResult::Contradiction(None)), // Report generic contradiction
+                        }
+                    }
+                }
+            }
+
+            // Optional debug snapshot
+            self.take_debug_snapshot().await?;
+        }
+    }
 }
 
 // --- Trait Implementations ---
@@ -457,10 +808,7 @@ impl propagator::ConstraintPropagator for GpuAccelerator {
 }
 
 impl EntropyCalculator for GpuAccelerator {
-    /// Delegates entropy calculation to an internal `GpuEntropyCalculator` instance.
-    ///
-    /// Note: This creates a new `GpuEntropyCalculator` instance on each call.
-    /// Consider optimizing if this becomes a bottleneck.
+    /// Calculates entropy using the GPU.
     fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
         // First upload the grid to GPU (synchronous)
         self.synchronizer
@@ -523,32 +871,57 @@ impl EntropyCalculator for GpuAccelerator {
         Ok(entropy_grid)
     }
 
-    /// Selects the cell with the lowest entropy based on the GPU-calculated entropy grid.
-    ///
-    /// Downloads the minimum entropy information from the GPU and converts the flat index
-    /// back to 3D coordinates.
+    /// Selects the cell with the lowest entropy based on the GPU calculation.
     fn select_lowest_entropy_cell(
         &self,
-        entropy_grid: &EntropyGrid,
+        heuristic: EntropyHeuristicType,
     ) -> Option<(usize, usize, usize)> {
-        // TODO: Download min_entropy_info buffer from GPU instead of CPU calculation
-        let mut min_entropy = f32::MAX;
-        let mut min_pos = None;
+        // Use the synchronizer to download the min entropy info
+        let min_entropy_info = pollster::block_on(self.synchronizer.download_min_entropy_info())
+            .ok()
+            .flatten();
 
-        for z in 0..entropy_grid.depth {
-            for y in 0..entropy_grid.height {
-                for x in 0..entropy_grid.width {
-                    let idx =
-                        x + y * entropy_grid.width + z * entropy_grid.width * entropy_grid.height;
-                    let entropy = entropy_grid.data[idx];
-                    if entropy > 0.0 && entropy < min_entropy {
-                        min_entropy = entropy;
-                        min_pos = Some((x, y, z));
-                    }
-                }
-            }
+        // Check if we have valid results
+        if min_entropy_info.is_none() {
+            log::debug!("No valid min entropy info found from GPU");
+            return None;
         }
-        min_pos
+
+        let (min_entropy, min_idx_u32) = min_entropy_info.unwrap();
+
+        // Check if we have a valid minimum entropy (not collapsed or MAX)
+        if min_entropy <= 0.0 || min_entropy == f32::MAX || min_idx_u32 == u32::MAX {
+            log::debug!(
+                "Min entropy found ({}) is invalid or cell already collapsed (idx: {}).",
+                min_entropy,
+                min_idx_u32
+            );
+            return None;
+        }
+
+        // Convert grid dimensions to u32 for calculations
+        let width_u32 = self.grid_dims.0 as u32;
+        let height_u32 = self.grid_dims.1 as u32;
+
+        if width_u32 == 0 || height_u32 == 0 {
+            log::error!("Grid dimensions are zero, cannot calculate 3D coordinates.");
+            return None; // Avoid division by zero
+        }
+
+        // Calculate 3D coordinates from 1D index (using u32)
+        let x = min_idx_u32 % width_u32;
+        let y = (min_idx_u32 / width_u32) % height_u32;
+        let z = min_idx_u32 / (width_u32 * height_u32);
+
+        log::debug!(
+            "Selected cell ({}, {}, {}) with min entropy {}",
+            x,
+            y,
+            z,
+            min_entropy
+        );
+        // Return coordinates as usize
+        Some((x as usize, y as usize, z as usize))
     }
 
     fn set_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> bool {
