@@ -319,6 +319,11 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [x] Implement `extract_subgrid` function
   - [x] Implement `merge_subgrids` function
 - [ ] Propagator subgrid handling
+
   - [x] Update `GpuConstraintPropagator::propagate` to call subgrid logic
   - [x] Implement `propagate_with_subgrids` helper function (Verified existing implementation)
   - [x] Implement `propagate_subgrid` helper function (Verified existing implementation)
+
+- [ ] Implement/Refine Entropy Shader (`entropy.wgsl`)
+  - [x] Support different entropy heuristics (Shannon, Count, Weighted) (Verified existing implementation)
+  - [ ] Consider optimizations (e.g., shared memory for reduction)
