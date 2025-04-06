@@ -166,3 +166,7 @@ mod tests {
         }
     }
 }
+
+// Add shader validation tests module
+#[cfg(test)]
+pub mod shader_validation_tests;
