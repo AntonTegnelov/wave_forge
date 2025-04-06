@@ -21,6 +21,8 @@ pub mod error_recovery;
 pub mod pipeline;
 /// GPU implementation of the ConstraintPropagator trait.
 pub mod propagator;
+/// GPU implementation of the ShaderCompiler trait.
+pub mod shader_compiler;
 /// Contains WGSL shader code as string constants or loading utilities.
 pub mod shaders; // Module to potentially help load shaders
 /// Provides parallel subgrid processing for large grids.
