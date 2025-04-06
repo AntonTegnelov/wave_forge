@@ -341,12 +341,31 @@ impl GpuAccelerator {
 
     /// Enable debug visualization with the given configuration
     pub fn enable_debug_visualization(&mut self, config: DebugVisualizationConfig) {
-        self.debug_visualizer = Some(DebugVisualizer::new(config));
+        // Pass the synchronizer when creating DebugVisualizer
+        let synchronizer = Arc::new(GpuSynchronizer::new(
+            self.device.clone(),
+            self.queue.clone(),
+            self.buffers.clone(),
+        ));
+        self.debug_visualizer = Some(DebugVisualizer::new(config, synchronizer));
     }
 
     /// Enable debug visualization with default settings
     pub fn enable_default_debug_visualization(&mut self) {
-        self.debug_visualizer = Some(DebugVisualizer::default());
+        // Ensure default() also gets a synchronizer if it uses new()
+        let synchronizer = Arc::new(GpuSynchronizer::new(
+            self.device.clone(),
+            self.queue.clone(),
+            self.buffers.clone(),
+        ));
+        // Assuming DebugVisualizer::default() now internally calls new() with a default synchronizer,
+        // or we need a specific `default_with_sync` method.
+        // For now, let's use new() directly.
+        self.debug_visualizer = Some(DebugVisualizer::new(
+            DebugVisualizationConfig::default(),
+            synchronizer,
+        ));
+        // self.debug_visualizer = Some(DebugVisualizer::default()); // This would panic if Default needs real resources
     }
 
     /// Disable debug visualization
@@ -373,10 +392,11 @@ impl GpuAccelerator {
     pub async fn take_debug_snapshot(&mut self) -> Result<(), GpuError> {
         if let Some(visualizer) = &mut self.debug_visualizer {
             let buffers = Arc::clone(&self.buffers);
-            let device = Arc::clone(&self.device);
-            let queue = Arc::clone(&self.queue);
+            // let device = Arc::clone(&self.device);
+            // let queue = Arc::clone(&self.queue);
 
-            buffers.take_debug_snapshot(device, queue, visualizer)?;
+            // Call the extension method on buffers, passing only the visualizer
+            buffers.take_debug_snapshot(visualizer)?;
         }
 
         Ok(())

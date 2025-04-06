@@ -1,10 +1,16 @@
-use crate::buffers::{EntropyParamsUniform, GpuBuffers};
-use crate::pipeline::ComputePipelines;
-use log::{trace, warn};
+use crate::{
+    buffers::{EntropyParamsUniform, GpuBuffers},
+    pipeline::ComputePipelines,
+    sync::GpuSynchronizer,
+    GpuError,
+};
+use log::trace;
 use pollster;
 use std::sync::Arc;
-use wfc_core::entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType};
-use wfc_core::grid::{EntropyGrid, PossibilityGrid};
+use wfc_core::{
+    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
+    grid::{EntropyGrid, PossibilityGrid},
+};
 use wgpu;
 
 /// GPU-accelerated entropy calculator for use in WFC algorithm.
@@ -16,6 +22,7 @@ pub struct GpuEntropyCalculator {
     queue: Arc<wgpu::Queue>,
     pipelines: Arc<ComputePipelines>,
     buffers: Arc<GpuBuffers>,
+    synchronizer: Arc<GpuSynchronizer>,
     grid_dims: (usize, usize, usize),
     heuristic_type: EntropyHeuristicType,
 }
@@ -29,14 +36,20 @@ impl GpuEntropyCalculator {
         buffers: Arc<GpuBuffers>,
         grid_dims: (usize, usize, usize),
     ) -> Self {
-        Self::with_heuristic(
+        let synchronizer = Arc::new(GpuSynchronizer::new(
+            device.clone(),
+            queue.clone(),
+            buffers.clone(),
+        ));
+        Self {
             device,
             queue,
             pipelines,
             buffers,
+            synchronizer,
             grid_dims,
-            EntropyHeuristicType::default(),
-        )
+            heuristic_type: EntropyHeuristicType::default(),
+        }
     }
 
     /// Creates a new GPU entropy calculator with a specific entropy heuristic.
@@ -48,11 +61,17 @@ impl GpuEntropyCalculator {
         grid_dims: (usize, usize, usize),
         heuristic_type: EntropyHeuristicType,
     ) -> Self {
+        let synchronizer = Arc::new(GpuSynchronizer::new(
+            device.clone(),
+            queue.clone(),
+            buffers.clone(),
+        ));
         Self {
             device,
             queue,
             pipelines,
             buffers,
+            synchronizer,
             grid_dims,
             heuristic_type,
         }
@@ -124,20 +143,11 @@ impl GpuEntropyCalculator {
             _padding4: 0,
         };
 
-        // Write entropy parameters to buffer
-        self.queue.write_buffer(
-            &self.buffers.entropy_params_buffer,
-            0,
-            bytemuck::cast_slice(&[entropy_params]),
-        );
+        // --- Write entropy parameters to buffer ---
+        self.synchronizer.upload_entropy_params(&entropy_params)?;
 
         // --- Reset min entropy buffer to initial state ---
-        if let Err(e) = self.buffers.reset_min_entropy_info(&self.queue) {
-            return Err(EntropyError::Other(format!(
-                "Failed to reset min entropy: {}",
-                e
-            )));
-        }
+        self.synchronizer.reset_min_entropy_buffer()?;
 
         // --- Create bind groups for the entropy shader ---
         let entropy_params_bind_group_layout =
@@ -223,19 +233,7 @@ impl GpuEntropyCalculator {
         self.queue.submit(std::iter::once(encoder.finish()));
 
         // Download minimum entropy information
-        let _min_entropy_info = match self
-            .buffers
-            .download_min_entropy_info(self.device.clone(), self.queue.clone())
-            .await
-        {
-            Ok(data) => data,
-            Err(e) => {
-                return Err(EntropyError::Other(format!(
-                    "Failed to download min entropy info: {}",
-                    e
-                )))
-            }
-        };
+        let _min_entropy_info = self.synchronizer.download_min_entropy_info().await?;
 
         // Create a new EntropyGrid with calculated values
         let mut entropy_grid = EntropyGrid::new(width, height, depth);
@@ -276,36 +274,41 @@ impl GpuEntropyCalculator {
         _entropy_grid: &EntropyGrid,
     ) -> Option<(usize, usize, usize)> {
         // Try to get the min entropy cell from the GPU calculation
-        let min_entropy_info = match self
-            .buffers
-            .download_min_entropy_info(self.device.clone(), self.queue.clone())
+        let min_entropy_info = self
+            .synchronizer
+            .download_min_entropy_info()
             .await
-        {
-            Ok(info) => info,
-            Err(e) => {
-                warn!("Failed to get min entropy info: {}", e);
-                return None;
-            }
-        };
+            .ok()
+            .flatten();
 
         // Check if we have valid results
-        min_entropy_info?;
-
-        let (min_entropy, min_idx) = min_entropy_info.unwrap();
-
-        // Check if we have a valid minimum entropy
-        if min_entropy <= 0.0 || min_entropy == f32::MAX || min_idx == u32::MAX as usize {
+        if min_entropy_info.is_none() {
             return None;
         }
 
-        // Convert the flat index to 3D coordinates
-        let width = self.grid_dims.0;
-        let height = self.grid_dims.1;
-        let x = min_idx % width;
-        let y = (min_idx / width) % height;
-        let z = min_idx / (width * height);
+        let (min_entropy, min_idx_u32) = min_entropy_info.unwrap(); // min_idx_u32 is u32
 
-        Some((x, y, z))
+        // Check if we have a valid minimum entropy
+        if min_entropy <= 0.0 || min_entropy == f32::MAX || min_idx_u32 == u32::MAX {
+            return None;
+        }
+
+        // Convert grid dimensions to u32 for calculations
+        let width_u32 = self.grid_dims.0 as u32;
+        let height_u32 = self.grid_dims.1 as u32;
+        // let depth_u32 = self.grid_dims.2 as u32; // depth not needed for index calc
+
+        if width_u32 == 0 || height_u32 == 0 {
+            return None; // Avoid division by zero
+        }
+
+        // Calculate 3D coordinates from 1D index (using u32)
+        let x = min_idx_u32 % width_u32;
+        let y = (min_idx_u32 / width_u32) % height_u32;
+        let z = min_idx_u32 / (width_u32 * height_u32);
+
+        // Return coordinates as usize
+        Some((x as usize, y as usize, z as usize))
     }
 }
 
@@ -330,5 +333,23 @@ impl EntropyCalculator for GpuEntropyCalculator {
 
     fn get_entropy_heuristic(&self) -> EntropyHeuristicType {
         self.heuristic_type
+    }
+}
+
+impl From<GpuError> for EntropyError {
+    fn from(gpu_error: GpuError) -> Self {
+        match gpu_error {
+            GpuError::BufferOperationError(s)
+            | GpuError::CommandExecutionError(s)
+            | GpuError::ShaderError(s)
+            | GpuError::TransferError(s)
+            | GpuError::BufferMappingFailed(s)
+            | GpuError::BufferSizeMismatch(s) => {
+                EntropyError::Other(format!("GPU Communication Error: {}", s))
+            }
+            GpuError::ValidationError(e) => EntropyError::Other(format!("GPU Setup Error: {}", e)),
+            GpuError::Other(s) => EntropyError::Other(s),
+            _ => EntropyError::Other(format!("Unhandled GpuError: {:?}", gpu_error)),
+        }
     }
 }

@@ -5,6 +5,7 @@ use crate::{
     subgrid::{
         divide_into_subgrids, extract_subgrid, merge_subgrids, SubgridConfig, SubgridRegion,
     },
+    sync::GpuSynchronizer,
 };
 use async_trait::async_trait;
 use log::{debug, info};
@@ -34,6 +35,7 @@ pub struct GpuConstraintPropagator {
     subgrid_config: Option<SubgridConfig>,
     // Debug visualization
     debug_visualizer: Option<Arc<std::sync::Mutex<DebugVisualizer>>>,
+    synchronizer: Arc<GpuSynchronizer>,
 }
 
 impl GpuConstraintPropagator {
@@ -47,6 +49,11 @@ impl GpuConstraintPropagator {
         _boundary_mode: wfc_core::BoundaryCondition,
         params: GpuParamsUniform,
     ) -> Self {
+        let synchronizer = Arc::new(GpuSynchronizer::new(
+            device.clone(),
+            queue.clone(),
+            buffers.clone(),
+        ));
         Self {
             device,
             queue,
@@ -58,6 +65,7 @@ impl GpuConstraintPropagator {
             early_termination_consecutive_passes: 3, // Default: require 3 consecutive passes below threshold
             subgrid_config: None,                    // Disabled by default
             debug_visualizer: None,                  // Debug visualization disabled by default
+            synchronizer,
         }
     }
 
@@ -287,24 +295,29 @@ impl GpuConstraintPropagator {
         debug!("Initial worklist size: {}", worklist_size);
 
         // Reset buffers for this propagation step
-        self.buffers
-            .reset_contradiction_flag(&self.queue)
+        let synchronizer = GpuSynchronizer::new(
+            self.device.clone(),
+            self.queue.clone(),
+            self.buffers.clone(),
+        );
+        synchronizer
+            .reset_contradiction_flag()
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-        self.buffers
-            .reset_contradiction_location(&self.queue)
+        synchronizer
+            .reset_contradiction_location()
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-        self.buffers
-            .reset_worklist_count(&self.queue)
+        synchronizer
+            .reset_worklist_count()
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
         // Upload initial worklist indices to the active buffer
-        self.buffers
-            .upload_initial_updates(&self.queue, &updated_indices, self.current_worklist_idx)
+        synchronizer
+            .upload_initial_updates(&updated_indices, self.current_worklist_idx)
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
         // Update params with the current worklist size
-        self.buffers
-            .update_params_worklist_size(&self.queue, worklist_size)
+        synchronizer
+            .update_params_worklist_size(worklist_size)
             .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
         // Determine dispatch size (ceiling division of total_cells by workgroup size)
@@ -415,21 +428,27 @@ impl GpuConstraintPropagator {
                 });
 
             // Check for contradictions and get next worklist size
-            let (has_contradiction, next_worklist_size, contradiction_idx) = self
-                .buffers
-                .download_propagation_status(Arc::clone(&self.device), Arc::clone(&self.queue))
-                .await
-                .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+            let (has_contradiction, next_worklist_size_opt, contradiction_idx) = {
+                // Download flag and location separately
+                let (flag, loc) = self
+                    .synchronizer
+                    .download_contradiction_status()
+                    .await
+                    .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+                // Download worklist count (assuming moved to synchronizer too)
+                let count = self
+                    .synchronizer
+                    .download_worklist_count()
+                    .await // TODO: Add download_worklist_count to synchronizer
+                    .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+                (flag, Some(count), loc) // Combine results
+            };
 
             // Take a debug snapshot after this propagation step
             if let Some(visualizer) = &self.debug_visualizer {
                 if let Ok(mut vis) = visualizer.lock() {
                     if vis.is_enabled() {
-                        let _ = self.buffers.take_debug_snapshot(
-                            Arc::clone(&self.device),
-                            Arc::clone(&self.queue),
-                            &mut vis,
-                        );
+                        let _ = self.buffers.take_debug_snapshot(&mut vis);
                     }
                 }
             }
@@ -445,8 +464,8 @@ impl GpuConstraintPropagator {
             }
 
             // Update worklist size and ping-pong buffer index
-            num_cells_to_process = next_worklist_size;
-            // Toggle the current index between 0 and 1
+            num_cells_to_process = next_worklist_size_opt.unwrap_or(0); // Use downloaded count
+                                                                        // Toggle the current index between 0 and 1
             self.current_worklist_idx = 1 - self.current_worklist_idx;
 
             debug!(
@@ -478,9 +497,9 @@ impl GpuConstraintPropagator {
                 dispatch_size = 1;
             }
 
-            // Update params with new worklist size
-            self.buffers
-                .update_params_worklist_size(&self.queue, num_cells_to_process)
+            // Update params buffer with the new worklist size for the next potential iteration
+            self.synchronizer
+                .update_params_worklist_size(num_cells_to_process)
                 .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
 
             iteration += 1;
@@ -564,11 +583,7 @@ impl GpuConstraintPropagator {
         if let Some(visualizer) = &self.debug_visualizer {
             if let Ok(mut vis) = visualizer.lock() {
                 if vis.is_enabled() {
-                    let _ = self.buffers.take_debug_snapshot(
-                        Arc::clone(&self.device),
-                        Arc::clone(&self.queue),
-                        &mut vis,
-                    );
+                    let _ = self.buffers.take_debug_snapshot(&mut vis);
                 }
             }
         }
@@ -617,11 +632,7 @@ impl GpuConstraintPropagator {
             if let Some(visualizer) = &self.debug_visualizer {
                 if let Ok(mut vis) = visualizer.lock() {
                     if vis.is_enabled() {
-                        let _ = self.buffers.take_debug_snapshot(
-                            Arc::clone(&self.device),
-                            Arc::clone(&self.queue),
-                            &mut vis,
-                        );
+                        let _ = self.buffers.take_debug_snapshot(&mut vis);
                     }
                 }
             }
@@ -641,11 +652,7 @@ impl GpuConstraintPropagator {
         if let Some(visualizer) = &self.debug_visualizer {
             if let Ok(mut vis) = visualizer.lock() {
                 if vis.is_enabled() {
-                    let _ = self.buffers.take_debug_snapshot(
-                        Arc::clone(&self.device),
-                        Arc::clone(&self.queue),
-                        &mut vis,
-                    );
+                    let _ = self.buffers.take_debug_snapshot(&mut vis);
                 }
             }
         }
@@ -739,11 +746,7 @@ impl ConstraintPropagator for GpuConstraintPropagator {
         if let Some(visualizer) = &self.debug_visualizer {
             if let Ok(mut vis) = visualizer.lock() {
                 if vis.is_enabled() {
-                    let _ = self.buffers.take_debug_snapshot(
-                        Arc::clone(&self.device),
-                        Arc::clone(&self.queue),
-                        &mut vis,
-                    );
+                    let _ = self.buffers.take_debug_snapshot(&mut vis);
                 }
             }
         }
@@ -755,11 +758,7 @@ impl ConstraintPropagator for GpuConstraintPropagator {
         if let Some(visualizer) = &self.debug_visualizer {
             if let Ok(mut vis) = visualizer.lock() {
                 if vis.is_enabled() {
-                    let _ = self.buffers.take_debug_snapshot(
-                        Arc::clone(&self.device),
-                        Arc::clone(&self.queue),
-                        &mut vis,
-                    );
+                    let _ = self.buffers.take_debug_snapshot(&mut vis);
                 }
             }
         }

@@ -52,12 +52,9 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
 
 - [ ] **Buffer management vs. synchronization**:
 
-  - [ ] Modify `sync.rs`:
-    - [ ] Move all data transfer methods from `GpuBuffers` to `GpuSynchronizer`
-    - [ ] Add new transfer methods for remaining buffer types
-  - [ ] Modify `buffers.rs`:
-    - [ ] Remove data transfer methods
-    - [ ] Refocus on buffer creation and management
+  - [x] Modify `sync.rs`: Move all data transfer methods from `GpuBuffers` to `GpuSynchronizer`
+  - [ ] Modify `sync.rs`: Add new transfer methods for remaining buffer types
+  - [ ] Modify `buffers.rs`: Remove data transfer methods
   - [ ] Create new documentation file:
     - [ ] `wfc-gpu/docs/buffer_lifecycle.md` - Explain buffer ownership & synchronization
   - [ ] **Update files to use new buffer management methods**:

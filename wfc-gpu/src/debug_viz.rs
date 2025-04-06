@@ -6,10 +6,10 @@
 //! - Contradictions: Where and why contradictions occur during execution
 
 use crate::buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults};
+use crate::sync::GpuSynchronizer;
 use crate::GpuError;
 use pollster;
 use std::sync::Arc;
-use wgpu;
 
 /// Types of debug visualizations available
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,22 +73,27 @@ pub struct DebugVisualizer {
     current_step: usize,
     /// Whether the visualizer is enabled
     enabled: bool,
+    synchronizer: Arc<GpuSynchronizer>,
 }
 
 impl Default for DebugVisualizer {
     fn default() -> Self {
-        Self::new(DebugVisualizationConfig::default())
+        Self::new(
+            DebugVisualizationConfig::default(),
+            Arc::new(GpuSynchronizer::default()),
+        )
     }
 }
 
 impl DebugVisualizer {
     /// Create a new debug visualizer with the given configuration
-    pub fn new(config: DebugVisualizationConfig) -> Self {
+    pub fn new(config: DebugVisualizationConfig, synchronizer: Arc<GpuSynchronizer>) -> Self {
         Self {
             config,
             snapshots: Vec::new(),
             current_step: 0,
             enabled: true,
+            synchronizer,
         }
     }
 
@@ -99,12 +104,7 @@ impl DebugVisualizer {
     }
 
     /// Take a snapshot of the current GPU state
-    pub async fn take_snapshot(
-        &mut self,
-        buffers: &GpuBuffers,
-        device: Arc<wgpu::Device>,
-        queue: Arc<wgpu::Queue>,
-    ) -> Result<(), GpuError> {
+    pub async fn take_snapshot(&mut self, buffers: &GpuBuffers) -> Result<(), GpuError> {
         if !self.enabled {
             return Ok(());
         }
@@ -123,8 +123,14 @@ impl DebugVisualizer {
             download_contradiction_location: needs_contradiction,
         };
 
-        let result = buffers
-            .download_results(Arc::clone(&device), Arc::clone(&queue), request)
+        let result = self
+            .synchronizer
+            .buffers()
+            .download_results(
+                self.synchronizer.device().clone(),
+                self.synchronizer.queue().clone(),
+                request,
+            )
             .await?;
 
         // Create and store the snapshot
@@ -257,8 +263,6 @@ pub trait GpuBuffersDebugExt {
     /// Take a snapshot of the current GPU state for debugging/visualization
     fn take_debug_snapshot<'a>(
         &'a self,
-        device: Arc<wgpu::Device>,
-        queue: Arc<wgpu::Queue>,
         visualizer: &'a mut DebugVisualizer,
     ) -> Result<(), GpuError>;
 }
@@ -266,13 +270,11 @@ pub trait GpuBuffersDebugExt {
 impl GpuBuffersDebugExt for GpuBuffers {
     fn take_debug_snapshot<'a>(
         &'a self,
-        device: Arc<wgpu::Device>,
-        queue: Arc<wgpu::Queue>,
         visualizer: &'a mut DebugVisualizer,
     ) -> Result<(), GpuError> {
         // Use pollster to block on the async take_snapshot call
         // This avoids the Send requirement but makes the call blocking
-        pollster::block_on(visualizer.take_snapshot(self, device, queue))
+        pollster::block_on(visualizer.take_snapshot(self))
     }
 }
 
@@ -288,7 +290,7 @@ mod tests {
             max_snapshots: 50,
         };
 
-        let visualizer = DebugVisualizer::new(config.clone());
+        let visualizer = DebugVisualizer::new(config.clone(), Arc::new(GpuSynchronizer::default()));
         assert_eq!(visualizer.config.viz_type, config.viz_type);
         assert_eq!(visualizer.config.auto_generate, config.auto_generate);
         assert_eq!(visualizer.config.max_snapshots, config.max_snapshots);

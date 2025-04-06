@@ -5,7 +5,7 @@ use crate::{
     buffers::{DownloadRequest, EntropyParamsUniform, GpuBuffers, GpuParamsUniform},
     GpuError,
 };
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wgpu;
@@ -23,6 +23,29 @@ pub struct GpuSynchronizer {
     queue: Arc<wgpu::Queue>,
     /// Shared GPU buffers for storing data.
     buffers: Arc<GpuBuffers>,
+}
+
+// Basic Default impl for testing/convenience in DebugVisualizer
+// This will likely panic if used without proper initialization
+impl Default for GpuSynchronizer {
+    fn default() -> Self {
+        // This is unsafe and should only be used where the actual
+        // device/queue/buffers are provided later or not used.
+        // Consider using Option<Arc<...>> instead if feasible.
+        panic!("Default GpuSynchronizer created without real resources");
+        // // Dummy implementations - replace with proper handling or remove Default
+        // let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+        // let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).unwrap();
+        // let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None)).unwrap();
+        // let dummy_grid = PossibilityGrid::new(1, 1, 1, 1);
+        // let dummy_rules = AdjacencyRules::new_uniform(1, 6);
+        // let buffers = GpuBuffers::new(&device, &queue, &dummy_grid, &dummy_rules, BoundaryCondition::Finite).unwrap();
+        // Self {
+        //     device: Arc::new(device),
+        //     queue: Arc::new(queue),
+        //     buffers: Arc::new(buffers),
+        // }
+    }
 }
 
 impl GpuSynchronizer {
@@ -195,6 +218,168 @@ impl GpuSynchronizer {
         Ok(grid)
     }
 
+    /// Downloads the contradiction status (flag and location) from the GPU.
+    ///
+    /// This is an optimized method that combines multiple status downloads into a single operation
+    /// to reduce synchronization points.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    /// * `has_contradiction` - Boolean indicating if a contradiction was detected
+    /// * `contradiction_location` - Optional index of the cell where a contradiction occurred
+    pub async fn download_contradiction_status(&self) -> Result<(bool, Option<u32>), GpuError> {
+        // Create encoder for copying buffers
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Contradiction Status Encoder"),
+            });
+
+        // Copy the contradiction flag to staging buffer
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.contradiction_flag_buf,
+            0,
+            &self.buffers.staging_contradiction_flag_buf,
+            0,
+            self.buffers.contradiction_flag_buf.size(),
+        );
+
+        self.queue.submit(Some(encoder.finish()));
+
+        // Download and map the flag buffer
+        let flag_buffer = self.buffers.staging_contradiction_flag_buf.clone();
+        let flag_slice = flag_buffer.slice(..);
+        let (flag_tx, flag_rx) = tokio::sync::oneshot::channel();
+
+        flag_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = flag_tx.send(result);
+        });
+
+        self.device.poll(wgpu::Maintain::Wait); // Ensure copy completes
+
+        flag_rx.await.map_err(|_| {
+            GpuError::BufferOperationError("Mapping channel canceled for flag".to_string())
+        })??; // Handle channel send error and map_async error
+
+        let flag_mapped_range = flag_slice.get_mapped_range();
+        let flag_data = flag_mapped_range.to_vec();
+        drop(flag_mapped_range);
+        flag_buffer.unmap();
+
+        let has_contradiction = if flag_data.len() >= 4 {
+            u32::from_le_bytes(flag_data[0..4].try_into().unwrap()) != 0
+        } else {
+            false // Default to false if buffer read failed
+        };
+
+        // If there's a contradiction, download the location
+        let contradiction_location = if has_contradiction {
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Contradiction Location Encoder"),
+                });
+
+            encoder.copy_buffer_to_buffer(
+                &self.buffers.contradiction_location_buf,
+                0,
+                &self.buffers.staging_contradiction_location_buf,
+                0,
+                self.buffers.contradiction_location_buf.size(),
+            );
+
+            self.queue.submit(Some(encoder.finish()));
+
+            let loc_buffer = self.buffers.staging_contradiction_location_buf.clone();
+            let loc_slice = loc_buffer.slice(..);
+            let (loc_tx, loc_rx) = tokio::sync::oneshot::channel();
+
+            loc_slice.map_async(wgpu::MapMode::Read, move |result| {
+                let _ = loc_tx.send(result);
+            });
+
+            self.device.poll(wgpu::Maintain::Wait); // Ensure copy completes
+
+            loc_rx.await.map_err(|_| {
+                GpuError::BufferOperationError("Mapping channel canceled for loc".to_string())
+            })??;
+
+            let loc_mapped_range = loc_slice.get_mapped_range();
+            let loc_data = loc_mapped_range.to_vec();
+            drop(loc_mapped_range);
+            loc_buffer.unmap();
+
+            if loc_data.len() >= 4 {
+                Some(u32::from_le_bytes(loc_data[0..4].try_into().unwrap()))
+            } else {
+                warn!("Contradiction detected, but failed to read location buffer.");
+                None // Failed to read location
+            }
+        } else {
+            None // No contradiction
+        };
+
+        Ok((has_contradiction, contradiction_location))
+    }
+
+    /// Downloads the worklist count from the GPU.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(count)` with the worklist count if successful, or an error detailing what went wrong.
+    pub async fn download_worklist_count(&self) -> Result<u32, GpuError> {
+        let buffer_size = self.buffers.worklist_count_buf.size();
+        if buffer_size < 4 {
+            return Err(GpuError::BufferSizeMismatch(
+                "Worklist count buffer too small".to_string(),
+            ));
+        }
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Worklist Count Download Encoder"),
+            });
+
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.worklist_count_buf,
+            0,
+            &self.buffers.staging_worklist_count_buf,
+            0,
+            buffer_size,
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let buffer_slice = self.buffers.staging_worklist_count_buf.slice(..);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        self.device.poll(wgpu::Maintain::Wait); // Ensure copy completes
+
+        rx.await.map_err(|_| {
+            GpuError::BufferOperationError("Mapping channel canceled for count".to_string())
+        })??;
+
+        let mapped_range = buffer_slice.get_mapped_range();
+        let data = mapped_range.to_vec();
+        drop(mapped_range);
+        self.buffers.staging_worklist_count_buf.unmap();
+
+        if data.len() >= 4 {
+            let count = u32::from_le_bytes(data[0..4].try_into().unwrap());
+            Ok(count)
+        } else {
+            Err(GpuError::BufferSizeMismatch(
+                "Downloaded worklist count data too small".to_string(),
+            ))
+        }
+    }
+
     /// Updates the entropy parameters on the GPU.
     ///
     /// # Arguments
@@ -267,8 +452,57 @@ impl GpuSynchronizer {
         updated_indices: &[u32],
         worklist_idx: usize,
     ) -> Result<(), GpuError> {
-        self.buffers
-            .upload_initial_updates(&self.queue, updated_indices, worklist_idx)
+        self.upload_initial_updates(updated_indices, worklist_idx)
+    }
+
+    /// Uploads the initial set of updated cell indices to the GPU worklist buffer.
+    ///
+    /// This is used to seed the propagation process after an initial cell collapse.
+    /// Requires updating the `params_uniform_buf` with the new worklist size separately.
+    ///
+    /// # Arguments
+    ///
+    /// * `updated_indices` - A slice containing the 1D indices of the cells that were updated.
+    /// * `worklist_idx` - The index (0 or 1) of the worklist buffer to use (for ping-pong).
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the upload is successful.
+    /// * `Err(GpuError)` if the data size exceeds the buffer capacity.
+    pub fn upload_initial_updates(
+        &self,
+        updated_indices: &[u32],
+        worklist_idx: usize,
+    ) -> Result<(), GpuError> {
+        let worklist_buffer = if worklist_idx == 0 {
+            &self.buffers.worklist_buf_a
+        } else {
+            &self.buffers.worklist_buf_b
+        };
+
+        let data_size = (updated_indices.len() * std::mem::size_of::<u32>()) as u64;
+        if data_size > worklist_buffer.size() {
+            return Err(GpuError::BufferSizeMismatch(format!(
+                "Initial update data size ({}) exceeds worklist buffer capacity ({})",
+                data_size,
+                worklist_buffer.size()
+            )));
+        }
+
+        debug!(
+            "Uploading {} initial updates ({} bytes) to worklist buffer {}.",
+            updated_indices.len(),
+            data_size,
+            worklist_idx
+        );
+        self.queue
+            .write_buffer(worklist_buffer, 0, bytemuck::cast_slice(updated_indices));
+
+        // NOTE: Updating the worklist size in the params buffer is now a separate step,
+        // likely called after this method.
+        // self.update_params_worklist_size(updated_indices.len() as u32)?;
+
+        Ok(())
     }
 
     /// Downloads the minimum entropy information from the GPU.
@@ -296,13 +530,124 @@ impl GpuSynchronizer {
         Ok(results.min_entropy_info)
     }
 
-    /// Resets the minimum entropy buffer on the GPU.
+    /// Downloads the pass statistics buffer from the GPU.
+    ///
+    /// The buffer contains [cells_added, possibilities_removed, contradictions, overflow].
     ///
     /// # Returns
     ///
-    /// `Ok(())` if successful, or an error detailing what went wrong.
+    /// `Ok(stats)` with the statistics data if successful, or an error detailing what went wrong.
+    pub async fn download_pass_statistics(&self) -> Result<[u32; 4], GpuError> {
+        let buffer_size = self.buffers.pass_statistics_buf.size();
+        if buffer_size < 16 {
+            return Err(GpuError::BufferSizeMismatch(
+                "Pass statistics buffer too small".to_string(),
+            ));
+        }
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Pass Statistics Download Encoder"),
+            });
+
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.pass_statistics_buf,
+            0,
+            &self.buffers.staging_pass_statistics_buf,
+            0,
+            buffer_size, // Copy the whole buffer
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let buffer_slice = self.buffers.staging_pass_statistics_buf.slice(..);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        self.device.poll(wgpu::Maintain::Wait); // Ensure copy completes
+
+        rx.await.map_err(|_| {
+            GpuError::BufferOperationError("Mapping channel canceled for stats".to_string())
+        })??; // Handle channel send error and map_async error
+
+        let mapped_range = buffer_slice.get_mapped_range();
+        let data = mapped_range.to_vec(); // Copy data out
+        drop(mapped_range);
+        self.buffers.staging_pass_statistics_buf.unmap();
+
+        if data.len() >= 16 {
+            let stats_slice: &[u32] = bytemuck::cast_slice(&data[0..16]);
+            Ok([
+                stats_slice[0],
+                stats_slice[1],
+                stats_slice[2],
+                stats_slice[3],
+            ])
+        } else {
+            Err(GpuError::BufferSizeMismatch(
+                "Downloaded pass statistics data too small".to_string(),
+            ))
+        }
+    }
+
+    /// Resets the `min_entropy_info_buf` on the GPU to its initial state.
+    ///
+    /// Sets the minimum entropy value to `f32::MAX` (represented as bits) and the index to `u32::MAX`.
+    /// This is typically done before running the entropy calculation shader.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` always (buffer writing is typically fire-and-forget, errors are harder to catch here).
     pub fn reset_min_entropy_buffer(&self) -> Result<(), GpuError> {
-        self.buffers.reset_min_entropy_info(&self.queue)
+        let initial_data = [f32::MAX.to_bits(), u32::MAX]; // [min_entropy_f32_bits, min_index_u32]
+        self.queue.write_buffer(
+            &self.buffers.min_entropy_info_buf,
+            0,
+            bytemuck::cast_slice(&initial_data),
+        );
+        Ok(())
+    }
+
+    /// Resets the `contradiction_flag_buf` on the GPU to 0.
+    ///
+    /// A value of 0 indicates no contradiction has been detected.
+    /// This should be called before running the propagation shader.
+    pub fn reset_contradiction_flag(&self) -> Result<(), GpuError> {
+        self.queue.write_buffer(
+            &self.buffers.contradiction_flag_buf,
+            0,
+            bytemuck::cast_slice(&[0u32]),
+        );
+        Ok(())
+    }
+
+    /// Resets the `contradiction_location_buf` on the GPU to `u32::MAX`.
+    ///
+    /// `u32::MAX` is used to indicate that no specific contradiction location has been recorded yet.
+    pub fn reset_contradiction_location(&self) -> Result<(), GpuError> {
+        let max_u32 = [u32::MAX];
+        self.queue.write_buffer(
+            &self.buffers.contradiction_location_buf,
+            0,
+            bytemuck::cast_slice(&max_u32),
+        );
+        Ok(())
+    }
+
+    /// Resets the `worklist_count_buf` on the GPU to 0.
+    ///
+    /// Used if implementing iterative GPU propagation where the shader generates a new worklist.
+    pub fn reset_worklist_count(&self) -> Result<(), GpuError> {
+        self.queue.write_buffer(
+            &self.buffers.worklist_count_buf,
+            0,
+            bytemuck::cast_slice(&[0u32]),
+        );
+        Ok(())
     }
 
     /// Creates a command encoder for GPU operations.
@@ -341,6 +686,96 @@ impl GpuSynchronizer {
     /// Gets a reference to the GPU buffers.
     pub fn buffers(&self) -> &Arc<GpuBuffers> {
         &self.buffers
+    }
+
+    /// Resets the grid state to an initial state based on a provided possibility grid.
+    ///
+    /// This involves:
+    /// 1. Uploading the packed possibilities from the `initial_grid`.
+    /// 2. Uploading the provided initial `updates` to the appropriate worklist buffer.
+    ///
+    /// Note: Buffer resizing logic is assumed to be handled elsewhere (e.g., accelerator).
+    ///
+    /// # Arguments
+    /// * `initial_grid` - The `PossibilityGrid` defining the initial state.
+    /// * `updates` - Initial cell indices to add to the worklist.
+    /// * `active_worklist_idx` - Which worklist buffer (0 or 1) to upload updates to.
+    ///
+    /// # Returns
+    /// * `Ok(())` on success.
+    /// * `Err(GpuError)` if packing or upload fails.
+    pub fn reset_grid_state(
+        &self,
+        initial_grid: &PossibilityGrid,
+        updates: &[u32],
+        active_worklist_idx: usize,
+    ) -> Result<(), GpuError> {
+        // 1. Upload packed possibilities
+        self.upload_grid(initial_grid)?;
+
+        // 2. Upload initial updates to the specified worklist
+        self.upload_initial_updates(updates, active_worklist_idx)?;
+
+        Ok(())
+    }
+
+    /// Updates the `worklist_size` field within the `params_uniform_buf` on the GPU.
+    ///
+    /// This informs the propagation shader how many updated cells are present in the `updates_buf`.
+    ///
+    /// # Arguments
+    ///
+    /// * `worklist_size` - The number of valid entries in the `updates_buf`.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` always.
+    ///
+    /// # Panics
+    ///
+    /// This function relies on the memory layout of `GpuParamsUniform`. Changes to that struct
+    /// might require updating the offset calculation here.
+    pub fn update_params_worklist_size(&self, worklist_size: u32) -> Result<(), GpuError> {
+        // Calculate the byte offset of the worklist_size field within GpuParamsUniform
+        // This relies on the struct layout. Field order: grid_width, grid_height, grid_depth,
+        // num_tiles, num_axes, boundary_mode, heuristic_type, tie_breaking,
+        // max_propagation_steps, contradiction_check_frequency, worklist_size
+        // Offsets: 0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40
+        let offset = 40; // Byte offset of worklist_size
+
+        // Check buffer size before writing to prevent panic
+        if self.buffers.params_uniform_buf.size() < offset + 4 {
+            return Err(GpuError::BufferOperationError(format!(
+                "Params uniform buffer too small ({}) to write worklist_size at offset {}",
+                self.buffers.params_uniform_buf.size(),
+                offset
+            )));
+        }
+
+        self.queue.write_buffer(
+            &self.buffers.params_uniform_buf,
+            offset,
+            bytemuck::cast_slice(&[worklist_size]),
+        );
+        Ok(())
+    }
+
+    /// Uploads entropy parameters to the GPU.
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - The `EntropyParamsUniform` struct containing the parameters.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if successful, or an error detailing what went wrong.
+    pub fn upload_entropy_params(&self, params: &EntropyParamsUniform) -> Result<(), GpuError> {
+        self.queue.write_buffer(
+            &self.buffers.entropy_params_buffer,
+            0,
+            bytemuck::cast_slice(&[*params]),
+        );
+        Ok(())
     }
 }
 
