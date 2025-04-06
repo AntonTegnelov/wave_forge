@@ -18,3 +18,12 @@
 - Shannon entropy can now be replaced with simpler heuristics like direct counts or weighted counts
 - The GPU implementation fully supports the EntropyHeuristicType enum defined in wfc-core
 - The different heuristics are implemented directly in the entropy shader for optimal performance
+
+## Architecture
+
+- [x] **Separation of GPU synchronization and algorithm logic**: Refactor to better separate these concerns.
+- [x] **Dynamic buffer management**: Implement resizable buffers based on runtime requirements.
+- [x] **Proper resource cleanup**: Ensure all GPU resources are properly released using RAII patterns.
+- [x] **Abstract hardware specifics**: Create abstraction layers to handle different GPU backends/capabilities.
+- [ ] **Reduce Arc nesting**: Simplify ownership model where excessive Arc wrapping occurs.
+- [ ] **Modularize shader code**: Split large shader functions into more manageable, testable pieces.

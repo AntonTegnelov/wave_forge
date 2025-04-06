@@ -34,15 +34,9 @@ This document outlines improvement opportunities for the GPU-accelerated Wave Fu
 - [x] **Separation of GPU synchronization and algorithm logic**: Refactor to better separate these concerns.
 - [x] **Dynamic buffer management**: Implement resizable buffers based on runtime requirements.
 - [x] **Proper resource cleanup**: Ensure all GPU resources are properly released using RAII patterns.
-- [ ] **Abstract hardware specifics**: Create abstraction layers to handle different GPU backends/capabilities.
+- [x] **Abstract hardware specifics**: Create abstraction layers to handle different GPU backends/capabilities.
 - [ ] **Reduce Arc nesting**: Simplify ownership model where excessive Arc wrapping occurs.
 - [ ] **Modularize shader code**: Split large shader functions into more manageable, testable pieces.
-
-## Testing & Documentation
-
-- [ ] **Shader validation**: Add validation tests for WGSL shaders.
-- [ ] **Buffer allocation strategy documentation**: Document and explain buffer creation logic.
-- [ ] **Numerical stability analysis**: Assess and document entropy calculation numerical stability.
 
 ## Specific Shader Improvements
 
@@ -57,3 +51,9 @@ This document outlines improvement opportunities for the GPU-accelerated Wave Fu
 - [ ] **Support for multiple propagation passes**: Enhance to support iterative constraint propagation.
 - [ ] **Improved contradiction handling**: Track and report multiple contradictions for better debugging.
 - [ ] **Memory access optimization**: Reduce atomic operations and memory access patterns.
+
+## Testing & Documentation
+
+- [ ] **Shader validation**: Add validation tests for WGSL shaders.
+- [ ] **Buffer allocation strategy documentation**: Document and explain buffer creation logic.
+- [ ] **Numerical stability analysis**: Assess and document entropy calculation numerical stability.

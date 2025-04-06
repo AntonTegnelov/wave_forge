@@ -4,6 +4,8 @@ use thiserror::Error;
 
 /// Manages the WGPU context and implements the WFC traits using compute shaders.
 pub mod accelerator;
+/// Provides abstraction layers for different GPU backends/capabilities.
+pub mod backend;
 /// Handles creation and management of WGPU buffers for grid state, rules, etc.
 pub mod buffers;
 /// Debug visualization tools for the algorithm's state.
@@ -25,6 +27,9 @@ pub mod sync;
 
 // Add test_utils module, conditionally compiled for tests
 pub mod test_utils;
+
+// Re-export commonly used types from the backend module
+pub use backend::{BackendError, GpuBackend, GpuBackendFactory};
 
 /// Errors related to GPU setup, buffer operations, shader compilation, and pipeline execution using WGPU.
 #[derive(Error, Debug)]
@@ -74,6 +79,9 @@ pub enum GpuError {
     /// A generic GPU operation error with a custom message.
     #[error("GPU operation failed: {0}")]
     Other(String),
+    /// An error from the backend abstraction layer.
+    #[error("Backend error: {0}")]
+    BackendError(#[from] BackendError),
 }
 
 // Removed manual From<wgpu::RequestDeviceError> impl as it conflicts with derive macro
