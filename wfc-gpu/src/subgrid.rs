@@ -1,121 +1,39 @@
-//! Module implementing parallel subgrid processing for large Wave Function Collapse grids.
-//!
-//! This module contains functionality to divide a large grid into smaller subgrids
-//! that can be processed independently in parallel, improving performance and
-//! scalability for the GPU-accelerated WFC implementation.
+#![allow(unused_variables, dead_code)] // Allow unused during development
+
+//! Defines structures and functions for dividing large grids into smaller subgrids
+//! for parallel processing.
 
 use crate::GpuError;
 use std::cmp::min;
 use wfc_core::grid::PossibilityGrid;
 
-/// Represents a subgrid region within the main WFC grid
-#[derive(Debug, Clone, Copy)]
+/// Represents a rectangular region within the main grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubgridRegion {
-    /// Start X coordinate (inclusive)
-    pub start_x: usize,
-    /// Start Y coordinate (inclusive)
-    pub start_y: usize,
-    /// Start Z coordinate (inclusive)
-    pub start_z: usize,
-    /// End X coordinate (exclusive)
-    pub end_x: usize,
-    /// End Y coordinate (exclusive)
-    pub end_y: usize,
-    /// End Z coordinate (exclusive)
-    pub end_z: usize,
+    pub x_offset: usize,
+    pub y_offset: usize,
+    pub z_offset: usize,
+    pub width: usize,
+    pub height: usize,
+    pub depth: usize,
 }
 
-impl SubgridRegion {
-    /// Creates a new subgrid region
-    pub fn new(
-        start_x: usize,
-        start_y: usize,
-        start_z: usize,
-        end_x: usize,
-        end_y: usize,
-        end_z: usize,
-    ) -> Self {
-        Self {
-            start_x,
-            start_y,
-            start_z,
-            end_x,
-            end_y,
-            end_z,
-        }
-    }
-
-    /// Returns the width of the subgrid
-    pub fn width(&self) -> usize {
-        self.end_x - self.start_x
-    }
-
-    /// Returns the height of the subgrid
-    pub fn height(&self) -> usize {
-        self.end_y - self.start_y
-    }
-
-    /// Returns the depth of the subgrid
-    pub fn depth(&self) -> usize {
-        self.end_z - self.start_z
-    }
-
-    /// Returns the size of the subgrid in cells
-    pub fn size(&self) -> usize {
-        self.width() * self.height() * self.depth()
-    }
-
-    /// Checks if a coordinate is within this subgrid
-    pub fn contains(&self, x: usize, y: usize, z: usize) -> bool {
-        x >= self.start_x
-            && x < self.end_x
-            && y >= self.start_y
-            && y < self.end_y
-            && z >= self.start_z
-            && z < self.end_z
-    }
-
-    /// Gets the relative coordinates within this subgrid
-    pub fn to_local_coords(&self, x: usize, y: usize, z: usize) -> Option<(usize, usize, usize)> {
-        if !self.contains(x, y, z) {
-            return None;
-        }
-
-        Some((x - self.start_x, y - self.start_y, z - self.start_z))
-    }
-
-    /// Converts local coordinates to global grid coordinates
-    pub fn to_global_coords(
-        &self,
-        local_x: usize,
-        local_y: usize,
-        local_z: usize,
-    ) -> (usize, usize, usize) {
-        (
-            self.start_x + local_x,
-            self.start_y + local_y,
-            self.start_z + local_z,
-        )
-    }
-}
-
-/// Configuration for subgrid division
-#[derive(Debug, Clone)]
+/// Configuration for subgrid processing.
 pub struct SubgridConfig {
-    /// Target maximum size for each subgrid dimension in cells
+    /// The maximum dimension size (width, height, or depth) for a subgrid.
     pub max_subgrid_size: usize,
-    /// Overlap between adjacent subgrids in cells (to handle boundary interactions)
+    /// The amount of overlap between adjacent subgrids.
     pub overlap_size: usize,
-    /// Minimum size (in any dimension) to enable subgrid processing
+    /// The minimum size of the original grid dimension to trigger subgridding.
     pub min_size: usize,
 }
 
 impl Default for SubgridConfig {
     fn default() -> Self {
         Self {
-            max_subgrid_size: 64, // Default reasonable size for GPU processing
-            overlap_size: 2,      // Default overlap to handle adjacency constraints
-            min_size: 128,        // Default minimum size to consider subgrid processing
+            max_subgrid_size: 64, // Example default
+            overlap_size: 2,      // Example default
+            min_size: 128,        // Example default
         }
     }
 }
@@ -181,9 +99,14 @@ pub fn divide_into_subgrids(
                 let end_y = min(base_end_y + config.overlap_size, grid_height);
                 let end_z = min(base_end_z + config.overlap_size, grid_depth);
 
-                subgrids.push(SubgridRegion::new(
-                    start_x, start_y, start_z, end_x, end_y, end_z,
-                ));
+                subgrids.push(SubgridRegion {
+                    x_offset: start_x,
+                    y_offset: start_y,
+                    z_offset: start_z,
+                    width: end_x - start_x,
+                    height: end_y - start_y,
+                    depth: end_z - start_z,
+                });
             }
         }
     }
@@ -197,20 +120,16 @@ pub fn extract_subgrid(
     region: &SubgridRegion,
 ) -> Result<PossibilityGrid, GpuError> {
     // Create a new grid with the subgrid dimensions
-    let mut subgrid = PossibilityGrid::new(
-        region.width(),
-        region.height(),
-        region.depth(),
-        grid.num_tiles(),
-    );
+    let mut subgrid =
+        PossibilityGrid::new(region.width, region.height, region.depth, grid.num_tiles());
 
     // Copy data from the main grid to the subgrid
-    for z in 0..region.depth() {
-        for y in 0..region.height() {
-            for x in 0..region.width() {
-                let global_x = region.start_x + x;
-                let global_y = region.start_y + y;
-                let global_z = region.start_z + z;
+    for z in 0..region.depth {
+        for y in 0..region.height {
+            for x in 0..region.width {
+                let global_x = region.x_offset + x;
+                let global_y = region.y_offset + y;
+                let global_z = region.z_offset + z;
 
                 if let Some(possibilities) = grid.get(global_x, global_y, global_z) {
                     if let Some(subgrid_possibilities) = subgrid.get_mut(x, y, z) {
@@ -234,20 +153,20 @@ pub fn merge_subgrids(
     // Process each subgrid
     for (region, subgrid) in subgrids {
         // Copy data from subgrid back to main grid and track updates
-        for z in 0..region.depth() {
-            for y in 0..region.height() {
-                for x in 0..region.width() {
-                    let global_x = region.start_x + x;
-                    let global_y = region.start_y + y;
-                    let global_z = region.start_z + z;
+        for z in 0..region.depth {
+            for y in 0..region.height {
+                for x in 0..region.width {
+                    let global_x = region.x_offset + x;
+                    let global_y = region.y_offset + y;
+                    let global_z = region.z_offset + z;
 
                     // Check if this is an overlap region (not on the edge of a subgrid)
-                    let is_interior = x >= region.overlap_size()
-                        && y >= region.overlap_size()
-                        && z >= region.overlap_size()
-                        && x < (region.width() - region.overlap_size())
-                        && y < (region.height() - region.overlap_size())
-                        && z < (region.depth() - region.overlap_size());
+                    let is_interior = x >= region.overlap_size
+                        && y >= region.overlap_size
+                        && z >= region.overlap_size
+                        && x < (region.width - region.overlap_size)
+                        && y < (region.height - region.overlap_size)
+                        && z < (region.depth - region.overlap_size);
 
                     // Only update interior cells or cells at the grid boundary
                     if is_interior
@@ -293,12 +212,19 @@ mod tests {
 
     #[test]
     fn test_subgrid_region() {
-        let region = SubgridRegion::new(10, 20, 30, 40, 50, 60);
+        let region = SubgridRegion {
+            x_offset: 10,
+            y_offset: 20,
+            z_offset: 30,
+            width: 40,
+            height: 50,
+            depth: 60,
+        };
 
-        assert_eq!(region.width(), 30);
-        assert_eq!(region.height(), 30);
-        assert_eq!(region.depth(), 30);
-        assert_eq!(region.size(), 27000);
+        assert_eq!(region.width, 40);
+        assert_eq!(region.height, 50);
+        assert_eq!(region.depth, 60);
+        assert_eq!(region.width * region.height * region.depth, 120000);
 
         assert!(region.contains(15, 25, 35));
         assert!(!region.contains(5, 25, 35));
@@ -328,20 +254,20 @@ mod tests {
 
         // Check first subgrid (should be 0,0,0 with overlap adjustments)
         let first = &subgrids[0];
-        assert_eq!(first.start_x, 0); // Can't go below 0
-        assert_eq!(first.start_y, 0);
-        assert_eq!(first.start_z, 0);
-        assert_eq!(first.end_x, 11); // 10 + 1 overlap
-        assert_eq!(first.end_y, 11);
-        assert_eq!(first.end_z, 5); // Only 5 deep total, so no overflow
+        assert_eq!(first.x_offset, 0); // Can't go below 0
+        assert_eq!(first.y_offset, 0);
+        assert_eq!(first.z_offset, 0);
+        assert_eq!(first.width, 11); // 10 + 1 overlap
+        assert_eq!(first.height, 11);
+        assert_eq!(first.depth, 5); // Only 5 deep total, so no overflow
 
         // Check last subgrid
         let last = &subgrids[5];
-        assert_eq!(last.start_x, 19); // 20 - 1 overlap
-        assert_eq!(last.start_y, 9); // 10 - 1 overlap
-        assert_eq!(last.start_z, 0); // Can't go below 0
-        assert_eq!(last.end_x, 25); // Grid width
-        assert_eq!(last.end_y, 15); // Grid height
-        assert_eq!(last.end_z, 5); // Grid depth
+        assert_eq!(last.x_offset, 19); // 20 - 1 overlap
+        assert_eq!(last.y_offset, 9); // 10 - 1 overlap
+        assert_eq!(last.z_offset, 0); // Can't go below 0
+        assert_eq!(last.width, 25); // Grid width
+        assert_eq!(last.height, 15); // Grid height
+        assert_eq!(last.depth, 5); // Grid depth
     }
 }

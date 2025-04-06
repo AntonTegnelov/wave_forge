@@ -309,3 +309,9 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
 - [ ] Implement GPU entropy calculation in entropy.rs
   - [x] Dispatch compute shader in calculate_entropy (in GpuAccelerator, needs import fixes)
   - [x] Download entropy grid results (in GpuAccelerator, needs import fixes)
+
+## 3. Subgrid Implementation
+
+- [ ] Basic subgrid division logic
+  - [x] Create subgrid module (`wfc-gpu/src/subgrid.rs`)
+  - [ ] Implement `divide_into_subgrids` function
