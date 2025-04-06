@@ -3,12 +3,12 @@ use crate::debug_viz::{DebugVisualizationConfig, DebugVisualizer, GpuBuffersDebu
 use crate::sync::GpuSynchronizer;
 use crate::{pipeline::ComputePipelines, subgrid::SubgridConfig, GpuError};
 use async_trait::async_trait;
-use log::info;
+use log::{debug, info};
 use std::sync::Arc;
 use wfc_core::{
     entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
-    propagator::{self, propagator::ConstraintPropagator},
+    propagator::{self},
     BoundaryCondition,
 }; // Use Arc for shared GPU resources
 use wfc_rules::AdjacencyRules; // Import from wfc_rules instead
@@ -551,6 +551,33 @@ impl EntropyCalculator for GpuAccelerator {
 
     fn get_entropy_heuristic(&self) -> EntropyHeuristicType {
         self.entropy_heuristic
+    }
+}
+
+impl Drop for GpuAccelerator {
+    /// Performs cleanup of GPU resources when GpuAccelerator is dropped.
+    ///
+    /// This ensures proper cleanup following RAII principles, releasing all GPU resources.
+    fn drop(&mut self) {
+        debug!("GpuAccelerator being dropped, coordinating cleanup of GPU resources");
+
+        // The actual cleanup happens through the Drop implementations of the components
+        // and the Arc reference counting system when these fields are dropped.
+
+        // We ensure a clean reference graph by explicitly dropping components in a specific order:
+
+        // Debug visualizer should be cleaned up first if it exists
+        if self.debug_visualizer.is_some() {
+            debug!("Cleaning up debug visualizer");
+            self.debug_visualizer = None;
+        }
+
+        // Additional synchronization might be needed for proper GPU cleanup
+        debug!("Final GPU device poll for cleanup");
+        self.device.poll(wgpu::Maintain::Wait);
+
+        // Log completion
+        info!("GPU Accelerator resources cleaned up");
     }
 }
 

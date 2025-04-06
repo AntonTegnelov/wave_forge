@@ -673,6 +673,25 @@ impl GpuConstraintPropagator {
     }
 }
 
+impl Drop for GpuConstraintPropagator {
+    /// Performs cleanup of GPU resources when GpuConstraintPropagator is dropped.
+    ///
+    /// This ensures proper cleanup following RAII principles.
+    fn drop(&mut self) {
+        debug!("GpuConstraintPropagator being dropped, releasing references to GPU resources");
+
+        // The actual cleanup happens automatically through Arc's reference counting
+        // when the device, queue, pipelines, and buffers references are dropped.
+
+        // If there's a debug visualizer, ensure it's properly cleaned up
+        if self.debug_visualizer.is_some() {
+            debug!("Cleaning up debug visualizer resources");
+            // The mutex will be cleaned up when the Arc is dropped
+            // We don't need to do anything special here
+        }
+    }
+}
+
 #[async_trait]
 impl ConstraintPropagator for GpuConstraintPropagator {
     /// Performs constraint propagation on the GPU using compute shaders.

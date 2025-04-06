@@ -5,7 +5,7 @@ use crate::{
     buffers::{EntropyParamsUniform, GpuBuffers, GpuParamsUniform},
     GpuError,
 };
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::AdjacencyRules;
@@ -346,6 +346,23 @@ impl GpuSynchronizer {
     /// Gets a reference to the GPU buffers.
     pub fn buffers(&self) -> &Arc<GpuBuffers> {
         &self.buffers
+    }
+}
+
+impl Drop for GpuSynchronizer {
+    /// Performs cleanup of GPU synchronizer resources when dropped.
+    ///
+    /// This properly handles the cleanup of GPU-related resources to prevent leaks.
+    /// The actual device and queue resources are cleaned up when their Arc references
+    /// are dropped.
+    fn drop(&mut self) {
+        // Log the cleanup for debugging purposes
+        debug!("GpuSynchronizer being dropped, releasing references to GPU resources");
+
+        // The actual cleanup happens automatically through Arc's reference counting
+        // when these fields are dropped. No explicit cleanup needed here.
+
+        // This is here to make the cleanup process explicit in the code, following RAII principles
     }
 }
 
