@@ -430,15 +430,23 @@ impl ComputePipelines {
 
     /// Utility function to select shader variants based on hardware capabilities
     fn select_shader_variants(supports_atomics: bool, num_tiles_u32: u32) -> (String, String) {
-        // Start with base versions of shader code
-        let mut entropy_shader_code = include_str!("./shaders/entropy.wgsl").to_string();
-        let mut propagation_shader_code = include_str!("./shaders/propagate.wgsl").to_string();
+        // Load utility modules first
+        let utils_code = include_str!("./shaders/utils.wgsl").to_string();
+        let rules_code = include_str!("./shaders/rules.wgsl").to_string();
+        let coords_code = include_str!("./shaders/coords.wgsl").to_string();
 
-        // If atomics not supported, use fallback versions
-        if !supports_atomics {
-            entropy_shader_code = include_str!("./shaders/entropy_fallback.wgsl").to_string();
-            propagation_shader_code = include_str!("./shaders/propagate_fallback.wgsl").to_string();
-        }
+        // Load shaders based on hardware capabilities
+        let (mut entropy_shader_code, mut propagation_shader_code) = if supports_atomics {
+            (
+                include_str!("./shaders/entropy_modular.wgsl").to_string(),
+                include_str!("./shaders/propagate_modular.wgsl").to_string(),
+            )
+        } else {
+            (
+                include_str!("./shaders/entropy_fallback.wgsl").to_string(),
+                include_str!("./shaders/propagate_fallback.wgsl").to_string(),
+            )
+        };
 
         // Replace the NUM_TILES_U32_VALUE placeholder with the actual value
         entropy_shader_code =
@@ -446,17 +454,60 @@ impl ComputePipelines {
         propagation_shader_code =
             propagation_shader_code.replace("NUM_TILES_U32_VALUE", &num_tiles_u32.to_string());
 
+        // Process includes in the shaders
+        entropy_shader_code = Self::process_shader_includes(
+            entropy_shader_code,
+            &utils_code,
+            &rules_code,
+            &coords_code,
+        );
+
+        propagation_shader_code = Self::process_shader_includes(
+            propagation_shader_code,
+            &utils_code,
+            &rules_code,
+            &coords_code,
+        );
+
+        // Replace the NUM_TILES_U32 placeholder with the actual value
+        let num_tiles_replace = format!("const NUM_TILES_U32: u32 = {};", num_tiles_u32);
+        entropy_shader_code = entropy_shader_code.replace(
+            "const NUM_TILES_U32: u32 = NUM_TILES_U32_VALUE;",
+            &num_tiles_replace,
+        );
+        propagation_shader_code = propagation_shader_code.replace(
+            "const NUM_TILES_U32: u32 = NUM_TILES_U32_VALUE;",
+            &num_tiles_replace,
+        );
+
         // Log the final shader code for debugging (just the relevant section)
-        log::warn!(
-            "Final shader code around line 80: {:?}",
-            propagation_shader_code
+        log::debug!(
+            "Entropy shader excerpt: {}",
+            entropy_shader_code
                 .lines()
-                .skip(70)
                 .take(20)
                 .collect::<Vec<_>>()
+                .join("\n")
         );
 
         (entropy_shader_code, propagation_shader_code)
+    }
+
+    /// Process shader includes to inline module code
+    fn process_shader_includes(
+        shader_code: String,
+        utils_code: &str,
+        rules_code: &str,
+        coords_code: &str,
+    ) -> String {
+        let mut processed_code = shader_code;
+
+        // Replace includes with actual code
+        processed_code = processed_code.replace("#include \"utils.wgsl\"", utils_code);
+        processed_code = processed_code.replace("#include \"rules.wgsl\"", rules_code);
+        processed_code = processed_code.replace("#include \"coords.wgsl\"", coords_code);
+
+        processed_code
     }
 
     pub fn create_propagation_bind_groups(
