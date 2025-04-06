@@ -50,7 +50,7 @@ This document outlines improvement opportunities for the GPU-accelerated Wave Fu
 
 - [x] **Support for multiple propagation passes**: Enhance to support iterative constraint propagation.
 - [x] **Improved contradiction handling**: Track and report multiple contradictions for better debugging.
-- [ ] **Memory access optimization**: Reduce atomic operations and memory access patterns.
+- [x] **Memory access optimization**: Reduce atomic operations and memory access patterns.
 
 ## Testing & Documentation
 

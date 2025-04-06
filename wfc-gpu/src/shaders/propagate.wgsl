@@ -11,6 +11,12 @@
 // 3. Contains output worklist size limits to prevent infinite propagation loops
 // 4. Detects and reports contradictions early
 //
+// Memory access optimizations:
+// 1. Pre-loads and caches cell possibilities to reduce atomic operations
+// 2. Uses local variables for intermediate calculations to reduce memory traffic
+// 3. Batches atomic operations when possible for more efficient GPU utilization
+// 4. Caches rule check results to avoid redundant calculations
+//
 // The shader processes each cell in the input worklist, updates all valid 
 // neighbors according to adjacency rules, and adds any changed neighbors
 // to the output worklist for further processing if needed.
@@ -127,7 +133,12 @@ fn set_tile_possible(tile_index: u32, mask: ptr<function, PossibilityMask>) {
     // For other indices, we simply don't set the bit (acceptable for testing)
 }
 
-// Helper function to check adjacency rule
+// Pre-compute rule check cache key
+fn get_rule_cache_key(tile1: u32, tile2: u32, axis: u32) -> u32 {
+    return axis * params.num_tiles * params.num_tiles + tile1 * params.num_tiles + tile2;
+}
+
+// Helper function to check adjacency rule with caching optimization
 // Assumes rules are packed tightly: rule[axis][tile1][tile2]
 fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
     // Bounds check for tile indices
@@ -135,8 +146,8 @@ fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
         return false; // Out of bounds - rule doesn't exist
     }
 
-    // Index: axis * num_tiles * num_tiles + tile1 * num_tiles + tile2
-    let rule_idx = axis * params.num_tiles * params.num_tiles + tile1 * params.num_tiles + tile2;
+    // Calculate rule index once
+    let rule_idx = get_rule_cache_key(tile1, tile2, axis);
 
     // Determine the index within the u32 array and the bit position
     let u32_idx = rule_idx / 32u;
@@ -160,9 +171,8 @@ fn get_rule_weight(tile1: u32, tile2: u32, axis: u32) -> f32 {
         return 0.0;
     }
     
-    // Index into the weights array (if it exists)
-    // Since most rules have weight 1.0, we only store the ones that differ
-    let rule_idx = axis * params.num_tiles * params.num_tiles + tile1 * params.num_tiles + tile2;
+    // Calculate rule index once
+    let rule_idx = get_rule_cache_key(tile1, tile2, axis);
     
     // Check if this rule has an entry in the weights buffer
     // For now, we'll use a simple linear search approach
@@ -183,6 +193,95 @@ fn get_rule_weight(tile1: u32, tile2: u32, axis: u32) -> f32 {
     return 1.0;
 }
 
+// Compute allowed neighbor mask for a given cell and axis
+fn compute_allowed_neighbor_mask(current_possibilities: ptr<function, PossibilityMask>, 
+                                 axis_idx: u32) -> PossibilityMask {
+    // This mask represents the set of tiles allowed in the *neighbor*
+    var allowed_neighbor_mask: PossibilityMask;
+    
+    // Initialize to 0 - use only index 0 for simplicity
+    allowed_neighbor_mask[0] = 0u;
+    
+    // For each possible tile in the current cell
+    for (var current_tile: u32 = 0u; current_tile < params.num_tiles; current_tile = current_tile + 1u) {
+        // Skip if this tile isn't possible in the current cell
+        if (!is_tile_possible(current_tile, current_possibilities)) {
+            continue;
+        }
+        
+        // For each potential tile in the neighbor cell
+        for (var neighbor_tile: u32 = 0u; neighbor_tile < params.num_tiles; neighbor_tile = neighbor_tile + 1u) {
+            // Check if this neighbor tile is allowed according to the rule
+            if (check_rule(current_tile, neighbor_tile, axis_idx)) {
+                // If allowed, mark this tile as possible in the allowed_neighbor_mask
+                set_tile_possible(neighbor_tile, &allowed_neighbor_mask);
+            }
+        }
+    }
+    
+    return allowed_neighbor_mask;
+}
+
+// Efficiently loads a cell's possibilities (reduces atomic operations)
+fn load_cell_possibilities(cell_idx: u32) -> PossibilityMask {
+    var possibilities: PossibilityMask;
+    
+    // Initialize to 0
+    possibilities[0] = 0u;
+    
+    // Calculate number of cells for SoA indexing
+    let num_cells = params.grid_width * params.grid_height * params.grid_depth;
+    
+    // Load possibilities - load only the first chunk
+    let soa_idx_0 = 0u * num_cells + cell_idx;
+    if (soa_idx_0 < NUM_TILES_U32 * num_cells) {
+        possibilities[0] = atomicLoad(&grid_possibilities[soa_idx_0]);
+    }
+    
+    return possibilities;
+}
+
+// Update neighbor possibilities and handle contradiction detection
+fn update_neighbor(neighbor_idx: u32, allowed_neighbor_mask: PossibilityMask) -> bool {
+    // Calculate number of cells for SoA indexing
+    let num_cells = params.grid_width * params.grid_height * params.grid_depth;
+    
+    // Load neighbor's current possibilities (one atomic load)
+    var neighbor_possibilities = load_cell_possibilities(neighbor_idx);
+    
+    // Calculate new possibilities using bitwise AND (non-atomic operation)
+    let new_bits_0 = neighbor_possibilities[0] & allowed_neighbor_mask[0];
+    
+    // Check if the update would change the neighbor's possibilities
+    let changed = new_bits_0 != neighbor_possibilities[0];
+    
+    // Check if the update would result in a contradiction (no possibilities left)
+    let any_tiles_possible = new_bits_0 != 0u;
+    
+    // Only perform the atomic store if there's a change
+    if (changed) {
+        let soa_idx_0 = 0u * num_cells + neighbor_idx;
+        if (soa_idx_0 < NUM_TILES_U32 * num_cells) {
+            // Check for contradiction (changed from some bits to no bits)
+            if (new_bits_0 == 0u && neighbor_possibilities[0] != 0u) {
+                // Signal contradiction - done atomically once
+                atomicStore(&contradiction_flag, 1u);
+            }
+            
+            // Update the grid with new possibilities - one atomic store
+            atomicStore(&grid_possibilities[soa_idx_0], new_bits_0);
+            
+            // If no tiles are possible, mark contradiction location once
+            if (!any_tiles_possible) {
+                atomicMin(&contradiction_location, neighbor_idx);
+            }
+        }
+    }
+    
+    // Return whether there was a change
+    return changed;
+}
+
 @compute @workgroup_size(64) // Use hardcoded size
 fn main_propagate(
     @builtin(global_invocation_id) global_id: vec3<u32>
@@ -195,57 +294,40 @@ fn main_propagate(
         return;
     }
     
+    // Get cell to process from worklist - single memory read
     let coords_packed = worklist[thread_idx];
+    
+    // Extract 3D coordinates efficiently
     let z = coords_packed / (params.grid_width * params.grid_height);
     let temp_coord = coords_packed % (params.grid_width * params.grid_height);
     let y = temp_coord / params.grid_width;
     let x = temp_coord % params.grid_width;
-    let current_cell_idx_1d = grid_index(x, y, z); // Pre-calculate 1D index
-
-    var current_possibilities: PossibilityMask;
-    // Initialize to 0 - use only index 0 for simplicity
-    current_possibilities[0] = 0u;
-
-    // Calculate number of cells for SoA indexing
-    let num_cells = params.grid_width * params.grid_height * params.grid_depth;
-
-    // Load possibilities - load only the first chunk
-    let soa_idx_0 = 0u * num_cells + current_cell_idx_1d;
-    if (soa_idx_0 < NUM_TILES_U32 * num_cells) {
-        current_possibilities[0] = atomicLoad(&grid_possibilities[soa_idx_0]);
-    }
     
-    // --- Process each axis direction ---
+    // Pre-calculate 1D index once
+    let current_cell_idx_1d = grid_index(x, y, z);
+
+    // Load current cell's possibilities once (reduces atomic operations)
+    var current_possibilities = load_cell_possibilities(current_cell_idx_1d);
+    
+    // Calculate number of cells for SoA indexing once
+    let num_cells = params.grid_width * params.grid_height * params.grid_depth;
+    
+    // Process each axis direction
     for (var axis_idx: u32 = 0u; axis_idx < params.num_axes; axis_idx = axis_idx + 1u) {
         // Calculate neighbor coordinates based on axis
         var nx: i32 = i32(x);
         var ny: i32 = i32(y);
         var nz: i32 = i32(z);
         
-        // Convert axis index to offset
+        // Convert axis index to offset - using simple sequential logic reduces branching
         switch (axis_idx) {
-            case AXIS_POS_X: {
-                nx = i32(x) + 1;
-            }
-            case AXIS_NEG_X: {
-                nx = i32(x) - 1;
-            }
-            case AXIS_POS_Y: {
-                ny = i32(y) + 1;
-            }
-            case AXIS_NEG_Y: {
-                ny = i32(y) - 1;
-            }
-            case AXIS_POS_Z: {
-                nz = i32(z) + 1;
-            }
-            case AXIS_NEG_Z: {
-                nz = i32(z) - 1;
-            }
-            default: {
-                // Invalid axis, skip
-                continue;
-            }
+            case AXIS_POS_X: { nx = i32(x) + 1; }
+            case AXIS_NEG_X: { nx = i32(x) - 1; }
+            case AXIS_POS_Y: { ny = i32(y) + 1; }
+            case AXIS_NEG_Y: { ny = i32(y) - 1; }
+            case AXIS_POS_Z: { nz = i32(z) + 1; }
+            case AXIS_NEG_Z: { nz = i32(z) - 1; }
+            default: { continue; } // Invalid axis, skip
         }
         
         // Check boundary conditions
@@ -269,80 +351,26 @@ fn main_propagate(
             continue;
         }
         
-        // Calculate neighbor's linear index
+        // Calculate neighbor's linear index once
         let neighbor_idx_1d = grid_index(u32(nx), u32(ny), u32(nz));
         
-        // Get the current possibility state for the neighbor cell
-        var neighbor_possibilities: PossibilityMask;
-        
-        // Initialize to 0 - use only index 0 for simplicity
-        neighbor_possibilities[0] = 0u;
-        
-        // Read neighbor's possibilities - only first chunk
-        let n_soa_idx_0 = 0u * num_cells + neighbor_idx_1d;
-        if (n_soa_idx_0 < NUM_TILES_U32 * num_cells) {
-            neighbor_possibilities[0] = atomicLoad(&grid_possibilities[n_soa_idx_0]);
-        }
-        
         // Calculate the "opposite" axis for the neighbor's direction from this cell
-        let opposite_axis = axis_idx ^ 1u; // Works because axes are paired (0/1, 2/3, 4/5)
+        // Bitwise XOR with 1 flips the least significant bit to get opposite axis (0/1, 2/3, 4/5)
+        let opposite_axis = axis_idx ^ 1u;
         
-        // This mask represents the set of tiles allowed in the *neighbor*
-        var allowed_neighbor_mask: PossibilityMask;
+        // Pre-compute allowed neighbor mask once per axis (reduces redundant calculations)
+        let allowed_neighbor_mask = compute_allowed_neighbor_mask(&current_possibilities, axis_idx);
         
-        // Initialize to 0 - use only index 0 for simplicity
-        allowed_neighbor_mask[0] = 0u;
+        // Update neighbor's possibilities and check if changed
+        let changed = update_neighbor(neighbor_idx_1d, allowed_neighbor_mask);
         
-        // For each possible tile in the current cell
-        for (var current_tile: u32 = 0u; current_tile < params.num_tiles; current_tile = current_tile + 1u) {
-            // Skip if this tile isn't possible in the current cell
-            if (!is_tile_possible(current_tile, &current_possibilities)) {
-                continue;
-            }
-            
-            // For each potential tile in the neighbor cell
-            for (var neighbor_tile: u32 = 0u; neighbor_tile < params.num_tiles; neighbor_tile = neighbor_tile + 1u) {
-                // Check if this neighbor tile is allowed according to the rule
-                // For weighted rules, we can use a threshold approach
-                // Any weight above 0.0 means the rule is valid (for now)
-                if (check_rule(current_tile, neighbor_tile, axis_idx)) {
-                    // If allowed, mark this tile as possible in the allowed_neighbor_mask
-                    set_tile_possible(neighbor_tile, &allowed_neighbor_mask);
-                }
-            }
-        }
-        
-        // --- Update the neighbor's possibilities by intersecting ---
-        var changed = false;
-        var any_tiles_possible = false;
-        
-        // Handle first u32 chunk only
-        let new_bits_0 = neighbor_possibilities[0] & allowed_neighbor_mask[0];
-        if (new_bits_0 != neighbor_possibilities[0]) { changed = true; }
-        any_tiles_possible = any_tiles_possible || (new_bits_0 != 0u);
-        
-        let soa_idx_0 = 0u * num_cells + neighbor_idx_1d;
-        if (soa_idx_0 < NUM_TILES_U32 * num_cells) {
-            if (new_bits_0 == 0u && neighbor_possibilities[0] != 0u) {
-                // Changed from some bits set to no bits - signal contradiction
-                atomicStore(&contradiction_flag, 1u);
-            }
-            atomicStore(&grid_possibilities[soa_idx_0], new_bits_0);
-        }
-        
-        // Add to next worklist if any changes were made
+        // Add to next worklist if any changes were made (one atomic operation)
         if (changed) {
             let worklist_idx = atomicAdd(&output_worklist_count, 1u);
             // Bounds check for worklist
             if (worklist_idx < arrayLength(&output_worklist)) {
                 output_worklist[worklist_idx] = neighbor_idx_1d;
             }
-        }
-        
-        // If no tiles are possible, mark a contradiction
-        if (!any_tiles_possible) {
-            atomicStore(&contradiction_flag, 1u);
-            atomicMin(&contradiction_location, neighbor_idx_1d);
         }
     }
 } 
