@@ -317,4 +317,5 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [x] Implement `divide_into_subgrids` function
 - [ ] Subgrid data extraction/merging
   - [x] Implement `extract_subgrid` function
-  - [ ] Implement `merge_subgrids` function
+  - [x] Implement `merge_subgrids` function
+- [ ] Propagator subgrid handling

@@ -194,50 +194,103 @@ pub fn extract_subgrid(
     Ok(subgrid)
 }
 
-/// Merges updated subgrids back into the main grid
+/// Merges processed subgrids back into the main grid.
+///
+/// Only updates the non-overlapping interior parts of each subgrid region to avoid overwriting
+/// changes from adjacent subgrids.
+///
+/// # Arguments
+/// * `grid` - A mutable reference to the main `PossibilityGrid` to merge into.
+/// * `subgrids` - A slice of tuples, each containing a `SubgridRegion` and the corresponding processed `PossibilityGrid`.
+/// * `config` - The `SubgridConfig` used for division (needed for overlap size).
+///
+/// # Returns
+/// * `Ok(Vec<(usize, usize, usize)>)` - A vector of global coordinates that were updated in the main grid.
+/// * `Err(String)` - If there's a dimension mismatch or other error.
 pub fn merge_subgrids(
-    main_grid: &mut PossibilityGrid,
+    grid: &mut PossibilityGrid,
     subgrids: &[(SubgridRegion, PossibilityGrid)],
-) -> Result<Vec<(usize, usize, usize)>, GpuError> {
+    config: &SubgridConfig,
+) -> Result<Vec<(usize, usize, usize)>, String> {
     let mut updated_coords = Vec::new();
+    let overlap = config.overlap_size;
 
-    // Process each subgrid
     for (region, subgrid) in subgrids {
-        // Copy data from subgrid back to main grid and track updates
+        // Validate subgrid dimensions match region
+        if subgrid.width != region.width
+            || subgrid.height != region.height
+            || subgrid.depth != region.depth
+        {
+            return Err(format!(
+                "Subgrid dimension mismatch for region {:?}: Expected ({},{},{}), Got ({},{},{})",
+                region,
+                region.width,
+                region.height,
+                region.depth,
+                subgrid.width,
+                subgrid.height,
+                subgrid.depth
+            ));
+        }
+        if subgrid.num_tiles() != grid.num_tiles() {
+            return Err(format!(
+                "Subgrid tile count mismatch: Main grid {}, Subgrid {}",
+                grid.num_tiles(),
+                subgrid.num_tiles()
+            ));
+        }
+
+        // Determine the interior region (non-overlapping part) within the subgrid
+        let interior_start_x = overlap;
+        let interior_start_y = overlap;
+        let interior_start_z = overlap;
+        // End is calculated carefully to avoid underflow if width/height/depth <= overlap * 2
+        let interior_end_x = region.width.saturating_sub(overlap);
+        let interior_end_y = region.height.saturating_sub(overlap);
+        let interior_end_z = region.depth.saturating_sub(overlap);
+
+        // Copy data from subgrid back to main grid
         for z in 0..region.depth {
             for y in 0..region.height {
                 for x in 0..region.width {
+                    // Check if this local coordinate (x,y,z) is within the *interior* part of the subgrid
+                    let is_interior = x >= interior_start_x
+                        && x < interior_end_x
+                        && y >= interior_start_y
+                        && y < interior_end_y
+                        && z >= interior_start_z
+                        && z < interior_end_z;
+
+                    // Also consider cells on the actual boundary of the *main* grid as "interior" for merging purposes
                     let global_x = region.x_offset + x;
                     let global_y = region.y_offset + y;
                     let global_z = region.z_offset + z;
-
-                    // Check if this is an overlap region (not on the edge of a subgrid)
-                    let is_interior = x >= region.overlap_size
-                        && y >= region.overlap_size
-                        && z >= region.overlap_size
-                        && x < (region.width - region.overlap_size)
-                        && y < (region.height - region.overlap_size)
-                        && z < (region.depth - region.overlap_size);
-
-                    // Only update interior cells or cells at the grid boundary
-                    if is_interior
-                        || global_x == 0
-                        || global_x == main_grid.width - 1
+                    let is_main_grid_boundary = global_x == 0
+                        || global_x == grid.width - 1
                         || global_y == 0
-                        || global_y == main_grid.height - 1
+                        || global_y == grid.height - 1
                         || global_z == 0
-                        || global_z == main_grid.depth - 1
-                    {
+                        || global_z == grid.depth - 1;
+
+                    // Only merge if it's an interior cell or a main grid boundary cell
+                    if is_interior || is_main_grid_boundary {
                         if let Some(subgrid_possibilities) = subgrid.get(x, y, z) {
-                            if let Some(main_possibilities) =
-                                main_grid.get_mut(global_x, global_y, global_z)
+                            if let Some(main_grid_possibilities) =
+                                grid.get_mut(global_x, global_y, global_z)
                             {
-                                // Check if there's actually a change before updating
-                                if *main_possibilities != *subgrid_possibilities {
-                                    *main_possibilities = subgrid_possibilities.clone();
+                                // Check if the state actually changed
+                                if *main_grid_possibilities != *subgrid_possibilities {
+                                    *main_grid_possibilities = *subgrid_possibilities;
                                     updated_coords.push((global_x, global_y, global_z));
                                 }
+                            } else {
+                                return Err(format!(
+                                    "Failed to get mutable main grid cell ({},{},{})",
+                                    global_x, global_y, global_z
+                                ));
                             }
+                        } else {
+                            return Err(format!("Failed to get subgrid cell ({},{},{})", x, y, z));
                         }
                     }
                 }
