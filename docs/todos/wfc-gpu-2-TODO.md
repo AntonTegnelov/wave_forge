@@ -6,19 +6,19 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
 
 - [ ] **Create truly modular shader components**:
 
-  - [ ] Create new directory structure in `wfc-gpu/src/shaders/`:
-    - `wfc-gpu/src/shaders/components/` - Base components
-    - `wfc-gpu/src/shaders/features/` - Feature-specific implementations
-    - `wfc-gpu/src/shaders/variants/` - Generated shader variants (build outputs)
-  - [ ] Extract from existing shaders into component files:
-    - [ ] `components/entropy_calculation.wgsl` (from entropy\*.wgsl)
-    - [ ] `components/worklist_management.wgsl` (from propagate\*.wgsl)
-    - [ ] `components/cell_collapse.wgsl` (new file)
-    - [ ] `components/contradiction_detection.wgsl` (from propagate\*.wgsl)
-  - [ ] Keep but refactor core utility files:
-    - [ ] `utils.wgsl` - Keep only truly generic utilities
-    - [ ] `coords.wgsl` - Coordinate system operations
-    - [ ] `rules.wgsl` - Adjacency rule handling
+  - [x] **Create new directory structure in `wfc-gpu/src/shaders/`**:
+    - [x] `wfc-gpu/src/shaders/components/` - Base components
+    - [x] `wfc-gpu/src/shaders/features/` - Feature-specific implementations
+    - [x] `wfc-gpu/src/shaders/variants/` - Generated shader variants (build outputs)
+  - [x] **Extract from existing shaders into component files**:
+    - [x] `components/entropy_calculation.wgsl` (from entropy\*.wgsl)
+    - [x] `components/worklist_management.wgsl` (from propagate\*.wgsl)
+    - [x] `components/cell_collapse.wgsl` (new file)
+    - [x] `components/contradiction_detection.wgsl` (from propagate\*.wgsl)
+  - [x] **Keep but refactor core utility files**:
+    - [x] `utils.wgsl` - Keep only truly generic utilities
+    - [x] `coords.wgsl` - Coordinate system operations
+    - [x] `rules.wgsl` - Adjacency rule handling
   - [ ] **Update files to reference new components**:
     - [ ] Update `pipeline.rs`: Add module component loading
     - [ ] Update `shaders.rs`: Reference new component paths

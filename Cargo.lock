@@ -3207,7 +3207,10 @@ dependencies = [
 name = "wfc-rules"
 version = "0.1.0"
 dependencies = [
+ "bitvec",
  "log",
+ "nalgebra",
+ "num-traits",
  "proptest",
  "rayon",
  "ron",

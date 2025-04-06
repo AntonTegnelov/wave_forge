@@ -1,7 +1,8 @@
 use crate::{
-    entropy::EntropyCalculator, grid::PossibilityGrid,
-    propagator::propagator::ConstraintPropagator, BoundaryCondition, ProgressInfo,
-    PropagationError, WfcCheckpoint, WfcError,
+    entropy::EntropyCalculator,
+    grid::PossibilityGrid,
+    propagator::{ConstraintPropagator, PropagationError},
+    BoundaryCondition, ProgressInfo, WfcCheckpoint, WfcError,
 };
 use log::{debug, error, info, warn};
 use rand::{
@@ -831,7 +832,7 @@ mod tests {
     use crate::{
         entropy::EntropyCalculator,
         grid::{EntropyGrid, PossibilityGrid},
-        propagator::propagator::{ConstraintPropagator, PropagationError},
+        propagator::{ConstraintPropagator, PropagationError},
         BoundaryCondition, WfcCheckpoint, WfcError,
     };
     use rand::rngs::StdRng;

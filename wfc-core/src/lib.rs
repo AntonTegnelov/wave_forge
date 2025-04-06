@@ -1,7 +1,7 @@
 //! Core library for the Wave Function Collapse algorithm implementation.
 //! Defines the fundamental data structures and platform-agnostic logic.
 
-use propagator::propagator::PropagationError;
+use propagator::PropagationError;
 // REMOVED: use bitvec::prelude::{BitVec, Lsb0};
 use rand::distributions::WeightedError;
 #[cfg(feature = "serde")] // Guard serde imports

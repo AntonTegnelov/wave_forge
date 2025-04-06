@@ -1,3 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
 # WFC-GPU Architecture
 
 This document describes the architecture of the WFC-GPU module after completing the refactoring outlined in the `wfc-gpu-2-TODO.md` document. It serves as a blueprint for the ideal structure and provides guidance for maintaining and extending the codebase.

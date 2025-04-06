@@ -1,5 +1,6 @@
 use crate::grid::{EntropyGrid, PossibilityGrid};
 use bitvec::prelude::*;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Strategy for selecting among cells with the same lowest entropy.
@@ -12,23 +13,18 @@ pub enum SelectionStrategy {
     // TODO: HilbertCurve,
 }
 
-/// Defines the entropy calculation heuristic to use
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Specifies the heuristic used to calculate the entropy of a cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum EntropyHeuristicType {
     /// Standard Shannon entropy (log2 of possibilities count)
+    #[default]
     Shannon,
-    /// Simple possibility count (linear weighting)
+    /// Simple count of remaining possibilities (Count - 1)
     Count,
     /// Just count possibilities, no logarithm (simpler and potentially more stable)
     CountSimple,
     /// Weighted count considering tile weights
     WeightedCount,
-}
-
-impl Default for EntropyHeuristicType {
-    fn default() -> Self {
-        EntropyHeuristicType::Shannon
-    }
 }
 
 /// Trait for strategies to calculate entropy values for cells
@@ -55,14 +51,16 @@ pub struct ShannonEntropyHeuristic;
 
 impl EntropyHeuristic for ShannonEntropyHeuristic {
     fn calculate_cell_entropy(&self, cell: &BitSlice, _weights: Option<&[f32]>) -> f32 {
-        let count = cell.count_ones();
-        if count == 0 {
-            return -1.0; // Contradiction: negative entropy
-        } else if count == 1 {
-            return 0.0; // Fully collapsed: zero entropy
+        let possible_count = cell.count_ones();
+        if possible_count == 0 {
+            // Contradiction: no possibilities left
+            -1.0
+        } else if possible_count == 1 {
+            // Fully collapsed: entropy is 0
+            0.0
         } else {
             // Shannon entropy for uniform distribution: log2(n)
-            return (count as f32).log2();
+            (possible_count as f32).log2()
         }
     }
 
@@ -77,14 +75,16 @@ pub struct CountEntropyHeuristic;
 
 impl EntropyHeuristic for CountEntropyHeuristic {
     fn calculate_cell_entropy(&self, cell: &BitSlice, _weights: Option<&[f32]>) -> f32 {
-        let count = cell.count_ones();
-        if count == 0 {
-            return -1.0; // Contradiction: negative entropy
-        } else if count == 1 {
-            return 0.0; // Fully collapsed: zero entropy
+        let possible_count = cell.count_ones();
+        if possible_count == 0 {
+            // Contradiction: no possibilities left
+            -1.0
+        } else if possible_count == 1 {
+            // Fully collapsed: entropy is 0
+            0.0
         } else {
             // Just return the count (minus 1 to make it start from 1.0)
-            return (count - 1) as f32;
+            (possible_count - 1) as f32
         }
     }
 
@@ -99,11 +99,13 @@ pub struct WeightedCountEntropyHeuristic;
 
 impl EntropyHeuristic for WeightedCountEntropyHeuristic {
     fn calculate_cell_entropy(&self, cell: &BitSlice, weights: Option<&[f32]>) -> f32 {
-        let count = cell.count_ones();
-        if count == 0 {
-            return -1.0; // Contradiction: negative entropy
-        } else if count == 1 {
-            return 0.0; // Fully collapsed: zero entropy
+        let possible_count = cell.count_ones();
+        if possible_count == 0 {
+            // Contradiction: no possibilities left
+            -1.0
+        } else if possible_count == 1 {
+            // Fully collapsed: entropy is 0
+            0.0
         } else if let Some(weights) = weights {
             // Sum the weights of possible states
             let mut sum = 0.0;
@@ -112,10 +114,10 @@ impl EntropyHeuristic for WeightedCountEntropyHeuristic {
                     sum += weights[i];
                 }
             }
-            return sum; // Higher sum = higher entropy
+            sum // Higher sum = higher entropy
         } else {
             // Fall back to simple count if no weights
-            return (count - 1) as f32;
+            (possible_count - 1) as f32
         }
     }
 
