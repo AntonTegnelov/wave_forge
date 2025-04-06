@@ -1,5 +1,7 @@
 // wfc-gpu/build.rs
 
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,6 +29,23 @@ fn get_variant_filename(shader_type: BuildShaderType, features: &[&str]) -> Stri
     }
 }
 
+// Data structures to parse registry.json
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)] // Allow unused fields for now (e.g., dependencies, features)
+struct Registry {
+    components: HashMap<String, ComponentInfo>,
+}
+
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)] // Allow unused fields for now
+struct ComponentInfo {
+    path: String,
+    dependencies: Vec<String>,
+    required_features: Vec<String>,
+    #[allow(dead_code)] // Provided features might be used later
+    provided_features: Vec<String>,
+}
+
 // --- End Duplicated Definitions ---
 
 fn main() {
@@ -34,13 +53,31 @@ fn main() {
     // Rerun if the registry file changes
     let registry_path_str = "src/shaders/components/registry.json";
     println!("cargo:rerun-if-changed={}", registry_path_str);
-    // TODO: Add rerun triggers for all *actual* shader component files listed in registry.json
-    println!("cargo:rerun-if-changed=src/shaders/utils.wgsl");
-    println!("cargo:rerun-if-changed=src/shaders/coords.wgsl");
-    println!("cargo:rerun-if-changed=src/shaders/rules.wgsl");
-    println!("cargo:rerun-if-changed=src/shaders/components/entropy_calculation.wgsl");
-    println!("cargo:rerun-if-changed=src/shaders/components/worklist_management.wgsl");
-    println!("cargo:rerun-if-changed=src/shaders/components/contradiction_detection.wgsl");
+
+    // Parse the registry
+    let registry_path = PathBuf::from(registry_path_str);
+    let registry_read_error_msg =
+        format!("Failed to read registry file: {}", registry_path.display());
+    let registry_content = fs::read_to_string(&registry_path).expect(&registry_read_error_msg);
+    let registry_parse_error_msg = format!(
+        "Failed to parse shader registry JSON: {}",
+        registry_path.display()
+    );
+    let registry: Registry =
+        serde_json::from_str(&registry_content).expect(&registry_parse_error_msg);
+
+    // Add rerun triggers for all actual shader component files listed in registry.json
+    for component_info in registry.components.values() {
+        println!("cargo:rerun-if-changed={}", component_info.path);
+    }
+
+    // Comment out old hardcoded triggers
+    //println!("cargo:rerun-if-changed=src/shaders/utils.wgsl");
+    //println!("cargo:rerun-if-changed=src/shaders/coords.wgsl");
+    //println!("cargo:rerun-if-changed=src/shaders/rules.wgsl");
+    //println!("cargo:rerun-if-changed=src/shaders/components/entropy_calculation.wgsl");
+    //println!("cargo:rerun-if-changed=src/shaders/components/worklist_management.wgsl");
+    //println!("cargo:rerun-if-changed=src/shaders/components/contradiction_detection.wgsl");
 
     println!("Running WFC-GPU build script...");
 
@@ -49,8 +86,6 @@ fn main() {
 
     // Ensure the target directory for compiled variants exists
     fs::create_dir_all(&variants_dir).expect("Failed to create variants output directory");
-
-    // --- Actual Build-Time Shader Generation ---
 
     // 1. Initialize Registry
     // Use the crate's code directly by specifying the path relative to Cargo.toml
@@ -65,6 +100,11 @@ fn main() {
 
     println!("[Build Script] Simulating Shader Registry loading...");
     let _registry_path = PathBuf::from(registry_path_str);
+    // Access the parsed registry data directly
+    println!(
+        "[Build Script] Registry loaded (parsed from JSON): {:?}",
+        registry
+    );
     // let registry = wfc_gpu::shader_registry::ShaderRegistry::new(&registry_path)
     //     .expect("Failed to load shader registry in build script");
     // println!("[Build Script] Registry loaded (simulated).");

@@ -4,7 +4,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
 
 ## 1. Shader Modularization
 
-- [ ] **Create truly modular shader components**:
+- [x] **Create truly modular shader components**:
 
   - [x] **Create new directory structure in `wfc-gpu/src/shaders/`**:
     - [x] `wfc-gpu/src/shaders/components/` - Base components
@@ -23,30 +23,30 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] Update `pipeline.rs`: Add module component loading
     - [x] Update `shaders.rs`: Reference new component paths
 
-- [ ] **Build shader assembly system**:
+- [x] **Build shader assembly system**:
 
-  - [ ] Create new files:
+  - [x] Create new files:
     - [x] `wfc-gpu/src/shader_compiler.rs` - Shader preprocessing & assembly system
     - [x] `wfc-gpu/src/shader_registry.rs` - Registry for shader components & features
-  - [ ] Create build script:
+  - [x] Create build script:
     - [x] `wfc-gpu/build.rs` - Pre-build shader generation
-  - [ ] Modify `shaders.rs`:
+  - [x] Modify `shaders.rs`:
     - [x] Expand from 12 lines to a full shader management system
     - [x] Implement the shader variant loading interface
-  - [ ] **Update files to use new shader system**:
+  - [x] **Update files to use new shader system**:
     - [x] Update `lib.rs`: Add new module imports
     - [x] Update `pipeline.rs`: Use new shader compiler
     - [x] Update `accelerator.rs`: Reference shader registry for feature detection
 
 - [ ] **Eliminate duplication across shader files**:
-  - [ ] Eventually remove redundant files:
+  - [x] Eventually remove redundant files:
     - [x] `entropy_fallback.wgsl`, `entropy_modular.wgsl` (after component extraction)
-    - [ ] `propagate_fallback.wgsl`, `propagate_modular.wgsl` (after component extraction)
+    - [x] `propagate_fallback.wgsl`, `propagate_modular.wgsl` (after component extraction)
   - [x] Create new component registry:
     - [x] `wfc-gpu/src/shaders/components/registry.json` - Component metadata & dependencies
   - [ ] **Update shader loading paths**:
     - [x] Update `pipeline.rs`: Remove direct inclusion of shader files
-    - [ ] Update build scripts to use component registry
+    - [x] Update build scripts to use component registry
 
 ## 2. Clear Responsibility Boundaries
 
