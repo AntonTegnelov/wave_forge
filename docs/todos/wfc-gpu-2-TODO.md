@@ -29,7 +29,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] `wfc-gpu/src/shader_compiler.rs` - Shader preprocessing & assembly system
     - [x] `wfc-gpu/src/shader_registry.rs` - Registry for shader components & features
   - [ ] Create build script:
-    - [ ] `wfc-gpu/build.rs` - Pre-build shader generation
+    - [x] `wfc-gpu/build.rs` - Pre-build shader generation
   - [ ] Modify `shaders.rs`:
     - [ ] Expand from 12 lines to a full shader management system
     - [ ] Implement the shader variant loading interface

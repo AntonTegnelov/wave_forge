@@ -6,8 +6,9 @@
 //! and replaces specialization constants to produce final WGSL code ready for compilation
 //! by the WGPU backend.
 
-use crate::shaders::{ShaderComponent, ShaderType};
+use crate::shaders::ShaderType;
 use crate::GpuError; // Or define a specific CompilationError
+use std::collections::HashMap;
 use std::collections::HashSet;
 use thiserror::Error;
 
@@ -57,7 +58,7 @@ impl ShaderCompiler {
         println!("Required components: {:?}", required_components);
 
         let mut assembled_source = String::new();
-        let mut included_files = HashSet::new(); // For handling includes and cycles
+        let included_files: HashSet<String> = HashSet::new(); // Specify type for HashSet
 
         // 1. Add header/common definitions (like Params struct?)
         // TODO: Define where common structs/constants live if not in components.
@@ -83,7 +84,7 @@ impl ShaderCompiler {
             // let content = std::fs::read_to_string(component_path).map_err(|e| CompilationError::IoError(component_path.to_string(), e))?;
             let placeholder_content = format!("// Content for {:?} would go here.\n", component);
             assembled_source.push_str(&placeholder_content);
-            assembled_source.push_str("\n");
+            assembled_source.push('\n');
         }
 
         // 3. Add main entry point wrapper?
