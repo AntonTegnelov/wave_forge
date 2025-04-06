@@ -60,7 +60,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] **Update files to use new buffer management methods**:
     - [x] Update `accelerator.rs`: Use `GpuSynchronizer` for all data transfers (Partially done, `run_with_callback` needs manual fixes)
     - [x] Update `propagator.rs`: Ensure correct use of `GpuSynchronizer`
-    - [ ] Update `entropy.rs`: Ensure correct use of `GpuSynchronizer`
+    - [x] Update `entropy.rs`: Ensure correct use of `GpuSynchronizer` (GPU dispatch in `calculate_entropy` still TODO)
 
 - [ ] **Entropy calculation**:
 
