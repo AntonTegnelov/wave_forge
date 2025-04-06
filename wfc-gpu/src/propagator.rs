@@ -639,7 +639,7 @@ impl GpuConstraintPropagator {
         }
 
         // Merge the processed subgrids back into the main grid
-        let merged_updates = merge_subgrids(grid, &processed_subgrids)
+        let merged_updates = merge_subgrids(grid, &processed_subgrids, &config)
             .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
 
         info!(
