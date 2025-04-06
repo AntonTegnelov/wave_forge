@@ -31,6 +31,8 @@ pub struct DebugVisualizationConfig {
     pub auto_generate: bool,
     /// Maximum number of snapshots to keep in memory
     pub max_snapshots: usize,
+    /// Snapshot interval for automatic generation
+    pub snapshot_interval: usize,
 }
 
 impl Default for DebugVisualizationConfig {
@@ -39,6 +41,7 @@ impl Default for DebugVisualizationConfig {
             viz_type: VisualizationType::EntropyHeatmap,
             auto_generate: false,
             max_snapshots: 100,
+            snapshot_interval: 10,
         }
     }
 }
@@ -236,6 +239,13 @@ impl DebugVisualizer {
         Some(result)
     }
 
+    /// Check if a snapshot should be taken based on the configured interval
+    pub fn should_snapshot(&self, current_iteration: usize) -> bool {
+        self.enabled
+            && self.config.snapshot_interval > 0
+            && current_iteration % self.config.snapshot_interval == 0
+    }
+
     /// Get all stored snapshots
     pub fn get_snapshots(&self) -> &[DebugSnapshot] {
         &self.snapshots
@@ -288,12 +298,17 @@ mod tests {
             viz_type: VisualizationType::EntropyHeatmap,
             auto_generate: true,
             max_snapshots: 50,
+            snapshot_interval: 10,
         };
 
         let visualizer = DebugVisualizer::new(config.clone(), Arc::new(GpuSynchronizer::default()));
         assert_eq!(visualizer.config.viz_type, config.viz_type);
         assert_eq!(visualizer.config.auto_generate, config.auto_generate);
         assert_eq!(visualizer.config.max_snapshots, config.max_snapshots);
+        assert_eq!(
+            visualizer.config.snapshot_interval,
+            config.snapshot_interval
+        );
         assert_eq!(visualizer.snapshots.len(), 0);
         assert_eq!(visualizer.current_step, 0);
         assert!(visualizer.enabled);

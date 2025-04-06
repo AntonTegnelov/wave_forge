@@ -2,7 +2,7 @@
 // This separates GPU synchronization concerns from algorithm logic
 
 use crate::{
-    buffers::{DownloadRequest, EntropyParamsUniform, GpuBuffers, GpuParamsUniform},
+    buffers::{DownloadRequest, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
     GpuError,
 };
 use log::{debug, trace, warn};
@@ -395,26 +395,23 @@ impl GpuSynchronizer {
         grid_dims: (usize, usize, usize),
         heuristic_type: u32,
     ) -> Result<(), GpuError> {
-        let (width, height, depth) = grid_dims;
+        let num_tiles = self.buffers.num_tiles; // Assuming num_tiles is available on GpuBuffers
+        let u32s_per_cell = self.buffers.u32s_per_cell;
 
-        let entropy_params = EntropyParamsUniform {
-            grid_width: width as u32,
-            grid_height: height as u32,
-            grid_depth: depth as u32,
-            _padding1: 0,
+        let params = GpuEntropyShaderParams {
+            grid_dims: [grid_dims.0 as u32, grid_dims.1 as u32, grid_dims.2 as u32],
             heuristic_type,
+            num_tiles: num_tiles as u32,
+            u32s_per_cell: u32s_per_cell as u32,
+            _padding1: 0,
             _padding2: 0,
-            _padding3: 0,
-            _padding4: 0,
         };
 
-        // Write entropy parameters to buffer
         self.queue.write_buffer(
             &self.buffers.entropy_params_buffer,
             0,
-            bytemuck::cast_slice(&[entropy_params]),
+            bytemuck::cast_slice(&[params]),
         );
-
         Ok(())
     }
 
@@ -764,12 +761,12 @@ impl GpuSynchronizer {
     ///
     /// # Arguments
     ///
-    /// * `params` - The `EntropyParamsUniform` struct containing the parameters.
+    /// * `params` - The `GpuEntropyShaderParams` struct containing the parameters.
     ///
     /// # Returns
     ///
     /// `Ok(())` if successful, or an error detailing what went wrong.
-    pub fn upload_entropy_params(&self, params: &EntropyParamsUniform) -> Result<(), GpuError> {
+    pub fn upload_entropy_params(&self, params: &GpuEntropyShaderParams) -> Result<(), GpuError> {
         self.queue.write_buffer(
             &self.buffers.entropy_params_buffer,
             0,

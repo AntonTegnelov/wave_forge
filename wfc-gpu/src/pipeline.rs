@@ -1,4 +1,3 @@
-use crate::GpuError;
 use log;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -9,6 +8,10 @@ use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
 // Import ShaderManager and related types
 use crate::shaders::{ShaderManager, ShaderType};
+use crate::GpuError;
+use std::{borrow::Cow, num::NonZeroU64};
+// Re-add lazy_static import
+use lazy_static::lazy_static;
 
 // --- Cache Definitions ---
 
@@ -29,8 +32,11 @@ struct PipelineCacheKey {
 static SHADER_MODULE_CACHE: Lazy<Mutex<HashMap<ShaderCacheKey, Arc<wgpu::ShaderModule>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-static COMPUTE_PIPELINE_CACHE: Lazy<Mutex<HashMap<PipelineCacheKey, Arc<wgpu::ComputePipeline>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+// Use lazy_static macro correctly
+lazy_static! {
+    static ref COMPUTE_PIPELINE_CACHE: Mutex<HashMap<PipelineCacheKey, Arc<wgpu::ComputePipeline>>> =
+        Mutex::new(HashMap::new());
+}
 
 // --- Helper Function to Hash Strings ---
 fn hash_string(s: &str) -> u64 {
@@ -134,7 +140,10 @@ pub struct ComputePipelines {
     pub propagation_pipeline: Arc<wgpu::ComputePipeline>,
     /// The layout describing the binding structure for the entropy pipeline's bind group.
     /// Required for creating bind groups compatible with `entropy_pipeline`.
-    pub entropy_bind_group_layout: Arc<wgpu::BindGroupLayout>,
+    pub entropy_bind_group_layout_0: Arc<wgpu::BindGroupLayout>,
+    /// The layout describing the binding structure for the entropy pipeline's bind group.
+    /// Required for creating bind groups compatible with `entropy_pipeline`.
+    pub entropy_bind_group_layout_1: Arc<wgpu::BindGroupLayout>,
     /// The layout describing the binding structure for the propagation pipeline's bind group.
     /// Required for creating bind groups compatible with `propagation_pipeline`.
     pub propagation_bind_group_layout: Arc<wgpu::BindGroupLayout>,
@@ -144,7 +153,17 @@ pub struct ComputePipelines {
     pub propagation_workgroup_size: u32,
 }
 
+/// Groups the buffer resources needed for creating entropy bind groups.
+#[derive(Debug)] // Added Debug derive
+pub struct GpuComputeBindingResources<'a> {
+    pub params_buf: &'a wgpu::Buffer, // Uniform buffer with entropy parameters
+    pub grid_possibilities_buf: &'a wgpu::Buffer, // Storage buffer with grid possibility bitsets (read-only)
+    pub entropy_data_buf: &'a wgpu::Buffer, // Storage buffer for calculated entropy values (write-only or read/write)
+    pub min_entropy_info_buf: &'a wgpu::Buffer, // Storage buffer for atomic min entropy tracking (read/write)
+}
+
 /// Groups the buffer resources needed for creating propagation bind groups.
+#[derive(Debug)] // Added Debug derive
 pub struct PropagationBindingResources<'a> {
     pub grid_possibilities_buf: &'a wgpu::Buffer,
     pub adjacency_rules_buf: &'a wgpu::Buffer,
@@ -201,39 +220,28 @@ impl ComputePipelines {
             max_invocations
         );
 
-        // Determine workgroup size - NOTE: This is now informational only
-        let chosen_workgroup_size_x = max_invocations.clamp(1, 64); // Clamp between 1 and 64
-        log::info!("Assumed workgroup size X: {}", chosen_workgroup_size_x);
-
-        // Feature detection is now done in accelerator.rs
-        // Remove the feature detection logic here
-        /*
-        let supports_atomics = device
-            .features()
-            .contains(wgpu::Features::BUFFER_BINDING_ARRAY)
-            || device
-                .features()
-                .contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY);
-        log::info!(
-            "GPU supports potentially relevant features (atomics proxy): {}",
-            supports_atomics
-        );
-        let features = if supports_atomics {
-            vec!["atomics"]
+        // Determine optimal workgroup size
+        // Example: Aim for 64-256 invocations, typically square root for 2D
+        let workgroup_size: u32 = if max_invocations >= 256 {
+            16 // 16x16 = 256
+        } else if max_invocations >= 64 {
+            8 // 8x8 = 64
         } else {
-            vec![]
+            // Fallback for very low limits, adjust as needed
+            (max_invocations as f64).sqrt() as u32
         };
-        */
+        let entropy_workgroup_size = workgroup_size;
+        let propagation_workgroup_size = workgroup_size; // Use same for now
 
-        // --- Compile Shaders using the compile_shader function ---
-        let (entropy_shader, entropy_source_hash) = compile_shader(
+        // --- Compile Shaders (using compile_shader helper) ---
+        let (entropy_shader_module, entropy_hash) = compile_shader(
             device,
             ShaderType::Entropy,
             features,
             &shader_manager,
             num_tiles_u32,
         )?;
-        let (propagation_shader, propagation_source_hash) = compile_shader(
+        let (propagation_shader_module, propagation_hash) = compile_shader(
             device,
             ShaderType::Propagation,
             features,
@@ -241,175 +249,64 @@ impl ComputePipelines {
             num_tiles_u32,
         )?;
 
-        // --- Define Bind Group Layouts (Largely remains the same, but check bindings) ---
-
-        // Layout for entropy shader (ensure bindings match component needs)
-        // TODO: Bindings might need adjustment based on final compiled shader structure
-        let entropy_bind_group_layout = Arc::new(device.create_bind_group_layout(
+        // --- Define Bind Group Layouts ---
+        // Entropy Layout Group 0
+        let entropy_bind_group_layout_0 = Arc::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("Entropy Bind Group Layout"),
+                label: Some("Entropy Bind Group Layout 0"),
                 entries: &[
-                    // @group(0) @binding(0) grid_possibilities (read-only storage)
+                    // @group(0) @binding(0): grid_possibilities (Storage RO)
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
+                            min_binding_size: None,
                         },
                         count: None,
                     },
-                    // @group(0) @binding(1) entropy_output (write-only storage)
+                    // @group(0) @binding(1): params (Uniform)
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None, // Size checked at buffer creation
+                        },
+                        count: None,
+                    },
+                ],
+            },
+        ));
+
+        // Entropy Layout Group 1
+        let entropy_bind_group_layout_1 = Arc::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Entropy Bind Group Layout 1"),
+                entries: &[
+                    // @group(1) @binding(0): entropy_grid (Storage RW)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
+                            min_binding_size: None,
                         },
                         count: None,
                     },
-                    // @group(0) @binding(2) params (uniform)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None, // Use params struct size
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(3) min_entropy_info (read-write storage, atomic vec2<u32>)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false }, // Atomics require write
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(8).unwrap()), // vec2<u32>
-                        },
-                        count: None,
-                    },
-                ],
-            },
-        ));
-
-        // Layout for propagation shader (ensure bindings match component needs)
-        // TODO: Bindings might need adjustment based on final compiled shader structure
-        let propagation_bind_group_layout = Arc::new(device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("Propagation Bind Group Layout"),
-                entries: &[
-                    // @group(0) @binding(0) params (uniform)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None, // Use params struct size
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(1) grid_possibilities (read-write storage, atomic)
+                    // @group(1) @binding(1): min_entropy_info (Atomic Storage RW)
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false }, // Atomics require write
+                            // Needs to be Storage RW for atomics
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(2) adjacency_rules (read-only storage)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(3) rule_weights (read-only storage)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()), // Can be empty, but needs binding
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(4) worklist (read-only storage)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(5) output_worklist (read-write storage, atomic)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false }, // Atomics require write
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(6) output_worklist_count (read-write storage, atomic)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false }, // Atomics require write
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()), // atomic<u32>
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(7) contradiction_flag (read-write storage, atomic)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 7,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false }, // Atomics require write
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()), // atomic<u32>
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(8) contradiction_location (read-write storage, atomic)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 8,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false }, // Atomics require write
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()), // atomic<u32>
-                        },
-                        count: None,
-                    },
-                    // @group(0) @binding(9) pass_statistics (read-write storage, atomic)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 9,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false }, // Atomics require write
-                            has_dynamic_offset: false,
-                            min_binding_size: Some(std::num::NonZeroU64::new(16).unwrap()), // array<atomic<u32>, 4> ?
+                            // Size for atomic<u32> min_entropy_bits + atomic<u32> min_index
+                            min_binding_size: Some(std::num::NonZeroU64::new(8).unwrap()),
                         },
                         count: None,
                     },
@@ -417,14 +314,133 @@ impl ComputePipelines {
             },
         ));
 
-        // --- Create Pipeline Layouts (Remains the same) ---
+        // Propagation Layout (unchanged for now, assuming previous structure)
+        let propagation_bind_group_layout = Arc::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Propagation Bind Group Layout"),
+                entries: &[
+                    // Grid Possibilities (Read/Write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Adjacency Rules (Read Only)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Rule Weights (Read Only) - Added
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Input Worklist (Read Only)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Output Worklist (Write Only)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Uniform Parameters (Read Only)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Worklist Counter (Read/Write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Contradiction Flag (Read/Write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Contradiction Location (Read/Write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Pass Statistics (Read/Write) - Added
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            },
+        ));
+
+        // --- Create Pipeline Layouts ---
         let entropy_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Entropy Pipeline Layout"),
-                bind_group_layouts: &[&entropy_bind_group_layout],
+                // IMPORTANT: List layouts for *all* bind groups used by the shader
+                bind_group_layouts: &[&entropy_bind_group_layout_0, &entropy_bind_group_layout_1], // Assuming group 0 and 1 use the same layout structure for now
                 push_constant_ranges: &[],
             });
-
         let propagation_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Propagation Pipeline Layout"),
@@ -432,74 +448,95 @@ impl ComputePipelines {
                 push_constant_ranges: &[],
             });
 
-        // --- Create Compute Pipelines with Caching ---
-
-        // Entropy Pipeline
-        let entropy_pipeline = {
-            let pipeline_key = PipelineCacheKey {
-                source_hash: entropy_source_hash,
-                entry_point: "main_entropy".to_string(),
-            };
-            let mut cache = COMPUTE_PIPELINE_CACHE
-                .lock()
-                .map_err(|e| GpuError::MutexError(e.to_string()))?;
-
-            if let Some(pipeline) = cache.get(&pipeline_key) {
-                log::debug!("Compute pipeline cache hit for Entropy");
-                pipeline.clone()
-            } else {
-                log::debug!("Compute pipeline cache miss for Entropy. Creating pipeline.");
-                let pipeline = Arc::new(device.create_compute_pipeline(
-                    &wgpu::ComputePipelineDescriptor {
-                        label: Some("Entropy Pipeline"),
-                        layout: Some(&entropy_pipeline_layout),
-                        module: &entropy_shader,
-                        entry_point: "main_entropy",
-                        compilation_options: Default::default(),
-                    },
-                ));
-                cache.insert(pipeline_key, pipeline.clone());
-                pipeline
-            }
-        };
-
-        // Propagation Pipeline
-        let propagation_pipeline = {
-            let pipeline_key = PipelineCacheKey {
-                source_hash: propagation_source_hash,
-                entry_point: "main_propagate".to_string(),
-            };
-            let mut cache = COMPUTE_PIPELINE_CACHE
-                .lock()
-                .map_err(|e| GpuError::MutexError(e.to_string()))?;
-
-            if let Some(pipeline) = cache.get(&pipeline_key) {
-                log::debug!("Compute pipeline cache hit for Propagation");
-                pipeline.clone()
-            } else {
-                log::debug!("Compute pipeline cache miss for Propagation. Creating pipeline.");
-                let pipeline = Arc::new(device.create_compute_pipeline(
-                    &wgpu::ComputePipelineDescriptor {
-                        label: Some("Propagation Pipeline"),
-                        layout: Some(&propagation_pipeline_layout),
-                        module: &propagation_shader,
-                        entry_point: "main_propagate",
-                        compilation_options: Default::default(),
-                    },
-                ));
-                cache.insert(pipeline_key, pipeline.clone());
-                pipeline
-            }
-        };
+        // --- Create Compute Pipelines (check cache first) ---
+        let entropy_pipeline = Self::get_or_create_compute_pipeline(
+            device,
+            &entropy_pipeline_layout,
+            &entropy_shader_module,
+            "main", // Entry point
+            entropy_hash,
+        )?;
+        let propagation_pipeline = Self::get_or_create_compute_pipeline(
+            device,
+            &propagation_pipeline_layout,
+            &propagation_shader_module,
+            "main_propagate", // Entry point
+            propagation_hash,
+        )?;
 
         Ok(Self {
             entropy_pipeline,
             propagation_pipeline,
-            entropy_bind_group_layout,
+            entropy_bind_group_layout_0,
+            entropy_bind_group_layout_1,
             propagation_bind_group_layout,
-            entropy_workgroup_size: chosen_workgroup_size_x,
-            propagation_workgroup_size: chosen_workgroup_size_x,
+            entropy_workgroup_size,
+            propagation_workgroup_size,
         })
+    }
+
+    // Helper function to get from cache or create compute pipeline
+    fn get_or_create_compute_pipeline(
+        device: &wgpu::Device,
+        layout: &wgpu::PipelineLayout,
+        module: &Arc<wgpu::ShaderModule>,
+        entry_point: &str,
+        source_hash: u64,
+    ) -> Result<Arc<wgpu::ComputePipeline>, GpuError> {
+        let pipeline_key = PipelineCacheKey {
+            source_hash,
+            entry_point: entry_point.to_string(),
+        };
+        let mut cache = COMPUTE_PIPELINE_CACHE
+            .lock()
+            .map_err(|e| GpuError::MutexError(e.to_string()))?;
+
+        if let Some(pipeline) = cache.get(&pipeline_key) {
+            log::debug!("Compute pipeline cache hit for entry '{}'", entry_point);
+            Ok(pipeline.clone())
+        } else {
+            log::debug!(
+                "Compute pipeline cache miss for entry '{}'. Creating new pipeline.",
+                entry_point
+            );
+            // Use error scopes for better diagnostics during pipeline creation
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+            let pipeline = Arc::new(device.create_compute_pipeline(
+                &wgpu::ComputePipelineDescriptor {
+                    label: Some(&format!("Compute Pipeline ({})", entry_point)),
+                    layout: Some(layout),
+                    module: module,
+                    entry_point: entry_point,
+                    compilation_options: Default::default(),
+                },
+            ));
+
+            // Pop the error scope and check for errors
+            // Note: This is asynchronous, ideally use poll(Maintain::Wait) or an async runtime
+            // For simplicity here, we assume synchronous for now, but this might block.
+            // Consider async handling in a real application.
+            if let Some(error) = pollster::block_on(device.pop_error_scope()) {
+                log::error!(
+                    "Pipeline creation failed for entry '{}': {:?}",
+                    entry_point,
+                    error
+                );
+                // Clear cache entry if it was somehow inserted despite error? Unlikely but possible.
+                cache.remove(&pipeline_key);
+                return Err(GpuError::PipelineCreationError(format!(
+                    "Failed to create compute pipeline for entry '{}': {:?}",
+                    entry_point, error
+                )));
+            }
+
+            cache.insert(pipeline_key.clone(), pipeline.clone());
+            log::info!(
+                "Successfully created and cached compute pipeline for entry '{}'",
+                entry_point
+            );
+            Ok(pipeline)
+        }
     }
 
     pub fn create_propagation_bind_groups(

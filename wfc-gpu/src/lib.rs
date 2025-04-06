@@ -189,5 +189,6 @@ pub mod shader_validation_tests;
 // Re-export key types
 pub use accelerator::GpuAccelerator;
 pub use buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults};
-pub use error_recovery::GpuError;
 pub use subgrid::SubgridConfig;
+
+// pub use error_recovery::GpuError; // Removed problematic re-export

@@ -62,7 +62,8 @@ pub fn test_large_tileset_init(
         &grid,
         &rules,
         BoundaryCondition::Periodic,
-        None, // No subgrid config
+        wfc_core::entropy::EntropyHeuristicType::Shannon, // Added missing heuristic argument
+        None,                                             // No subgrid config
     ));
 
     result

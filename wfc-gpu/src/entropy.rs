@@ -1,6 +1,7 @@
 use crate::{
-    buffers::{EntropyParamsUniform, GpuBuffers},
-    pipeline::ComputePipelines,
+    buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
+    error_recovery::RecoverableGpuOp,
+    pipeline::{ComputePipelines, GpuComputeBindingResources},
     sync::GpuSynchronizer,
     GpuError,
 };
@@ -8,7 +9,7 @@ use log::trace;
 use pollster;
 use std::sync::Arc;
 use wfc_core::{
-    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
+    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType, SelectionStrategy},
     grid::{EntropyGrid, PossibilityGrid},
 };
 use wgpu;
@@ -17,6 +18,7 @@ use wgpu;
 ///
 /// This component computes the entropy of each cell in the grid and identifies
 /// the cell with the minimum positive entropy, which is a key step in the WFC algorithm.
+#[derive(Debug, Clone)]
 pub struct GpuEntropyCalculator {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
@@ -127,24 +129,23 @@ impl GpuEntropyCalculator {
         );
 
         // --- Create and configure entropy parameters ---
-        let entropy_params = EntropyParamsUniform {
-            grid_width: width as u32,
-            grid_height: height as u32,
-            grid_depth: depth as u32,
-            _padding1: 0,
+        let entropy_shader_params = GpuEntropyShaderParams {
+            grid_dims: [width as u32, height as u32, depth as u32],
             heuristic_type: match self.heuristic_type {
                 EntropyHeuristicType::Shannon => 0,
                 EntropyHeuristicType::Count => 1,
                 EntropyHeuristicType::CountSimple => 2,
                 EntropyHeuristicType::WeightedCount => 3,
             },
+            num_tiles: self.buffers.num_tiles as u32,
+            u32s_per_cell: self.buffers.u32s_per_cell as u32,
+            _padding1: 0,
             _padding2: 0,
-            _padding3: 0,
-            _padding4: 0,
         };
 
         // --- Write entropy parameters to buffer ---
-        self.synchronizer.upload_entropy_params(&entropy_params)?;
+        self.synchronizer
+            .upload_entropy_params(&entropy_shader_params)?;
 
         // --- Reset min entropy buffer to initial state ---
         self.synchronizer.reset_min_entropy_buffer()?;
@@ -185,7 +186,7 @@ impl GpuEntropyCalculator {
         // Create bind groups before the compute pass
         let grid_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Grid Possibilities Bind Group"),
-            layout: &self.pipelines.entropy_bind_group_layout,
+            layout: &self.pipelines.entropy_bind_group_layout_0,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,

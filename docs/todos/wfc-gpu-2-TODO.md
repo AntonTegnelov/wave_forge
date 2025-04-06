@@ -44,7 +44,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] `propagate_fallback.wgsl`, `propagate_modular.wgsl` (after component extraction)
   - [x] Create new component registry:
     - [x] `wfc-gpu/src/shaders/components/registry.json` - Component metadata & dependencies
-  - [ ] **Update shader loading paths**:
+  - [x] **Update shader loading paths**:
     - [x] Update `pipeline.rs`: Remove direct inclusion of shader files
     - [x] Update build scripts to use component registry
 

@@ -24,7 +24,7 @@ use wgpu::util::DeviceExt;
 /// Marked `#[repr(C)]` for stable memory layout across Rust/WGPU.
 /// Implements `Pod` and `Zeroable` for safe, direct memory mapping (`bytemuck`).
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 pub struct GpuParamsUniform {
     /// Width of the grid (X dimension).
     pub grid_width: u32,
@@ -54,30 +54,22 @@ pub struct GpuParamsUniform {
     pub _padding: u32,
 }
 
-/// Uniform buffer structure for entropy parameters
+/// Uniform buffer structure for entropy shader parameters.
+/// Must match the `Params` struct in `entropy.wgsl`.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct EntropyParamsUniform {
-    /// Width of the grid (X dimension).
-    pub grid_width: u32,
-    /// Height of the grid (Y dimension).
-    pub grid_height: u32,
-    /// Depth of the grid (Z dimension).
-    pub grid_depth: u32,
-    /// Padding to ensure alignment
+pub struct GpuEntropyShaderParams {
+    pub grid_dims: [u32; 3], // width, height, depth
+    pub heuristic_type: u32, // 0=Shannon, 1=Count, etc.
+    pub num_tiles: u32,
+    pub u32s_per_cell: u32,
+    // Add padding if necessary to meet alignment rules (e.g., vec3 needs 16-byte alignment)
     pub _padding1: u32,
-    /// Entropy heuristic type (0=Shannon, 1=Count, 2=CountSimple, 3=WeightedCount)
-    pub heuristic_type: u32,
-    /// Padding to ensure alignment
     pub _padding2: u32,
-    /// Padding to ensure alignment
-    pub _padding3: u32,
-    /// Padding to ensure alignment
-    pub _padding4: u32,
 }
 
 /// DynamicBufferConfig contains settings for how buffers are resized
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DynamicBufferConfig {
     /// Growth factor for buffer sizes when resizing
     pub growth_factor: f32,
@@ -105,7 +97,7 @@ impl Default for DynamicBufferConfig {
 /// This struct maintains the state of all WGPU buffers required for the Wave Function Collapse
 /// algorithm's GPU acceleration, including grid data, entropy calculations, worklists for propagation,
 /// and various auxiliary buffers for things like contradiction detection.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GpuBuffers {
     /// Buffer holding the current state of all cell possibilities - the primary WFC grid state.
     pub grid_possibilities_buf: Arc<wgpu::Buffer>,
@@ -531,7 +523,7 @@ impl GpuBuffers {
         // Create entropy parameters buffer
         let entropy_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Entropy Parameters Buffer"),
-            size: std::mem::size_of::<EntropyParamsUniform>() as wgpu::BufferAddress,
+            size: std::mem::size_of::<GpuEntropyShaderParams>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -806,6 +798,24 @@ impl GpuBuffers {
         // Proceed with upload
         self.upload_initial_updates(queue, updates, active_worklist_idx as usize)
             .map_err(|e| e.to_string())
+    }
+
+    /// Convenience method to call upload_initial_updates_with_auto_resize.
+    /// This wrapper keeps the original call signature used elsewhere for now.
+    pub fn upload_initial_updates_wrapper(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        updates: &[u32],
+        active_worklist_idx: usize, // Keep usize to match callers
+    ) -> Result<(), String> {
+        // Renamed call to the correct function
+        self.upload_initial_updates_with_auto_resize(
+            device,
+            queue,
+            updates,
+            active_worklist_idx as u32, // Convert usize to u32 here
+        )
     }
 
     /// Downloads data from multiple GPU buffers in parallel and returns the results.
