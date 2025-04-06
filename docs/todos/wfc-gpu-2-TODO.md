@@ -34,7 +34,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] Expand from 12 lines to a full shader management system
     - [x] Implement the shader variant loading interface
   - [ ] **Update files to use new shader system**:
-    - [ ] Update `lib.rs`: Add new module imports
+    - [x] Update `lib.rs`: Add new module imports
     - [ ] Update `pipeline.rs`: Use new shader compiler
     - [ ] Update `accelerator.rs`: Reference shader registry for feature detection
 
