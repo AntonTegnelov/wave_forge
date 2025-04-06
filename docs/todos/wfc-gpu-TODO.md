@@ -42,9 +42,9 @@ This document outlines improvement opportunities for the GPU-accelerated Wave Fu
 
 ### entropy.wgsl
 
-- [ ] **Improved Shannon entropy calculation**: Enhance numerical stability for edge cases.
-- [ ] **Better atomicMinF32Index validation**: Ensure correct handling of race conditions.
-- [ ] **Configurable tie-breaking**: Allow different strategies for breaking entropy ties.
+- [x] **Improved Shannon entropy calculation**: Enhance numerical stability for edge cases.
+- [x] **Better atomicMinF32Index validation**: Ensure correct handling of race conditions.
+- [x] **Configurable tie-breaking**: Allow different strategies for breaking entropy ties.
 
 ### propagate.wgsl
 

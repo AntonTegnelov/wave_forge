@@ -18,7 +18,7 @@ use wgpu::util::DeviceExt;
 /// and tile counts. It must exactly match the corresponding struct definition in the WGSL shaders
 /// (e.g., `Params` struct in `propagate.wgsl` and `entropy.wgsl`).
 ///
-/// Marked `#[repr(C)]` for stable memory layout across Rust/WGSL.
+/// Marked `#[repr(C)]` for stable memory layout across Rust/WGPU.
 /// Implements `Pod` and `Zeroable` for safe, direct memory mapping (`bytemuck`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -33,12 +33,22 @@ pub struct GpuParamsUniform {
     pub num_tiles: u32,
     /// Number of adjacency axes (typically 6 for 3D).
     pub num_axes: u32,
-    /// Current size of the input worklist (number of updated cells) for the propagation shader.
-    pub worklist_size: u32,
     /// Boundary mode: 0 for Clamped, 1 for Periodic.
     pub boundary_mode: u32,
+    /// Entropy heuristic type: 0 for simple count, 1 for Shannon entropy, 2 for weighted.
+    pub heuristic_type: u32,
+    /// Tie-breaking strategy: 0 for none, 1 for deterministic, 2 for random pattern, 3 for position-based.
+    pub tie_breaking: u32,
+    /// Maximum propagation steps before giving up
+    pub max_propagation_steps: u32,
+    /// How often to check for contradictions during propagation
+    pub contradiction_check_frequency: u32,
+    /// Current size of the input worklist (number of updated cells) for the propagation shader.
+    pub worklist_size: u32,
+    /// Number of total grid elements for SoA access
+    pub grid_element_count: u32,
     /// Padding to ensure struct size is a multiple of 16 bytes.
-    pub _padding1: u32, // Ensure alignment to 16 bytes
+    pub _padding: u32,
 }
 
 /// Uniform buffer structure for entropy parameters
@@ -309,12 +319,17 @@ impl GpuBuffers {
             grid_depth: depth as u32,
             num_tiles: num_tiles as u32,
             num_axes: num_axes as u32,
-            worklist_size: 0, // Initial worklist size is 0
             boundary_mode: match boundary_mode {
                 BoundaryCondition::Finite => 0,
                 BoundaryCondition::Periodic => 1,
             },
-            _padding1: 0,
+            heuristic_type: 0, // Default to simple count
+            tie_breaking: 0, // Default to none
+            max_propagation_steps: 1000, // Default maximum steps
+            contradiction_check_frequency: 10, // Default check frequency
+            worklist_size: 0, // Initial worklist size is 0
+            grid_element_count: (num_cells * u32s_per_cell) as u32,
+            _padding: 0,
         };
         let _params_buffer_size = std::mem::size_of::<GpuParamsUniform>() as u64;
 

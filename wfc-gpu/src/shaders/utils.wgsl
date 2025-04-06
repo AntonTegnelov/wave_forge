@@ -18,14 +18,30 @@ const NUM_TILES_U32: u32 = NUM_TILES_U32_VALUE;
 
 // Common struct defining shader parameters
 struct Params {
+    // Grid dimensions
     grid_width: u32,
     grid_height: u32,
     grid_depth: u32,
+    
+    // Algorithm settings
     num_tiles: u32,
     num_axes: u32,
+    boundary_mode: u32, // 0 = clamped, 1 = periodic
+    heuristic_type: u32, // 0 = simple count, 1 = shannon entropy, 2 = weighted
+    tie_breaking: u32, // 0 = none, 1 = deterministic, 2 = random pattern, 3 = position-based
+    
+    // Propagation parameters
+    max_propagation_steps: u32,
+    contradiction_check_frequency: u32,
+    
+    // Worklist parameters
     worklist_size: u32,
-    boundary_mode: u32, // 0: Clamped, 1: Periodic
-    _padding1: u32, // padding to align to 16 bytes
+    
+    // For SoA structure
+    grid_element_count: u32,
+    
+    // Padding to ensure 16 byte alignment
+    _padding: u32,
 };
 
 // Possibility mask array type using the NUM_TILES_U32 constant
