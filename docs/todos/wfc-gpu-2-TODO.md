@@ -116,5 +116,5 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] `wfc-gpu/src/coordination/propagation.rs` - Propagation strategy coordination
   - [ ] **Update files using GpuAccelerator**:
     - [x] Update `accelerator.rs`: Use new shader loading interfaces
-    - [ ] Update `tests.rs`: Use new shader loading methods
+    - [x] Update `tests.rs`: Use new shader loading methods
     - [ ] Update `debug_viz.rs`: If it uses shaders
