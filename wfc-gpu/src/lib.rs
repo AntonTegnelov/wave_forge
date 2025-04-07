@@ -40,6 +40,11 @@ pub use coordination::{BasicCoordinator, WfcCoordinator};
 pub use debug_viz::{DebugVisualizationConfig, DebugVisualizer, VisualizationType};
 pub use subgrid::SubgridConfig; // Coordination API
 
+// Add re-exports for propagation coordination
+pub use coordination::propagation::{
+    DirectPropagationCoordinator, PropagationCoordinator, SubgridPropagationCoordinator,
+};
+
 // Error type
 pub use error_recovery::GpuError;
 

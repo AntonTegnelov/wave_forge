@@ -61,5 +61,5 @@ impl WfcCoordinator for BasicCoordinator {
 
 // --- Submodules --- //
 
-// pub mod propagation; // Planned submodule for propagation coordination
-// pub mod entropy;     // Planned submodule for entropy coordination
+pub mod propagation; // Added propagation submodule
+                     // pub mod entropy;     // Planned submodule for entropy coordination

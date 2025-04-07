@@ -111,9 +111,9 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] Convert to use composition rather than direct implementation
     - [x] Create delegation methods for all WFC operations
     - [x] Reduce Arc nesting
-  - [ ] Create new coordination files:
+  - [x] Create new coordination files:
     - [x] `wfc-gpu/src/coordination/mod.rs` - Operational coordination interfaces
-    - [ ] `wfc-gpu/src/coordination/propagation.rs` - Propagation strategy coordination
+    - [x] `wfc-gpu/src/coordination/propagation.rs` - Propagation strategy coordination
   - [ ] **Update files using GpuAccelerator**:
     - [ ] Update `accelerator.rs`: Use new shader loading interfaces
     - [ ] Update `tests.rs`: Use new shader loading methods
