@@ -62,7 +62,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] Update `propagator.rs`: Access buffers via new structs (e.g., `buffers.worklist_buffers`)
     - [x] Update `entropy.rs`: Access buffers via new structs (e.g., `buffers.entropy_buffers`)
     - [x] Update `sync.rs`: Reference new buffer module structure
-    - [ ] Update all tests and validation code
+    - [x] Update all tests and validation code
 
 - [x] **Entropy calculation**:
 
@@ -99,74 +99,11 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] `wfc-gpu/src/buffers/mod.rs` - Facade implementation & common utilities
   - [x] Modify existing `buffers.rs`:
     - [x] Move code to appropriate new files
-  - [ ] **Update files using GpuBuffers**:
+  - [x] **Update files using GpuBuffers**:
     - [x] Update `accelerator.rs`: Import from new buffer modules
     - [x] Update `propagator.rs`: Access buffers via new structs (e.g., `buffers.worklist_buffers`)
     - [x] Update `entropy.rs`: Access buffers via new structs (e.g., `buffers.entropy_buffers`)
-    - [ ] Update `sync.rs`: Reference new buffer module structure
-    - [ ] Update all tests and validation code
+    - [x] Update `sync.rs`: Reference new buffer module structure
+    - [x] Update all tests and validation code
 
-- [ ] **Revise `GpuAccelerator`**:
-  - [ ] Modify `accelerator.rs`:
-    - [ ] Convert to use composition rather than direct implementation
-    - [ ] Create delegation methods for all WFC operations
-    - [ ] Reduce Arc nesting
-  - [ ] Create new coordination files:
-    - [ ] `wfc-gpu/src/coordination/mod.rs` - Operational coordination interfaces
-    - [ ] `wfc-gpu/src/coordination/propagation.rs` - Propagation strategy coordination
-  - [ ] **Update files using GpuAccelerator**:
-    - [ ] Update `lib.rs`: Export new coordinator traits
-    - [ ] Update `tests.rs`: Use new coordinator interfaces
-    - [ ] Update integration test files to use new abstractions
-
-## 4. Advanced Shader Management
-
-- [ ] **Implement shader component system in `shaders.rs`**:
-
-  - [ ] Expand `shaders.rs` to include:
-    - [ ] Component registry system
-    - [ ] Dependency resolution
-    - [ ] Feature flag handling
-  - [ ] Create new JSON schema files:
-    - [ ] `wfc-gpu/src/shaders/schemas/component.json` - Shader component metadata schema
-    - [ ] `wfc-gpu/src/shaders/schemas/feature.json` - Feature capability flags schema
-  - [ ] **Update files using shader management**:
-    - [ ] Update `pipeline.rs`: Use component registry
-    - [ ] Update `build.rs`: Use schema validation
-    - [ ] Update any test files using shaders
-
-- [ ] **Feature-based shader optimization**:
-
-  - [ ] Create new files:
-    - [ ] `wfc-gpu/src/shader_features.rs` - Hardware capability detection
-    - [ ] `wfc-gpu/src/features/atomics.rs` - Atomics feature detection & handling
-    - [ ] `wfc-gpu/src/features/workgroups.rs` - Workgroup size optimization
-  - [ ] Modify `backend.rs`:
-    - [ ] Add capability reporting methods
-    - [ ] Standardize feature detection across backends
-  - [ ] **Update files using feature detection**:
-    - [ ] Update `accelerator.rs`: Use feature detection for initialization
-    - [ ] Update `pipeline.rs`: Select shader variants based on features
-    - [ ] Update `shader_compiler.rs`: Include feature-specific code
-
-- [ ] **Build-time shader generation**:
-  - [ ] Create new build time tools:
-    - [ ] `wfc-gpu/tools/shader_optimizer.rs` - Shader optimization tool
-    - [ ] `wfc-gpu/tools/shader_validator.rs` - Shader validation tool
-  - [ ] Implement caching in `build.rs`:
-    - [ ] Shader hash-based caching
-    - [ ] Incremental rebuilds of changed components only
-  - [ ] **Update project configuration**:
-    - [ ] Update `Cargo.toml`: Add build script and build dependencies
-    - [ ] Update `.gitignore`: Exclude generated shader variant files
-    - [ ] Update CI workflow files to handle shader generation
-
-## 5. Unify Testing Strategy
-
-- [ ] **Consolidate test modules**:
-
-  - [ ] Enhance `test_utils.rs`:
-    - [ ] Move common test setup code from module-specific tests
-    - [ ] Create standardized test fixtures
-  - [ ] Move module-specific tests:
-    - [ ] From `tests.rs`
+- [ ] \*\*Revise `
