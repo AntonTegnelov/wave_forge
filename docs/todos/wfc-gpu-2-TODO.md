@@ -122,3 +122,8 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
 ## 4. Advanced Shader Management
 
 - [ ] **Implement shader component system in `shaders.rs`**:
+
+  - [x] Expand `shaders.rs` to include:
+    - [x] Component registry system
+    - [ ] Dependency resolution
+    - [ ] Feature flag handling
