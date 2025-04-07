@@ -309,231 +309,107 @@ impl GpuAccelerator {
         self.propagator.params
     }
 
-    /// Retrieves the current intermediate grid state from the GPU.
-    ///
-    /// This method allows accessing partial or in-progress WFC results before the algorithm completes.
-    /// It downloads the current state of the grid possibilities from the GPU and converts them back
-    /// to a PossibilityGrid.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing either the current grid state or a `GpuError`.
+    /// Retrieves the current state of the possibility grid from the GPU.
     pub async fn get_intermediate_result(&self) -> Result<PossibilityGrid, GpuError> {
-        // Create template grid with same dimensions and num_tiles
-        let template = PossibilityGrid::new(
+        let grid_template = PossibilityGrid::new(
             self.grid_dims.0,
             self.grid_dims.1,
             self.grid_dims.2,
             self.num_tiles,
         );
-
-        // Use the synchronizer to download the grid
-        self.synchronizer.download_grid(&template).await
+        self.synchronizer.download_grid(&grid_template).await
     }
 
-    /// Enables parallel subgrid processing for large grids.
-    ///
-    /// When enabled, the Wave Function Collapse algorithm will divide large grids
-    /// into smaller subgrids that can be processed independently, potentially
-    /// improving performance for large problem sizes.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The configuration for subgrid division and processing.
-    ///              If None, a default configuration will be used.
-    ///
-    /// # Returns
-    ///
-    /// `&mut Self` for method chaining.
-    pub fn with_parallel_subgrid_processing(&mut self, config: Option<SubgridConfig>) -> &mut Self {
-        // Create a propagator with parallel subgrid processing enabled
-        let config = config.unwrap_or_default();
-        self.propagator = self
-            .propagator
-            .clone()
-            .with_parallel_subgrid_processing(config.clone());
-        self.subgrid_config = Some(config);
-        self
-    }
-
-    /// Disables parallel subgrid processing.
-    ///
-    /// # Returns
-    ///
-    /// `&mut Self` for method chaining.
-    pub fn without_parallel_subgrid_processing(&mut self) -> &mut Self {
-        self.propagator = self
-            .propagator
-            .clone()
-            .without_parallel_subgrid_processing();
-        self
-    }
-
-    /// Enable debug visualization with the given configuration
-    pub fn enable_debug_visualization(&mut self, config: DebugVisualizationConfig) {
-        let visualizer = DebugVisualizer::new(config, self.synchronizer.clone());
-        self.debug_visualizer = Some(visualizer);
-    }
-
-    /// Enable debug visualization with default settings
+    /// Enables debug visualization.
     pub fn enable_default_debug_visualization(&mut self) {
-        // Ensure default() also gets a synchronizer if it uses new()
-        let synchronizer = Arc::new(GpuSynchronizer::new(
-            self.device.clone(),
-            self.queue.clone(),
-            self.buffers.clone(),
-        ));
-        // Assuming DebugVisualizer::default() now internally calls new() with a default synchronizer,
-        // or we need a specific `default_with_sync` method.
-        // For now, let's use new() directly.
         self.debug_visualizer = Some(DebugVisualizer::new(
             DebugVisualizationConfig::default(),
-            synchronizer,
+            self.synchronizer.clone(),
         ));
-        // self.debug_visualizer = Some(DebugVisualizer::default()); // This would panic if Default needs real resources
     }
 
-    /// Disable debug visualization
-    pub fn disable_debug_visualization(&mut self) {
-        self.debug_visualizer = None;
-    }
-
-    /// Check if debug visualization is enabled
-    pub fn has_debug_visualization(&self) -> bool {
-        self.debug_visualizer.is_some()
-    }
-
-    /// Get a reference to the debug visualizer, if enabled
-    pub fn debug_visualizer(&self) -> Option<&DebugVisualizer> {
-        self.debug_visualizer.as_ref()
-    }
-
-    /// Get a mutable reference to the debug visualizer, if enabled
-    pub fn debug_visualizer_mut(&mut self) -> Option<&mut DebugVisualizer> {
-        self.debug_visualizer.as_mut()
-    }
-
-    /// Take a snapshot of the current state for visualization purposes
-    pub async fn take_debug_snapshot(&mut self) -> Result<(), GpuError> {
-        if let Some(visualizer) = &mut self.debug_visualizer {
-            self.buffers.take_debug_snapshot(visualizer)?;
-        }
-        Ok(())
-    }
-
-    /// Sets the entropy heuristic used for entropy calculation
-    ///
-    /// # Arguments
-    ///
-    /// * `heuristic_type` - The entropy heuristic type to use
-    ///
-    /// # Returns
-    ///
-    /// `&mut Self` for method chaining
-    pub fn with_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> &mut Self {
-        self.entropy_heuristic = heuristic_type;
+    /// Sets the entropy heuristic type.
+    pub fn with_entropy_heuristic(mut self, heuristic: EntropyHeuristicType) -> Self {
+        self.entropy_heuristic = heuristic;
+        // Re-create or update the entropy calculator if its behavior depends on the heuristic
+        self.entropy_calculator = GpuEntropyCalculator::with_heuristic(
+            self.device.clone(),
+            self.queue.clone(),
+            self.pipelines.clone(),
+            self.buffers.clone(),
+            self.grid_dims,
+            heuristic,
+        );
         self
     }
 
-    /// Gets the current entropy heuristic type
-    pub fn entropy_heuristic(&self) -> EntropyHeuristicType {
-        self.entropy_heuristic
+    /// Configures the accelerator for parallel subgrid processing.
+    pub fn with_parallel_subgrid_processing(mut self, config: SubgridConfig) -> Self {
+        self.subgrid_config = Some(config.clone());
+        // Update the propagator with the subgrid config
+        self.propagator = self
+            .propagator
+            .clone()
+            .with_parallel_subgrid_processing(config);
+        self
     }
 
-    /// Runs the WFC algorithm on the GPU asynchronously.
-    ///
-    /// # Arguments
-    /// * `grid` - The mutable `PossibilityGrid` to operate on.
-    /// * `rules` - The `AdjacencyRules` for the model.
-    /// * `max_iterations` - The maximum number of iterations before stopping.
-    /// * `callback` - A closure called periodically with progress updates.
-    ///
-    /// # Returns
-    /// A `Result` containing a `WfcResult` enum indicating success, contradiction, or max iterations,
-    /// or a `GpuError` if a GPU-specific error occurs.
-    #[allow(unused_variables)]
-    pub async fn run_with_callback<'grid, F>(
+    /// Runs the WFC algorithm using the GPU accelerator, with progress callbacks.
+    pub async fn run_with_callback<F>(
         &mut self,
-        grid: &'grid mut PossibilityGrid,
+        grid: &mut PossibilityGrid,
         rules: &AdjacencyRules,
-        max_iterations: Option<usize>,
-        mut callback: F,
-    ) -> Result<(), WfcError>
+        max_iterations: u64,
+        mut progress_callback: F,
+        shutdown_signal: Option<tokio::sync::watch::Receiver<bool>>,
+    ) -> Result<PossibilityGrid, WfcError>
     where
-        F: FnMut(ProgressInfo) -> Result<(), WfcError> + Send,
+        F: FnMut(ProgressInfo),
     {
-        info!("Starting GPU accelerated WFC run...");
         let start_time = Instant::now();
-        let mut iterations: usize = 0;
         let total_cells = grid.width * grid.height * grid.depth;
 
-        // Initial upload of grid state
+        // Upload initial grid state
         self.synchronizer
             .upload_grid(grid)
             .map_err(|e| WfcError::InternalError(e.to_string()))?;
 
-        loop {
-            iterations += 1;
-            trace!("WFC Iteration: {}", iterations);
-
-            if let Some(limit) = max_iterations {
-                if iterations > limit {
-                    warn!("Reached iteration limit ({}), stopping.", limit);
-                    return Err(WfcError::MaxIterationsReached(iterations as u64));
+        for iterations in 0..max_iterations {
+            // Check for shutdown signal
+            if let Some(ref signal) = shutdown_signal {
+                if *signal.borrow() {
+                    return Err(WfcError::ShutdownSignalReceived);
                 }
             }
 
-            // --- Observe Phase (using GpuEntropyCalculator) ---
-            let entropy_grid = match self.entropy_calculator.calculate_entropy_async(grid).await {
-                Ok(eg) => eg,
-                Err(e) => {
-                    error!("Entropy calculation failed: {:?}", e);
-                    return Err(WfcError::EntropyError(e));
-                }
-            };
-
-            let selected_coords_opt = match self
+            // --- Observation Phase (Entropy Calculation & Cell Selection) ---
+            trace!("Iteration {}: Calculating entropy...", iterations);
+            // Use the dedicated GpuEntropyCalculator
+            let entropy_grid = self
                 .entropy_calculator
-                .select_lowest_entropy_cell_async(&entropy_grid)
+                .calculate_entropy(grid)
                 .await
-            {
-                Some(coords) => Some(coords),
-                None => {
-                    // Check if grid is fully collapsed or has contradictions
-                    match self.synchronizer.download_grid(grid).await {
-                        Ok(final_grid) => {
-                            // Check for contradictions explicitly if needed
-                            info!("Observation found no cells with lowest entropy. Grid might be fully collapsed or contradictory.");
-                            // Let the loop termination check handle it based on collapsed count
-                        }
-                        Err(e) => {
-                            error!("Failed to download grid state after observation: {:?}", e);
-                            return Err(WfcError::InternalError(
-                                "Failed to check grid state".to_string(),
-                            ));
-                        }
-                    }
-                    break; // Exit loop, assume completion or contradiction handled below
-                }
-            };
+                .map_err(WfcError::EntropyError)?;
 
-            let (x, y, z) = match selected_coords_opt {
+            trace!("Iteration {}: Selecting lowest entropy cell...", iterations);
+            let maybe_coords = self
+                .entropy_calculator
+                .select_lowest_entropy_cell(&entropy_grid)
+                .await;
+
+            let (x, y, z) = match maybe_coords {
                 Some(coords) => coords,
                 None => {
-                    info!("No cell selected for collapse, assuming completion.");
-                    break; // Exit loop
+                    info!("No cells left to collapse. WFC finished.");
+                    break; // No more cells to collapse
                 }
             };
+            trace!("Selected cell: ({}, {}, {})", x, y, z);
 
-            // --- Collapse Phase (CPU-side for now) ---
-            trace!("Collapsing cell ({}, {}, {})", x, y, z);
-            let cell_possibilities = match grid.get(x, y, z) {
-                Some(p) => p.clone(),
-                None => {
-                    error!("Selected cell ({}, {}, {}) out of bounds.", x, y, z);
-                    return Err(WfcError::GridError("Selected cell out of bounds".into()));
-                }
-            };
+            // --- Collapse Phase ---
+            let cell_possibilities = grid
+                .get(x, y, z)
+                .ok_or_else(|| WfcError::GridError("Selected cell out of bounds".to_string()))?;
 
             if cell_possibilities.count_ones() <= 1 {
                 trace!("Cell ({}, {}, {}) already collapsed.", x, y, z);
@@ -551,7 +427,7 @@ impl GpuAccelerator {
 
             // TODO: Implement weighted selection based on rules.get_tile_weight
             // For now, randomly choose one of the available tiles.
-            let chosen_tile = available_tiles[iterations % available_tiles.len()]; // Simple deterministic choice for now
+            let chosen_tile = available_tiles[iterations as usize % available_tiles.len()]; // Simple deterministic choice for now
 
             if let Err(e) = grid.collapse(x, y, z, chosen_tile) {
                 error!("Failed to collapse cell ({}, {}, {}): {}", x, y, z, e);
@@ -572,6 +448,7 @@ impl GpuAccelerator {
 
             // --- Propagation Phase (using GpuConstraintPropagator) ---
             trace!("Propagating constraints...");
+            // Use the dedicated GpuConstraintPropagator
             match self
                 .propagator
                 .propagate(grid, vec![(x, y, z)], rules)
@@ -620,111 +497,13 @@ impl GpuAccelerator {
                 iterations: iterations as u64,
                 grid_state: current_grid_state,
             };
-            if let Err(e) = callback(progress_info) {
-                warn!("Progress callback returned error: {:?}. Stopping.", e);
-                return Err(e);
-            }
-
-            // Check for completion
-            if collapsed_cells_count == total_cells {
-                info!("Grid fully collapsed.");
-                break;
-            }
-
-            // Optional: Debug visualization snapshot
-            if let Some(visualizer) = &mut self.debug_visualizer {
-                if visualizer.should_snapshot(iterations) {
-                    trace!("Taking debug snapshot at iteration {}", iterations);
-                    self.buffers
-                        .take_debug_snapshot(visualizer)
-                        .map_err(|gpu_err| {
-                            error!("Failed to take debug snapshot: {}", gpu_err);
-                            WfcError::InternalError(format!("Debug snapshot failed: {}", gpu_err))
-                        })?;
-                }
-            }
+            progress_callback(progress_info);
         }
 
-        info!(
-            "WFC run finished in {:.2?}. Total iterations: {}",
-            start_time.elapsed(),
-            iterations
-        );
-
-        // Download the final grid state
-        let final_grid_state = self
-            .synchronizer
-            .download_grid(grid)
+        // Download final result
+        self.get_intermediate_result()
             .await
-            .map_err(|e| WfcError::InternalError(e.to_string()))?;
-        *grid = final_grid_state;
-
-        // Final check for completeness
-        match grid.is_fully_collapsed() {
-            Ok(true) => Ok(()),
-            Ok(false) => {
-                warn!("WFC finished but grid is not fully collapsed.");
-                Err(WfcError::IncompleteCollapse)
-            }
-            Err(e) => {
-                error!("Final grid check failed: {}", e);
-                Err(WfcError::InternalError(format!(
-                    "Final grid check error: {}",
-                    e
-                )))
-            }
-        }
-    }
-}
-
-// --- Implement WFC Traits ---
-
-#[async_trait::async_trait]
-impl EntropyCalculator for GpuAccelerator {
-    fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
-        // Ensure buffers are correctly sized (consider adding this to GpuEntropyCalculator if needed)
-        // self.ensure_buffers_ready(grid.width, grid.height, grid.depth)?;
-
-        // Use the internal GpuEntropyCalculator instance
-        self.entropy_calculator
-            .calculate_entropy(grid)
-            // Map GpuError to EntropyError::Other
-            .map_err(|e| EntropyError::Other(format!("GPU entropy calculation failed: {}", e)))
-    }
-
-    fn select_lowest_entropy_cell(
-        &self,
-        entropy_grid: &EntropyGrid,
-    ) -> Option<(usize, usize, usize)> {
-        // Delegate to the internal calculator
-        self.entropy_calculator
-            .select_lowest_entropy_cell(entropy_grid)
-    }
-
-    fn set_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> bool {
-        self.entropy_calculator
-            .set_entropy_heuristic(heuristic_type)
-    }
-
-    fn get_entropy_heuristic(&self) -> EntropyHeuristicType {
-        self.entropy_calculator.get_entropy_heuristic()
-    }
-}
-
-#[async_trait::async_trait]
-impl ConstraintPropagator for GpuAccelerator {
-    async fn propagate(
-        &mut self,
-        grid: &mut PossibilityGrid,
-        updated_coords: Vec<(usize, usize, usize)>,
-        rules: &AdjacencyRules,
-    ) -> Result<(), PropagationError> {
-        // Delegate to the internal propagator
-        self.propagator
-            .propagate(grid, updated_coords, rules)
-            .await
-            // Map GpuError to PropagationError::InternalError
-            .map_err(|e| PropagationError::InternalError(format!("GPU propagation failed: {}", e)))
+            .map_err(|e| WfcError::InternalError(e.to_string()))
     }
 }
 

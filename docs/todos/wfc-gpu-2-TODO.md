@@ -106,4 +106,8 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] Update `sync.rs`: Reference new buffer module structure
     - [x] Update all tests and validation code
 
-- [ ] \*\*Revise `
+- [ ] **Revise `GpuAccelerator`**:
+  - [x] Modify `accelerator.rs`:
+    - [x] Convert to use composition rather than direct implementation
+    - [ ] Create delegation methods for all WFC operations
+    - [ ] Reduce Arc nesting
