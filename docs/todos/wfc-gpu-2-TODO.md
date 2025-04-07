@@ -99,7 +99,7 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] Move code to appropriate new files
   - [ ] **Update files using GpuBuffers**:
     - [x] Update `accelerator.rs`: Import from new buffer modules
-    - [ ] Update `propagator.rs`: Access buffers via new structs (e.g., `buffers.worklist_buffers`)
+    - [x] Update `propagator.rs`: Access buffers via new structs (e.g., `buffers.worklist_buffers`)
     - [ ] Update `entropy.rs`: Access buffers via new structs (e.g., `buffers.entropy_buffers`)
     - [ ] Update `sync.rs`: Reference new buffer module structure
     - [ ] Update all tests and validation code

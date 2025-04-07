@@ -141,7 +141,6 @@ impl GpuConstraintPropagator {
 
     /// Gets the binding resource for the grid possibilities buffer.
     fn grid_possibilities_binding(&self) -> wgpu::BindingResource {
-        // Access via grid_buffers
         self.buffers
             .grid_buffers
             .grid_possibilities_buf
@@ -151,13 +150,11 @@ impl GpuConstraintPropagator {
     /// Gets the binding resource for the current input worklist buffer.
     fn input_worklist_binding(&self) -> wgpu::BindingResource {
         if self.current_worklist_idx == 0 {
-            // Access through worklist_buffers field
             self.buffers
                 .worklist_buffers
                 .worklist_buf_a
                 .as_entire_binding()
         } else {
-            // Access through worklist_buffers field
             self.buffers
                 .worklist_buffers
                 .worklist_buf_b
@@ -168,20 +165,96 @@ impl GpuConstraintPropagator {
     /// Gets the binding resource for the current output worklist buffer.
     fn output_worklist_binding(&self) -> wgpu::BindingResource {
         if self.current_worklist_idx == 0 {
-            // Input is A, Output is B
-            // Access through worklist_buffers field
             self.buffers
                 .worklist_buffers
                 .worklist_buf_b
                 .as_entire_binding()
         } else {
-            // Input is B, Output is A
-            // Access through worklist_buffers field
             self.buffers
                 .worklist_buffers
                 .worklist_buf_a
                 .as_entire_binding()
         }
+    }
+
+    /// Gets the binding resource for the input worklist count buffer.
+    fn input_worklist_count_binding(&self) -> wgpu::BindingResource {
+        if self.current_worklist_idx == 0 {
+            self.buffers
+                .worklist_buffers
+                .worklist_count_buf_a
+                .as_entire_binding()
+        } else {
+            self.buffers
+                .worklist_buffers
+                .worklist_count_buf_b
+                .as_entire_binding()
+        }
+    }
+
+    /// Gets the binding resource for the output worklist count buffer.
+    fn output_worklist_count_binding(&self) -> wgpu::BindingResource {
+        if self.current_worklist_idx == 0 {
+            self.buffers
+                .worklist_buffers
+                .worklist_count_buf_b
+                .as_entire_binding()
+        } else {
+            self.buffers
+                .worklist_buffers
+                .worklist_count_buf_a
+                .as_entire_binding()
+        }
+    }
+
+    /// Creates the bind group for the constraint propagation compute pass.
+    fn create_propagation_bind_group(&self) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Propagation Bind Group"),
+            layout: &self.pipelines.propagation_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffers.params_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.grid_possibilities_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self
+                        .buffers
+                        .rule_buffers
+                        .adjacency_rules_buf
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.input_worklist_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.output_worklist_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.input_worklist_count_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.output_worklist_count_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: self.buffers.contradiction_location_buf.as_entire_binding(),
+                },
+            ],
+        })
     }
 
     /// Performs constraint propagation on a subgrid.
@@ -296,279 +369,437 @@ impl GpuConstraintPropagator {
         }
     }
 
-    /// Performs the actual constraint propagation on the GPU.
+    /// Internal propagation logic using GPU compute shaders.
     async fn propagate_internal(
         &mut self,
         _grid: &mut PossibilityGrid,
         updated_indices: Vec<u32>,
         _rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        let (total_width, total_height, total_depth) = (
-            self.params.grid_width,
-            self.params.grid_height,
-            self.params.grid_depth,
-        );
-        let total_cells = (total_width * total_height * total_depth) as usize;
+        let start_time = std::time::Instant::now();
 
-        // Prepare initial worklist
-        let worklist_size = updated_indices.len() as u32;
-        if worklist_size == 0 {
-            debug!("No cells to update, skipping propagation");
-            return Ok(());
-        }
-
-        debug!("Initial worklist size: {}", worklist_size);
-
-        // Reset buffers using the instance's synchronizer
-        self.synchronizer
-            .reset_contradiction_flag()
-            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-        self.synchronizer
-            .reset_contradiction_location()
-            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-        self.synchronizer
-            .reset_worklist_count()
-            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-
-        // Upload initial worklist indices using the instance's synchronizer
-        self.synchronizer
-            .upload_initial_updates(&updated_indices, self.current_worklist_idx)
-            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-
-        // Update params using the instance's synchronizer
-        self.synchronizer
-            .update_params_worklist_size(worklist_size)
-            .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-
-        // Determine dispatch size (ceiling division of total_cells by workgroup size)
-        let mut num_cells_to_process = worklist_size;
-        let workgroup_size = 64;
-        let mut dispatch_size = num_cells_to_process.div_ceil(workgroup_size);
-
-        // If dispatch_size is zero (e.g., empty worklist), use at least one workgroup
-        if dispatch_size == 0 {
-            dispatch_size = 1;
-        }
-
+        // 1. Initialize Worklist
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Propagation Command Encoder"),
+                label: Some("Propagation Init Encoder"),
             });
 
-        // Run the iterative propagation algorithm until no more updates or we hit a limit
-        let mut iteration = 0;
-        let max_iterations = 100; // Safety limit to prevent infinite loops
-        let mut contradiction = false;
-        let mut contradiction_location = None;
-        let mut early_termination_count = 0;
-        let mut last_worklist_count = worklist_size;
+        // Clear output worklist count (ping-pong target)
+        encoder.clear_buffer(
+            if self.current_worklist_idx == 0 {
+                &self.buffers.worklist_buffers.worklist_count_buf_b
+            } else {
+                &self.buffers.worklist_buffers.worklist_count_buf_a
+            },
+            0,
+            None,
+        );
+        // Clear contradiction flag & location (direct access ok)
+        encoder.clear_buffer(&self.buffers.contradiction_flag_buf, 0, None);
+        encoder.clear_buffer(&self.buffers.contradiction_location_buf, 0, None);
 
-        while num_cells_to_process > 0 && iteration < max_iterations && !contradiction {
-            debug!(
-                "Propagation iteration {}: Processing {} cells",
-                iteration, num_cells_to_process
-            );
+        // Write initial updated indices to the *input* worklist buffer
+        let worklist_data: &[u8] = bytemuck::cast_slice(&updated_indices);
+        let initial_worklist_size = updated_indices.len() as u32;
 
-            // Create a new bind group for this iteration
-            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Propagation Bind Group"),
-                layout: &self.pipelines.propagation_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.buffers.params_uniform_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.buffers.rules_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.grid_possibilities_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: self.input_worklist_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: self.output_worklist_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: self
-                            .buffers
-                            .worklist_buffers
-                            .worklist_count_buf
-                            .as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 7,
-                        resource: self.buffers.contradiction_location_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 8,
-                        resource: self.buffers.rule_weights_buf.as_entire_binding(),
-                    },
-                ],
-            });
+        // Ensure worklist buffers are large enough
+        self.buffers.worklist_buffers.ensure_buffer_size(
+            &self.device,
+            initial_worklist_size as u64,
+            self.buffers.dynamic_buffer_config.as_ref().ok_or_else(|| {
+                PropagationError::InternalError("DynamicBufferConfig missing".to_string())
+            })?,
+        )?; // Propagate String error
 
-            // Execute propagation pass
-            {
-                let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some(&format!("Propagation Pass {}", iteration)),
-                    timestamp_writes: None,
-                });
+        let input_worklist_buffer = if self.current_worklist_idx == 0 {
+            &self.buffers.worklist_buffers.worklist_buf_a
+        } else {
+            &self.buffers.worklist_buffers.worklist_buf_b
+        };
+        self.queue
+            .write_buffer(input_worklist_buffer, 0, worklist_data);
 
-                compute_pass.set_pipeline(
-                    self.pipelines
-                        .get_propagation_pipeline(
-                            self.device.features().contains(wgpu::Features::SHADER_I16),
-                        )
-                        .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?,
-                );
-                compute_pass.set_bind_group(0, &bind_group, &[]);
-                compute_pass.dispatch_workgroups(dispatch_size, 1, 1);
+        // Write the initial worklist size to the *input* count buffer
+        let input_count_buffer = if self.current_worklist_idx == 0 {
+            &self.buffers.worklist_buffers.worklist_count_buf_a
+        } else {
+            &self.buffers.worklist_buffers.worklist_count_buf_b
+        };
+        self.queue.write_buffer(
+            input_count_buffer,
+            0,
+            bytemuck::cast_slice(&[initial_worklist_size]),
+        );
+
+        self.queue.submit(Some(encoder.finish()));
+
+        // 2. Propagation Loop
+        let mut current_pass = 0;
+        let mut consecutive_low_worklist_passes = 0;
+
+        loop {
+            if current_pass >= self.params.max_propagation_steps {
+                return Err(PropagationError::MaxStepsReached(current_pass));
             }
 
-            // Submit commands
-            self.queue.submit(std::iter::once(encoder.finish()));
+            // Create Bind Group
+            let bind_group = self.create_propagation_bind_group();
 
-            // Create a new encoder for the next iteration
+            // Create Command Encoder
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some(&format!("Propagation Pass {} Encoder", current_pass)),
+                });
+
+            // --- Read Input Worklist Size --- (Requires copy + map)
+            let input_count_buffer_gpu = if self.current_worklist_idx == 0 {
+                &self.buffers.worklist_buffers.worklist_count_buf_a
+            } else {
+                &self.buffers.worklist_buffers.worklist_count_buf_b
+            };
+            let input_count_buffer_staging = if self.current_worklist_idx == 0 {
+                &self.buffers.worklist_buffers.staging_worklist_count_buf_a
+            } else {
+                &self.buffers.worklist_buffers.staging_worklist_count_buf_b
+            };
+
+            encoder.copy_buffer_to_buffer(
+                input_count_buffer_gpu,
+                0,
+                input_count_buffer_staging,
+                0,
+                4, // Size of u32
+            );
+            // Submit copy command SEPARATELY before mapping
+            self.queue.submit(Some(encoder.finish()));
+
+            // Map and read (BLOCKING - Needs Async Version)
+            let worklist_size_result = crate::buffers::map_and_process::<u32>(
+                input_count_buffer_staging.clone(),
+                std::time::Duration::from_secs(5),
+                Some(1),
+            )
+            .await;
+
+            // Re-create encoder for the compute pass dispatch
             encoder = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some(&format!("Propagation Command Encoder {}", iteration + 1)),
+                    label: Some(&format!(
+                        "Propagation Pass {} Encoder Post Read",
+                        current_pass
+                    )),
                 });
 
-            // Check for contradictions and get next worklist size using the instance's synchronizer
-            let (has_contradiction, next_worklist_size_opt, contradiction_idx) = {
-                let (flag, loc) = self
-                    .synchronizer
-                    .download_contradiction_status()
-                    .await
-                    .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-                let count = self
-                    .synchronizer
-                    .download_worklist_count()
-                    .await
-                    .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
-                (flag, Some(count), loc)
+            let worklist_size = match worklist_size_result {
+                Ok(data_box) => data_box
+                    .downcast::<Vec<u32>>()
+                    .map_err(|_| {
+                        PropagationError::InternalError("Failed to downcast worklist size".into())
+                    })?
+                    .get(0)
+                    .cloned()
+                    .unwrap_or(0),
+                Err(e) => return Err(PropagationError::GpuError(e.to_string())),
             };
 
-            // Take a debug snapshot after this propagation step
-            if let Some(visualizer) = &self.debug_visualizer {
-                if let Ok(mut vis) = visualizer.lock() {
-                    if vis.is_enabled() {
-                        let _ = self.buffers.take_debug_snapshot(&mut vis);
-                    }
+            if worklist_size == 0 {
+                debug!(
+                    "Propagation Pass {}: Worklist empty. Finishing.",
+                    current_pass
+                );
+                break; // Worklist is empty
+            }
+
+            // --- Propagation Compute Pass ---
+            {
+                let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some(&format!("Propagation Pass {}", current_pass)),
+                    timestamp_writes: None,
+                });
+                compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
+                compute_pass.set_bind_group(0, &bind_group, &[]);
+
+                let workgroup_size = 256; // Should match shader
+                let num_workgroups = (worklist_size + workgroup_size - 1) / workgroup_size;
+
+                debug!(
+                    "Propagation Pass {}: Dispatching {} workgroups for {} items.",
+                    current_pass, num_workgroups, worklist_size
+                );
+
+                compute_pass.dispatch_workgroups(num_workgroups, 1, 1);
+            } // End compute pass
+
+            // Submit commands for this pass
+            self.queue.submit(Some(encoder.finish()));
+
+            // Device poll (BLOCKING!)
+            self.device.poll(wgpu::Maintain::Wait);
+
+            // --- Check for contradictions periodically ---
+            if current_pass % self.params.contradiction_check_frequency == 0 {
+                // Create encoder for copy
+                let mut copy_encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Copy Contradiction Encoder"),
+                        });
+                copy_encoder.copy_buffer_to_buffer(
+                    &self.buffers.contradiction_flag_buf,
+                    0,
+                    &self.buffers.staging_contradiction_flag_buf,
+                    0,
+                    4, // Size of u32
+                );
+                // Submit copy
+                self.queue.submit(Some(copy_encoder.finish()));
+
+                // Read contradiction flag (BLOCKING)
+                let contradiction_flag_result = crate::buffers::map_and_process::<u32>(
+                    self.buffers.staging_contradiction_flag_buf.clone(),
+                    std::time::Duration::from_secs(5),
+                    Some(1),
+                )
+                .await;
+
+                let contradiction_flag = match contradiction_flag_result {
+                    Ok(data_box) => data_box
+                        .downcast::<Vec<u32>>()
+                        .map_err(|_| {
+                            PropagationError::InternalError(
+                                "Failed to downcast contradiction flag".into(),
+                            )
+                        })?
+                        .get(0)
+                        .cloned()
+                        .unwrap_or(0),
+                    Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+                };
+
+                if contradiction_flag != 0 {
+                    // Copy location buffer
+                    let mut copy_encoder_loc =
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("Copy Contradiction Loc Encoder"),
+                            });
+                    copy_encoder_loc.copy_buffer_to_buffer(
+                        &self.buffers.contradiction_location_buf,
+                        0,
+                        &self.buffers.staging_contradiction_location_buf,
+                        0,
+                        4, // Size of u32
+                    );
+                    self.queue.submit(Some(copy_encoder_loc.finish()));
+
+                    // Read contradiction location (BLOCKING)
+                    let contradiction_loc_result = crate::buffers::map_and_process::<u32>(
+                        self.buffers.staging_contradiction_location_buf.clone(),
+                        std::time::Duration::from_secs(5),
+                        Some(1),
+                    )
+                    .await;
+
+                    let contradiction_loc = match contradiction_loc_result {
+                        Ok(data_box) => data_box
+                            .downcast::<Vec<u32>>()
+                            .map_err(|_| {
+                                PropagationError::InternalError(
+                                    "Failed to downcast contradiction location".into(),
+                                )
+                            })?
+                            .get(0)
+                            .cloned()
+                            .unwrap_or(std::u32::MAX),
+                        Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+                    };
+
+                    // Calculate coordinates from index
+                    let width = self.params.grid_width as usize;
+                    let height = self.params.grid_height as usize;
+                    let idx = contradiction_loc as usize;
+                    let z = idx / (width * height);
+                    let y = (idx % (width * height)) / width;
+                    let x = idx % width;
+
+                    return Err(PropagationError::Contradiction(x, y, z)); // Pass coordinates
                 }
             }
 
-            if has_contradiction {
-                contradiction = true;
-                contradiction_location = contradiction_idx;
-                debug!(
-                    "Contradiction detected at cell {}",
-                    contradiction_idx.unwrap_or(total_cells as u32)
-                );
-                break;
-            }
+            // --- Check for early termination based on OUTPUT worklist size ---
+            let output_count_buffer_gpu = if self.current_worklist_idx == 0 {
+                &self.buffers.worklist_buffers.worklist_count_buf_b // Output was B
+            } else {
+                &self.buffers.worklist_buffers.worklist_count_buf_a // Output was A
+            };
+            let output_count_buffer_staging = if self.current_worklist_idx == 0 {
+                &self.buffers.worklist_buffers.staging_worklist_count_buf_b // Use worklist_buffers
+            } else {
+                &self.buffers.worklist_buffers.staging_worklist_count_buf_a // Use worklist_buffers
+            };
 
-            // Update worklist size and ping-pong buffer index
-            num_cells_to_process = next_worklist_size_opt.unwrap_or(0); // Use downloaded count
-                                                                        // Toggle the current index between 0 and 1
-            self.current_worklist_idx = 1 - self.current_worklist_idx;
-
-            debug!(
-                "Iteration {} completed: Next worklist size: {}",
-                iteration, num_cells_to_process
+            // Create encoder for copy
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Copy Output Count Encoder"),
+                });
+            encoder.copy_buffer_to_buffer(
+                output_count_buffer_gpu,
+                0,
+                output_count_buffer_staging,
+                0,
+                4, // Size of u32
             );
+            self.queue.submit(Some(encoder.finish()));
 
-            // Check for early termination condition (small worklist for multiple consecutive passes)
-            if num_cells_to_process <= self.early_termination_threshold {
-                early_termination_count += 1;
-                if early_termination_count >= self.early_termination_consecutive_passes {
+            // Read output worklist count (BLOCKING)
+            let output_worklist_size_result = crate::buffers::map_and_process::<u32>(
+                output_count_buffer_staging.clone(),
+                std::time::Duration::from_secs(5),
+                Some(1),
+            )
+            .await;
+
+            let output_worklist_size = match output_worklist_size_result {
+                Ok(data_box) => data_box
+                    .downcast::<Vec<u32>>()
+                    .map_err(|_| {
+                        PropagationError::InternalError(
+                            "Failed to downcast output worklist size".into(),
+                        )
+                    })?
+                    .get(0)
+                    .cloned()
+                    .unwrap_or(0),
+                Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+            };
+
+            if output_worklist_size < self.early_termination_threshold {
+                consecutive_low_worklist_passes += 1;
+                if consecutive_low_worklist_passes >= self.early_termination_consecutive_passes {
                     debug!(
-                        "Early termination after {} iterations: {} cells affected, below threshold {} for {} consecutive passes",
-                        iteration + 1,
-                        num_cells_to_process,
+                        "Propagation Pass {}: Early termination threshold met ({} < {} for {} passes).",
+                        current_pass,
+                        output_worklist_size,
                         self.early_termination_threshold,
-                        self.early_termination_consecutive_passes
+                        consecutive_low_worklist_passes
                     );
                     break;
                 }
             } else {
-                // Reset the counter if we have a larger worklist again
-                early_termination_count = 0;
+                consecutive_low_worklist_passes = 0; // Reset counter
             }
 
-            // Prepare dispatch size for next iteration
-            dispatch_size = num_cells_to_process.div_ceil(workgroup_size);
-            if dispatch_size == 0 {
-                dispatch_size = 1;
-            }
+            // --- Prepare for next pass ---
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Clear Next Output Count Encoder"),
+                });
+            encoder.clear_buffer(output_count_buffer_gpu, 0, None); // Clear the buffer we just read from
+            self.queue.submit(Some(encoder.finish()));
 
-            // Update params buffer using the instance's synchronizer
-            self.synchronizer
-                .update_params_worklist_size(num_cells_to_process)
-                .map_err(|e| PropagationError::GpuCommunicationError(e.to_string()))?;
+            // Swap worklists (ping-pong)
+            self.current_worklist_idx = 1 - self.current_worklist_idx;
+            current_pass += 1;
+        }
 
-            iteration += 1;
+        // --- Final contradiction check ---
+        // Create encoder for copy
+        let mut copy_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Copy Final Contradiction Encoder"),
+                });
+        copy_encoder.copy_buffer_to_buffer(
+            &self.buffers.contradiction_flag_buf,
+            0,
+            &self.buffers.staging_contradiction_flag_buf,
+            0,
+            4,
+        );
+        self.queue.submit(Some(copy_encoder.finish()));
+
+        // Read flag (BLOCKING)
+        let contradiction_flag_result = crate::buffers::map_and_process::<u32>(
+            self.buffers.staging_contradiction_flag_buf.clone(),
+            std::time::Duration::from_secs(5),
+            Some(1),
+        )
+        .await;
+
+        let contradiction_flag = match contradiction_flag_result {
+            Ok(data_box) => data_box
+                .downcast::<Vec<u32>>()
+                .map_err(|_| {
+                    PropagationError::InternalError(
+                        "Failed to downcast final contradiction flag".into(),
+                    )
+                })?
+                .get(0)
+                .cloned()
+                .unwrap_or(0),
+            Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+        };
+
+        if contradiction_flag != 0 {
+            // Copy location
+            let mut copy_encoder_loc =
+                self.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Copy Final Contradiction Loc Encoder"),
+                    });
+            copy_encoder_loc.copy_buffer_to_buffer(
+                &self.buffers.contradiction_location_buf,
+                0,
+                &self.buffers.staging_contradiction_location_buf,
+                0,
+                4,
+            );
+            self.queue.submit(Some(copy_encoder_loc.finish()));
+
+            // Read location (BLOCKING)
+            let contradiction_loc_result = crate::buffers::map_and_process::<u32>(
+                self.buffers.staging_contradiction_location_buf.clone(),
+                std::time::Duration::from_secs(5),
+                Some(1),
+            )
+            .await;
+
+            let contradiction_loc = match contradiction_loc_result {
+                Ok(data_box) => data_box
+                    .downcast::<Vec<u32>>()
+                    .map_err(|_| {
+                        PropagationError::InternalError(
+                            "Failed to downcast final contradiction location".into(),
+                        )
+                    })?
+                    .get(0)
+                    .cloned()
+                    .unwrap_or(std::u32::MAX),
+                Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+            };
+
+            // Calculate coordinates from index
+            let width = self.params.grid_width as usize;
+            let height = self.params.grid_height as usize;
+            let idx = contradiction_loc as usize;
+            let z = idx / (width * height);
+            let y = (idx % (width * height)) / width;
+            let x = idx % width;
+
+            return Err(PropagationError::Contradiction(x, y, z)); // Pass coordinates
         }
 
         debug!(
-            "Propagation completed after {} iterations{}",
-            iteration,
-            if contradiction {
-                format!(
-                    " with contradiction at cell {:?}",
-                    contradiction_location.map(|idx| {
-                        let _z = idx / (total_width * total_height);
-                        let _y = (idx % (total_width * total_height)) / total_width;
-                        let x = idx % total_width;
-                        x as usize
-                    })
-                )
-            } else {
-                String::new()
-            }
+            "GPU Propagation finished in {:.2?} after {} passes.",
+            start_time.elapsed(),
+            current_pass
         );
-
-        // If a contradiction was detected, propagate that information
-        if contradiction {
-            return Err(PropagationError::Contradiction(
-                contradiction_location
-                    .map(|idx| {
-                        let _z = idx / (total_width * total_height);
-                        let _y = (idx % (total_width * total_height)) / total_width;
-                        let x = idx % total_width;
-                        x as usize
-                    })
-                    .unwrap_or(0),
-                contradiction_location
-                    .map(|idx| {
-                        let _z = idx / (total_width * total_height);
-                        let y = (idx % (total_width * total_height)) / total_width;
-                        let _x = idx % total_width;
-                        y as usize
-                    })
-                    .unwrap_or(0),
-                contradiction_location
-                    .map(|idx| {
-                        let z = idx / (total_width * total_height);
-                        let _y = (idx % (total_width * total_height)) / total_width;
-                        let _x = idx % total_width;
-                        z as usize
-                    })
-                    .unwrap_or(0),
-            ));
-        }
 
         Ok(())
     }
