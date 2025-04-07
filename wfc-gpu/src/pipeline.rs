@@ -9,8 +9,6 @@ use std::hash::{Hash, Hasher};
 // Import ShaderManager and related types
 use crate::shaders::{ShaderManager, ShaderType};
 use crate::GpuError;
-use std::{borrow::Cow, num::NonZeroU64};
-// Re-add lazy_static import
 use lazy_static::lazy_static;
 
 // --- Cache Definitions ---
@@ -483,60 +481,42 @@ impl ComputePipelines {
         entry_point: &str,
         source_hash: u64,
     ) -> Result<Arc<wgpu::ComputePipeline>, GpuError> {
-        let pipeline_key = PipelineCacheKey {
+        let key = PipelineCacheKey {
             source_hash,
             entry_point: entry_point.to_string(),
         };
+
+        // Access the cache using the lazy_static macro
         let mut cache = COMPUTE_PIPELINE_CACHE
             .lock()
             .map_err(|e| GpuError::MutexError(e.to_string()))?;
 
-        if let Some(pipeline) = cache.get(&pipeline_key) {
-            log::debug!("Compute pipeline cache hit for entry '{}'", entry_point);
-            Ok(pipeline.clone())
-        } else {
+        if let Some(pipeline) = cache.get(&key) {
             log::debug!(
-                "Compute pipeline cache miss for entry '{}'. Creating new pipeline.",
+                "Compute pipeline cache hit for entry point: {}",
                 entry_point
             );
-            // Use error scopes for better diagnostics during pipeline creation
-            device.push_error_scope(wgpu::ErrorFilter::Validation);
-
-            let pipeline = Arc::new(device.create_compute_pipeline(
-                &wgpu::ComputePipelineDescriptor {
-                    label: Some(&format!("Compute Pipeline ({})", entry_point)),
-                    layout: Some(layout),
-                    module: module,
-                    entry_point: entry_point,
-                    compilation_options: Default::default(),
-                },
-            ));
-
-            // Pop the error scope and check for errors
-            // Note: This is asynchronous, ideally use poll(Maintain::Wait) or an async runtime
-            // For simplicity here, we assume synchronous for now, but this might block.
-            // Consider async handling in a real application.
-            if let Some(error) = pollster::block_on(device.pop_error_scope()) {
-                log::error!(
-                    "Pipeline creation failed for entry '{}': {:?}",
-                    entry_point,
-                    error
-                );
-                // Clear cache entry if it was somehow inserted despite error? Unlikely but possible.
-                cache.remove(&pipeline_key);
-                return Err(GpuError::PipelineCreationError(format!(
-                    "Failed to create compute pipeline for entry '{}': {:?}",
-                    entry_point, error
-                )));
-            }
-
-            cache.insert(pipeline_key.clone(), pipeline.clone());
-            log::info!(
-                "Successfully created and cached compute pipeline for entry '{}'",
-                entry_point
-            );
-            Ok(pipeline)
+            return Ok(pipeline.clone());
         }
+
+        log::debug!(
+            "Compute pipeline cache miss for entry point: {}. Creating new pipeline.",
+            entry_point
+        );
+
+        // Create compute pipeline
+        let pipeline = Arc::new(
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(&format!("Compute Pipeline: {}", entry_point)),
+                layout: Some(layout),
+                module,
+                entry_point,
+                compilation_options: Default::default(),
+            }),
+        );
+
+        cache.insert(key, pipeline.clone());
+        Ok(pipeline)
     }
 
     pub fn create_propagation_bind_groups(

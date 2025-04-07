@@ -15,6 +15,14 @@ use wfc_rules::AdjacencyRules;
 use wgpu;
 use wgpu::util::DeviceExt;
 
+mod grid_buffers;
+// Add mod declaration for the new module
+pub mod worklist_buffers;
+
+// Import the new struct
+// Removed: use grid_buffers::GridBuffers; - File is empty for now
+use worklist_buffers::WorklistBuffers;
+
 /// Uniform buffer structure holding parameters accessible by GPU compute shaders.
 ///
 /// This struct defines the layout for constant data passed to the GPU, such as grid dimensions
@@ -113,12 +121,6 @@ pub struct GpuBuffers {
     pub min_entropy_info_buf: Arc<wgpu::Buffer>,
     /// Staging buffer used during min entropy info upload/download.
     pub staging_min_entropy_info_buf: Arc<wgpu::Buffer>,
-    /// First buffer for storing the worklist of cells to update in propagation (double-buffered design).
-    pub worklist_buf_a: Arc<wgpu::Buffer>,
-    /// Second buffer for storing the worklist of cells to update in propagation (double-buffered design).
-    pub worklist_buf_b: Arc<wgpu::Buffer>,
-    /// Buffer for tracking the number of cells in the worklist.
-    pub worklist_count_buf: Arc<wgpu::Buffer>,
     /// Buffer containing a flag that is set when a contradiction is detected.
     pub contradiction_flag_buf: Arc<wgpu::Buffer>,
     /// Staging buffer used during contradiction flag upload/download.
@@ -127,8 +129,6 @@ pub struct GpuBuffers {
     pub contradiction_location_buf: Arc<wgpu::Buffer>,
     /// Staging buffer used during contradiction location upload/download.
     pub staging_contradiction_location_buf: Arc<wgpu::Buffer>,
-    /// Staging buffer used during worklist count upload/download.
-    pub staging_worklist_count_buf: Arc<wgpu::Buffer>,
     /// Uniform buffer containing GPU parameters like grid dimensions, tile count, etc.
     pub params_uniform_buf: Arc<wgpu::Buffer>,
     /// Buffer containing adjacency rules in a format optimized for the GPU.
@@ -139,16 +139,14 @@ pub struct GpuBuffers {
     pub pass_statistics_buf: Arc<wgpu::Buffer>,
     /// Staging buffer used during pass statistics upload/download.
     pub staging_pass_statistics_buf: Arc<wgpu::Buffer>,
+    /// Buffers specifically for propagation worklists.
+    pub worklist_buffers: WorklistBuffers,
     /// Number of u32 words used to represent the possibilities for a single cell.
     pub u32s_per_cell: usize,
     /// Total number of cells in the grid.
     pub num_cells: usize,
     /// Original grid dimensions, used for error recovery.
     pub original_grid_dims: Option<(usize, usize, usize)>,
-    /// Current size of the worklist.
-    pub current_worklist_size: usize,
-    /// Current worklist buffer index (0 or 1 for worklist_buf_a or worklist_buf_b).
-    pub current_worklist_idx: usize,
     /// Current grid dimensions (width, height, depth).
     pub grid_dims: (usize, usize, usize),
     /// Number of tile types in the model.
@@ -158,7 +156,7 @@ pub struct GpuBuffers {
     /// Boundary condition to apply (e.g., Wrap, Block).
     pub boundary_mode: wfc_core::BoundaryCondition,
     /// Uniform buffer for entropy calculation parameters.
-    pub entropy_params_buffer: wgpu::Buffer,
+    pub entropy_params_buffer: Arc<wgpu::Buffer>,
     /// Configuration for dynamic buffer management.
     pub dynamic_buffer_config: Option<DynamicBufferConfig>,
 }
@@ -170,7 +168,6 @@ pub struct GpuDownloadResults {
     pub min_entropy_info: Option<(f32, u32)>,
     pub contradiction_flag: Option<bool>,
     pub contradiction_location: Option<u32>,
-    pub worklist_count: Option<u32>,
     pub grid_possibilities: Option<Vec<u32>>,
 }
 
@@ -179,8 +176,6 @@ pub struct DownloadRequest {
     pub download_entropy: bool,
     pub download_min_entropy_info: bool,
     pub download_grid_possibilities: bool,
-    // pub download_worklist: bool, // Not used currently
-    pub download_worklist_size: bool,
     pub download_contradiction_location: bool,
 }
 
@@ -289,20 +284,17 @@ impl GpuBuffers {
         // --- Pack Rules ---
         // Each rule is represented by a bit in a u32 array
         // Index pattern: axis * num_tiles * num_tiles + tile1 * num_tiles + tile2
-        let rule_bits_len = (num_axes * num_tiles * num_tiles + 31) / 32;
-        let mut packed_rules = vec![0u32; rule_bits_len];
+        // let rule_bits_len = (num_axes * num_tiles * num_tiles + 31) / 32;
+        // let mut packed_rules = vec![0u32; rule_bits_len];
 
-        for (axis, tile1, tile2) in rules.get_allowed_rules_map().keys() {
-            let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
-            let u32_idx = rule_idx / 32;
-            let bit_idx = rule_idx % 32;
-            packed_rules[u32_idx] |= 1 << bit_idx;
-        }
+        // for (axis, tile1, tile2) in rules.get_allowed_rules_map().keys() {
+        //     let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
+        //     let u32_idx = rule_idx / 32;
+        //     let bit_idx = rule_idx % 32;
+        //     packed_rules[u32_idx] |= 1 << bit_idx;
+        // }
 
         // --- Pack Rule Weights ---
-        // Each weighted rule is represented by two values:
-        // - rule_idx: The packed rule index (axis, tile1, tile2)
-        // - weight_bits: The f32 weight encoded as u32 bits
         let mut weighted_rules = Vec::new();
 
         for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
@@ -344,7 +336,8 @@ impl GpuBuffers {
 
         // --- Calculate Other Buffer Sizes ---
         let entropy_buffer_size = (num_cells * std::mem::size_of::<f32>()) as u64;
-        let updates_buffer_size = (num_cells * std::mem::size_of::<u32>()) as u64;
+        // Removed unused variable `updates_buffer_size`
+        // let updates_buffer_size = (num_cells * std::mem::size_of::<u32>()) as u64;
         let contradiction_buffer_size = std::mem::size_of::<u32>() as u64;
         let min_entropy_info_buffer_size = (2 * std::mem::size_of::<u32>()) as u64; // Size for [f32_bits, u32_index]
         let contradiction_location_buffer_size = std::mem::size_of::<u32>() as u64;
@@ -360,13 +353,14 @@ impl GpuBuffers {
             },
         ));
 
-        let rules_buf = Arc::new(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Rules"),
-                contents: bytemuck::cast_slice(&packed_rules),
-                usage: wgpu::BufferUsages::STORAGE, // Read-only in shader
-            }),
-        );
+        // Removed unused buffer creation `rules_buf`
+        // let rules_buf = Arc::new(
+        //     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        //         label: Some("Rules"),
+        //         contents: bytemuck::cast_slice(&packed_rules), // Commented out usage
+        //         usage: wgpu::BufferUsages::STORAGE, // Read-only in shader
+        //     }),
+        // );
 
         let params_uniform_buf = Arc::new(device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
@@ -385,33 +379,9 @@ impl GpuBuffers {
             mapped_at_creation: false,
         }));
 
-        let worklist_buf_a = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Worklist Buffer A"),
-            size: updates_buffer_size, // Max possible size
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST // For initial upload
-                | wgpu::BufferUsages::COPY_SRC, // If direct copy between worklists is needed (less likely now)
-            mapped_at_creation: false,
-        }));
-
-        let worklist_buf_b = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Worklist Buffer B"),
-            size: updates_buffer_size, // Max possible size
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }));
-
-        let worklist_count_buf = Arc::new(device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Worklist Count Buffer"),
-                contents: bytemuck::cast_slice(&[0u32]),
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-            },
-        ));
+        // Create worklist buffers using the new struct's constructor
+        let default_dynamic_config = DynamicBufferConfig::default(); // Need a config
+        let worklist_buffers = WorklistBuffers::new(device, num_cells, &default_dynamic_config)?;
 
         let contradiction_flag_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Contradiction Flag"),
@@ -479,13 +449,6 @@ impl GpuBuffers {
                 mapped_at_creation: false,
             }));
 
-        let staging_worklist_count_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging Worklist Count Buffer"),
-            size: std::mem::size_of::<u32>() as u64, // Use size directly
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }));
-
         // Create rules buffer
         let adjacency_rules_buf = Arc::new(device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
@@ -530,31 +493,31 @@ impl GpuBuffers {
 
         info!("GPU buffers created successfully.");
         Ok(Self {
-            grid_possibilities_buf,
+            grid_possibilities_buf: Arc::new(grid_possibilities_buf),
             staging_grid_possibilities_buf,
-            rules_buf,
+            rules_buf: Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Dummy Rules Buf"), // TODO: Replace with actual rules buffer logic
+                size: 16,                       // Placeholder size
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            })), // Keep field but initialize dummy for now
             entropy_buf,
             staging_entropy_buf,
             min_entropy_info_buf,
             staging_min_entropy_info_buf,
-            worklist_buf_a,
-            worklist_buf_b,
-            worklist_count_buf,
             contradiction_flag_buf,
             staging_contradiction_flag_buf,
             contradiction_location_buf,
             staging_contradiction_location_buf,
-            staging_worklist_count_buf,
             params_uniform_buf,
             adjacency_rules_buf,
             rule_weights_buf,
             pass_statistics_buf,
             staging_pass_statistics_buf,
+            worklist_buffers,
             u32s_per_cell,
             num_cells,
             original_grid_dims: None,
-            current_worklist_size: 0,
-            current_worklist_idx: 0,
             grid_dims: (width, height, depth),
             num_tiles,
             num_axes,
@@ -671,64 +634,6 @@ impl GpuBuffers {
         Ok(())
     }
 
-    /// Ensure the worklist buffers are sufficient for the given dimensions
-    pub fn ensure_worklist_buffers(
-        &mut self,
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-        depth: u32,
-        config: &DynamicBufferConfig,
-    ) -> Result<(), String> {
-        let num_cells = (width * height * depth) as usize;
-        let required_size = (num_cells * std::mem::size_of::<u32>()) as u64;
-
-        if !Self::is_buffer_sufficient(&self.worklist_buf_a, required_size) {
-            let new_buffer_a = Self::resize_buffer(
-                device,
-                &self.worklist_buf_a,
-                required_size,
-                wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-                Some("Worklist Buffer A"),
-                config,
-            );
-            self.worklist_buf_a = new_buffer_a;
-        }
-
-        if !Self::is_buffer_sufficient(&self.worklist_buf_b, required_size) {
-            let new_buffer_b = Self::resize_buffer(
-                device,
-                &self.worklist_buf_b,
-                required_size,
-                wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-                Some("Worklist Buffer B"),
-                config,
-            );
-            self.worklist_buf_b = new_buffer_b;
-        }
-
-        // Also resize the worklist count buffer (much smaller, fixed size)
-        if !Self::is_buffer_sufficient(&self.worklist_count_buf, 4) {
-            let new_count_buf = Self::resize_buffer(
-                device,
-                &self.worklist_count_buf,
-                4,
-                wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-                Some("Worklist Count Buffer"),
-                config,
-            );
-            self.worklist_count_buf = new_count_buf;
-        }
-
-        Ok(())
-    }
-
     /// Resize all essential buffers for a given grid dimension
     pub fn resize_for_grid(
         &mut self,
@@ -741,7 +646,6 @@ impl GpuBuffers {
     ) -> Result<(), String> {
         self.ensure_grid_possibilities_buffer(device, width, height, depth, num_tiles, config)?;
         self.ensure_entropy_buffer(device, width, height, depth, config)?;
-        self.ensure_worklist_buffers(device, width, height, depth, config)?;
 
         // Update grid dimensions
         self.num_cells = (width * height * depth) as usize;
@@ -872,16 +776,6 @@ impl GpuBuffers {
                         self.grid_possibilities_buf.size(),
                     );
                 }
-                if request.download_worklist_size {
-                    encoder.copy_buffer_to_buffer(
-                        &self.worklist_count_buf,
-                        0,
-                        &self.staging_worklist_count_buf,
-                        0,
-                        self.worklist_count_buf.size(),
-                    );
-                }
-                // Assuming contradiction flag is needed if location is
                 if request.download_contradiction_location {
                     encoder.copy_buffer_to_buffer(
                         &self.contradiction_flag_buf,
@@ -991,14 +885,6 @@ impl GpuBuffers {
                             .boxed(),
                     ); // Expect [f32_bits, u32_idx]
                 }
-                if request.download_worklist_size {
-                    let buffer = self.staging_worklist_count_buf.clone();
-                    futures.push(
-                        map_and_process::<u32>(buffer, operation_timeout, None)
-                            .map(|r| r.map(|d| ("worklist_count", d)))
-                            .boxed(),
-                    );
-                }
                 if request.download_contradiction_location {
                     let flag_buffer = self.staging_contradiction_flag_buf.clone();
                     futures.push(
@@ -1034,10 +920,6 @@ impl GpuBuffers {
                                             Some((f32::from_bits(d[0]), d[1]));
                                     }
                                 }
-                            }
-                            "worklist_count" => {
-                                download_data.worklist_count =
-                                    data_box.downcast::<u32>().ok().map(|b| *b)
                             }
                             "contradiction_flag" => {
                                 download_data.contradiction_flag =

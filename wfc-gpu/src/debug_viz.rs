@@ -122,7 +122,6 @@ impl DebugVisualizer {
             download_entropy: needs_entropy,
             download_min_entropy_info: false, // Not needed for viz
             download_grid_possibilities: needs_grid,
-            download_worklist_size: false,
             download_contradiction_location: needs_contradiction,
         };
 
@@ -141,7 +140,7 @@ impl DebugVisualizer {
             buffers.grid_dims,
             buffers.num_tiles,
             result,
-            buffers.current_worklist_size as u32,
+            buffers.worklist_buffers.current_worklist_size as u32,
         );
 
         Ok(())
@@ -325,8 +324,7 @@ mod tests {
                 min_entropy_info: None,
                 contradiction_flag: None,
                 contradiction_location: None,
-                worklist_count: None,
-                grid_possibilities: Some(vec![0; 10]),
+                grid_possibilities: None,
             };
 
             visualizer.add_snapshot((5, 2, 1), 4, mock_results, 0);
@@ -337,17 +335,17 @@ mod tests {
 
         // Test snapshot limit
         visualizer.config.max_snapshots = 3;
+        let another_mock_results = GpuDownloadResults {
+            entropy: Some(vec![5.0; 10]),
+            min_entropy_info: None,
+            contradiction_flag: None,
+            contradiction_location: None,
+            grid_possibilities: None,
+        };
         visualizer.add_snapshot(
             (5, 2, 1),
             4,
-            GpuDownloadResults {
-                entropy: Some(vec![5.0; 10]),
-                min_entropy_info: None,
-                contradiction_flag: None,
-                contradiction_location: None,
-                worklist_count: None,
-                grid_possibilities: Some(vec![0; 10]),
-            },
+            another_mock_results, // Use the separate variable
             0,
         );
 

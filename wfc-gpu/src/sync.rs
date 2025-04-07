@@ -156,7 +156,6 @@ impl GpuSynchronizer {
             download_entropy: false,
             download_min_entropy_info: false,
             download_grid_possibilities: true,
-            download_worklist_size: false,
             download_contradiction_location: false,
         };
         let results = self
@@ -329,7 +328,7 @@ impl GpuSynchronizer {
     ///
     /// `Ok(count)` with the worklist count if successful, or an error detailing what went wrong.
     pub async fn download_worklist_count(&self) -> Result<u32, GpuError> {
-        let buffer_size = self.buffers.worklist_count_buf.size();
+        let buffer_size = self.buffers.worklist_buffers.worklist_count_buf.size();
         if buffer_size < 4 {
             return Err(GpuError::BufferSizeMismatch(
                 "Worklist count buffer too small".to_string(),
@@ -343,16 +342,20 @@ impl GpuSynchronizer {
             });
 
         encoder.copy_buffer_to_buffer(
-            &self.buffers.worklist_count_buf,
+            &self.buffers.worklist_buffers.worklist_count_buf,
             0,
-            &self.buffers.staging_worklist_count_buf,
+            &self.buffers.worklist_buffers.staging_worklist_count_buf,
             0,
             buffer_size,
         );
 
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        let buffer_slice = self.buffers.staging_worklist_count_buf.slice(..);
+        let buffer_slice = self
+            .buffers
+            .worklist_buffers
+            .staging_worklist_count_buf
+            .slice(..);
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -368,7 +371,10 @@ impl GpuSynchronizer {
         let mapped_range = buffer_slice.get_mapped_range();
         let data = mapped_range.to_vec();
         drop(mapped_range);
-        self.buffers.staging_worklist_count_buf.unmap();
+        self.buffers
+            .worklist_buffers
+            .staging_worklist_count_buf
+            .unmap();
 
         if data.len() >= 4 {
             let count = u32::from_le_bytes(data[0..4].try_into().unwrap());
@@ -472,9 +478,9 @@ impl GpuSynchronizer {
         worklist_idx: usize,
     ) -> Result<(), GpuError> {
         let worklist_buffer = if worklist_idx == 0 {
-            &self.buffers.worklist_buf_a
+            &self.buffers.worklist_buffers.worklist_buf_a
         } else {
-            &self.buffers.worklist_buf_b
+            &self.buffers.worklist_buffers.worklist_buf_b
         };
 
         let data_size = (updated_indices.len() * std::mem::size_of::<u32>()) as u64;
@@ -513,7 +519,6 @@ impl GpuSynchronizer {
             download_entropy: false,
             download_min_entropy_info: true,
             download_grid_possibilities: false,
-            download_worklist_size: false,
             download_contradiction_location: false,
         };
         let results = self
@@ -640,7 +645,7 @@ impl GpuSynchronizer {
     /// Used if implementing iterative GPU propagation where the shader generates a new worklist.
     pub fn reset_worklist_count(&self) -> Result<(), GpuError> {
         self.queue.write_buffer(
-            &self.buffers.worklist_count_buf,
+            &self.buffers.worklist_buffers.worklist_count_buf,
             0,
             bytemuck::cast_slice(&[0u32]),
         );

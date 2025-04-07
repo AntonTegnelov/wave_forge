@@ -15,7 +15,6 @@
 
 ## API Design
 
-- [ ] Add methods to load rules from string/memory instead of just files
 - [ ] Separate parsing logic from deserialization for better testability
 - [ ] Add support for loading directly from embedded resources
 

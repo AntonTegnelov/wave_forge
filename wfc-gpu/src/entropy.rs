@@ -1,15 +1,15 @@
 use crate::{
-    buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
-    error_recovery::RecoverableGpuOp,
-    pipeline::{ComputePipelines, GpuComputeBindingResources},
+    buffers::{GpuBuffers, GpuEntropyShaderParams},
+    pipeline::ComputePipelines,
     sync::GpuSynchronizer,
     GpuError,
 };
-use log::trace;
+use async_trait::async_trait;
+use log::{debug, error, info, warn};
 use pollster;
 use std::sync::Arc;
 use wfc_core::{
-    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType, SelectionStrategy},
+    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
 };
 use wgpu;
@@ -84,7 +84,7 @@ impl GpuEntropyCalculator {
         &self,
         grid: &PossibilityGrid,
     ) -> Result<EntropyGrid, EntropyError> {
-        trace!("Entering calculate_entropy_async");
+        debug!("Entering calculate_entropy_async");
         let (width, height, depth) = (grid.width, grid.height, grid.depth);
         let num_cells = width * height * depth;
 

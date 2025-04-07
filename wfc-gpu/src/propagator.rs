@@ -8,14 +8,11 @@ use crate::{
     sync::GpuSynchronizer,
 };
 use async_trait::async_trait;
-use bitvec::vec::BitVec;
 use log::{debug, info};
 use std::sync::Arc;
-use std::time::Instant;
 use wfc_core::{
-    grid::{Grid, PossibilityGrid},
+    grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    BoundaryCondition,
 };
 use wfc_rules::AdjacencyRules;
 use wgpu;
@@ -145,9 +142,17 @@ impl GpuConstraintPropagator {
     /// Gets the binding resource for the current input worklist buffer.
     fn input_worklist_binding(&self) -> wgpu::BindingResource {
         if self.current_worklist_idx == 0 {
-            self.buffers.worklist_buf_a.as_entire_binding()
+            // Access through worklist_buffers field
+            self.buffers
+                .worklist_buffers
+                .worklist_buf_a
+                .as_entire_binding()
         } else {
-            self.buffers.worklist_buf_b.as_entire_binding()
+            // Access through worklist_buffers field
+            self.buffers
+                .worklist_buffers
+                .worklist_buf_b
+                .as_entire_binding()
         }
     }
 
@@ -155,10 +160,18 @@ impl GpuConstraintPropagator {
     fn output_worklist_binding(&self) -> wgpu::BindingResource {
         if self.current_worklist_idx == 0 {
             // Input is A, Output is B
-            self.buffers.worklist_buf_b.as_entire_binding()
+            // Access through worklist_buffers field
+            self.buffers
+                .worklist_buffers
+                .worklist_buf_b
+                .as_entire_binding()
         } else {
             // Input is B, Output is A
-            self.buffers.worklist_buf_a.as_entire_binding()
+            // Access through worklist_buffers field
+            self.buffers
+                .worklist_buffers
+                .worklist_buf_a
+                .as_entire_binding()
         }
     }
 
@@ -216,12 +229,12 @@ impl GpuConstraintPropagator {
 
         debug!(
             "Processing subgrid region ({},{},{}) to ({},{},{}) with {} updates",
-            region.start_x,
-            region.start_y,
-            region.start_z,
-            region.end_x,
-            region.end_y,
-            region.end_z,
+            region.x_offset,
+            region.y_offset,
+            region.z_offset,
+            region.end_x(),
+            region.end_y(),
+            region.end_z(),
             local_updated_coords.len()
         );
 
@@ -380,7 +393,11 @@ impl GpuConstraintPropagator {
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: self.buffers.worklist_count_buf.as_entire_binding(),
+                        resource: self
+                            .buffers
+                            .worklist_buffers
+                            .worklist_count_buf
+                            .as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 6,

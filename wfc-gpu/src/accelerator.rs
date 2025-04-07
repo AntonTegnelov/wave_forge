@@ -1,33 +1,24 @@
 #![allow(clippy::redundant_field_names)]
 use crate::{
-    backend::GpuBackend,
-    buffers::{DynamicBufferConfig, GpuBuffers, GpuDownloadResults, GpuParamsUniform},
+    buffers::{GpuBuffers, GpuParamsUniform},
     debug_viz::{DebugVisualizationConfig, DebugVisualizer, GpuBuffersDebugExt},
-    entropy::{self as gpu_entropy, GpuEntropyCalculator},
-    error_recovery::{self, RecoverableGpuOp},
+    entropy::GpuEntropyCalculator,
     pipeline::ComputePipelines,
-    propagator::{self as gpu_propagator, GpuConstraintPropagator},
-    shaders::ShaderManager,
-    subgrid::{self, SubgridConfig, SubgridRegion},
+    propagator::GpuConstraintPropagator,
+    subgrid::SubgridConfig,
     sync::GpuSynchronizer,
     GpuError,
 };
-use async_trait::async_trait;
-use bytemuck;
-use futures::channel::oneshot;
-use log::{debug, error, info, trace, warn};
-use std::sync::atomic::{AtomicBool, Ordering};
+use log::{error, info, trace, warn};
 use std::sync::Arc;
 use std::time::Instant;
 use wfc_core::{
-    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType, SelectionStrategy},
-    grid::{EntropyGrid, Grid, PossibilityGrid},
+    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
+    grid::{EntropyGrid, PossibilityGrid},
     propagator::{ConstraintPropagator, PropagationError},
-    runner::{self, ProgressCallback, ProgressiveResultsCallback, WfcConfig},
-    BoundaryCondition, ProgressInfo, WfcCheckpoint, WfcError,
+    BoundaryCondition, ProgressInfo, WfcError,
 };
 use wfc_rules::AdjacencyRules;
-use wgpu;
 
 /// Manages the WGPU context and orchestrates GPU-accelerated WFC operations.
 ///
@@ -635,7 +626,12 @@ impl GpuAccelerator {
             if let Some(visualizer) = &mut self.debug_visualizer {
                 if visualizer.should_snapshot(iterations) {
                     trace!("Taking debug snapshot at iteration {}", iterations);
-                    self.buffers.take_debug_snapshot(visualizer)?;
+                    self.buffers
+                        .take_debug_snapshot(visualizer)
+                        .map_err(|gpu_err| {
+                            error!("Failed to take debug snapshot: {}", gpu_err);
+                            WfcError::InternalError(format!("Debug snapshot failed: {}", gpu_err))
+                        })?;
                 }
             }
         }

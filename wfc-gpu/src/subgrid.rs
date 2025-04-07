@@ -3,8 +3,6 @@
 //! Defines structures and functions for dividing large grids into smaller subgrids
 //! for parallel processing.
 
-use crate::GpuError;
-use std::cmp::min;
 use wfc_core::grid::PossibilityGrid;
 
 /// Represents a rectangular region within the main grid.
@@ -310,6 +308,62 @@ impl SubgridRegion {
         // This is a simplification; in practice you might want to store the overlap explicitly
         // Here we just return a default value
         2
+    }
+
+    /// Returns the end coordinates (exclusive) of the region.
+    pub fn end_x(&self) -> usize {
+        self.x_offset + self.width
+    }
+    pub fn end_y(&self) -> usize {
+        self.y_offset + self.height
+    }
+    pub fn end_z(&self) -> usize {
+        self.z_offset + self.depth
+    }
+
+    /// Checks if a global coordinate is contained within this subgrid region.
+    pub fn contains(&self, x: usize, y: usize, z: usize) -> bool {
+        x >= self.x_offset
+            && x < self.end_x()
+            && y >= self.y_offset
+            && y < self.end_y()
+            && z >= self.z_offset
+            && z < self.end_z()
+    }
+
+    /// Converts global coordinates to local coordinates within this subgrid.
+    /// Returns `None` if the global coordinates are outside the region.
+    pub fn to_local_coords(
+        &self,
+        global_x: usize,
+        global_y: usize,
+        global_z: usize,
+    ) -> Option<(usize, usize, usize)> {
+        if self.contains(global_x, global_y, global_z) {
+            Some((
+                global_x - self.x_offset,
+                global_y - self.y_offset,
+                global_z - self.z_offset,
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Converts local coordinates within this subgrid to global coordinates.
+    pub fn to_global_coords(
+        &self,
+        local_x: usize,
+        local_y: usize,
+        local_z: usize,
+    ) -> (usize, usize, usize) {
+        // We assume local coordinates are valid (within width/height/depth)
+        // No bounds checking needed here, as it's converting *from* local.
+        (
+            self.x_offset + local_x,
+            self.y_offset + local_y,
+            self.z_offset + local_z,
+        )
     }
 }
 
