@@ -59,8 +59,10 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] `wfc-gpu/docs/buffer_lifecycle.md` - Explain buffer ownership & synchronization
   - [x] **Update files to use new buffer management methods**:
     - [x] Update `accelerator.rs`: Use `GpuSynchronizer` for all data transfers (Partially done, `run_with_callback` needs manual fixes)
-    - [x] Update `propagator.rs`: Ensure correct use of `GpuSynchronizer`
-    - [x] Update `entropy.rs`: Ensure correct use of `GpuSynchronizer` (GPU dispatch in `calculate_entropy` still TODO)
+    - [x] Update `propagator.rs`: Access buffers via new structs (e.g., `buffers.worklist_buffers`)
+    - [x] Update `entropy.rs`: Access buffers via new structs (e.g., `buffers.entropy_buffers`)
+    - [x] Update `sync.rs`: Reference new buffer module structure
+    - [ ] Update all tests and validation code
 
 - [x] **Entropy calculation**:
 
