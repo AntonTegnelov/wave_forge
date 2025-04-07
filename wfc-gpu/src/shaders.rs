@@ -14,6 +14,7 @@
 #![allow(unused_variables, dead_code)] // Allow unused items during development
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use thiserror::Error; // Added for registry
 
@@ -193,21 +194,23 @@ impl ShaderManager {
         self.component_registry.keys().cloned().collect()
     }
 
-    /// Resolves all direct and transitive dependencies for a given component.
-    /// Returns a topologically sorted list of component names required to build the target component.
+    /// Returns a topologically sorted list of component names required to build the target component,
+    /// considering the enabled features.
     pub fn resolve_component_dependencies(
         &self,
         target_component_name: &str,
+        enabled_features: &HashSet<String>, // Changed from &[&str] to HashSet for easier lookup
     ) -> Result<Vec<String>, ShaderError> {
-        let mut resolved_order = Vec::new(); // Stores the final order of component names
-        let mut visiting = std::collections::HashSet::new(); // Tracks components currently in the recursion stack (for cycle detection)
-        let mut visited = std::collections::HashSet::new(); // Tracks components already fully processed
+        let mut resolved_order = Vec::new();
+        let mut visiting = std::collections::HashSet::new();
+        let mut visited = std::collections::HashSet::new();
 
         self.visit_component(
             target_component_name,
             &mut resolved_order,
             &mut visiting,
             &mut visited,
+            enabled_features,
         )?;
 
         Ok(resolved_order)
@@ -220,44 +223,72 @@ impl ShaderManager {
         resolved_order: &mut Vec<String>,
         visiting: &mut std::collections::HashSet<&'a str>,
         visited: &mut std::collections::HashSet<&'a str>,
+        enabled_features: &HashSet<String>,
     ) -> Result<(), ShaderError> {
-        // If already fully visited, do nothing
         if visited.contains(component_name) {
             return Ok(());
         }
-
-        // If currently visiting, we have a cycle
         if visiting.contains(component_name) {
+            // ... (cycle detection) ...
             return Err(ShaderError::NotImplemented(format!(
                 "Circular dependency detected involving component: {}",
                 component_name
-            ))); // Using NotImplemented as placeholder error
+            )));
         }
-
-        // Mark as visiting
-        visiting.insert(component_name);
 
         // Get component info
-        let component_info = self.component_registry.get(component_name).ok_or_else(|| {
-            ShaderError::NotImplemented(format!(
-                "Component '{}' not found in registry",
-                component_name
-            ))
-        })?;
+        let component_info = self.get_component_info_or_err(component_name)?;
 
-        // Recursively visit dependencies
-        for dep_name in &component_info.dependencies {
-            self.visit_component(dep_name, resolved_order, visiting, visited)?;
+        // Check if component's features are met
+        if !self.component_features_met(component_info, enabled_features) {
+            // If features not met, treat this component (and its subtree) as pruned/skipped
+            // We don't add it to resolved_order and mark it visited to avoid re-processing.
+            // We don't return an error, as this might be expected (e.g., alternative feature paths).
+            visited.insert(component_name);
+            return Ok(());
         }
 
-        // Mark as finished visiting (remove from current stack)
+        visiting.insert(component_name);
+
+        // Recursively visit dependencies (which will also check features)
+        for dep_name in &component_info.dependencies {
+            self.visit_component(
+                dep_name,
+                resolved_order,
+                visiting,
+                visited,
+                enabled_features,
+            )?;
+        }
+
         visiting.remove(component_name);
-        // Mark as fully visited
         visited.insert(component_name);
-        // Add to the final list (after all dependencies)
+        // Only add the component if its features were met and it hasn't been added already
+        // (The visited check at the start handles the 'already added' case)
         resolved_order.push(component_name.to_string());
 
         Ok(())
+    }
+
+    /// Helper to get component info or return a specific error.
+    fn get_component_info_or_err(&self, name: &str) -> Result<&ShaderComponentInfo, ShaderError> {
+        self.component_registry.get(name).ok_or_else(|| {
+            ShaderError::NotImplemented(format!("Component '{}' not found in registry", name))
+        })
+    }
+
+    /// Helper to check if a component's feature requirements are met.
+    fn component_features_met(
+        &self,
+        component_info: &ShaderComponentInfo,
+        enabled_features: &HashSet<String>,
+    ) -> bool {
+        // If the component requires features, check if all are enabled.
+        !component_info
+            .features
+            .iter()
+            .any(|req_feat| !enabled_features.contains(req_feat))
+        // Equivalent to: component_info.features.iter().all(|req_feat| enabled_features.contains(req_feat))
     }
 }
 
@@ -355,55 +386,88 @@ mod tests {
         manager
     }
 
+    fn features(features: &[&str]) -> HashSet<String> {
+        features.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
     fn test_resolve_dependencies_simple() {
         let manager = setup_test_registry();
-        let deps = manager.resolve_component_dependencies("util_a").unwrap();
+        let deps = manager
+            .resolve_component_dependencies("util_a", &features(&[]))
+            .unwrap();
         assert_eq!(deps, vec!["base", "util_a"]);
     }
 
     #[test]
     fn test_resolve_dependencies_complex() {
         let manager = setup_test_registry();
-        let deps = manager.resolve_component_dependencies("complex").unwrap();
-        // Order can vary slightly depending on HashMap iteration, but content matters
+        let deps = manager
+            .resolve_component_dependencies("complex", &features(&[]))
+            .unwrap();
         assert_eq!(deps.len(), 4);
-        assert!(deps.contains(&"base".to_string()));
-        assert!(deps.contains(&"util_a".to_string()));
-        assert!(deps.contains(&"util_b".to_string()));
-        assert!(deps.contains(&"complex".to_string()));
-        // Check relative order: base before utils, utils before complex
-        let base_idx = deps.iter().position(|n| n == "base").unwrap();
-        let util_a_idx = deps.iter().position(|n| n == "util_a").unwrap();
-        let util_b_idx = deps.iter().position(|n| n == "util_b").unwrap();
-        let complex_idx = deps.iter().position(|n| n == "complex").unwrap();
-        assert!(base_idx < util_a_idx);
-        assert!(base_idx < util_b_idx);
-        assert!(util_a_idx < complex_idx);
-        assert!(util_b_idx < complex_idx);
+        assert_eq!(deps[0], "base");
+        assert!(deps[1..3].contains(&"util_a".to_string()));
+        assert!(deps[1..3].contains(&"util_b".to_string()));
+        assert_eq!(deps[3], "complex");
     }
 
     #[test]
     fn test_resolve_dependencies_base() {
         let manager = setup_test_registry();
-        let deps = manager.resolve_component_dependencies("base").unwrap();
+        let deps = manager
+            .resolve_component_dependencies("base", &features(&[]))
+            .unwrap();
         assert_eq!(deps, vec!["base"]);
+    }
+
+    #[test]
+    fn test_resolve_dependencies_feature_met() {
+        let manager = setup_test_registry();
+        let deps = manager
+            .resolve_component_dependencies("complex_with_feature", &features(&["feature_x"]))
+            .unwrap();
+        assert_eq!(deps.len(), 5);
+        assert_eq!(deps[0], "base");
+        assert_eq!(deps[1], "util_a");
+        assert_eq!(deps[2], "feature_x_impl");
+        assert_eq!(deps[3], "util_b");
+        assert_eq!(deps[4], "complex_with_feature");
+    }
+
+    #[test]
+    fn test_resolve_dependencies_feature_not_met() {
+        let manager = setup_test_registry();
+        let deps = manager
+            .resolve_component_dependencies("complex_with_feature", &features(&[]))
+            .unwrap();
+        assert_eq!(deps.len(), 3);
+        assert_eq!(deps[0], "base");
+        assert_eq!(deps[1], "util_b");
+        assert_eq!(deps[2], "complex_with_feature");
+    }
+
+    #[test]
+    fn test_resolve_dependencies_feature_not_met_root() {
+        let manager = setup_test_registry();
+        let deps = manager
+            .resolve_component_dependencies("feature_x_impl", &features(&[]))
+            .unwrap();
+        assert!(deps.is_empty());
     }
 
     #[test]
     fn test_resolve_dependencies_not_found() {
         let manager = setup_test_registry();
-        let result = manager.resolve_component_dependencies("non_existent");
+        let result = manager.resolve_component_dependencies("non_existent", &features(&[]));
         assert!(result.is_err());
-        // Check error type if specific variant is used later
     }
 
     #[test]
     fn test_resolve_dependencies_cyclic() {
         let manager = setup_test_registry();
-        let result = manager.resolve_component_dependencies("cyclic_a");
+        let result = manager.resolve_component_dependencies("cyclic_a", &features(&[]));
         assert!(result.is_err());
-        // Check error type indicates cycle
         match result {
             Err(ShaderError::NotImplemented(msg)) => {
                 assert!(msg.contains("Circular dependency detected"));

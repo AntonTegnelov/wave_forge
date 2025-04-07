@@ -121,10 +121,13 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
 
 ## 4. Advanced Shader Management
 
-- [ ] **Implement shader component system in `shaders.rs`**:
+- [x] **Implement shader component system in `shaders.rs`**:
 
   - [x] Expand `shaders.rs` to include:
     - [x] Component registry system
     - [x] Dependency resolution
-    - [ ] Feature flag handling
-  - [ ] Create new JSON schema files:
+    - [x] Feature flag handling
+
+- [ ] Create new JSON schema files:
+  - [ ] `wfc-gpu/src/shaders/schemas/component.json` - Shader component metadata schema
+  - [ ] `wfc-gpu/src/shaders/schemas/feature.json` - Feature capability flags schema
