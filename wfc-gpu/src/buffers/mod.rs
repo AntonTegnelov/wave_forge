@@ -24,12 +24,13 @@ use wgpu::{self, util::DeviceExt};
 // Declare submodules
 pub mod entropy_buffers;
 pub mod grid_buffers;
+pub mod rule_buffers;
 pub mod worklist_buffers;
-// pub mod rule_buffers; // Future
 
 // Re-export key structs from submodules
 pub use entropy_buffers::EntropyBuffers;
 pub use grid_buffers::GridBuffers;
+pub use rule_buffers::RuleBuffers;
 pub use worklist_buffers::WorklistBuffers;
 
 // --- Struct Definitions --- //
@@ -89,15 +90,13 @@ impl Default for DynamicBufferConfig {
 #[derive(Debug, Clone)]
 pub struct GpuBuffers {
     pub grid_buffers: GridBuffers,
-    pub rules_buf: Arc<wgpu::Buffer>,
+    pub rule_buffers: RuleBuffers,
     pub entropy_buffers: EntropyBuffers,
     pub contradiction_flag_buf: Arc<wgpu::Buffer>,
     pub staging_contradiction_flag_buf: Arc<wgpu::Buffer>,
     pub contradiction_location_buf: Arc<wgpu::Buffer>,
     pub staging_contradiction_location_buf: Arc<wgpu::Buffer>,
     pub params_uniform_buf: Arc<wgpu::Buffer>,
-    pub adjacency_rules_buf: Arc<wgpu::Buffer>,
-    pub rule_weights_buf: Arc<wgpu::Buffer>,
     pub pass_statistics_buf: Arc<wgpu::Buffer>,
     pub staging_pass_statistics_buf: Arc<wgpu::Buffer>,
     pub worklist_buffers: WorklistBuffers,
@@ -154,19 +153,7 @@ impl GpuBuffers {
         let grid_buffers = GridBuffers::new(device, initial_grid, &default_dynamic_config)?;
         let worklist_buffers = WorklistBuffers::new(device, num_cells, &default_dynamic_config)?;
         let entropy_buffers = EntropyBuffers::new(device, num_cells, &default_dynamic_config)?;
-
-        let mut weighted_rules = Vec::new();
-        for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
-            if *weight < 1.0 {
-                let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
-                weighted_rules.push(rule_idx as u32);
-                weighted_rules.push(weight.to_bits());
-            }
-        }
-        if weighted_rules.is_empty() {
-            weighted_rules.push(0);
-            weighted_rules.push(1.0f32.to_bits());
-        }
+        let rule_buffers = RuleBuffers::new(device, rules)?;
 
         let params = GpuParamsUniform {
             grid_width: width as u32,
@@ -189,13 +176,6 @@ impl GpuBuffers {
 
         let contradiction_buffer_size = std::mem::size_of::<u32>() as u64;
         let contradiction_location_buffer_size = std::mem::size_of::<u32>() as u64;
-
-        let rules_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Dummy Rules Buf"),
-            size: 16,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        }));
 
         let contradiction_flag_buf = Self::create_buffer(
             device,
@@ -234,19 +214,6 @@ impl GpuBuffers {
                     | wgpu::BufferUsages::COPY_SRC,
             },
         ));
-        let adjacency_rules_buf = Arc::new(device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("WFC Adjacency Rules Buffer"),
-                contents: bytemuck::cast_slice(&weighted_rules),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            },
-        ));
-        let rule_weights_buf = Self::create_buffer(
-            device,
-            16,
-            wgpu::BufferUsages::STORAGE,
-            Some("Dummy Rule Weights"),
-        ); // Placeholder
         let pass_statistics_buf = Self::create_buffer(
             device,
             16,
@@ -271,20 +238,18 @@ impl GpuBuffers {
         info!("GPU buffers created successfully.");
         Ok(Self {
             grid_buffers,
-            rules_buf,
+            rule_buffers,
             entropy_buffers,
             contradiction_flag_buf,
             staging_contradiction_flag_buf,
             contradiction_location_buf,
             staging_contradiction_location_buf,
             params_uniform_buf,
-            adjacency_rules_buf,
-            rule_weights_buf,
             pass_statistics_buf,
             staging_pass_statistics_buf,
             worklist_buffers,
             num_cells,
-            original_grid_dims: None,
+            original_grid_dims: Some((width, height, depth)),
             grid_dims: (width, height, depth),
             num_tiles,
             num_axes,
