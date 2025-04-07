@@ -139,6 +139,15 @@ impl GpuConstraintPropagator {
         self
     }
 
+    /// Gets the binding resource for the grid possibilities buffer.
+    fn grid_possibilities_binding(&self) -> wgpu::BindingResource {
+        // Access via grid_buffers
+        self.buffers
+            .grid_buffers
+            .grid_possibilities_buf
+            .as_entire_binding()
+    }
+
     /// Gets the binding resource for the current input worklist buffer.
     fn input_worklist_binding(&self) -> wgpu::BindingResource {
         if self.current_worklist_idx == 0 {
@@ -341,12 +350,6 @@ impl GpuConstraintPropagator {
             dispatch_size = 1;
         }
 
-        // Prepare bind group parameters for the propagation compute pass
-        let bind_group_layout = self
-            .pipelines
-            .get_propagation_bind_group_layout()
-            .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?;
-
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -359,6 +362,7 @@ impl GpuConstraintPropagator {
         let mut contradiction = false;
         let mut contradiction_location = None;
         let mut early_termination_count = 0;
+        let mut last_worklist_count = worklist_size;
 
         while num_cells_to_process > 0 && iteration < max_iterations && !contradiction {
             debug!(
@@ -368,8 +372,8 @@ impl GpuConstraintPropagator {
 
             // Create a new bind group for this iteration
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("Propagation Bind Group {}", iteration)),
-                layout: bind_group_layout,
+                label: Some("Propagation Bind Group"),
+                layout: &self.pipelines.propagation_bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -377,11 +381,11 @@ impl GpuConstraintPropagator {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                        resource: self.buffers.rules_buf.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: self.buffers.adjacency_rules_buf.as_entire_binding(),
+                        resource: self.grid_possibilities_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,

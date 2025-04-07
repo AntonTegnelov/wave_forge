@@ -92,12 +92,12 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [ ] Create new files:
     - [x] `wfc-gpu/src/buffers/grid_buffers.rs` - Grid state buffers
     - [x] `wfc-gpu/src/buffers/worklist_buffers.rs` - Propagation worklist buffers
-    - [ ] `wfc-gpu/src/buffers/entropy_buffers.rs` - Entropy calculation buffers
+    - [x] `wfc-gpu/src/buffers/entropy_buffers.rs` - Entropy calculation buffers
     - [ ] `wfc-gpu/src/buffers/rule_buffers.rs` - Adjacency rule buffers
     - [ ] `wfc-gpu/src/buffers/mod.rs` - Facade implementation & common utilities
   - [ ] Modify existing `buffers.rs`:
     - [ ] Move code to appropriate new files
-    - [ ] Convert to a facade for backward compatibility
+    - [ ] Delete `buffers.rs`
   - [ ] **Update files using GpuBuffers**:
     - [ ] Update `accelerator.rs`: Import from new buffer modules
     - [ ] Update `propagator.rs`: Use specific buffer modules

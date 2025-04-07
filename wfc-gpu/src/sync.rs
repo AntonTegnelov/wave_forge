@@ -85,7 +85,7 @@ impl GpuSynchronizer {
         trace!("Uploading grid possibilities to GPU");
         let (width, height, depth) = (grid.width, grid.height, grid.depth);
         let num_cells = width * height * depth;
-        let u32s_per_cell = self.buffers.u32s_per_cell;
+        let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
 
         // Convert grid possibilities to u32 arrays
         let mut packed_data = Vec::with_capacity(num_cells * u32s_per_cell);
@@ -116,7 +116,7 @@ impl GpuSynchronizer {
 
         // Upload the data to the GPU buffer
         self.queue.write_buffer(
-            &self.buffers.grid_possibilities_buf,
+            &self.buffers.grid_buffers.grid_possibilities_buf,
             0,
             bytemuck::cast_slice(&packed_data),
         );
@@ -124,15 +124,7 @@ impl GpuSynchronizer {
         Ok(())
     }
 
-    /// Downloads the grid possibilities from GPU to CPU.
-    ///
-    /// # Arguments
-    ///
-    /// * `grid_template` - A template grid with the correct dimensions to download into.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(grid)` with the downloaded data if successful, or an error detailing what went wrong.
+    /// Downloads the full possibility grid state from the GPU.
     pub async fn download_grid(
         &self,
         grid_template: &PossibilityGrid,
@@ -146,7 +138,7 @@ impl GpuSynchronizer {
         );
         let num_cells = width * height * depth;
         let num_tiles = self.buffers.num_tiles;
-        let u32s_per_cell = self.buffers.u32s_per_cell;
+        let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
 
         // Create a new grid with the same dimensions
         let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
@@ -402,7 +394,7 @@ impl GpuSynchronizer {
         heuristic_type: u32,
     ) -> Result<(), GpuError> {
         let num_tiles = self.buffers.num_tiles; // Assuming num_tiles is available on GpuBuffers
-        let u32s_per_cell = self.buffers.u32s_per_cell;
+        let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
 
         let params = GpuEntropyShaderParams {
             grid_dims: [grid_dims.0 as u32, grid_dims.1 as u32, grid_dims.2 as u32],
@@ -776,6 +768,20 @@ impl GpuSynchronizer {
             &self.buffers.entropy_params_buffer,
             0,
             bytemuck::cast_slice(&[*params]),
+        );
+        Ok(())
+    }
+
+    pub(crate) fn stage_grid_possibilities_download(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<(), GpuError> {
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.grid_buffers.grid_possibilities_buf,
+            0,
+            &self.buffers.grid_buffers.staging_grid_possibilities_buf,
+            0,
+            self.buffers.grid_buffers.grid_possibilities_buf.size(),
         );
         Ok(())
     }

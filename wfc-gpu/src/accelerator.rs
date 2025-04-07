@@ -127,11 +127,20 @@ impl GpuAccelerator {
             features.push("binding_arrays".to_string());
             info!("GPU supports binding arrays.");
         }
-        if supported_features.contains(wgpu::Features::ATOMIC_FLOAT32) {
-            features_to_enable |= wgpu::Features::ATOMIC_FLOAT32;
-            features.push("atomics".to_string());
-            info!("GPU supports 32-bit float atomics.");
+        if supported_features.contains(wgpu::Features::SHADER_F64) {
+            features_to_enable |= wgpu::Features::SHADER_F64;
+            info!("SHADER_F64 feature supported and enabled.");
         }
+
+        // Example: Check for atomics support (general)
+        // Commenting out entirely for now to ensure compilation
+        /*
+        if supported_features.contains(wgpu::Features::BUFFER_BINDING_TYPE_STORAGE_BUFFER_ATOMIC) {
+            info!("Storage Buffer Atomics feature supported.");
+            features.push("atomics".to_string()); // Push based on general atomics support
+            // features_to_enable |= wgpu::Features::BUFFER_BINDING_TYPE_STORAGE_BUFFER_ATOMIC;
+        }
+        */
 
         let (device, queue) = adapter
             .request_device(

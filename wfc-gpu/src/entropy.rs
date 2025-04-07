@@ -4,8 +4,7 @@ use crate::{
     sync::GpuSynchronizer,
     GpuError,
 };
-use async_trait::async_trait;
-use log::{debug, error, info, warn};
+use log::debug;
 use pollster;
 use std::sync::Arc;
 use wfc_core::{
@@ -88,24 +87,39 @@ impl GpuEntropyCalculator {
         let (width, height, depth) = (grid.width, grid.height, grid.depth);
         let num_cells = width * height * depth;
 
-        if num_cells == 0 {
-            return Ok(EntropyGrid {
-                width,
-                height,
-                depth,
-                data: Vec::new(),
-            });
-        }
+        // Prefix unused variables
+        let _entropy_buffer_size = (num_cells * std::mem::size_of::<f32>()) as u64;
+        let _min_info_buffer_size = (2 * std::mem::size_of::<u32>()) as u64;
+
+        // Ensure buffers are large enough (using synchronizer's buffer access)
+        // Access via grid_buffers
+        let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
+        let _grid_buffer_size = (num_cells * u32s_per_cell * std::mem::size_of::<u32>()) as u64;
+
+        // TODO: Add buffer resizing logic if needed, potentially via GpuSynchronizer
+        // if self.synchronizer.buffers().grid_buffers.grid_possibilities_buf.size() < grid_buffer_size {
+        //     return Err(EntropyError::Other("Grid buffer too small".to_string()));
+        // }
+        // if self.synchronizer.buffers().entropy_buf.size() < entropy_buffer_size {
+        //     return Err(EntropyError::Other("Entropy buffer too small".to_string()));
+        // }
+        // if self.synchronizer.buffers().min_entropy_info_buf.size() < min_info_buffer_size {
+        //     return Err(EntropyError::Other("Min entropy info buffer too small".to_string()));
+        // }
+
+        // Reset min entropy buffer
+        self.synchronizer.reset_min_entropy_buffer()?;
 
         // Convert grid possibilities to u32 arrays and upload them
-        let mut packed_data = Vec::with_capacity(num_cells * self.buffers.u32s_per_cell);
+        let mut packed_data =
+            Vec::with_capacity(num_cells * self.buffers.grid_buffers.u32s_per_cell);
 
         // For each cell, get its bitvector and pack it into u32s
         for z in 0..depth {
             for y in 0..height {
                 for x in 0..width {
                     if let Some(cell) = grid.get(x, y, z) {
-                        let mut cell_data = vec![0u32; self.buffers.u32s_per_cell];
+                        let mut cell_data = vec![0u32; self.buffers.grid_buffers.u32s_per_cell];
                         for (i, bit) in cell.iter().enumerate() {
                             if *bit {
                                 let u32_idx = i / 32;
@@ -123,7 +137,7 @@ impl GpuEntropyCalculator {
 
         // Upload the data to the GPU buffer
         self.queue.write_buffer(
-            &self.buffers.grid_possibilities_buf,
+            &self.buffers.grid_buffers.grid_possibilities_buf,
             0,
             bytemuck::cast_slice(&packed_data),
         );
@@ -138,7 +152,7 @@ impl GpuEntropyCalculator {
                 EntropyHeuristicType::WeightedCount => 3,
             },
             num_tiles: self.buffers.num_tiles as u32,
-            u32s_per_cell: self.buffers.u32s_per_cell as u32,
+            u32s_per_cell: self.buffers.grid_buffers.u32s_per_cell as u32,
             _padding1: 0,
             _padding2: 0,
         };
@@ -146,9 +160,6 @@ impl GpuEntropyCalculator {
         // --- Write entropy parameters to buffer ---
         self.synchronizer
             .upload_entropy_params(&entropy_shader_params)?;
-
-        // --- Reset min entropy buffer to initial state ---
-        self.synchronizer.reset_min_entropy_buffer()?;
 
         // --- Create bind groups for the entropy shader ---
         let entropy_params_bind_group_layout =
@@ -190,7 +201,11 @@ impl GpuEntropyCalculator {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.buffers.grid_possibilities_buf.as_entire_binding(),
+                    resource: self
+                        .buffers
+                        .grid_buffers
+                        .grid_possibilities_buf
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,

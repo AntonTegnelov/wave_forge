@@ -173,7 +173,7 @@ pub fn extract_subgrid(
                 if let Some(possibilities) = grid.get(global_x, global_y, global_z) {
                     // Get mutable reference to subgrid cell and assign cloned possibilities
                     if let Some(subgrid_cell) = subgrid.get_mut(x, y, z) {
-                        *subgrid_cell = possibilities.clone(); // Clone the BitVec
+                        *subgrid_cell = possibilities.clone();
                     } else {
                         // This should not happen if dimensions are correct
                         return Err(format!(
@@ -281,7 +281,7 @@ pub fn merge_subgrids(
                             {
                                 // Check if the state actually changed
                                 if *main_grid_possibilities != *subgrid_possibilities {
-                                    *main_grid_possibilities = *subgrid_possibilities;
+                                    *main_grid_possibilities = subgrid_possibilities.clone();
                                     updated_coords.push((global_x, global_y, global_z));
                                 }
                             } else {
@@ -398,38 +398,63 @@ mod tests {
 
     #[test]
     fn test_divide_into_subgrids() {
-        let config = SubgridConfig {
+        let config_small_grid = SubgridConfig {
             max_subgrid_size: 10,
             overlap_size: 1,
-            min_size: 128,
+            min_size: 128, // Grid dimensions are smaller than this
         };
 
-        let subgrids = divide_into_subgrids(25, 15, 5, &config).unwrap();
+        let subgrids_small = divide_into_subgrids(25, 15, 5, &config_small_grid).unwrap();
+        // Expect only 1 subgrid because grid dimensions < min_size
+        assert_eq!(
+            subgrids_small.len(),
+            1,
+            "Expected 1 subgrid when grid < min_size"
+        );
+        let the_only_subgrid = &subgrids_small[0];
+        assert_eq!(the_only_subgrid.x_offset, 0);
+        assert_eq!(the_only_subgrid.y_offset, 0);
+        assert_eq!(the_only_subgrid.z_offset, 0);
+        assert_eq!(the_only_subgrid.width, 25);
+        assert_eq!(the_only_subgrid.height, 15);
+        assert_eq!(the_only_subgrid.depth, 5);
 
-        // For a 25x15x5 grid with max size 10 and overlap 1, we expect:
-        // X: 3 divisions (0-10, 10-20, 20-25)
-        // Y: 2 divisions (0-10, 10-15)
-        // Z: 1 division (0-5)
+        // Test case where subgridding *should* happen
+        let config_large_grid = SubgridConfig {
+            max_subgrid_size: 10,
+            overlap_size: 1,
+            min_size: 10, // Grid dimensions are larger than this
+        };
+        let subgrids_large = divide_into_subgrids(25, 15, 5, &config_large_grid).unwrap();
+
+        // For a 25x15x5 grid with max size 10, overlap 1, and min_size 10:
+        // X: Steps at 0, 9, 18. Regions: (0..11), (9..20), (18..25) -> 3 subgrids
+        // Y: Steps at 0, 9. Regions: (0..11), (9..15) -> 2 subgrids
+        // Z: Steps at 0. Regions: (0..5) -> 1 subgrid
         // Total: 3 * 2 * 1 = 6 subgrids
-        assert_eq!(subgrids.len(), 6);
+        assert_eq!(
+            subgrids_large.len(),
+            6,
+            "Expected 6 subgrids when grid > min_size"
+        );
 
         // Check first subgrid (should be 0,0,0 with overlap adjustments)
-        let first = &subgrids[0];
-        assert_eq!(first.x_offset, 0); // Can't go below 0
+        let first = &subgrids_large[0];
+        assert_eq!(first.x_offset, 0);
         assert_eq!(first.y_offset, 0);
         assert_eq!(first.z_offset, 0);
-        assert_eq!(first.width, 11); // 10 + 1 overlap
-        assert_eq!(first.height, 11);
-        assert_eq!(first.depth, 5); // Only 5 deep total, so no overflow
+        assert_eq!(first.width, 11); // 0 + 10 (+1 overlap)
+        assert_eq!(first.height, 11); // 0 + 10 (+1 overlap)
+        assert_eq!(first.depth, 5); // 0 + 5 (clamped by grid depth)
 
-        // Check last subgrid
-        let last = &subgrids[5];
-        assert_eq!(last.x_offset, 19); // 20 - 1 overlap
-        assert_eq!(last.y_offset, 9); // 10 - 1 overlap
-        assert_eq!(last.z_offset, 0); // Can't go below 0
-        assert_eq!(last.width, 25); // Grid width
-        assert_eq!(last.height, 15); // Grid height
-        assert_eq!(last.depth, 5); // Grid depth
+        // Check last subgrid (offsets: x=18, y=9, z=0)
+        let last = &subgrids_large[5];
+        assert_eq!(last.x_offset, 18);
+        assert_eq!(last.y_offset, 9);
+        assert_eq!(last.z_offset, 0);
+        assert_eq!(last.width, 7); // 18 to 25
+        assert_eq!(last.height, 6); // 9 to 15
+        assert_eq!(last.depth, 5); // 0 to 5
     }
 
     #[test]

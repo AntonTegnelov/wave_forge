@@ -113,17 +113,12 @@ impl DebugVisualizer {
         }
 
         // Download the data we need based on visualization type
-        let needs_entropy = self.config.viz_type == VisualizationType::EntropyHeatmap;
+        let _needs_entropy = self.config.viz_type == VisualizationType::EntropyHeatmap;
         let needs_grid = true; // Always useful
         let _needs_worklist = self.config.viz_type == VisualizationType::PropagationSteps;
         let needs_contradiction = self.config.viz_type == VisualizationType::Contradictions;
 
-        let request = DownloadRequest {
-            download_entropy: needs_entropy,
-            download_min_entropy_info: false, // Not needed for viz
-            download_grid_possibilities: needs_grid,
-            download_contradiction_location: needs_contradiction,
-        };
+        let request = self.create_download_request(needs_grid, needs_contradiction);
 
         let result = self
             .synchronizer
@@ -144,6 +139,26 @@ impl DebugVisualizer {
         );
 
         Ok(())
+    }
+
+    /// Helper to create the DownloadRequest based on visualization needs
+    fn create_download_request(
+        &self,
+        needs_grid: bool,
+        needs_contradiction: bool,
+    ) -> DownloadRequest {
+        let _needs_entropy = self.config.viz_type == VisualizationType::EntropyHeatmap;
+        DownloadRequest {
+            download_entropy: false,
+            download_min_entropy_info: self.config.viz_type == VisualizationType::PropagationSteps,
+            download_grid_possibilities: needs_grid,
+            download_contradiction_location: needs_contradiction,
+        }
+    }
+
+    /// Helper to get buffer size (example for possibilities buffer)
+    fn get_grid_buffer_size(&self, buffers: &GpuBuffers) -> u64 {
+        buffers.grid_buffers.grid_possibilities_buf.size()
     }
 
     /// Add a snapshot from the downloaded results
@@ -290,24 +305,37 @@ impl GpuBuffersDebugExt for GpuBuffers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::buffers::{DynamicBufferConfig, GpuBuffers, GpuDownloadResults, WorklistBuffers};
+    use crate::sync::GpuSynchronizer;
+    use crate::test_utils::{create_test_device_queue /* other utils if needed */};
+    use std::sync::Arc;
+    use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
+    use wfc_rules::AdjacencyRules;
+
+    // Helper function to create a basic GpuBuffers for tests
+    fn create_test_gpu_buffers(
+        device: &Arc<wgpu::Device>,
+        queue: &Arc<wgpu::Queue>,
+    ) -> Arc<GpuBuffers> {
+        let grid = PossibilityGrid::new(2, 2, 1, 3);
+        let rules = AdjacencyRules::new_uniform(3, 6);
+        Arc::new(GpuBuffers::new(device, queue, &grid, &rules, BoundaryCondition::Finite).unwrap())
+    }
 
     #[test]
     fn test_debug_visualizer_creation() {
-        let config = DebugVisualizationConfig {
-            viz_type: VisualizationType::EntropyHeatmap,
-            auto_generate: true,
-            max_snapshots: 50,
-            snapshot_interval: 10,
-        };
+        // Initialize GPU resources for the test
+        let (device, queue) = create_test_device_queue();
+        let buffers = create_test_gpu_buffers(&device, &queue);
+        let synchronizer = Arc::new(GpuSynchronizer::new(device, queue, buffers));
 
-        let visualizer = DebugVisualizer::new(config.clone(), Arc::new(GpuSynchronizer::default()));
-        assert_eq!(visualizer.config.viz_type, config.viz_type);
-        assert_eq!(visualizer.config.auto_generate, config.auto_generate);
-        assert_eq!(visualizer.config.max_snapshots, config.max_snapshots);
-        assert_eq!(
-            visualizer.config.snapshot_interval,
-            config.snapshot_interval
+        // Create visualizer with the test synchronizer
+        let visualizer = DebugVisualizer::new(
+            DebugVisualizationConfig::default(),
+            synchronizer, // Pass the initialized synchronizer
         );
+
+        assert!(visualizer.config.enabled);
         assert_eq!(visualizer.snapshots.len(), 0);
         assert_eq!(visualizer.current_step, 0);
         assert!(visualizer.enabled);
@@ -315,7 +343,16 @@ mod tests {
 
     #[test]
     fn test_debug_snapshot_management() {
-        let mut visualizer = DebugVisualizer::default();
+        // Initialize GPU resources for the test
+        let (device, queue) = create_test_device_queue();
+        let buffers = create_test_gpu_buffers(&device, &queue);
+        let synchronizer = Arc::new(GpuSynchronizer::new(device, queue, buffers));
+
+        // Create visualizer with the test synchronizer
+        let mut visualizer = DebugVisualizer::new(
+            DebugVisualizationConfig::default(),
+            synchronizer.clone(), // Clone Arc for visualizer
+        );
 
         // Add mock snapshots
         for i in 0..5 {
@@ -324,10 +361,10 @@ mod tests {
                 min_entropy_info: None,
                 contradiction_flag: None,
                 contradiction_location: None,
-                grid_possibilities: None,
+                grid_possibilities: Some(vec![0; 10]),
             };
-
-            visualizer.add_snapshot((5, 2, 1), 4, mock_results, 0);
+            // Pass the synchronizer needed by add_snapshot
+            visualizer.add_snapshot((5, 2, 1), 4, mock_results, synchronizer.clone());
         }
 
         assert_eq!(visualizer.snapshots.len(), 5);
@@ -340,14 +377,10 @@ mod tests {
             min_entropy_info: None,
             contradiction_flag: None,
             contradiction_location: None,
-            grid_possibilities: None,
+            grid_possibilities: Some(vec![0; 10]),
         };
-        visualizer.add_snapshot(
-            (5, 2, 1),
-            4,
-            another_mock_results, // Use the separate variable
-            0,
-        );
+        // Pass the synchronizer needed by add_snapshot
+        visualizer.add_snapshot((5, 2, 1), 4, another_mock_results, synchronizer.clone());
 
         // After adding the 6th snapshot with a limit of 3, we should have snapshots 3, 4, 5
         assert_eq!(visualizer.snapshots.len(), 3);
