@@ -114,7 +114,11 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
   - [x] Create new coordination files:
     - [x] `wfc-gpu/src/coordination/mod.rs` - Operational coordination interfaces
     - [x] `wfc-gpu/src/coordination/propagation.rs` - Propagation strategy coordination
-  - [ ] **Update files using GpuAccelerator**:
+  - [x] **Update files using GpuAccelerator**:
     - [x] Update `accelerator.rs`: Use new shader loading interfaces
     - [x] Update `tests.rs`: Use new shader loading methods
-    - [ ] Update `debug_viz.rs`: If it uses shaders
+    - [x] Update `debug_viz.rs`: If it uses shaders
+
+## 4. Advanced Shader Management
+
+- [ ] **Implement shader component system in `shaders.rs`**:
