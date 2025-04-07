@@ -109,5 +109,5 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
 - [ ] **Revise `GpuAccelerator`**:
   - [x] Modify `accelerator.rs`:
     - [x] Convert to use composition rather than direct implementation
-    - [ ] Create delegation methods for all WFC operations
+    - [x] Create delegation methods for all WFC operations
     - [ ] Reduce Arc nesting

@@ -505,6 +505,45 @@ impl GpuAccelerator {
             .await
             .map_err(|e| WfcError::InternalError(e.to_string()))
     }
+
+    // --- Delegated Methods ---
+
+    /// Calculates the entropy for each cell in the grid using the GPU.
+    /// Delegates to the internal `GpuEntropyCalculator`.
+    pub async fn calculate_entropy(
+        &self,
+        grid: &PossibilityGrid,
+    ) -> Result<EntropyGrid, EntropyError> {
+        self.entropy_calculator.calculate_entropy_async(grid).await
+    }
+
+    /// Selects the cell with the lowest positive entropy based on the GPU calculation.
+    /// Delegates to the internal `GpuEntropyCalculator`.
+    pub async fn select_lowest_entropy_cell(
+        &self,
+        entropy_grid: &EntropyGrid,
+    ) -> Option<(usize, usize, usize)> {
+        self.entropy_calculator
+            .select_lowest_entropy_cell_async(entropy_grid)
+            .await
+    }
+
+    /// Propagates constraints based on updated cells using the GPU.
+    /// Delegates to the internal `GpuConstraintPropagator`.
+    /// Note: The `run_with_callback` method handles the main propagation loop.
+    /// This method might be useful for manual step-by-step execution.
+    pub async fn propagate_constraints(
+        &mut self,
+        grid: &mut PossibilityGrid,
+        updated_coords: Vec<(usize, usize, usize)>,
+        rules: &AdjacencyRules,
+    ) -> Result<(), PropagationError> {
+        self.propagator.propagate(grid, updated_coords, rules).await
+    }
+
+    // Optional: Delegate heuristic getters/setters if needed
+    // pub fn set_entropy_heuristic(&mut self, heuristic: EntropyHeuristicType) { ... }
+    // pub fn get_entropy_heuristic(&self) -> EntropyHeuristicType { ... }
 }
 
 impl Drop for GpuAccelerator {
