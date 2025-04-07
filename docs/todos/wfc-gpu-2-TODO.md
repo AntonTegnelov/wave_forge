@@ -125,5 +125,6 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
 
   - [x] Expand `shaders.rs` to include:
     - [x] Component registry system
-    - [ ] Dependency resolution
+    - [x] Dependency resolution
     - [ ] Feature flag handling
+  - [ ] Create new JSON schema files:

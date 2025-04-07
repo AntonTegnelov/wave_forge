@@ -192,11 +192,79 @@ impl ShaderManager {
     pub fn list_components(&self) -> Vec<String> {
         self.component_registry.keys().cloned().collect()
     }
+
+    /// Resolves all direct and transitive dependencies for a given component.
+    /// Returns a topologically sorted list of component names required to build the target component.
+    pub fn resolve_component_dependencies(
+        &self,
+        target_component_name: &str,
+    ) -> Result<Vec<String>, ShaderError> {
+        let mut resolved_order = Vec::new(); // Stores the final order of component names
+        let mut visiting = std::collections::HashSet::new(); // Tracks components currently in the recursion stack (for cycle detection)
+        let mut visited = std::collections::HashSet::new(); // Tracks components already fully processed
+
+        self.visit_component(
+            target_component_name,
+            &mut resolved_order,
+            &mut visiting,
+            &mut visited,
+        )?;
+
+        Ok(resolved_order)
+    }
+
+    /// Recursive helper function for topological sort (DFS-based).
+    fn visit_component<'a>(
+        &'a self,
+        component_name: &str,
+        resolved_order: &mut Vec<String>,
+        visiting: &mut std::collections::HashSet<&'a str>,
+        visited: &mut std::collections::HashSet<&'a str>,
+    ) -> Result<(), ShaderError> {
+        // If already fully visited, do nothing
+        if visited.contains(component_name) {
+            return Ok(());
+        }
+
+        // If currently visiting, we have a cycle
+        if visiting.contains(component_name) {
+            return Err(ShaderError::NotImplemented(format!(
+                "Circular dependency detected involving component: {}",
+                component_name
+            ))); // Using NotImplemented as placeholder error
+        }
+
+        // Mark as visiting
+        visiting.insert(component_name);
+
+        // Get component info
+        let component_info = self.component_registry.get(component_name).ok_or_else(|| {
+            ShaderError::NotImplemented(format!(
+                "Component '{}' not found in registry",
+                component_name
+            ))
+        })?;
+
+        // Recursively visit dependencies
+        for dep_name in &component_info.dependencies {
+            self.visit_component(dep_name, resolved_order, visiting, visited)?;
+        }
+
+        // Mark as finished visiting (remove from current stack)
+        visiting.remove(component_name);
+        // Mark as fully visited
+        visited.insert(component_name);
+        // Add to the final list (after all dependencies)
+        resolved_order.push(component_name.to_string());
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*; // Import items from outer module
+    use std::collections::HashSet;
 
     #[test]
     fn test_get_variant_filename_no_features() {
@@ -219,6 +287,129 @@ mod tests {
         let filename = ShaderManager::get_variant_filename(ShaderType::Propagation, &features);
         // Features should be sorted alphabetically in the filename
         assert_eq!(filename, "Propagation_atomics_feature_a_feature_z.wgsl");
+    }
+
+    // Helper to create a test ShaderManager with specific components
+    fn setup_test_registry() -> ShaderManager {
+        let mut manager = ShaderManager::new().expect("Failed to create test ShaderManager");
+        manager.component_registry.clear(); // Clear placeholder data
+
+        let base_path = PathBuf::from("test/components");
+
+        manager.component_registry.insert(
+            "base".to_string(),
+            ShaderComponentInfo {
+                name: "base".to_string(),
+                path: base_path.join("base.wgsl"),
+                dependencies: vec![],
+                features: vec![],
+            },
+        );
+        manager.component_registry.insert(
+            "util_a".to_string(),
+            ShaderComponentInfo {
+                name: "util_a".to_string(),
+                path: base_path.join("util_a.wgsl"),
+                dependencies: vec!["base".to_string()],
+                features: vec![],
+            },
+        );
+        manager.component_registry.insert(
+            "util_b".to_string(),
+            ShaderComponentInfo {
+                name: "util_b".to_string(),
+                path: base_path.join("util_b.wgsl"),
+                dependencies: vec!["base".to_string()],
+                features: vec![],
+            },
+        );
+        manager.component_registry.insert(
+            "complex".to_string(),
+            ShaderComponentInfo {
+                name: "complex".to_string(),
+                path: base_path.join("complex.wgsl"),
+                dependencies: vec!["util_a".to_string(), "util_b".to_string()],
+                features: vec![],
+            },
+        );
+        // For cycle detection
+        manager.component_registry.insert(
+            "cyclic_a".to_string(),
+            ShaderComponentInfo {
+                name: "cyclic_a".to_string(),
+                path: base_path.join("cyclic_a.wgsl"),
+                dependencies: vec!["cyclic_b".to_string()],
+                features: vec![],
+            },
+        );
+        manager.component_registry.insert(
+            "cyclic_b".to_string(),
+            ShaderComponentInfo {
+                name: "cyclic_b".to_string(),
+                path: base_path.join("cyclic_b.wgsl"),
+                dependencies: vec!["cyclic_a".to_string()],
+                features: vec![],
+            },
+        );
+
+        manager
+    }
+
+    #[test]
+    fn test_resolve_dependencies_simple() {
+        let manager = setup_test_registry();
+        let deps = manager.resolve_component_dependencies("util_a").unwrap();
+        assert_eq!(deps, vec!["base", "util_a"]);
+    }
+
+    #[test]
+    fn test_resolve_dependencies_complex() {
+        let manager = setup_test_registry();
+        let deps = manager.resolve_component_dependencies("complex").unwrap();
+        // Order can vary slightly depending on HashMap iteration, but content matters
+        assert_eq!(deps.len(), 4);
+        assert!(deps.contains(&"base".to_string()));
+        assert!(deps.contains(&"util_a".to_string()));
+        assert!(deps.contains(&"util_b".to_string()));
+        assert!(deps.contains(&"complex".to_string()));
+        // Check relative order: base before utils, utils before complex
+        let base_idx = deps.iter().position(|n| n == "base").unwrap();
+        let util_a_idx = deps.iter().position(|n| n == "util_a").unwrap();
+        let util_b_idx = deps.iter().position(|n| n == "util_b").unwrap();
+        let complex_idx = deps.iter().position(|n| n == "complex").unwrap();
+        assert!(base_idx < util_a_idx);
+        assert!(base_idx < util_b_idx);
+        assert!(util_a_idx < complex_idx);
+        assert!(util_b_idx < complex_idx);
+    }
+
+    #[test]
+    fn test_resolve_dependencies_base() {
+        let manager = setup_test_registry();
+        let deps = manager.resolve_component_dependencies("base").unwrap();
+        assert_eq!(deps, vec!["base"]);
+    }
+
+    #[test]
+    fn test_resolve_dependencies_not_found() {
+        let manager = setup_test_registry();
+        let result = manager.resolve_component_dependencies("non_existent");
+        assert!(result.is_err());
+        // Check error type if specific variant is used later
+    }
+
+    #[test]
+    fn test_resolve_dependencies_cyclic() {
+        let manager = setup_test_registry();
+        let result = manager.resolve_component_dependencies("cyclic_a");
+        assert!(result.is_err());
+        // Check error type indicates cycle
+        match result {
+            Err(ShaderError::NotImplemented(msg)) => {
+                assert!(msg.contains("Circular dependency detected"));
+            }
+            _ => panic!("Expected cycle error"),
+        }
     }
 
     // TODO: Add tests for ShaderManager::new() and load_shader_variant()
