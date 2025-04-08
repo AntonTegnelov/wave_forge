@@ -2,11 +2,12 @@
 
 //! Module for GPU buffers related to WFC rules and constraints.
 
+use crate::buffers::DynamicBufferConfig;
 use crate::buffers::GpuBuffers; // For GpuBuffers::create_buffer
-use crate::GpuError;
+use crate::error_recovery::GpuError;
 use std::sync::Arc;
 use wfc_rules::AdjacencyRules;
-use wgpu::{util::DeviceExt, BufferUsages};
+use wgpu::{util::DeviceExt, BufferUsages}; // Import DynamicBufferConfig
 
 /// Holds GPU buffers containing WFC adjacency rules and related data.
 #[derive(Debug, Clone)] // Added Clone as buffers are Arc
@@ -24,10 +25,10 @@ impl RuleBuffers {
     pub fn new(
         device: &wgpu::Device,
         rules: &AdjacencyRules,
-        // config: &DynamicBufferConfig, // Not needed yet for fixed-size rule buffers
+        config: &DynamicBufferConfig,
     ) -> Result<Self, GpuError> {
-        let num_tiles = rules.num_tiles();
-        let num_axes = rules.num_axes();
+        let num_tiles = rules.num_transformed_tiles();
+        let _num_axes = rules.num_axes();
 
         // Prepare weighted rules data for the buffer
         let mut weighted_rules_data = Vec::new();

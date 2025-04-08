@@ -4,11 +4,20 @@
 //! on the GPU, scheduling different phases like entropy calculation, cell collapse,
 //! and constraint propagation.
 
-use crate::{GpuAccelerator, GpuError};
-use async_trait::async_trait;
-use wfc_core::{
-    entropy::EntropyError, grid::PossibilityGrid, propagator::PropagationError, WfcError,
+use crate::{
+    coordination::{CoordinationError, CoordinationEvent, CoordinationStrategy},
+    entropy::GpuEntropyCalculator,
+    // GpuAccelerator, GpuError, // Removed unused imports
 };
+use async_trait::async_trait;
+use wfc_core::{grid::PossibilityGrid, WfcError};
+
+// Re-export or define CoordinationError, CoordinationEvent, CoordinationStrategy here
+// For now, let's assume they should be defined in this file or imported differently.
+// Placeholder definitions removed as they seem to exist already
+// #[derive(Debug)] pub enum CoordinationError {}
+// #[derive(Debug)] pub enum CoordinationEvent {}
+// pub trait CoordinationStrategy {}
 
 // --- Traits --- //
 

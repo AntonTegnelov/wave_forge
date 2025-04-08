@@ -219,7 +219,7 @@ impl ShaderManager {
     /// Recursive helper function for topological sort (DFS-based).
     fn visit_component<'a>(
         &'a self,
-        component_name: &str,
+        component_name: &'a str,
         resolved_order: &mut Vec<String>,
         visiting: &mut std::collections::HashSet<&'a str>,
         visited: &mut std::collections::HashSet<&'a str>,

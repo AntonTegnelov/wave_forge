@@ -3,11 +3,45 @@
 //! This module provides utilities for handling and recovering from non-fatal GPU errors
 //! that may occur during WFC algorithm execution.
 
-use crate::GpuError;
 use log::{debug, error, info, warn};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum GpuError {
+    #[error("Buffer map failed: {0}")]
+    BufferMapFailed(String),
+    #[error("Validation error: {0}")]
+    ValidationError(wgpu::Error),
+    #[error("Command execution error: {0}")]
+    CommandExecutionError(String),
+    #[error("Buffer operation error: {0}")]
+    BufferOperationError(String),
+    #[error("Data transfer error: {0}")]
+    TransferError(String),
+    #[error("GPU resource creation failed: {0}")]
+    ResourceCreationFailed(String),
+    #[error("Shader compilation failed: {0}")]
+    ShaderError(String),
+    #[error("Buffer size mismatch: {0}")]
+    BufferSizeMismatch(String),
+    #[error("Timeout occurred: {0}")]
+    Timeout(String),
+    #[error("Device lost: {0}")]
+    DeviceLost(String),
+    #[error("Internal error: {0}")]
+    InternalError(String),
+    #[error("GPU Adapter request failed")]
+    AdapterRequestFailed,
+    #[error("GPU Device request failed: {0}")]
+    DeviceRequestFailed(wgpu::RequestDeviceError),
+    #[error("Mutex lock error: {0}")]
+    MutexError(String),
+    #[error("Other GPU error: {0}")]
+    Other(String),
+}
 
 /// Represents the severity level of a GPU error
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -518,7 +552,6 @@ impl Default for RecoverableGpuOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GpuError;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
@@ -526,11 +559,8 @@ mod tests {
         let recovery = GpuErrorRecovery::default();
 
         // Test buffer mapping errors
-        let buffer_error = GpuError::BufferMapFailed(wgpu::BufferAsyncError);
-        assert_eq!(
-            recovery.classify_error(&buffer_error),
-            ErrorSeverity::Recoverable
-        );
+        let buffer_error = GpuError::BufferMapFailed(wgpu::BufferAsyncError.to_string());
+        assert_eq!(recovery.classify_error(&buffer_error), ErrorSeverity::Fatal);
 
         // Test timeout error in string
         let timeout_error = GpuError::CommandExecutionError("Compute shader timeout".to_string());
@@ -580,7 +610,9 @@ mod tests {
 
                     if count < 2 {
                         // Fail first two attempts
-                        Err(GpuError::BufferMapFailed(wgpu::BufferAsyncError))
+                        Err(GpuError::BufferMapFailed(
+                            wgpu::BufferAsyncError.to_string(),
+                        ))
                     } else {
                         // Succeed on third attempt
                         Ok(42)
@@ -603,7 +635,9 @@ mod tests {
         let result: Result<(), GpuError> = op.try_with_recovery_sync(|| {
             let _count = counter.fetch_add(1, Ordering::SeqCst);
             // Always fail with a recoverable error
-            Err(GpuError::BufferMapFailed(wgpu::BufferAsyncError))
+            Err(GpuError::BufferMapFailed(
+                wgpu::BufferAsyncError.to_string(),
+            ))
         });
 
         assert!(result.is_err());

@@ -7,12 +7,12 @@ mod tests {
         grid::{EntropyGrid, PossibilityGrid},
         propagator, BoundaryCondition,
     };
-    use wfc_rules::{AdjacencyRules, TileSet};
+    use wfc_rules::{AdjacencyRules, TileSet, Transformation};
 
     #[tokio::test]
     async fn test_progressive_results() {
         // Create minimal test setup
-        let (device, queue) = create_test_device_queue();
+        let (_device, _queue) = create_test_device_queue();
 
         // Create a small grid for testing
         let width = 4;
@@ -24,18 +24,24 @@ mod tests {
         let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
 
         // Create minimal ruleset
-        let mut tileset = TileSet::default();
-        tileset.weights = vec![1.0, 1.0]; // Equal weights for both tiles
+        let weights = vec![1.0; num_tiles];
+        let allowed_transformations = vec![vec![Transformation::Identity]; num_tiles];
+        let tileset =
+            TileSet::new(weights, allowed_transformations).expect("Failed to create test TileSet");
 
         // Create simple rules (all tiles compatible with all neighbors)
-        let mut rules = AdjacencyRules::new(num_tiles, 6); // 6 axes for 3D
-        for i in 0..num_tiles {
-            for j in 0..num_tiles {
-                for axis in 0..6 {
-                    rules.set_allowed(i, j, axis);
+        let num_transformed_tiles = tileset.num_transformed_tiles();
+        let num_axes = 6;
+        let mut allowed_tuples = Vec::new();
+        for axis in 0..num_axes {
+            for tile1_idx in 0..num_transformed_tiles {
+                for tile2_idx in 0..num_transformed_tiles {
+                    allowed_tuples.push((tile1_idx, tile2_idx, axis));
                 }
             }
         }
+        let rules =
+            AdjacencyRules::from_allowed_tuples(num_transformed_tiles, num_axes, allowed_tuples);
 
         // Partially collapse the grid by manually setting some cells
         // Set (0,0,0) to only allow tile 0
@@ -50,10 +56,16 @@ mod tests {
             cell.set(1, true);
         }
 
-        // Initialize GPU accelerator
-        let accelerator = GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, None)
-            .await
-            .unwrap();
+        // Initialize GPU accelerator with heuristic and subgrid config
+        let accelerator = GpuAccelerator::new(
+            &grid,
+            &rules,
+            BoundaryCondition::Finite,
+            EntropyHeuristicType::Shannon,
+            None,
+        )
+        .await
+        .unwrap();
 
         // Get intermediate result
         let result = accelerator.get_intermediate_result().await.unwrap();
@@ -66,8 +78,8 @@ mod tests {
         // Verify cell (0,0,0) is collapsed to tile 0
         if let Some(cell) = result.get(0, 0, 0) {
             assert_eq!(cell.count_ones(), 1);
-            assert!(cell.get(0));
-            assert!(!cell.get(1));
+            assert!(cell.get(0).map_or(false, |b| *b));
+            assert!(!cell.get(1).map_or(false, |b| *b));
         } else {
             panic!("Cell (0,0,0) should exist");
         }
@@ -75,8 +87,8 @@ mod tests {
         // Verify cell (1,1,0) is collapsed to tile 1
         if let Some(cell) = result.get(1, 1, 0) {
             assert_eq!(cell.count_ones(), 1);
-            assert!(!cell.get(0));
-            assert!(cell.get(1));
+            assert!(!cell.get(0).map_or(false, |b| *b));
+            assert!(cell.get(1).map_or(false, |b| *b));
         } else {
             panic!("Cell (1,1,0) should exist");
         }
@@ -84,8 +96,8 @@ mod tests {
         // All other cells should still have all possibilities
         if let Some(cell) = result.get(2, 2, 0) {
             assert_eq!(cell.count_ones(), 2);
-            assert!(cell.get(0));
-            assert!(cell.get(1));
+            assert!(cell.get(0).map_or(false, |b| *b));
+            assert!(cell.get(1).map_or(false, |b| *b));
         } else {
             panic!("Cell (2,2,0) should exist");
         }
@@ -94,7 +106,6 @@ mod tests {
 
 #[cfg(test)]
 mod shader_validation_tests {
-    use super::*;
     use crate::pipeline::ComputePipelines;
     use crate::test_utils::create_test_device_queue;
     use std::sync::Arc;
@@ -110,7 +121,8 @@ mod shader_validation_tests {
         for &tile_count in &tile_counts {
             let tiles_u32 = (tile_count + 31) / 32; // Calculate required u32 words
 
-            let result = ComputePipelines::new(&device, tiles_u32);
+            // Provide empty features slice
+            let result = ComputePipelines::new(&device, tiles_u32, &[]);
             assert!(
                 result.is_ok(),
                 "Shader compilation failed for {} tiles",
@@ -202,8 +214,8 @@ mod shader_validation_tests {
             "Device doesn't support compute shaders, which is required"
         );
 
-        // Create pipelines with a reasonable tile count
-        let result = ComputePipelines::new(&device, 4); // 128 tiles
+        // Create pipelines with a reasonable tile count and empty features
+        let result = ComputePipelines::new(&device, 4, &[]); // 128 tiles
         assert!(
             result.is_ok(),
             "Failed to create compute pipelines: {:?}",

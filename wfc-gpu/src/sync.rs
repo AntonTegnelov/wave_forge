@@ -238,11 +238,11 @@ impl GpuSynchronizer {
 
         // Copy the contradiction location to staging buffer
         encoder.copy_buffer_to_buffer(
-             &self.buffers.contradiction_location_buf,
-             0,
-             &self.buffers.staging_contradiction_location_buf,
-             0,
-             self.buffers.contradiction_location_buf.size(),
+            &self.buffers.contradiction_location_buf,
+            0,
+            &self.buffers.staging_contradiction_location_buf,
+            0,
+            self.buffers.contradiction_location_buf.size(),
         );
 
         self.queue.submit(Some(encoder.finish()));
@@ -253,15 +253,22 @@ impl GpuSynchronizer {
             flag_buffer,
             std::time::Duration::from_secs(5),
             Some(1),
-        ).await;
+        )
+        .await;
 
         let flag = match flag_result {
-            Ok(data_box) => data_box.downcast::<Vec<u32>>()
-                                .map_err(|_| GpuError::InternalError("Failed to downcast flag".into()))?
-                                .get(0)
-                                .cloned()
-                                .unwrap_or(0),
-            Err(e) => return Err(GpuError::BufferOperationError(format!("Flag map failed: {}", e))),
+            Ok(data_box) => data_box
+                .downcast::<Vec<u32>>()
+                .map_err(|_| GpuError::InternalError("Failed to downcast flag".into()))?
+                .get(0)
+                .cloned()
+                .unwrap_or(0),
+            Err(e) => {
+                return Err(GpuError::BufferOperationError(format!(
+                    "Flag map failed: {}",
+                    e
+                )))
+            }
         };
 
         let has_contradiction = flag != 0;
@@ -270,17 +277,19 @@ impl GpuSynchronizer {
         if has_contradiction {
             // Download and map the location buffer
             let loc_buffer = self.buffers.staging_contradiction_location_buf.clone();
-             let loc_result = crate::buffers::map_and_process::<u32>(
+            let loc_result = crate::buffers::map_and_process::<u32>(
                 loc_buffer,
                 std::time::Duration::from_secs(5),
                 Some(1),
-            ).await;
+            )
+            .await;
 
             contradiction_location = match loc_result {
-                Ok(data_box) => data_box.downcast::<Vec<u32>>()
-                                    .map_err(|_| GpuError::InternalError("Failed to downcast loc".into()))?
-                                    .get(0)
-                                    .cloned(),
+                Ok(data_box) => data_box
+                    .downcast::<Vec<u32>>()
+                    .map_err(|_| GpuError::InternalError("Failed to downcast loc".into()))?
+                    .get(0)
+                    .cloned(),
                 Err(e) => {
                     warn!("Contradiction flag set, but failed to read location: {}", e);
                     None // Proceed without location if read fails
@@ -302,11 +311,15 @@ impl GpuSynchronizer {
         // For now, let's assume we download from a specific buffer (e.g., A) - THIS IS LIKELY WRONG
         // TODO: Rework this logic based on how propagator state is managed.
         warn!("download_worklist_count logic needs review regarding ping-pong buffers");
-        let count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf_a; // Use worklist_buffers (assuming A for now)
-        let count_buffer_staging = &self.buffers.worklist_buffers.staging_worklist_count_buf_a; // Use worklist_buffers (assuming A for now)
+        let count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf; // Use single count buffer
+        let count_buffer_staging = &self.buffers.worklist_buffers.staging_worklist_count_buf; // Use single staging count buffer
 
         // Copy
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Worklist Count Copy") });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Worklist Count Copy"),
+            });
         encoder.copy_buffer_to_buffer(count_buffer_gpu, 0, count_buffer_staging, 0, 4);
         self.queue.submit(Some(encoder.finish()));
 
@@ -315,14 +328,19 @@ impl GpuSynchronizer {
             count_buffer_staging.clone(),
             std::time::Duration::from_secs(5),
             Some(1),
-        ).await;
+        )
+        .await;
 
         match count_result {
-            Ok(data_box) => Ok(*data_box.downcast::<Vec<u32>>()
-                                .map_err(|_| GpuError::InternalError("Failed to downcast count".into()))?
-                                .get(0)
-                                .unwrap_or(&0)),
-            Err(e) => Err(GpuError::BufferOperationError(format!("Count map failed: {}", e))),
+            Ok(data_box) => Ok(*data_box
+                .downcast::<Vec<u32>>()
+                .map_err(|_| GpuError::InternalError("Failed to downcast count".into()))?
+                .get(0)
+                .unwrap_or(&0)),
+            Err(e) => Err(GpuError::BufferOperationError(format!(
+                "Count map failed: {}",
+                e
+            ))),
         }
     }
 
@@ -373,20 +391,18 @@ impl GpuSynchronizer {
         } else {
             &self.buffers.worklist_buffers.worklist_buf_b // Use worklist_buffers
         };
-        let count_buffer = if worklist_idx == 0 {
-            &self.buffers.worklist_buffers.worklist_count_buf_a // Use worklist_buffers
-        } else {
-            &self.buffers.worklist_buffers.worklist_count_buf_b // Use worklist_buffers
-        };
+        let count_buffer = &self.buffers.worklist_buffers.worklist_count_buf; // Use single count buffer
 
         let data_size = (updated_indices.len() * std::mem::size_of::<u32>()) as u64;
 
         // Ensure buffer is large enough (use worklist_buffers method)
         // Note: This might require mutable access or coordination if called concurrently
-        // self.buffers.worklist_buffers.ensure_buffer_size(&self.device, data_size, config)?; 
+        // self.buffers.worklist_buffers.ensure_buffer_size(&self.device, data_size, config)?;
 
         if worklist_buffer.size() < data_size {
-            return Err(GpuError::BufferSizeMismatch("Worklist buffer too small".to_string()));
+            return Err(GpuError::BufferSizeMismatch(
+                "Worklist buffer too small".to_string(),
+            ));
         }
 
         self.queue
@@ -405,7 +421,10 @@ impl GpuSynchronizer {
         updated_indices: &[u32],
         worklist_idx: usize,
     ) -> Result<(), GpuError> {
-        trace!("Uploading initial worklist ({} items) to GPU", updated_indices.len());
+        trace!(
+            "Uploading initial worklist ({} items) to GPU",
+            updated_indices.len()
+        );
         self.upload_updated_indices(updated_indices, worklist_idx)
     }
 
@@ -422,7 +441,9 @@ impl GpuSynchronizer {
             .buffers
             .download_results(self.device.clone(), self.queue.clone(), request)
             .await
-            .map_err(|e| GpuError::TransferError(format!("Failed to download min entropy: {}", e)))?;
+            .map_err(|e| {
+                GpuError::TransferError(format!("Failed to download min entropy: {}", e))
+            })?;
 
         Ok(results.min_entropy_info)
     }
@@ -433,7 +454,11 @@ impl GpuSynchronizer {
         let gpu_buf = &self.buffers.pass_statistics_buf; // Direct access ok
 
         // Copy
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Stats Copy") });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Stats Copy"),
+            });
         encoder.copy_buffer_to_buffer(gpu_buf, 0, staging_buf, 0, 16);
         self.queue.submit(Some(encoder.finish()));
 
@@ -442,25 +467,36 @@ impl GpuSynchronizer {
             staging_buf.clone(),
             std::time::Duration::from_secs(5),
             Some(4),
-        ).await;
+        )
+        .await;
 
         match stats_result {
             Ok(data_box) => {
-                let data = data_box.downcast::<Vec<u32>>()
-                                .map_err(|_| GpuError::InternalError("Failed to downcast stats".into()))?;
+                let data = data_box
+                    .downcast::<Vec<u32>>()
+                    .map_err(|_| GpuError::InternalError("Failed to downcast stats".into()))?;
                 if data.len() >= 4 {
                     Ok([data[0], data[1], data[2], data[3]])
                 } else {
-                    Err(GpuError::BufferSizeMismatch("Stats data too short".to_string()))
+                    Err(GpuError::BufferSizeMismatch(
+                        "Stats data too short".to_string(),
+                    ))
                 }
-            },
-            Err(e) => Err(GpuError::BufferOperationError(format!("Stats map failed: {}", e))),
+            }
+            Err(e) => Err(GpuError::BufferOperationError(format!(
+                "Stats map failed: {}",
+                e
+            ))),
         }
     }
 
     /// Resets the minimum entropy buffer on the GPU.
     pub fn reset_min_entropy_buffer(&self) -> Result<(), GpuError> {
-        let mut encoder = self.create_command_encoder(Some("Reset Min Entropy"));
+        // let mut encoder = self // Encoder not needed, write_buffer used directly
+        //     .device
+        //     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        //         label: Some("Reset Min Entropy"),
+        //     });
         // Reset to [f32::MAX.to_bits(), u32::MAX]
         let reset_data = [f32::MAX.to_bits(), u32::MAX];
         self.queue.write_buffer(
@@ -474,7 +510,11 @@ impl GpuSynchronizer {
 
     /// Resets the contradiction flag buffer on the GPU.
     pub fn reset_contradiction_flag(&self) -> Result<(), GpuError> {
-        let mut encoder = self.create_command_encoder(Some("Reset Contradiction Flag"));
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Reset Contradiction Flag"),
+            });
         encoder.clear_buffer(&self.buffers.contradiction_flag_buf, 0, None); // Direct access ok
         self.submit_commands(encoder);
         Ok(())
@@ -482,7 +522,11 @@ impl GpuSynchronizer {
 
     /// Resets the contradiction location buffer on the GPU.
     pub fn reset_contradiction_location(&self) -> Result<(), GpuError> {
-        let mut encoder = self.create_command_encoder(Some("Reset Contradiction Location"));
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Reset Contradiction Location"),
+            });
         encoder.clear_buffer(&self.buffers.contradiction_location_buf, 0, None); // Direct access ok
         self.submit_commands(encoder);
         Ok(())
@@ -490,14 +534,16 @@ impl GpuSynchronizer {
 
     /// Resets both worklist count buffers on the GPU.
     pub fn reset_worklist_count(&self) -> Result<(), GpuError> {
-        let mut encoder = self.create_command_encoder(Some("Reset Worklist Counts"));
-        encoder.clear_buffer(&self.buffers.worklist_buffers.worklist_count_buf_a, 0, None); // Use worklist_buffers
-        encoder.clear_buffer(&self.buffers.worklist_buffers.worklist_count_buf_b, 0, None); // Use worklist_buffers
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Reset Worklist Counts"),
+            });
+        encoder.clear_buffer(&self.buffers.worklist_buffers.worklist_count_buf, 0, None); // Use single count buffer
+                                                                                          // Remove redundant clear for non-existent buffer B
         self.submit_commands(encoder);
         Ok(())
     }
-
-    // ... create_command_encoder, submit_commands, device, queue, buffers ...
 
     /// Resets grid possibilities, worklist, and contradiction state on the GPU.
     pub fn reset_grid_state(
@@ -558,11 +604,6 @@ impl GpuSynchronizer {
         );
         Ok(())
     }
-}
-
-// ... Drop impl ...
-// ... tests ...
-
 
     /// Submits a command encoder to the GPU queue.
     ///

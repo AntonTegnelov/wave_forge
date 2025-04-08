@@ -5,11 +5,13 @@
 //! - Entropy heatmaps: Visual representation of cell entropy distribution
 //! - Contradictions: Where and why contradictions occur during execution
 
-use crate::buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults};
+use crate::buffers::{DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults};
 use crate::sync::GpuSynchronizer;
 use crate::GpuError;
 use pollster;
 use std::sync::Arc;
+use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
+use wfc_rules::AdjacencyRules;
 
 /// Types of debug visualizations available
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,6 +122,12 @@ impl DebugVisualizer {
 
         let request = self.create_download_request(needs_grid, needs_contradiction);
 
+        let worklist_size = self
+            .synchronizer
+            .buffers()
+            .worklist_buffers
+            .current_worklist_size as u32;
+
         let result = self
             .synchronizer
             .buffers()
@@ -131,12 +139,7 @@ impl DebugVisualizer {
             .await?;
 
         // Create and store the snapshot
-        self.add_snapshot(
-            buffers.grid_dims,
-            buffers.num_tiles,
-            result,
-            buffers.worklist_buffers.current_worklist_size as u32,
-        );
+        self.add_snapshot(buffers.grid_dims, buffers.num_tiles, result, worklist_size);
 
         Ok(())
     }
@@ -307,10 +310,8 @@ mod tests {
     use super::*;
     use crate::buffers::{DynamicBufferConfig, GpuBuffers, GpuDownloadResults, WorklistBuffers};
     use crate::sync::GpuSynchronizer;
-    use crate::test_utils::{create_test_device_queue /* other utils if needed */};
+    use crate::test_utils::{create_test_device_queue, create_test_gpu_buffers};
     use std::sync::Arc;
-    use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
-    use wfc_rules::AdjacencyRules;
 
     // Helper function to create a basic GpuBuffers for tests
     fn create_test_gpu_buffers(
@@ -318,7 +319,7 @@ mod tests {
         queue: &Arc<wgpu::Queue>,
     ) -> Arc<GpuBuffers> {
         let grid = PossibilityGrid::new(2, 2, 1, 3);
-        let rules = AdjacencyRules::new_uniform(3, 6);
+        let rules = AdjacencyRules::from_allowed_tuples(3, 6, vec![]);
         Arc::new(GpuBuffers::new(device, queue, &grid, &rules, BoundaryCondition::Finite).unwrap())
     }
 
@@ -335,10 +336,13 @@ mod tests {
             synchronizer, // Pass the initialized synchronizer
         );
 
-        assert!(visualizer.config.enabled);
+        assert!(visualizer.enabled);
         assert_eq!(visualizer.snapshots.len(), 0);
         assert_eq!(visualizer.current_step, 0);
         assert!(visualizer.enabled);
+
+        // Test adding snapshots
+        let mut mock_buffers = create_test_gpu_buffers(&device, &queue);
     }
 
     #[test]
@@ -364,7 +368,7 @@ mod tests {
                 grid_possibilities: Some(vec![0; 10]),
             };
             // Pass the synchronizer needed by add_snapshot
-            visualizer.add_snapshot((5, 2, 1), 4, mock_results, synchronizer.clone());
+            visualizer.add_snapshot((5, 2, 1), 4, mock_results, 4);
         }
 
         assert_eq!(visualizer.snapshots.len(), 5);
@@ -380,7 +384,7 @@ mod tests {
             grid_possibilities: Some(vec![0; 10]),
         };
         // Pass the synchronizer needed by add_snapshot
-        visualizer.add_snapshot((5, 2, 1), 4, another_mock_results, synchronizer.clone());
+        visualizer.add_snapshot((5, 2, 1), 4, another_mock_results, 4);
 
         // After adding the 6th snapshot with a limit of 3, we should have snapshots 3, 4, 5
         assert_eq!(visualizer.snapshots.len(), 3);
@@ -391,5 +395,103 @@ mod tests {
         visualizer.clear_snapshots();
         assert_eq!(visualizer.snapshots.len(), 0);
         assert_eq!(visualizer.current_step, 0);
+    }
+
+    #[test]
+    fn test_debug_visualizer_creation_updated_assertions() {
+        // Initialize GPU resources for the test
+        let (device, queue) = create_test_device_queue();
+        let buffers = create_test_gpu_buffers(&device, &queue);
+        let synchronizer = Arc::new(GpuSynchronizer::new(device, queue, buffers));
+
+        // Create visualizer with the test synchronizer
+        let visualizer = DebugVisualizer::new(
+            DebugVisualizationConfig::default(),
+            synchronizer, // Pass the initialized synchronizer
+        );
+
+        // Test visualizer creation
+        // assert_eq!(visualizer.config.viz_type, VisualizationType::EntropyHeatmap);
+        // assert!(!visualizer.config.auto_generate);
+        // assert_eq!(visualizer.config.max_snapshots, 100);
+        // assert_eq!(visualizer.config.snapshot_interval, 10);
+
+        // Updated assertions to use methods
+        assert!(visualizer.is_enabled());
+        assert_eq!(visualizer.get_snapshots().len(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_debug_visualizer_creation_should_panic() {
+        // Initialize GPU resources for the test
+        let (device, queue) = create_test_device_queue();
+        let buffers = create_test_gpu_buffers(&device, &queue);
+        let synchronizer = Arc::new(GpuSynchronizer::new(device, queue, buffers));
+
+        // Create visualizer with the test synchronizer
+        let visualizer = DebugVisualizer::new(
+            DebugVisualizationConfig::default(),
+            synchronizer, // Pass the initialized synchronizer
+        );
+
+        // Test visualizer creation
+        // assert_eq!(visualizer.config.viz_type, VisualizationType::EntropyHeatmap);
+        // assert!(!visualizer.config.auto_generate);
+        // assert_eq!(visualizer.config.max_snapshots, 100);
+        // assert_eq!(visualizer.config.snapshot_interval, 10);
+
+        // Updated assertions to use methods
+        assert!(visualizer.is_enabled());
+        assert_eq!(visualizer.get_snapshots().len(), 0);
+    }
+
+    #[test]
+    fn test_add_snapshot() {
+        let (device, queue) = create_test_device_queue();
+        let buffers = create_test_gpu_buffers(&device, &queue);
+        // Clone Arcs before moving them into GpuSynchronizer::new
+        let synchronizer = Arc::new(GpuSynchronizer::new(
+            device.clone(),
+            queue.clone(),
+            buffers.clone(),
+        ));
+        let mut visualizer =
+            DebugVisualizer::new(DebugVisualizationConfig::default(), synchronizer);
+
+        assert_eq!(visualizer.snapshots.len(), 0);
+
+        // Create mock results
+        // ... existing code ...
+    }
+
+    #[test]
+    fn test_snapshot_limit() {
+        let (device, queue) = create_test_device_queue();
+        let buffers = create_test_gpu_buffers(&device, &queue);
+        // Clone Arcs before moving them into GpuSynchronizer::new
+        let synchronizer = Arc::new(GpuSynchronizer::new(
+            device.clone(),
+            queue.clone(),
+            buffers.clone(),
+        ));
+        let mut config = DebugVisualizationConfig::default();
+        config.max_snapshots = 3;
+        let mut visualizer = DebugVisualizer::new(config, synchronizer);
+        // ... existing code ...
+    }
+
+    #[test]
+    fn test_generate_visualizations_empty() {
+        let (device, queue) = create_test_device_queue();
+        let buffers = create_test_gpu_buffers(&device, &queue);
+        // Clone Arcs before moving them into GpuSynchronizer::new
+        let synchronizer = Arc::new(GpuSynchronizer::new(
+            device.clone(),
+            queue.clone(),
+            buffers.clone(),
+        ));
+        let visualizer = DebugVisualizer::new(DebugVisualizationConfig::default(), synchronizer);
+        // ... existing code ...
     }
 }

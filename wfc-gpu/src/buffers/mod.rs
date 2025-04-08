@@ -6,17 +6,12 @@
 use crate::{error_recovery::RecoverableGpuOp, GpuError};
 use bytemuck::{Pod, Zeroable};
 use futures::future::{try_join_all, FutureExt};
-use log::{debug, error, info, trace, warn};
+use log::{info, warn};
+use pollster;
 use std::{
-    any::Any,
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
+    any::Any, collections::HashMap, future::Future, pin::Pin, sync::Arc, task::Poll, time::Duration,
 };
-use tokio::time::timeout;
+use std::{mem, sync::mpsc};
 use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
 use wfc_rules::AdjacencyRules;
 use wgpu::{self, util::DeviceExt};
@@ -153,7 +148,7 @@ impl GpuBuffers {
         let grid_buffers = GridBuffers::new(device, initial_grid, &default_dynamic_config)?;
         let worklist_buffers = WorklistBuffers::new(device, num_cells, &default_dynamic_config)?;
         let entropy_buffers = EntropyBuffers::new(device, num_cells, &default_dynamic_config)?;
-        let rule_buffers = RuleBuffers::new(device, rules)?;
+        let rule_buffers = RuleBuffers::new(device, rules, &default_dynamic_config)?;
 
         let params = GpuParamsUniform {
             grid_width: width as u32,
@@ -527,10 +522,8 @@ pub(crate) async fn map_and_process<
 
             Ok(Box::new(data))
         }
-        Ok(Ok(Err(e))) => Err(GpuError::BufferMapFailed(e)),
-        Ok(Err(_elapsed)) => Err(GpuError::BufferOperationError(
-            "Buffer mapping timed out".to_string(),
-        )),
+        Ok(Ok(Err(e))) => Err(GpuError::BufferMapFailed(e.to_string())),
+        Ok(Err(_timeout)) => Err(GpuError::Timeout("Buffer map timed out".to_string())),
         Err(_recv_error) => Err(GpuError::InternalError(
             "Buffer mapping channel closed unexpectedly".to_string(),
         )),

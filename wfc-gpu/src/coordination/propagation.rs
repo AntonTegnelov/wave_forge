@@ -2,7 +2,7 @@
 
 //! Module responsible for coordinating different constraint propagation strategies.
 
-use crate::{GpuConstraintPropagator, GpuError};
+use crate::propagator::GpuConstraintPropagator;
 use async_trait::async_trait;
 use wfc_core::{
     grid::PossibilityGrid,

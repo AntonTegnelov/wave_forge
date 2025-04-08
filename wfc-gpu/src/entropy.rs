@@ -7,6 +7,7 @@ use crate::{
 use log::{debug, error, warn};
 use pollster;
 use std::sync::Arc;
+use wfc_core::entropy::EntropyError as CoreEntropyError;
 use wfc_core::{
     entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
@@ -273,7 +274,21 @@ impl GpuEntropyCalculator {
         };
 
         debug!("Exiting calculate_entropy_async");
-        Ok(EntropyGrid::from_vec(width, height, depth, entropy_data))
+        let mut entropy_grid =
+            EntropyGrid::new(self.grid_dims.0, self.grid_dims.1, self.grid_dims.2);
+        if entropy_grid.data.len() == entropy_data.len() {
+            entropy_grid.data = entropy_data;
+            Ok(entropy_grid)
+        } else {
+            error!(
+                "Entropy data size mismatch: expected {}, got {}",
+                entropy_grid.data.len(),
+                entropy_data.len()
+            );
+            Err(CoreEntropyError::Other(
+                "Downloaded entropy data size mismatch".into(),
+            ))
+        }
     }
 
     /// Asynchronously selects the cell with the lowest positive entropy.
@@ -377,7 +392,6 @@ impl From<GpuError> for EntropyError {
             | GpuError::CommandExecutionError(s)
             | GpuError::ShaderError(s)
             | GpuError::TransferError(s)
-            | GpuError::BufferMappingFailed(s)
             | GpuError::BufferSizeMismatch(s) => {
                 EntropyError::Other(format!("GPU Communication Error: {}", s))
             }
@@ -386,4 +400,30 @@ impl From<GpuError> for EntropyError {
             _ => EntropyError::Other(format!("Unhandled GpuError: {:?}", gpu_error)),
         }
     }
+}
+
+pub trait GpuEntropyCalculatorExt {
+    fn select_lowest_entropy_cell_sync(
+        &self,
+        entropy_grid: &EntropyGrid,
+    ) -> Option<(usize, usize, usize)>;
+}
+
+impl GpuEntropyCalculatorExt for GpuEntropyCalculator {
+    fn select_lowest_entropy_cell_sync(
+        &self,
+        entropy_grid: &EntropyGrid,
+    ) -> Option<(usize, usize, usize)> {
+        self.select_lowest_entropy_cell(entropy_grid)
+    }
+}
+
+/// Maps a GPU error encountered during entropy calculation to a core WFC EntropyError.
+fn map_gpu_error_to_entropy_error(gpu_error: GpuError) -> CoreEntropyError {
+    CoreEntropyError::Other(format!("GPU Error: {}", gpu_error))
+}
+
+#[cfg(test)]
+mod tests {
+    // ... existing code ...
 }

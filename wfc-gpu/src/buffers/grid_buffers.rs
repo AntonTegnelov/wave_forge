@@ -29,7 +29,7 @@ impl GridBuffers {
         let width = initial_grid.width;
         let height = initial_grid.height;
         let depth = initial_grid.depth;
-        let num_cells = width * height * depth; // Reverted prefix
+        let _num_cells = width * height * depth; // Prefix with _ as it might be unused depending on config usage
         let num_tiles = initial_grid.num_tiles();
         let u32s_per_cell = (num_tiles + 31) / 32;
 
@@ -67,10 +67,10 @@ impl GridBuffers {
         let width = initial_grid.width;
         let height = initial_grid.height;
         let depth = initial_grid.depth;
-        let num_cells = width * height * depth; // Reverted prefix
+        let _num_cells = width * height * depth; // Prefix with _ as it might be unused depending on config usage
         let num_tiles = initial_grid.num_tiles();
         let u32s_per_cell = (num_tiles + 31) / 32;
-        let mut packed_possibilities = Vec::with_capacity(num_cells * u32s_per_cell);
+        let mut packed_possibilities = Vec::with_capacity(_num_cells * u32s_per_cell);
 
         for z in 0..depth {
             for y in 0..height {
@@ -107,10 +107,10 @@ impl GridBuffers {
             }
         }
 
-        if packed_possibilities.len() != num_cells * u32s_per_cell {
+        if packed_possibilities.len() != _num_cells * u32s_per_cell {
             return Err(GpuError::BufferOperationError(format!(
                 "Internal Error: Packed possibilities size mismatch. Expected {}, Got {}.",
-                num_cells * u32s_per_cell,
+                _num_cells * u32s_per_cell,
                 packed_possibilities.len()
             )));
         }
@@ -128,9 +128,9 @@ impl GridBuffers {
         num_tiles: u32,
         config: &DynamicBufferConfig,
     ) -> Result<(), String> {
-        let num_cells = (width * height * depth) as usize;
+        let _num_cells = (width * height * depth) as usize;
         let u32s_per_cell = ((num_tiles + 31) / 32) as usize;
-        let required_size = (num_cells * u32s_per_cell * std::mem::size_of::<u32>()) as u64;
+        let required_size = (u32s_per_cell * std::mem::size_of::<u32>()) as u64;
 
         // Resize main buffer if needed
         if !GpuBuffers::is_buffer_sufficient(&self.grid_possibilities_buf, required_size) {

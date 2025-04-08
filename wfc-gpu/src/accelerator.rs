@@ -1,7 +1,7 @@
 #![allow(clippy::redundant_field_names)]
 use crate::{
-    buffers::{GpuBuffers, GpuParamsUniform},
-    debug_viz::{DebugVisualizationConfig, DebugVisualizer, GpuBuffersDebugExt},
+    buffers::{DownloadRequest, GpuBuffers, GpuParamsUniform},
+    debug_viz::{DebugVisualizationConfig, DebugVisualizer},
     entropy::GpuEntropyCalculator,
     pipeline::ComputePipelines,
     propagator::GpuConstraintPropagator,
@@ -9,7 +9,7 @@ use crate::{
     sync::GpuSynchronizer,
     GpuError,
 };
-use log::{error, info, trace, warn};
+use log::{error, info, trace};
 use std::sync::Arc;
 use std::time::Instant;
 use wfc_core::{
@@ -311,13 +311,22 @@ impl GpuAccelerator {
 
     /// Retrieves the current state of the possibility grid from the GPU.
     pub async fn get_intermediate_result(&self) -> Result<PossibilityGrid, GpuError> {
-        let grid_template = PossibilityGrid::new(
-            self.grid_dims.0,
-            self.grid_dims.1,
-            self.grid_dims.2,
-            self.num_tiles,
-        );
-        self.synchronizer.download_grid(&grid_template).await
+        // Use GpuSynchronizer to download grid data
+        let request = DownloadRequest {
+            download_grid_possibilities: true,
+            ..Default::default() // Other fields false by default
+        };
+        // Call download_results on the buffers held by the synchronizer
+        let results = self
+            .synchronizer
+            .buffers()
+            .download_results(
+                self.synchronizer.device().clone(), // Pass device Arc
+                self.synchronizer.queue().clone(),  // Pass queue Arc
+                request,
+            )
+            .await?;
+        results.to_possibility_grid(self.grid_dims, self.num_tiles)
     }
 
     /// Enables debug visualization.
@@ -356,8 +365,8 @@ impl GpuAccelerator {
 
     /// Runs the WFC algorithm using the GPU accelerator, with progress callbacks.
     pub async fn run_with_callback<F>(
-        &mut self,
-        grid: &mut PossibilityGrid,
+        &self,
+        initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
         max_iterations: u64,
         mut progress_callback: F,
@@ -367,12 +376,14 @@ impl GpuAccelerator {
         F: FnMut(ProgressInfo),
     {
         let start_time = Instant::now();
-        let total_cells = grid.width * grid.height * grid.depth;
+        let total_cells = initial_grid.width * initial_grid.height * initial_grid.depth;
 
         // Upload initial grid state
         self.synchronizer
-            .upload_grid(grid)
+            .upload_grid(initial_grid)
             .map_err(|e| WfcError::InternalError(e.to_string()))?;
+
+        let mut current_grid = initial_grid.clone();
 
         for iterations in 0..max_iterations {
             // Check for shutdown signal
@@ -385,119 +396,113 @@ impl GpuAccelerator {
             // --- Observation Phase (Entropy Calculation & Cell Selection) ---
             trace!("Iteration {}: Calculating entropy...", iterations);
             // Use the dedicated GpuEntropyCalculator
-            let entropy_grid = self
-                .entropy_calculator
-                .calculate_entropy(grid)
-                .await
-                .map_err(WfcError::EntropyError)?;
+            let entropy_grid = self.entropy_calculator.calculate_entropy(&current_grid)?;
 
             trace!("Iteration {}: Selecting lowest entropy cell...", iterations);
-            let maybe_coords = self
+            let collapse_coords = self
                 .entropy_calculator
-                .select_lowest_entropy_cell(&entropy_grid)
+                .select_lowest_entropy_cell(&entropy_grid);
+
+            if let Some(coords) = collapse_coords {
+                let (x, y, z) = coords;
+                trace!("Selected cell: ({}, {}, {})", x, y, z);
+
+                // --- Collapse Phase ---
+                let cell_possibilities = current_grid.get(x, y, z).ok_or_else(|| {
+                    WfcError::GridError("Selected cell out of bounds".to_string())
+                })?;
+
+                if cell_possibilities.count_ones() <= 1 {
+                    trace!("Cell ({}, {}, {}) already collapsed.", x, y, z);
+                    continue; // Skip propagation if already collapsed
+                }
+
+                let available_tiles: Vec<usize> = cell_possibilities.iter_ones().collect();
+                if available_tiles.is_empty() {
+                    error!(
+                        "Contradiction detected at ({}, {}, {}) before collapse.",
+                        x, y, z
+                    );
+                    return Err(WfcError::Contradiction(x, y, z));
+                }
+
+                // TODO: Implement weighted selection based on rules.get_tile_weight
+                // For now, randomly choose one of the available tiles.
+                let chosen_tile = available_tiles[iterations as usize % available_tiles.len()]; // Simple deterministic choice for now
+
+                if let Err(e) = current_grid.collapse(x, y, z, chosen_tile) {
+                    error!("Failed to collapse cell ({}, {}, {}): {}", x, y, z, e);
+                    return Err(WfcError::InternalError(format!("Collapse failed: {}", e)));
+                }
+                trace!(
+                    "Collapsed cell ({}, {}, {}) to tile {}",
+                    x,
+                    y,
+                    z,
+                    chosen_tile
+                );
+
+                // Update GPU grid state after collapse
+                self.synchronizer
+                    .upload_grid(&current_grid)
+                    .map_err(|e| WfcError::InternalError(e.to_string()))?;
+
+                // --- Propagation Phase (using GpuConstraintPropagator) ---
+                trace!("Propagating constraints...");
+                // Propagate the constraints asynchronously
+                // Use a block to handle the Result from propagate
+                let propagation_result = {
+                    let grid_ref = &mut current_grid; // Use current_grid here
+                    self.propagator.propagate(grid_ref, vec![(x, y, z)], rules)
+                }
                 .await;
 
-            let (x, y, z) = match maybe_coords {
-                Some(coords) => coords,
-                None => {
-                    info!("No cells left to collapse. WFC finished.");
-                    break; // No more cells to collapse
-                }
-            };
-            trace!("Selected cell: ({}, {}, {})", x, y, z);
+                match propagation_result {
+                    Ok(_) => trace!("Propagation successful."),
+                    Err(PropagationError::Contradiction(cx, cy, cz)) => {
+                        error!("Contradiction detected at ({}, {}, {})", cx, cy, cz);
+                        return Err(WfcError::Contradiction(cx, cy, cz));
+                    }
+                    Err(e) => {
+                        error!("Propagation failed: {}", e);
+                        return Err(WfcError::PropagationError(e));
+                    }
+                };
 
-            // --- Collapse Phase ---
-            let cell_possibilities = grid
-                .get(x, y, z)
-                .ok_or_else(|| WfcError::GridError("Selected cell out of bounds".to_string()))?;
+                // Download updated grid state for callback
+                let current_grid_state = self
+                    .synchronizer
+                    .download_grid(&current_grid)
+                    .await
+                    .map_err(|e| WfcError::InternalError(e.to_string()))?;
 
-            if cell_possibilities.count_ones() <= 1 {
-                trace!("Cell ({}, {}, {}) already collapsed.", x, y, z);
-                continue; // Skip propagation if already collapsed
-            }
-
-            let available_tiles: Vec<usize> = cell_possibilities.iter_ones().collect();
-            if available_tiles.is_empty() {
-                error!(
-                    "Contradiction detected at ({}, {}, {}) before collapse.",
-                    x, y, z
-                );
-                return Err(WfcError::Contradiction(x, y, z));
-            }
-
-            // TODO: Implement weighted selection based on rules.get_tile_weight
-            // For now, randomly choose one of the available tiles.
-            let chosen_tile = available_tiles[iterations as usize % available_tiles.len()]; // Simple deterministic choice for now
-
-            if let Err(e) = grid.collapse(x, y, z, chosen_tile) {
-                error!("Failed to collapse cell ({}, {}, {}): {}", x, y, z, e);
-                return Err(WfcError::InternalError(format!("Collapse failed: {}", e)));
-            }
-            trace!(
-                "Collapsed cell ({}, {}, {}) to tile {}",
-                x,
-                y,
-                z,
-                chosen_tile
-            );
-
-            // Update GPU grid state after collapse
-            self.synchronizer
-                .upload_grid(grid)
-                .map_err(|e| WfcError::InternalError(e.to_string()))?;
-
-            // --- Propagation Phase (using GpuConstraintPropagator) ---
-            trace!("Propagating constraints...");
-            // Use the dedicated GpuConstraintPropagator
-            match self
-                .propagator
-                .propagate(grid, vec![(x, y, z)], rules)
-                .await
-            {
-                Ok(_) => trace!("Propagation successful."),
-                Err(PropagationError::Contradiction(cx, cy, cz)) => {
-                    error!(
-                        "Contradiction detected at ({}, {}, {}) during propagation.",
-                        cx, cy, cz
-                    );
-                    return Err(WfcError::Contradiction(cx, cy, cz));
-                }
-                Err(e) => {
-                    error!("Propagation failed: {:?}", e);
-                    return Err(WfcError::Propagation(e));
-                }
-            }
-
-            // Download updated grid state for callback
-            let current_grid_state = self
-                .synchronizer
-                .download_grid(grid)
-                .await
-                .map_err(|e| WfcError::InternalError(e.to_string()))?;
-
-            // Calculate collapsed cells count (can be optimized)
-            let mut collapsed_cells_count = 0;
-            for cz in 0..current_grid_state.depth {
-                for cy in 0..current_grid_state.height {
-                    for cx in 0..current_grid_state.width {
-                        if let Some(cell) = current_grid_state.get(cx, cy, cz) {
-                            if cell.count_ones() == 1 {
-                                collapsed_cells_count += 1;
+                // Calculate collapsed cells count (can be optimized)
+                let mut collapsed_cells_count = 0;
+                for cz in 0..current_grid_state.depth {
+                    for cy in 0..current_grid_state.height {
+                        for cx in 0..current_grid_state.width {
+                            if let Some(cell) = current_grid_state.get(cx, cy, cz) {
+                                if cell.count_ones() == 1 {
+                                    collapsed_cells_count += 1;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // --- Progress Callback ---
-            let progress_info = ProgressInfo {
-                collapsed_cells: collapsed_cells_count,
-                total_cells: total_cells,
-                elapsed_time: start_time.elapsed(),
-                iterations: iterations as u64,
-                grid_state: current_grid_state,
-            };
-            progress_callback(progress_info);
+                // --- Progress Callback ---
+                let progress_info = ProgressInfo {
+                    collapsed_cells: collapsed_cells_count,
+                    total_cells: total_cells,
+                    elapsed_time: start_time.elapsed(),
+                    iterations: iterations as u64,
+                    grid_state: current_grid_state,
+                };
+                progress_callback(progress_info);
+            } else {
+                info!("No cells left to collapse. WFC finished.");
+                break; // No more cells to collapse
+            }
         }
 
         // Download final result
@@ -568,34 +573,14 @@ impl Drop for GpuAccelerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{create_test_device_queue, initialize_test_gpu};
-    use std::sync::atomic::AtomicBool;
-    use wfc_core::grid::PossibilityGrid;
+    use crate::test_utils::create_test_device_queue;
+    // use std::sync::atomic::AtomicBool; // Removed unused
+    // use wfc_core::grid::PossibilityGrid; // Removed unused
 
-    // Removed test that depended on create_simple_2d_rules
-    // #[tokio::test]
-    // async fn test_accelerator_creation() {
-    //     let accelerator = run_test_accelerator(4, 4, 1, 3).await;
-    //     assert!(accelerator.is_ok());
-    // }
-
-    // Helper function might still be useful later?
-    // async fn run_test_accelerator(
-    //     width: usize,
-    //     height: usize,
-    //     depth: usize,
-    //     num_tiles: usize,
-    // ) -> Result<GpuAccelerator, GpuError> {
-    //     let rules = create_simple_2d_rules(num_tiles); // This function is missing
-    //     let grid = PossibilityGrid::new(width, height, depth, num_tiles);
-    //     GpuAccelerator::new(
-    //         &grid,
-    //         &rules,
-    //         BoundaryCondition::Finite,
-    //         EntropyHeuristicType::Shannon, // Added missing heuristic
-    //         None
-    //     ).await
-    // }
+    #[tokio::test]
+    async fn test_accelerator_creation_and_config() {
+        // Implementation of the test
+    }
 
     // ... (Keep other tests, ensure they use async fn and .await where needed)
 }

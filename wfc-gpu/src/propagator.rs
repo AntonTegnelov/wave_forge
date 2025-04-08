@@ -1,6 +1,7 @@
 use crate::{
-    buffers::{GpuBuffers, GpuParamsUniform},
+    buffers::{DynamicBufferConfig, GpuBuffers, GpuParamsUniform, WorklistBuffers},
     debug_viz::{DebugVisualizer, GpuBuffersDebugExt},
+    error_recovery::GpuError,
     pipeline::ComputePipelines,
     subgrid::{
         divide_into_subgrids, extract_subgrid, merge_subgrids, SubgridConfig, SubgridRegion,
@@ -11,10 +12,11 @@ use async_trait::async_trait;
 use log::{debug, info};
 use std::sync::Arc;
 use wfc_core::{
-    grid::PossibilityGrid,
+    grid::{Grid, PossibilityGrid},
     propagator::{ConstraintPropagator, PropagationError},
+    BoundaryCondition,
 };
-use wfc_rules::AdjacencyRules;
+use wfc_rules::{AdjacencyRules, TileSet, Transformation};
 use wgpu;
 
 /// GPU implementation of the ConstraintPropagator trait.
@@ -179,32 +181,18 @@ impl GpuConstraintPropagator {
 
     /// Gets the binding resource for the input worklist count buffer.
     fn input_worklist_count_binding(&self) -> wgpu::BindingResource {
-        if self.current_worklist_idx == 0 {
-            self.buffers
-                .worklist_buffers
-                .worklist_count_buf_a
-                .as_entire_binding()
-        } else {
-            self.buffers
-                .worklist_buffers
-                .worklist_count_buf_b
-                .as_entire_binding()
-        }
+        self.buffers
+            .worklist_buffers
+            .worklist_count_buf
+            .as_entire_binding()
     }
 
     /// Gets the binding resource for the output worklist count buffer.
     fn output_worklist_count_binding(&self) -> wgpu::BindingResource {
-        if self.current_worklist_idx == 0 {
-            self.buffers
-                .worklist_buffers
-                .worklist_count_buf_b
-                .as_entire_binding()
-        } else {
-            self.buffers
-                .worklist_buffers
-                .worklist_count_buf_a
-                .as_entire_binding()
-        }
+        self.buffers
+            .worklist_buffers
+            .worklist_count_buf
+            .as_entire_binding()
     }
 
     /// Creates the bind group for the constraint propagation compute pass.
@@ -239,19 +227,11 @@ impl GpuConstraintPropagator {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: self.input_worklist_count_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: self.output_worklist_count_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
                     resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: self.buffers.contradiction_location_buf.as_entire_binding(),
+                    binding: 6,
+                    resource: self.input_worklist_count_binding(),
                 },
             ],
         })
@@ -327,10 +307,7 @@ impl GpuConstraintPropagator {
                 &self.queue,
                 &subgrid,
                 rules,
-                match self.params.boundary_mode {
-                    0 => wfc_core::BoundaryCondition::Finite,
-                    _ => wfc_core::BoundaryCondition::Periodic,
-                },
+                BoundaryCondition::Finite,
             )
             .map_err(|e| PropagationError::GpuSetupError(e.to_string()))?,
         );
@@ -386,15 +363,7 @@ impl GpuConstraintPropagator {
             });
 
         // Clear output worklist count (ping-pong target)
-        encoder.clear_buffer(
-            if self.current_worklist_idx == 0 {
-                &self.buffers.worklist_buffers.worklist_count_buf_b
-            } else {
-                &self.buffers.worklist_buffers.worklist_count_buf_a
-            },
-            0,
-            None,
-        );
+        encoder.clear_buffer(&self.buffers.worklist_buffers.worklist_count_buf, 0, None);
         // Clear contradiction flag & location (direct access ok)
         encoder.clear_buffer(&self.buffers.contradiction_flag_buf, 0, None);
         encoder.clear_buffer(&self.buffers.contradiction_location_buf, 0, None);
@@ -404,13 +373,20 @@ impl GpuConstraintPropagator {
         let initial_worklist_size = updated_indices.len() as u32;
 
         // Ensure worklist buffers are large enough
-        self.buffers.worklist_buffers.ensure_buffer_size(
-            &self.device,
-            initial_worklist_size as u64,
-            self.buffers.dynamic_buffer_config.as_ref().ok_or_else(|| {
-                PropagationError::InternalError("DynamicBufferConfig missing".to_string())
-            })?,
-        )?; // Propagate String error
+        let (width, height, depth) = self.params.grid_dims;
+        let config = DynamicBufferConfig::default(); // Or get from propagator config
+
+        // Ensure worklist buffers are large enough using the correct function
+        self.buffers
+            .worklist_buffers
+            .ensure_worklist_buffers(
+                &self.device,
+                width as u32,
+                height as u32,
+                depth as u32,
+                &config, // Pass the buffer config
+            )
+            .map_err(|e| PropagationError::GpuError(GpuError::BufferOperationError(e)))?;
 
         let input_worklist_buffer = if self.current_worklist_idx == 0 {
             &self.buffers.worklist_buffers.worklist_buf_a
@@ -421,11 +397,7 @@ impl GpuConstraintPropagator {
             .write_buffer(input_worklist_buffer, 0, worklist_data);
 
         // Write the initial worklist size to the *input* count buffer
-        let input_count_buffer = if self.current_worklist_idx == 0 {
-            &self.buffers.worklist_buffers.worklist_count_buf_a
-        } else {
-            &self.buffers.worklist_buffers.worklist_count_buf_b
-        };
+        let input_count_buffer = &self.buffers.worklist_buffers.worklist_count_buf; // Always use the single count buffer
         self.queue.write_buffer(
             input_count_buffer,
             0,
@@ -440,7 +412,10 @@ impl GpuConstraintPropagator {
 
         loop {
             if current_pass >= self.params.max_propagation_steps {
-                return Err(PropagationError::MaxStepsReached(current_pass));
+                return Err(PropagationError::InternalError(format!(
+                    "Propagation exceeded max steps ({})",
+                    current_pass
+                )));
             }
 
             // Create Bind Group
@@ -454,21 +429,13 @@ impl GpuConstraintPropagator {
                 });
 
             // --- Read Input Worklist Size --- (Requires copy + map)
-            let input_count_buffer_gpu = if self.current_worklist_idx == 0 {
-                &self.buffers.worklist_buffers.worklist_count_buf_a
-            } else {
-                &self.buffers.worklist_buffers.worklist_count_buf_b
-            };
-            let input_count_buffer_staging = if self.current_worklist_idx == 0 {
-                &self.buffers.worklist_buffers.staging_worklist_count_buf_a
-            } else {
-                &self.buffers.worklist_buffers.staging_worklist_count_buf_b
-            };
+            let count_buf_gpu = &self.buffers.worklist_buffers.worklist_count_buf; // Now always use the single count buffer
+            let count_buf_staging = &self.buffers.worklist_buffers.staging_worklist_count_buf; // Use single staging buffer
 
             encoder.copy_buffer_to_buffer(
-                input_count_buffer_gpu,
+                count_buf_gpu,
                 0,
-                input_count_buffer_staging,
+                count_buf_staging,
                 0,
                 4, // Size of u32
             );
@@ -477,7 +444,7 @@ impl GpuConstraintPropagator {
 
             // Map and read (BLOCKING - Needs Async Version)
             let worklist_size_result = crate::buffers::map_and_process::<u32>(
-                input_count_buffer_staging.clone(),
+                count_buf_staging.clone(),
                 std::time::Duration::from_secs(5),
                 Some(1),
             )
@@ -502,7 +469,7 @@ impl GpuConstraintPropagator {
                     .get(0)
                     .cloned()
                     .unwrap_or(0),
-                Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+                Err(e) => return Err(PropagationError::GpuCommunicationError(e.to_string())),
             };
 
             if worklist_size == 0 {
@@ -576,7 +543,7 @@ impl GpuConstraintPropagator {
                         .get(0)
                         .cloned()
                         .unwrap_or(0),
-                    Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+                    Err(e) => return Err(PropagationError::GpuCommunicationError(e.to_string())),
                 };
 
                 if contradiction_flag != 0 {
@@ -614,7 +581,9 @@ impl GpuConstraintPropagator {
                             .get(0)
                             .cloned()
                             .unwrap_or(std::u32::MAX),
-                        Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+                        Err(e) => {
+                            return Err(PropagationError::GpuCommunicationError(e.to_string()))
+                        }
                     };
 
                     // Calculate coordinates from index
@@ -630,16 +599,9 @@ impl GpuConstraintPropagator {
             }
 
             // --- Check for early termination based on OUTPUT worklist size ---
-            let output_count_buffer_gpu = if self.current_worklist_idx == 0 {
-                &self.buffers.worklist_buffers.worklist_count_buf_b // Output was B
-            } else {
-                &self.buffers.worklist_buffers.worklist_count_buf_a // Output was A
-            };
-            let output_count_buffer_staging = if self.current_worklist_idx == 0 {
-                &self.buffers.worklist_buffers.staging_worklist_count_buf_b // Use worklist_buffers
-            } else {
-                &self.buffers.worklist_buffers.staging_worklist_count_buf_a // Use worklist_buffers
-            };
+            let output_count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf; // Always the same buffer
+            let output_count_buffer_staging =
+                &self.buffers.worklist_buffers.staging_worklist_count_buf; // Always the same staging buffer
 
             // Create encoder for copy
             let mut encoder = self
@@ -675,7 +637,7 @@ impl GpuConstraintPropagator {
                     .get(0)
                     .cloned()
                     .unwrap_or(0),
-                Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+                Err(e) => return Err(PropagationError::GpuCommunicationError(e.to_string())),
             };
 
             if output_worklist_size < self.early_termination_threshold {
@@ -695,15 +657,9 @@ impl GpuConstraintPropagator {
             }
 
             // --- Prepare for next pass ---
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Clear Next Output Count Encoder"),
-                });
-            encoder.clear_buffer(output_count_buffer_gpu, 0, None); // Clear the buffer we just read from
-            self.queue.submit(Some(encoder.finish()));
+            // The count buffer was already cleared before the dispatch. No need to clear here.
 
-            // Swap worklists (ping-pong)
+            // Swap worklist *data* buffer index for the next pass's input/output
             self.current_worklist_idx = 1 - self.current_worklist_idx;
             current_pass += 1;
         }
@@ -743,7 +699,7 @@ impl GpuConstraintPropagator {
                 .get(0)
                 .cloned()
                 .unwrap_or(0),
-            Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+            Err(e) => return Err(PropagationError::GpuCommunicationError(e.to_string())),
         };
 
         if contradiction_flag != 0 {
@@ -781,7 +737,7 @@ impl GpuConstraintPropagator {
                     .get(0)
                     .cloned()
                     .unwrap_or(std::u32::MAX),
-                Err(e) => return Err(PropagationError::GpuError(e.to_string())),
+                Err(e) => return Err(PropagationError::GpuCommunicationError(e.to_string())),
             };
 
             // Calculate coordinates from index
@@ -1015,19 +971,20 @@ impl ConstraintPropagator for GpuConstraintPropagator {
     }
 }
 
-/* // Commenting out tests due to compilation issues and problems applying fixes
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::buffers::{DynamicBufferConfig, WorklistBuffers};
+    use crate::propagator::{GpuConstraintPropagator, GpuParamsUniform};
     use crate::{
-        buffers::GpuBuffers,
-        pipeline::{self},
-        test_utils::{self},
+        buffers::GpuBuffers, pipeline::ComputePipelines, test_utils::create_test_device_queue,
         GpuError,
     };
     use std::sync::Arc;
-    use wfc_core::grid::{Grid, PossibilityGrid};
-    use wfc_rules::AdjacencyRules;
+    use wfc_core::{
+        grid::{Grid, PossibilityGrid},
+        BoundaryCondition,
+    };
+    use wfc_rules::{AdjacencyRules, TileSet, Transformation};
 
     // Helper struct for mock GPU resources
     struct MockGpu {
@@ -1040,15 +997,14 @@ mod tests {
     // Make setup_mock_gpu synchronous
     fn setup_mock_gpu() -> Result<MockGpu, GpuError> {
         // Use synchronous test device/queue creation
-        let (device, queue) = test_utils::create_test_device_queue();
+        let (device, queue) = create_test_device_queue();
 
         // Create dummy grid and rules for buffer/pipeline creation
         let grid_dims = (16, 16, 1);
         let num_tiles = 4;
         let num_axes = 6;
         let dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, num_tiles);
-        // let dummy_rules = AdjacencyRules::new_uniform(num_tiles, num_axes); // new_uniform is likely removed/renamed
-        let dummy_rules = AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, vec![]); // Use alternative constructor
+        let dummy_rules = AdjacencyRules::from_allowed_tuples(num_tiles, num_axes, vec![]);
 
         // Create test buffers
         let buffers = Arc::new(GpuBuffers::new(
@@ -1100,16 +1056,8 @@ mod tests {
             },
         ));
 
-        // Create test pipelines object - Corrected structure
-        let pipelines = Arc::new(ComputePipelines {
-            entropy_pipeline: propagation_pipeline.clone(), // Use dummy for both
-            propagation_pipeline,
-            entropy_bind_group_layout_0,
-            entropy_bind_group_layout_1,
-            propagation_bind_group_layout,
-            entropy_workgroup_size: 8,     // Example size
-            propagation_workgroup_size: 8, // Example size
-        });
+        // Create test pipelines object - Corrected structure and added features
+        let pipelines = Arc::new(ComputePipelines::new(&device, (num_tiles + 31) / 32, &[])?);
 
         Ok(MockGpu {
             device,
@@ -1124,11 +1072,21 @@ mod tests {
         let mock_gpu = setup_mock_gpu().expect("Failed to setup mock GPU");
         let grid_dims = mock_gpu.buffers.grid_dims;
         let boundary_mode = mock_gpu.buffers.boundary_mode;
-        // let params = GpuParamsUniform { ..Default::default() }; // GpuParamsUniform doesn't derive Default
-        let params = GpuParamsUniform { // Manual initialization
-            grid_width: 16, grid_height: 16, grid_depth: 1, num_tiles: 4, num_axes: 6,
-            boundary_mode: 0, heuristic_type: 0, tie_breaking: 0, max_propagation_steps: 1000,
-            contradiction_check_frequency: 100, worklist_size: 0, grid_element_count: 256, _padding: 0,
+        let params = GpuParamsUniform {
+            // Manual initialization
+            grid_width: 16,
+            grid_height: 16,
+            grid_depth: 1,
+            num_tiles: 4,
+            num_axes: 6,
+            boundary_mode: 0,
+            heuristic_type: 0,
+            tie_breaking: 0,
+            max_propagation_steps: 1000,
+            contradiction_check_frequency: 100,
+            worklist_size: 0,
+            grid_element_count: 256,
+            _padding: 0,
         };
 
         let propagator = GpuConstraintPropagator::new(
@@ -1149,10 +1107,21 @@ mod tests {
         let mock_gpu = setup_mock_gpu().expect("Failed to setup mock GPU");
         let grid_dims = mock_gpu.buffers.grid_dims;
         let boundary_mode = mock_gpu.buffers.boundary_mode;
-        let params = GpuParamsUniform { // Manual initialization
-            grid_width: 16, grid_height: 16, grid_depth: 1, num_tiles: 4, num_axes: 6,
-            boundary_mode: 0, heuristic_type: 0, tie_breaking: 0, max_propagation_steps: 1000,
-            contradiction_check_frequency: 100, worklist_size: 0, grid_element_count: 256, _padding: 0,
+        let params = GpuParamsUniform {
+            // Manual initialization
+            grid_width: 16,
+            grid_height: 16,
+            grid_depth: 1,
+            num_tiles: 4,
+            num_axes: 6,
+            boundary_mode: 0,
+            heuristic_type: 0,
+            tie_breaking: 0,
+            max_propagation_steps: 1000,
+            contradiction_check_frequency: 100,
+            worklist_size: 0,
+            grid_element_count: 256,
+            _padding: 0,
         };
 
         let propagator = GpuConstraintPropagator::new(
@@ -1175,10 +1144,21 @@ mod tests {
         let mock_gpu = setup_mock_gpu().expect("Failed to setup mock GPU");
         let grid_dims = mock_gpu.buffers.grid_dims;
         let boundary_mode = mock_gpu.buffers.boundary_mode;
-        let params = GpuParamsUniform { // Manual initialization
-            grid_width: 16, grid_height: 16, grid_depth: 1, num_tiles: 4, num_axes: 6,
-            boundary_mode: 0, heuristic_type: 0, tie_breaking: 0, max_propagation_steps: 1000,
-            contradiction_check_frequency: 100, worklist_size: 0, grid_element_count: 256, _padding: 0,
+        let params = GpuParamsUniform {
+            // Manual initialization
+            grid_width: 16,
+            grid_height: 16,
+            grid_depth: 1,
+            num_tiles: 4,
+            num_axes: 6,
+            boundary_mode: 0,
+            heuristic_type: 0,
+            tie_breaking: 0,
+            max_propagation_steps: 1000,
+            contradiction_check_frequency: 100,
+            worklist_size: 0,
+            grid_element_count: 256,
+            _padding: 0,
         };
 
         let config = SubgridConfig {
@@ -1198,11 +1178,88 @@ mod tests {
         )
         .with_parallel_subgrid_processing(config.clone());
 
-        // assert_eq!(propagator.subgrid_config, Some(config)); // SubgridConfig doesn't derive PartialEq
         assert!(propagator.subgrid_config.is_some());
 
         let propagator_disabled = propagator.without_parallel_subgrid_processing();
         assert!(propagator_disabled.subgrid_config.is_none()); // Check for None instead of direct comparison
     }
+
+    /// Test helper for subgrid merging
+    #[test]
+    #[ignore = "GpuConstraintPropagatorImpl not accessible for merge_subgrid_changes"]
+    fn test_merge_subgrid_changes() {
+        let mut main_grid = PossibilityGrid::new(4, 4, 1, 3);
+        let mut subgrid = PossibilityGrid::new(2, 2, 1, 3);
+
+        // Modify subgrid
+        subgrid.get_mut(0, 0, 0).unwrap().set(0, false); // Remove possibility 0
+        subgrid.get_mut(1, 1, 0).unwrap().set(1, false); // Remove possibility 1
+
+        // Merge subgrid into main grid at offset (1, 1)
+        // This call requires GpuConstraintPropagatorImpl which seems private/gone.
+        // GpuConstraintPropagatorImpl::merge_subgrid_changes(
+        //     &mut main_grid,
+        //     subgrid,
+        //     1, // subgrid_x
+        //     1, // subgrid_y
+        //     0, // subgrid_z
+        // ).unwrap();
+
+        // Since we can't call the function, we can't assert the results.
+        // // Check main grid
+        // // Cell (1, 1, 0) corresponds to subgrid (0, 0, 0)
+        // assert!(!main_grid.get(1, 1, 0).unwrap().get(0).map_or(false, |b| *b));
+        // assert!(main_grid.get(1, 1, 0).unwrap().get(1).map_or(false, |b| *b));
+        // assert!(main_grid.get(1, 1, 0).unwrap().get(2).map_or(false, |b| *b));
+        //
+        // // Cell (2, 2, 0) corresponds to subgrid (1, 1, 0)
+        // assert!(!main_grid.get(2, 2, 0).unwrap().get(1).map_or(false, |b| *b));
+        // assert!(main_grid.get(2, 2, 0).unwrap().get(0).map_or(false, |b| *b));
+        // assert!(main_grid.get(2, 2, 0).unwrap().get(2).map_or(false, |b| *b));
+        //
+        // // Other cells in main grid should be untouched
+        // assert!(main_grid.get(0, 0, 0).unwrap().iter_ones().count() == 3);
+    }
+
+    /// This should trigger buffer resizing logic within ensure_worklist_buffers.
+    #[test]
+    fn test_ensure_worklist_buffers() {
+        let (device, _) = create_test_device_queue();
+        // Use the config when creating WorklistBuffers
+        let config = DynamicBufferConfig::default();
+        let mut buffers =
+            WorklistBuffers::new(&device, 100, &config).expect("Failed to create initial buffers");
+
+        // Ensure for a much larger grid
+        let large_width: u32 = 1000;
+        let large_height: u32 = 1000;
+        let large_depth: u32 = 1;
+
+        let result = buffers.ensure_worklist_buffers(
+            &device,
+            large_width,  // Pass u32
+            large_height, // Pass u32
+            large_depth,  // Pass u32
+            &config,      // Pass the config
+        );
+        assert!(
+            result.is_ok(),
+            "ensure_worklist_buffers failed: {:?}",
+            result.err()
+        );
+
+        // Check if buffers were actually resized (example check on buffer A)
+        let expected_size = large_width as u64
+            * large_height as u64
+            * large_depth as u64
+            * std::mem::size_of::<u32>() as u64;
+        assert!(
+            buffers.worklist_buf_a.size() >= expected_size,
+            "Buffer A size not increased"
+        );
+        assert!(
+            buffers.worklist_buf_b.size() >= expected_size,
+            "Buffer B size not increased"
+        );
+    }
 }
-*/
