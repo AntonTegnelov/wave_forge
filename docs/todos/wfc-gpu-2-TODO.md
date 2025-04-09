@@ -128,6 +128,6 @@ This document outlines a specific plan to refactor the wfc-gpu module, addressin
     - [x] Dependency resolution
     - [x] Feature flag handling
 
-- [ ] Create new JSON schema files:
-  - [ ] `wfc-gpu/src/shaders/schemas/component.json` - Shader component metadata schema
-  - [ ] `wfc-gpu/src/shaders/schemas/feature.json` - Feature capability flags schema
+- [x] Create new JSON schema files:
+  - [x] `wfc-gpu/src/shaders/schemas/component.json` - Shader component metadata schema
+  - [x] `wfc-gpu/src/shaders/schemas/feature.json` - Feature capability flags schema
