@@ -7,6 +7,7 @@ use crate::{
 use log::{debug, error, warn};
 use pollster;
 use std::sync::Arc;
+use thiserror::Error;
 use wfc_core::{
     entropy::{EntropyCalculator, EntropyError as CoreEntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},

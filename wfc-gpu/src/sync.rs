@@ -253,10 +253,10 @@ impl GpuSynchronizer {
         let flag_buffer_gpu = &self.buffers.contradiction_flag_buf;
         let flag_buffer_staging = self.buffers.staging_contradiction_flag_buf.clone();
         let flag_data = crate::buffers::download_buffer_data::<u32>(
-            &self.device,
-            &self.queue,
-            flag_buffer_gpu,
-            &flag_buffer_staging,
+            self.device.clone(),
+            self.queue.clone(),
+            flag_buffer_gpu.clone(),
+            flag_buffer_staging.clone(),
             flag_buffer_gpu.size(),
             Some("Contradiction Flag".to_string()),
         )
@@ -276,10 +276,10 @@ impl GpuSynchronizer {
             let loc_buffer_gpu = &self.buffers.contradiction_location_buf;
             let loc_buffer_staging = self.buffers.staging_contradiction_location_buf.clone();
             let loc_data = crate::buffers::download_buffer_data::<u32>(
-                &self.device,
-                &self.queue,
-                loc_buffer_gpu,
-                &loc_buffer_staging,
+                self.device.clone(),
+                self.queue.clone(),
+                loc_buffer_gpu.clone(),
+                loc_buffer_staging.clone(),
                 loc_buffer_gpu.size(),
                 Some("Contradiction Location".to_string()),
             )
@@ -309,10 +309,10 @@ impl GpuSynchronizer {
             .clone();
 
         let count_data = crate::buffers::download_buffer_data::<u32>(
-            &self.device,
-            &self.queue,
-            count_buffer_gpu,
-            &staging_count_buffer,
+            self.device.clone(),
+            self.queue.clone(),
+            count_buffer_gpu.clone(),
+            staging_count_buffer.clone(),
             4, // size of u32
             Some("Worklist Count".to_string()),
         )
@@ -328,41 +328,23 @@ impl GpuSynchronizer {
     }
 
     /// Downloads pass statistics (updated cells, contradictions) from the GPU.
-    pub async fn download_pass_statistics(&self) -> Result<(u32, u32), GpuError> {
+    pub async fn download_pass_statistics(&self) -> Result<Vec<u32>, GpuError> {
         trace!("Downloading pass statistics from GPU");
 
         let stats_buffer_gpu = &self.buffers.pass_statistics_buf;
         let staging_stats_buffer = self.buffers.staging_pass_statistics_buf.clone();
 
         let stats_data = crate::buffers::download_buffer_data::<u32>(
-            &self.device,
-            &self.queue,
-            stats_buffer_gpu,
-            &staging_stats_buffer,
-            staging_stats_buffer.size(), // Assuming size is correct (e.g., 2 * u32)
+            self.device.clone(),
+            self.queue.clone(),
+            stats_buffer_gpu.clone(),
+            staging_stats_buffer.clone(),
+            stats_buffer_gpu.size(), // Assuming size is correct (e.g., 2 * u32)
             Some("Pass Statistics".to_string()),
         )
-        .await;
+        .await?;
 
-        match stats_data {
-            Ok(data) => {
-                if data.len() >= 2 {
-                    Ok((data[0], data[1])) // Updated cells, contradictions
-                } else {
-                    error!(
-                        "Downloaded pass statistics data has incorrect length: {}",
-                        data.len()
-                    );
-                    Err(GpuError::BufferSizeMismatch(
-                        "Pass statistics buffer size mismatch".to_string(),
-                    ))
-                }
-            }
-            Err(e) => {
-                error!("Failed to download pass statistics: {}", e);
-                Err(e)
-            }
-        }
+        Ok(stats_data)
     }
 
     /// Updates the entropy parameters uniform buffer on the GPU.
@@ -606,6 +588,87 @@ impl GpuSynchronizer {
     /// Gets a reference to the GPU buffers.
     pub fn buffers(&self) -> &Arc<GpuBuffers> {
         &self.buffers
+    }
+
+    /// Checks if a contradiction has occurred by downloading the contradiction flag.
+    pub async fn check_for_contradiction(&self) -> Result<bool, GpuError> {
+        let flag_buffer_gpu = &self.buffers.contradiction_flag_buf;
+        let flag_buffer_staging = &self.buffers.staging_contradiction_flag_buf;
+
+        let flag_data = crate::buffers::download_buffer_data::<u32>(
+            self.device.clone(),
+            self.queue.clone(),
+            flag_buffer_gpu.clone(),
+            flag_buffer_staging.clone(),
+            std::mem::size_of::<u32>() as u64,
+            Some("Contradiction Flag Download".to_string()),
+        )
+        .await?;
+
+        Ok(flag_data.first().map_or(false, |&flag| flag != 0))
+    }
+
+    /// Downloads the location of the first contradiction, if one occurred.
+    pub async fn download_contradiction_location(&self) -> Result<Option<u32>, GpuError> {
+        let loc_buffer_gpu = &self.buffers.contradiction_location_buf;
+        let loc_buffer_staging = &self.buffers.staging_contradiction_location_buf;
+
+        // First, check the flag
+        if !self.check_for_contradiction().await? {
+            return Ok(None);
+        }
+
+        // If flag is set, download the location
+        let loc_data = crate::buffers::download_buffer_data::<u32>(
+            self.device.clone(),
+            self.queue.clone(),
+            loc_buffer_gpu.clone(),
+            loc_buffer_staging.clone(),
+            std::mem::size_of::<u32>() as u64,
+            Some("Contradiction Location Download".to_string()),
+        )
+        .await?;
+
+        Ok(loc_data.first().cloned())
+    }
+
+    /// Downloads the current worklist count.
+    pub async fn download_worklist_count(&self) -> Result<u32, GpuError> {
+        let count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf;
+        let staging_count_buffer = &self.buffers.worklist_buffers.staging_worklist_count_buf;
+
+        let count_data = crate::buffers::download_buffer_data::<u32>(
+            self.device.clone(),
+            self.queue.clone(),
+            count_buffer_gpu.clone(),
+            staging_count_buffer.clone(),
+            std::mem::size_of::<u32>() as u64,
+            Some("Worklist Count Download".to_string()),
+        )
+        .await?;
+        Ok(count_data.first().cloned().unwrap_or(0))
+    }
+
+    /// Downloads pass statistics (e.g., number of updates).
+    pub async fn download_pass_statistics(&self) -> Result<Vec<u32>, GpuError> {
+        let stats_buffer_gpu = &self.buffers.pass_statistics_buf;
+        let staging_stats_buffer = &self.buffers.staging_pass_statistics_buf;
+
+        let stats_data = crate::buffers::download_buffer_data::<u32>(
+            self.device.clone(),
+            self.queue.clone(),
+            stats_buffer_gpu.clone(),
+            staging_stats_buffer.clone(),
+            stats_buffer_gpu.size(), // Use actual buffer size
+            Some("Pass Statistics Download".to_string()),
+        )
+        .await?;
+        Ok(stats_data)
+    }
+
+    /// Downloads the entire possibility grid state.
+    pub async fn download_entire_grid_state(&self) -> Result<PossibilityGrid, GpuError> {
+        self.download_grid(&PossibilityGrid::new(0, 0, 0, 0))
     }
 }
 

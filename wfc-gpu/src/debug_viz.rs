@@ -22,6 +22,15 @@ use std::sync::Arc;
 // Restore create_test_gpu_buffers import
 use crate::test_utils::{create_test_device_queue, create_test_gpu_buffers};
 
+use crate::{
+    backend::GpuBackend, buffers::GpuBuffers, pipeline::ComputePipelines,
+    shader_registry::ShaderRegistry, sync::GpuSynchronizer, GpuError,
+};
+use futures::FutureExt;
+use image::{ImageBuffer, Rgba, RgbaImage};
+use wfc_core::grid::GridDefinition;
+use wgpu::util::DeviceExt;
+
 /// Types of debug visualizations available
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VisualizationType {
@@ -333,12 +342,12 @@ pub trait GpuBuffersDebugExt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Removed unused imports
-    // use crate::test_utils::{create_test_device_queue, create_test_gpu_buffers};
-    use crate::test_utils::{create_test_device_queue, create_test_gpu_buffers}; // Keep these
-    use std::sync::Arc; // Keep Arc
-    use wfc_core::{BoundaryCondition, PossibilityGrid};
-    use wfc_rules::AdjacencyRules;
+    use crate::entropy::EntropyHeuristicType;
+    use crate::test_utils::{create_test_device_queue, setup_mock_gpu};
+    use futures::executor::block_on;
+    use std::sync::Arc;
+    use wfc_core::grid::{GridCoord3D, GridDefinition};
+    use wfc_rules::{TileSet, Transformation};
 
     #[tokio::test] // Restore tokio test attribute
     async fn test_debug_visualizer_creation() {

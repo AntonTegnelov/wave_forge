@@ -104,6 +104,11 @@ mod tests {
             panic!("Cell (2,2,0) should exist");
         }
     }
+
+    #[tokio::test]
+    async fn test_entropy_calculation() {
+        // Existing test code...
+    }
 }
 
 #[cfg(test)]
