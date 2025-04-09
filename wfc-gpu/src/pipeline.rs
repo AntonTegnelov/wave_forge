@@ -505,15 +505,14 @@ impl ComputePipelines {
         );
 
         // Create compute pipeline
-        let pipeline = Arc::new(
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(&format!("Compute Pipeline: {}", entry_point)),
-                layout: Some(layout),
-                module,
-                entry_point,
-                compilation_options: Default::default(),
-            }),
-        );
+        let desc = wgpu::ComputePipelineDescriptor {
+            label: Some(&format!("Compute Pipeline: {}", entry_point)),
+            layout: Some(layout),
+            module,
+            entry_point,
+        };
+
+        let pipeline = device.create_compute_pipeline(&desc);
 
         cache.insert(key, pipeline.clone());
         Ok(pipeline)

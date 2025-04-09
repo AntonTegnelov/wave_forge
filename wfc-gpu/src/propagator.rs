@@ -1,6 +1,5 @@
-use crate::test_utils::create_test_device_queue;
 use crate::{
-    buffers::{DynamicBufferConfig, GpuBuffers, GpuParamsUniform},
+    buffers::{GpuBuffers, GpuParamsUniform},
     debug_viz::DebugVisualizer,
     pipeline::ComputePipelines,
     subgrid::{
@@ -430,10 +429,10 @@ impl GpuConstraintPropagator {
 
             // Use download_buffer_data instead
             let worklist_size_data = crate::buffers::download_buffer_data::<u32>(
-                &self.device,
-                &self.queue,
-                count_buf_gpu,
-                count_buf_staging,
+                self.device.clone(),
+                self.queue.clone(),
+                count_buf_gpu.clone(),
+                count_buf_staging.clone(),
                 4, // Size of u32
                 Some("Worklist Size".to_string()),
             )
@@ -485,10 +484,10 @@ impl GpuConstraintPropagator {
             if current_pass % self.params.contradiction_check_frequency == 0 {
                 // Use download_buffer_data instead
                 let contradiction_flag_data = crate::buffers::download_buffer_data::<u32>(
-                    &self.device,
-                    &self.queue,
-                    &self.buffers.contradiction_flag_buf,
-                    &self.buffers.staging_contradiction_flag_buf,
+                    self.device.clone(),
+                    self.queue.clone(),
+                    self.buffers.contradiction_flag_buf.clone(),
+                    self.buffers.staging_contradiction_flag_buf.clone(),
                     4, // Size of u32
                     Some("Contradiction Flag".to_string()),
                 )
@@ -502,10 +501,10 @@ impl GpuConstraintPropagator {
                 if contradiction_flag != 0 {
                     // Use download_buffer_data instead
                     let contradiction_loc_data = crate::buffers::download_buffer_data::<u32>(
-                        &self.device,
-                        &self.queue,
-                        &self.buffers.contradiction_location_buf,
-                        &self.buffers.staging_contradiction_location_buf,
+                        self.device.clone(),
+                        self.queue.clone(),
+                        self.buffers.contradiction_location_buf.clone(),
+                        self.buffers.staging_contradiction_location_buf.clone(),
                         4, // Size of u32
                         Some("Contradiction Location".to_string()),
                     )
@@ -530,10 +529,10 @@ impl GpuConstraintPropagator {
 
             // --- Check Early Termination ---
             let output_worklist_size_data = crate::buffers::download_buffer_data::<u32>(
-                &self.device,
-                &self.queue,
-                count_buf_gpu, // Source is still the main count buffer
-                count_buf_staging,
+                self.device.clone(),
+                self.queue.clone(),
+                count_buf_gpu.clone(), // Source is still the main count buffer
+                count_buf_staging.clone(),
                 4, // Size of u32
                 Some("Output Worklist Size".to_string()),
             )
@@ -564,10 +563,10 @@ impl GpuConstraintPropagator {
 
         // Final contradiction check after loop finishes
         let contradiction_flag_data = crate::buffers::download_buffer_data::<u32>(
-            &self.device,
-            &self.queue,
-            &self.buffers.contradiction_flag_buf,
-            &self.buffers.staging_contradiction_flag_buf,
+            self.device.clone(),
+            self.queue.clone(),
+            self.buffers.contradiction_flag_buf.clone(),
+            self.buffers.staging_contradiction_flag_buf.clone(),
             4, // Size of u32
             Some("Final Contradiction Flag Check".to_string()),
         )
@@ -580,10 +579,10 @@ impl GpuConstraintPropagator {
 
         if contradiction_flag != 0 {
             let contradiction_loc_data = crate::buffers::download_buffer_data::<u32>(
-                &self.device,
-                &self.queue,
-                &self.buffers.contradiction_location_buf,
-                &self.buffers.staging_contradiction_location_buf,
+                self.device.clone(),
+                self.queue.clone(),
+                self.buffers.contradiction_location_buf.clone(),
+                self.buffers.staging_contradiction_location_buf.clone(),
                 4, // Size of u32
                 Some("Contradiction Location on Final Check".to_string()),
             )

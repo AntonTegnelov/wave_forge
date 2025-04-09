@@ -1,27 +1,31 @@
 #![allow(clippy::redundant_field_names)]
 use crate::{
     backend::GpuBackend,
-    buffers::{DownloadRequest, GpuBuffers},
-    coordination::WfcCoordinator,
+    buffers::{DownloadRequest, GpuBuffers, GpuParamsUniform},
+    coordination::{DefaultCoordinator, WfcCoordinator},
     debug_viz::{DebugVisualizationConfig, DebugVisualizer},
     entropy::{EntropyHeuristicType, GpuEntropyCalculator},
     pipeline::ComputePipelines,
     propagator::GpuConstraintPropagator,
     shader_registry::ShaderRegistry,
+    subgrid::SubgridConfig,
     sync::GpuSynchronizer,
     GpuError,
 };
+use anyhow::Error as AnyhowError;
 use log::{error, info, trace, warn};
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Instant;
 use wfc_core::{
-    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
-    grid::{EntropyGrid, PossibilityGrid},
+    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType as CoreEntropyHeuristicType},
+    grid::{GridCoord, GridDefinition, GridStats, GridView, PossibilityGrid},
     propagator::{ConstraintPropagator, PropagationError},
-    BoundaryCondition, ProgressInfo, WfcError,
+    traits::{self as wfc_traits, CollapseResult, ObserveResult, PropagationResult},
+    BoundaryCondition, ProgressInfo, TileId, WfcError,
 };
 use wfc_rules::AdjacencyRules;
+use wgpu::{Device, Queue};
 
 /// Internal state for the GpuAccelerator, managed within an Arc<RwLock<>>.
 #[derive(Debug)]
@@ -32,11 +36,13 @@ pub struct AcceleratorInstance {
     boundary_condition: BoundaryCondition,
     pipelines: Arc<ComputePipelines>,
     buffers: Arc<GpuBuffers>,
-    entropy_calculator: GpuEntropyCalculator,
-    propagator: GpuConstraintPropagator,
-    coordinator: Box<dyn WfcCoordinator + Send + Sync + std::fmt::Debug>,
+    sync: Arc<GpuSynchronizer>,
+    entropy_calculator: Arc<GpuEntropyCalculator>,
+    propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    coordinator: Box<dyn WfcCoordinator + Send + Sync>,
     subgrid_config: Option<SubgridConfig>,
-    progress_callback: Option<Box<dyn FnMut(f32) + Send + Sync>>,
+    progress_callback:
+        Option<Box<dyn FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync>>,
     debug_visualizer: Option<DebugVisualizer>,
 }
 
@@ -88,169 +94,132 @@ impl GpuAccelerator {
     pub async fn new(
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
-        boundary_mode: BoundaryCondition,
-        entropy_heuristic: EntropyHeuristicType,
+        boundary_condition: BoundaryCondition,
+        entropy_heuristic: CoreEntropyHeuristicType,
         subgrid_config: Option<SubgridConfig>,
     ) -> Result<Self, GpuError> {
         let start_time = Instant::now();
         info!("Initializing GPU Accelerator...");
 
-        // Initialize WGPU
-        let instance = wgpu::Instance::default();
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            })
-            .await
-            .ok_or_else(|| GpuError::AdapterRequestFailed)?;
+        let backend = crate::backend::WgpuBackend::new()?;
+        let device = backend.device();
+        let queue = backend.queue();
 
-        info!("Using GPU adapter: {:?}", adapter.get_info());
+        info!("Using GPU adapter: {:?}", backend.adapter_info());
 
-        let supported_features = adapter.features();
+        let supported_features = backend.features();
         let mut features_to_enable = wgpu::Features::empty();
         let mut features = vec![];
 
-        if supported_features.contains(
-            wgpu::Features::BUFFER_BINDING_ARRAY | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY,
-        ) {
-            features_to_enable |= wgpu::Features::BUFFER_BINDING_ARRAY
-                | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY;
-            features.push("binding_arrays".to_string());
-            info!("GPU supports binding arrays.");
-        }
         if supported_features.contains(wgpu::Features::SHADER_F64) {
             features_to_enable |= wgpu::Features::SHADER_F64;
+            features.push("f64".to_string());
             info!("SHADER_F64 feature supported and enabled.");
         }
 
-        // Example: Check for atomics support (general)
-        // Commenting out entirely for now to ensure compilation
-        /*
-        if supported_features.contains(wgpu::Features::BUFFER_BINDING_TYPE_STORAGE_BUFFER_ATOMIC) {
-            info!("Storage Buffer Atomics feature supported.");
-            features.push("atomics".to_string()); // Push based on general atomics support
-            // features_to_enable |= wgpu::Features::BUFFER_BINDING_TYPE_STORAGE_BUFFER_ATOMIC;
-        }
-        */
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("WFC GPU Device"),
-                    required_features: features_to_enable,
-                    required_limits: wgpu::Limits {
-                        max_compute_invocations_per_workgroup: 256,
-                        ..wgpu::Limits::default()
-                    },
-                },
-                None,
-            )
-            .await
-            .map_err(GpuError::DeviceRequestFailed)?;
-
-        let device = Arc::new(device);
-        let queue = Arc::new(queue);
-
-        // Calculate num_tiles_u32 using public getter
-        let num_tiles = initial_grid.num_tiles(); // Use getter
+        let num_tiles = initial_grid.num_tiles();
         let num_tiles_u32 = (num_tiles + 31) / 32;
 
-        let features_ref: Vec<&str> = features.iter().map(String::as_str).collect();
+        let features_ref: Vec<&str> = features.iter().map(|s| s.as_str()).collect();
 
-        // Create compute pipelines
         let pipelines = Arc::new(ComputePipelines::new(
-            &device,
+            device.clone(),
             num_tiles_u32 as u32,
             &features_ref,
         )?);
 
-        // Create GPU buffers
         let buffers = Arc::new(GpuBuffers::new(
-            &device,
-            &queue,
+            device.clone(),
+            queue.clone(),
             initial_grid,
             rules,
-            boundary_mode,
+            boundary_condition,
         )?);
 
-        // Create synchronizer
         let synchronizer = Arc::new(GpuSynchronizer::new(
             device.clone(),
             queue.clone(),
             buffers.clone(),
         ));
 
-        // Need params for propagator creation
-        let temp_params = GpuParamsUniform {
+        let total_cells = initial_grid.width * initial_grid.height * initial_grid.depth;
+
+        let params = GpuParamsUniform {
             grid_width: initial_grid.width as u32,
             grid_height: initial_grid.height as u32,
             grid_depth: initial_grid.depth as u32,
             num_tiles: num_tiles as u32,
             num_axes: rules.num_axes() as u32,
-            boundary_mode: if boundary_mode == BoundaryCondition::Periodic {
+            boundary_mode: if boundary_condition == BoundaryCondition::Periodic {
                 1
             } else {
                 0
             },
-            heuristic_type: 0,                  // Placeholder, update later
-            tie_breaking: 0,                    // Placeholder
-            max_propagation_steps: 1000,        // Example
-            contradiction_check_frequency: 100, // Example
-            worklist_size: 0,                   // Initial
-            grid_element_count: (initial_grid.width * initial_grid.height * initial_grid.depth)
-                as u32,
+            heuristic_type: match entropy_heuristic {
+                CoreEntropyHeuristicType::Shannon => 0,
+                CoreEntropyHeuristicType::Count => 1,
+                CoreEntropyHeuristicType::CountSimple => 2,
+                CoreEntropyHeuristicType::WeightedCount => 3,
+            },
+            tie_breaking: 0,
+            max_propagation_steps: 1000,
+            contradiction_check_frequency: 100,
+            worklist_size: 0,
+            grid_element_count: total_cells as u32,
             _padding: 0,
         };
 
-        // Create propagator
-        let mut propagator = GpuConstraintPropagator::new(
+        synchronizer.update_propagation_params(&params)?;
+
+        let mut propagator_concrete = GpuConstraintPropagator::new(
             device.clone(),
-            &pipelines,
-            &buffers,
-            initial_grid.width as u32,
-            initial_grid.height as u32,
-            initial_grid.depth as u32,
-            contradiction_check_frequency,
-        )?;
+            queue.clone(),
+            pipelines.clone(),
+            buffers.clone(),
+            (initial_grid.width, initial_grid.height, initial_grid.depth),
+            boundary_condition,
+            params,
+        );
 
-        // Set subgrid config if provided
         if let Some(config) = subgrid_config {
-            propagator.with_parallel_subgrid_processing(config);
+            propagator_concrete = propagator_concrete.with_parallel_subgrid_processing(config);
         }
+        let propagator = Arc::new(RwLock::new(propagator_concrete));
 
-        let grid_dims = (initial_grid.width, initial_grid.height, initial_grid.depth);
-        let max_propagation_steps = 1000;
-        let contradiction_check_frequency = 100;
-
-        // Create entropy calculator
-        let entropy_calculator = GpuEntropyCalculator::new(
+        let mut entropy_calculator_concrete = GpuEntropyCalculator::new(
             device.clone(),
             queue.clone(),
             pipelines.clone(),
             buffers.clone(),
             (initial_grid.width, initial_grid.height, initial_grid.depth),
         );
+        entropy_calculator_concrete.set_entropy_heuristic(entropy_heuristic);
+        let entropy_calculator = Arc::new(entropy_calculator_concrete);
 
         info!(
             "GPU Accelerator initialized in {:.2?}",
             start_time.elapsed()
         );
 
-        // Explicitly instantiate DefaultCoordinator
         let default_coord = DefaultCoordinator::new(entropy_calculator.clone(), propagator.clone());
+
+        let grid_definition = GridDefinition {
+            dims: (initial_grid.width, initial_grid.height, initial_grid.depth),
+            num_tiles: initial_grid.num_tiles(),
+        };
+
         let instance = AcceleratorInstance {
-            backend: backend.clone(),
+            backend: Arc::new(backend),
             grid_definition,
             rules: Arc::new(rules.clone()),
             boundary_condition,
-            pipelines: Arc::new(pipelines),
-            buffers: Arc::new(buffers),
+            pipelines,
+            buffers,
+            sync: synchronizer,
             entropy_calculator,
             propagator,
             coordinator: Box::new(default_coord),
-            subgrid_config: None,
+            subgrid_config,
             progress_callback: None,
             debug_visualizer: None,
         };
@@ -261,8 +230,6 @@ impl GpuAccelerator {
 
         Ok(accelerator)
     }
-
-    // Methods accessing instance fields now require locks
 
     pub fn backend(&self) -> Arc<dyn GpuBackend> {
         self.instance.read().unwrap().backend.clone()
@@ -290,43 +257,27 @@ impl GpuAccelerator {
 
     pub async fn get_intermediate_result(&self) -> Result<PossibilityGrid, GpuError> {
         let instance = self.instance.read().unwrap();
-        let device = instance.backend.device();
-        let queue = instance.backend.queue();
-        let buffers = instance.buffers.clone(); // Clone Arc for async boundary
-        let grid_def = instance.grid_definition.clone();
-
-        // Download grid possibilities
-        let request = DownloadRequest {
-            download_grid_possibilities: true,
-            ..Default::default()
-        };
-        let results = buffers
-            .download_results(device.clone(), queue.clone(), request)
-            .await?;
-
-        // Convert raw data to PossibilityGrid
-        results.to_possibility_grid(grid_def.dims, grid_def.num_tiles)
+        let target_grid = PossibilityGrid::new(
+            instance.grid_definition.dims.0,
+            instance.grid_definition.dims.1,
+            instance.grid_definition.dims.2,
+            instance.grid_definition.num_tiles,
+        );
+        instance.sync.download_grid(&target_grid).await
     }
 
     pub fn enable_default_debug_visualization(&mut self) {
-        // TODO: Fix DebugVisualizer setup after RwLock refactor
-        /*
-        let mut instance = self.instance.write().unwrap(); // Write lock
+        let mut instance = self.instance.write().unwrap();
         if instance.debug_visualizer.is_none() {
-            let config = DebugVisualizationConfig::default(); // Or load from somewhere
-            // Need access to GpuSynchronizer which is not in AcceleratorInstance
-            // let synchronizer = ???;
-            match DebugVisualizer::new(&config, synchronizer) { // Updated signature guess
-                Ok(visualizer) => instance.debug_visualizer = Some(visualizer),
-                Err(e) => error!("Failed to create debug visualizer: {}", e),
-            }
+            let config = DebugVisualizationConfig::default();
+            let sync_clone = instance.sync.clone();
+            instance.debug_visualizer = Some(DebugVisualizer::new(config, sync_clone));
+            info!("Debug visualization enabled.");
         }
-        */
-        warn!("Debug visualizer setup skipped due to ongoing refactoring.");
     }
 
     pub async fn run_with_callback<F>(
-        &mut self, // Needs &mut self for write lock
+        &mut self,
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
         max_iterations: u64,
@@ -334,23 +285,50 @@ impl GpuAccelerator {
         shutdown_signal: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> Result<PossibilityGrid, WfcError>
     where
-        F: FnMut(ProgressInfo),
+        F: FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync + 'static,
     {
-        let mut instance = self.instance.write().unwrap(); // Acquire write lock early
         let start_time = Instant::now();
-        let mut iteration = 0;
-        let total_cells = instance.grid_definition.total_cells();
+        let mut instance_guard = self.instance.write().unwrap();
 
-        // --- Initial State Synchronization ---
+        info!(
+            "Running WFC on GPU for grid {}x{}x{} with {} tiles. Max iterations: {}",
+            instance_guard.grid_definition.dims.0,
+            instance_guard.grid_definition.dims.1,
+            instance_guard.grid_definition.dims.2,
+            instance_guard.grid_definition.num_tiles,
+            max_iterations
+        );
+
+        let mut iteration: u64 = 0;
+        let total_cells = instance_guard.grid_definition.total_cells();
+
+        let mut run_result = WfcRunResult {
+            grid: initial_grid.clone(),
+            stats: GridStats::default(),
+        };
+
         trace!("Uploading initial grid state to GPU...");
-        instance
-            .buffers
-            .upload_grid_state(instance.backend.queue(), initial_grid)?;
-        trace!("Initial grid state uploaded.");
+        instance_guard
+            .sync
+            .upload_grid(initial_grid)
+            .map_err(|e| WfcError::GpuError(e.to_string()))?;
 
-        // --- Main WFC Loop ---
+        instance_guard
+            .sync
+            .reset_contradiction_flag()
+            .map_err(|e| WfcError::GpuError(e.to_string()))?;
+        instance_guard
+            .sync
+            .reset_contradiction_location()
+            .map_err(|e| WfcError::GpuError(e.to_string()))?;
+        instance_guard
+            .sync
+            .reset_worklist_count()
+            .map_err(|e| WfcError::GpuError(e.to_string()))?;
+
+        trace!("Initial grid state uploaded and GPU state reset.");
+
         loop {
-            // Check for shutdown signal
             if let Some(ref signal) = shutdown_signal {
                 if *signal.borrow() {
                     info!("Shutdown signal received, stopping WFC execution.");
@@ -369,122 +347,133 @@ impl GpuAccelerator {
             }
 
             iteration += 1;
-            trace!("--- Iteration {} ---", iteration);
+            trace!("--- WFC Iteration {} ---", iteration);
 
-            // 1. Calculate Entropy & Select Cell (using Coordinator)
-            let selection_result = instance
+            trace!("Coordinating entropy calculation and selection...");
+            let selection_result = instance_guard
                 .coordinator
                 .coordinate_entropy_and_selection(
-                    &instance.entropy_calculator,
-                    &instance.buffers, // Pass buffers needed by coordinator
-                    instance.backend.device(),
-                    instance.backend.queue(),
+                    &instance_guard.entropy_calculator,
+                    &instance_guard.buffers,
+                    &*instance_guard.backend.device(),
+                    &*instance_guard.backend.queue(),
+                    &instance_guard.sync,
                 )
                 .await;
 
             let selected_coords = match selection_result {
                 Ok(Some(coords)) => {
-                    // Keep coords as (usize, usize, usize) for contradiction reporting
+                    trace!("Selected cell for collapse: {:?}", coords);
                     coords
                 }
                 Ok(None) => {
-                    // No cell with entropy > 0 found, convergence?
-                    // Check for contradictions first
-                    if instance
-                        .propagator
-                        .check_for_contradiction(
-                            instance.backend.device(),
-                            instance.backend.queue(),
-                        )
-                        .await?
-                    {
-                        error!("Contradiction detected after entropy calculation.");
-                        return Err(WfcError::Contradiction(None)); // Contradiction expects Option<(usize, usize, usize)>?
-                    }
                     info!(
                         "Converged after {} iterations ({:.2?})",
                         iteration,
                         start_time.elapsed()
                     );
-                    break; // Converged successfully
+                    run_result.stats.iterations = iteration as usize;
+                    break;
                 }
-                Err(EntropyError::GpuError(e)) => return Err(WfcError::Gpu(e)),
-                Err(e) => return Err(WfcError::EntropyCalculation(e)), // Other entropy errors
+                Err(GpuError::ContradictionDetected { coord }) => {
+                    error!(
+                        "Contradiction detected during entropy calculation at {:?}",
+                        coord
+                    );
+                    run_result.stats.contradictions += 1;
+                    run_result.stats.iterations = iteration as usize;
+                    if let Some(c) = coord {
+                        return Err(WfcError::Contradiction(c.x, c.y, c.z));
+                    } else {
+                        error!("Contradiction detected by GPU but location unknown.");
+                        return Err(WfcError::UnknownContradiction);
+                    }
+                }
+                Err(e) => {
+                    error!("GPU error during entropy calculation: {}", e);
+                    return Err(WfcError::GpuError(e.to_string()));
+                }
             };
 
-            // 2. Collapse Cell (Implicitly handled by next propagation)
-            // The coordinator should provide the tile to collapse to, or handle it.
-            // For now, assume coordinator handles collapse internally or provides info needed.
-            // Let's assume propagation starts from the selected cell.
-            let updated_coords = vec![selected_coords]; // Start propagation from the selected cell
+            trace!("Coordinating constraint propagation...");
+            let update_coords = vec![GridCoord::from(selected_coords)];
 
-            // 3. Propagate Constraints (using Coordinator)
-            let propagation_result = instance
+            let mut propagator_guard = instance_guard.propagator.write().unwrap();
+
+            let propagation_result = instance_guard
                 .coordinator
                 .coordinate_propagation(
-                    &mut instance.propagator,
-                    &instance.buffers, // Pass buffers needed by coordinator
-                    instance.backend.device(),
-                    instance.backend.queue(),
-                    updated_coords,
+                    &mut *propagator_guard,
+                    &instance_guard.buffers,
+                    &*instance_guard.backend.device(),
+                    &*instance_guard.backend.queue(),
+                    update_coords,
                 )
                 .await;
 
+            drop(propagator_guard);
+
             match propagation_result {
-                Ok(_) => { /* Continue */ }
-                Err(PropagationError::Contradiction(coords_option)) => {
-                    // Map Option<GridCoord3D> to Option<(usize, usize, usize)>
-                    let coords_tuple_option =
-                        coords_option.map(|gc| (gc.x as usize, gc.y as usize, gc.z as usize));
-                    error!(
-                        "Contradiction detected during propagation at {:?}",
-                        coords_tuple_option
-                    );
-                    return Err(WfcError::Contradiction(coords_tuple_option)); // Pass Option<(usize, usize, usize)>
+                Ok(_) => {
+                    trace!("Propagation successful.");
+                    run_result.stats.collapsed_cells += 1;
                 }
-                Err(PropagationError::GpuError(e)) => return Err(WfcError::Gpu(e)),
-                Err(e) => return Err(WfcError::Propagation(e)), // Other propagation errors
+                Err(PropagationError::Contradiction(x, y, z)) => {
+                    error!(
+                        "Contradiction detected during propagation at ({}, {}, {})",
+                        x, y, z
+                    );
+                    run_result.stats.contradictions += 1;
+                    run_result.stats.iterations = iteration as usize;
+                    return Err(WfcError::Contradiction(x, y, z));
+                }
+                Err(PropagationError::GpuError(e)) => {
+                    error!("GPU error during propagation: {}", e);
+                    return Err(WfcError::GpuError(e.to_string()));
+                }
+                Err(e) => {
+                    error!("Propagation error: {}", e);
+                    return Err(WfcError::Propagation(e));
+                }
             }
 
-            // --- Progress Reporting ---
-            // Fetch intermediate grid for accurate progress info
-            let intermediate_grid = instance
-                .buffers
-                .download_results(
-                    instance.backend.device().clone(),
-                    instance.backend.queue().clone(),
-                    DownloadRequest {
-                        download_grid_possibilities: true,
-                        ..Default::default()
-                    },
-                )
-                .await?
-                .to_possibility_grid(
-                    instance.grid_definition.dims,
-                    instance.grid_definition.num_tiles,
-                )?;
+            if let Some(cb) = &mut instance_guard.progress_callback {
+                trace!("Calling progress callback for iteration {}...", iteration);
 
-            let collapsed_cells_count = intermediate_grid.count_collapsed_cells();
+                run_result.stats.iterations = iteration as usize;
 
-            let progress = collapsed_cells_count as f32 / total_cells as f32;
-            let progress_info = ProgressInfo {
-                iteration: iteration, // Ensure field name is correct
-                total_iterations: Some(max_iterations),
-                collapsed_cells: collapsed_cells_count,
-                total_cells: total_cells,
-                progress: progress,
-                start_time: start_time,
-                elapsed_time: start_time.elapsed(),
-                message: format!("Iteration {} complete", iteration),
-                grid_state: intermediate_grid, // grid_state expects PossibilityGrid, not Option
-            };
-            progress_callback(progress_info);
+                let progress = run_result.stats.collapsed_cells as f32 / total_cells as f32;
 
-            // --- Debug Visualization ---
-            if let Some(visualizer) = &mut instance.debug_visualizer {
-                trace!("Updating debug visualizer...");
+                let progress_info = ProgressInfo {
+                    iterations: iteration,
+                    grid_state: None,
+                    collapsed_cells: run_result.stats.collapsed_cells,
+                    total_cells: total_cells,
+                    elapsed_time: start_time.elapsed(),
+                };
+
+                trace!("Calling progress callback...");
+                match cb(progress_info) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        info!("WFC execution cancelled by progress callback.");
+                        return Err(WfcError::ExecutionCancelled(
+                            "Progress callback".to_string(),
+                        ));
+                    }
+                    Err(e) => {
+                        error!("Progress callback failed: {}", e);
+                        return Err(WfcError::CallbackError(e.to_string()));
+                    }
+                }
+            } else {
+                run_result.stats.iterations = iteration as usize;
+            }
+
+            if let Some(visualizer) = &mut instance_guard.debug_visualizer {
+                trace!("Updating debug visualizer for iteration {}...", iteration);
                 if let Err(e) = visualizer
-                    .update(&instance.backend, &instance.buffers)
+                    .update(&*instance_guard.backend, &*instance_guard.buffers)
                     .await
                 {
                     error!("Failed to update debug visualizer: {}", e);
@@ -492,72 +481,97 @@ impl GpuAccelerator {
             }
         }
 
-        // --- Final Result Download ---
-        trace!("Downloading final grid state from GPU...");
-        let request = DownloadRequest {
-            download_grid_possibilities: true,
-            ..Default::default()
-        };
-        let results = instance
-            .buffers
-            .download_results(instance.backend.device(), instance.backend.queue(), request)
-            .await?;
-        trace!("Final grid state downloaded.");
+        drop(instance_guard);
+        let final_instance_guard = self.instance.read().unwrap();
 
-        results
-            .to_possibility_grid(
-                instance.grid_definition.dims,
-                instance.grid_definition.num_tiles,
-            )
-            .map_err(WfcError::Gpu)
+        trace!("Downloading final grid state from GPU...");
+        let final_grid_target = PossibilityGrid::new(
+            final_instance_guard.grid_definition.dims.0,
+            final_instance_guard.grid_definition.dims.1,
+            final_instance_guard.grid_definition.dims.2,
+            final_instance_guard.grid_definition.num_tiles,
+        );
+        let final_grid = final_instance_guard
+            .sync
+            .download_grid(&final_grid_target)
+            .await
+            .map_err(|e| WfcError::GpuError(e.to_string()))?;
+
+        let final_collapsed_count = final_grid.count_collapsed_cells();
+        run_result.stats.collapsed_cells = final_collapsed_count;
+
+        info!(
+            "WFC finished. Iterations: {}, Time: {:.2?}, Collapsed: {}, Contradictions: {}",
+            run_result.stats.iterations,
+            start_time.elapsed(),
+            final_collapsed_count,
+            run_result.stats.contradictions
+        );
+
+        Ok(final_grid)
+    }
+
+    pub fn with_debug_visualization(&mut self, config: DebugVisualizationConfig) {
+        let mut instance = self.instance.write().unwrap();
+        let sync_clone = instance.sync.clone();
+        instance.debug_visualizer = Some(DebugVisualizer::new(config, sync_clone));
+        info!("Debug visualization enabled with custom config.");
     }
 
     pub fn set_progress_callback<F>(&mut self, callback: F)
     where
-        F: FnMut(f32) + Send + Sync + 'static,
+        F: FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync + 'static,
     {
-        let mut instance = self.instance.write().unwrap(); // Acquire write lock
+        let mut instance = self.instance.write().unwrap();
         instance.progress_callback = Some(Box::new(callback));
+        info!("Progress callback set.");
     }
 }
 
 impl Drop for GpuAccelerator {
     fn drop(&mut self) {
-        // Acquire write lock to ensure exclusive access during drop
-        let _instance = self.instance.write().unwrap();
-        // GPU resources within AcceleratorInstance (Buffers, Pipelines, Backend) should handle their own cleanup
-        // via their respective Drop implementations when the Arc count reaches zero.
-        info!("Dropping GpuAccelerator instance. GPU resources should be released if this is the last reference.");
+        info!("Dropping GpuAccelerator, releasing GPU resources...");
     }
 }
 
-// Removed trait impls
+#[derive(Debug)]
+pub struct WfcRunResult {
+    pub grid: PossibilityGrid,
+    pub stats: GridStats,
+}
+
+impl WfcRunResult {
+    pub fn new(grid: PossibilityGrid, stats: GridStats) -> Self {
+        WfcRunResult { grid, stats }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::create_test_device_queue;
-    use futures::executor::block_on;
-    use std::collections::HashSet;
-    use wfc_core::grid::{GridCoord3D, PossibilityGrid};
-    use wfc_rules::{AdjacencyRules, TileSet, Transformation};
+    use crate::backend::WgpuBackend;
+    use wfc_core::entropy::EntropyHeuristicType as CoreEntropyHeuristicType;
 
-    // Helper to create basic grid and rules for testing
     fn setup_basic_test_data() -> (PossibilityGrid, AdjacencyRules) {
-        let width = 3;
-        let height = 3;
+        let width = 4;
+        let height = 4;
         let depth = 1;
         let num_tiles = 2;
-        let grid = PossibilityGrid::new(width, height, depth, num_tiles);
 
-        let weights = vec![1.0; num_tiles];
-        let allowed_transforms = vec![vec![Transformation::Identity]; num_tiles];
-        let tileset = TileSet::new(weights, allowed_transforms).unwrap();
-        let num_transformed_tiles = tileset.num_transformed_tiles();
-        let allowed_tuples = (0..num_transformed_tiles).flat_map(|t1| {
-            (0..num_transformed_tiles).flat_map(move |t2| (0..6).map(move |axis| (t1, t2, axis)))
-        });
-        let rules = AdjacencyRules::from_allowed_tuples(num_transformed_tiles, 6, allowed_tuples);
+        let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
+        for z in 0..depth {
+            for y in 0..height {
+                for x in 0..width {
+                    if let Some(cell) = grid.get_mut(x, y, z) {
+                        cell.fill(true);
+                    }
+                }
+            }
+        }
+
+        let mut rules = AdjacencyRules::new(num_tiles, 6);
+        rules.allow(0, 1, 0);
+        rules.allow(1, 0, 0);
 
         (grid, rules)
     }
@@ -569,25 +583,44 @@ mod tests {
             &grid,
             &rules,
             BoundaryCondition::Finite,
-            EntropyHeuristicType::Shannon,
+            CoreEntropyHeuristicType::Shannon,
             None,
         )
         .await;
+
         assert!(accelerator.is_ok());
         let acc = accelerator.unwrap();
 
-        // Test basic config access
+        assert_eq!(acc.num_tiles(), grid.num_tiles());
         assert_eq!(acc.boundary_condition(), BoundaryCondition::Finite);
-        let grid_def = acc.grid_definition();
-        assert_eq!(grid_def.width, 3);
-        assert_eq!(grid_def.height, 3);
-        assert_eq!(grid_def.depth, 1);
-        assert_eq!(grid_def.num_tiles, 2);
-
-        // TODO: Test setting/getting heuristic and subgrid config once refactored
     }
 
-    // TODO: Add tests for run_with_callback
-    // TODO: Add tests for get_intermediate_result
-    // TODO: Add tests for error conditions (e.g., contradiction)
+    #[tokio::test]
+    async fn test_run_basic_wfc() {
+        let (grid, rules) = setup_basic_test_data();
+        let mut accelerator = GpuAccelerator::new(
+            &grid,
+            &rules,
+            BoundaryCondition::Finite,
+            CoreEntropyHeuristicType::Count,
+            None,
+        )
+        .await
+        .expect("Failed to create accelerator");
+
+        let max_iterations = (grid.width * grid.height * grid.depth * 2) as u64;
+
+        let result = accelerator
+            .run_with_callback(&grid, &rules, max_iterations, |_info| Ok(true), None)
+            .await;
+
+        assert!(result.is_ok(), "WFC run failed: {:?}", result.err());
+
+        if let Ok(final_grid) = result {
+            assert_eq!(final_grid.width, grid.width);
+            assert_eq!(final_grid.height, grid.height);
+            assert_eq!(final_grid.depth, grid.depth);
+            assert!(final_grid.is_fully_collapsed());
+        }
+    }
 }

@@ -19,8 +19,10 @@ pollster = "0.3.0"
 rayon = "1.10.0"
 seahash = "4.1.0"     # For hashing cache keys
 thiserror = "1.0.59"
-wgpu = "0.20" # Check for compatibility updates
+wgpu = { version = "0.19", features = ["trace"] } # Keep trace feature for debugging if needed
 wgpu-profiler = "0.17.0" # Match wgpu version if possible
+winit = "0.29"
+image = "0.25" # Added image crate
 
 wfc-core = { path = "../wfc-core", features = ["serde"] }
 wfc-rules = { path = "../wfc-rules" }
@@ -32,6 +34,9 @@ tokio = { version = "1", features = ["sync", "time"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 lazy_static = "1.4.0" # Moved from build-dependencies
+
+# Add other dependencies needed by wfc-gpu
+anyhow = "1.0"
 
 [dev-dependencies]
 env_logger = "0.11.3"

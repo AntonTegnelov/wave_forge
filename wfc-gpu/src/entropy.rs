@@ -7,12 +7,11 @@ use crate::{
 use log::{debug, error, warn};
 use pollster;
 use std::sync::Arc;
-use thiserror::Error;
 use wfc_core::{
     entropy::{EntropyCalculator, EntropyError as CoreEntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
 };
-use wgpu;
+use wgpu::{BindGroup, BindGroupLayout, Buffer, ComputePipeline, Device, Queue};
 
 /// GPU-accelerated entropy calculator for use in WFC algorithm.
 ///
@@ -260,14 +259,14 @@ impl GpuEntropyCalculator {
         );
         self.queue.submit(Some(copy_encoder.finish()));
 
-        // Use download_buffer_data instead
+        // Use the centralized download function, cloning the necessary Arcs
         let entropy_data = crate::buffers::download_buffer_data::<f32>(
-            &self.device,
-            &self.queue,
-            &self.buffers.entropy_buffers.entropy_buf,
-            &self.buffers.entropy_buffers.staging_entropy_buf,
-            self.buffers.entropy_buffers.entropy_buf.size(),
-            Some("Entropy Data".to_string()),
+            self.device.clone(),
+            self.queue.clone(),
+            self.buffers.entropy_buffers.entropy_buf.clone(),
+            self.buffers.entropy_buffers.staging_entropy_buf.clone(),
+            self.buffers.entropy_buffers.entropy_buf.size(), // Use calculated size
+            Some("Entropy Data Download".to_string()),
         )
         .await?;
 
@@ -313,14 +312,17 @@ impl GpuEntropyCalculator {
         );
         self.queue.submit(Some(copy_encoder.finish()));
 
-        // Use download_buffer_data instead
+        // Use the centralized download function
         let min_info_data = crate::buffers::download_buffer_data::<u32>(
-            &self.device,
-            &self.queue,
-            &self.buffers.entropy_buffers.min_entropy_info_buf,
-            &self.buffers.entropy_buffers.staging_min_entropy_info_buf,
-            self.buffers.entropy_buffers.min_entropy_info_buf.size(),
-            Some("Min Entropy Info".to_string()),
+            self.device.clone(),
+            self.queue.clone(),
+            self.buffers.entropy_buffers.min_entropy_info_buf.clone(),
+            self.buffers
+                .entropy_buffers
+                .staging_min_entropy_info_buf
+                .clone(),
+            self.buffers.entropy_buffers.min_entropy_info_buf.size(), // Use calculated size
+            Some("Min Entropy Info Download".to_string()),
         )
         .await;
 

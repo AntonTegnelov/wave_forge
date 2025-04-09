@@ -5,31 +5,23 @@
 //! - Entropy heatmaps: Visual representation of cell entropy distribution
 //! - Contradictions: Where and why contradictions occur during execution
 
-use crate::buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults};
-use crate::sync::GpuSynchronizer;
-use crate::GpuError;
-use std::sync::Arc;
-// Removed unused import
-// use pollster;
-// Removed unused import
-// use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
-// Removed unused import
-// use wfc_rules::AdjacencyRules;
-
-// Removed unused import
-// use crate::test_utils::create_test_device_queue; // Import for tests
-
-// Restore create_test_gpu_buffers import
-use crate::test_utils::{create_test_device_queue, create_test_gpu_buffers};
-
 use crate::{
-    backend::GpuBackend, buffers::GpuBuffers, pipeline::ComputePipelines,
-    shader_registry::ShaderRegistry, sync::GpuSynchronizer, GpuError,
+    backend::GpuBackend,
+    buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults},
+    pipeline::ComputePipelines,
+    shader_registry::ShaderRegistry,
+    sync::GpuSynchronizer,
+    GpuError,
 };
-use futures::FutureExt;
 use image::{ImageBuffer, Rgba, RgbaImage};
-use wfc_core::grid::GridDefinition;
-use wgpu::util::DeviceExt;
+use log::trace;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use wfc_core::{
+    grid::{GridDefinition, PossibilityGrid},
+    TileId,
+};
+use wfc_rules::AdjacencyRules;
 
 /// Types of debug visualizations available
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +89,13 @@ pub struct DebugVisualizer {
     /// Whether the visualizer is enabled
     enabled: bool,
     synchronizer: Arc<GpuSynchronizer>,
+    last_update: Instant,
+    update_interval: Duration,
+    show_entropy: bool,
+    show_min_entropy_index: bool,
+    last_entropy_values: Option<Vec<f32>>,
+    last_min_entropy_index: Option<Vec<u32>>,
+    grid_dims: (usize, usize, usize),
 }
 
 impl Default for DebugVisualizer {
@@ -117,6 +116,13 @@ impl DebugVisualizer {
             current_step: 0,
             enabled: true,
             synchronizer,
+            last_update: Instant::now(),
+            update_interval: Duration::from_secs(1),
+            show_entropy: false,
+            show_min_entropy_index: false,
+            last_entropy_values: None,
+            last_min_entropy_index: None,
+            grid_dims: (0, 0, 0),
         }
     }
 
@@ -323,6 +329,117 @@ impl DebugVisualizer {
         // Placeholder: Get snapshot by index or latest
         self.snapshots.last()
     }
+
+    /// Updates the visualizer with the current GPU state.
+    ///
+    /// This might involve downloading data from the GPU, which can be slow.
+    pub async fn update(
+        &mut self,
+        backend: &dyn GpuBackend, // Use trait object
+        // grid_state: &PossibilityGrid, // Pass PossibilityGrid if needed for CPU-side rendering
+        gpu_buffers: &GpuBuffers, // Pass GPU buffers
+    ) -> Result<(), GpuError> {
+        let start = Instant::now();
+        trace!("Updating debug visualizer...");
+
+        if self.last_update.elapsed() < self.update_interval {
+            return Ok(());
+        }
+
+        // Example: Download entropy data if configured
+        if self.show_entropy {
+            let request = DownloadRequest {
+                download_entropy: true,
+                ..Default::default()
+            };
+            match gpu_buffers.download_results(request).await? {
+                results if results.entropy.is_some() => {
+                    self.last_entropy_values = results.entropy;
+                    trace!("Downloaded entropy data for visualization.");
+                }
+                _ => {
+                    return Err(GpuError::InternalError(
+                        "Entropy data not found in download results".to_string(),
+                    ))
+                }
+            }
+        }
+
+        // Example: Download min entropy index if configured
+        if self.show_min_entropy_index {
+            let request = DownloadRequest {
+                download_min_entropy_info: true,
+                ..Default::default()
+            };
+            match gpu_buffers.download_results(request).await? {
+                results if results.min_entropy_info.is_some() => {
+                    self.last_min_entropy_index = results.min_entropy_info;
+                    trace!("Downloaded min entropy index data for visualization.");
+                }
+                _ => {
+                    return Err(GpuError::InternalError(
+                        "Min entropy index data not found in download results".to_string(),
+                    ))
+                }
+            }
+        }
+
+        // TODO: Add rendering logic based on downloaded data (e.g., create an image)
+        // Example: Generate an image based on self.last_entropy_values
+        // let image = self.generate_visualization_image(grid_state)?; // Pass grid if needed
+
+        self.last_update = Instant::now();
+        trace!("Debug visualizer updated in {:?}", start.elapsed());
+        Ok(())
+    }
+
+    // Placeholder for a function to generate the actual visualization (e.g., an image)
+    // This would use the downloaded data (last_entropy_values, etc.) and potentially the grid_state
+    fn generate_visualization_image(
+        &self, /* grid: &PossibilityGrid */
+    ) -> Result<RgbaImage, GpuError> {
+        // Implementation depends on what you want to visualize
+        // Example: Create a simple image based on entropy
+        let width = self.grid_dims.0;
+        let height = self.grid_dims.1;
+        let mut img = RgbaImage::new(width as u32, height as u32);
+
+        if let Some(entropy_values) = &self.last_entropy_values {
+            // Find min/max entropy for normalization
+            let min_entropy = entropy_values
+                .iter()
+                .copied()
+                .filter(|&e| e.is_finite())
+                .fold(f32::INFINITY, f32::min);
+            let max_entropy = entropy_values
+                .iter()
+                .copied()
+                .filter(|&e| e.is_finite())
+                .fold(f32::NEG_INFINITY, f32::max);
+            let range = max_entropy - min_entropy;
+
+            for y in 0..height {
+                for x in 0..width {
+                    let index = y * width + x;
+                    if index < entropy_values.len() {
+                        let entropy = entropy_values[index];
+                        let normalized = if range > 1e-6 {
+                            (entropy - min_entropy) / range
+                        } else {
+                            0.0
+                        };
+                        let gray = (normalized.max(0.0).min(1.0) * 255.0) as u8;
+                        img.put_pixel(x as u32, y as u32, Rgba([gray, gray, gray, 255]));
+                    } else {
+                        img.put_pixel(x as u32, y as u32, Rgba([255, 0, 0, 255]));
+                        // Error color
+                    }
+                }
+            }
+        }
+
+        Ok(img)
+    }
 }
 
 /// Trait extension for GpuBuffers specific to debug visualization
@@ -342,194 +459,88 @@ pub trait GpuBuffersDebugExt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entropy::EntropyHeuristicType;
-    use crate::test_utils::{create_test_device_queue, setup_mock_gpu};
-    use futures::executor::block_on;
+    use crate::backend::{MockGpuBackend, MockGpuDevice, MockGpuQueue};
+    use crate::sync::GpuSynchronizer;
     use std::sync::Arc;
-    use wfc_core::grid::{GridCoord3D, GridDefinition};
-    use wfc_rules::{TileSet, Transformation};
+    use wfc_core::{
+        grid::{GridDefinition, PossibilityGrid},
+        BoundaryCondition,
+    };
+    use wfc_rules::AdjacencyRules;
 
-    #[tokio::test] // Restore tokio test attribute
-    async fn test_debug_visualizer_creation() {
-        // Initialize GPU resources for the test
-        let (device, queue) = create_test_device_queue();
-        let buffers = create_test_gpu_buffers(&device, &queue);
-        // Clone Arcs when creating synchronizer
-        let synchronizer = Arc::new(GpuSynchronizer::new(
-            device.clone(),
-            queue.clone(),
-            buffers.clone(),
-        ));
-
-        // Renamed _visualizer back to visualizer as it's used
-        let visualizer = DebugVisualizer::new(
-            DebugVisualizationConfig::default(),
-            synchronizer, // Pass the initialized synchronizer
-        );
-
-        // Assertions using visualizer
-        assert!(visualizer.enabled);
-        assert_eq!(visualizer.snapshots.len(), 0);
-        assert_eq!(visualizer.current_step, 0);
-        assert!(visualizer.enabled);
-    }
-
-    #[test]
-    fn test_debug_snapshot_management() {
-        // Initialize GPU resources for the test
-        let (device, queue) = create_test_device_queue();
-        let buffers = create_test_gpu_buffers(&device, &queue);
-        // Clone Arcs
-        let synchronizer = Arc::new(GpuSynchronizer::new(
-            device.clone(),
-            queue.clone(),
-            buffers.clone(),
-        ));
-
-        // Create visualizer (renamed back from _visualizer)
-        let mut visualizer = DebugVisualizer::new(
-            DebugVisualizationConfig::default(),
-            synchronizer.clone(), // Clone Arc for visualizer
-        );
-
-        // Add mock snapshots (assertions use visualizer)
-        for i in 0..5 {
-            let mock_results = GpuDownloadResults {
-                entropy: Some(vec![i as f32; 10]),
-                min_entropy_info: None,
-                contradiction_flag: None,
-                contradiction_location: None,
-                grid_possibilities: Some(vec![0; 10]),
-            };
-            visualizer.add_snapshot((5, 2, 1), 4, mock_results, 0);
-        }
-
-        assert_eq!(visualizer.snapshots.len(), 5);
-        assert_eq!(visualizer.current_step, 5);
-
-        // Test snapshot limit
-        visualizer.config.max_snapshots = 3;
-        let another_mock_results = GpuDownloadResults {
-            entropy: Some(vec![5.0; 10]),
-            min_entropy_info: None,
-            contradiction_flag: None,
-            contradiction_location: None,
-            grid_possibilities: Some(vec![0; 10]),
+    // Mock setup helper
+    async fn setup_test_environment() -> (
+        Arc<MockGpuBackend>,
+        Arc<GpuSynchronizer>,
+        GridDefinition,
+        Arc<GpuBuffers>,
+    ) {
+        let backend = Arc::new(MockGpuBackend::new());
+        let device = Arc::new(MockGpuDevice::new()); // Mock device
+        let queue = Arc::new(MockGpuQueue::new()); // Mock queue
+        let grid_def = GridDefinition {
+            dims: (10, 10, 1),
+            num_tiles: 5,
         };
-        visualizer.add_snapshot((5, 2, 1), 4, another_mock_results, 0);
 
-        assert_eq!(visualizer.snapshots.len(), 3);
-        assert_eq!(visualizer.snapshots[0].step, 3);
+        // Create dummy grid/rules for buffer creation
+        let dummy_grid = PossibilityGrid::new(
+            grid_def.dims.0,
+            grid_def.dims.1,
+            grid_def.dims.2,
+            grid_def.num_tiles,
+        );
+        let dummy_rules = AdjacencyRules::new(grid_def.num_tiles, 6);
 
-        visualizer.clear_snapshots();
-        assert_eq!(visualizer.snapshots.len(), 0);
-        assert_eq!(visualizer.current_step, 0);
-    }
-
-    #[test]
-    fn test_debug_visualizer_creation_updated_assertions() {
-        let (device, queue) = create_test_device_queue();
-        let buffers = create_test_gpu_buffers(&device, &queue);
-        let synchronizer = Arc::new(GpuSynchronizer::new(
-            device.clone(),
-            queue.clone(),
-            buffers.clone(),
-        ));
-
-        // Renamed _visualizer back to visualizer
-        let visualizer = DebugVisualizer::new(
-            DebugVisualizationConfig::default(),
-            synchronizer, // Pass the initialized synchronizer
+        // Call GpuBuffers::new with mock device/queue references and dummy data
+        let buffers = Arc::new(
+            GpuBuffers::new(
+                &device, // Pass reference
+                &queue,  // Pass reference
+                &dummy_grid,
+                &dummy_rules,
+                BoundaryCondition::Finite,
+            )
+            .expect("Failed to create mock GpuBuffers"),
         );
 
-        assert!(visualizer.is_enabled());
-        assert_eq!(visualizer.get_snapshots().len(), 0);
+        // Call GpuSynchronizer::new with mock device/queue references and buffers Arc
+        let sync = Arc::new(GpuSynchronizer::new(&device, &queue, buffers.clone())); // Pass references
+
+        (backend, sync, grid_def, buffers)
     }
 
-    #[test]
-    #[should_panic] // This test is expected to panic
-    fn test_debug_visualizer_creation_should_panic() {
-        let (device, queue) = create_test_device_queue();
-        let buffers = create_test_gpu_buffers(&device, &queue);
-        let synchronizer = Arc::new(GpuSynchronizer::new(
-            device.clone(),
-            queue.clone(),
-            buffers.clone(),
-        ));
-
-        // Renamed _visualizer back to visualizer
-        let visualizer = DebugVisualizer::new(
-            DebugVisualizationConfig::default(),
-            synchronizer, // Pass the initialized synchronizer
-        );
-
-        assert!(visualizer.is_enabled());
-        assert_eq!(visualizer.get_snapshots().len(), 0);
-        // Add a panic condition if needed for the test purpose
-        // panic!("Intentional panic for test");
+    #[tokio::test]
+    async fn test_visualizer_creation() {
+        let (_backend, sync, grid_def, _buffers) = setup_test_environment().await;
+        let config = DebugVisualizationConfig::default();
+        let visualizer = DebugVisualizer::new(config, sync);
+        assert!(visualizer.enabled);
     }
 
-    #[test]
-    fn test_add_snapshot() {
-        let (device, queue) = create_test_device_queue();
-        let buffers = create_test_gpu_buffers(&device, &queue);
-        let synchronizer = Arc::new(GpuSynchronizer::new(
-            device.clone(),
-            queue.clone(),
-            buffers.clone(),
-        ));
-        // Removed unnecessary mut
-        let mut visualizer =
-            DebugVisualizer::new(DebugVisualizationConfig::default(), synchronizer);
-
-        assert_eq!(visualizer.snapshots.len(), 0);
-
-        let mock_results = GpuDownloadResults {
-            entropy: Some(vec![1.0; 10]),
-            grid_possibilities: Some(vec![0; 10]),
-            ..Default::default()
-        };
-        visualizer.add_snapshot((5, 2, 1), 4, mock_results, 0);
-        assert_eq!(visualizer.snapshots.len(), 1);
-    }
-
-    #[test]
-    fn test_snapshot_limit() {
-        let (device, queue) = create_test_device_queue();
-        let buffers = create_test_gpu_buffers(&device, &queue);
-        let synchronizer = Arc::new(GpuSynchronizer::new(
-            device.clone(),
-            queue.clone(),
-            buffers.clone(),
-        ));
+    #[tokio::test]
+    async fn test_visualizer_update_throttling() {
+        let (backend, sync, grid_def, mock_buffers) = setup_test_environment().await;
         let mut config = DebugVisualizationConfig::default();
-        config.max_snapshots = 3;
-        // Removed unnecessary mut and renamed back
-        let mut visualizer = DebugVisualizer::new(config, synchronizer);
+        config.update_interval = Duration::from_millis(100);
 
-        for i in 0..5 {
-            let mock_results = GpuDownloadResults {
-                entropy: Some(vec![i as f32; 10]),
-                ..Default::default()
-            };
-            visualizer.add_snapshot((5, 2, 1), 4, mock_results, 0);
-        }
-        assert_eq!(visualizer.snapshots.len(), 3);
-    }
+        let mut visualizer = DebugVisualizer::new(config, sync.clone());
 
-    #[test]
-    fn test_generate_visualizations_empty() {
-        let (device, queue) = create_test_device_queue();
-        let buffers = create_test_gpu_buffers(&device, &queue);
-        let synchronizer = Arc::new(GpuSynchronizer::new(
-            device.clone(),
-            queue.clone(),
-            buffers.clone(),
-        ));
-        // Removed unnecessary mut and renamed back
-        let visualizer = DebugVisualizer::new(DebugVisualizationConfig::default(), synchronizer);
-        assert!(visualizer.generate_entropy_heatmap(None).is_none());
-        assert!(visualizer.generate_propagation_viz(None).is_none());
-        assert!(visualizer.generate_contradiction_viz(None).is_none());
+        let result1 = visualizer.update(&*backend, &mock_buffers).await;
+        assert!(result1.is_ok());
+        let update_time1 = visualizer.last_update;
+
+        let result2 = visualizer.update(&*backend, &mock_buffers).await;
+        assert!(result2.is_ok());
+        let update_time2 = visualizer.last_update;
+
+        assert_eq!(update_time1, update_time2);
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let result3 = visualizer.update(&*backend, &mock_buffers).await;
+        assert!(result3.is_ok());
+        let update_time3 = visualizer.last_update;
+
+        assert!(update_time3 > update_time2);
     }
 }

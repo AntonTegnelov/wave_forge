@@ -37,7 +37,7 @@ pub use accelerator::GpuAccelerator;
 pub use buffers::{DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults};
 
 // Configuration types
-pub use coordination::{BasicCoordinator, WfcCoordinator};
+pub use coordination::WfcCoordinator;
 pub use debug_viz::{DebugVisualizationConfig, DebugVisualizer, VisualizationType};
 pub use subgrid::SubgridConfig; // Coordination API
 
@@ -59,3 +59,8 @@ pub use error_recovery::GpuError;
 mod shader_validation_tests;
 #[cfg(test)]
 mod tests;
+
+pub use pipeline::ComputePipelines;
+pub use propagator::GpuConstraintPropagator;
+pub use shader_registry::ShaderRegistry;
+pub use sync::GpuSynchronizer;

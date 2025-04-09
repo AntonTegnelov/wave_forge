@@ -254,13 +254,11 @@ impl GpuBackend for WgpuBackend {
         if let Some(adapter) = &self.adapter {
             let info = adapter.get_info();
             format!(
-                "Backend: {}, Device: {}, Driver: {}",
-                info.backend,
-                info.name,
-                info.driver
+                "Backend: {:?}, Vendor: {:?}, Device: {}, DeviceType: {:?}, Name: {:?}, Driver: {:?}",
+                info.backend, info.vendor, info.device, info.device_type, info.name, info.driver
             )
         } else {
-            "WGPU backend (uninitialized)".to_string()
+            "Unknown Adapter".to_string()
         }
     }
 
@@ -296,7 +294,6 @@ impl ComputeCapable for WgpuBackend {
             layout: None,
             module: &shader_module,
             entry_point,
-            compilation_options: Default::default(),
         });
 
         // Generate a unique ID for this pipeline
@@ -512,7 +509,7 @@ mod tests {
         let info = backend.get_info();
 
         // The backend is not initialized, so we expect a default message
-        assert_eq!(info, "WGPU backend (uninitialized)");
+        assert_eq!(info, "Unknown Adapter");
     }
 
     #[test]
