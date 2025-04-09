@@ -159,11 +159,7 @@ impl DebugVisualizer {
         let result = _visualizer
             .synchronizer
             .buffers()
-            .download_results(
-                _visualizer.synchronizer.device().clone(),
-                _visualizer.synchronizer.queue().clone(),
-                request,
-            )
+            .download_results(request)
             .await?;
 
         // Create and store the snapshot
@@ -490,7 +486,7 @@ mod tests {
             grid_def.dims.2,
             grid_def.num_tiles,
         );
-        let dummy_rules = AdjacencyRules::new(grid_def.num_tiles, 6);
+        let dummy_rules = AdjacencyRules::from_allowed_tuples(grid_def.num_tiles, 6, vec![]);
 
         // Call GpuBuffers::new with mock device/queue references and dummy data
         let buffers = Arc::new(

@@ -505,17 +505,19 @@ impl ComputePipelines {
         );
 
         // Create compute pipeline
+        let label = format!("Compute Pipeline: {}", entry_point);
         let desc = wgpu::ComputePipelineDescriptor {
-            label: Some(&format!("Compute Pipeline: {}", entry_point)),
-            layout: Some(layout),
-            module,
-            entry_point,
+            label: Some(&label),
+            layout: layout.as_ref(),
+            module: &module,
+            entry_point: entry_point,
         };
 
         let pipeline = device.create_compute_pipeline(&desc);
+        let pipeline_arc = Arc::new(pipeline);
 
-        cache.insert(key, pipeline.clone());
-        Ok(pipeline)
+        cache.insert(key, pipeline_arc.clone());
+        Ok(pipeline_arc)
     }
 
     pub fn create_propagation_bind_groups(

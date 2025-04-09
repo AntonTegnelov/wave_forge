@@ -9,6 +9,26 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+/// A simple coordinate struct for grid positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GridCoord {
+    pub x: usize,
+    pub y: usize,
+    pub z: usize,
+}
+
+impl GridCoord {
+    pub fn new(x: usize, y: usize, z: usize) -> Self {
+        Self { x, y, z }
+    }
+}
+
+impl From<(usize, usize, usize)> for GridCoord {
+    fn from((x, y, z): (usize, usize, usize)) -> Self {
+        Self { x, y, z }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum GpuError {
     #[error("Buffer map failed: {0}")]
@@ -39,6 +59,14 @@ pub enum GpuError {
     DeviceRequestFailed(wgpu::RequestDeviceError),
     #[error("Mutex lock error: {0}")]
     MutexError(String),
+    #[error("Buffer error: {0}")]
+    BufferError(String),
+    #[error("Buffer map error: {0}")]
+    BufferMapError(String),
+    #[error("Buffer map timeout: {0}")]
+    BufferMapTimeout(String),
+    #[error("Contradiction detected at {coord:?}")]
+    ContradictionDetected { coord: Option<GridCoord> },
     #[error("Other GPU error: {0}")]
     Other(String),
 }

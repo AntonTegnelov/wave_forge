@@ -57,6 +57,30 @@ pub trait GpuBackend: Send + Sync + Debug {
 
     /// Clean up resources when backend is no longer needed
     fn cleanup(&mut self);
+
+    /// Get the WGPU device
+    ///
+    /// # Returns
+    /// Arc-wrapped reference to the WGPU device
+    fn device(&self) -> Arc<wgpu::Device>;
+
+    /// Get the WGPU queue
+    ///
+    /// # Returns
+    /// Arc-wrapped reference to the WGPU queue
+    fn queue(&self) -> Arc<wgpu::Queue>;
+
+    /// Get the supported features of the device
+    ///
+    /// # Returns
+    /// The feature flags supported by the current device
+    fn features(&self) -> wgpu::Features;
+
+    /// Get information about the adapter
+    ///
+    /// # Returns
+    /// Information about the GPU adapter
+    fn adapter_info(&self) -> wgpu::AdapterInfo;
 }
 
 /// Trait for GPU backends that can execute compute shaders
@@ -185,11 +209,30 @@ impl WgpuBackend {
             ..Default::default()
         }));
 
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .expect("Failed to find GPU adapter");
+
+        let adapter = Arc::new(adapter);
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("WFC GPU Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+            },
+            None,
+        ))
+        .expect("Failed to create device");
+
         Self {
             instance,
-            adapter: None,
-            device: None,
-            queue: None,
+            adapter: Some(adapter),
+            device: Some(Arc::new(device)),
+            queue: Some(Arc::new(queue)),
             pipelines: std::collections::HashMap::new(),
             buffers: std::collections::HashMap::new(),
         }
@@ -211,33 +254,17 @@ impl WgpuBackend {
 
 impl GpuBackend for WgpuBackend {
     fn initialize(&self) -> Result<(), BackendError> {
-        // This method would normally be async in a real implementation
-        // For simplicity, we're using pollster::block_on here
-        let adapter =
-            pollster::block_on(self.instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            }))
-            .ok_or(BackendError::InitializationFailed(
-                "Failed to find GPU adapter".to_string(),
-            ))?;
+        // If already initialized, just return success
+        if self.device.is_some() && self.queue.is_some() {
+            return Ok(());
+        }
 
-        let (_device, _queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("WFC GPU Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-            },
-            None,
+        // This is a bit awkward since we're initializing in `new()`
+        // and our struct fields are not mutable. In a real implementation,
+        // we would handle this differently.
+        Err(BackendError::Other(
+            "Backend already initialized in new()".to_string(),
         ))
-        .map_err(|e| {
-            BackendError::InitializationFailed(format!("Failed to create device: {}", e))
-        })?;
-
-        // Update the fields (this would require interior mutability in a real implementation)
-        // For this example, we'll return an error instead
-        Err(BackendError::Other("This implementation is just a demonstration. In a real implementation, we would store the adapter, device, and queue.".to_string()))
     }
 
     fn supports_feature(&self, feature_name: &str) -> bool {
@@ -271,6 +298,28 @@ impl GpuBackend for WgpuBackend {
         self.device = None;
         self.queue = None;
         self.adapter = None;
+    }
+
+    fn device(&self) -> Arc<wgpu::Device> {
+        self.device
+            .as_ref()
+            .expect("Device not initialized")
+            .clone()
+    }
+
+    fn queue(&self) -> Arc<wgpu::Queue> {
+        self.queue.as_ref().expect("Queue not initialized").clone()
+    }
+
+    fn features(&self) -> wgpu::Features {
+        self.device().features()
+    }
+
+    fn adapter_info(&self) -> wgpu::AdapterInfo {
+        self.adapter
+            .as_ref()
+            .expect("Adapter not initialized")
+            .get_info()
     }
 }
 
@@ -550,6 +599,34 @@ mod tests {
 
         fn cleanup(&mut self) {
             // Nothing to clean up in mock
+        }
+
+        fn device(&self) -> Arc<wgpu::Device> {
+            // This is a mock implementation that can't actually be created
+            // In a real test, we would use a proper test device
+            panic!("MockBackend cannot provide a real device");
+        }
+
+        fn queue(&self) -> Arc<wgpu::Queue> {
+            // This is a mock implementation that can't actually be created
+            // In a real test, we would use a proper test queue
+            panic!("MockBackend cannot provide a real queue");
+        }
+
+        fn features(&self) -> wgpu::Features {
+            wgpu::Features::empty()
+        }
+
+        fn adapter_info(&self) -> wgpu::AdapterInfo {
+            wgpu::AdapterInfo {
+                name: "Mock Device".to_string(),
+                vendor: 0,
+                device: 0,
+                device_type: wgpu::DeviceType::Cpu,
+                driver: "Mock Driver".to_string(),
+                driver_info: "Mock Driver Info".to_string(),
+                backend: wgpu::Backend::Empty,
+            }
         }
     }
 

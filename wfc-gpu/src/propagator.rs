@@ -431,9 +431,9 @@ impl GpuConstraintPropagator {
             let worklist_size_data = crate::buffers::download_buffer_data::<u32>(
                 self.device.clone(),
                 self.queue.clone(),
-                count_buf_gpu.clone(),
-                count_buf_staging.clone(),
-                4, // Size of u32
+                count_buf_gpu,
+                count_buf_staging,
+                std::mem::size_of::<u32>() as u64,
                 Some("Worklist Size".to_string()),
             )
             .await;
@@ -486,9 +486,9 @@ impl GpuConstraintPropagator {
                 let contradiction_flag_data = crate::buffers::download_buffer_data::<u32>(
                     self.device.clone(),
                     self.queue.clone(),
-                    self.buffers.contradiction_flag_buf.clone(),
-                    self.buffers.staging_contradiction_flag_buf.clone(),
-                    4, // Size of u32
+                    &self.buffers.contradiction_flag_buf,
+                    &self.buffers.staging_contradiction_flag_buf,
+                    std::mem::size_of::<u32>() as u64,
                     Some("Contradiction Flag".to_string()),
                 )
                 .await;
@@ -503,9 +503,9 @@ impl GpuConstraintPropagator {
                     let contradiction_loc_data = crate::buffers::download_buffer_data::<u32>(
                         self.device.clone(),
                         self.queue.clone(),
-                        self.buffers.contradiction_location_buf.clone(),
-                        self.buffers.staging_contradiction_location_buf.clone(),
-                        4, // Size of u32
+                        &self.buffers.contradiction_location_buf,
+                        &self.buffers.staging_contradiction_location_buf,
+                        std::mem::size_of::<u32>() as u64,
                         Some("Contradiction Location".to_string()),
                     )
                     .await;
@@ -531,9 +531,9 @@ impl GpuConstraintPropagator {
             let output_worklist_size_data = crate::buffers::download_buffer_data::<u32>(
                 self.device.clone(),
                 self.queue.clone(),
-                count_buf_gpu.clone(), // Source is still the main count buffer
-                count_buf_staging.clone(),
-                4, // Size of u32
+                count_buf_gpu, // Source is still the main count buffer
+                count_buf_staging,
+                std::mem::size_of::<u32>() as u64,
                 Some("Output Worklist Size".to_string()),
             )
             .await;
@@ -565,9 +565,9 @@ impl GpuConstraintPropagator {
         let contradiction_flag_data = crate::buffers::download_buffer_data::<u32>(
             self.device.clone(),
             self.queue.clone(),
-            self.buffers.contradiction_flag_buf.clone(),
-            self.buffers.staging_contradiction_flag_buf.clone(),
-            4, // Size of u32
+            &self.buffers.contradiction_flag_buf,
+            &self.buffers.staging_contradiction_flag_buf,
+            std::mem::size_of::<u32>() as u64,
             Some("Final Contradiction Flag Check".to_string()),
         )
         .await;
@@ -581,9 +581,9 @@ impl GpuConstraintPropagator {
             let contradiction_loc_data = crate::buffers::download_buffer_data::<u32>(
                 self.device.clone(),
                 self.queue.clone(),
-                self.buffers.contradiction_location_buf.clone(),
-                self.buffers.staging_contradiction_location_buf.clone(),
-                4, // Size of u32
+                &self.buffers.contradiction_location_buf,
+                &self.buffers.staging_contradiction_location_buf,
+                std::mem::size_of::<u32>() as u64,
                 Some("Contradiction Location on Final Check".to_string()),
             )
             .await;

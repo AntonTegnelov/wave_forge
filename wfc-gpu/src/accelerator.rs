@@ -4,31 +4,51 @@ use crate::{
     buffers::{DownloadRequest, GpuBuffers, GpuParamsUniform},
     coordination::{DefaultCoordinator, WfcCoordinator},
     debug_viz::{DebugVisualizationConfig, DebugVisualizer},
-    entropy::{EntropyHeuristicType, GpuEntropyCalculator},
+    entropy::GpuEntropyCalculator,
+    error_recovery::{GpuError, GridCoord},
     pipeline::ComputePipelines,
     propagator::GpuConstraintPropagator,
     shader_registry::ShaderRegistry,
     subgrid::SubgridConfig,
     sync::GpuSynchronizer,
-    GpuError,
 };
 use anyhow::Error as AnyhowError;
 use log::{error, info, trace, warn};
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use wfc_core::{
     entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType as CoreEntropyHeuristicType},
-    grid::{GridCoord, GridDefinition, GridStats, GridView, PossibilityGrid},
+    grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    traits::{self as wfc_traits, CollapseResult, ObserveResult, PropagationResult},
-    BoundaryCondition, ProgressInfo, TileId, WfcError,
+    BoundaryCondition, ProgressInfo, WfcError,
 };
 use wfc_rules::AdjacencyRules;
 use wgpu::{Device, Queue};
 
+/// Grid definition info
+#[derive(Debug, Clone)]
+pub struct GridDefinition {
+    pub dims: (usize, usize, usize),
+    pub num_tiles: usize,
+}
+
+impl GridDefinition {
+    /// Returns the total number of cells in the grid
+    pub fn total_cells(&self) -> usize {
+        self.dims.0 * self.dims.1 * self.dims.2
+    }
+}
+
+/// Statistics about the grid state
+#[derive(Debug, Clone, Default)]
+pub struct GridStats {
+    pub iterations: usize,
+    pub contradictions: usize,
+    pub collapsed_cells: usize,
+}
+
 /// Internal state for the GpuAccelerator, managed within an Arc<RwLock<>>.
-#[derive(Debug)]
 pub struct AcceleratorInstance {
     backend: Arc<dyn GpuBackend>,
     grid_definition: GridDefinition,
@@ -44,6 +64,19 @@ pub struct AcceleratorInstance {
     progress_callback:
         Option<Box<dyn FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync>>,
     debug_visualizer: Option<DebugVisualizer>,
+}
+
+// Custom Debug implementation to handle types that don't implement Debug
+impl std::fmt::Debug for AcceleratorInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AcceleratorInstance")
+            .field("grid_definition", &self.grid_definition)
+            .field("boundary_condition", &self.boundary_condition)
+            .field("subgrid_config", &self.subgrid_config)
+            .field("has_progress_callback", &self.progress_callback.is_some())
+            .field("has_debug_visualizer", &self.debug_visualizer.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Manages the WGPU context and orchestrates GPU-accelerated WFC operations.
@@ -101,7 +134,7 @@ impl GpuAccelerator {
         let start_time = Instant::now();
         info!("Initializing GPU Accelerator...");
 
-        let backend = crate::backend::WgpuBackend::new()?;
+        let backend = crate::backend::WgpuBackend::new();
         let device = backend.device();
         let queue = backend.queue();
 
@@ -123,14 +156,14 @@ impl GpuAccelerator {
         let features_ref: Vec<&str> = features.iter().map(|s| s.as_str()).collect();
 
         let pipelines = Arc::new(ComputePipelines::new(
-            device.clone(),
+            &device,
             num_tiles_u32 as u32,
             &features_ref,
         )?);
 
         let buffers = Arc::new(GpuBuffers::new(
-            device.clone(),
-            queue.clone(),
+            &device,
+            &queue,
             initial_grid,
             rules,
             boundary_condition,
@@ -181,8 +214,9 @@ impl GpuAccelerator {
             params,
         );
 
-        if let Some(config) = subgrid_config {
-            propagator_concrete = propagator_concrete.with_parallel_subgrid_processing(config);
+        if let Some(ref config) = subgrid_config {
+            propagator_concrete =
+                propagator_concrete.with_parallel_subgrid_processing(config.clone());
         }
         let propagator = Arc::new(RwLock::new(propagator_concrete));
 
@@ -263,7 +297,11 @@ impl GpuAccelerator {
             instance.grid_definition.dims.2,
             instance.grid_definition.num_tiles,
         );
-        instance.sync.download_grid(&target_grid).await
+        instance
+            .sync
+            .download_grid(&target_grid)
+            .await
+            .map(|_| target_grid.clone())
     }
 
     pub fn enable_default_debug_visualization(&mut self) {
@@ -311,20 +349,20 @@ impl GpuAccelerator {
         instance_guard
             .sync
             .upload_grid(initial_grid)
-            .map_err(|e| WfcError::GpuError(e.to_string()))?;
+            .map_err(|e| WfcError::InternalError(e.to_string()))?;
 
         instance_guard
             .sync
             .reset_contradiction_flag()
-            .map_err(|e| WfcError::GpuError(e.to_string()))?;
+            .map_err(|e| WfcError::InternalError(e.to_string()))?;
         instance_guard
             .sync
             .reset_contradiction_location()
-            .map_err(|e| WfcError::GpuError(e.to_string()))?;
+            .map_err(|e| WfcError::InternalError(e.to_string()))?;
         instance_guard
             .sync
             .reset_worklist_count()
-            .map_err(|e| WfcError::GpuError(e.to_string()))?;
+            .map_err(|e| WfcError::InternalError(e.to_string()))?;
 
         trace!("Initial grid state uploaded and GPU state reset.");
 
@@ -332,9 +370,7 @@ impl GpuAccelerator {
             if let Some(ref signal) = shutdown_signal {
                 if *signal.borrow() {
                     info!("Shutdown signal received, stopping WFC execution.");
-                    return Err(WfcError::ExecutionInterrupted(
-                        "Shutdown signal".to_string(),
-                    ));
+                    return Err(WfcError::Interrupted);
                 }
             }
 
@@ -386,12 +422,12 @@ impl GpuAccelerator {
                         return Err(WfcError::Contradiction(c.x, c.y, c.z));
                     } else {
                         error!("Contradiction detected by GPU but location unknown.");
-                        return Err(WfcError::UnknownContradiction);
+                        return Err(WfcError::Interrupted);
                     }
                 }
                 Err(e) => {
                     error!("GPU error during entropy calculation: {}", e);
-                    return Err(WfcError::GpuError(e.to_string()));
+                    return Err(WfcError::InternalError(e.to_string()));
                 }
             };
 
@@ -427,10 +463,6 @@ impl GpuAccelerator {
                     run_result.stats.iterations = iteration as usize;
                     return Err(WfcError::Contradiction(x, y, z));
                 }
-                Err(PropagationError::GpuError(e)) => {
-                    error!("GPU error during propagation: {}", e);
-                    return Err(WfcError::GpuError(e.to_string()));
-                }
                 Err(e) => {
                     error!("Propagation error: {}", e);
                     return Err(WfcError::Propagation(e));
@@ -446,7 +478,12 @@ impl GpuAccelerator {
 
                 let progress_info = ProgressInfo {
                     iterations: iteration,
-                    grid_state: None,
+                    grid_state: PossibilityGrid::new(
+                        instance_guard.grid_definition.dims.0,
+                        instance_guard.grid_definition.dims.1,
+                        instance_guard.grid_definition.dims.2,
+                        instance_guard.grid_definition.num_tiles,
+                    ),
                     collapsed_cells: run_result.stats.collapsed_cells,
                     total_cells: total_cells,
                     elapsed_time: start_time.elapsed(),
@@ -457,13 +494,11 @@ impl GpuAccelerator {
                     Ok(true) => {}
                     Ok(false) => {
                         info!("WFC execution cancelled by progress callback.");
-                        return Err(WfcError::ExecutionCancelled(
-                            "Progress callback".to_string(),
-                        ));
+                        return Err(WfcError::Interrupted);
                     }
                     Err(e) => {
                         error!("Progress callback failed: {}", e);
-                        return Err(WfcError::CallbackError(e.to_string()));
+                        return Err(WfcError::InternalError(e.to_string()));
                     }
                 }
             } else {
@@ -495,7 +530,7 @@ impl GpuAccelerator {
             .sync
             .download_grid(&final_grid_target)
             .await
-            .map_err(|e| WfcError::GpuError(e.to_string()))?;
+            .map_err(|e| WfcError::InternalError(e.to_string()))?;
 
         let final_collapsed_count = final_grid.count_collapsed_cells();
         run_result.stats.collapsed_cells = final_collapsed_count;
@@ -508,7 +543,9 @@ impl GpuAccelerator {
             run_result.stats.contradictions
         );
 
-        Ok(final_grid)
+        assert!(final_grid.is_fully_collapsed().unwrap_or(false));
+
+        Ok(final_grid.clone())
     }
 
     pub fn with_debug_visualization(&mut self, config: DebugVisualizationConfig) {
@@ -546,6 +583,30 @@ impl WfcRunResult {
     }
 }
 
+// Helper methods not in the core library
+trait PossibilityGridExt {
+    /// Count the number of cells that are fully collapsed (have only one possibility)
+    fn count_collapsed_cells(&self) -> usize;
+}
+
+impl PossibilityGridExt for PossibilityGrid {
+    fn count_collapsed_cells(&self) -> usize {
+        let mut count = 0;
+        for z in 0..self.depth {
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    if let Some(cell) = self.get(x, y, z) {
+                        if cell.count_ones() == 1 {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        count
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,9 +630,8 @@ mod tests {
             }
         }
 
-        let mut rules = AdjacencyRules::new(num_tiles, 6);
-        rules.allow(0, 1, 0);
-        rules.allow(1, 0, 0);
+        let allowed_tuples = vec![(0, 0, 1), (0, 1, 0)];
+        let mut rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, allowed_tuples);
 
         (grid, rules)
     }
@@ -620,7 +680,7 @@ mod tests {
             assert_eq!(final_grid.width, grid.width);
             assert_eq!(final_grid.height, grid.height);
             assert_eq!(final_grid.depth, grid.depth);
-            assert!(final_grid.is_fully_collapsed());
+            assert!(final_grid.is_fully_collapsed().unwrap_or(false));
         }
     }
 }
