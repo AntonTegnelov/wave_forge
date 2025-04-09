@@ -575,7 +575,7 @@ pub async fn run_standard_mode(
     let message =
         "Direct GPU execution not implemented properly yet. Use custom propagator/calculator.";
 
-    let wfc_run_result = Err(WfcError::InternalError(message.to_string()));
+    let wfc_run_result: Result<(), WfcError> = Err(WfcError::InternalError(message.to_string()));
 
     // The following code is commented out to prevent compilation errors
     /*
