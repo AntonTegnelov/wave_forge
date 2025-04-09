@@ -451,14 +451,14 @@ impl ComputePipelines {
             device,
             &entropy_pipeline_layout,
             &entropy_shader_module,
-            "main", // Entry point
+            "main", // Entry point - This is correct for entropy shader
             entropy_hash,
         )?;
         let propagation_pipeline = Self::get_or_create_compute_pipeline(
             device,
             &propagation_pipeline_layout,
             &propagation_shader_module,
-            "main_propagate", // Entry point
+            "main_propagate", // Entry point - This is the correct entry point
             propagation_hash,
         )?;
 
@@ -508,7 +508,7 @@ impl ComputePipelines {
         let label = format!("Compute Pipeline: {}", entry_point);
         let desc = wgpu::ComputePipelineDescriptor {
             label: Some(&label),
-            layout: layout.as_ref(),
+            layout: Some(layout),
             module: &module,
             entry_point: entry_point,
         };

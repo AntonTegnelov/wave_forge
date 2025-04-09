@@ -5,12 +5,15 @@
 // Imports
 use crate::error_recovery::GpuError;
 use bytemuck::{Pod, Zeroable};
-use log::{debug, error, info, warn};
+use futures::future::FusedFuture;
+use log::{debug, error, info, trace, warn};
 use std::mem;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use thiserror::Error;
 use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
 use wfc_rules::AdjacencyRules;
+use wgpu::util::DeviceExt;
 use wgpu::{self, Device, MapMode, Queue};
 
 // Re-export buffer modules
@@ -108,12 +111,12 @@ pub struct GpuDownloadResults {
     pub entropy: Option<Vec<f32>>,
     pub min_entropy_info: Option<(f32, u32)>,
     pub contradiction_flag: Option<bool>,
-    pub contradiction_location: Option<u32>,
+    pub contradiction_location: Option<(usize, usize, usize)>,
     pub grid_possibilities: Option<Vec<u32>>,
 }
 
 /// Request for downloading data from GPU buffers.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct DownloadRequest {
     pub download_entropy: bool,
     pub download_min_entropy_info: bool,
@@ -334,28 +337,31 @@ impl GpuBuffers {
         request: DownloadRequest,
     ) -> Result<GpuDownloadResults, GpuError> {
         let download_start = Instant::now();
-        debug!("Starting download with request: {:?}", request);
+        trace!("Starting buffer download");
 
         let mut final_results = GpuDownloadResults::default();
 
         // First collect all async operations into a Vec
         if request.download_entropy {
             let num_cells = self.grid_dims.0 * self.grid_dims.1 * self.grid_dims.2;
-            let device = Arc::new(Device::default()); // We'll get these from GpuSynchronizer instead
-            let queue = Arc::new(Queue::default());
+            // These would normally come from a GpuSynchronizer - for now, we'll pass None
+            // and update the download_buffer_data function to accept Option<Arc<>> types
+            let device = None;
+            let queue = None;
 
             debug!("Entropy download requested for {} cells", num_cells);
 
             // We'll refactor this to use a different approach that doesn't require different async block types
             let download_size = num_cells * mem::size_of::<f32>();
-            let buffer = self.entropy_buffers.entropy_buf.slice(..);
+            let buffer = &*self.entropy_buffers.entropy_buf;
+            let staging_buffer = &*self.entropy_buffers.staging_entropy_buf;
 
             let data = download_buffer_data::<f32>(
-                device.clone(),
-                queue.clone(),
+                device,
+                queue,
                 buffer,
-                self.entropy_buffers.entropy_buf.slice(..),
-                download_size,
+                staging_buffer,
+                download_size as u64,
                 Some("Entropy Data".to_string()),
             )
             .await?;
@@ -366,18 +372,20 @@ impl GpuBuffers {
         if request.download_min_entropy_info {
             debug!("Min entropy index download requested");
 
-            let device = Arc::new(Device::default()); // These are placeholders
-            let queue = Arc::new(Queue::default());
+            // These are placeholders - for now, use None
+            let device = None;
+            let queue = None;
 
             let download_size = 5 * mem::size_of::<u32>();
-            let buffer = self.entropy_buffers.min_entropy_info_buf.slice(..);
+            let buffer = &*self.entropy_buffers.min_entropy_info_buf;
+            let staging_buffer = &*self.entropy_buffers.staging_min_entropy_info_buf;
 
             let data = download_buffer_data::<u32>(
-                device.clone(),
-                queue.clone(),
+                device,
+                queue,
                 buffer,
-                self.entropy_buffers.min_entropy_info_buf.slice(..),
-                download_size,
+                staging_buffer,
+                download_size as u64,
                 Some("Min Entropy Info".to_string()),
             )
             .await?;
@@ -393,20 +401,22 @@ impl GpuBuffers {
         if request.download_grid_possibilities {
             debug!("Grid state download requested");
 
-            let device = Arc::new(Device::default()); // These are placeholders
-            let queue = Arc::new(Queue::default());
+            // These are placeholders - for now, use None
+            let device = None;
+            let queue = None;
 
             let num_cells = self.grid_dims.0 * self.grid_dims.1 * self.grid_dims.2;
             let u32s_per_cell = (self.num_tiles + 31) / 32; // Ceiling division by 32
             let download_size = num_cells * u32s_per_cell * mem::size_of::<u32>();
-            let buffer = self.grid_buffers.grid_possibilities_buf.slice(..);
+            let buffer = &*self.grid_buffers.grid_possibilities_buf;
+            let staging_buffer = &*self.grid_buffers.staging_grid_possibilities_buf;
 
             let data = download_buffer_data::<u32>(
-                device.clone(),
-                queue.clone(),
+                device,
+                queue,
                 buffer,
-                self.grid_buffers.grid_possibilities_buf.slice(..),
-                download_size,
+                staging_buffer,
+                download_size as u64,
                 Some("Grid Data".to_string()),
             )
             .await?;
@@ -417,18 +427,20 @@ impl GpuBuffers {
         if request.download_contradiction_flag {
             debug!("Contradiction flag download requested");
 
-            let device = Arc::new(Device::default()); // These are placeholders
-            let queue = Arc::new(Queue::default());
+            // These are placeholders - for now, use None
+            let device = None;
+            let queue = None;
 
             let download_size = mem::size_of::<u32>();
-            let buffer = self.contradiction_flag_buf.slice(..);
+            let buffer = &*self.contradiction_flag_buf;
+            let staging_buffer = &*self.staging_contradiction_flag_buf;
 
             let data = download_buffer_data::<u32>(
-                device.clone(),
-                queue.clone(),
+                device,
+                queue,
                 buffer,
-                self.contradiction_flag_buf.slice(..),
-                download_size,
+                staging_buffer,
+                download_size as u64,
                 Some("Contradiction Flag".to_string()),
             )
             .await?;
@@ -440,18 +452,20 @@ impl GpuBuffers {
         if request.download_contradiction_location {
             debug!("Contradiction location download requested");
 
-            let device = Arc::new(Device::default()); // These are placeholders
-            let queue = Arc::new(Queue::default());
+            // These are placeholders - for now, use None
+            let device = None;
+            let queue = None;
 
             let download_size = 3 * mem::size_of::<u32>();
-            let buffer = self.contradiction_location_buf.slice(..);
+            let buffer = &*self.contradiction_location_buf;
+            let staging_buffer = &*self.staging_contradiction_location_buf;
 
             let data = download_buffer_data::<u32>(
-                device.clone(),
-                queue.clone(),
+                device,
+                queue,
                 buffer,
-                self.contradiction_location_buf.slice(..),
-                download_size,
+                staging_buffer,
+                download_size as u64,
                 Some("Contradiction Location".to_string()),
             )
             .await?;
@@ -514,7 +528,14 @@ impl GpuBuffers {
                         if data_end <= data.len() {
                             // Copy the raw data to the cell's possibilities
                             for (i, &value) in data[data_start..data_end].iter().enumerate() {
-                                cell.set_raw_word(i, value);
+                                // Set bits directly based on the u32 value
+                                let base_bit = i * 32;
+                                for bit_offset in 0..32 {
+                                    let bit_idx = base_bit + bit_offset;
+                                    if bit_idx < cell.len() {
+                                        cell.set(bit_idx, (value & (1 << bit_offset)) != 0);
+                                    }
+                                }
                             }
                         } else {
                             warn!(
@@ -548,8 +569,8 @@ impl GpuBuffers {
 /// * `Ok(Vec<T>)` - The downloaded data as a vector
 /// * `Err(GpuError)` - If an error occurred during download
 pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
+    device: Option<Arc<wgpu::Device>>,
+    queue: Option<Arc<wgpu::Queue>>,
     source_buffer: &wgpu::Buffer,
     staging_buffer: &wgpu::Buffer,
     buffer_size: u64,
@@ -582,57 +603,63 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
     }
 
     // Create command encoder
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some(&format!("Download encoder for '{}'", label_str)),
-    });
+    let mut encoder =
+        device
+            .as_ref()
+            .unwrap()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some(&format!("Download encoder for '{}'", label_str)),
+            });
 
     // Copy source buffer to staging buffer
     encoder.copy_buffer_to_buffer(source_buffer, 0, staging_buffer, 0, buffer_size);
 
-    queue.submit(Some(encoder.finish()));
+    queue.as_ref().unwrap().submit(Some(encoder.finish()));
     debug!("Copy command submitted for '{}'", label_str);
 
     // Map the staging buffer
     let buffer_slice = staging_buffer.slice(..);
-    let (sender, receiver) = futures::channel::oneshot::channel();
+    let (sender, mut receiver) = futures::channel::oneshot::channel();
     buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
         sender.send(result).unwrap();
     });
 
     // Wait for the mapping operation to complete
-    device.poll(wgpu::Maintain::Wait);
+    device.as_ref().unwrap().poll(wgpu::Maintain::Wait);
     debug!("Device polled for '{}'", label_str);
 
     // Handle the mapping result
     let map_start = std::time::Instant::now();
     let map_timeout = std::time::Duration::from_secs(2);
 
-    // Use a mutable variable for receiver handling
-    let mut recv = receiver;
-    loop {
-        match recv.try_recv() {
-            Ok(Some(Ok(()))) => {
-                break;
-            }
-            Ok(Some(Err(e))) => {
-                error!("Failed to map buffer '{}': {:?}", label_str, e);
-                staging_buffer.unmap(); // Unmap on error
-                return Err(GpuError::BufferMapError(format!(
-                    "Failed to map buffer '{}': {}",
-                    label_str,
-                    e.to_string()
-                )));
-            }
-            Ok(None) | Err(_) => {
-                // We're still waiting
-                if map_start.elapsed() > map_timeout {
-                    error!("Timeout waiting for buffer map for '{}'", label_str);
-                    staging_buffer.unmap(); // Attempt to unmap on timeout
-                    return Err(GpuError::BufferMapTimeout(label_str.to_string()));
-                }
-                tokio::task::yield_now().await;
-            }
+    // Wait for the mapping to complete with a timeout
+    let mut retry_count = 0;
+    while !receiver.is_terminated() {
+        device.as_ref().unwrap().poll(wgpu::Maintain::Wait);
+
+        if Instant::now() > map_start + map_timeout {
+            error!("Buffer {:?} mapping timed out after 2 seconds", label_str);
+            return Err(GpuError::BufferMapTimeout(label_str.to_string()));
         }
+
+        // Yield periodically to avoid blocking the executor
+        if (retry_count + 1) % 128 == 0 {
+            std::thread::yield_now();
+        }
+        retry_count += 1;
+    }
+
+    // Get the result from our receiver
+    let result = match receiver.try_recv() {
+        Ok(Some(res)) => res,
+        Ok(None) => Err(wgpu::BufferAsyncError),
+        Err(_) => Err(wgpu::BufferAsyncError),
+    };
+    if let Err(e) = result {
+        return Err(GpuError::BufferOperationError(format!(
+            "Failed to map buffer '{}': {:?}",
+            label_str, e
+        )));
     }
 
     // Read data from the mapped buffer
@@ -642,7 +669,6 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
         result
     };
 
-    staging_buffer.unmap();
     debug!(
         "Download for '{}' completed in {:?}",
         label_str,

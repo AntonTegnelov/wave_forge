@@ -4279,6 +4279,7 @@ dependencies = [
  "criterion",
  "env_logger",
  "futures",
+ "futures-channel",
  "futures-intrusive",
  "glam",
  "image",

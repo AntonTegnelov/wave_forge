@@ -136,11 +136,19 @@ impl GpuSynchronizer {
     /// # Returns
     ///
     /// Returns the `target_grid` on success, or a `GpuError` on failure.
-    pub async fn download_grid<'a>(
+    pub async fn download_grid(
         &self,
-        target_grid: &'a PossibilityGrid, // Use reference for target
-    ) -> Result<&'a PossibilityGrid, GpuError> {
-        trace!("Downloading grid state from GPU...");
+        target: &PossibilityGrid,
+    ) -> Result<PossibilityGrid, GpuError> {
+        let request = DownloadRequest {
+            download_grid_possibilities: true,
+            download_contradiction_flag: false,
+            download_entropy: false,
+            download_min_entropy_info: false,
+            download_contradiction_location: false,
+        };
+
+        trace!("Downloading grid with request: {:?}", request);
         let start_time = std::time::Instant::now();
 
         // Access buffer via grid_buffers
@@ -165,12 +173,12 @@ impl GpuSynchronizer {
                 // --- Copy data from mapped GPU buffer to CPU grid --- ///
                 // Safety: Ensure target_grid dimensions match GPU buffer layout
                 // Assume data is tightly packed array of u32 bitmasks.
-                let num_tiles = target_grid.num_tiles();
+                let num_tiles = target.num_tiles();
                 let tiles_per_u32 = 32;
                 let u32_per_cell = (num_tiles + tiles_per_u32 - 1) / tiles_per_u32;
-                let expected_size = target_grid.width
-                    * target_grid.height
-                    * target_grid.depth
+                let expected_size = target.width
+                    * target.height
+                    * target.depth
                     * u32_per_cell
                     * std::mem::size_of::<u32>();
 
@@ -220,7 +228,7 @@ impl GpuSynchronizer {
 
         let duration = start_time.elapsed();
         trace!("Grid download completed in {:?}", duration);
-        Ok(target_grid)
+        Ok(target.clone())
     }
 
     /// Downloads the contradiction status (flag and location) from the GPU.
@@ -239,14 +247,17 @@ impl GpuSynchronizer {
         let mut contradiction_location = None;
 
         let flag_data = crate::buffers::download_buffer_data::<u32>(
-            self.device.clone(),
-            self.queue.clone(),
-            &flag_buffer_gpu,
-            &flag_buffer_staging,
+            Some(self.device.clone()),
+            Some(self.queue.clone()),
+            &*flag_buffer_gpu,
+            &*flag_buffer_staging,
             std::mem::size_of::<u32>() as u64,
-            Some("Contradiction Flag Download".to_string()),
+            Some("Check Contradiction Flag".to_string()),
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            GpuError::TransferError(format!("Failed to download contradiction flag: {}", e))
+        })?;
 
         let has_contradiction = flag_data.first().map_or(false, |&flag| flag != 0);
 
@@ -255,14 +266,17 @@ impl GpuSynchronizer {
             let loc_buffer_staging = &self.buffers.staging_contradiction_location_buf;
 
             let loc_data = crate::buffers::download_buffer_data::<u32>(
-                self.device.clone(),
-                self.queue.clone(),
-                &loc_buffer_gpu,
-                &loc_buffer_staging,
-                std::mem::size_of::<u32>() as u64,
-                Some("Contradiction Location Download".to_string()),
+                Some(self.device.clone()),
+                Some(self.queue.clone()),
+                &*loc_buffer_gpu,
+                &*loc_buffer_staging,
+                3 * std::mem::size_of::<u32>() as u64,
+                Some("Download Contradiction Location".to_string()),
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                GpuError::TransferError(format!("Failed to download contradiction location: {}", e))
+            })?;
 
             contradiction_location = loc_data.first().cloned();
         }
@@ -276,12 +290,12 @@ impl GpuSynchronizer {
         let staging_count_buffer = &self.buffers.worklist_buffers.staging_worklist_count_buf;
 
         let count_data = crate::buffers::download_buffer_data::<u32>(
-            self.device.clone(),
-            self.queue.clone(),
-            &count_buffer_gpu,
-            &staging_count_buffer,
+            Some(self.device.clone()),
+            Some(self.queue.clone()),
+            &*count_buffer_gpu,
+            &*staging_count_buffer,
             std::mem::size_of::<u32>() as u64,
-            Some("Worklist Count Download".to_string()),
+            Some("Download Worklist Count".to_string()),
         )
         .await?;
 
@@ -379,6 +393,7 @@ impl GpuSynchronizer {
             download_entropy: false,
             download_min_entropy_info: true,
             download_grid_possibilities: false,
+            download_contradiction_flag: false,
             download_contradiction_location: false,
         };
         let results = self.buffers.download_results(request).await.map_err(|e| {
@@ -533,14 +548,17 @@ impl GpuSynchronizer {
         let flag_buffer_staging = &self.buffers.staging_contradiction_flag_buf;
 
         let flag_data = crate::buffers::download_buffer_data::<u32>(
-            self.device.clone(),
-            self.queue.clone(),
-            &flag_buffer_gpu,
-            &flag_buffer_staging,
+            Some(self.device.clone()),
+            Some(self.queue.clone()),
+            &*flag_buffer_gpu,
+            &*flag_buffer_staging,
             std::mem::size_of::<u32>() as u64,
-            Some("Contradiction Flag Download".to_string()),
+            Some("Check Contradiction Flag".to_string()),
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            GpuError::TransferError(format!("Failed to download contradiction flag: {}", e))
+        })?;
 
         Ok(flag_data.first().map_or(false, |&flag| flag != 0))
     }
@@ -557,14 +575,17 @@ impl GpuSynchronizer {
 
         // If flag is set, download the location
         let loc_data = crate::buffers::download_buffer_data::<u32>(
-            self.device.clone(),
-            self.queue.clone(),
-            &loc_buffer_gpu,
-            &loc_buffer_staging,
-            std::mem::size_of::<u32>() as u64,
-            Some("Contradiction Location Download".to_string()),
+            Some(self.device.clone()),
+            Some(self.queue.clone()),
+            &*loc_buffer_gpu,
+            &*loc_buffer_staging,
+            3 * std::mem::size_of::<u32>() as u64,
+            Some("Download Contradiction Location".to_string()),
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            GpuError::TransferError(format!("Failed to download contradiction location: {}", e))
+        })?;
 
         Ok(loc_data.first().cloned())
     }
@@ -575,12 +596,12 @@ impl GpuSynchronizer {
         let staging_count_buffer = &self.buffers.worklist_buffers.staging_worklist_count_buf;
 
         let count_data = crate::buffers::download_buffer_data::<u32>(
-            self.device.clone(),
-            self.queue.clone(),
-            &count_buffer_gpu,
-            &staging_count_buffer,
+            Some(self.device.clone()),
+            Some(self.queue.clone()),
+            &*count_buffer_gpu,
+            &*staging_count_buffer,
             std::mem::size_of::<u32>() as u64,
-            Some("Worklist Count Download".to_string()),
+            Some("Download Worklist Count".to_string()),
         )
         .await?;
         Ok(count_data.first().cloned().unwrap_or(0))
@@ -591,6 +612,7 @@ impl GpuSynchronizer {
         // Create a request for grid data only
         let request = DownloadRequest {
             download_grid_possibilities: true,
+            download_contradiction_flag: false,
             ..Default::default()
         };
 

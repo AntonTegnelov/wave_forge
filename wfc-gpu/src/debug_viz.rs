@@ -6,22 +6,21 @@
 //! - Contradictions: Where and why contradictions occur during execution
 
 use crate::{
+    accelerator::GridDefinition,
     backend::GpuBackend,
     buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults},
+    error_recovery::GpuError,
     pipeline::ComputePipelines,
     shader_registry::ShaderRegistry,
     sync::GpuSynchronizer,
-    GpuError,
 };
 use image::{ImageBuffer, Rgba, RgbaImage};
-use log::trace;
-use std::sync::Arc;
+use log::{debug, error, info, trace, warn};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use wfc_core::{
-    grid::{GridDefinition, PossibilityGrid},
-    TileId,
-};
-use wfc_rules::AdjacencyRules;
+use wfc_core::grid::PossibilityGrid;
+use wfc_rules::{AdjacencyRules, TileId};
 
 /// Types of debug visualizations available
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +33,7 @@ pub enum VisualizationType {
     Contradictions,
 }
 
-/// Configuration options for the debug visualization
+/// Configuration for debug visualization
 #[derive(Debug, Clone)]
 pub struct DebugVisualizationConfig {
     /// The type of visualization to generate
@@ -44,7 +43,7 @@ pub struct DebugVisualizationConfig {
     /// Maximum number of snapshots to keep in memory
     pub max_snapshots: usize,
     /// Snapshot interval for automatic generation
-    pub snapshot_interval: usize,
+    pub snapshot_interval: Duration,
 }
 
 impl Default for DebugVisualizationConfig {
@@ -53,7 +52,7 @@ impl Default for DebugVisualizationConfig {
             viz_type: VisualizationType::EntropyHeatmap,
             auto_generate: false,
             max_snapshots: 100,
-            snapshot_interval: 10,
+            snapshot_interval: Duration::from_secs(1),
         }
     }
 }
@@ -77,25 +76,33 @@ pub struct DebugSnapshot {
     pub num_tiles: usize,
 }
 
-/// Manages debug visualization for WFC GPU execution
-#[derive(Debug, Clone)]
+/// Holds state for the debug visualization system.
+#[derive(Debug)]
 pub struct DebugVisualizer {
-    /// Configuration for the visualizer
-    config: DebugVisualizationConfig,
-    /// Collection of snapshots taken during algorithm execution
-    snapshots: Vec<DebugSnapshot>,
-    /// Current step counter
-    current_step: usize,
-    /// Whether the visualizer is enabled
-    enabled: bool,
-    synchronizer: Arc<GpuSynchronizer>,
-    last_update: Instant,
-    update_interval: Duration,
-    show_entropy: bool,
-    show_min_entropy_index: bool,
-    last_entropy_values: Option<Vec<f32>>,
-    last_min_entropy_index: Option<Vec<u32>>,
-    grid_dims: (usize, usize, usize),
+    /// Configuration for the debug visualization.
+    pub config: DebugVisualizationConfig,
+    /// Whether visualization is enabled.
+    pub enabled: bool,
+    /// Queue of grid snapshots for visualization.
+    pub snapshots: VecDeque<DebugSnapshot>,
+    /// Last successful snapshot time.
+    pub last_snapshot_time: Option<Instant>,
+    /// Last grid dimensions seen.
+    pub last_grid_dims: Option<(usize, usize, usize)>,
+    /// Last min entropy cell index detected.
+    pub last_min_entropy_index: Option<(f32, u32)>,
+    /// Synchronizer for buffer access.
+    pub synchronizer: Arc<GpuSynchronizer>,
+    /// Current snapshot counter
+    pub current_step: usize,
+    /// Whether to show entropy visualization
+    pub show_entropy: bool,
+    /// Last downloaded entropy values
+    pub last_entropy_values: Option<Vec<f32>>,
+    /// Whether to show minimum entropy index
+    pub show_min_entropy_index: bool,
+    /// Current grid dimensions
+    pub grid_dims: (usize, usize, usize),
 }
 
 impl Default for DebugVisualizer {
@@ -112,16 +119,16 @@ impl DebugVisualizer {
     pub fn new(config: DebugVisualizationConfig, synchronizer: Arc<GpuSynchronizer>) -> Self {
         Self {
             config,
-            snapshots: Vec::new(),
-            current_step: 0,
+            snapshots: VecDeque::new(),
             enabled: true,
             synchronizer,
-            last_update: Instant::now(),
-            update_interval: Duration::from_secs(1),
-            show_entropy: false,
-            show_min_entropy_index: false,
-            last_entropy_values: None,
+            last_snapshot_time: None,
+            last_grid_dims: None,
             last_min_entropy_index: None,
+            current_step: 0,
+            show_entropy: false,
+            last_entropy_values: None,
+            show_min_entropy_index: false,
             grid_dims: (0, 0, 0),
         }
     }
@@ -179,6 +186,7 @@ impl DebugVisualizer {
             download_entropy: false,
             download_min_entropy_info: self.config.viz_type == VisualizationType::PropagationSteps,
             download_grid_possibilities: needs_grid,
+            download_contradiction_flag: needs_contradiction,
             download_contradiction_location: needs_contradiction,
         }
     }
@@ -205,16 +213,21 @@ impl DebugVisualizer {
             } else {
                 None
             },
-            contradiction_locations: results.contradiction_location.map(|loc| vec![loc]),
+            contradiction_locations: results.contradiction_location.map(|loc| {
+                // Convert the (x, y, z) tuple to a 1D index as u32
+                let (x, y, z) = loc;
+                let total_index = z * dimensions.0 * dimensions.1 + y * dimensions.0 + x;
+                vec![total_index as u32]
+            }),
             dimensions,
             num_tiles,
         };
 
-        self.snapshots.push(snapshot);
+        self.snapshots.push_back(snapshot);
 
         // Limit the number of snapshots to conserve memory
         while self.snapshots.len() > self.config.max_snapshots {
-            self.snapshots.remove(0);
+            self.snapshots.pop_front();
         }
 
         self.current_step += 1;
@@ -283,13 +296,14 @@ impl DebugVisualizer {
     /// Check if a snapshot should be taken based on the configured interval
     pub fn should_snapshot(&self, current_iteration: usize) -> bool {
         self.enabled
-            && self.config.snapshot_interval > 0
-            && current_iteration % self.config.snapshot_interval == 0
+            && self.config.snapshot_interval > Duration::from_secs(0)
+            && current_iteration % self.config.snapshot_interval.as_secs() as usize == 0
     }
 
     /// Get all stored snapshots
-    pub fn get_snapshots(&self) -> &[DebugSnapshot] {
-        &self.snapshots
+    pub fn get_snapshots(&self) -> Vec<&DebugSnapshot> {
+        // Create a Vec of references to the snapshots in the VecDeque
+        self.snapshots.iter().collect()
     }
 
     /// Clear all stored snapshots
@@ -323,7 +337,7 @@ impl DebugVisualizer {
     // Prefix unused parameter
     fn get_snapshot_by_index(&self, _index: Option<usize>) -> Option<&DebugSnapshot> {
         // Placeholder: Get snapshot by index or latest
-        self.snapshots.last()
+        self.snapshots.back()
     }
 
     /// Updates the visualizer with the current GPU state.
@@ -336,9 +350,15 @@ impl DebugVisualizer {
         gpu_buffers: &GpuBuffers, // Pass GPU buffers
     ) -> Result<(), GpuError> {
         let start = Instant::now();
+        if !self.enabled {
+            return Ok(());
+        }
+
         trace!("Updating debug visualizer...");
 
-        if self.last_update.elapsed() < self.update_interval {
+        if self.last_snapshot_time.is_some()
+            && self.last_snapshot_time.unwrap().elapsed() < self.config.snapshot_interval
+        {
             return Ok(());
         }
 
@@ -369,7 +389,7 @@ impl DebugVisualizer {
             };
             match gpu_buffers.download_results(request).await? {
                 results if results.min_entropy_info.is_some() => {
-                    self.last_min_entropy_index = results.min_entropy_info;
+                    self.last_min_entropy_index = results.min_entropy_info.map(|(e, i)| (e, i));
                     trace!("Downloaded min entropy index data for visualization.");
                 }
                 _ => {
@@ -384,7 +404,7 @@ impl DebugVisualizer {
         // Example: Generate an image based on self.last_entropy_values
         // let image = self.generate_visualization_image(grid_state)?; // Pass grid if needed
 
-        self.last_update = Instant::now();
+        self.last_snapshot_time = Some(Instant::now());
         trace!("Debug visualizer updated in {:?}", start.elapsed());
         Ok(())
     }
@@ -455,25 +475,24 @@ pub trait GpuBuffersDebugExt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::{MockGpuBackend, MockGpuDevice, MockGpuQueue};
+    use crate::accelerator::GridDefinition;
+    use crate::backend::GpuBackend;
     use crate::sync::GpuSynchronizer;
     use std::sync::Arc;
-    use wfc_core::{
-        grid::{GridDefinition, PossibilityGrid},
-        BoundaryCondition,
-    };
+    use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
     use wfc_rules::AdjacencyRules;
 
-    // Mock setup helper
+    // Modified setup helper
     async fn setup_test_environment() -> (
-        Arc<MockGpuBackend>,
+        Arc<dyn GpuBackend>,
         Arc<GpuSynchronizer>,
         GridDefinition,
         Arc<GpuBuffers>,
     ) {
-        let backend = Arc::new(MockGpuBackend::new());
-        let device = Arc::new(MockGpuDevice::new()); // Mock device
-        let queue = Arc::new(MockGpuQueue::new()); // Mock queue
+        // Use the real WgpuBackend implementation instead of mock objects
+        let backend = crate::backend::WgpuBackend::new();
+        let device = backend.device();
+        let queue = backend.queue();
         let grid_def = GridDefinition {
             dims: (10, 10, 1),
             num_tiles: 5,
@@ -488,7 +507,7 @@ mod tests {
         );
         let dummy_rules = AdjacencyRules::from_allowed_tuples(grid_def.num_tiles, 6, vec![]);
 
-        // Call GpuBuffers::new with mock device/queue references and dummy data
+        // Call GpuBuffers::new with device/queue references and dummy data
         let buffers = Arc::new(
             GpuBuffers::new(
                 &device, // Pass reference
@@ -497,18 +516,18 @@ mod tests {
                 &dummy_rules,
                 BoundaryCondition::Finite,
             )
-            .expect("Failed to create mock GpuBuffers"),
+            .expect("Failed to create GpuBuffers"),
         );
 
-        // Call GpuSynchronizer::new with mock device/queue references and buffers Arc
-        let sync = Arc::new(GpuSynchronizer::new(&device, &queue, buffers.clone())); // Pass references
+        // Call GpuSynchronizer::new with device/queue references and buffers Arc
+        let sync = Arc::new(GpuSynchronizer::new(device, queue, buffers.clone())); // Pass references
 
-        (backend, sync, grid_def, buffers)
+        (Arc::new(backend), sync, grid_def, buffers)
     }
 
     #[tokio::test]
     async fn test_visualizer_creation() {
-        let (_backend, sync, grid_def, _buffers) = setup_test_environment().await;
+        let (_backend, sync, _grid_def, _buffers) = setup_test_environment().await;
         let config = DebugVisualizationConfig::default();
         let visualizer = DebugVisualizer::new(config, sync);
         assert!(visualizer.enabled);
@@ -516,26 +535,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_visualizer_update_throttling() {
-        let (backend, sync, grid_def, mock_buffers) = setup_test_environment().await;
+        let (backend, sync, _grid_def, mock_buffers) = setup_test_environment().await;
         let mut config = DebugVisualizationConfig::default();
-        config.update_interval = Duration::from_millis(100);
+        config.snapshot_interval = Duration::from_millis(100);
 
         let mut visualizer = DebugVisualizer::new(config, sync.clone());
 
         let result1 = visualizer.update(&*backend, &mock_buffers).await;
         assert!(result1.is_ok());
-        let update_time1 = visualizer.last_update;
+        let update_time1 = visualizer.last_snapshot_time;
 
         let result2 = visualizer.update(&*backend, &mock_buffers).await;
         assert!(result2.is_ok());
-        let update_time2 = visualizer.last_update;
+        let update_time2 = visualizer.last_snapshot_time;
 
         assert_eq!(update_time1, update_time2);
 
         tokio::time::sleep(Duration::from_millis(150)).await;
         let result3 = visualizer.update(&*backend, &mock_buffers).await;
         assert!(result3.is_ok());
-        let update_time3 = visualizer.last_update;
+        let update_time3 = visualizer.last_snapshot_time;
 
         assert!(update_time3 > update_time2);
     }

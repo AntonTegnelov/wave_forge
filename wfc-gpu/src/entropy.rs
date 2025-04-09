@@ -11,6 +11,7 @@ use wfc_core::{
     entropy::{EntropyCalculator, EntropyError as CoreEntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
 };
+use wgpu::util::DeviceExt;
 use wgpu::{BindGroup, BindGroupLayout, Buffer, ComputePipeline, Device, Queue};
 
 /// GPU-accelerated entropy calculator for use in WFC algorithm.
@@ -261,10 +262,10 @@ impl GpuEntropyCalculator {
 
         // Use the centralized download function, cloning the necessary Arcs
         let entropy_data = crate::buffers::download_buffer_data::<f32>(
-            self.device.clone(),
-            self.queue.clone(),
-            self.buffers.entropy_buffers.entropy_buf.clone(),
-            self.buffers.entropy_buffers.staging_entropy_buf.clone(),
+            Some(self.device.clone()),
+            Some(self.queue.clone()),
+            &*self.buffers.entropy_buffers.entropy_buf,
+            &*self.buffers.entropy_buffers.staging_entropy_buf,
             self.buffers.entropy_buffers.entropy_buf.size(), // Use calculated size
             Some("Entropy Data Download".to_string()),
         )
@@ -314,14 +315,11 @@ impl GpuEntropyCalculator {
 
         // Use the centralized download function
         let min_info_data = crate::buffers::download_buffer_data::<u32>(
-            self.device.clone(),
-            self.queue.clone(),
-            self.buffers.entropy_buffers.min_entropy_info_buf.clone(),
-            self.buffers
-                .entropy_buffers
-                .staging_min_entropy_info_buf
-                .clone(),
-            self.buffers.entropy_buffers.min_entropy_info_buf.size(), // Use calculated size
+            Some(self.device.clone()),
+            Some(self.queue.clone()),
+            &*self.buffers.entropy_buffers.min_entropy_info_buf,
+            &*self.buffers.entropy_buffers.staging_min_entropy_info_buf,
+            self.buffers.entropy_buffers.min_entropy_info_buf.size(),
             Some("Min Entropy Info Download".to_string()),
         )
         .await;

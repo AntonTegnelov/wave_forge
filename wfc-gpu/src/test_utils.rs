@@ -17,11 +17,15 @@ pub fn initialize_test_gpu() -> (wgpu::Device, wgpu::Queue) {
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
             .expect("Failed to get adapter");
 
+    // Create a limits struct that increases the max storage buffers per shader stage
+    let mut limits = wgpu::Limits::downlevel_defaults();
+    limits.max_storage_buffers_per_shader_stage = 10;
+
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("Test Device"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits: limits,
         },
         None,
     ))

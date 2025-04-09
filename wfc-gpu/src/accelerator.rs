@@ -1,30 +1,27 @@
 #![allow(clippy::redundant_field_names)]
 use crate::{
     backend::GpuBackend,
-    buffers::{DownloadRequest, GpuBuffers, GpuParamsUniform},
+    buffers::{GpuBuffers, GpuParamsUniform},
     coordination::{DefaultCoordinator, WfcCoordinator},
     debug_viz::{DebugVisualizationConfig, DebugVisualizer},
     entropy::GpuEntropyCalculator,
     error_recovery::{GpuError, GridCoord},
     pipeline::ComputePipelines,
     propagator::GpuConstraintPropagator,
-    shader_registry::ShaderRegistry,
     subgrid::SubgridConfig,
     sync::GpuSynchronizer,
 };
 use anyhow::Error as AnyhowError;
-use log::{error, info, trace, warn};
-use std::sync::Arc;
-use std::sync::RwLock;
-use std::time::{Duration, Instant};
+use log::{error, info, trace};
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use wfc_core::{
-    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType as CoreEntropyHeuristicType},
+    entropy::{EntropyCalculator, EntropyHeuristicType as CoreEntropyHeuristicType},
     grid::PossibilityGrid,
-    propagator::{ConstraintPropagator, PropagationError},
+    propagator::PropagationError,
     BoundaryCondition, ProgressInfo, WfcError,
 };
 use wfc_rules::AdjacencyRules;
-use wgpu::{Device, Queue};
 
 /// Grid definition info
 #[derive(Debug, Clone)]
@@ -317,7 +314,7 @@ impl GpuAccelerator {
     pub async fn run_with_callback<F>(
         &mut self,
         initial_grid: &PossibilityGrid,
-        rules: &AdjacencyRules,
+        _rules: &AdjacencyRules,
         max_iterations: u64,
         mut progress_callback: F,
         shutdown_signal: Option<tokio::sync::watch::Receiver<bool>>,
@@ -434,20 +431,16 @@ impl GpuAccelerator {
             trace!("Coordinating constraint propagation...");
             let update_coords = vec![GridCoord::from(selected_coords)];
 
-            let mut propagator_guard = instance_guard.propagator.write().unwrap();
-
             let propagation_result = instance_guard
                 .coordinator
                 .coordinate_propagation(
-                    &mut *propagator_guard,
+                    &instance_guard.propagator,
                     &instance_guard.buffers,
                     &*instance_guard.backend.device(),
                     &*instance_guard.backend.queue(),
                     update_coords,
                 )
                 .await;
-
-            drop(propagator_guard);
 
             match propagation_result {
                 Ok(_) => {
@@ -469,20 +462,28 @@ impl GpuAccelerator {
                 }
             }
 
+            // Extract all the grid information we need before entering the callback blocks
+            let grid_width = instance_guard.grid_definition.dims.0;
+            let grid_height = instance_guard.grid_definition.dims.1;
+            let grid_depth = instance_guard.grid_definition.dims.2;
+            let num_tiles = instance_guard.grid_definition.num_tiles;
+
+            // Clone the backend and buffers references outside of any blocks
+            let backend_ref = instance_guard.backend.clone();
+            let buffers_ref = instance_guard.buffers.clone();
+
+            run_result.stats.iterations = iteration as usize;
+
             if let Some(cb) = &mut instance_guard.progress_callback {
                 trace!("Calling progress callback for iteration {}...", iteration);
-
-                run_result.stats.iterations = iteration as usize;
-
-                let progress = run_result.stats.collapsed_cells as f32 / total_cells as f32;
 
                 let progress_info = ProgressInfo {
                     iterations: iteration,
                     grid_state: PossibilityGrid::new(
-                        instance_guard.grid_definition.dims.0,
-                        instance_guard.grid_definition.dims.1,
-                        instance_guard.grid_definition.dims.2,
-                        instance_guard.grid_definition.num_tiles,
+                        grid_width,
+                        grid_height,
+                        grid_depth,
+                        num_tiles,
                     ),
                     collapsed_cells: run_result.stats.collapsed_cells,
                     total_cells: total_cells,
@@ -501,19 +502,17 @@ impl GpuAccelerator {
                         return Err(WfcError::InternalError(e.to_string()));
                     }
                 }
-            } else {
-                run_result.stats.iterations = iteration as usize;
             }
 
             if let Some(visualizer) = &mut instance_guard.debug_visualizer {
                 trace!("Updating debug visualizer for iteration {}...", iteration);
-                if let Err(e) = visualizer
-                    .update(&*instance_guard.backend, &*instance_guard.buffers)
-                    .await
-                {
+
+                if let Err(e) = visualizer.update(&*backend_ref, &*buffers_ref).await {
                     error!("Failed to update debug visualizer: {}", e);
                 }
             }
+
+            let _progress = run_result.stats.collapsed_cells as f32 / total_cells as f32;
         }
 
         drop(instance_guard);
@@ -617,21 +616,18 @@ mod tests {
         let width = 4;
         let height = 4;
         let depth = 1;
-        let num_tiles = 2;
+        let num_tiles = 3;
+        let grid = PossibilityGrid::new(width, height, depth, num_tiles);
 
-        let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
-        for z in 0..depth {
-            for y in 0..height {
-                for x in 0..width {
-                    if let Some(cell) = grid.get_mut(x, y, z) {
-                        cell.fill(true);
-                    }
-                }
-            }
-        }
+        // Simple adjacency rules
+        let allowed_tuples = vec![
+            (0, 1, 0), // Tile 0 allows Tile 1 to its right
+            (1, 0, 1), // Tile 1 allows Tile 0 to its left
+            (1, 2, 0), // Tile 1 allows Tile 2 to its right
+            (2, 1, 1), // Tile 2 allows Tile 1 to its left
+        ];
 
-        let allowed_tuples = vec![(0, 0, 1), (0, 1, 0)];
-        let mut rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, allowed_tuples);
+        let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, allowed_tuples);
 
         (grid, rules)
     }

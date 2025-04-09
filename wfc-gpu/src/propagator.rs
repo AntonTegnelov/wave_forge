@@ -424,24 +424,21 @@ impl GpuConstraintPropagator {
                 });
 
             // --- Read Input Worklist Size ---
-            let count_buf_gpu = &self.buffers.worklist_buffers.worklist_count_buf;
-            let count_buf_staging = &self.buffers.worklist_buffers.staging_worklist_count_buf;
-
-            // Use download_buffer_data instead
-            let worklist_size_data = crate::buffers::download_buffer_data::<u32>(
-                self.device.clone(),
-                self.queue.clone(),
-                count_buf_gpu,
-                count_buf_staging,
+            let worklist_size_data = match crate::buffers::download_buffer_data::<u32>(
+                Some(self.device.clone()),
+                Some(self.queue.clone()),
+                &*self.buffers.worklist_buffers.worklist_count_buf,
+                &*self.buffers.worklist_buffers.staging_worklist_count_buf,
                 std::mem::size_of::<u32>() as u64,
-                Some("Worklist Size".to_string()),
+                Some("Download Worklist Count".to_string()),
             )
-            .await;
-
-            let worklist_size = match worklist_size_data {
-                Ok(data) => data.first().cloned().unwrap_or(0),
+            .await
+            {
+                Ok(data) => data,
                 Err(e) => return Err(PropagationError::GpuCommunicationError(e.to_string())),
             };
+
+            let worklist_size = worklist_size_data.first().cloned().unwrap_or(0);
 
             if worklist_size == 0 {
                 debug!(
@@ -482,43 +479,45 @@ impl GpuConstraintPropagator {
 
             // --- Check for contradictions periodically ---
             if current_pass % self.params.contradiction_check_frequency == 0 {
-                // Use download_buffer_data instead
-                let contradiction_flag_data = crate::buffers::download_buffer_data::<u32>(
-                    self.device.clone(),
-                    self.queue.clone(),
-                    &self.buffers.contradiction_flag_buf,
-                    &self.buffers.staging_contradiction_flag_buf,
+                let contradiction_flag_data = match crate::buffers::download_buffer_data::<u32>(
+                    Some(self.device.clone()),
+                    Some(self.queue.clone()),
+                    &*self.buffers.contradiction_flag_buf,
+                    &*self.buffers.staging_contradiction_flag_buf,
                     std::mem::size_of::<u32>() as u64,
                     Some("Contradiction Flag".to_string()),
                 )
-                .await;
-
-                let contradiction_flag = match contradiction_flag_data {
-                    Ok(data) => data.first().cloned().unwrap_or(0),
+                .await
+                {
+                    Ok(data) => data,
                     Err(e) => return Err(PropagationError::GpuCommunicationError(e.to_string())),
                 };
 
+                let contradiction_flag = contradiction_flag_data.first().cloned().unwrap_or(0);
+
                 if contradiction_flag != 0 {
-                    // Use download_buffer_data instead
-                    let contradiction_loc_data = crate::buffers::download_buffer_data::<u32>(
-                        self.device.clone(),
-                        self.queue.clone(),
-                        &self.buffers.contradiction_location_buf,
-                        &self.buffers.staging_contradiction_location_buf,
-                        std::mem::size_of::<u32>() as u64,
+                    let contradiction_loc_data = match crate::buffers::download_buffer_data::<u32>(
+                        Some(self.device.clone()),
+                        Some(self.queue.clone()),
+                        &*self.buffers.contradiction_location_buf,
+                        &*self.buffers.staging_contradiction_location_buf,
+                        3 * std::mem::size_of::<u32>() as u64,
                         Some("Contradiction Location".to_string()),
                     )
-                    .await;
-                    let contradiction_loc = match contradiction_loc_data {
-                        Ok(data) => data.first().cloned().unwrap_or(std::u32::MAX),
+                    .await
+                    {
+                        Ok(data) => data,
                         Err(e) => {
                             return Err(PropagationError::GpuCommunicationError(e.to_string()))
                         }
                     };
+
+                    let contradiction_loc = contradiction_loc_data
+                        .first()
+                        .cloned()
+                        .unwrap_or(std::u32::MAX);
                     let (width, height, _) = self.buffers.grid_dims;
                     let (cx, cy, cz) = index_to_coords(contradiction_loc as usize, width, height);
-                    // Commented out unused debug print
-                    // debug!("Contradiction at {:?}", (cx, cy, cz));
                     return Err(PropagationError::Contradiction(cx, cy, cz));
                 }
             }
@@ -528,20 +527,21 @@ impl GpuConstraintPropagator {
             self.current_worklist_idx.fetch_xor(1, Ordering::Relaxed);
 
             // --- Check Early Termination ---
-            let output_worklist_size_data = crate::buffers::download_buffer_data::<u32>(
-                self.device.clone(),
-                self.queue.clone(),
-                count_buf_gpu, // Source is still the main count buffer
-                count_buf_staging,
+            let output_worklist_size_data = match crate::buffers::download_buffer_data::<u32>(
+                Some(self.device.clone()),
+                Some(self.queue.clone()),
+                &*self.buffers.worklist_buffers.worklist_count_buf,
+                &*self.buffers.worklist_buffers.staging_worklist_count_buf,
                 std::mem::size_of::<u32>() as u64,
-                Some("Output Worklist Size".to_string()),
+                Some("Output Worklist Count".to_string()),
             )
-            .await;
-
-            let output_worklist_size = match output_worklist_size_data {
-                Ok(data) => data.first().cloned().unwrap_or(0),
+            .await
+            {
+                Ok(data) => data,
                 Err(e) => return Err(PropagationError::GpuCommunicationError(e.to_string())),
             };
+
+            let output_worklist_size = output_worklist_size_data.first().cloned().unwrap_or(0);
 
             if output_worklist_size < self.early_termination_threshold {
                 consecutive_low_worklist_passes += 1;
@@ -562,33 +562,34 @@ impl GpuConstraintPropagator {
         }
 
         // Final contradiction check after loop finishes
-        let contradiction_flag_data = crate::buffers::download_buffer_data::<u32>(
-            self.device.clone(),
-            self.queue.clone(),
-            &self.buffers.contradiction_flag_buf,
-            &self.buffers.staging_contradiction_flag_buf,
+        let contradiction_flag_data = match crate::buffers::download_buffer_data::<u32>(
+            Some(self.device.clone()),
+            Some(self.queue.clone()),
+            &*self.buffers.contradiction_flag_buf,
+            &*self.buffers.staging_contradiction_flag_buf,
             std::mem::size_of::<u32>() as u64,
-            Some("Final Contradiction Flag Check".to_string()),
+            Some("Final Contradiction Flag".to_string()),
         )
-        .await;
-
-        let contradiction_flag = match contradiction_flag_data {
-            Ok(data) => data.first().cloned().unwrap_or(0),
+        .await
+        {
+            Ok(data) => data,
             Err(e) => return Err(PropagationError::GpuCommunicationError(e.to_string())),
         };
 
+        let contradiction_flag = contradiction_flag_data.first().cloned().unwrap_or(0);
+
         if contradiction_flag != 0 {
-            let contradiction_loc_data = crate::buffers::download_buffer_data::<u32>(
-                self.device.clone(),
-                self.queue.clone(),
-                &self.buffers.contradiction_location_buf,
-                &self.buffers.staging_contradiction_location_buf,
-                std::mem::size_of::<u32>() as u64,
-                Some("Contradiction Location on Final Check".to_string()),
+            let contradiction_loc_data = match crate::buffers::download_buffer_data::<u32>(
+                Some(self.device.clone()),
+                Some(self.queue.clone()),
+                &*self.buffers.contradiction_location_buf,
+                &*self.buffers.staging_contradiction_location_buf,
+                3 * std::mem::size_of::<u32>() as u64,
+                Some("Final Contradiction Location".to_string()),
             )
-            .await;
-            let contradiction_loc = match contradiction_loc_data {
-                Ok(data) => data.first().cloned().unwrap_or(std::u32::MAX),
+            .await
+            {
+                Ok(data) => data,
                 Err(e) => {
                     error!(
                         "Failed to get contradiction location after flag was set: {}",
@@ -597,10 +598,13 @@ impl GpuConstraintPropagator {
                     return Err(PropagationError::GpuCommunicationError(e.to_string()));
                 }
             };
+
+            let contradiction_loc = contradiction_loc_data
+                .first()
+                .cloned()
+                .unwrap_or(std::u32::MAX);
             let (width, height, _) = self.buffers.grid_dims;
             let (cx, cy, cz) = index_to_coords(contradiction_loc as usize, width, height);
-            // Commented out unused debug print
-            // debug!("Contradiction at {:?}", (cx, cy, cz));
             return Err(PropagationError::Contradiction(cx, cy, cz));
         }
 
@@ -898,21 +902,17 @@ fn index_to_coords(index: usize, width: usize, height: usize) -> (usize, usize, 
 mod tests {
     use super::*;
     use crate::{
-        buffers::GpuBuffers,
-        entropy::GpuEntropyCalculator,
-        test_utils::{create_test_device_queue, setup_mock_gpu}, // Ensure setup_mock_gpu is imported
+        accelerator::GridDefinition, buffers::GpuBuffers, entropy::GpuEntropyCalculator,
+        test_utils::create_test_device_queue,
     };
     use futures::executor::block_on;
     use std::sync::Arc;
-    use wfc_core::{
-        grid::{GridCoord3D, GridDefinition, PossibilityGrid},
-        BoundaryCondition,
-    };
+    use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
     use wfc_rules::{AdjacencyRules, TileSet, Transformation};
 
     #[tokio::test]
     async fn test_propagation_initialization() {
-        let mock_gpu = setup_mock_gpu().expect("Failed to setup mock GPU");
+        let (_device, _queue) = create_test_device_queue();
         // ... rest of test ...
     }
 
