@@ -1,8 +1,12 @@
 #![allow(clippy::redundant_field_names)]
 use crate::{
-    buffers::{DownloadRequest, GpuBuffers, GpuParamsUniform},
+    buffers::{
+        self, DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults,
+        GpuParamsUniform,
+    },
+    coordination::{BasicCoordinator, WfcCoordinator},
     debug_viz::{DebugVisualizationConfig, DebugVisualizer},
-    entropy::GpuEntropyCalculator,
+    entropy::{GpuEntropyCalculator, GpuEntropyCalculatorExt},
     pipeline::ComputePipelines,
     propagator::GpuConstraintPropagator,
     subgrid::SubgridConfig,
@@ -40,8 +44,7 @@ use wfc_rules::AdjacencyRules;
 /// (or used directly) to perform entropy calculation and constraint propagation steps on the GPU.
 /// Data synchronization between CPU (`PossibilityGrid`) and GPU (`GpuBuffers`) is handled
 /// internally by the respective trait method implementations.
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct GpuAccelerator {
     /// WGPU instance.
     instance: Arc<wgpu::Instance>,
@@ -70,6 +73,7 @@ pub struct GpuAccelerator {
     max_propagation_steps: u32,
     contradiction_check_frequency: u32,
     entropy_calculator: GpuEntropyCalculator,
+    coordinator: Box<dyn WfcCoordinator + Send + Sync>,
 }
 
 impl GpuAccelerator {
@@ -212,7 +216,7 @@ impl GpuAccelerator {
         };
 
         // Create propagator
-        let mut propagator = GpuConstraintPropagator::new(
+        let propagator = GpuConstraintPropagator::new(
             device.clone(),
             queue.clone(),
             pipelines.clone(),
@@ -224,7 +228,7 @@ impl GpuAccelerator {
 
         // Configure propagator with subgrid if provided
         if let Some(config) = subgrid_config.clone() {
-            propagator = propagator.with_parallel_subgrid_processing(config);
+            propagator.with_parallel_subgrid_processing(config);
         }
 
         let grid_dims = (initial_grid.width, initial_grid.height, initial_grid.depth);
@@ -264,6 +268,7 @@ impl GpuAccelerator {
             max_propagation_steps,
             contradiction_check_frequency,
             entropy_calculator,
+            coordinator: Box::new(BasicCoordinator::default()),
         })
     }
 
@@ -355,7 +360,7 @@ impl GpuAccelerator {
     /// Configures the accelerator for parallel subgrid processing.
     pub fn with_parallel_subgrid_processing(mut self, config: SubgridConfig) -> Self {
         self.subgrid_config = Some(config.clone());
-        // Update the propagator with the subgrid config
+        // Clone and modify propagator directly
         self.propagator = self
             .propagator
             .clone()
@@ -365,7 +370,7 @@ impl GpuAccelerator {
 
     /// Runs the WFC algorithm using the GPU accelerator, with progress callbacks.
     pub async fn run_with_callback<F>(
-        &self,
+        &mut self,
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
         max_iterations: u64,
@@ -449,13 +454,11 @@ impl GpuAccelerator {
 
                 // --- Propagation Phase (using GpuConstraintPropagator) ---
                 trace!("Propagating constraints...");
-                // Propagate the constraints asynchronously
-                // Use a block to handle the Result from propagate
-                let propagation_result = {
-                    let grid_ref = &mut current_grid; // Use current_grid here
-                    self.propagator.propagate(grid_ref, vec![(x, y, z)], rules)
-                }
-                .await;
+                let grid_ref = &mut current_grid;
+                let propagation_result = self
+                    .propagator // Call on propagator directly
+                    .propagate(grid_ref, vec![(x, y, z)], rules)
+                    .await;
 
                 match propagation_result {
                     Ok(_) => trace!("Propagation successful."),
@@ -543,6 +546,7 @@ impl GpuAccelerator {
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
+        // Call directly on self.propagator
         self.propagator.propagate(grid, updated_coords, rules).await
     }
 
@@ -572,11 +576,6 @@ impl Drop for GpuAccelerator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_utils::create_test_device_queue;
-    // use std::sync::atomic::AtomicBool; // Removed unused
-    // use wfc_core::grid::PossibilityGrid; // Removed unused
-
     #[tokio::test]
     async fn test_accelerator_creation_and_config() {
         // Implementation of the test

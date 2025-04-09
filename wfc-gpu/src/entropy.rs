@@ -7,9 +7,8 @@ use crate::{
 use log::{debug, error, warn};
 use pollster;
 use std::sync::Arc;
-use wfc_core::entropy::EntropyError as CoreEntropyError;
 use wfc_core::{
-    entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
+    entropy::{EntropyCalculator, EntropyError as CoreEntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
 };
 use wgpu;
@@ -83,10 +82,14 @@ impl GpuEntropyCalculator {
     pub async fn calculate_entropy_async(
         &self,
         grid: &PossibilityGrid,
-    ) -> Result<EntropyGrid, EntropyError> {
+    ) -> Result<EntropyGrid, CoreEntropyError> {
         debug!("Entering calculate_entropy_async");
         let (width, height, depth) = (grid.width, grid.height, grid.depth);
         let num_cells = width * height * depth;
+
+        if num_cells == 0 {
+            return Ok(EntropyGrid::new(width, height, depth));
+        }
 
         // TODO: Re-evaluate buffer resizing logic. Should it be here or handled
         // by a higher-level coordinator? For now, assume buffers are correctly sized.
@@ -178,7 +181,7 @@ impl GpuEntropyCalculator {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Entropy Encoder"),
+                label: Some("Entropy Compute Encoder"),
             });
 
         // Create main bind group (group 0)
@@ -227,16 +230,14 @@ impl GpuEntropyCalculator {
             compute_pass.set_bind_group(0, &grid_bind_group, &[]); // Main data buffers
             compute_pass.set_bind_group(1, &entropy_params_bind_group, &[]); // Entropy specific params
 
-            // Dispatch - Calculate workgroup counts
-            let workgroup_size = 8; // Must match shader's workgroup_size
-            let workgroup_x = width.div_ceil(workgroup_size);
-            let workgroup_y = height.div_ceil(workgroup_size);
-            let workgroup_z = depth;
-            compute_pass.dispatch_workgroups(
-                workgroup_x as u32,
-                workgroup_y as u32,
-                workgroup_z as u32,
-            );
+            // Calculate workgroups
+            let workgroup_size = self.pipelines.entropy_workgroup_size as u32;
+            // Cast width and height to u32 for division
+            let workgroup_x = (width as u32).div_ceil(workgroup_size);
+            let workgroup_y = (height as u32).div_ceil(workgroup_size);
+            let workgroup_z = depth as u32; // Depth likely doesn't need division by workgroup size
+
+            compute_pass.dispatch_workgroups(workgroup_x, workgroup_y, workgroup_z);
         } // End compute pass scope
 
         // Submit to Queue
@@ -258,20 +259,16 @@ impl GpuEntropyCalculator {
         );
         self.queue.submit(Some(copy_encoder.finish()));
 
-        // Map and read entropy data (BLOCKING - Needs Async Version)
-        let entropy_data_result = crate::buffers::map_and_process::<f32>(
-            self.buffers.entropy_buffers.staging_entropy_buf.clone(), // Use entropy_buffers
-            std::time::Duration::from_secs(5),
-            Some(num_cells),
+        // Use download_buffer_data instead
+        let entropy_data = crate::buffers::download_buffer_data::<f32>(
+            &self.device,
+            &self.queue,
+            &self.buffers.entropy_buffers.entropy_buf,
+            &self.buffers.entropy_buffers.staging_entropy_buf,
+            self.buffers.entropy_buffers.entropy_buf.size(),
+            Some("Entropy Data".to_string()),
         )
-        .await;
-
-        let entropy_data = match entropy_data_result {
-            Ok(data_box) => *data_box.downcast::<Vec<f32>>().map_err(|_| {
-                EntropyError::InternalError("Failed to downcast entropy data".into())
-            })?,
-            Err(e) => return Err(EntropyError::GpuError(e.to_string())),
-        };
+        .await?;
 
         debug!("Exiting calculate_entropy_async");
         let mut entropy_grid =
@@ -315,20 +312,19 @@ impl GpuEntropyCalculator {
         );
         self.queue.submit(Some(copy_encoder.finish()));
 
-        // Map and read min entropy info (BLOCKING - Needs Async Version)
-        let min_info_result = crate::buffers::map_and_process::<u32>(
-            self.buffers
-                .entropy_buffers
-                .staging_min_entropy_info_buf
-                .clone(), // Use entropy_buffers
-            std::time::Duration::from_secs(5),
-            Some(2), // Expect [f32_bits, u32_index]
+        // Use download_buffer_data instead
+        let min_info_data = crate::buffers::download_buffer_data::<u32>(
+            &self.device,
+            &self.queue,
+            &self.buffers.entropy_buffers.min_entropy_info_buf,
+            &self.buffers.entropy_buffers.staging_min_entropy_info_buf,
+            self.buffers.entropy_buffers.min_entropy_info_buf.size(),
+            Some("Min Entropy Info".to_string()),
         )
         .await;
 
-        match min_info_result {
-            Ok(data_box) => {
-                let data = data_box.downcast::<Vec<u32>>().ok()?;
+        match min_info_data {
+            Ok(data) => {
                 if data.len() < 2 {
                     warn!(
                         "Downloaded min_entropy_info data has insufficient length ({})",
@@ -362,7 +358,7 @@ impl GpuEntropyCalculator {
 }
 
 impl EntropyCalculator for GpuEntropyCalculator {
-    fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, EntropyError> {
+    fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, CoreEntropyError> {
         // Use pollster instead of futures::executor::block_on
         pollster::block_on(self.calculate_entropy_async(grid))
     }
@@ -385,7 +381,7 @@ impl EntropyCalculator for GpuEntropyCalculator {
     }
 }
 
-impl From<GpuError> for EntropyError {
+impl From<GpuError> for CoreEntropyError {
     fn from(gpu_error: GpuError) -> Self {
         match gpu_error {
             GpuError::BufferOperationError(s)
@@ -393,11 +389,13 @@ impl From<GpuError> for EntropyError {
             | GpuError::ShaderError(s)
             | GpuError::TransferError(s)
             | GpuError::BufferSizeMismatch(s) => {
-                EntropyError::Other(format!("GPU Communication Error: {}", s))
+                CoreEntropyError::Other(format!("GPU Communication Error: {}", s))
             }
-            GpuError::ValidationError(e) => EntropyError::Other(format!("GPU Setup Error: {}", e)),
-            GpuError::Other(s) => EntropyError::Other(s),
-            _ => EntropyError::Other(format!("Unhandled GpuError: {:?}", gpu_error)),
+            GpuError::ValidationError(e) => {
+                CoreEntropyError::Other(format!("GPU Setup Error: {}", e))
+            }
+            GpuError::Other(s) => CoreEntropyError::Other(s),
+            _ => CoreEntropyError::Other(format!("Unhandled GpuError: {:?}", gpu_error)),
         }
     }
 }

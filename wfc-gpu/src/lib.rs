@@ -3,7 +3,8 @@
 #![allow(clippy::derive_partial_eq_without_eq)]
 // Removed conflicting use statement
 // use crate::backend::BackendError;
-use thiserror::Error;
+// Removed unused import
+// use thiserror::Error;
 
 // --- Private/Internal Modules ---
 // These are implementation details not part of the public API unless re-exported.

@@ -25,9 +25,9 @@ impl RuleBuffers {
     pub fn new(
         device: &wgpu::Device,
         rules: &AdjacencyRules,
-        config: &DynamicBufferConfig,
+        _config: &DynamicBufferConfig,
     ) -> Result<Self, GpuError> {
-        let num_tiles = rules.num_transformed_tiles();
+        let num_tiles = rules.num_tiles();
         let _num_axes = rules.num_axes();
 
         // Prepare weighted rules data for the buffer

@@ -6,15 +6,12 @@
 use crate::{error_recovery::RecoverableGpuOp, GpuError};
 use bytemuck::{Pod, Zeroable};
 use futures::future::{try_join_all, FutureExt};
-use log::{info, warn};
-use pollster;
-use std::{
-    any::Any, collections::HashMap, future::Future, pin::Pin, sync::Arc, task::Poll, time::Duration,
-};
-use std::{mem, sync::mpsc};
+use log::{error, info, trace, warn};
+use std::{any::Any, collections::HashMap, future::Future, pin::Pin, sync::Arc};
 use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
 use wfc_rules::AdjacencyRules;
 use wgpu::{self, util::DeviceExt};
+use wgpu::{BufferAsyncError, BufferSlice, Device, MapMode, Queue};
 
 // Declare submodules
 pub mod entropy_buffers;
@@ -121,6 +118,18 @@ pub struct DownloadRequest {
     pub download_min_entropy_info: bool,
     pub download_grid_possibilities: bool,
     pub download_contradiction_location: bool,
+}
+
+impl Default for DownloadRequest {
+    /// Creates a new `DownloadRequest` with default values (all false).
+    fn default() -> Self {
+        Self {
+            download_entropy: false,
+            download_min_entropy_info: false,
+            download_grid_possibilities: false,
+            download_contradiction_location: false,
+        }
+    }
 }
 
 // --- Implementations --- //
@@ -324,92 +333,149 @@ impl GpuBuffers {
         request: DownloadRequest,
     ) -> Result<GpuDownloadResults, GpuError> {
         let recoverable_op = RecoverableGpuOp::default();
+        // Clone Arcs needed by the closure outside of it
+        let device_clone = device.clone();
+        let queue_clone = queue.clone();
+        let buffers_clone = self.clone(); // Clone self (GpuBuffers) to access buffers inside closure
+
         recoverable_op
-            .try_with_recovery(|| async {
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Download Results Encoder"),
-                });
-                let mut futures: Vec<Pin<Box<dyn Future<Output = Result<(String, Box<dyn Any>), GpuError>> + Send>>> = Vec::new();
-                let operation_timeout = Duration::from_secs(10); // Example timeout
+            .try_with_recovery(move || {
+                // Use the cloned Arcs inside the closure
+                let device = device_clone;
+                let queue = queue_clone;
+                let buffers = buffers_clone; // Use the cloned GpuBuffers
 
-                if request.download_entropy {
-                    encoder.copy_buffer_to_buffer(
-                        &self.entropy_buffers.entropy_buf,
-                        0,
-                        &self.entropy_buffers.staging_entropy_buf,
-                        0,
-                        self.entropy_buffers.entropy_buf.size(),
-                    );
-                    let buffer = self.entropy_buffers.staging_entropy_buf.clone();
-                    let expected_size = self.num_cells;
-                    futures.push(
-                        map_and_process::<f32>(buffer, operation_timeout, Some(expected_size))
-                            .map(|r| r.map(|d| ("entropy".to_string(), d as Box<dyn Any>)))
-                            .boxed(),
-                    );
-                }
-                if request.download_min_entropy_info {
-                    encoder.copy_buffer_to_buffer(
-                        &self.entropy_buffers.min_entropy_info_buf,
-                        0,
-                        &self.entropy_buffers.staging_min_entropy_info_buf,
-                        0,
-                        self.entropy_buffers.min_entropy_info_buf.size(),
-                    );
-                    let buffer = self.entropy_buffers.staging_min_entropy_info_buf.clone();
-                    futures.push(
-                         map_and_process::<u32>(buffer, operation_timeout, Some(2)) // Expect [f32_bits, u32_idx]
-                             .map(|r| r.map(|d| ("min_entropy_info".to_string(), d as Box<dyn Any>)))
-                             .boxed(),
-                     );
-                }
-                if request.download_grid_possibilities {
-                    encoder.copy_buffer_to_buffer(
-                        &self.grid_buffers.grid_possibilities_buf,
-                        0,
-                        &self.grid_buffers.staging_grid_possibilities_buf,
-                        0,
-                        self.grid_buffers.grid_possibilities_buf.size(),
-                    );
-                    let buffer = self.grid_buffers.staging_grid_possibilities_buf.clone();
-                    let expected_size = self.num_cells * self.grid_buffers.u32s_per_cell;
-                    futures.push(
-                        map_and_process::<u32>(buffer, operation_timeout, Some(expected_size))
-                            .map(|r| r.map(|d| ("grid_possibilities".to_string(), d as Box<dyn Any>)))
-                            .boxed(),
-                    );
-                }
-                if request.download_contradiction_location {
-                    encoder.copy_buffer_to_buffer(
-                        &self.contradiction_flag_buf,
-                        0,
-                        &self.staging_contradiction_flag_buf,
-                        0,
-                        self.contradiction_flag_buf.size(),
-                    );
-                    encoder.copy_buffer_to_buffer(
-                        &self.contradiction_location_buf,
-                        0,
-                        &self.staging_contradiction_location_buf,
-                        0,
-                        self.contradiction_location_buf.size(),
-                    );
-                    let flag_buffer = self.staging_contradiction_flag_buf.clone();
-                    futures.push(
-                        map_and_process::<u32>(flag_buffer, operation_timeout, Some(1))
-                            .map(|r| r.map(|d| ("contradiction_flag".to_string(), d as Box<dyn Any>)))
-                            .boxed(),
-                    );
-                    let loc_buffer = self.staging_contradiction_location_buf.clone();
-                    futures.push(
-                        map_and_process::<u32>(loc_buffer, operation_timeout, Some(1))
-                            .map(|r| r.map(|d| ("contradiction_location".to_string(), d as Box<dyn Any>)))
-                            .boxed(),
-                    );
-                }
+                // Move staging buffer clones here, inside the closure but outside the ifs
+                let staging_entropy_buffer = buffers.entropy_buffers.staging_entropy_buf.clone();
+                let staging_min_info_buffer =
+                    buffers.entropy_buffers.staging_min_entropy_info_buf.clone();
+                let staging_grid_buffer =
+                    buffers.grid_buffers.staging_grid_possibilities_buf.clone();
+                let staging_flag_buffer = buffers.staging_contradiction_flag_buf.clone();
+                let staging_loc_buffer = buffers.staging_contradiction_location_buf.clone();
 
-                queue.submit(Some(encoder.finish()));
-                self.map_downloaded_data(futures, operation_timeout).await
+                async move {
+                    let mut futures: Vec<
+                        Pin<
+                            Box<
+                                dyn Future<Output = Result<(String, Box<dyn Any>), GpuError>>
+                                    + Send,
+                            >,
+                        >,
+                    > = Vec::new();
+
+                    if request.download_entropy {
+                        // Use buffers reference from closure
+                        let entropy_buffer = &buffers.entropy_buffers.entropy_buf;
+                        let _expected_size = self.num_cells;
+                        let entropy_future = download_buffer_data::<f32>(
+                            &device,
+                            &queue,
+                            entropy_buffer,
+                            &staging_entropy_buffer, // Use cloned staging buffer
+                            _expected_size as u64,
+                            Some("Entropy".to_string()),
+                        )
+                        .map(|res| {
+                            res.map(|data| ("entropy".to_string(), Box::new(data) as Box<dyn Any>))
+                        })
+                        .boxed();
+                        futures.push(entropy_future);
+                    }
+
+                    if request.download_min_entropy_info {
+                        let min_info_buffer = &buffers.entropy_buffers.min_entropy_info_buf;
+                        let _expected_size = self.num_cells * self.grid_buffers.u32s_per_cell;
+                        let min_info_future = download_buffer_data::<u32>(
+                            &device,
+                            &queue,
+                            min_info_buffer,
+                            &staging_min_info_buffer, // Use cloned staging buffer
+                            _expected_size as u64,
+                            Some("Min Entropy Info".to_string()),
+                        )
+                        .map(|res| {
+                            res.map(|data| {
+                                (
+                                    "min_entropy_info".to_string(),
+                                    Box::new(data) as Box<dyn Any>,
+                                )
+                            })
+                        })
+                        .boxed();
+                        futures.push(min_info_future);
+                    }
+
+                    if request.download_grid_possibilities {
+                        let grid_buffer = &buffers.grid_buffers.grid_possibilities_buf;
+                        let _expected_size = self.num_cells * self.grid_buffers.u32s_per_cell;
+                        let grid_future = download_buffer_data::<u32>(
+                            &device,
+                            &queue,
+                            grid_buffer,
+                            &staging_grid_buffer, // Use cloned staging buffer
+                            _expected_size as u64,
+                            Some("Grid Possibilities".to_string()),
+                        )
+                        .map(|res| {
+                            res.map(|data| {
+                                (
+                                    "grid_possibilities".to_string(),
+                                    Box::new(data) as Box<dyn Any>,
+                                )
+                            })
+                        })
+                        .boxed();
+                        futures.push(grid_future);
+                    }
+
+                    if request.download_contradiction_location {
+                        let flag_buffer = &buffers.contradiction_flag_buf;
+                        let _expected_size = self.num_cells;
+                        let flag_future = download_buffer_data::<u32>(
+                            &device,
+                            &queue,
+                            flag_buffer,
+                            &staging_flag_buffer, // Use cloned staging buffer
+                            _expected_size as u64,
+                            Some("Contradiction Flag".to_string()),
+                        )
+                        .map(|res| {
+                            res.map(|data| {
+                                (
+                                    "contradiction_flag".to_string(),
+                                    Box::new(data) as Box<dyn Any>,
+                                )
+                            })
+                        })
+                        .boxed();
+                        futures.push(flag_future);
+
+                        let loc_buffer = &buffers.contradiction_location_buf;
+                        let _expected_size = self.num_cells;
+                        let loc_future = download_buffer_data::<u32>(
+                            &device,
+                            &queue,
+                            loc_buffer,
+                            &staging_loc_buffer, // Use cloned staging buffer
+                            _expected_size as u64,
+                            Some("Contradiction Location".to_string()),
+                        )
+                        .map(|res| {
+                            res.map(|data| {
+                                (
+                                    "contradiction_location".to_string(),
+                                    Box::new(data) as Box<dyn Any>,
+                                )
+                            })
+                        })
+                        .boxed();
+                        futures.push(loc_future);
+                    }
+
+                    // --- Wait for all download futures ---
+                    self.map_downloaded_data(futures).await
+                }
             })
             .await
     }
@@ -419,17 +485,17 @@ impl GpuBuffers {
         futures: Vec<
             Pin<Box<dyn Future<Output = Result<(String, Box<dyn Any>), GpuError>> + Send>>,
         >,
-        _operation_timeout: Duration, // Timeout handled within map_and_process
     ) -> Result<GpuDownloadResults, GpuError> {
         let results = try_join_all(futures).await?;
-        let mut download_data = GpuDownloadResults::default();
-        let data_map: HashMap<String, Box<dyn Any>> = results.into_iter().collect();
+        let mut final_results = GpuDownloadResults::default();
 
-        for (key, data_box) in data_map {
+        let downloaded_data: HashMap<String, Box<dyn Any>> = results.into_iter().collect();
+
+        for (key, data_box) in downloaded_data {
             match key.as_str() {
                 "entropy" => {
                     if let Ok(b) = data_box.downcast::<Vec<f32>>() {
-                        download_data.entropy = Some(*b);
+                        final_results.entropy = Some(*b);
                     } else {
                         warn!("Failed to downcast entropy data Box<dyn Any> to Box<Vec<f32>>");
                     }
@@ -437,7 +503,7 @@ impl GpuBuffers {
                 "min_entropy_info" => {
                     if let Ok(b) = data_box.downcast::<Vec<u32>>() {
                         if b.len() >= 2 {
-                            download_data.min_entropy_info = Some((f32::from_bits(b[0]), b[1]));
+                            final_results.min_entropy_info = Some((f32::from_bits(b[0]), b[1]));
                         } else {
                             warn!("min_entropy_info data has len {}, expected >= 2", b.len());
                         }
@@ -447,7 +513,7 @@ impl GpuBuffers {
                 }
                 "grid_possibilities" => {
                     if let Ok(d) = data_box.downcast::<Vec<u32>>() {
-                        download_data.grid_possibilities = Some(*d);
+                        final_results.grid_possibilities = Some(*d);
                     } else {
                         warn!("Failed to downcast grid_possibilities data Box<dyn Any> to Box<Vec<u32>>");
                     }
@@ -455,7 +521,7 @@ impl GpuBuffers {
                 "contradiction_flag" => {
                     if let Ok(b) = data_box.downcast::<Vec<u32>>() {
                         if !b.is_empty() {
-                            download_data.contradiction_flag = Some(b[0] != 0);
+                            final_results.contradiction_flag = Some(b[0] != 0);
                         } else {
                             warn!("contradiction_flag data is empty");
                         }
@@ -466,7 +532,7 @@ impl GpuBuffers {
                 "contradiction_location" => {
                     if let Ok(b) = data_box.downcast::<Vec<u32>>() {
                         if !b.is_empty() {
-                            download_data.contradiction_location = Some(b[0]);
+                            final_results.contradiction_location = Some(b[0]);
                         } else {
                             warn!("contradiction_location data is empty");
                         }
@@ -477,66 +543,225 @@ impl GpuBuffers {
                 _ => warn!("Unknown key found during data mapping: {}", key),
             }
         }
-        Ok(download_data)
+        Ok(final_results)
     }
 }
 
-/// Helper function to map a buffer and process its contents.
-pub(crate) async fn map_and_process<
-    T: bytemuck::Pod + bytemuck::Zeroable + Default + Clone + Send + 'static,
->(
-    buffer: Arc<wgpu::Buffer>,
-    timeout: Duration,
-    expected_elements: Option<usize>,
-) -> Result<Box<dyn Any>, GpuError> {
-    let buffer_slice = buffer.slice(..);
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-        let _ = tx.send(result);
-    });
+/// Downloads data from a GPU buffer into a CPU-accessible structure.
+///
+/// This function handles the asynchronous mapping, polling, and reading
+/// required to safely get data back from the GPU.
+///
+/// # Type Parameters
+///
+/// * `T`: The type of data expected in the buffer (must be `Pod` and `Send`).
+///
+/// # Arguments
+///
+/// * `device` - Reference to the WGPU device.
+/// * `queue` - Reference to the WGPU queue.
+/// * `buffer_to_download` - Arc reference to the source GPU buffer.
+/// * `staging_buffer` - Arc reference to the staging buffer (must have MAP_READ usage).
+/// * `buffer_size` - The number of bytes to copy and read.
+/// * `label` - An optional label for logging/debugging.
+///
+/// # Returns
+///
+/// A `Result` containing a `Vec<T>` with the downloaded data, or a `GpuError`.
+pub async fn download_buffer_data<T>(
+    device: &Device,
+    queue: &Queue,
+    buffer_to_download: &Arc<wgpu::Buffer>,
+    staging_buffer: &Arc<wgpu::Buffer>,
+    buffer_size: u64,
+    label: Option<String>,
+) -> Result<Vec<T>, GpuError>
+where
+    T: Pod + Send + 'static,
+{
+    if staging_buffer.size() < buffer_size {
+        return Err(GpuError::BufferSizeMismatch(format!(
+            "Staging buffer '{}' too small ({} bytes) for download ({} bytes)",
+            label.as_deref().unwrap_or("Unnamed"),
+            staging_buffer.size(),
+            buffer_size
+        )));
+    }
 
-    // This poll is important to drive the map_async operation forward,
-    // especially if the device is not being polled elsewhere frequently.
-    // Using Maintain::Poll allows other futures to run.
-    // Consider using Maintain::Wait if blocking is acceptable/necessary.
-    // buffer.device().poll(wgpu::Maintain::Poll); // Device polling might be handled elsewhere
+    trace!(
+        "Downloading {} bytes from buffer '{}'",
+        buffer_size,
+        label.as_deref().unwrap_or("Unnamed")
+    );
 
-    match timeout_after(rx, timeout).await {
-        Ok(Ok(Ok(()))) => {
-            let mapped_range = buffer_slice.get_mapped_range();
-            let data: Vec<T> = bytemuck::cast_slice(&mapped_range).to_vec();
-            drop(mapped_range);
-            buffer.unmap();
-
-            if let Some(expected) = expected_elements {
-                if data.len() < expected {
-                    return Err(GpuError::BufferSizeMismatch(format!(
-                        "Downloaded data size mismatch. Expected at least {} elements, Got {}.",
-                        expected,
-                        data.len()
-                    )));
-                }
-                // Optionally truncate if exactly `expected` are needed
-                // data.truncate(expected);
-            }
-
-            Ok(Box::new(data))
-        }
-        Ok(Ok(Err(e))) => Err(GpuError::BufferMapFailed(e.to_string())),
-        Ok(Err(_timeout)) => Err(GpuError::Timeout("Buffer map timed out".to_string())),
-        Err(_recv_error) => Err(GpuError::InternalError(
-            "Buffer mapping channel closed unexpectedly".to_string(),
+    // 1. Copy data from GPU buffer to staging buffer
+    let label_clone = label.clone();
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some(&format!(
+            "Download Encoder for {}",
+            label.as_deref().unwrap_or("buffer")
         )),
+    });
+    encoder.copy_buffer_to_buffer(buffer_to_download, 0, staging_buffer, 0, buffer_size);
+    queue.submit(Some(encoder.finish()));
+    trace!(
+        "Copy command submitted for buffer '{}'",
+        label.as_deref().unwrap_or("Unnamed")
+    );
+
+    // 2. Map the staging buffer for reading
+    let buffer_slice: BufferSlice = staging_buffer.slice(..buffer_size);
+    let (sender, receiver) = futures::channel::oneshot::channel();
+    buffer_slice.map_async(MapMode::Read, move |result| {
+        let closure_label = label_clone;
+        if let Err(e) = sender.send(result) {
+            error!(
+                "Failed to send map_async result for buffer '{}': {:?}",
+                closure_label.as_deref().unwrap_or("Unnamed"),
+                e
+            );
+        }
+    });
+    trace!(
+        "map_async called for buffer '{}'",
+        label.as_deref().unwrap_or("Unnamed")
+    );
+
+    // 3. Poll the device until the mapping is complete (important!)
+    // Use Maintain::Wait for simplicity, or Maintain::Poll in a loop for non-blocking.
+    device.poll(wgpu::Maintain::Wait);
+    trace!(
+        "Device polled, waiting for map_async callback for '{}'",
+        label.as_deref().unwrap_or("Unnamed")
+    );
+
+    // 4. Receive the mapping result
+    let map_result: Result<(), BufferAsyncError> = match receiver.await {
+        Ok(result) => result,
+        Err(e) => {
+            error!(
+                "Failed to receive map_async result for buffer '{}': {}",
+                label.as_deref().unwrap_or("Unnamed"),
+                e
+            );
+            return Err(GpuError::TransferError(format!(
+                "Channel error receiving map result for {}: {}",
+                label.as_deref().unwrap_or("buffer"),
+                e
+            )));
+        }
+    };
+
+    if let Err(e) = map_result {
+        error!(
+            "Failed to map buffer '{}' for reading: {}",
+            label.as_deref().unwrap_or("Unnamed"),
+            e
+        );
+        return Err(GpuError::TransferError(format!(
+            "Failed to map buffer '{}': {}",
+            label.as_deref().unwrap_or("Unnamed"),
+            e
+        )));
     }
+    trace!(
+        "Buffer '{}' mapped successfully",
+        label.as_deref().unwrap_or("Unnamed")
+    );
+
+    // 5. Get the mapped buffer view and copy data
+    let mapped_data = {
+        let view = staging_buffer.slice(..buffer_size).get_mapped_range();
+        trace!(
+            "Got mapped range for buffer '{}'",
+            label.as_deref().unwrap_or("Unnamed")
+        );
+        // Copy data immediately while the view is valid
+        let data_vec = bytemuck::cast_slice::<u8, T>(&view).to_vec();
+        // Drop the view implicitly here by ending the scope
+        trace!(
+            "Copied data from mapped buffer '{}'",
+            label.as_deref().unwrap_or("Unnamed")
+        );
+        data_vec
+    };
+
+    // 6. Unmap the buffer
+    staging_buffer.unmap();
+    trace!(
+        "Unmapped buffer '{}'",
+        label.as_deref().unwrap_or("Unnamed")
+    );
+
+    Ok(mapped_data)
 }
 
-// Custom timeout helper to avoid external crate dependency if needed
-async fn timeout_after<F: Future>(
-    future: F,
-    duration: Duration,
-) -> Result<F::Output, tokio::time::error::Elapsed> {
-    tokio::time::timeout(duration, future).await
+impl GpuDownloadResults {
+    /// Converts the downloaded grid possibilities data into a `PossibilityGrid`.
+    ///
+    /// # Arguments
+    ///
+    /// * `grid_dims` - The dimensions (width, height, depth) of the grid.
+    /// * `num_tiles` - The total number of tile types.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(PossibilityGrid)` if conversion is successful, or `Err(GpuError)` if data is missing or invalid.
+    pub fn to_possibility_grid(
+        &self,
+        grid_dims: (usize, usize, usize),
+        num_tiles: usize,
+    ) -> Result<PossibilityGrid, GpuError> {
+        let (width, height, depth) = grid_dims;
+        let num_cells = width * height * depth;
+        let u32s_per_cell = (num_tiles + 31) / 32;
+
+        let grid_possibilities = self.grid_possibilities.as_ref().ok_or_else(|| {
+            GpuError::BufferOperationError("Grid possibilities data not downloaded".to_string())
+        })?;
+
+        if grid_possibilities.len() < num_cells * u32s_per_cell {
+            return Err(GpuError::BufferSizeMismatch(format!(
+                "Downloaded grid data size mismatch: expected {} u32s, got {}",
+                num_cells * u32s_per_cell,
+                grid_possibilities.len()
+            )));
+        }
+
+        let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);
+        let mut cell_index = 0;
+        for z in 0..depth {
+            for y in 0..height {
+                for x in 0..width {
+                    if let Some(cell) = grid.get_mut(x, y, z) {
+                        cell.fill(false); // Clear initial state
+                        let base_index = cell_index * u32s_per_cell;
+                        for i in 0..u32s_per_cell {
+                            if base_index + i < grid_possibilities.len() {
+                                let bits = grid_possibilities[base_index + i];
+                                for bit_pos in 0..32 {
+                                    let tile_idx = i * 32 + bit_pos;
+                                    if tile_idx < num_tiles {
+                                        if ((bits >> bit_pos) & 1) == 1 {
+                                            cell.set(tile_idx, true);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        warn!(
+                            "Attempted to access invalid grid cell ({}, {}, {}) during conversion",
+                            x, y, z
+                        );
+                    }
+                    cell_index += 1;
+                }
+            }
+        }
+
+        Ok(grid)
+    }
 }
 
 // Test module remains in the respective files (grid_buffers.rs, worklist_buffers.rs)
-// OR could be moved here if testing GpuBuffers itself.

@@ -2,6 +2,7 @@
 /// Make propagator module public
 use crate::grid::PossibilityGrid;
 use async_trait::async_trait;
+use std::fmt::Debug;
 use thiserror::Error;
 use wfc_rules::AdjacencyRules;
 
@@ -29,29 +30,23 @@ pub enum PropagationError {
 /// Implementors of this trait are responsible for updating the `PossibilityGrid`
 /// based on changes initiated (e.g., collapsing a cell) and the defined `AdjacencyRules`.
 #[async_trait]
-pub trait ConstraintPropagator {
-    /// Performs constraint propagation on the grid.
+pub trait ConstraintPropagator: Send + Sync + Debug {
+    /// Propagates constraints starting from a list of initially updated cells.
     ///
-    /// Takes the current state of the `PossibilityGrid`, a list of coordinates
-    /// `updated_coords` where possibilities have recently changed (e.g., due to a collapse),
-    /// and the `AdjacencyRules`.
-    ///
-    /// Modifies the `grid` in place by removing possibilities that violate the rules
-    /// based on the updates.
+    /// Implementations should update the `grid` in place based on the `rules`.
     ///
     /// # Arguments
     ///
-    /// * `grid` - The mutable `PossibilityGrid` to operate on.
-    /// * `updated_coords` - A vector of (x, y, z) coordinates indicating cells whose possibilities have changed.
-    /// * `rules` - The `AdjacencyRules` defining valid neighbor relationships.
+    /// * `grid` - A mutable reference to the possibility grid to update.
+    /// * `updated_coords` - A list of (x, y, z) coordinates of cells that were initially changed.
+    /// * `rules` - The adjacency rules defining compatibility between tiles.
     ///
     /// # Returns
     ///
-    /// * `Ok(())` if propagation completed successfully without contradictions.
-    /// * `Err(PropagationError::Contradiction(x, y, z))` if a cell at (x, y, z) becomes empty (contradiction).
-    /// * Other `Err(PropagationError)` variants for different propagation issues (e.g., GPU errors).
+    /// * `Ok(())` if propagation completes successfully.
+    /// * `Err(PropagationError)` if a contradiction is found or another error occurs.
     async fn propagate(
-        &mut self,
+        &self,
         grid: &mut PossibilityGrid,
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
@@ -92,27 +87,36 @@ mod tests {
     // not the specific implementation (GPU). They require a concrete
     // propagator implementation to run.
 
-    // Mock Propagator (if needed for tests independent of GPU impl)
-    struct MockPropagator;
+    // --- Mock Propagator for Testing ---
+    #[derive(Debug)]
+    pub struct MockPropagator {
+        pub should_succeed: bool,
+    }
+
     #[async_trait]
     impl ConstraintPropagator for MockPropagator {
         async fn propagate(
-            &mut self,
+            &self,
             _grid: &mut PossibilityGrid,
             _updated_coords: Vec<(usize, usize, usize)>,
             _rules: &AdjacencyRules,
         ) -> Result<(), PropagationError> {
-            // No-op for testing trait bounds, etc.
-            Ok(())
+            if self.should_succeed {
+                Ok(())
+            } else {
+                Err(PropagationError::Contradiction(0, 0, 0)) // Simulate contradiction
+            }
         }
     }
 
     // A basic test that uses the MockPropagator (if you need a placeholder)
     #[tokio::test]
-    async fn test_mock_propagator() {
+    async fn test_mock_propagation_success() {
         let mut grid = PossibilityGrid::new(2, 1, 1, 2);
         let rules = setup_simple_rules_3d();
-        let mut propagator = MockPropagator;
+        let propagator = MockPropagator {
+            should_succeed: true,
+        };
         let result = propagator
             .propagate(&mut grid, vec![(0, 0, 0)], &rules)
             .await;

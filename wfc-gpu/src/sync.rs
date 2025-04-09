@@ -3,9 +3,11 @@
 
 use crate::{
     buffers::{DownloadRequest, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
+    error_recovery::RecoverableGpuOp,
     GpuError,
 };
-use log::{debug, trace, warn};
+use futures::future::try_join_all;
+use log::{debug, error, trace, warn};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wgpu;
@@ -248,51 +250,46 @@ impl GpuSynchronizer {
         self.queue.submit(Some(encoder.finish()));
 
         // Download and map the flag buffer
-        let flag_buffer = self.buffers.staging_contradiction_flag_buf.clone();
-        let flag_result = crate::buffers::map_and_process::<u32>(
-            flag_buffer,
-            std::time::Duration::from_secs(5),
-            Some(1),
+        let flag_buffer_gpu = &self.buffers.contradiction_flag_buf;
+        let flag_buffer_staging = self.buffers.staging_contradiction_flag_buf.clone();
+        let flag_data = crate::buffers::download_buffer_data::<u32>(
+            &self.device,
+            &self.queue,
+            flag_buffer_gpu,
+            &flag_buffer_staging,
+            flag_buffer_gpu.size(),
+            Some("Contradiction Flag".to_string()),
         )
         .await;
 
-        let flag = match flag_result {
-            Ok(data_box) => data_box
-                .downcast::<Vec<u32>>()
-                .map_err(|_| GpuError::InternalError("Failed to downcast flag".into()))?
-                .get(0)
-                .cloned()
-                .unwrap_or(0),
+        let has_contradiction = match flag_data {
+            Ok(data) => data.first().map(|&v| v != 0).unwrap_or(false),
             Err(e) => {
-                return Err(GpuError::BufferOperationError(format!(
-                    "Flag map failed: {}",
-                    e
-                )))
+                error!("Failed to download contradiction flag: {}", e);
+                return Err(e);
             }
         };
 
-        let has_contradiction = flag != 0;
-        let mut contradiction_location = None;
-
+        // Download and map the location buffer only if contradiction detected
+        let mut contradiction_location: Option<u32> = None;
         if has_contradiction {
-            // Download and map the location buffer
-            let loc_buffer = self.buffers.staging_contradiction_location_buf.clone();
-            let loc_result = crate::buffers::map_and_process::<u32>(
-                loc_buffer,
-                std::time::Duration::from_secs(5),
-                Some(1),
+            let loc_buffer_gpu = &self.buffers.contradiction_location_buf;
+            let loc_buffer_staging = self.buffers.staging_contradiction_location_buf.clone();
+            let loc_data = crate::buffers::download_buffer_data::<u32>(
+                &self.device,
+                &self.queue,
+                loc_buffer_gpu,
+                &loc_buffer_staging,
+                loc_buffer_gpu.size(),
+                Some("Contradiction Location".to_string()),
             )
             .await;
 
-            contradiction_location = match loc_result {
-                Ok(data_box) => data_box
-                    .downcast::<Vec<u32>>()
-                    .map_err(|_| GpuError::InternalError("Failed to downcast loc".into()))?
-                    .get(0)
-                    .cloned(),
+            contradiction_location = match loc_data {
+                Ok(data) => data.first().cloned(),
                 Err(e) => {
-                    warn!("Contradiction flag set, but failed to read location: {}", e);
-                    None // Proceed without location if read fails
+                    error!("Failed to download contradiction location: {}", e);
+                    return Err(e);
                 }
             };
         }
@@ -300,47 +297,71 @@ impl GpuSynchronizer {
         Ok((has_contradiction, contradiction_location))
     }
 
-    /// Downloads the worklist count from the GPU.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(count)` with the worklist count if successful, or an error detailing what went wrong.
-    pub async fn download_worklist_count(&self) -> Result<u32, GpuError> {
-        // Determine which count buffer to download (assuming propagator manages index)
-        // We need access to the propagator's state or need to coordinate the index.
-        // For now, let's assume we download from a specific buffer (e.g., A) - THIS IS LIKELY WRONG
-        // TODO: Rework this logic based on how propagator state is managed.
-        warn!("download_worklist_count logic needs review regarding ping-pong buffers");
-        let count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf; // Use single count buffer
-        let count_buffer_staging = &self.buffers.worklist_buffers.staging_worklist_count_buf; // Use single staging count buffer
+    /// Downloads the current worklist size from the GPU.
+    pub async fn download_worklist_size(&self) -> Result<u32, GpuError> {
+        trace!("Downloading worklist size from GPU");
 
-        // Copy
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Worklist Count Copy"),
-            });
-        encoder.copy_buffer_to_buffer(count_buffer_gpu, 0, count_buffer_staging, 0, 4);
-        self.queue.submit(Some(encoder.finish()));
+        let count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf;
+        let staging_count_buffer = self
+            .buffers
+            .worklist_buffers
+            .staging_worklist_count_buf
+            .clone();
 
-        // Map and Read
-        let count_result = crate::buffers::map_and_process::<u32>(
-            count_buffer_staging.clone(),
-            std::time::Duration::from_secs(5),
-            Some(1),
+        let count_data = crate::buffers::download_buffer_data::<u32>(
+            &self.device,
+            &self.queue,
+            count_buffer_gpu,
+            &staging_count_buffer,
+            4, // size of u32
+            Some("Worklist Count".to_string()),
         )
         .await;
 
-        match count_result {
-            Ok(data_box) => Ok(*data_box
-                .downcast::<Vec<u32>>()
-                .map_err(|_| GpuError::InternalError("Failed to downcast count".into()))?
-                .get(0)
-                .unwrap_or(&0)),
-            Err(e) => Err(GpuError::BufferOperationError(format!(
-                "Count map failed: {}",
-                e
-            ))),
+        match count_data {
+            Ok(data) => Ok(data.first().cloned().unwrap_or(0)),
+            Err(e) => {
+                error!("Failed to download worklist count: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Downloads pass statistics (updated cells, contradictions) from the GPU.
+    pub async fn download_pass_statistics(&self) -> Result<(u32, u32), GpuError> {
+        trace!("Downloading pass statistics from GPU");
+
+        let stats_buffer_gpu = &self.buffers.pass_statistics_buf;
+        let staging_stats_buffer = self.buffers.staging_pass_statistics_buf.clone();
+
+        let stats_data = crate::buffers::download_buffer_data::<u32>(
+            &self.device,
+            &self.queue,
+            stats_buffer_gpu,
+            &staging_stats_buffer,
+            staging_stats_buffer.size(), // Assuming size is correct (e.g., 2 * u32)
+            Some("Pass Statistics".to_string()),
+        )
+        .await;
+
+        match stats_data {
+            Ok(data) => {
+                if data.len() >= 2 {
+                    Ok((data[0], data[1])) // Updated cells, contradictions
+                } else {
+                    error!(
+                        "Downloaded pass statistics data has incorrect length: {}",
+                        data.len()
+                    );
+                    Err(GpuError::BufferSizeMismatch(
+                        "Pass statistics buffer size mismatch".to_string(),
+                    ))
+                }
+            }
+            Err(e) => {
+                error!("Failed to download pass statistics: {}", e);
+                Err(e)
+            }
         }
     }
 
@@ -446,48 +467,6 @@ impl GpuSynchronizer {
             })?;
 
         Ok(results.min_entropy_info)
-    }
-
-    /// Downloads pass statistics from the GPU.
-    pub async fn download_pass_statistics(&self) -> Result<[u32; 4], GpuError> {
-        let staging_buf = &self.buffers.staging_pass_statistics_buf; // Direct access ok
-        let gpu_buf = &self.buffers.pass_statistics_buf; // Direct access ok
-
-        // Copy
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Stats Copy"),
-            });
-        encoder.copy_buffer_to_buffer(gpu_buf, 0, staging_buf, 0, 16);
-        self.queue.submit(Some(encoder.finish()));
-
-        // Map and Read
-        let stats_result = crate::buffers::map_and_process::<u32>(
-            staging_buf.clone(),
-            std::time::Duration::from_secs(5),
-            Some(4),
-        )
-        .await;
-
-        match stats_result {
-            Ok(data_box) => {
-                let data = data_box
-                    .downcast::<Vec<u32>>()
-                    .map_err(|_| GpuError::InternalError("Failed to downcast stats".into()))?;
-                if data.len() >= 4 {
-                    Ok([data[0], data[1], data[2], data[3]])
-                } else {
-                    Err(GpuError::BufferSizeMismatch(
-                        "Stats data too short".to_string(),
-                    ))
-                }
-            }
-            Err(e) => Err(GpuError::BufferOperationError(format!(
-                "Stats map failed: {}",
-                e
-            ))),
-        }
     }
 
     /// Resets the minimum entropy buffer on the GPU.

@@ -5,9 +5,14 @@
 //! and constraint propagation.
 
 use crate::{
-    coordination::{CoordinationError, CoordinationEvent, CoordinationStrategy},
-    entropy::GpuEntropyCalculator,
     // GpuAccelerator, GpuError, // Removed unused imports
+    // Removed unused imports
+    // coordination::{CoordinationError, CoordinationEvent, CoordinationStrategy},
+    // entropy::GpuEntropyCalculator,
+    // GpuAccelerator, GpuError, // Removed unused imports
+    GpuAccelerator,
+    // Removed unused import GpuError
+    // GpuError,
 };
 use async_trait::async_trait;
 use wfc_core::{grid::PossibilityGrid, WfcError};
@@ -18,6 +23,22 @@ use wfc_core::{grid::PossibilityGrid, WfcError};
 // #[derive(Debug)] pub enum CoordinationError {}
 // #[derive(Debug)] pub enum CoordinationEvent {}
 // pub trait CoordinationStrategy {}
+
+// Define placeholder types until proper ones are implemented
+// These should eventually be replaced by actual types from submodules or elsewhere.
+#[derive(Debug, thiserror::Error)]
+pub enum CoordinationError {
+    #[error("Placeholder coordination error: {0}")]
+    Placeholder(String),
+}
+
+#[derive(Debug)]
+pub enum CoordinationEvent {
+    PhaseStarted(String),
+    PhaseCompleted(String),
+}
+
+pub trait CoordinationStrategy {}
 
 // --- Traits --- //
 

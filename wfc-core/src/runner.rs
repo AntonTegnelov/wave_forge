@@ -859,11 +859,15 @@ mod tests {
         }
     }
 
+    #[cfg(test)]
+    #[derive(Debug)]
     struct TestPropagator;
+
+    #[cfg(test)]
     #[async_trait::async_trait]
     impl ConstraintPropagator for TestPropagator {
         async fn propagate(
-            &mut self,
+            &self,
             _grid: &mut PossibilityGrid,
             _updated_coords: Vec<(usize, usize, usize)>,
             _rules: &AdjacencyRules,

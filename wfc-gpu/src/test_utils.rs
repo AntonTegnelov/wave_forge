@@ -4,6 +4,7 @@ use wfc_rules::AdjacencyRules;
 use wgpu;
 
 use crate::accelerator::GpuAccelerator;
+use crate::buffers::GpuBuffers;
 use crate::GpuError;
 
 /// Synchronously initialize GPU for testing
@@ -67,4 +68,27 @@ pub fn test_large_tileset_init(
     ));
 
     result
+}
+
+/// Creates GPU buffers for testing purposes.
+///
+/// # Arguments
+///
+/// * `device` - Arc reference to the WGPU device.
+/// * `queue` - Arc reference to the WGPU queue.
+///
+/// # Returns
+///
+/// An Arc reference to the created `GpuBuffers`.
+pub fn create_test_gpu_buffers(
+    device: &Arc<wgpu::Device>,
+    queue: &Arc<wgpu::Queue>,
+) -> Arc<GpuBuffers> {
+    // Create a minimal grid and rules for buffer initialization
+    let grid = PossibilityGrid::new(2, 2, 1, 3);
+    let rules = AdjacencyRules::from_allowed_tuples(3, 6, vec![]);
+    Arc::new(
+        GpuBuffers::new(device, queue, &grid, &rules, BoundaryCondition::Finite)
+            .expect("Failed to create test GPU buffers"),
+    )
 }

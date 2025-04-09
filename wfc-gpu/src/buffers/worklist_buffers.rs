@@ -101,72 +101,61 @@ impl WorklistBuffers {
         config: &DynamicBufferConfig,
     ) -> Result<(), String> {
         let num_cells = (width * height * depth) as usize;
-        // Worklist stores cell indices (u32)
-        let required_size = (num_cells * std::mem::size_of::<u32>()) as u64;
+        let required_worklist_size = num_cells * std::mem::size_of::<u32>();
+        let required_count_size = 4; // Always 4 bytes for a single u32 count
 
-        if !GpuBuffers::is_buffer_sufficient(&self.worklist_buf_a, required_size) {
-            let new_buffer_a = GpuBuffers::resize_buffer(
+        // Check and resize worklist A if needed
+        if !GpuBuffers::is_buffer_sufficient(&self.worklist_buf_a, required_worklist_size as u64) {
+            self.worklist_buf_a = GpuBuffers::resize_buffer(
                 device,
                 &self.worklist_buf_a,
-                required_size,
-                wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-                Some("Worklist Buffer A"),
+                required_worklist_size as u64,
+                self.worklist_buf_a.usage(),
+                Some("Worklist A"),
                 config,
             );
-            self.worklist_buf_a = new_buffer_a;
         }
 
-        if !GpuBuffers::is_buffer_sufficient(&self.worklist_buf_b, required_size) {
-            let new_buffer_b = GpuBuffers::resize_buffer(
+        // Check and resize worklist B if needed
+        if !GpuBuffers::is_buffer_sufficient(&self.worklist_buf_b, required_worklist_size as u64) {
+            self.worklist_buf_b = GpuBuffers::resize_buffer(
                 device,
                 &self.worklist_buf_b,
-                required_size,
-                wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-                Some("Worklist Buffer B"),
+                required_worklist_size as u64,
+                self.worklist_buf_b.usage(),
+                Some("Worklist B"),
                 config,
             );
-            self.worklist_buf_b = new_buffer_b;
         }
 
-        // Ensure the worklist count buffer (single u32)
-        let count_buf_required_size = std::mem::size_of::<u32>() as u64;
-        if !GpuBuffers::is_buffer_sufficient(&self.worklist_count_buf, count_buf_required_size) {
-            let new_count_buf = GpuBuffers::resize_buffer(
+        // Check and resize worklist count buffer if needed
+        if !GpuBuffers::is_buffer_sufficient(&self.worklist_count_buf, required_count_size as u64) {
+            self.worklist_count_buf = GpuBuffers::resize_buffer(
                 device,
                 &self.worklist_count_buf,
-                count_buf_required_size, // Size is always 4 bytes for a single u32
-                wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::COPY_SRC, // Added COPY_SRC for download
-                Some("Worklist Count Buffer"),
+                required_count_size as u64,
+                self.worklist_count_buf.usage(),
+                Some("Worklist Count"),
                 config,
             );
-            self.worklist_count_buf = new_count_buf;
         }
 
-        // Ensure the staging worklist count buffer (single u32)
-        let staging_count_buf_required_size = std::mem::size_of::<u32>() as u64;
+        // Check and resize staging worklist count buffer if needed
         if !GpuBuffers::is_buffer_sufficient(
             &self.staging_worklist_count_buf,
-            staging_count_buf_required_size,
+            required_count_size as u64,
         ) {
-            // Staging buffers have different usage flags
-            let new_staging_count_buf = GpuBuffers::resize_buffer(
+            self.staging_worklist_count_buf = GpuBuffers::resize_buffer(
                 device,
                 &self.staging_worklist_count_buf,
-                staging_count_buf_required_size,
-                wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                Some("Staging Worklist Count Buffer"),
+                required_count_size as u64,
+                self.staging_worklist_count_buf.usage(),
+                Some("Staging Worklist Count"),
                 config,
             );
-            self.staging_worklist_count_buf = new_staging_count_buf;
         }
 
+        self.current_worklist_size = num_cells;
         Ok(())
     }
 

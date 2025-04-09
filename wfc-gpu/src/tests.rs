@@ -1,13 +1,15 @@
 #[cfg(test)]
 mod tests {
-    use crate::accelerator::GpuAccelerator;
+    // Removed unused Accelerator import (already in scope)
+    // use crate::accelerator::GpuAccelerator;
+    // Commented out missing test utils imports
+    // use crate::test_utils::{assert_grid_consistency, create_test_device_queue, get_tile_weights};
     use crate::test_utils::create_test_device_queue;
-    use wfc_core::{
-        entropy::{EntropyCalculator, EntropyError, EntropyHeuristicType},
-        grid::{EntropyGrid, PossibilityGrid},
-        propagator, BoundaryCondition,
-    };
+    use wfc_core::{entropy::EntropyHeuristicType, grid::PossibilityGrid, BoundaryCondition};
     use wfc_rules::{AdjacencyRules, TileSet, Transformation};
+
+    // Added missing GpuAccelerator import
+    use crate::GpuAccelerator;
 
     #[tokio::test]
     async fn test_progressive_results() {
@@ -108,7 +110,6 @@ mod tests {
 mod shader_validation_tests {
     use crate::pipeline::ComputePipelines;
     use crate::test_utils::create_test_device_queue;
-    use std::sync::Arc;
 
     /// Tests that all shaders compile correctly with various tile sizes
     #[test]
@@ -240,5 +241,28 @@ mod shader_validation_tests {
             layout_result.is_ok(),
             "Failed to get propagation bind group layout"
         );
+    }
+
+    /// Tests the basic functionality of the WGPU device and queue.
+    #[test]
+    fn test_gpu_device_and_queue() {
+        let (device, queue) = create_test_device_queue();
+        let _features = device.features(); // Check available features
+
+        let buffer_desc = wgpu::BufferDescriptor {
+            label: Some("Test Buffer"),
+            size: 64,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        };
+        let _buffer = device.create_buffer(&buffer_desc);
+
+        let command_buffer = device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
+            .finish();
+        queue.submit(Some(command_buffer));
+        device.poll(wgpu::Maintain::Wait);
+
+        assert!(true);
     }
 }
