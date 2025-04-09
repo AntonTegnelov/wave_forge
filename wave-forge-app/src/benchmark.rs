@@ -120,11 +120,16 @@ pub async fn run_single_wfc_benchmark(
 
     // Get a clone of the actual GpuAccelerator from inside the Arc
     let accelerator_clone = (*accelerator).clone();
+
+    // Get constraint propagator and entropy calculator from the accelerator
+    let constraint_propagator = accelerator_clone.get_constraint_propagator();
+    let entropy_calculator = accelerator_clone.get_entropy_calculator();
+
     let wfc_result = runner::run(
         &mut grid,
         rules,
-        accelerator_clone.clone(),
-        accelerator_clone,
+        constraint_propagator,
+        entropy_calculator,
         wfc_config,
     )
     .await;

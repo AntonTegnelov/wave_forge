@@ -21,6 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 use wfc_core::{
+    entropy::EntropyHeuristicType,
     grid::PossibilityGrid,
     runner::{self, ProgressCallback, WfcConfig},
     BoundaryCondition, ProgressInfo, WfcError,
@@ -201,6 +202,7 @@ pub async fn run_benchmark_mode(
                 &rules,
                 core_boundary_mode,
                 None,
+                EntropyHeuristicType::Shannon,
             ));
             drop(grid_guard); // Drop the guard after the call
 
@@ -213,6 +215,10 @@ pub async fn run_benchmark_mode(
                     continue; // Skip this scenario if GPU init fails
                 }
             };
+
+            // Get constraint propagator and entropy calculator from the accelerator
+            let constraint_propagator = accelerator.get_constraint_propagator();
+            let entropy_calculator = accelerator.get_entropy_calculator();
 
             for run_index in 0..config.benchmark_runs_per_scenario {
                 log::info!(
@@ -494,6 +500,7 @@ pub async fn run_standard_mode(
         rules,
         core_boundary_mode,
         None,
+        EntropyHeuristicType::Shannon,
     ));
     drop(grid_guard); // Drop the guard after the call
 
@@ -567,15 +574,15 @@ pub async fn run_standard_mode(
         grid_guard.clone()
     };
 
-    // Clone the GPU accelerator to use directly in the run call
-    let accelerator_clone = gpu_accelerator.clone();
-    let entropy_clone = gpu_accelerator.clone();
+    // Get constraint propagator and entropy calculator from the accelerator
+    let constraint_propagator = gpu_accelerator.get_constraint_propagator();
+    let entropy_calculator = gpu_accelerator.get_entropy_calculator();
 
     let wfc_run_result = runner::run(
         &mut runner_grid,
         rules,
-        accelerator_clone,
-        entropy_clone,
+        constraint_propagator,
+        entropy_calculator,
         wfc_config,
     );
 
