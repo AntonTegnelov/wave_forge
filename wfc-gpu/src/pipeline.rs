@@ -510,7 +510,9 @@ impl ComputePipelines {
             label: Some(&label),
             layout: Some(layout),
             module: &module,
-            entry_point: entry_point,
+            entry_point: Some(entry_point),
+            cache: None,
+            compilation_options: Default::default(),
         };
 
         let pipeline = device.create_compute_pipeline(&desc);

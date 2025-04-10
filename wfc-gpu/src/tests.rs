@@ -401,7 +401,7 @@ mod shader_validation_tests {
 
         // Submit the command buffer and wait for completion
         queue.submit(Some(encoder.finish()));
-        device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::MaintainBase::Wait);
 
         // If we got this far without any errors, the test passes
         assert!(true);
@@ -425,7 +425,7 @@ mod shader_validation_tests {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
             .finish();
         queue.submit(Some(command_buffer));
-        device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::MaintainBase::Wait);
 
         assert!(true);
     }

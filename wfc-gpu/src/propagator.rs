@@ -475,7 +475,7 @@ impl GpuConstraintPropagator {
             encoder.clear_buffer(output_count_buffer, 0, None);
 
             self.queue.submit(Some(encoder.finish()));
-            self.device.poll(wgpu::Maintain::Wait);
+            let _ = self.device.poll(wgpu::MaintainBase::Wait);
 
             // --- Check for contradictions periodically ---
             if current_pass % self.params.contradiction_check_frequency == 0 {

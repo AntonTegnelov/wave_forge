@@ -625,7 +625,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
     });
 
     // Wait for the mapping operation to complete
-    device.as_ref().unwrap().poll(wgpu::Maintain::Wait);
+    let _ = device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
     debug!("Device polled for '{}'", label_str);
 
     // Handle the mapping result
@@ -635,7 +635,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
     // Wait for the mapping to complete with a timeout
     let mut retry_count = 0;
     while !receiver.is_terminated() {
-        device.as_ref().unwrap().poll(wgpu::Maintain::Wait);
+        let _ = device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
 
         if Instant::now() > map_start + map_timeout {
             error!("Buffer {:?} mapping timed out after 2 seconds", label_str);

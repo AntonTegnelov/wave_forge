@@ -204,7 +204,7 @@ impl WgpuBackend {
     /// # Returns
     /// A new WgpuBackend instance
     pub fn new() -> Self {
-        let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = Arc::new(wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         }));
@@ -222,14 +222,13 @@ impl WgpuBackend {
         let mut limits = wgpu::Limits::default();
         limits.max_storage_buffers_per_shader_stage = 10;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("WFC GPU Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: limits,
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("WFC GPU Device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: limits,
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::default(),
+        }))
         .expect("Failed to create device");
 
         Self {
@@ -346,7 +345,9 @@ impl ComputeCapable for WgpuBackend {
             label: Some("WFC GPU Compute Pipeline"),
             layout: None,
             module: &shader_module,
-            entry_point,
+            entry_point: Some(entry_point),
+            cache: None,
+            compilation_options: Default::default(),
         });
 
         // Generate a unique ID for this pipeline
@@ -629,7 +630,7 @@ mod tests {
                 device_type: wgpu::DeviceType::Cpu,
                 driver: "Mock Driver".to_string(),
                 driver_info: "Mock Driver Info".to_string(),
-                backend: wgpu::Backend::Empty,
+                backend: wgpu::Backend::Vulkan,
             }
         }
     }

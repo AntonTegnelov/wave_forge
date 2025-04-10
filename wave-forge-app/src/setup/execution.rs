@@ -104,8 +104,8 @@ pub async fn run_benchmark_mode(
         .request_adapter(&wgpu::RequestAdapterOptions::default())
         .await
     {
-        Some(adapter) => adapter.get_info(),
-        None => {
+        Ok(adapter) => adapter.get_info(),
+        Err(_) => {
             return Err(GpuError::AdapterRequestFailed.into());
         }
     };

@@ -161,7 +161,7 @@ impl GpuSynchronizer {
         });
 
         // Poll the device while waiting for the map operation to complete
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::MaintainBase::Wait);
 
         // Wait for the mapping result
         match receiver.await {
