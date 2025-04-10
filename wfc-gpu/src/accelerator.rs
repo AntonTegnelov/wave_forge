@@ -316,7 +316,7 @@ impl GpuAccelerator {
         initial_grid: &PossibilityGrid,
         _rules: &AdjacencyRules,
         max_iterations: u64,
-        mut progress_callback: F,
+        progress_callback: F,
         shutdown_signal: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> Result<PossibilityGrid, WfcError>
     where

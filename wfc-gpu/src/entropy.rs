@@ -11,8 +11,6 @@ use wfc_core::{
     entropy::{EntropyCalculator, EntropyError as CoreEntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
 };
-use wgpu::util::DeviceExt;
-use wgpu::{BindGroup, BindGroupLayout, Buffer, ComputePipeline, Device, Queue};
 
 /// GPU-accelerated entropy calculator for use in WFC algorithm.
 ///

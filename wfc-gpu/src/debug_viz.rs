@@ -6,21 +6,16 @@
 //! - Contradictions: Where and why contradictions occur during execution
 
 use crate::{
-    accelerator::GridDefinition,
     backend::GpuBackend,
     buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults},
     error_recovery::GpuError,
-    pipeline::ComputePipelines,
-    shader_registry::ShaderRegistry,
     sync::GpuSynchronizer,
 };
-use image::{ImageBuffer, Rgba, RgbaImage};
-use log::{debug, error, info, trace, warn};
+use image::{Rgba, RgbaImage};
+use log::trace;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wfc_core::grid::PossibilityGrid;
-use wfc_rules::{AdjacencyRules, TileId};
 
 /// Types of debug visualizations available
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

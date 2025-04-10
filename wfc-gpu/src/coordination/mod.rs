@@ -7,18 +7,16 @@
 use crate::{
     buffers::{DownloadRequest, GpuBuffers},
     entropy::GpuEntropyCalculator,
-    error_recovery::{GridCoord, RecoverableGpuOp},
-    pipeline::ComputePipelines,
+    error_recovery::GridCoord,
     propagator::GpuConstraintPropagator,
     sync::GpuSynchronizer,
     GpuAccelerator, GpuError,
 };
 use async_trait::async_trait;
-use log::{debug, error, info, trace};
+use log::{error, trace};
 use std::fmt::Debug;
 use std::sync::{Arc, RwLock};
 use wfc_core::{
-    entropy::{EntropyCalculator, EntropyHeuristicType},
     grid::PossibilityGrid,
     propagator::PropagationError,
     WfcError,

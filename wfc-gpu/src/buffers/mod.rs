@@ -9,12 +9,11 @@ use futures::future::FusedFuture;
 use log::{debug, error, info, trace, warn};
 use std::mem;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use thiserror::Error;
+use std::time::Instant;
 use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
 use wfc_rules::AdjacencyRules;
 use wgpu::util::DeviceExt;
-use wgpu::{self, Device, MapMode, Queue};
+use wgpu::{self};
 
 // Re-export buffer modules
 pub use entropy_buffers::EntropyBuffers;

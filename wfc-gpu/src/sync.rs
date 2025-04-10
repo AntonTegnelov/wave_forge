@@ -5,9 +5,8 @@ use crate::{
     buffers::{DownloadRequest, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
     error_recovery::GpuError,
 };
-use futures::future::try_join_all;
-use log::{debug, error, info, trace, warn};
-use std::{sync::Arc, time::Instant};
+use log::{debug, error, trace, warn};
+use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wgpu;
 

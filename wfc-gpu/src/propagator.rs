@@ -369,7 +369,7 @@ impl GpuConstraintPropagator {
 
         // 1. Prepare Initial Worklist
         // Create encoder for initial writes
-        let mut encoder = self
+        let encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Initial Worklist Write Encoder"),
