@@ -92,7 +92,6 @@ pub async fn run_single_wfc_benchmark(
     let start_time = Instant::now();
     let initial_memory_res = get_memory_usage().map_err(|e| AppError::Anyhow(e));
 
-    let _tileset_arc = Arc::new(tileset.clone());
     let accelerator = match gpu_accelerator_arc {
         Some(arc) => arc,
         None => {
@@ -102,32 +101,12 @@ pub async fn run_single_wfc_benchmark(
         }
     };
 
-    let wfc_config = WfcConfig {
-        boundary_condition: core_boundary_mode,
-        progress_callback,
-        progressive_results_callback: None,
-        shutdown_signal: Arc::new(AtomicBool::new(false)),
-        initial_checkpoint: None,
-        checkpoint_interval: None,
-        checkpoint_path: None,
-        max_iterations: config.max_iterations,
-        seed: config.seed,
-        max_backtrack_depth: None,
-    };
-
-    log::info!("Running WFC Benchmark ({:?})...", core_execution_mode);
-    let _run_guard = profiler.profile("wfc_run");
-
-    // Get a clone of the actual GpuAccelerator from inside the Arc
-    let accelerator_clone = (*accelerator).clone();
-
     // Skip the actual execution for now since we don't have working adapters
     let wfc_result = Err(WfcError::InternalError(
         "GPU benchmark mode not fully implemented yet".to_string(),
     ));
 
     let duration = start_time.elapsed();
-    drop(_run_guard);
 
     let final_memory_res = get_memory_usage().map_err(|e| AppError::Anyhow(e));
     let memory_usage = match (initial_memory_res, final_memory_res) {
