@@ -1,8 +1,3 @@
----
-description: 
-globs: 
-alwaysApply: true
----
 # WFC-GPU Architecture
 
 This document describes the architecture of the WFC-GPU module. It serves as a blueprint for the ideal structure and provides guidance for maintaining and extending the codebase.

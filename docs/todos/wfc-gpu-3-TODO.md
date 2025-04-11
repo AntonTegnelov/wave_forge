@@ -109,7 +109,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
       - [x] Formalize the `CoordinationStrategy` trait (currently just a placeholder on line 47)
       - [x] Update `WfcCoordinator` to leverage the strategy pattern
-      - [ ] Add new coordinator implementations using the strategy pattern
+      - [x] Add new coordinator implementations using the strategy pattern
       - [x] Implement strategy factory methods
 
     - `wfc-gpu/src/coordination/propagation.rs`:

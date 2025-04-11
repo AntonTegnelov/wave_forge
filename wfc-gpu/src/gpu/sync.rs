@@ -3,12 +3,14 @@
 
 use crate::{
     buffers::{DownloadRequest, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
-    error_recovery::GpuError,
+    utils::error_recovery::GpuError,
 };
 use log::{debug, error, trace, warn};
+use std::borrow::Cow;
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wgpu;
+use wgpu::util::DeviceExt;
 
 /// Handles synchronization between CPU and GPU for Wave Function Collapse data.
 ///

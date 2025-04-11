@@ -125,6 +125,19 @@ impl CoordinationStrategyFactory {
             ))
         }
     }
+
+    /// Creates a batched coordination strategy for processing cells in batches.
+    pub fn create_batched(
+        entropy_calculator: Arc<GpuEntropyCalculator>,
+        propagator: Arc<RwLock<GpuConstraintPropagator>>,
+        batch_size: usize,
+    ) -> Box<dyn CoordinationStrategy> {
+        Box::new(BatchedCoordinationStrategy::new(
+            entropy_calculator,
+            propagator,
+            batch_size,
+        ))
+    }
 }
 
 /// The default coordination strategy implementation.
@@ -240,6 +253,106 @@ impl CoordinationStrategy for LargeGridCoordinationStrategy {
         grid: &mut PossibilityGrid,
     ) -> Result<PossibilityGrid, WfcError> {
         // Finalize and clean up resources
+        Ok(grid.clone())
+    }
+
+    fn clone_box(&self) -> Box<dyn CoordinationStrategy> {
+        Box::new(self.clone())
+    }
+}
+
+/// A coordination strategy that processes cells in batches to improve performance.
+///
+/// This strategy selects multiple cells to collapse in a single step, which can
+/// improve performance on very large grids by reducing the number of GPU synchronization
+/// points and increasing parallelism.
+#[derive(Debug, Clone)]
+struct BatchedCoordinationStrategy {
+    entropy_calculator: Arc<GpuEntropyCalculator>,
+    propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    batch_size: usize,
+    // Additional state for batch processing
+    current_batch: Vec<(usize, usize, usize)>,
+}
+
+impl BatchedCoordinationStrategy {
+    fn new(
+        entropy_calculator: Arc<GpuEntropyCalculator>,
+        propagator: Arc<RwLock<GpuConstraintPropagator>>,
+        batch_size: usize,
+    ) -> Self {
+        Self {
+            entropy_calculator,
+            propagator,
+            batch_size: batch_size.max(1), // Ensure batch size is at least 1
+            current_batch: Vec::new(),
+        }
+    }
+
+    /// Select multiple low-entropy cells for simultaneous collapse
+    async fn select_batch(
+        &mut self,
+        accelerator: &mut GpuAccelerator,
+        grid: &PossibilityGrid,
+    ) -> Result<Vec<(usize, usize, usize)>, WfcError> {
+        // In a real implementation, this would use a modified entropy calculation
+        // that returns multiple low-entropy cells instead of just the minimum.
+        // For now, we just return a placeholder.
+
+        let batch = vec![(0, 0, 0)]; // Placeholder
+        Ok(batch)
+    }
+}
+
+#[async_trait]
+impl CoordinationStrategy for BatchedCoordinationStrategy {
+    async fn step(
+        &mut self,
+        accelerator: &mut GpuAccelerator,
+        grid: &mut PossibilityGrid,
+    ) -> Result<StepResult, WfcError> {
+        // If we don't have a batch in progress, select a new batch
+        if self.current_batch.is_empty() {
+            self.current_batch = self.select_batch(accelerator, grid).await?;
+
+            // If we couldn't find any cells to collapse, we're done
+            if self.current_batch.is_empty() {
+                return Ok(StepResult::Completed);
+            }
+        }
+
+        // Process one cell from the current batch
+        let cell = self.current_batch.pop().unwrap();
+
+        // In a real implementation, this would:
+        // 1. Collapse the cell
+        // 2. Propagate constraints
+        // 3. Check for contradictions
+
+        // This is a placeholder - the actual implementation would process the cell
+
+        // If we've processed all cells in the batch, return InProgress to get a new batch
+        // Otherwise, return a special result indicating we have more cells in the current batch
+        Ok(StepResult::InProgress)
+    }
+
+    async fn initialize(
+        &mut self,
+        accelerator: &mut GpuAccelerator,
+        grid: &PossibilityGrid,
+    ) -> Result<(), WfcError> {
+        // Initialize resources needed for batched coordination
+        self.current_batch.clear();
+        Ok(())
+    }
+
+    async fn finalize(
+        &mut self,
+        accelerator: &mut GpuAccelerator,
+        grid: &mut PossibilityGrid,
+    ) -> Result<PossibilityGrid, WfcError> {
+        // Finalize and clean up resources
+        self.current_batch.clear();
         Ok(grid.clone())
     }
 

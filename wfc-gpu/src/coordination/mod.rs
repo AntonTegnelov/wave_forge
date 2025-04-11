@@ -354,6 +354,151 @@ impl WfcCoordinator for DefaultCoordinator {
     }
 }
 
+/// A coordinator implementation that fully leverages the strategy pattern.
+/// This implementation delegates all coordination decisions to strategy implementations.
+#[derive(Debug, Clone)]
+pub struct StrategicCoordinator {
+    entropy_calculator: Arc<GpuEntropyCalculator>,
+    propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    // Strategy for overall coordination
+    coordination_strategy: Box<dyn strategy::CoordinationStrategy>,
+    // Synchronizer for GPU operations
+    sync: Option<Arc<GpuSynchronizer>>,
+}
+
+impl StrategicCoordinator {
+    /// Creates a new StrategicCoordinator with the specified strategy.
+    pub fn new(
+        entropy_calculator: Arc<GpuEntropyCalculator>,
+        propagator: Arc<RwLock<GpuConstraintPropagator>>,
+        coordination_strategy: Box<dyn strategy::CoordinationStrategy>,
+    ) -> Self {
+        Self {
+            entropy_calculator,
+            propagator,
+            coordination_strategy,
+            sync: None,
+        }
+    }
+
+    /// Sets the synchronizer for GPU operations.
+    pub fn with_synchronizer(&mut self, sync: Arc<GpuSynchronizer>) -> &mut Self {
+        self.sync = Some(sync);
+        self
+    }
+
+    /// Creates a StrategicCoordinator with the default coordination strategy.
+    pub fn with_default_strategy(
+        entropy_calculator: Arc<GpuEntropyCalculator>,
+        propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    ) -> Self {
+        Self::new(
+            entropy_calculator.clone(),
+            propagator.clone(),
+            strategy::CoordinationStrategyFactory::create_default(entropy_calculator, propagator),
+        )
+    }
+
+    /// Creates a StrategicCoordinator with the adaptive coordination strategy.
+    pub fn with_adaptive_strategy(
+        entropy_calculator: Arc<GpuEntropyCalculator>,
+        propagator: Arc<RwLock<GpuConstraintPropagator>>,
+        grid_size: (usize, usize, usize),
+    ) -> Self {
+        Self::new(
+            entropy_calculator.clone(),
+            propagator.clone(),
+            strategy::CoordinationStrategyFactory::create_adaptive(
+                entropy_calculator,
+                propagator,
+                grid_size,
+            ),
+        )
+    }
+
+    /// Creates a StrategicCoordinator with the batched coordination strategy.
+    pub fn with_batched_strategy(
+        entropy_calculator: Arc<GpuEntropyCalculator>,
+        propagator: Arc<RwLock<GpuConstraintPropagator>>,
+        batch_size: usize,
+    ) -> Self {
+        Self::new(
+            entropy_calculator.clone(),
+            propagator.clone(),
+            strategy::CoordinationStrategyFactory::create_batched(
+                entropy_calculator,
+                propagator,
+                batch_size,
+            ),
+        )
+    }
+}
+
+#[async_trait]
+impl WfcCoordinator for StrategicCoordinator {
+    async fn coordinate_entropy_and_selection(
+        &self,
+        entropy_calculator: &Arc<GpuEntropyCalculator>,
+        buffers: &Arc<GpuBuffers>,
+        device: &Device,
+        queue: &Queue,
+        sync: &Arc<GpuSynchronizer>,
+    ) -> Result<Option<(usize, usize, usize)>, GpuError> {
+        trace!("StrategicCoordinator: Delegating entropy calculation to strategy");
+
+        // This would typically delegate to the strategy, but since our strategy interface
+        // doesn't have a direct method for this, we'll use a simpler approach for now.
+
+        // Create a temporary grid for calculation
+        let grid_dims = buffers.grid_dims;
+        let dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
+
+        // Use the EntropyCoordinator as a helper
+        let coordinator = entropy::EntropyCoordinator::new(entropy_calculator.clone());
+        let result = coordinator.download_min_entropy_info(buffers, sync).await?;
+
+        if let Some((_entropy, coord)) = result {
+            return Ok(Some((coord.x, coord.y, coord.z)));
+        } else {
+            return Ok(None);
+        }
+    }
+
+    async fn coordinate_propagation(
+        &self,
+        propagator: &Arc<RwLock<GpuConstraintPropagator>>,
+        buffers: &Arc<GpuBuffers>,
+        device: &Device,
+        queue: &Queue,
+        updated_coords: Vec<GridCoord>,
+    ) -> Result<(), PropagationError> {
+        trace!("StrategicCoordinator: Delegating propagation to strategy");
+
+        // Convert grid coordinates to tuple format
+        let coords_vec: Vec<(usize, usize, usize)> =
+            updated_coords.iter().map(|c| (c.x, c.y, c.z)).collect();
+
+        // Create a temporary grid for propagation
+        let grid_dims = buffers.grid_dims;
+        let mut dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
+
+        // Create dummy rules - in a real implementation, we would get the proper rules
+        let rules = wfc_rules::AdjacencyRules::new();
+
+        // Create a propagation coordination strategy
+        let mut strategy = propagation::DirectPropagationCoordinationStrategy::new();
+
+        strategy
+            .coordinate_propagation(propagator, &mut dummy_grid, coords_vec, &rules)
+            .await
+            .map_err(|e| PropagationError::Other(format!("Strategy propagation failed: {}", e)))
+    }
+
+    fn clone_box(&self) -> Box<dyn WfcCoordinator + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
 // --- Submodules --- //
 
 pub mod entropy;

@@ -5,10 +5,11 @@
 //! - Entropy heatmaps: Visual representation of cell entropy distribution
 //! - Contradictions: Where and why contradictions occur during execution
 
+use super::error_recovery::GpuError;
 use crate::{
-    buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults},
-    error_recovery::GpuError,
-    gpu::{backend::GpuBackend, sync::GpuSynchronizer},
+    buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults, GpuParamsUniform},
+    gpu::{backend::GpuBackend, sync::GpuSynchronizer, WgpuBackend},
+    shader::{pipeline::ComputePipelines, ShaderType},
 };
 use image::{Rgba, RgbaImage};
 use log::trace;
