@@ -27,6 +27,36 @@ pub trait ErrorWithContext: std::error::Error {
     fn is_recoverable(&self) -> bool {
         self.severity() != ErrorSeverity::Fatal
     }
+
+    /// Formats a detailed diagnostic report for this error
+    fn diagnostic_report(&self) -> String {
+        let mut report = String::new();
+
+        // Error type and message
+        report.push_str(&format!("ERROR: {}\n", self));
+
+        // Context information
+        report.push_str(&format!("CONTEXT: {}\n", self.context()));
+
+        // Severity
+        report.push_str(&format!("SEVERITY: {:?}\n", self.severity()));
+        report.push_str(&format!("RECOVERABLE: {}\n", self.is_recoverable()));
+
+        // Suggested solution
+        if let Some(solution) = self.suggested_solution() {
+            report.push_str(&format!("\nSUGGESTED SOLUTION:\n{}\n", solution));
+        }
+
+        report
+    }
+
+    /// Logs the error diagnostic information to a provided function
+    fn log_diagnostic<F>(&self, log_fn: F)
+    where
+        F: FnOnce(&str),
+    {
+        log_fn(&self.diagnostic_report());
+    }
 }
 
 /// Main error type for the WFC-GPU library, encompassing all possible error scenarios.
@@ -55,6 +85,64 @@ pub enum WfcError {
     /// Other errors
     #[error("Error: {0}")]
     Other(String),
+}
+
+impl WfcError {
+    /// Create a new algorithm error
+    pub fn algorithm<S: Into<String>>(msg: S) -> Self {
+        Self::Algorithm(msg.into())
+    }
+
+    /// Create a new validation error
+    pub fn validation<S: Into<String>>(msg: S) -> Self {
+        Self::Validation(msg.into())
+    }
+
+    /// Create a new configuration error
+    pub fn configuration<S: Into<String>>(msg: S) -> Self {
+        Self::Configuration(msg.into())
+    }
+
+    /// Create a new general error
+    pub fn other<S: Into<String>>(msg: S) -> Self {
+        Self::Other(msg.into())
+    }
+
+    /// Format diagnostic information as JSON for easier parsing
+    pub fn as_json(&self) -> String {
+        let severity = match self.severity() {
+            ErrorSeverity::Fatal => "fatal",
+            ErrorSeverity::Recoverable => "recoverable",
+            ErrorSeverity::Warning => "warning",
+        };
+
+        let error_type = match self {
+            WfcError::Gpu(_) => "gpu",
+            WfcError::Io(_) => "io",
+            WfcError::Algorithm(_) => "algorithm",
+            WfcError::Validation(_) => "validation",
+            WfcError::Configuration(_) => "configuration",
+            WfcError::Other(_) => "other",
+        };
+
+        let solution = match self.suggested_solution() {
+            Some(s) => format!(
+                "\"solution\": \"{}\"",
+                s.replace('"', "\\\"").replace('\n', "\\n")
+            ),
+            None => "\"solution\": null".to_string(),
+        };
+
+        format!(
+            "{{\"error\": \"{}\", \"type\": \"{}\", \"context\": \"{}\", \"severity\": \"{}\", \"recoverable\": {}, {}}}",
+            self.to_string().replace('"', "\\\""),
+            error_type,
+            self.context().replace('"', "\\\"").replace('\n', "\\n"),
+            severity,
+            self.is_recoverable(),
+            solution
+        )
+    }
 }
 
 impl ErrorWithContext for WfcError {
@@ -181,3 +269,21 @@ macro_rules! error_location {
 
 // Re-export function_name for use with error_location! macro
 use function_name::named;
+
+/// Logs an error with detailed diagnostic information
+#[macro_export]
+macro_rules! log_error {
+    ($error:expr, $log_fn:expr) => {{
+        use $crate::utils::error::ErrorWithContext;
+        $error.log_diagnostic($log_fn);
+    }};
+}
+
+/// Creates a diagnostic report from the error
+#[macro_export]
+macro_rules! error_report {
+    ($error:expr) => {{
+        use $crate::utils::error::ErrorWithContext;
+        $error.diagnostic_report()
+    }};
+}
