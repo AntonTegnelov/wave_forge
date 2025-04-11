@@ -8,11 +8,11 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
   - [ ] **Create strategy interface for entropy calculations**:
     - [x] `wfc-gpu/src/algorithm/entropy_strategy.rs` - Define core entropy calculation strategies
-    - [ ] Extract existing entropy implementations into separate strategy classes
-    - [ ] Implement Shannon, Count, CountSimple, and WeightedCount strategies
+    - [x] Extract existing entropy implementations into separate strategy classes
+    - [x] Implement Shannon, Count, CountSimple, and WeightedCount strategies
   - [ ] **Modify entropy calculator to use strategies**:
-    - [ ] Update `entropy.rs` to delegate to specific strategies
-    - [ ] Add factory method to create appropriate strategy based on configuration
+    - [x] Update `entropy.rs` to delegate to specific strategies
+    - [x] Add factory method to create appropriate strategy based on configuration
   - [ ] **Update files to use enhanced entropy strategies**:
     - [ ] Update `accelerator.rs` to configure specific entropy strategies
     - [ ] Update `coordination/mod.rs` to work with strategy pattern

@@ -1,4 +1,5 @@
 use crate::{
+    algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory},
     buffers::{GpuBuffers, GpuEntropyShaderParams},
     pipeline::ComputePipelines,
     sync::GpuSynchronizer,
@@ -24,7 +25,7 @@ pub struct GpuEntropyCalculator {
     buffers: Arc<GpuBuffers>,
     synchronizer: Arc<GpuSynchronizer>,
     grid_dims: (usize, usize, usize),
-    heuristic_type: EntropyHeuristicType,
+    strategy: Box<dyn EntropyStrategy>,
 }
 
 impl GpuEntropyCalculator {
@@ -41,6 +42,14 @@ impl GpuEntropyCalculator {
             queue.clone(),
             buffers.clone(),
         ));
+
+        // Use factory to create the default Shannon strategy
+        let strategy = EntropyStrategyFactory::create_strategy(
+            EntropyHeuristicType::default(),
+            buffers.num_tiles,
+            buffers.grid_buffers.u32s_per_cell,
+        );
+
         Self {
             device,
             queue,
@@ -48,7 +57,7 @@ impl GpuEntropyCalculator {
             buffers,
             synchronizer,
             grid_dims,
-            heuristic_type: EntropyHeuristicType::default(),
+            strategy,
         }
     }
 
@@ -66,6 +75,14 @@ impl GpuEntropyCalculator {
             queue.clone(),
             buffers.clone(),
         ));
+
+        // Use factory to create the specified strategy
+        let strategy = EntropyStrategyFactory::create_strategy(
+            heuristic_type,
+            buffers.num_tiles,
+            buffers.grid_buffers.u32s_per_cell,
+        );
+
         Self {
             device,
             queue,
@@ -73,8 +90,14 @@ impl GpuEntropyCalculator {
             buffers,
             synchronizer,
             grid_dims,
-            heuristic_type,
+            strategy,
         }
+    }
+
+    /// Sets a new entropy strategy
+    pub fn with_strategy(&mut self, strategy: Box<dyn EntropyStrategy>) -> &mut Self {
+        self.strategy = strategy;
+        self
     }
 
     /// Asynchronous version of calculate_entropy that allows proper async/await patterns
@@ -90,11 +113,11 @@ impl GpuEntropyCalculator {
             return Ok(EntropyGrid::new(width, height, depth));
         }
 
-        // TODO: Re-evaluate buffer resizing logic. Should it be here or handled
-        // by a higher-level coordinator? For now, assume buffers are correctly sized.
-
-        // Reset min entropy buffer (Access via entropy_buffers)
+        // Reset min entropy buffer
         self.synchronizer.reset_min_entropy_buffer()?;
+
+        // Call strategy's prepare method
+        self.strategy.prepare(&self.synchronizer)?;
 
         // Convert grid possibilities to u32 arrays and upload them
         let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
@@ -116,14 +139,13 @@ impl GpuEntropyCalculator {
                         packed_data.extend_from_slice(&cell_data);
                     } else {
                         // Handle case where grid.get might return None if dimensions are mismatched
-                        // Fill with zeros or handle as error depending on expected behavior
                         packed_data.extend(vec![0u32; u32s_per_cell]);
                     }
                 }
             }
         }
 
-        // Upload the data to the GPU buffer (Access via grid_buffers)
+        // Upload the data to the GPU buffer
         self.queue.write_buffer(
             &self.buffers.grid_buffers.grid_possibilities_buf,
             0,
@@ -131,26 +153,27 @@ impl GpuEntropyCalculator {
         );
 
         // --- Create and configure entropy parameters ---
-        let entropy_shader_params = GpuEntropyShaderParams {
+        let mut entropy_shader_params = GpuEntropyShaderParams {
             grid_dims: [width as u32, height as u32, depth as u32],
-            heuristic_type: match self.heuristic_type {
-                EntropyHeuristicType::Shannon => 0,
-                EntropyHeuristicType::Count => 1,
-                EntropyHeuristicType::CountSimple => 2,
-                EntropyHeuristicType::WeightedCount => 3,
-            },
-            num_tiles: self.buffers.num_tiles as u32,
-            u32s_per_cell: u32s_per_cell as u32,
+            heuristic_type: 0, // Will be set by strategy
+            num_tiles: 0,      // Will be set by strategy
+            u32s_per_cell: 0,  // Will be set by strategy
             _padding1: 0,
             _padding2: 0,
         };
+
+        // Let the strategy configure its specific parameters
+        self.strategy
+            .configure_shader_params(&mut entropy_shader_params);
 
         // --- Write entropy parameters to buffer ---
         self.synchronizer
             .upload_entropy_params(&entropy_shader_params)?;
 
+        // Upload any strategy-specific data
+        self.strategy.upload_data(&self.synchronizer)?;
+
         // --- Create bind groups for the entropy shader ---
-        // (Layouts might be better managed within ComputePipelines)
         let entropy_params_bind_group_layout =
             self.device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -172,7 +195,7 @@ impl GpuEntropyCalculator {
             layout: &entropy_params_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: self.buffers.entropy_params_buffer.as_entire_binding(), // Direct access ok
+                resource: self.buffers.entropy_params_buffer.as_entire_binding(),
             }],
         });
 
@@ -193,19 +216,19 @@ impl GpuEntropyCalculator {
                     binding: 0,
                     resource: self
                         .buffers
-                        .grid_buffers // Access via grid_buffers
+                        .grid_buffers
                         .grid_possibilities_buf
                         .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     // Entropy Output
                     binding: 1,
-                    resource: self.buffers.entropy_buffers.entropy_buf.as_entire_binding(), // Corrected access
+                    resource: self.buffers.entropy_buffers.entropy_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     // Params (General)
                     binding: 2,
-                    resource: self.buffers.params_uniform_buf.as_entire_binding(), // Direct access ok
+                    resource: self.buffers.params_uniform_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     // Min Entropy Output
@@ -214,7 +237,7 @@ impl GpuEntropyCalculator {
                         .buffers
                         .entropy_buffers
                         .min_entropy_info_buf
-                        .as_entire_binding(), // Corrected access
+                        .as_entire_binding(),
                 },
             ],
         });
@@ -250,11 +273,11 @@ impl GpuEntropyCalculator {
                     label: Some("Copy Entropy Results Encoder"),
                 });
         copy_encoder.copy_buffer_to_buffer(
-            &self.buffers.entropy_buffers.entropy_buf, // Source: Use entropy_buffers
+            &self.buffers.entropy_buffers.entropy_buf,
             0,
-            &self.buffers.entropy_buffers.staging_entropy_buf, // Destination: Use entropy_buffers
+            &self.buffers.entropy_buffers.staging_entropy_buf,
             0,
-            self.buffers.entropy_buffers.entropy_buf.size(), // Use entropy_buffers
+            self.buffers.entropy_buffers.entropy_buf.size(),
         );
         self.queue.submit(Some(copy_encoder.finish()));
 
@@ -264,10 +287,13 @@ impl GpuEntropyCalculator {
             Some(self.queue.clone()),
             &*self.buffers.entropy_buffers.entropy_buf,
             &*self.buffers.entropy_buffers.staging_entropy_buf,
-            self.buffers.entropy_buffers.entropy_buf.size(), // Use calculated size
+            self.buffers.entropy_buffers.entropy_buf.size(),
             Some("Entropy Data Download".to_string()),
         )
         .await?;
+
+        // Let the strategy do any post-processing
+        self.strategy.post_process(&self.synchronizer)?;
 
         debug!("Exiting calculate_entropy_async");
         let mut entropy_grid =
@@ -303,11 +329,11 @@ impl GpuEntropyCalculator {
                     label: Some("Copy Min Entropy Info Encoder"),
                 });
         copy_encoder.copy_buffer_to_buffer(
-            &self.buffers.entropy_buffers.min_entropy_info_buf, // Source: Use entropy_buffers
+            &self.buffers.entropy_buffers.min_entropy_info_buf,
             0,
-            &self.buffers.entropy_buffers.staging_min_entropy_info_buf, // Destination: Use entropy_buffers
+            &self.buffers.entropy_buffers.staging_min_entropy_info_buf,
             0,
-            self.buffers.entropy_buffers.min_entropy_info_buf.size(), // Use entropy_buffers
+            self.buffers.entropy_buffers.min_entropy_info_buf.size(),
         );
         self.queue.submit(Some(copy_encoder.finish()));
 
@@ -371,12 +397,21 @@ impl EntropyCalculator for GpuEntropyCalculator {
     }
 
     fn set_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> bool {
-        self.heuristic_type = heuristic_type;
+        // Create a new strategy using the factory
+        let strategy = EntropyStrategyFactory::create_strategy(
+            heuristic_type,
+            self.buffers.num_tiles,
+            self.buffers.grid_buffers.u32s_per_cell,
+        );
+
+        // Replace the current strategy
+        self.strategy = strategy;
         true // GPU implementation supports all heuristic types
     }
 
     fn get_entropy_heuristic(&self) -> EntropyHeuristicType {
-        self.heuristic_type
+        // Get the heuristic type from the strategy
+        self.strategy.heuristic_type()
     }
 }
 
@@ -418,9 +453,4 @@ impl GpuEntropyCalculatorExt for GpuEntropyCalculator {
 /// Maps a GPU error encountered during entropy calculation to a core WFC EntropyError.
 fn map_gpu_error_to_entropy_error(gpu_error: GpuError) -> CoreEntropyError {
     CoreEntropyError::Other(format!("GPU Error: {}", gpu_error))
-}
-
-#[cfg(test)]
-mod tests {
-    // ... existing code ...
 }

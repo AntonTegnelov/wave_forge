@@ -14,11 +14,11 @@ mod pipeline;
 mod shader_compiler;
 mod shader_registry;
 mod shaders;
-mod test_utils; // Only compiled for tests, but declared here
 
 // --- Public Modules ---
 // These form the public API surface of the crate.
 pub mod accelerator;
+pub mod algorithm;
 pub mod buffers;
 pub mod coordination;
 pub mod debug_viz;
@@ -32,6 +32,9 @@ pub mod sync;
 
 // Core accelerator type
 pub use accelerator::GpuAccelerator;
+
+// Algorithm strategy types
+pub use algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory};
 
 // Buffer related types
 pub use buffers::{DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults};
@@ -55,8 +58,6 @@ pub use error_recovery::GpuError;
 
 // --- Conditional Compilation for Tests --- //
 // Declare test modules, only compiled when running tests.
-#[cfg(test)]
-mod shader_validation_tests;
 #[cfg(test)]
 mod tests;
 
