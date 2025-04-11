@@ -8,26 +8,24 @@
 
 // --- Private/Internal Modules ---
 // These are implementation details not part of the public API unless re-exported.
-mod backend;
 mod error_recovery;
-pub mod shader; // New shader module that contains all shader-related functionality
+pub mod gpu;
+pub mod shader; // New shader module that contains all shader-related functionality // New gpu module that contains all GPU-related functionality
 
 // --- Public Modules ---
 // These form the public API surface of the crate.
-pub mod accelerator;
 pub mod buffers;
 pub mod coordination;
 pub mod debug_viz;
 pub mod entropy;
 pub mod propagator;
 pub mod subgrid;
-pub mod sync;
 
 // --- Public Re-exports --- //
 // Re-export key types for easier access by users of the crate.
 
-// Core accelerator type
-pub use accelerator::GpuAccelerator;
+// Core accelerator type - now from gpu module
+pub use gpu::GpuAccelerator;
 
 // Algorithm strategy types
 pub use entropy::{EntropyStrategy, EntropyStrategyFactory};
@@ -62,7 +60,10 @@ mod tests;
 pub use shader::pipeline::ComputePipelines;
 pub use shader::shader_registry::ShaderRegistry;
 pub use shader::ShaderType;
-pub use sync::GpuSynchronizer;
+
+// Re-exports from gpu module
+pub use gpu::GpuSynchronizer;
+pub use gpu::{BackendError, GpuBackend, WgpuBackend};
 
 // Re-export propagator
 pub use propagator::GpuConstraintPropagator;
