@@ -60,7 +60,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - [x] `AdaptivePropagationStrategy` - Selects optimal strategy based on grid size
   - [ ] **Update propagator to use strategy pattern**:
     - [x] Modify `propagator/gpu_constraint_propagator.rs` to delegate to strategies
-    - [ ] Reduce file size by extracting strategy implementations
+    - [x] Reduce file size by extracting strategy implementations
     - [ ] Update strategy selection based on configuration
 
   **Implementation Details**:
