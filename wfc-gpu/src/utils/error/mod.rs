@@ -73,10 +73,50 @@ impl ErrorWithContext for WfcError {
         match self {
             WfcError::Gpu(err) => err.suggested_solution(),
             WfcError::Io(err) => err.suggested_solution(),
-            WfcError::Algorithm(_) => Some("Check algorithm parameters and input data".to_string()),
-            WfcError::Validation(_) => Some("Validate input data and configuration".to_string()),
-            WfcError::Configuration(_) => Some("Review configuration settings".to_string()),
-            WfcError::Other(_) => None,
+            WfcError::Algorithm(msg) => Some(format!(
+                concat!(
+                    "Algorithm error: {}. Try the following:\n",
+                    "1. Check algorithm parameters for validity\n",
+                    "2. Verify input data matches algorithm requirements\n",
+                    "3. Ensure input grid dimensions are compatible with algorithm\n",
+                    "4. Consider using a different algorithm variant if available\n",
+                    "5. Review the implementation for logical errors"
+                ),
+                msg
+            )),
+            WfcError::Validation(msg) => Some(format!(
+                concat!(
+                    "Validation error: {}. Try the following:\n",
+                    "1. Check input values against allowed ranges\n",
+                    "2. Verify data format and structure\n",
+                    "3. Ensure all required fields are populated\n",
+                    "4. Check for inconsistencies in configuration\n",
+                    "5. Add pre-validation steps to catch issues earlier"
+                ),
+                msg
+            )),
+            WfcError::Configuration(msg) => Some(format!(
+                concat!(
+                    "Configuration error: {}. Try the following:\n",
+                    "1. Review configuration settings for validity\n",
+                    "2. Check for conflicting or incompatible options\n",
+                    "3. Ensure required configuration properties are set\n",
+                    "4. Verify that feature requirements match capabilities\n",
+                    "5. Consider using default configuration if unsure"
+                ),
+                msg
+            )),
+            WfcError::Other(msg) => Some(format!(
+                concat!(
+                    "Error: {}. Try the following:\n",
+                    "1. Check logs for additional error details\n",
+                    "2. Review recent code changes that might affect functionality\n",
+                    "3. Verify system resources are sufficient\n",
+                    "4. Consider restarting the application\n",
+                    "5. Report the issue if it persists"
+                ),
+                msg
+            )),
         }
     }
 

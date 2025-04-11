@@ -568,22 +568,169 @@ impl ErrorWithContext for GpuError {
         // Otherwise return default solutions based on error type
         match self {
             Self::BufferMapFailed { .. } => {
-                Some("Check buffer usage flags and ensure buffer is not already mapped".to_string())
+                Some(concat!(
+                    "Buffer mapping failed. Try the following:\n",
+                    "1. Check buffer usage flags - ensure COPY_SRC/COPY_DST are set for mapped buffers\n",
+                    "2. Ensure buffer is not already mapped or in use by another operation\n",
+                    "3. Check that the buffer size is sufficient for the mapping range\n",
+                    "4. Verify that the GPU device hasn't been lost during the operation\n",
+                    "5. Consider using a staging buffer with GPU-only buffers"
+                ).to_string())
             }
-            Self::ValidationError(_, _) => {
-                Some("Check GPU resource creation parameters and usage flags".to_string())
+            Self::ValidationError(err, _) => {
+                let basic_msg = "Validation error in GPU operation. Try the following:\n\
+                1. Check resource usage flags and ensure they match the operation\n\
+                2. Verify bind group layouts match pipeline expectations\n\
+                3. Ensure buffer sizes are sufficient for the operation";
+                
+                // Add more specific advice based on the error message
+                let err_str = err.to_string().to_lowercase();
+                let specific_advice = if err_str.contains("out of memory") {
+                    "\n4. Reduce resource usage or buffer sizes\n\
+                     5. Consider batching operations into smaller chunks"
+                } else if err_str.contains("bind group") {
+                    "\n4. Check bind group entries match the layout\n\
+                     5. Ensure all required bindings are provided"
+                } else if err_str.contains("buffer") {
+                    "\n4. Verify buffer alignment requirements\n\
+                     5. Check buffer usage flags"
+                } else if err_str.contains("shader") {
+                    "\n4. Review shader code for validation errors\n\
+                     5. Ensure shader inputs match pipeline configuration"
+                } else {
+                    ""
+                };
+                
+                Some(format!("{}{}", basic_msg, specific_advice))
             }
+            Self::CommandExecutionError { .. } => {
+                Some(concat!(
+                    "Command execution failed. Try the following:\n",
+                    "1. Check that resources used in the command are still valid\n",
+                    "2. Ensure resources are in the correct state for the operation\n",
+                    "3. Verify that buffer sizes and offsets are valid\n",
+                    "4. Consider adding debug markers to identify problematic commands\n",
+                    "5. Inspect device logs for further validation errors"
+                ).to_string())
+            }
+            Self::BufferOperationError { .. } => {
+                Some(concat!(
+                    "Buffer operation failed. Try the following:\n",
+                    "1. Check buffer usage flags match the intended operation\n",
+                    "2. Verify that buffer size is sufficient for the operation\n",
+                    "3. Ensure buffer alignments are correct for the operation\n",
+                    "4. Check that the buffer isn't being used in conflicting operations\n",
+                    "5. Consider using larger buffers or chunking data into multiple operations"
+                ).to_string())
+            }
+            Self::TransferError { .. } => {
+                Some(concat!(
+                    "Data transfer error. Try the following:\n",
+                    "1. Check that both source and destination buffers exist and are valid\n",
+                    "2. Ensure buffers have appropriate usage flags (COPY_SRC and COPY_DST)\n",
+                    "3. Verify that transfer sizes and alignments are correct\n",
+                    "4. Check for potential race conditions in async operations\n",
+                    "5. Consider using mapped memory or staging buffers for complex transfers"
+                ).to_string())
+            }
+            Self::ResourceCreationFailed { .. } => {
+                Some(concat!(
+                    "GPU resource creation failed. Try the following:\n",
+                    "1. Check resource creation parameters (size, format, usage flags)\n",
+                    "2. Verify that the GPU device is still valid\n",
+                    "3. Check system resources (available memory)\n",
+                    "4. Consider reducing resource sizes or counts\n",
+                    "5. Verify that required features are supported by the GPU"
+                ).to_string())
+            }
+            Self::ShaderError { .. } => {
+                Some(concat!(
+                    "Shader compilation or execution failed. Try the following:\n",
+                    "1. Check shader code for syntax errors or unsupported features\n",
+                    "2. Verify that required GPU features are enabled\n",
+                    "3. Check for uniform buffer or texture binding mismatches\n",
+                    "4. Consider using simpler shader code or breaking into multiple passes\n",
+                    "5. Check for resource conflicts or invalid bind groups"
+                ).to_string())
+            }
+            Self::BufferSizeMismatch { .. } => {
+                Some(concat!(
+                    "Buffer size mismatch. Try the following:\n",
+                    "1. Ensure the buffer was created with sufficient size\n",
+                    "2. Check data structures for size calculations\n",
+                    "3. Verify that dynamic buffer resizing is working correctly\n",
+                    "4. Consider padding buffers to avoid alignment issues\n",
+                    "5. Add size validation checks before buffer operations"
+                ).to_string())
+            }
+            Self::Timeout { .. } => Some(concat!(
+                "Operation timed out. Try the following:\n",
+                "1. Increase timeout duration for complex operations\n",
+                "2. Optimize algorithm to reduce processing time\n",
+                "3. Consider breaking work into smaller chunks\n",
+                "4. Check for infinite loops or deadlocks in shader code\n",
+                "5. Monitor GPU utilization to detect bottlenecks"
+            ).to_string()),
             Self::DeviceLost { .. } => {
-                Some("GPU device was lost. Reinitialize GPU resources and retry".to_string())
+                Some(concat!(
+                    "GPU device was lost. Try the following:\n",
+                    "1. Reinitialize the GPU device and recreate resources\n",
+                    "2. Check for driver crashes or system resource issues\n",
+                    "3. Reduce GPU workload if overheating may be an issue\n",
+                    "4. Update GPU drivers to the latest version\n",
+                    "5. Consider implementing automatic device recovery"
+                ).to_string())
             }
-            Self::Timeout { .. } => Some(
-                "Operation timed out. Consider increasing timeout duration or optimizing algorithm"
-                    .to_string(),
-            ),
+            Self::AdapterRequestFailed { .. } => {
+                Some(concat!(
+                    "Failed to request GPU adapter. Try the following:\n",
+                    "1. Check that a compatible GPU is available in the system\n",
+                    "2. Verify GPU driver installation and update if necessary\n",
+                    "3. Reduce GPU feature requirements to improve compatibility\n",
+                    "4. Consider fallback to software rendering if available\n",
+                    "5. Check system logs for GPU detection issues"
+                ).to_string())
+            }
+            Self::DeviceRequestFailed(_, _) => {
+                Some(concat!(
+                    "Failed to request GPU device. Try the following:\n",
+                    "1. Check that the requested features are supported by the GPU\n",
+                    "2. Reduce limits or feature requirements\n",
+                    "3. Update GPU drivers to the latest version\n",
+                    "4. Verify that the GPU is not disabled or in error state\n",
+                    "5. Consider fallback to a different adapter or GPU"
+                ).to_string())
+            }
+            Self::MutexError { .. } => {
+                Some(concat!(
+                    "Mutex lock error. Try the following:\n",
+                    "1. Check for potential deadlocks in multi-threaded code\n",
+                    "2. Ensure locks are released properly in all code paths\n",
+                    "3. Consider using read-write locks for better concurrency\n",
+                    "4. Reduce lock contention by minimizing critical sections\n",
+                    "5. Add timeout to lock acquisition to detect deadlocks"
+                ).to_string())
+            }
             Self::ContradictionDetected { .. } => {
-                Some("Algorithm reached contradiction. Check input data or constraints".to_string())
+                Some(concat!(
+                    "Algorithm reached contradiction. Try the following:\n",
+                    "1. Check input data for consistency with constraints\n",
+                    "2. Verify adjacency rules for potential conflicts\n",
+                    "3. Consider relaxing constraints if they're too restrictive\n",
+                    "4. Use backtracking or alternative cell selection strategy\n",
+                    "5. Add debug visualization to identify problematic areas"
+                ).to_string())
             }
-            _ => None,
+            Self::Other { .. } => {
+                Some(concat!(
+                    "Unknown GPU error occurred. Try the following:\n",
+                    "1. Check for system resource limitations (memory, etc.)\n",
+                    "2. Verify GPU driver status and update if necessary\n",
+                    "3. Restart the application or reinitialize GPU resources\n",
+                    "4. Check logs for additional error details\n",
+                    "5. Consider simplifying GPU workload"
+                ).to_string())
+            }
         }
     }
 

@@ -251,16 +251,153 @@ impl ErrorWithContext for IoError {
 
         // Otherwise return default solutions based on error type
         match self {
-            Self::NotFound { .. } => {
-                Some("Check the file path and ensure the file exists".to_string())
+            Self::NotFound { .. } => Some(
+                concat!(
+                    "File not found. Try the following:\n",
+                    "1. Check that the file path is correct\n",
+                    "2. Verify that the file exists at the specified location\n",
+                    "3. Ensure that external resources have been downloaded or generated\n",
+                    "4. Check for typos in file paths or names\n",
+                    "5. Verify working directory if using relative paths"
+                )
+                .to_string(),
+            ),
+            Self::PermissionDenied { .. } => Some(
+                concat!(
+                    "Permission denied. Try the following:\n",
+                    "1. Check file permissions for current user\n",
+                    "2. Run the application with elevated privileges if necessary\n",
+                    "3. Verify that the file is not locked by another process\n",
+                    "4. Check if the resource is read-only\n",
+                    "5. Ensure proper access rights on network resources"
+                )
+                .to_string(),
+            ),
+            Self::Io(err, _) => {
+                let default_msg = concat!(
+                    "I/O error occurred. Try the following:\n",
+                    "1. Check if the device or resource is available\n",
+                    "2. Verify network connectivity for remote resources\n",
+                    "3. Ensure sufficient disk space is available\n",
+                    "4. Close other applications that might be using the resource\n",
+                    "5. Retry the operation after a short delay"
+                );
+
+                // Add more specific advice based on the error kind
+                match err.kind() {
+                    std::io::ErrorKind::AlreadyExists => Some(
+                        concat!(
+                            "Resource already exists. Try the following:\n",
+                            "1. Use a different name for the resource\n",
+                            "2. Delete or move the existing resource first\n",
+                            "3. Check if the application can overwrite existing resources\n",
+                            "4. Use a unique naming scheme for resources\n",
+                            "5. Consider implementing versioning for resources"
+                        )
+                        .to_string(),
+                    ),
+                    std::io::ErrorKind::Interrupted => Some(
+                        concat!(
+                            "Operation interrupted. Try the following:\n",
+                            "1. Retry the operation\n",
+                            "2. Implement retry logic with backoff\n",
+                            "3. Check for system signals that might be interrupting operation\n",
+                            "4. Handle interruption gracefully in the application\n",
+                            "5. Consider using async I/O for better handling of interruptions"
+                        )
+                        .to_string(),
+                    ),
+                    std::io::ErrorKind::Unsupported => Some(
+                        concat!(
+                            "Unsupported operation. Try the following:\n",
+                            "1. Check if the operation is supported on this platform\n",
+                            "2. Use an alternative approach that is supported\n",
+                            "3. Verify feature requirements for the operation\n",
+                            "4. Check documentation for platform-specific limitations\n",
+                            "5. Consider using abstraction libraries for cross-platform support"
+                        )
+                        .to_string(),
+                    ),
+                    std::io::ErrorKind::ConnectionRefused => Some(
+                        concat!(
+                            "Connection refused. Try the following:\n",
+                            "1. Verify the server is running and accessible\n",
+                            "2. Check network connectivity and firewall settings\n",
+                            "3. Verify connection parameters (host, port)\n",
+                            "4. Ensure the service is accepting connections\n",
+                            "5. Implement connection retry with exponential backoff"
+                        )
+                        .to_string(),
+                    ),
+                    std::io::ErrorKind::TimedOut => Some(
+                        concat!(
+                            "Operation timed out. Try the following:\n",
+                            "1. Increase timeout duration if possible\n",
+                            "2. Check if the resource is overloaded or slow\n",
+                            "3. Verify network connectivity for remote resources\n",
+                            "4. Implement retry logic with backoff\n",
+                            "5. Consider breaking the operation into smaller chunks"
+                        )
+                        .to_string(),
+                    ),
+                    _ => Some(default_msg.to_string()),
+                }
             }
-            Self::PermissionDenied { .. } => {
-                Some("Check file permissions or run with elevated privileges".to_string())
-            }
-            Self::MemoryError { .. } => {
-                Some("Consider reducing memory usage or increasing available memory".to_string())
-            }
-            _ => None,
+            Self::Serialization { .. } => Some(
+                concat!(
+                    "Serialization error. Try the following:\n",
+                    "1. Check the data structure for incompatible types\n",
+                    "2. Verify that all fields are serializable\n",
+                    "3. Consider using a different serialization format\n",
+                    "4. Add robust error handling for serialization failures\n",
+                    "5. Validate data before serialization"
+                )
+                .to_string(),
+            ),
+            Self::Deserialization { .. } => Some(
+                concat!(
+                    "Deserialization error. Try the following:\n",
+                    "1. Verify the format of the input data\n",
+                    "2. Check for format version mismatches\n",
+                    "3. Ensure the data structure matches the serialized format\n",
+                    "4. Validate input data before attempting deserialization\n",
+                    "5. Consider implementing migration for older formats"
+                )
+                .to_string(),
+            ),
+            Self::ResourceNotAvailable { .. } => Some(
+                concat!(
+                    "Resource not available. Try the following:\n",
+                    "1. Check if the resource exists and is accessible\n",
+                    "2. Verify that external dependencies are installed\n",
+                    "3. Ensure sufficient system resources (memory, disk space)\n",
+                    "4. Check if resource is locked by another process\n",
+                    "5. Implement resource availability checking before use"
+                )
+                .to_string(),
+            ),
+            Self::MemoryError { .. } => Some(
+                concat!(
+                    "Memory allocation error. Try the following:\n",
+                    "1. Reduce memory usage by processing data in smaller chunks\n",
+                    "2. Close other applications to free up memory\n",
+                    "3. Check for memory leaks in the application\n",
+                    "4. Ensure system has sufficient RAM and swap space\n",
+                    "5. Consider using memory-mapped files for large datasets"
+                )
+                .to_string(),
+            ),
+            Self::Other { .. } => Some(
+                concat!(
+                    "I/O error occurred. Try the following:\n",
+                    "1. Check system logs for detailed error information\n",
+                    "2. Verify system resources and permissions\n",
+                    "3. Restart the application or service\n",
+                    "4. Check for operating system or hardware issues\n",
+                    "5. Consider updating drivers or system software"
+                )
+                .to_string(),
+            ),
         }
     }
 
