@@ -316,7 +316,7 @@ impl GpuAccelerator {
         initial_grid: &PossibilityGrid,
         _rules: &AdjacencyRules,
         max_iterations: u64,
-        progress_callback: F,
+        _progress_callback: F,
         shutdown_signal: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> Result<PossibilityGrid, WfcError>
     where
@@ -609,7 +609,7 @@ impl PossibilityGridExt for PossibilityGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::WgpuBackend;
+
     use wfc_core::entropy::EntropyHeuristicType as CoreEntropyHeuristicType;
 
     fn setup_basic_test_data() -> (PossibilityGrid, AdjacencyRules) {

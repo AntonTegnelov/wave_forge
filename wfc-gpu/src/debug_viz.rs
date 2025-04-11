@@ -340,7 +340,7 @@ impl DebugVisualizer {
     /// This might involve downloading data from the GPU, which can be slow.
     pub async fn update(
         &mut self,
-        backend: &dyn GpuBackend, // Use trait object
+        _backend: &dyn GpuBackend, // Use trait object
         // grid_state: &PossibilityGrid, // Pass PossibilityGrid if needed for CPU-side rendering
         gpu_buffers: &GpuBuffers, // Pass GPU buffers
     ) -> Result<(), GpuError> {
