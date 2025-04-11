@@ -1,7 +1,7 @@
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     debug_viz::DebugVisualizer,
-    pipeline::ComputePipelines,
+    shader::pipeline::ComputePipelines,
     subgrid::{
         divide_into_subgrids, extract_subgrid, merge_subgrids, SubgridConfig, SubgridRegion,
     },
