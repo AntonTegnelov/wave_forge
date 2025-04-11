@@ -345,7 +345,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
   - **Specific inconsistencies to address**:
     - [x] In `entropy/calculator.rs`, `From<GpuError> for CoreEntropyError` conversion uses different mapping than in other files
-    - [ ] `gpu/accelerator.rs` uses both `GpuError` and `WfcError` for similar failures
+    - [x] `gpu/accelerator.rs` uses both `GpuError` and `WfcError` for similar failures
     - [ ] `propagator/gpu_constraint_propagator.rs` uses custom error conversions
     - [ ] `utils/error_recovery.rs` inconsistently handles buffers across error types
 

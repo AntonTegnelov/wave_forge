@@ -25,7 +25,9 @@ use crate::{
     propagator::{GpuConstraintPropagator, PropagationStrategy, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
     utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer},
-    utils::error::{gpu_error::GpuError as NewGpuError, RecoveryAction, RecoveryHookRegistry},
+    utils::error::{
+        self, gpu_error::GpuError as NewGpuError, RecoveryAction, RecoveryHookRegistry, WfcError,
+    },
     utils::error_recovery::{GpuError, GridCoord},
     utils::subgrid::SubgridConfig,
 };
@@ -37,7 +39,7 @@ use wfc_core::propagator::PropagationError;
 use wfc_core::{
     entropy::{EntropyCalculator, EntropyHeuristicType as CoreEntropyHeuristicType},
     grid::PossibilityGrid,
-    BoundaryCondition, ProgressInfo, WfcError,
+    BoundaryCondition, ProgressInfo,
 };
 use wfc_rules::AdjacencyRules;
 use wgpu::Features;
@@ -136,7 +138,7 @@ impl GpuAccelerator {
     ///
     /// # Returns
     ///
-    /// A `Result` containing either a new `GpuAccelerator` or a `GpuError`.
+    /// A `Result` containing either a new `GpuAccelerator` or a `WfcError`.
     ///
     /// # Constraints
     ///
@@ -147,7 +149,7 @@ impl GpuAccelerator {
         boundary_condition: BoundaryCondition,
         entropy_heuristic: CoreEntropyHeuristicType,
         subgrid_config: Option<SubgridConfig>,
-    ) -> Result<Self, GpuError> {
+    ) -> Result<Self, WfcError> {
         let start_time = Instant::now();
         info!("Initializing GPU Accelerator...");
 
@@ -172,19 +174,15 @@ impl GpuAccelerator {
 
         let features_ref: Vec<&str> = features.iter().map(|s| s.as_str()).collect();
 
-        let pipelines = Arc::new(ComputePipelines::new(
-            &device,
-            num_tiles_u32 as u32,
-            &features_ref,
-        )?);
+        let pipelines = Arc::new(
+            ComputePipelines::new(&device, num_tiles_u32 as u32, &features_ref)
+                .map_err(|e| WfcError::Gpu(e))?,
+        );
 
-        let buffers = Arc::new(GpuBuffers::new(
-            &device,
-            &queue,
-            initial_grid,
-            rules,
-            boundary_condition,
-        )?);
+        let buffers = Arc::new(
+            GpuBuffers::new(&device, &queue, initial_grid, rules, boundary_condition)
+                .map_err(|e| WfcError::Gpu(e))?,
+        );
 
         let synchronizer = Arc::new(GpuSynchronizer::new(
             device.clone(),
@@ -394,20 +392,20 @@ impl GpuAccelerator {
         instance_guard
             .sync
             .upload_grid(initial_grid)
-            .map_err(|e| WfcError::InternalError(e.to_string()))?;
+            .map_err(|e| WfcError::other(e.to_string()))?;
 
         instance_guard
             .sync
             .reset_contradiction_flag()
-            .map_err(|e| WfcError::InternalError(e.to_string()))?;
+            .map_err(|e| WfcError::other(e.to_string()))?;
         instance_guard
             .sync
             .reset_contradiction_location()
-            .map_err(|e| WfcError::InternalError(e.to_string()))?;
+            .map_err(|e| WfcError::other(e.to_string()))?;
         instance_guard
             .sync
             .reset_worklist_count()
-            .map_err(|e| WfcError::InternalError(e.to_string()))?;
+            .map_err(|e| WfcError::other(e.to_string()))?;
 
         trace!("Initial grid state uploaded and GPU state reset.");
 
@@ -415,7 +413,7 @@ impl GpuAccelerator {
             if let Some(ref signal) = shutdown_signal {
                 if *signal.borrow() {
                     info!("Shutdown signal received, stopping WFC execution.");
-                    return Err(WfcError::Interrupted);
+                    return Err(WfcError::other("WFC run interrupted"));
                 }
             }
 
@@ -424,7 +422,10 @@ impl GpuAccelerator {
                     "Maximum iterations ({}) reached without convergence.",
                     max_iterations
                 );
-                return Err(WfcError::MaxIterationsReached(max_iterations));
+                return Err(WfcError::algorithm(format!(
+                    "Maximum iterations ({}) reached",
+                    max_iterations
+                )));
             }
 
             iteration += 1;
@@ -464,10 +465,13 @@ impl GpuAccelerator {
                     run_result.stats.contradictions += 1;
                     run_result.stats.iterations = iteration as usize;
                     if let Some(c) = coord {
-                        let wfc_error = WfcError::Contradiction(c.x, c.y, c.z);
+                        let error = WfcError::algorithm(format!(
+                            "Contradiction found at ({}, {}, {})",
+                            c.x, c.y, c.z
+                        ));
 
                         // Try user-defined recovery hooks first
-                        if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                        if let Some(recovery_action) = self.try_handle_local_error(&error) {
                             info!(
                                 "User-defined recovery hook is handling contradiction: {:?}",
                                 recovery_action
@@ -487,34 +491,34 @@ impl GpuAccelerator {
                                 }
                                 _ => {
                                     // Other actions - default to returning the error
-                                    return Err(wfc_error);
+                                    return Err(error);
                                 }
                             }
                         }
 
-                        return Err(wfc_error);
+                        return Err(error);
                     } else {
                         error!("Contradiction detected by GPU but location unknown.");
-                        let wfc_error = WfcError::Interrupted;
+                        let error = WfcError::other("WFC run interrupted due to contradiction");
 
                         // Try user-defined recovery hooks
-                        if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                        if let Some(recovery_action) = self.try_handle_local_error(&error) {
                             info!("User-defined recovery hook is handling unknown contradiction: {:?}", recovery_action);
                             match recovery_action {
                                 RecoveryAction::Retry => continue,
-                                _ => return Err(wfc_error),
+                                _ => return Err(error),
                             }
                         }
 
-                        return Err(wfc_error);
+                        return Err(error);
                     }
                 }
                 Err(e) => {
                     error!("GPU error during entropy calculation: {}", e);
-                    let wfc_error = WfcError::InternalError(e.to_string());
+                    let error = WfcError::Gpu(NewGpuError::from(e));
 
                     // Try user-defined recovery hooks
-                    if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                    if let Some(recovery_action) = self.try_handle_local_error(&error) {
                         info!(
                             "User-defined recovery hook is handling GPU error: {:?}",
                             recovery_action
@@ -522,11 +526,11 @@ impl GpuAccelerator {
                         match recovery_action {
                             RecoveryAction::Retry => continue,
                             RecoveryAction::RetryWithModifiedParams => continue,
-                            _ => return Err(wfc_error),
+                            _ => return Err(error),
                         }
                     }
 
-                    return Err(wfc_error);
+                    return Err(error);
                 }
             };
 
@@ -557,28 +561,31 @@ impl GpuAccelerator {
                     run_result.stats.contradictions += 1;
                     run_result.stats.iterations = iteration as usize;
 
-                    let wfc_error = WfcError::Contradiction(x, y, z);
+                    let error = WfcError::algorithm(format!(
+                        "Contradiction found at ({}, {}, {})",
+                        x, y, z
+                    ));
 
                     // Try user-defined recovery hooks
-                    if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                    if let Some(recovery_action) = self.try_handle_local_error(&error) {
                         info!("User-defined recovery hook is handling propagation contradiction: {:?}", recovery_action);
                         match recovery_action {
                             RecoveryAction::Retry => continue,
                             RecoveryAction::RetryWithModifiedParams => continue,
                             RecoveryAction::UseAlternative => continue,
-                            _ => return Err(wfc_error),
+                            _ => return Err(error),
                         }
                     }
 
-                    return Err(wfc_error);
+                    return Err(error);
                 }
                 Err(e) => {
                     error!("Propagation error: {}", e);
 
-                    let wfc_error = WfcError::Propagation(e);
+                    let error = WfcError::algorithm(format!("Propagation error: {}", e));
 
                     // Try user-defined recovery hooks
-                    if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                    if let Some(recovery_action) = self.try_handle_local_error(&error) {
                         info!(
                             "User-defined recovery hook is handling propagation error: {:?}",
                             recovery_action
@@ -586,11 +593,11 @@ impl GpuAccelerator {
                         match recovery_action {
                             RecoveryAction::Retry => continue,
                             RecoveryAction::RetryWithModifiedParams => continue,
-                            _ => return Err(wfc_error),
+                            _ => return Err(error),
                         }
                     }
 
-                    return Err(wfc_error);
+                    return Err(error);
                 }
             }
 
@@ -627,11 +634,11 @@ impl GpuAccelerator {
                     Ok(true) => {}
                     Ok(false) => {
                         info!("WFC execution cancelled by progress callback.");
-                        return Err(WfcError::Interrupted);
+                        return Err(WfcError::other("WFC run interrupted"));
                     }
                     Err(e) => {
                         error!("Progress callback failed: {}", e);
-                        return Err(WfcError::InternalError(e.to_string()));
+                        return Err(WfcError::other(e.to_string()));
                     }
                 }
             }
@@ -661,7 +668,7 @@ impl GpuAccelerator {
             .sync
             .download_grid(&final_grid_target)
             .await
-            .map_err(|e| WfcError::InternalError(e.to_string()))?;
+            .map_err(|e| WfcError::other(e.to_string()))?;
 
         let final_collapsed_count = final_grid.count_collapsed_cells();
         run_result.stats.collapsed_cells = final_collapsed_count;
@@ -1051,14 +1058,28 @@ impl GpuAccelerator {
     /// # Returns
     ///
     /// `Option<RecoveryAction>` if a hook was able to handle the error
-    pub(crate) fn try_handle_error(&self, error: &wfc_core::WfcError) -> Option<RecoveryAction> {
+    pub(crate) fn try_handle_local_error(&self, error: &WfcError) -> Option<RecoveryAction> {
         let hooks = self.instance.read().unwrap().recovery_hooks.read().unwrap();
+        hooks.try_handle(error)
+    }
 
+    /// Try to handle a core WFC error with registered hooks
+    ///
+    /// This method bridges between core WfcError and our local WfcError.
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - The core error to handle
+    ///
+    /// # Returns
+    ///
+    /// `Option<RecoveryAction>` if a hook was able to handle the error
+    pub(crate) fn try_handle_error(&self, error: &wfc_core::WfcError) -> Option<RecoveryAction> {
         // Convert the core error to our local error type
         let local_error = crate::utils::error::WfcError::from_core_error(error);
 
-        // Try to handle the error with registered hooks
-        hooks.try_handle(&local_error)
+        // Delegate to the method that handles local errors
+        self.try_handle_local_error(&local_error)
     }
 }
 
