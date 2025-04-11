@@ -168,12 +168,12 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/shader/shaders.rs`:
 
-      - [ ] Update shader loading code to work with the enhanced component system
-      - [ ] Add versioning support for shader components
+      - [x] Update shader loading code to work with the enhanced component system
+      - [x] Add versioning support for shader components
 
     - `wfc-gpu/build.rs`:
-      - [ ] Update build process to validate shader component dependencies
-      - [ ] Add component validation during build
+      - [x] Update build process to validate shader component dependencies
+      - [x] Add component validation during build
 
   - **New files**:
 

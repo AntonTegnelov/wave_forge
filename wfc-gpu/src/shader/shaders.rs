@@ -42,13 +42,15 @@ pub enum ShaderError {
 }
 
 /// Represents metadata about a single shader component.
-#[derive(Debug, Clone)] // Added Clone
+#[derive(Debug, Clone)]
 pub struct ShaderComponentInfo {
     pub name: String,
     pub path: PathBuf,
-    pub dependencies: Vec<String>, // Names of other components it depends on
-    pub features: Vec<String>,     // Features this component provides or requires
-                                   // Add other fields like description, author, etc. if needed
+    pub dependencies: Vec<String>,
+    pub features: Vec<String>,
+    pub version: String,
+    pub provided_features: Vec<String>,
+    pub gpu_capabilities: Vec<String>,
 }
 
 /// Manages access to pre-compiled shader variants and shader component metadata.
@@ -57,8 +59,10 @@ pub struct ShaderManager {
     variants_dir: PathBuf,
     /// Registry mapping component names to their metadata.
     component_registry: HashMap<String, ShaderComponentInfo>,
-    // Optional: Cache loaded shaders
-    // loaded_shaders: HashMap<(ShaderType, Vec<String>), String>,
+    /// Path to the component registry file
+    registry_path: PathBuf,
+    /// Cache loaded shaders for better performance
+    loaded_shaders: HashMap<(ShaderType, Vec<String>), String>,
 }
 
 impl ShaderManager {
@@ -72,60 +76,157 @@ impl ShaderManager {
         }
         let variants_dir = Path::new(&out_dir).join("shaders").join("variants");
 
-        // --- Load Component Registry (Placeholder) ---
-        // TODO: Load this from src/shader/shaders/components/registry.json
-        let mut component_registry = HashMap::new();
-
-        // Example placeholder components based on planned structure
-        let components_base_path = PathBuf::from("src/shader/shaders/components"); // Relative to crate root
-
-        component_registry.insert(
-            "utils".to_string(),
-            ShaderComponentInfo {
-                name: "utils".to_string(),
-                path: components_base_path.join("utils.wgsl"), // Assuming utils is also a component now
-                dependencies: vec![],
-                features: vec![],
-            },
-        );
-        component_registry.insert(
-            "coords".to_string(),
-            ShaderComponentInfo {
-                name: "coords".to_string(),
-                path: components_base_path.join("coords.wgsl"), // Assuming coords is also a component
-                dependencies: vec!["utils".to_string()],
-                features: vec![],
-            },
-        );
-        component_registry.insert(
-            "entropy_calculation".to_string(),
-            ShaderComponentInfo {
-                name: "entropy_calculation".to_string(),
-                path: components_base_path.join("entropy_calculation.wgsl"),
-                dependencies: vec!["utils".to_string(), "coords".to_string()],
-                features: vec![],
-            },
-        );
-        component_registry.insert(
-            "worklist_management".to_string(),
-            ShaderComponentInfo {
-                name: "worklist_management".to_string(),
-                path: components_base_path.join("worklist_management.wgsl"),
-                dependencies: vec!["utils".to_string()],
-                features: vec!["atomics".to_string()], // Example feature requirement
-            },
-        );
-        // Add more components here...
+        // Load registry from JSON file
+        let registry_path = PathBuf::from("src/shader/shaders/components/registry.json");
+        let component_registry = Self::load_component_registry(&registry_path)?;
 
         println!(
-            "[ShaderManager] Initialized. Expecting shader variants in: {:?}. Loaded {} components (placeholder).",
-            variants_dir,
-            component_registry.len()
+            "[ShaderManager] Initialized. Found {} shader components. Expecting variants in: {:?}",
+            component_registry.len(),
+            variants_dir
         );
+
         Ok(Self {
             variants_dir,
             component_registry,
+            registry_path,
+            loaded_shaders: HashMap::new(),
         })
+    }
+
+    /// Loads the component registry from the specified JSON file.
+    fn load_component_registry(
+        registry_path: &Path,
+    ) -> Result<HashMap<String, ShaderComponentInfo>, ShaderError> {
+        let registry_content = match std::fs::read_to_string(registry_path) {
+            Ok(content) => content,
+            Err(e) => {
+                println!(
+                    "[ShaderManager] Warning: Could not read registry file: {}",
+                    e
+                );
+                println!("[ShaderManager] Using placeholder registry data");
+                return Ok(Self::create_placeholder_registry());
+            }
+        };
+
+        #[derive(serde::Deserialize)]
+        struct RegistryFile {
+            components: HashMap<String, ComponentData>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct ComponentData {
+            path: String,
+            #[serde(default)]
+            version: String,
+            #[serde(default)]
+            dependencies: Vec<String>,
+            #[serde(default)]
+            required_features: Vec<String>,
+            #[serde(default)]
+            provided_features: Vec<String>,
+            #[serde(default)]
+            gpu_capabilities: Vec<String>,
+        }
+
+        // Parse the JSON
+        let registry: RegistryFile = match serde_json::from_str(&registry_content) {
+            Ok(reg) => reg,
+            Err(e) => {
+                println!("[ShaderManager] Error parsing registry JSON: {}", e);
+                println!("[ShaderManager] Using placeholder registry data");
+                return Ok(Self::create_placeholder_registry());
+            }
+        };
+
+        // Convert to our internal format
+        let mut component_registry = HashMap::new();
+        for (name, data) in registry.components {
+            component_registry.insert(
+                name.clone(),
+                ShaderComponentInfo {
+                    name: name.clone(),
+                    path: PathBuf::from(&data.path),
+                    dependencies: data.dependencies,
+                    features: data.required_features,
+                    version: data.version,
+                    provided_features: data.provided_features,
+                    gpu_capabilities: data.gpu_capabilities,
+                },
+            );
+        }
+
+        Ok(component_registry)
+    }
+
+    /// Creates a placeholder registry for when the real registry can't be loaded
+    fn create_placeholder_registry() -> HashMap<String, ShaderComponentInfo> {
+        let mut registry = HashMap::new();
+        let components_base_path = PathBuf::from("src/shader/shaders/components");
+
+        registry.insert(
+            "Utils".to_string(),
+            ShaderComponentInfo {
+                name: "Utils".to_string(),
+                path: PathBuf::from("src/shaders/utils.wgsl"),
+                dependencies: vec![],
+                features: vec![],
+                version: "1.0.0".to_string(),
+                provided_features: vec!["bit_manipulation".to_string(), "math_utils".to_string()],
+                gpu_capabilities: vec![],
+            },
+        );
+
+        // Add other basic components
+        registry.insert(
+            "Coords".to_string(),
+            ShaderComponentInfo {
+                name: "Coords".to_string(),
+                path: PathBuf::from("src/shaders/coords.wgsl"),
+                dependencies: vec![],
+                features: vec![],
+                version: "1.0.0".to_string(),
+                provided_features: vec!["coordinate_utils".to_string()],
+                gpu_capabilities: vec![],
+            },
+        );
+
+        // Add entropy components
+        registry.insert(
+            "EntropyCalculation".to_string(),
+            ShaderComponentInfo {
+                name: "EntropyCalculation".to_string(),
+                path: components_base_path.join("entropy_calculation.wgsl"),
+                dependencies: vec!["Utils".to_string(), "Coords".to_string()],
+                features: vec![
+                    "bit_manipulation".to_string(),
+                    "coordinate_utils".to_string(),
+                ],
+                version: "1.0.0".to_string(),
+                provided_features: vec!["entropy_calculation".to_string()],
+                gpu_capabilities: vec![],
+            },
+        );
+
+        // Add propagation components
+        registry.insert(
+            "DirectPropagation".to_string(),
+            ShaderComponentInfo {
+                name: "DirectPropagation".to_string(),
+                path: components_base_path.join("propagation/direct.wgsl"),
+                dependencies: vec!["Utils".to_string(), "Coords".to_string()],
+                features: vec![
+                    "bit_manipulation".to_string(),
+                    "coordinate_utils".to_string(),
+                ],
+                version: "1.0.0".to_string(),
+                provided_features: vec!["direct_propagation".to_string()],
+                gpu_capabilities: vec!["compute_shader".to_string()],
+            },
+        );
+
+        registry
     }
 
     /// Loads the source code for a specific pre-compiled shader variant.
@@ -138,10 +239,20 @@ impl ShaderManager {
     /// # Returns
     /// The WGSL source code as a String, or a ShaderError.
     pub fn load_shader_variant(
-        &self,
+        &mut self,
         shader_type: ShaderType,
         features: &[&str],
     ) -> Result<String, ShaderError> {
+        // Sort features for consistency
+        let mut sorted_features: Vec<String> = features.iter().map(|&s| s.to_string()).collect();
+        sorted_features.sort();
+
+        // Check cache first
+        let cache_key = (shader_type, sorted_features.clone());
+        if let Some(cached_shader) = self.loaded_shaders.get(&cache_key) {
+            return Ok(cached_shader.clone());
+        }
+
         let variant_filename = Self::get_variant_filename(shader_type, features);
         let variant_path = self.variants_dir.join(&variant_filename);
 
@@ -154,6 +265,8 @@ impl ShaderManager {
         match std::fs::read_to_string(&variant_path) {
             Ok(source) => {
                 println!("[ShaderManager] Successfully loaded: {}", variant_filename);
+                // Add to cache
+                self.loaded_shaders.insert(cache_key, source.clone());
                 return Ok(source);
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -196,6 +309,8 @@ impl ShaderManager {
         };
 
         println!("[ShaderManager] Successfully loaded fallback shader");
+        // Add to cache
+        self.loaded_shaders.insert(cache_key, shader_source.clone());
         Ok(shader_source)
     }
 
@@ -322,6 +437,44 @@ impl ShaderManager {
             .any(|req_feat| !enabled_features.contains(req_feat))
         // Equivalent to: component_info.features.iter().all(|req_feat| enabled_features.contains(req_feat))
     }
+
+    /// Checks if all required GPU capabilities for a component are available
+    pub fn check_gpu_capabilities(
+        &self,
+        component_name: &str,
+        available_capabilities: &HashSet<String>,
+    ) -> bool {
+        if let Some(component) = self.get_component_info(component_name) {
+            for capability in &component.gpu_capabilities {
+                if !available_capabilities.contains(capability) {
+                    return false;
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the version of a component
+    pub fn get_component_version(&self, component_name: &str) -> Option<&str> {
+        self.get_component_info(component_name)
+            .map(|info| info.version.as_str())
+    }
+
+    /// Checks if a component version meets a minimum requirement
+    pub fn version_meets_requirement(
+        &self,
+        component_name: &str,
+        min_version: &str,
+    ) -> Result<bool, ShaderError> {
+        let version = self.get_component_version(component_name).ok_or_else(|| {
+            ShaderError::NotImplemented(format!("Component not found: {}", component_name))
+        })?;
+
+        // Simple version comparison (could use semver crate for more robust comparison)
+        Ok(version >= min_version)
+    }
 }
 
 #[cfg(test)]
@@ -366,6 +519,9 @@ mod tests {
                 path: base_path.join("base.wgsl"),
                 dependencies: vec![],
                 features: vec![],
+                version: "1.0.0".to_string(),
+                provided_features: vec![],
+                gpu_capabilities: vec![],
             },
         );
         manager.component_registry.insert(
@@ -375,6 +531,9 @@ mod tests {
                 path: base_path.join("util_a.wgsl"),
                 dependencies: vec!["base".to_string()],
                 features: vec![],
+                version: "1.0.0".to_string(),
+                provided_features: vec![],
+                gpu_capabilities: vec![],
             },
         );
         manager.component_registry.insert(
@@ -384,6 +543,9 @@ mod tests {
                 path: base_path.join("util_b.wgsl"),
                 dependencies: vec!["base".to_string()],
                 features: vec![],
+                version: "1.0.0".to_string(),
+                provided_features: vec![],
+                gpu_capabilities: vec![],
             },
         );
         manager.component_registry.insert(
@@ -393,6 +555,9 @@ mod tests {
                 path: base_path.join("complex.wgsl"),
                 dependencies: vec!["util_a".to_string(), "util_b".to_string()],
                 features: vec![],
+                version: "1.0.0".to_string(),
+                provided_features: vec![],
+                gpu_capabilities: vec![],
             },
         );
         // For cycle detection
@@ -403,6 +568,9 @@ mod tests {
                 path: base_path.join("cyclic_a.wgsl"),
                 dependencies: vec!["cyclic_b".to_string()],
                 features: vec![],
+                version: "1.0.0".to_string(),
+                provided_features: vec![],
+                gpu_capabilities: vec![],
             },
         );
         manager.component_registry.insert(
@@ -412,6 +580,9 @@ mod tests {
                 path: base_path.join("cyclic_b.wgsl"),
                 dependencies: vec!["cyclic_a".to_string()],
                 features: vec![],
+                version: "1.0.0".to_string(),
+                provided_features: vec![],
+                gpu_capabilities: vec![],
             },
         );
 
