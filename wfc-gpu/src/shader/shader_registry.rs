@@ -98,6 +98,11 @@ impl ComponentInfo {
     pub fn required_capabilities(&self) -> &HashSet<String> {
         &self.gpu_capabilities
     }
+
+    /// Get the path to the component source file
+    pub fn path(&self) -> &str {
+        &self.path
+    }
 }
 
 // Struct to directly deserialize the registry.json file
