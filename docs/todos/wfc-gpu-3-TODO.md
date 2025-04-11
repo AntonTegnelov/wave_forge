@@ -530,7 +530,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
       - Keep public only types/functions intended for the public API
       - Ensure changes maintain backward compatibility with existing code
 
-- [ ] **Add Public API Design Documentation**:
+- [x] **Add Public API Design Documentation**:
 
   - [ ] **Create public API documentation**:
     - [ ] `wfc-gpu/docs/public_api.md` - Document the public API design and usage
