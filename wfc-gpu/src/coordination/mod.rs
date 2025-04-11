@@ -8,11 +8,9 @@ use crate::{
     buffers::GpuBuffers,
     debug_viz::DebugVisualizer,
     entropy::{EntropyStrategy, GpuEntropyCalculator},
-    error_recovery::GpuError,
-    error_recovery::GridCoord,
+    error_recovery::{GpuError, GridCoord},
+    gpu::sync::GpuSynchronizer,
     propagator::GpuConstraintPropagator,
-    sync::GpuSynchronizer,
-    GpuAccelerator,
 };
 use async_trait::async_trait;
 use log::{error, trace};

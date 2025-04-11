@@ -1,6 +1,6 @@
 use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams},
-    sync::GpuSynchronizer,
+    gpu::sync::GpuSynchronizer,
     GpuError,
 };
 use std::sync::Arc;

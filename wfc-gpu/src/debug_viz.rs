@@ -6,10 +6,9 @@
 //! - Contradictions: Where and why contradictions occur during execution
 
 use crate::{
-    backend::GpuBackend,
     buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults},
     error_recovery::GpuError,
-    sync::GpuSynchronizer,
+    gpu::{backend::GpuBackend, sync::GpuSynchronizer},
 };
 use image::{Rgba, RgbaImage};
 use log::trace;

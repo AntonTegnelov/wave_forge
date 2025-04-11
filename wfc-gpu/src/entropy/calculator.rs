@@ -2,8 +2,8 @@ use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams},
     entropy::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory},
     error_recovery::GpuError,
+    gpu::sync::GpuSynchronizer,
     shader::pipeline::ComputePipelines,
-    sync::GpuSynchronizer,
 };
 use log::{debug, error, warn};
 use pollster;
