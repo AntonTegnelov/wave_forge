@@ -250,7 +250,12 @@ impl GpuErrorRecovery {
     /// The error's severity level
     pub fn classify_error(&self, error: &GpuError) -> ErrorSeverity {
         match error {
-            GpuError::BufferMapFailed(_) => {
+            GpuError::BufferMapFailed(_)
+            | GpuError::BufferError(_)
+            | GpuError::BufferOperationError(_)
+            | GpuError::BufferMapError(_)
+            | GpuError::BufferMapTimeout(_)
+            | GpuError::BufferSizeMismatch(_) => {
                 if self.recover_buffer_mapping {
                     ErrorSeverity::Recoverable
                 } else {
@@ -280,17 +285,6 @@ impl GpuErrorRecovery {
                         log::debug!(
                             "Using adaptive timeout recovery for command execution timeout"
                         );
-                    }
-                    ErrorSeverity::Recoverable
-                } else {
-                    ErrorSeverity::Fatal
-                }
-            }
-            GpuError::BufferOperationError(msg) => {
-                if (msg.contains("map") || msg.contains("timeout")) && self.recover_buffer_mapping {
-                    // Use adaptive timeout recovery for mapping timeouts
-                    if msg.contains("timeout") && self.adaptive_timeout.is_some() {
-                        log::debug!("Using adaptive timeout recovery for buffer mapping timeout");
                     }
                     ErrorSeverity::Recoverable
                 } else {
@@ -470,58 +464,58 @@ impl RecoverableGpuOp {
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<T, GpuError>>,
     {
-        let mut result = op().await;
-        let mut attempts = 1;
+        let mut attempts = 0;
+        let max_attempts = self.recovery.max_retries as usize + 1; // +1 for initial attempt
 
         loop {
-            // Check if the result is an error *before* the await point
-            let error_string_opt: Option<String> = match &result {
-                Err(e) => Some(e.to_string()), // Convert error to String (Send + Sync)
-                Ok(_) => None,
-            };
+            match op().await {
+                Ok(result) => {
+                    // Reset error count on success after retries
+                    if attempts > 0 {
+                        self.recovery.reset_error_count();
+                    }
+                    return Ok(result);
+                }
+                Err(err) => {
+                    attempts += 1;
 
-            if let Some(error_str) = error_string_opt {
-                // Need the actual error reference *here* to check recoverability
-                // This reference is NOT held across the await below
-                let should_retry = match &result {
-                    Err(actual_error_ref) => self.recovery.record_error(actual_error_ref),
-                    Ok(_) => None, // Should not happen if error_string_opt was Some
-                };
-
-                if let Some(delay) = should_retry {
-                    warn!(
-                        "Recoverable GPU error on attempt {}/{}, retrying after {:?}: {}",
-                        attempts,
-                        self.recovery.max_retries + 1,
-                        delay,
-                        error_str // Log the error *string* after await
+                    // Use consistent error classification for all buffer types
+                    let is_buffer_error = matches!(
+                        err,
+                        GpuError::BufferMapFailed(_)
+                            | GpuError::BufferError(_)
+                            | GpuError::BufferOperationError(_)
+                            | GpuError::BufferMapError(_)
+                            | GpuError::BufferMapTimeout(_)
+                            | GpuError::BufferSizeMismatch(_)
                     );
 
-                    // Await point
-                    tokio::time::sleep(delay).await;
+                    if attempts >= max_attempts
+                        || !self.recovery.should_attempt_recovery(&err)
+                        || (is_buffer_error && !self.recovery.recover_buffer_mapping)
+                    {
+                        return Err(err);
+                    }
 
-                    // Re-run the operation
-                    result = op().await;
-                    attempts += 1;
-                } else {
-                    // Not recoverable or max retries exceeded
-                    break; // Exit loop, returning the current Err(result)
+                    // Consistent handling for all buffer errors
+                    if is_buffer_error {
+                        debug!(
+                            "Buffer operation failed (attempt {}/{}). Retrying after {:?}...",
+                            attempts,
+                            max_attempts,
+                            self.recovery.get_backoff_delay()
+                        );
+                    } else {
+                        // ... existing debug logs for other error types ...
+                    }
+
+                    // Apply backoff delay
+                    if let Some(delay) = self.recovery.record_error(&err) {
+                        tokio::time::sleep(delay).await;
+                    }
                 }
-            } else {
-                // Result is Ok
-                break; // Exit loop, returning the current Ok(result)
             }
         }
-
-        if result.is_ok() && attempts > 1 {
-            info!(
-                "GPU operation recovered successfully after {} attempts",
-                attempts
-            );
-            self.recovery.reset_error_count();
-        }
-
-        result
     }
 
     /// Synchronous version of try_with_recovery for operations that don't use async/await.
@@ -537,41 +531,58 @@ impl RecoverableGpuOp {
     where
         F: FnMut() -> Result<T, GpuError>,
     {
-        let mut result = op();
-        let mut attempts = 1;
+        let mut attempts = 0;
+        let max_attempts = self.recovery.max_retries as usize + 1; // +1 for initial attempt
 
-        while let Err(error) = &result {
-            if let Some(delay) = self.recovery.record_error(error) {
-                warn!(
-                    "Recoverable GPU error on attempt {}/{}, retrying after {:?}: {}",
-                    attempts,
-                    self.recovery.max_retries + 1,
-                    delay,
-                    error
-                );
+        loop {
+            match op() {
+                Ok(result) => {
+                    // Reset error count on success after retries
+                    if attempts > 0 {
+                        self.recovery.reset_error_count();
+                    }
+                    return Ok(result);
+                }
+                Err(err) => {
+                    attempts += 1;
 
-                // Implement delay with blocking sleep
-                std::thread::sleep(delay);
+                    // Use consistent error classification for all buffer types
+                    let is_buffer_error = matches!(
+                        err,
+                        GpuError::BufferMapFailed(_)
+                            | GpuError::BufferError(_)
+                            | GpuError::BufferOperationError(_)
+                            | GpuError::BufferMapError(_)
+                            | GpuError::BufferMapTimeout(_)
+                            | GpuError::BufferSizeMismatch(_)
+                    );
 
-                // Try the operation again
-                result = op();
-                attempts += 1;
-            } else {
-                // Error is not recoverable or max retries exceeded
-                break;
+                    if attempts >= max_attempts
+                        || !self.recovery.should_attempt_recovery(&err)
+                        || (is_buffer_error && !self.recovery.recover_buffer_mapping)
+                    {
+                        return Err(err);
+                    }
+
+                    // Consistent handling for all buffer errors
+                    if is_buffer_error {
+                        debug!(
+                            "Buffer operation failed (attempt {}/{}). Retrying after {:?}...",
+                            attempts,
+                            max_attempts,
+                            self.recovery.get_backoff_delay()
+                        );
+                    } else {
+                        // ... existing debug logs for other error types ...
+                    }
+
+                    // Apply backoff delay
+                    if let Some(delay) = self.recovery.record_error(&err) {
+                        std::thread::sleep(delay);
+                    }
+                }
             }
         }
-
-        if result.is_ok() && attempts > 1 {
-            info!(
-                "GPU operation recovered successfully after {} attempts",
-                attempts
-            );
-            // Reset error counter on successful recovery
-            self.recovery.reset_error_count();
-        }
-
-        result
     }
 }
 
