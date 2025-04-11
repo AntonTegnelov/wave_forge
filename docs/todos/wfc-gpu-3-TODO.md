@@ -7,7 +7,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 - [x] **Enhance Entropy Calculation Strategies**:
 
   - [x] **Create strategy interface for entropy calculations**:
-    - [x] `wfc-gpu/src/algorithm/entropy_strategy.rs` - Define core entropy calculation strategies
+    - [x] `wfc-gpu/src/propagator/algorithm/entropy_strategy.rs` - Define core entropy calculation strategies
     - [x] Extract existing entropy implementations into separate strategy classes
     - [x] Implement Shannon, Count, CountSimple, and WeightedCount strategies
   - [x] **Modify entropy calculator to use strategies**:
@@ -31,34 +31,35 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - `wfc-gpu/src/lib.rs`:
 
       - Add re-export for the new entropy strategy types
-      - Add the new `algorithm` module to the module tree
+      - Update the module references to reflect new structure
 
     - `wfc-gpu/src/accelerator.rs`:
 
       - Update `GpuAccelerator::new` (~line 124) to configure the entropy calculator with appropriate strategy
       - Add a method to customize entropy strategy after initialization
+      - Update imports to use `propagator::algorithm::entropy_strategy` instead of `algorithm::entropy_strategy`
 
     - `wfc-gpu/src/buffers/entropy_buffers.rs`:
       - Add buffer specializations for different entropy heuristics if needed
       - Ensure buffer layouts align with strategy implementations
 
   - **New directories/files**:
-    - `wfc-gpu/src/algorithm/` - Create new directory
-    - `wfc-gpu/src/algorithm/mod.rs` - Register submodules
-    - `wfc-gpu/src/algorithm/entropy_strategy.rs` - Create strategy interface and implementations
+    - ~~`wfc-gpu/src/algorithm/` - Create new directory~~ (Now exists at `wfc-gpu/src/propagator/algorithm/`)
+    - ~~`wfc-gpu/src/algorithm/mod.rs` - Register submodules~~ (Now at `wfc-gpu/src/propagator/algorithm/mod.rs`)
+    - ~~`wfc-gpu/src/algorithm/entropy_strategy.rs` - Create strategy interface and implementations~~ (Now at `wfc-gpu/src/propagator/algorithm/entropy_strategy.rs`)
 
 - [ ] **Complete Propagation Strategy Pattern**:
 
   - [ ] **Create dedicated strategy files**:
-    - [x] `wfc-gpu/src/algorithm/propagator_strategy.rs` - Core propagation strategies
-    - [ ] Extract direct propagation logic from `propagator.rs`
+    - [x] `wfc-gpu/src/propagator/algorithm/propagator_strategy.rs` - Core propagation strategies
+    - [ ] Extract direct propagation logic from `propagator/gpu_constraint_propagator.rs`
     - [ ] Extract subgrid propagation logic into its own strategy
   - [ ] **Implement additional propagation strategies**:
     - [x] `DirectPropagationStrategy` - Standard propagation approach
     - [x] `SubgridPropagationStrategy` - For large grid optimization
     - [x] `AdaptivePropagationStrategy` - Selects optimal strategy based on grid size
   - [ ] **Update propagator to use strategy pattern**:
-    - [ ] Modify `propagator.rs` to delegate to strategies
+    - [ ] Modify `propagator/gpu_constraint_propagator.rs` to delegate to strategies
     - [ ] Reduce file size by extracting strategy implementations
     - [ ] Update strategy selection based on configuration
 
@@ -66,7 +67,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
   - **Files to modify**:
 
-    - `wfc-gpu/src/propagator.rs` (~36KB, 923 lines):
+    - `wfc-gpu/src/propagator/gpu_constraint_propagator.rs` (~36KB, 923 lines):
 
       - Reduce file size by ~60% by extracting strategy-specific code
       - Convert remaining code to use the Facade/Strategy pattern
@@ -82,12 +83,13 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/subgrid.rs`:
 
-      - Extract subgrid-specific propagation logic to `SubgridPropagationStrategy`
+      - Extract subgrid-specific propagation logic to `propagator/algorithm/propagator_strategy.rs` in `SubgridPropagationStrategy`
       - Update `SubgridConfig` to work with strategy pattern
 
     - `wfc-gpu/src/accelerator.rs`:
       - Update `GpuAccelerator` to configure propagator with the right strategy
       - Add methods to customize propagation strategy after initialization
+      - Update imports to use `propagator::algorithm::propagator_strategy` instead of `algorithm::propagator_strategy`
 
   - **Dependencies**:
     - This change must be coordinated with shader changes to ensure WGSL code matches the strategy implementations
@@ -296,7 +298,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
       - Update module declarations and re-exports
       - Add the new error module to the module tree
 
-    - Files with error handling code (e.g., `accelerator.rs`, `propagator.rs`, `entropy.rs`):
+    - Files with error handling code (e.g., `accelerator.rs`, `propagator/gpu_constraint_propagator.rs`, `entropy.rs`):
       - Update to use the new error types
       - Replace direct error handling with strategy-based recovery
 
@@ -347,7 +349,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
   - **Specific inconsistencies to address**:
     - In `entropy.rs`, `From<GpuError> for CoreEntropyError` conversion uses different mapping than in other files
     - `accelerator.rs` uses both `GpuError` and `WfcError` for similar failures
-    - `propagator.rs` uses custom error conversions
+    - `propagator/gpu_constraint_propagator.rs` uses custom error conversions
     - `error_recovery.rs` inconsistently handles buffers across error types
 
 ## 4. Hardware Abstraction Improvements
@@ -522,7 +524,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - [ ] Keep `GpuError` and `GridCoord` public
     - [ ] Make `ErrorSeverity`, `GpuErrorRecovery`, `AdaptiveTimeoutConfig`, `RecoverableGpuOp` `pub(crate)`
 
-  - [ ] **Modify other modules (entropy.rs, pipeline.rs, propagator.rs, etc.)**:
+  - [ ] **Modify other modules (entropy.rs, pipeline.rs, propagator/\* files, etc.)**:
     - [ ] Change all public structs, traits, enums, and functions to `pub(crate)`
     - [ ] Exception: Keep `SubgridConfig` public (if needed in public API)
 

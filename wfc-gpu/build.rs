@@ -48,7 +48,8 @@ struct ShaderRegistryData {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
-    let registry_path_str = "src/shaders/components/registry.json";
+    // Update registry path to reflect new structure
+    let registry_path_str = "src/shader/shaders/components/registry.json";
     println!("cargo:rerun-if-changed={}", registry_path_str);
 
     // Parse the registry to get component paths

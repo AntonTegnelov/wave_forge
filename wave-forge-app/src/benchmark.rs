@@ -9,12 +9,12 @@ use std::{
     collections::HashMap,
     fs::File,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc, Mutex}, // Consolidated sync imports
+    sync::{Arc, Mutex}, // Consolidated sync imports
     time::{Duration, Instant},
 };
 use wfc_core::{
     grid::PossibilityGrid,
-    runner::{self, WfcConfig},
+    runner::{self},
     BoundaryCondition, ExecutionMode, ProgressInfo, WfcError,
 };
 use wfc_gpu::accelerator::GpuAccelerator;
@@ -74,7 +74,7 @@ pub async fn run_single_wfc_benchmark(
     let profiler = Profiler::new(&format!("{:?}", core_execution_mode));
     let _overall_guard = profiler.profile("total_benchmark_run");
 
-    let mut grid =
+    let grid =
         PossibilityGrid::new(config.width, config.height, config.depth, rules.num_tiles());
     let _total_cells = grid.width * grid.height * grid.depth;
 

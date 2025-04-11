@@ -23,7 +23,7 @@ use std::{
 use wfc_core::{
     entropy::EntropyHeuristicType,
     grid::PossibilityGrid,
-    runner::{self, ProgressCallback, WfcConfig},
+    runner::{ProgressCallback, WfcConfig},
     BoundaryCondition, ProgressInfo, WfcError,
 };
 use wfc_gpu::{accelerator::GpuAccelerator, GpuError};
@@ -563,7 +563,7 @@ pub async fn run_standard_mode(
     // --- Run WFC using the runner ---
     log::info!("Starting WFC core algorithm on GPU...");
     // Clone the grid state *before* passing it to the runner, runner needs mutable grid
-    let mut runner_grid = {
+    let runner_grid = {
         let grid_guard = grid_snapshot
             .lock()
             .expect("Runner grid clone mutex poisoned");

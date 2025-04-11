@@ -9,10 +9,10 @@
 pub mod pipeline;
 pub mod shader_compiler;
 pub mod shader_registry;
+pub mod shaders;
 
-// Re-export the main shader manager
-mod shaders;
-pub use shaders::*;
-
-// Public re-export of ShaderType enum for use by clients
-pub use shaders::ShaderType;
+// Re-export key types for easier access
+pub use self::shader_registry::ShaderComponent;
+pub use self::shaders::ShaderError;
+pub use self::shaders::ShaderManager;
+pub use self::shaders::ShaderType;

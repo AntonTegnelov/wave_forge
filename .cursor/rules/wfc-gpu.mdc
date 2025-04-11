@@ -76,8 +76,8 @@ Calculates entropy for cells in the grid and selects the next cell to collapse.
 - **Interface**: Delegates to appropriate entropy strategy implementation
 - **Extension Point**: Supports custom entropy heuristics
 - **Files**:
-  - `entropy.rs` - Will be enhanced to handle all entropy calculation logic
-  - `algorithm/entropy_strategy.rs` - Planned file for core entropy calculation strategies
+  - `entropy.rs` - Handles all entropy calculation logic
+  - `algorithm/entropy_strategy.rs` - Core entropy calculation strategies
 
 #### Propagator
 
@@ -99,8 +99,8 @@ Manages the high-level flow of the algorithm and coordinates different operation
 - **Responsibility**: Schedule and manage the different WFC phases
 - **Implementation**: Uses strategy pattern for algorithm variants
 - **Files**:
-  - `coordination/mod.rs` - Core coordination interfaces (planned)
-  - `coordination/propagation.rs` - Propagation coordination (planned)
+  - `coordination/mod.rs` - Core coordination interfaces
+  - `coordination/propagation.rs` - Propagation coordination
 
 #### Parallelism
 
@@ -109,7 +109,7 @@ Handles distribution of work across multiple GPU workgroups or subgrids.
 - **Responsibility**: Efficient parallelization of WFC operations
 - **Implementation**: Subgrid decomposition and parallel execution
 - **Files**:
-  - `parallelism.rs` - Parallel execution strategies (planned)
+  - `parallelism.rs` - Parallel execution strategies
   - `subgrid.rs` - Currently 12KB, will be enhanced for better coordination with main algorithm
 
 #### Error Recovery
@@ -119,10 +119,10 @@ Provides robust error handling with recovery mechanisms for GPU operations.
 - **Responsibility**: Handle GPU errors gracefully, allowing for recovery
 - **Implementation**: Strategy pattern for different types of errors
 - **Files**:
-  - `error/mod.rs` - Unified error system (planned)
-  - `error/gpu_error.rs` - Enhanced GPU errors (planned)
-  - `error/io_error.rs` - File and resource errors (planned)
-  - `error_recovery.rs` - Currently 21KB, will be enhanced with specialized recovery strategies
+  - `error/mod.rs` - Unified error system
+  - `error/gpu_error.rs` - Enhanced GPU errors
+  - `error/io_error.rs` - File and resource errors
+  - `error_recovery.rs` - Specialized recovery strategies
 
 ### 2.3 Implementation Layer
 
@@ -146,7 +146,7 @@ Handles synchronized data transfer between CPU and GPU.
 
 - **Responsibility**: Manage CPU-GPU data synchronization
 - **Implementation**: Optimized transfer operations with retry capabilities
-- **Files**: `sync.rs` - Currently 14KB, will take over all data transfer methods from `GpuBuffers`
+- **Files**: `sync.rs` - Data transfer methods
 
 #### Pipeline
 
@@ -154,7 +154,7 @@ Creates and manages WGPU compute pipelines for shader execution.
 
 - **Responsibility**: Compute pipeline creation and management
 - **Implementation**: Creates pipelines from shader components
-- **Files**: `pipeline.rs` - Currently 29KB, will be refactored to focus on pipeline creation and binding
+- **Files**: `pipeline.rs` -Pipeline creation and binding
 
 ### 2.4 Hardware Layer
 
@@ -164,7 +164,7 @@ Abstracts away the underlying GPU API details.
 
 - **Responsibility**: Hardware abstraction and feature reporting
 - **Implementation**: Adapts to different GPU backends (primarily WGPU)
-- **Files**: `backend.rs` - Currently 19KB, will be enhanced with capability reporting methods
+- **Files**: `backend.rs` - 
 
 #### ShaderRegistry
 
@@ -174,9 +174,9 @@ Manages shader components and their assembly into complete shaders.
 - **Implementation**: Component-based shader management system
 - **Current State**: `shaders.rs` - Only 532B, 12 lines
 - **Planned Files**:
-  - `shaders.rs` - Will be expanded to include component registry system
-  - `shader_compiler.rs` - Shader preprocessing & assembly system (planned)
-  - `shader_registry.rs` - Registry for shader components & features (planned)
+  - `shaders.rs` - 
+  - `shader_compiler.rs` - Shader preprocessing & assembly system
+  - `shader_registry.rs` - Registry for shader components & features
 
 #### Feature Detection
 
@@ -230,25 +230,7 @@ Shader code is organized into highly modular components:
 - **Feature Components**: Hardware-specific implementations (atomics, workgroups)
 - **Generated Variants**: Complete shaders assembled from components
 
-### 3.3 Directory Structure
-
-#### Current Structure
-
-```
-wfc-gpu/src/shaders/
-├── propagate.wgsl             # 15KB, 376 lines
-├── propagate_modular.wgsl     # 9.1KB, 248 lines
-├── propagate_fallback.wgsl    # 14KB, 341 lines
-├── entropy.wgsl               # 3.9KB, 115 lines
-├── entropy_modular.wgsl       # 9.9KB, 248 lines
-├── entropy_fallback.wgsl      # 6.3KB, 172 lines
-├── utils.wgsl                 # 3.6KB, 104 lines
-├── coords.wgsl                # 3.2KB, 89 lines
-├── rules.wgsl                 # 4.1KB, 92 lines
-└── test_shader.wgsl           # 1.2KB, 42 lines
-```
-
-#### Planned Structure
+#### Structure
 
 ```
 wfc-gpu/src/shaders/
@@ -275,11 +257,11 @@ wfc-gpu/src/shaders/
 
 The build process will generate optimized shader variants:
 
-- **Build Script**: `wfc-gpu/build.rs` will handle pre-build shader generation
+- **Build Script**: `wfc-gpu/build.rs` handles pre-build shader generation
 - **Tools**:
   - `wfc-gpu/tools/shader_optimizer.rs` - Shader optimization tool
   - `wfc-gpu/tools/shader_validator.rs` - Shader validation tool
-- **Validation**: Currently handled in `shader_validation_tests.rs` (3.1KB)
+- **Validation**
 
 ## 4. Buffer Management
 
@@ -328,15 +310,6 @@ The `GpuSynchronizer` handles all data transfer between CPU and GPU, providing:
 - **Downloading**: GPU buffers → CPU data
 - **Synchronization**: Waiting for GPU operations to complete
 - **Recovery**: Handling transfer errors with retry mechanisms
-
-### 4.4 Current vs. Planned Implementation
-
-Currently, `buffers.rs` (83KB) contains all buffer creation, management, and synchronization logic. The refactoring will:
-
-1. Move all data transfer methods from `GpuBuffers` to `GpuSynchronizer`
-2. Divide `buffers.rs` into specialized buffer type modules
-3. Create a buffer facade for backward compatibility
-4. Document buffer lifecycle and ownership
 
 ## 5. Algorithm Implementation
 
@@ -389,14 +362,6 @@ The algorithm coordinator manages the overall flow:
 5. Repeat until completion or contradiction
 
 ### 5.4 Algorithm Implementation Files
-
-- **Current State**:
-
-  - `accelerator.rs` (24KB) - Contains most high-level algorithm logic
-  - `propagator.rs` (38KB) - Handles constraint propagation
-  - `entropy.rs` (12KB) - Entropy calculation
-
-- **Planned Structure**:
   - `algorithm/propagator_strategy.rs` - Core propagation logic
   - `algorithm/entropy_strategy.rs` - Core entropy calculation
   - `coordination/mod.rs` - Operational coordination interfaces
@@ -404,33 +369,6 @@ The algorithm coordinator manages the overall flow:
 
 ## 6. Extension Guidelines
 
-### 6.1 Adding a New Entropy Heuristic
-
-1. Create a new implementation in `algorithm/entropy_strategy.rs`
-2. Register the strategy in `entropy.rs`
-3. Add selection code in `GpuEntropyCalculator`
-4. Update shader component in `shaders/components/entropy_calculation.wgsl`
-
-### 6.2 Adding a New Shader Component
-
-1. Create the component file in `shaders/components/`
-2. Update component metadata in `registry.json`
-3. Add feature detection if needed in `shader_features.rs`
-4. Update the shader compiler to use the new component
-
-### 6.3 Supporting a New Hardware Feature
-
-1. Add detection code in `features/` directory
-2. Create feature-specific shader components
-3. Update shader assembly to conditionally include the feature
-4. Add fallback implementation for hardware without the feature
-
-### 6.4 Adding GPU Buffer Types
-
-1. Create a new buffer module in `buffers/`
-2. Implement creation and management logic
-3. Add synchronization methods to `GpuSynchronizer`
-4. Update the buffer facade to expose the new buffer type
 
 ## 7. Testing Strategy
 
@@ -440,20 +378,9 @@ The algorithm coordinator manages the overall flow:
 - `test_utils.rs` (2.2KB, 70 lines) - Test utilities
 - `shader_validation_tests.rs` (3.1KB, 94 lines) - Shader validation
 
-### 7.2 Planned Testing Structure
+### 7.2 Testing Structure
 
-- **Consolidated test modules**:
 
-  - Enhanced `test_utils.rs` with common test setup code
-  - Module-specific test submodules
-  - Shader component tests
-  - Regression tests
-
-- **New test files**:
-  - `wfc-gpu/tests/shaders/component_tests.rs` - Test individual shader components
-  - `wfc-gpu/tests/shaders/variant_tests.rs` - Test assembled shader variants
-  - `wfc-gpu/tests/shaders/sandbox.rs` - Isolated shader testing environment
-  - `wfc-gpu/tests/regression/features.rs` - Tests for all features from original TODO
 
 ## 8. Common Pitfalls and Best Practices
 
