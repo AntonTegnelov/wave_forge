@@ -7,7 +7,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 - [ ] **Enhance Entropy Calculation Strategies**:
 
   - [ ] **Create strategy interface for entropy calculations**:
-    - [ ] `wfc-gpu/src/algorithm/entropy_strategy.rs` - Define core entropy calculation strategies
+    - [x] `wfc-gpu/src/algorithm/entropy_strategy.rs` - Define core entropy calculation strategies
     - [ ] Extract existing entropy implementations into separate strategy classes
     - [ ] Implement Shannon, Count, CountSimple, and WeightedCount strategies
   - [ ] **Modify entropy calculator to use strategies**:
@@ -434,7 +434,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
   - [ ] **Create architecture documentation**:
     - [ ] `wfc-gpu/docs/architecture.md` - Updated architecture guide
     - [ ] `wfc-gpu/docs/error-handling.md` - Error handling guide
-    - [x] `wfc-gpu/docs/customization.md` - Strategy customization guide
+    - [ ] `wfc-gpu/docs/customization.md` - Strategy customization guide
 
   **Implementation Details**:
 
