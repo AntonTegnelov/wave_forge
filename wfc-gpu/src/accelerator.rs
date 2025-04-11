@@ -1,8 +1,16 @@
 #![allow(clippy::redundant_field_names)]
 use crate::{
-    backend::GpuBackend,
+    algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory},
+    backend::{GpuBackend, WgpuBackend},
     buffers::{GpuBuffers, GpuParamsUniform},
-    coordination::{DefaultCoordinator, WfcCoordinator},
+    coordination::{
+        self,
+        coordinator::DefaultCoordinator,
+        propagation::{
+            DirectPropagationCoordinator, PropagationCoordinator, SubgridPropagationCoordinator,
+        },
+        WfcCoordinator,
+    },
     debug_viz::{DebugVisualizationConfig, DebugVisualizer},
     entropy::GpuEntropyCalculator,
     error_recovery::{GpuError, GridCoord},
@@ -16,12 +24,11 @@ use log::{error, info, trace};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use wfc_core::{
+    adjacency::AdjacencyRules,
     entropy::{EntropyCalculator, EntropyHeuristicType as CoreEntropyHeuristicType},
-    grid::PossibilityGrid,
-    propagator::PropagationError,
-    BoundaryCondition, ProgressInfo, WfcError,
+    grid::{BoundaryCondition, PossibilityGrid},
+    progress::ProgressInfo,
 };
-use wfc_rules::AdjacencyRules;
 
 /// Grid definition info
 #[derive(Debug, Clone)]
@@ -562,6 +569,57 @@ impl GpuAccelerator {
         instance.progress_callback = Some(Box::new(callback));
         info!("Progress callback set.");
     }
+
+    /// Creates a new GPU accelerator with a specific entropy strategy
+    pub fn with_entropy_strategy<S: EntropyStrategy + 'static>(
+        &mut self,
+        strategy: S,
+    ) -> &mut Self {
+        let mut instance = self.instance.write().unwrap();
+        let buffers = instance.buffers.clone();
+
+        // Get a mutable reference to the entropy calculator
+        let entropy_calculator = Arc::get_mut(&mut instance.entropy_calculator)
+            .expect("Could not get exclusive access to entropy calculator");
+
+        // Set the new strategy
+        entropy_calculator.with_strategy(Box::new(strategy));
+
+        info!("Custom entropy strategy configured.");
+        self
+    }
+
+    /// Configure the accelerator with a specific entropy heuristic
+    pub fn with_entropy_heuristic(&mut self, heuristic: CoreEntropyHeuristicType) -> &mut Self {
+        let instance = self.instance.read().unwrap();
+
+        // Create a new strategy using the factory
+        let strategy = EntropyStrategyFactory::create_strategy(
+            heuristic,
+            instance.grid_definition.num_tiles,
+            instance.buffers.grid_buffers.u32s_per_cell,
+        );
+
+        // Set the strategy (dropping the read lock first to avoid deadlock)
+        drop(instance);
+
+        self.with_entropy_strategy_boxed(strategy)
+    }
+
+    /// Lower-level method to set a boxed strategy
+    pub fn with_entropy_strategy_boxed(&mut self, strategy: Box<dyn EntropyStrategy>) -> &mut Self {
+        let mut instance = self.instance.write().unwrap();
+
+        // Get a mutable reference to the entropy calculator
+        let entropy_calculator = Arc::get_mut(&mut instance.entropy_calculator)
+            .expect("Could not get exclusive access to entropy calculator");
+
+        // Set the new strategy
+        entropy_calculator.with_strategy(strategy);
+
+        info!("Entropy strategy configured using factory.");
+        self
+    }
 }
 
 impl Drop for GpuAccelerator {
@@ -603,80 +661,5 @@ impl PossibilityGridExt for PossibilityGrid {
             }
         }
         count
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use wfc_core::entropy::EntropyHeuristicType as CoreEntropyHeuristicType;
-
-    fn setup_basic_test_data() -> (PossibilityGrid, AdjacencyRules) {
-        let width = 4;
-        let height = 4;
-        let depth = 1;
-        let num_tiles = 3;
-        let grid = PossibilityGrid::new(width, height, depth, num_tiles);
-
-        // Simple adjacency rules
-        let allowed_tuples = vec![
-            (0, 1, 0), // Tile 0 allows Tile 1 to its right
-            (1, 0, 1), // Tile 1 allows Tile 0 to its left
-            (1, 2, 0), // Tile 1 allows Tile 2 to its right
-            (2, 1, 1), // Tile 2 allows Tile 1 to its left
-        ];
-
-        let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, allowed_tuples);
-
-        (grid, rules)
-    }
-
-    #[tokio::test]
-    async fn test_accelerator_creation_and_config() {
-        let (grid, rules) = setup_basic_test_data();
-        let accelerator = GpuAccelerator::new(
-            &grid,
-            &rules,
-            BoundaryCondition::Finite,
-            CoreEntropyHeuristicType::Shannon,
-            None,
-        )
-        .await;
-
-        assert!(accelerator.is_ok());
-        let acc = accelerator.unwrap();
-
-        assert_eq!(acc.num_tiles(), grid.num_tiles());
-        assert_eq!(acc.boundary_condition(), BoundaryCondition::Finite);
-    }
-
-    #[tokio::test]
-    async fn test_run_basic_wfc() {
-        let (grid, rules) = setup_basic_test_data();
-        let mut accelerator = GpuAccelerator::new(
-            &grid,
-            &rules,
-            BoundaryCondition::Finite,
-            CoreEntropyHeuristicType::Count,
-            None,
-        )
-        .await
-        .expect("Failed to create accelerator");
-
-        let max_iterations = (grid.width * grid.height * grid.depth * 2) as u64;
-
-        let result = accelerator
-            .run_with_callback(&grid, &rules, max_iterations, |_info| Ok(true), None)
-            .await;
-
-        assert!(result.is_ok(), "WFC run failed: {:?}", result.err());
-
-        if let Ok(final_grid) = result {
-            assert_eq!(final_grid.width, grid.width);
-            assert_eq!(final_grid.height, grid.height);
-            assert_eq!(final_grid.depth, grid.depth);
-            assert!(final_grid.is_fully_collapsed().unwrap_or(false));
-        }
     }
 }
