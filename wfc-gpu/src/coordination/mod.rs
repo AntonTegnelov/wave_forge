@@ -167,6 +167,17 @@ impl DefaultCoordinator {
         }
         self
     }
+
+    /// Set a specific propagation coordination strategy
+    pub fn with_propagation_coordination_strategy(
+        &mut self,
+        strategy: Box<dyn propagation::PropagationCoordinationStrategy>,
+    ) -> &mut Self {
+        // In a real implementation, would store the strategy and use it
+        // in coordinate_propagation, but requires refactoring the method signature
+        trace!("Setting propagation coordination strategy on DefaultCoordinator (placeholder)");
+        self
+    }
 }
 
 #[async_trait]
@@ -275,6 +286,13 @@ pub mod strategy; // New strategy module for coordination strategies
 // For convenience, re-export key types from submodules
 pub use self::entropy::{
     EntropyCoordinationStrategy, EntropyCoordinationStrategyFactory, EntropyCoordinator,
+};
+pub use self::propagation::{
+    DirectPropagationCoordinationStrategy,
+    PropagationCoordinationStrategy,
+    PropagationCoordinationStrategyFactory,
+    PropagationCoordinator, // Legacy
+    SubgridPropagationCoordinationStrategy,
 };
 pub use self::strategy::{CoordinationStrategy, CoordinationStrategyFactory, StepResult};
 pub mod coordinator {
