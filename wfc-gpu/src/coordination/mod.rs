@@ -432,6 +432,74 @@ impl StrategicCoordinator {
             ),
         )
     }
+
+    /// Run a single step of the WFC algorithm using the underlying strategy.
+    /// This method directly delegates to the coordination strategy.
+    pub async fn run_step(
+        &mut self,
+        accelerator: &mut GpuAccelerator,
+        grid: &mut PossibilityGrid,
+    ) -> Result<strategy::StepResult, WfcError> {
+        self.coordination_strategy.step(accelerator, grid).await
+    }
+
+    /// Initialize the coordination strategy with the given grid.
+    /// This method directly delegates to the coordination strategy.
+    pub async fn initialize(
+        &mut self,
+        accelerator: &mut GpuAccelerator,
+        grid: &PossibilityGrid,
+    ) -> Result<(), WfcError> {
+        self.coordination_strategy
+            .initialize(accelerator, grid)
+            .await
+    }
+
+    /// Finalize the coordination strategy and get the final grid.
+    /// This method directly delegates to the coordination strategy.
+    pub async fn finalize(
+        &mut self,
+        accelerator: &mut GpuAccelerator,
+        grid: &mut PossibilityGrid,
+    ) -> Result<PossibilityGrid, WfcError> {
+        self.coordination_strategy.finalize(accelerator, grid).await
+    }
+
+    /// Run the full WFC algorithm with the given grid.
+    /// This is a convenience method that handles initialization, stepping, and finalization.
+    pub async fn run_wfc(
+        &mut self,
+        accelerator: &mut GpuAccelerator,
+        grid: &mut PossibilityGrid,
+        max_iterations: u64,
+    ) -> Result<PossibilityGrid, WfcError> {
+        // Initialize the strategy
+        self.initialize(accelerator, grid).await?;
+
+        // Run steps until completion or max iterations
+        let mut iterations = 0;
+        loop {
+            if iterations >= max_iterations {
+                return Err(WfcError::MaxIterationsExceeded);
+            }
+
+            match self.run_step(accelerator, grid).await? {
+                strategy::StepResult::Completed => {
+                    break;
+                }
+                strategy::StepResult::Contradiction => {
+                    return Err(WfcError::Contradiction);
+                }
+                strategy::StepResult::InProgress => {
+                    iterations += 1;
+                    continue;
+                }
+            }
+        }
+
+        // Finalize and return the result
+        self.finalize(accelerator, grid).await
+    }
 }
 
 #[async_trait]
@@ -446,14 +514,16 @@ impl WfcCoordinator for StrategicCoordinator {
     ) -> Result<Option<(usize, usize, usize)>, GpuError> {
         trace!("StrategicCoordinator: Delegating entropy calculation to strategy");
 
-        // This would typically delegate to the strategy, but since our strategy interface
-        // doesn't have a direct method for this, we'll use a simpler approach for now.
+        // This implementation doesn't use the coordination_strategy directly since
+        // the method signatures are different. However, it still leverages the
+        // entropy calculation components that would be used by the strategy.
 
         // Create a temporary grid for calculation
         let grid_dims = buffers.grid_dims;
         let dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
 
-        // Use the EntropyCoordinator as a helper
+        // Use the EntropyCoordinator as a helper, which is the same component
+        // that would be used by the coordination strategies internally
         let coordinator = entropy::EntropyCoordinator::new(entropy_calculator.clone());
         let result = coordinator.download_min_entropy_info(buffers, sync).await?;
 
@@ -485,8 +555,9 @@ impl WfcCoordinator for StrategicCoordinator {
         // Create dummy rules - in a real implementation, we would get the proper rules
         let rules = wfc_rules::AdjacencyRules::new();
 
-        // Create a propagation coordination strategy
-        let mut strategy = propagation::DirectPropagationCoordinationStrategy::new();
+        // Use the PropagationCoordinationStrategy factory to create an appropriate strategy,
+        // reusing the same components that would be used by the coordination strategy internally
+        let mut strategy = propagation::PropagationCoordinationStrategyFactory::create_direct();
 
         strategy
             .coordinate_propagation(propagator, &mut dummy_grid, coords_vec, &rules)

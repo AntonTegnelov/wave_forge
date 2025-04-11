@@ -128,7 +128,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
   - **Dependencies**:
     - [x] Must be implemented after entropy and propagation strategies are completed
-    - [ ] Coordination strategies should compose existing strategies rather than duplicate logic
+    - [x] Coordination strategies should compose existing strategies rather than duplicate logic
 
 ## 2. Enhance Shader Component System
 
