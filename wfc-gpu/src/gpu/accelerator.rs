@@ -28,9 +28,9 @@ use wfc_core::propagator::PropagationError;
 use wfc_core::{
     adjacency::AdjacencyRules,
     entropy::{EntropyCalculator, EntropyHeuristicType as CoreEntropyHeuristicType},
-    grid::{BoundaryCondition, PossibilityGrid},
+    grid::PossibilityGrid,
     progress::ProgressInfo,
-    WfcError,
+    BoundaryCondition, WfcError,
 };
 
 /// Grid definition info
@@ -141,7 +141,7 @@ impl GpuAccelerator {
         let start_time = Instant::now();
         info!("Initializing GPU Accelerator...");
 
-        let backend = crate::backend::WgpuBackend::new();
+        let backend = WgpuBackend::new();
         let device = backend.device();
         let queue = backend.queue();
 

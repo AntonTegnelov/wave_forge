@@ -4,7 +4,7 @@ use crate::{
     buffers::{DownloadRequest, GpuBuffers},
     entropy::{EntropyStrategy, GpuEntropyCalculator},
     error_recovery::{GpuError, GridCoord},
-    sync::GpuSynchronizer,
+    gpu::sync::GpuSynchronizer,
 };
 use log::trace;
 use std::sync::Arc;
