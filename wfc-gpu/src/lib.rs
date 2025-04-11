@@ -10,10 +10,7 @@
 // These are implementation details not part of the public API unless re-exported.
 mod backend;
 mod error_recovery;
-mod pipeline;
-mod shader_compiler;
-mod shader_registry;
-mod shaders;
+pub mod shader; // New shader module that contains all shader-related functionality
 
 // --- Public Modules ---
 // These form the public API surface of the crate.
@@ -63,7 +60,11 @@ pub use error_recovery::GpuError;
 #[cfg(test)]
 mod tests;
 
-pub use pipeline::ComputePipelines;
-pub use propagator::GpuConstraintPropagator;
-pub use shader_registry::ShaderRegistry;
+// Re-exports from shader module
+pub use shader::pipeline::ComputePipelines;
+pub use shader::shader_registry::ShaderRegistry;
+pub use shader::ShaderType;
 pub use sync::GpuSynchronizer;
+
+// Re-export propagator
+pub use propagator::GpuConstraintPropagator;

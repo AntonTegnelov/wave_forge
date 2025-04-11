@@ -13,9 +13,9 @@ use crate::{
     debug_viz::{DebugVisualizationConfig, DebugVisualizer},
     entropy::GpuEntropyCalculator,
     error_recovery::{GpuError, GridCoord},
-    pipeline::ComputePipelines,
     propagator::algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory},
     propagator::algorithm::propagator_strategy::{PropagationStrategy, PropagationStrategyFactory},
+    shader::pipeline::ComputePipelines,
     subgrid::SubgridConfig,
     sync::GpuSynchronizer,
 };

@@ -1,8 +1,8 @@
 use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams},
     error_recovery::GpuError,
-    pipeline::ComputePipelines,
     propagator::algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory},
+    shader::pipeline::ComputePipelines,
     sync::GpuSynchronizer,
 };
 use log::{debug, error, warn};
