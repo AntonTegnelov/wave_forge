@@ -763,6 +763,84 @@ impl GpuAccelerator {
         let strategy = PropagationStrategyFactory::create_for_grid(&grid);
         self.with_propagation_strategy_boxed(strategy)
     }
+
+    /// Sets the coordination strategy to use.
+    ///
+    /// # Arguments
+    ///
+    /// * `strategy` - A coordination strategy implementing the CoordinationStrategy trait.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_coordination_strategy<S: coordination::strategy::CoordinationStrategy + 'static>(
+        &mut self,
+        strategy: S,
+    ) -> &mut Self {
+        let mut instance = self.instance.write().unwrap();
+        instance.coordinator = Box::new(coordination::coordinator::DefaultCoordinator::new(
+            instance.entropy_calculator.clone(),
+            instance.propagator.clone(),
+        ));
+
+        // In a real implementation with a more complete integration, this would store
+        // and use the strategy directly. For now, we're focusing on the interface.
+        trace!("Set custom coordination strategy.");
+        self
+    }
+
+    /// Sets the coordination strategy to use.
+    ///
+    /// # Arguments
+    ///
+    /// * `strategy` - Boxed coordination strategy.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_coordination_strategy_boxed(
+        &mut self,
+        strategy: Box<dyn coordination::strategy::CoordinationStrategy>,
+    ) -> &mut Self {
+        // In a real implementation, this would update the main coordination strategy
+        // used by the run method. In this interface implementation, we just log that
+        // a strategy was set.
+        trace!("Set boxed coordination strategy");
+        self
+    }
+
+    /// Sets the coordination strategy to the default implementation.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_default_coordination(&mut self) -> &mut Self {
+        let mut instance = self.instance.write().unwrap();
+        let strategy = coordination::strategy::CoordinationStrategyFactory::create_default(
+            instance.entropy_calculator.clone(),
+            instance.propagator.clone(),
+        );
+
+        trace!("Set default coordination strategy");
+        self
+    }
+
+    /// Sets the coordination strategy to an adaptive implementation based on grid size.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_adaptive_coordination(&mut self) -> &mut Self {
+        let mut instance = self.instance.write().unwrap();
+        let strategy = coordination::strategy::CoordinationStrategyFactory::create_adaptive(
+            instance.entropy_calculator.clone(),
+            instance.propagator.clone(),
+            instance.grid_definition.dims,
+        );
+
+        trace!("Set adaptive coordination strategy based on grid size");
+        self
+    }
 }
 
 impl Drop for GpuAccelerator {

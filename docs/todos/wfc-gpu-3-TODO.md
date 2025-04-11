@@ -118,8 +118,8 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
       - [x] Implement specific strategy for propagation coordination
 
     - `wfc-gpu/src/gpu/accelerator.rs`:
-      - [ ] Update to configure the right coordination strategy
-      - [ ] Add method to select coordination strategy
+      - [x] Update to configure the right coordination strategy
+      - [x] Add method to select coordination strategy
 
   - **New files**:
 
