@@ -42,8 +42,17 @@ pub use coordination::propagation::{
     DirectPropagationCoordinator, PropagationCoordinator, SubgridPropagationCoordinator,
 };
 
-// Error type
-pub use utils::error_recovery::GpuError;
+// Error types (updated to use the new error module)
+pub use utils::error::gpu_error::{GpuError, GpuErrorContext, GpuResourceType};
+pub use utils::error::io_error::{IoError, IoResourceType};
+pub use utils::error::WfcError;
+pub use utils::error::{ErrorLocation, ErrorSeverity, ErrorWithContext};
+
+// Error recovery - maintain compatibility
+pub use utils::error_recovery::strategies::RecoveryStrategy;
+pub use utils::error_recovery::{
+    AdaptiveTimeoutConfig, ErrorRecoveryManager, GpuErrorRecovery, GridCoord, RecoverableGpuOp,
+};
 
 // Re-export types from dependencies if they are part of the public API
 // (e.g., from wfc_core if needed for function signatures)

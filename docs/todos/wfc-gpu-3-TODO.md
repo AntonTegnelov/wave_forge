@@ -267,17 +267,17 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
 ## 3. Decouple Error Handling and Recovery
 
-- [ ] **Create dedicated error recovery system**:
+- [x] **Create dedicated error recovery system**:
 
-  - [ ] **Refine error types**:
-    - [ ] `wfc-gpu/src/utils/error/mod.rs` - Unified error system
-    - [ ] `wfc-gpu/src/utils/error/gpu_error.rs` - Enhanced GPU errors
-    - [ ] `wfc-gpu/src/utils/error/io_error.rs` - File and resource errors
-  - [ ] **Implement recovery strategies**:
-    - [ ] `wfc-gpu/src/utils/error_recovery/strategies.rs` - Error recovery strategies
-    - [ ] Create retry strategy for transient GPU errors
-    - [ ] Create fallback strategy for hardware limitations
-    - [ ] Create graceful degradation for recoverable errors
+  - [x] **Refine error types**:
+    - [x] `wfc-gpu/src/utils/error/mod.rs` - Unified error system
+    - [x] `wfc-gpu/src/utils/error/gpu_error.rs` - Enhanced GPU errors
+    - [x] `wfc-gpu/src/utils/error/io_error.rs` - File and resource errors
+  - [x] **Implement recovery strategies**:
+    - [x] `wfc-gpu/src/utils/error_recovery/strategies.rs` - Error recovery strategies
+    - [x] Create retry strategy for transient GPU errors
+    - [x] Create fallback strategy for hardware limitations
+    - [x] Create graceful degradation for recoverable errors
 
   **Implementation Details**:
 
@@ -285,15 +285,15 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/utils/error_recovery.rs` (21KB, 583 lines):
 
-      - [ ] Extract types to dedicated module files
-      - [ ] Move `GpuError` enum to `error/gpu_error.rs`
-      - [ ] Move recovery logic to strategy-based implementation
-      - [ ] Update to use the Strategy pattern
+      - [x] Extract types to dedicated module files
+      - [x] Move `GpuError` enum to `error/gpu_error.rs`
+      - [x] Move recovery logic to strategy-based implementation
+      - [x] Update to use the Strategy pattern
 
     - `wfc-gpu/src/lib.rs`:
 
-      - [ ] Update module declarations and re-exports
-      - [ ] Add the new error module to the module tree
+      - [x] Update module declarations and re-exports
+      - [x] Add the new error module to the module tree
 
     - Files with error handling code (e.g., `gpu/accelerator.rs`, `propagator/gpu_constraint_propagator.rs`, `entropy/calculator.rs`):
       - [ ] Update to use the new error types
@@ -301,12 +301,12 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
   - **New files/directories**:
 
-    - [ ] `wfc-gpu/src/utils/error/` - New directory
-    - [ ] `wfc-gpu/src/utils/error/mod.rs` - Main error module
-    - [ ] `wfc-gpu/src/utils/error/gpu_error.rs` - GPU-specific errors
-    - [ ] `wfc-gpu/src/utils/error/io_error.rs` - I/O and resource errors
-    - [ ] `wfc-gpu/src/utils/error_recovery/mod.rs` - Refactored from existing file
-    - [ ] `wfc-gpu/src/utils/error_recovery/strategies.rs` - Recovery strategies
+    - [x] `wfc-gpu/src/utils/error/` - New directory
+    - [x] `wfc-gpu/src/utils/error/mod.rs` - Main error module
+    - [x] `wfc-gpu/src/utils/error/gpu_error.rs` - GPU-specific errors
+    - [x] `wfc-gpu/src/utils/error/io_error.rs` - I/O and resource errors
+    - [x] `wfc-gpu/src/utils/error_recovery/mod.rs` - Refactored from existing file
+    - [x] `wfc-gpu/src/utils/error_recovery/strategies.rs` - Recovery strategies
 
   - **Dependencies**:
     - [ ] Error handling changes should be made before other major refactoring
@@ -405,123 +405,4 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - [ ] `wfc-gpu/src/tests/error_recovery.rs` - Tests for error recovery system
 
   - [ ] **Add integration tests for coordinator strategies**:
-    - [ ] `wfc-gpu/tests/integration/coordinator_tests.rs` - Tests for coordination strategies
-    - [ ] `wfc-gpu/tests/integration/strategy_composition_tests.rs` - Tests for strategy composition
-
-  **Implementation Details**:
-
-  - **Files to modify**:
-
-    - `wfc-gpu/src/tests.rs` (~7.9KB, ~229 lines):
-
-      - [ ] Refactor into multiple files with focused tests
-      - [ ] Add tests for new components and strategies
-      - [ ] Add error handling testing
-
-    - `wfc-gpu/src/test_utils.rs`:
-      - [ ] Enhance with mock implementations
-      - [ ] Add test helpers for strategy testing
-      - [ ] Add fixtures for common test cases
-
-- [ ] **Update documentation**:
-
-  - [ ] **Update API documentation**:
-
-    - [ ] Document strategy interfaces
-    - [ ] Update error handling documentation
-
-  - [ ] **Create architecture documentation**:
-    - [ ] `wfc-gpu/docs/architecture.md` - Updated architecture guide
-    - [ ] `wfc-gpu/docs/error-handling.md` - Error handling guide
-    - [ ] `wfc-gpu/docs/customization.md` - Strategy customization guide
-
-  **Implementation Details**:
-
-  - **Files to modify**:
-    - [ ] Code documentation in most files
-    - [ ] Update inline documentation to reflect new architecture
-  - **New files**:
-    - [ ] Architecture and usage documentation files
-
-## 6. Public API Refactoring
-
-- [ ] **Restrict Module Visibility in lib.rs**:
-
-  - [ ] **Change most module declarations to pub(crate)**:
-    - [ ] `pub(crate) mod buffers;`
-    - [ ] `pub(crate) mod coordination;`
-    - [ ] `pub(crate) mod entropy;`
-    - [ ] `pub(crate) mod propagator;`
-    - [ ] `pub(crate) mod shader;`
-    - [ ] `pub(crate) mod utils;`
-    - [ ] `pub(crate) mod gpu;`
-  - [ ] **Keep necessary modules public**:
-    - [ ] Public module exports for main entry points
-    - [ ] Public exports for user-facing error types
-    - [ ] Public exports for debug visualization if intended as a public feature
-
-  **Implementation Details**:
-
-  - **Files to modify**:
-    - `wfc-gpu/src/lib.rs`:
-      - [ ] Update all module declarations as specified above
-      - [ ] Adjust pub use statements to only expose the intended public API
-      - [ ] Ensure backward compatibility with existing client code
-
-- [ ] **Adjust pub use statements in lib.rs**:
-
-  - [ ] **Keep essential public re-exports**:
-    - [ ] `pub use gpu::GpuAccelerator;`
-    - [ ] `pub use utils::error_recovery::GpuError;`
-    - [ ] `pub use gpu::accelerator::{GridDefinition, GridStats, WfcRunResult};`
-    - [ ] `pub use utils::subgrid::SubgridConfig;` (If needed for configuration)
-    - [ ] `pub use utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer, VisualizationType};` (If debug viz is public)
-  - [ ] **Remove internal implementation re-exports**:
-    - [ ] Remove re-exports of `GpuBuffers`, `ComputePipelines`, `GpuConstraintPropagator`, `GpuSynchronizer`, etc.
-    - [ ] Remove re-exports of coordination types
-    - [ ] Remove re-exports of internal buffer types
-
-  **Implementation Details**:
-
-  - **Files to modify**:
-    - `wfc-gpu/src/lib.rs`:
-      - [ ] Audit all `pub use` statements against the desired public API
-      - [ ] Remove any that expose internal implementation details
-      - [ ] Add `#[doc(hidden)]` to types that must remain public for technical reasons but shouldn't be in public docs
-
-- [ ] **Restrict Visibility within Individual Modules**:
-
-  - [ ] **Modify gpu/accelerator.rs**:
-
-    - [ ] Make `AcceleratorInstance` `pub(crate)`
-    - [ ] Make methods exposing internal types (`backend()`, `pipelines()`, `buffers()`) `pub(crate)`
-    - [ ] Keep public: `GpuAccelerator`, `GridDefinition`, `GridStats`, `WfcRunResult`, core methods
-
-  - [ ] **Modify buffers/ module and submodules**:
-
-    - [ ] Change visibility of all public structs (`GpuBuffers`, `EntropyBuffers`, etc.) to `pub(crate)`
-    - [ ] Change visibility of all public enums and functions to `pub(crate)`
-    - [ ] Keep `DynamicBufferConfig` public only if part of the public API
-
-  - [ ] **Modify coordination/ module and submodules**:
-
-    - [ ] Change visibility of all public structs/traits/enums to `pub(crate)`
-
-  - [ ] **Modify utils/debug_viz.rs**:
-
-    - [ ] If public: Retain public visibility only for config/control types
-    - [ ] Make `DebugSnapshot` `pub(crate)`
-
-  - [ ] **Modify utils/error_recovery.rs**:
-
-    - [ ] Keep `GpuError` and `GridCoord` public
-    - [ ] Make `ErrorSeverity`, `GpuErrorRecovery`, `AdaptiveTimeoutConfig`, `RecoverableGpuOp` `pub(crate)`
-
-  - [ ] **Modify other modules (entropy/calculator.rs, shader/pipeline.rs, propagator/\* files, etc.)**:
-    - [ ] Change all public structs, traits, enums, and functions to `pub(crate)`
-    - [ ] Exception: Keep `SubgridConfig` public (if needed in public API)
-
-  **Implementation Details**:
-
-  - **Files to modify**:
-    - All source files in the `wfc-gpu`
+    - [ ] `
