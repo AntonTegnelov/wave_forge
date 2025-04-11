@@ -46,6 +46,169 @@ impl fmt::Display for GpuResourceType {
     }
 }
 
+/// Debug information about GPU state
+#[derive(Debug, Clone)]
+pub struct GpuStateInfo {
+    /// Available GPU memory at the time of error (if available)
+    pub available_memory: Option<u64>,
+    /// Total GPU memory (if available)
+    pub total_memory: Option<u64>,
+    /// Current GPU workload/utilization (if available)
+    pub gpu_utilization: Option<f32>,
+    /// Number of active command buffers
+    pub active_commands: Option<usize>,
+    /// Number of allocated buffers
+    pub buffer_count: Option<usize>,
+    /// Debug markers active at time of error
+    pub active_debug_markers: Option<Vec<String>>,
+    /// GPU adapter information
+    pub adapter_info: Option<String>,
+    /// GPU features enabled
+    pub enabled_features: Option<Vec<String>>,
+    /// Current frame number
+    pub frame_number: Option<u64>,
+}
+
+impl Default for GpuStateInfo {
+    fn default() -> Self {
+        Self {
+            available_memory: None,
+            total_memory: None,
+            gpu_utilization: None,
+            active_commands: None,
+            buffer_count: None,
+            active_debug_markers: None,
+            adapter_info: None,
+            enabled_features: None,
+            frame_number: None,
+        }
+    }
+}
+
+impl GpuStateInfo {
+    /// Create a new GPU state info
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add memory information to the state
+    pub fn with_memory(mut self, available: u64, total: u64) -> Self {
+        self.available_memory = Some(available);
+        self.total_memory = Some(total);
+        self
+    }
+
+    /// Add GPU utilization to the state
+    pub fn with_utilization(mut self, utilization: f32) -> Self {
+        self.gpu_utilization = Some(utilization);
+        self
+    }
+
+    /// Add active command count to the state
+    pub fn with_active_commands(mut self, count: usize) -> Self {
+        self.active_commands = Some(count);
+        self
+    }
+
+    /// Add buffer count to the state
+    pub fn with_buffer_count(mut self, count: usize) -> Self {
+        self.buffer_count = Some(count);
+        self
+    }
+
+    /// Add active debug markers to the state
+    pub fn with_debug_markers(mut self, markers: Vec<String>) -> Self {
+        self.active_debug_markers = Some(markers);
+        self
+    }
+
+    /// Add adapter info to the state
+    pub fn with_adapter_info<S: Into<String>>(mut self, info: S) -> Self {
+        self.adapter_info = Some(info.into());
+        self
+    }
+
+    /// Add enabled features to the state
+    pub fn with_enabled_features(mut self, features: Vec<String>) -> Self {
+        self.enabled_features = Some(features);
+        self
+    }
+
+    /// Add frame number to the state
+    pub fn with_frame_number(mut self, frame: u64) -> Self {
+        self.frame_number = Some(frame);
+        self
+    }
+}
+
+impl fmt::Display for GpuStateInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+
+        if let (Some(available), Some(total)) = (self.available_memory, self.total_memory) {
+            write!(f, "Memory: {}/{} bytes", available, total)?;
+            first = false;
+        }
+
+        if let Some(utilization) = self.gpu_utilization {
+            if !first {
+                write!(f, ", ")?;
+            }
+            write!(f, "GPU Utilization: {:.1}%", utilization * 100.0)?;
+            first = false;
+        }
+
+        if let Some(cmds) = self.active_commands {
+            if !first {
+                write!(f, ", ")?;
+            }
+            write!(f, "Active Commands: {}", cmds)?;
+            first = false;
+        }
+
+        if let Some(buffers) = self.buffer_count {
+            if !first {
+                write!(f, ", ")?;
+            }
+            write!(f, "Allocated Buffers: {}", buffers)?;
+            first = false;
+        }
+
+        if let Some(frame) = self.frame_number {
+            if !first {
+                write!(f, ", ")?;
+            }
+            write!(f, "Frame: {}", frame)?;
+        }
+
+        if let Some(ref markers) = self.active_debug_markers {
+            write!(f, "\nActive Debug Markers: ")?;
+            for (i, marker) in markers.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " -> ")?;
+                }
+                write!(f, "{}", marker)?;
+            }
+        }
+
+        if let Some(ref adapter) = self.adapter_info {
+            write!(f, "\nAdapter: {}", adapter)?;
+        }
+
+        if let Some(ref features) = self.enabled_features {
+            write!(f, "\nEnabled Features: ")?;
+            for (i, feature) in features.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", feature)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Contains contextual information about a GPU error
 #[derive(Debug, Clone)]
 pub struct GpuErrorContext {
@@ -61,6 +224,8 @@ pub struct GpuErrorContext {
     pub location: Option<ErrorLocation>,
     /// Suggested solution or recovery strategy
     pub suggested_solution: Option<String>,
+    /// GPU state information at the time of error
+    pub gpu_state: Option<GpuStateInfo>,
 }
 
 impl Default for GpuErrorContext {
@@ -72,6 +237,7 @@ impl Default for GpuErrorContext {
             details: None,
             location: None,
             suggested_solution: None,
+            gpu_state: None,
         }
     }
 }
@@ -114,6 +280,12 @@ impl GpuErrorContext {
         self.suggested_solution = Some(solution.into());
         self
     }
+
+    /// Add GPU state information to the context
+    pub fn with_gpu_state(mut self, state: GpuStateInfo) -> Self {
+        self.gpu_state = Some(state);
+        self
+    }
 }
 
 impl fmt::Display for GpuErrorContext {
@@ -137,6 +309,14 @@ impl fmt::Display for GpuErrorContext {
 
         if let Some(location) = &self.location {
             write!(f, " [at {}]", location)?;
+        }
+
+        if let Some(state) = &self.gpu_state {
+            write!(f, "\nGPU State: {}", state)?;
+        }
+
+        if let Some(solution) = &self.suggested_solution {
+            write!(f, "\nSuggested solution: {}", solution)?;
         }
 
         Ok(())
