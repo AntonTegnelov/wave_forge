@@ -320,7 +320,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - [x] Add suggested solutions to common errors
   - [ ] **Update error interfaces**:
     - [x] Make errors more actionable by user code
-    - [ ] Ensure consistent error types across the library
+    - [x] Ensure consistent error types across the library
     - [ ] Add recovery hooks for user-defined recovery logic
 
   **Implementation Details**:
@@ -344,7 +344,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
       - [ ] Improve error reporting to application code
 
   - **Specific inconsistencies to address**:
-    - [ ] In `entropy/calculator.rs`, `From<GpuError> for CoreEntropyError` conversion uses different mapping than in other files
+    - [x] In `entropy/calculator.rs`, `From<GpuError> for CoreEntropyError` conversion uses different mapping than in other files
     - [ ] `gpu/accelerator.rs` uses both `GpuError` and `WfcError` for similar failures
     - [ ] `propagator/gpu_constraint_propagator.rs` uses custom error conversions
     - [ ] `utils/error_recovery.rs` inconsistently handles buffers across error types

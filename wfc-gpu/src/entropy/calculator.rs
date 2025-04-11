@@ -3,7 +3,7 @@ use crate::{
     entropy::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory},
     gpu::sync::GpuSynchronizer,
     shader::pipeline::ComputePipelines,
-    utils::error_recovery::GpuError,
+    utils::error::gpu_error::GpuError,
 };
 use log::{debug, error, warn};
 use pollster;
@@ -440,18 +440,33 @@ impl EntropyCalculator for GpuEntropyCalculator {
 impl From<GpuError> for CoreEntropyError {
     fn from(gpu_error: GpuError) -> Self {
         match gpu_error {
-            GpuError::BufferOperationError(s)
-            | GpuError::CommandExecutionError(s)
-            | GpuError::ShaderError(s)
-            | GpuError::TransferError(s)
-            | GpuError::BufferSizeMismatch(s) => {
-                CoreEntropyError::Other(format!("GPU Communication Error: {}", s))
+            GpuError::BufferOperationError { msg, .. }
+            | GpuError::CommandExecutionError { msg, .. }
+            | GpuError::TransferError { msg, .. }
+            | GpuError::BufferSizeMismatch { msg, .. } => {
+                CoreEntropyError::Other(format!("GPU Communication Error: {}", msg))
             }
-            GpuError::ValidationError(e) => {
-                CoreEntropyError::Other(format!("GPU Setup Error: {}", e))
+            GpuError::ShaderError { msg, .. } => {
+                CoreEntropyError::Other(format!("GPU Shader Error: {}", msg))
             }
-            GpuError::Other(s) => CoreEntropyError::Other(s),
-            _ => CoreEntropyError::Other(format!("Unhandled GpuError: {:?}", gpu_error)),
+            GpuError::ValidationError(e, _) => {
+                CoreEntropyError::Other(format!("GPU Validation Error: {}", e))
+            }
+            GpuError::ContradictionDetected { .. } => CoreEntropyError::Contradiction,
+            GpuError::DeviceLost { msg, .. }
+            | GpuError::BufferMapFailed { msg, .. }
+            | GpuError::ResourceCreationFailed { msg, .. }
+            | GpuError::Timeout { msg, .. }
+            | GpuError::MutexError { msg, .. } => {
+                CoreEntropyError::Other(format!("GPU Resource Error: {}", msg))
+            }
+            GpuError::DeviceRequestFailed(e, _) => {
+                CoreEntropyError::Other(format!("GPU Device Error: {}", e))
+            }
+            GpuError::AdapterRequestFailed { .. } => {
+                CoreEntropyError::Other("GPU Adapter request failed".to_string())
+            }
+            GpuError::Other { msg, .. } => CoreEntropyError::Other(format!("GPU Error: {}", msg)),
         }
     }
 }
@@ -473,6 +488,7 @@ impl GpuEntropyCalculatorExt for GpuEntropyCalculator {
 }
 
 /// Maps a GPU error encountered during entropy calculation to a core WFC EntropyError.
+/// This is consistent with the From<GpuError> implementation above.
 fn map_gpu_error_to_entropy_error(gpu_error: GpuError) -> CoreEntropyError {
-    CoreEntropyError::Other(format!("GPU Error: {}", gpu_error))
+    gpu_error.into()
 }
