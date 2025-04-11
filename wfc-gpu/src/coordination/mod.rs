@@ -121,8 +121,12 @@ pub trait WfcCoordinatorTrait: Send + Sync {
 pub struct DefaultCoordinator {
     entropy_calculator: Arc<GpuEntropyCalculator>,
     propagator: Arc<RwLock<GpuConstraintPropagator>>,
-    // Add reference to EntropyCoordinator
+    // Coordinator for entropy calculation and selection
     entropy_coordinator: Option<entropy::EntropyCoordinator>,
+    // Strategy for propagation coordination
+    propagation_strategy: Option<Box<dyn propagation::PropagationCoordinationStrategy>>,
+    // Overall coordination strategy
+    coordination_strategy: Option<Box<dyn strategy::CoordinationStrategy>>,
 }
 
 impl DefaultCoordinator {
@@ -138,6 +142,11 @@ impl DefaultCoordinator {
             entropy_calculator,
             propagator,
             entropy_coordinator,
+            propagation_strategy: None,
+            coordination_strategy: Some(strategy::CoordinationStrategyFactory::create_default(
+                entropy_calculator.clone(),
+                propagator.clone(),
+            )),
         }
     }
 
@@ -173,9 +182,49 @@ impl DefaultCoordinator {
         &mut self,
         strategy: Box<dyn propagation::PropagationCoordinationStrategy>,
     ) -> &mut Self {
-        // In a real implementation, would store the strategy and use it
-        // in coordinate_propagation, but requires refactoring the method signature
-        trace!("Setting propagation coordination strategy on DefaultCoordinator (placeholder)");
+        self.propagation_strategy = Some(strategy);
+        trace!("Setting propagation coordination strategy on DefaultCoordinator");
+        self
+    }
+
+    /// Set the overall coordination strategy
+    pub fn with_coordination_strategy<S: strategy::CoordinationStrategy + 'static>(
+        &mut self,
+        strategy: S,
+    ) -> &mut Self {
+        self.coordination_strategy = Some(Box::new(strategy));
+        trace!("Setting coordination strategy on DefaultCoordinator");
+        self
+    }
+
+    /// Set the overall coordination strategy
+    pub fn with_coordination_strategy_boxed(
+        &mut self,
+        strategy: Box<dyn strategy::CoordinationStrategy>,
+    ) -> &mut Self {
+        self.coordination_strategy = Some(strategy);
+        trace!("Setting boxed coordination strategy on DefaultCoordinator");
+        self
+    }
+
+    /// Use the default coordination strategy
+    pub fn with_default_coordination(&mut self) -> &mut Self {
+        self.coordination_strategy = Some(strategy::CoordinationStrategyFactory::create_default(
+            self.entropy_calculator.clone(),
+            self.propagator.clone(),
+        ));
+        trace!("Set default coordination strategy");
+        self
+    }
+
+    /// Use an adaptive coordination strategy based on grid size
+    pub fn with_adaptive_coordination(&mut self, grid_size: (usize, usize, usize)) -> &mut Self {
+        self.coordination_strategy = Some(strategy::CoordinationStrategyFactory::create_adaptive(
+            self.entropy_calculator.clone(),
+            self.propagator.clone(),
+            grid_size,
+        ));
+        trace!("Set adaptive coordination strategy based on grid size");
         self
     }
 }
@@ -259,13 +308,41 @@ impl WfcCoordinator for DefaultCoordinator {
     async fn coordinate_propagation(
         &self,
         propagator_lock: &Arc<RwLock<GpuConstraintPropagator>>,
-        _buffers: &Arc<GpuBuffers>,
-        _device: &Device,
-        _queue: &Queue,
-        _updated_coords: Vec<GridCoord>,
+        buffers: &Arc<GpuBuffers>,
+        device: &Device,
+        queue: &Queue,
+        updated_coords: Vec<GridCoord>,
     ) -> Result<(), PropagationError> {
         trace!("DefaultCoordinator: Running propagation...");
 
+        // If a propagation strategy is set, use it
+        if let Some(ref mut strategy) = self.propagation_strategy.clone() {
+            let coords_vec: Vec<(usize, usize, usize)> =
+                updated_coords.iter().map(|c| (c.x, c.y, c.z)).collect();
+
+            // Create a dummy grid for now - in a real implementation, we would
+            // download the grid state first
+            let grid_dims = buffers.grid_dims;
+            let mut grid = PossibilityGrid::new(
+                grid_dims.0,
+                grid_dims.1,
+                grid_dims.2,
+                0, // Placeholder
+            );
+
+            // Create dummy rules - in a real implementation, we would
+            // get the proper rules
+            let rules = wfc_rules::AdjacencyRules::new();
+
+            return strategy
+                .coordinate_propagation(propagator_lock, &mut grid, coords_vec, &rules)
+                .await
+                .map_err(|e| {
+                    PropagationError::Other(format!("Strategy propagation failed: {}", e))
+                });
+        }
+
+        // Otherwise, use the default implementation
         let _propagator = propagator_lock.write().unwrap();
 
         // Handle propagation operations
