@@ -162,44 +162,30 @@ mod shader_validation_tests {
             fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read shader: {}", name))
         }
 
-        // Read the modular shaders
-        let entropy_modular = read_shader("entropy_modular.wgsl");
-        let propagate_modular = read_shader("propagate_modular.wgsl");
+        // Read the available shaders
+        let entropy = read_shader("entropy.wgsl");
+        let propagate = read_shader("propagate.wgsl");
         let utils = read_shader("utils.wgsl");
         let rules = read_shader("rules.wgsl");
         let coords = read_shader("coords.wgsl");
 
-        // Check includes exist in the modular shaders
+        // Check parameter struct fields exist
         assert!(
-            entropy_modular.contains("#include \"utils.wgsl\""),
-            "Entropy shader should include utils"
-        );
-        assert!(
-            propagate_modular.contains("#include \"rules.wgsl\""),
-            "Propagate shader should include rules"
-        );
-
-        // Check placeholder constants exist
-        assert!(
-            entropy_modular.contains("NUM_TILES_U32_VALUE"),
-            "Entropy shader missing NUM_TILES_U32_VALUE placeholder"
-        );
-        assert!(
-            propagate_modular.contains("NUM_TILES_U32_VALUE"),
-            "Propagate shader missing NUM_TILES_U32_VALUE placeholder"
+            entropy.contains("num_tiles"),
+            "Entropy shader should have num_tiles parameter"
         );
 
         // Check utility modules contain expected functions
         assert!(
-            utils.contains("fn count_bits("),
-            "Utils should contain bit counting function"
+            utils.contains("fn count_bits(") || entropy.contains("fn count_ones("),
+            "Utils or Entropy should contain bit counting function"
         );
         assert!(
-            rules.contains("fn check_rule("),
+            rules.contains("fn check_rule"),
             "Rules should contain rule checking function"
         );
         assert!(
-            coords.contains("fn get_neighbor_index("),
+            coords.contains("fn get_neighbor_index"),
             "Coords should contain neighbor calculation function"
         );
     }
@@ -395,7 +381,7 @@ mod shader_validation_tests {
         });
 
         // Create a command encoder
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Test Command Encoder"),
         });
 

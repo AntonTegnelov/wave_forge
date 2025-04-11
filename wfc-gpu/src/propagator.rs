@@ -225,19 +225,35 @@ impl GpuConstraintPropagator {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: self.input_worklist_binding(),
+                    resource: self
+                        .buffers
+                        .rule_buffers
+                        .rule_weights_buf
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: self.output_worklist_binding(),
+                    resource: self.input_worklist_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                    resource: self.output_worklist_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: self.input_worklist_count_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: self.buffers.contradiction_location_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: self.buffers.pass_statistics_buf.as_entire_binding(),
                 },
             ],
         })
@@ -427,8 +443,8 @@ impl GpuConstraintPropagator {
             let worklist_size_data = match crate::buffers::download_buffer_data::<u32>(
                 Some(self.device.clone()),
                 Some(self.queue.clone()),
-                &*self.buffers.worklist_buffers.worklist_count_buf,
-                &*self.buffers.worklist_buffers.staging_worklist_count_buf,
+                &self.buffers.worklist_buffers.worklist_count_buf,
+                &self.buffers.worklist_buffers.staging_worklist_count_buf,
                 std::mem::size_of::<u32>() as u64,
                 Some("Download Worklist Count".to_string()),
             )
@@ -458,7 +474,7 @@ impl GpuConstraintPropagator {
                 compute_pass.set_bind_group(0, &bind_group, &[]);
 
                 let workgroup_size = 256;
-                let num_workgroups = (worklist_size + workgroup_size - 1) / workgroup_size;
+                let num_workgroups = worklist_size.div_ceil(workgroup_size);
 
                 debug!(
                     "Propagation Pass {}: Dispatching {} workgroups for {} items.",
@@ -482,8 +498,8 @@ impl GpuConstraintPropagator {
                 let contradiction_flag_data = match crate::buffers::download_buffer_data::<u32>(
                     Some(self.device.clone()),
                     Some(self.queue.clone()),
-                    &*self.buffers.contradiction_flag_buf,
-                    &*self.buffers.staging_contradiction_flag_buf,
+                    &self.buffers.contradiction_flag_buf,
+                    &self.buffers.staging_contradiction_flag_buf,
                     std::mem::size_of::<u32>() as u64,
                     Some("Contradiction Flag".to_string()),
                 )
@@ -499,8 +515,8 @@ impl GpuConstraintPropagator {
                     let contradiction_loc_data = match crate::buffers::download_buffer_data::<u32>(
                         Some(self.device.clone()),
                         Some(self.queue.clone()),
-                        &*self.buffers.contradiction_location_buf,
-                        &*self.buffers.staging_contradiction_location_buf,
+                        &self.buffers.contradiction_location_buf,
+                        &self.buffers.staging_contradiction_location_buf,
                         3 * std::mem::size_of::<u32>() as u64,
                         Some("Contradiction Location".to_string()),
                     )
@@ -512,10 +528,8 @@ impl GpuConstraintPropagator {
                         }
                     };
 
-                    let contradiction_loc = contradiction_loc_data
-                        .first()
-                        .cloned()
-                        .unwrap_or(std::u32::MAX);
+                    let contradiction_loc =
+                        contradiction_loc_data.first().cloned().unwrap_or(u32::MAX);
                     let (width, height, _) = self.buffers.grid_dims;
                     let (cx, cy, cz) = index_to_coords(contradiction_loc as usize, width, height);
                     return Err(PropagationError::Contradiction(cx, cy, cz));
@@ -530,8 +544,8 @@ impl GpuConstraintPropagator {
             let output_worklist_size_data = match crate::buffers::download_buffer_data::<u32>(
                 Some(self.device.clone()),
                 Some(self.queue.clone()),
-                &*self.buffers.worklist_buffers.worklist_count_buf,
-                &*self.buffers.worklist_buffers.staging_worklist_count_buf,
+                &self.buffers.worklist_buffers.worklist_count_buf,
+                &self.buffers.worklist_buffers.staging_worklist_count_buf,
                 std::mem::size_of::<u32>() as u64,
                 Some("Output Worklist Count".to_string()),
             )
@@ -565,8 +579,8 @@ impl GpuConstraintPropagator {
         let contradiction_flag_data = match crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*self.buffers.contradiction_flag_buf,
-            &*self.buffers.staging_contradiction_flag_buf,
+            &self.buffers.contradiction_flag_buf,
+            &self.buffers.staging_contradiction_flag_buf,
             std::mem::size_of::<u32>() as u64,
             Some("Final Contradiction Flag".to_string()),
         )
@@ -582,8 +596,8 @@ impl GpuConstraintPropagator {
             let contradiction_loc_data = match crate::buffers::download_buffer_data::<u32>(
                 Some(self.device.clone()),
                 Some(self.queue.clone()),
-                &*self.buffers.contradiction_location_buf,
-                &*self.buffers.staging_contradiction_location_buf,
+                &self.buffers.contradiction_location_buf,
+                &self.buffers.staging_contradiction_location_buf,
                 3 * std::mem::size_of::<u32>() as u64,
                 Some("Final Contradiction Location".to_string()),
             )
@@ -599,10 +613,7 @@ impl GpuConstraintPropagator {
                 }
             };
 
-            let contradiction_loc = contradiction_loc_data
-                .first()
-                .cloned()
-                .unwrap_or(std::u32::MAX);
+            let contradiction_loc = contradiction_loc_data.first().cloned().unwrap_or(u32::MAX);
             let (width, height, _) = self.buffers.grid_dims;
             let (cx, cy, cz) = index_to_coords(contradiction_loc as usize, width, height);
             return Err(PropagationError::Contradiction(cx, cy, cz));
@@ -668,28 +679,40 @@ impl GpuConstraintPropagator {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
+                    resource: self
+                        .buffers
+                        .rule_buffers
+                        .rule_weights_buf
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
                     resource: input_binding,
                 }, // Input worklist (read)
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 5,
                     resource: output_binding,
                 }, // Output worklist (write)
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 6,
                     resource: self
                         .buffers
                         .worklist_buffers
                         .worklist_count_buf
                         .as_entire_binding(),
-                }, // Worklist count (atomic)
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
-                }, // Contradiction flag (atomic)
+                }, // Worklist count
                 wgpu::BindGroupEntry {
                     binding: 7,
+                    resource: self.buffers.contradiction_flag_buf.as_entire_binding(),
+                }, // Contradiction flag
+                wgpu::BindGroupEntry {
+                    binding: 8,
                     resource: self.buffers.contradiction_location_buf.as_entire_binding(),
                 }, // Contradiction location (atomic)
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: self.buffers.pass_statistics_buf.as_entire_binding(),
+                }, // Pass statistics
             ],
         })
     }
@@ -900,15 +923,8 @@ fn index_to_coords(index: usize, width: usize, height: usize) -> (usize, usize, 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        accelerator::GridDefinition, buffers::GpuBuffers, entropy::GpuEntropyCalculator,
-        test_utils::create_test_device_queue,
-    };
-    use futures::executor::block_on;
-    use std::sync::Arc;
-    use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
-    use wfc_rules::{AdjacencyRules, TileSet, Transformation};
+
+    use crate::test_utils::create_test_device_queue;
 
     #[tokio::test]
     async fn test_propagation_initialization() {
