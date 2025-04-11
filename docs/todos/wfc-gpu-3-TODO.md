@@ -135,10 +135,10 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 - [ ] **Improve shader component modularity**:
 
   - [ ] **Add more fine-grained shader components**:
-    - [ ] `shader/shaders/components/entropy/shannon.wgsl` - Shannon entropy specific code
-    - [ ] `shader/shaders/components/entropy/count_based.wgsl` - Count-based entropy
-    - [ ] `shader/shaders/components/propagation/direct.wgsl` - Direct propagation
-    - [ ] `shader/shaders/components/propagation/subgrid.wgsl` - Subgrid propagation
+    - [x] `shader/shaders/components/entropy/shannon.wgsl` - Shannon entropy specific code
+    - [x] `shader/shaders/components/entropy/count_based.wgsl` - Count-based entropy
+    - [x] `shader/shaders/components/propagation/direct.wgsl` - Direct propagation
+    - [x] `shader/shaders/components/propagation/subgrid.wgsl` - Subgrid propagation
   - [ ] **Update registry to track component dependencies**:
     - [ ] Enhance component metadata to include explicit dependencies
     - [ ] Add version information to components
