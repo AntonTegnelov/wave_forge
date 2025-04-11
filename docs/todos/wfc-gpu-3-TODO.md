@@ -355,7 +355,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
   - [ ] **Improve unit test organization**:
 
-    - [ ] `wfc-gpu/src/tests/entropy_strategies.rs` - Unit tests for entropy strategies
+    - [x] `wfc-gpu/src/tests/entropy_strategies.rs` - Unit tests for entropy strategies
     - [ ] `wfc-gpu/src/tests/propagation_strategies.rs` - Unit tests for propagation strategies
     - [ ] `wfc-gpu/src/tests/error_recovery.rs` - Tests for error recovery system
 
