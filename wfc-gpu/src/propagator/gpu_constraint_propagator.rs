@@ -1,3 +1,4 @@
+use crate::propagator::propagator_strategy::gpu_error_to_propagation_error;
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     gpu::sync::GpuSynchronizer,
@@ -282,7 +283,9 @@ impl ConstraintPropagator for GpuConstraintPropagator {
         // Upload rules to buffers if needed
         // Note: This is normally handled by GpuBuffers::new, but we need to ensure
         // rules are up-to-date before each propagation
-        self.synchronizer.upload_rules(rules)?;
+        self.synchronizer
+            .upload_rules(rules)
+            .map_err(gpu_error_to_propagation_error)?;
 
         // Delegate to the strategy
         let result =

@@ -173,12 +173,7 @@ impl PropagationStrategy for DirectPropagationStrategy {
                         0,
                         std::mem::size_of::<u32>(),
                     )
-                    .map_err(|e| {
-                        PropagationError::InternalError(format!(
-                            "Failed to download worklist count: {}",
-                            e
-                        ))
-                    })?;
+                    .map_err(gpu_error_to_propagation_error)?;
 
                 let current_worklist_count = worklist_count[0] as usize;
 
@@ -214,13 +209,12 @@ impl PropagationStrategy for DirectPropagationStrategy {
 
             // Check for contradiction after each pass
             contradiction_flag = synchronizer
-                .download_buffer(&buffers.contradiction_flag_buf, 0, 4)
-                .map_err(|e| {
-                    PropagationError::InternalError(format!(
-                        "Failed to download contradiction flag: {}",
-                        e
-                    ))
-                })?;
+                .download_buffer(
+                    &buffers.contradiction_flag_buf,
+                    0,
+                    std::mem::size_of::<u32>(),
+                )
+                .map_err(gpu_error_to_propagation_error)?;
 
             if contradiction_flag[0] != 0 {
                 return Err(PropagationError::Contradiction);
@@ -230,15 +224,10 @@ impl PropagationStrategy for DirectPropagationStrategy {
             let output_idx = 1 - current_worklist_idx;
             let output_worklist_count_buf = &buffers.worklist_buffers.worklist_count_buf;
 
-            // Download the output worklist count
+            // Read the output worklist count
             worklist_count = synchronizer
-                .download_buffer(output_worklist_count_buf, 0, 4)
-                .map_err(|e| {
-                    PropagationError::InternalError(format!(
-                        "Failed to download worklist count: {}",
-                        e
-                    ))
-                })?;
+                .download_buffer(output_worklist_count_buf, 0, std::mem::size_of::<u32>())
+                .map_err(gpu_error_to_propagation_error)?;
 
             let output_worklist_count = worklist_count[0] as u32;
 
@@ -592,6 +581,11 @@ impl SubgridPropagationStrategy {
         let subgrid_synchronizer =
             GpuSynchronizer::new(device.clone(), queue.clone(), Arc::new(subgrid_buffers));
 
+        // Upload subgrid possibilities to the GPU
+        subgrid_synchronizer
+            .upload_grid(&subgrid_mutable)
+            .map_err(gpu_error_to_propagation_error)?;
+
         // Process the subgrid with direct propagation
         direct_strategy.propagate(
             &mut subgrid_mutable,
@@ -600,12 +594,10 @@ impl SubgridPropagationStrategy {
             &subgrid_synchronizer,
         )?;
 
-        // Download the resulting grid state
+        // Download result from GPU
         let result = subgrid_synchronizer
             .download_grid(&mut subgrid_mutable)
-            .map_err(|e| {
-                PropagationError::InternalError(format!("Failed to download subgrid: {}", e))
-            })?;
+            .map_err(gpu_error_to_propagation_error)?;
 
         Ok(result)
     }
@@ -717,5 +709,43 @@ impl PropagationStrategyFactory {
         } else {
             Self::create_direct(1000)
         }
+    }
+}
+
+/// Helper function to convert GpuError to PropagationError consistently
+pub fn gpu_error_to_propagation_error(error: GpuError) -> PropagationError {
+    match error {
+        GpuError::ContradictionDetected { coord } => {
+            if let Some(c) = coord {
+                PropagationError::Contradiction(c.x, c.y, c.z)
+            } else {
+                // If we don't have specific coordinates, create a general error
+                PropagationError::InternalError(
+                    "Contradiction detected but location unknown".to_string(),
+                )
+            }
+        }
+        GpuError::BufferCreationFailed { resource_name, .. } => PropagationError::InternalError(
+            format!("Failed to create GPU buffer: {}", resource_name),
+        ),
+        GpuError::BufferWriteFailed { resource_name, .. } => PropagationError::InternalError(
+            format!("Failed to write to GPU buffer: {}", resource_name),
+        ),
+        GpuError::BufferReadFailed { resource_name, .. } => PropagationError::InternalError(
+            format!("Failed to read from GPU buffer: {}", resource_name),
+        ),
+        GpuError::ShaderCreationFailed { shader_name, .. } => {
+            PropagationError::InternalError(format!("Failed to create shader: {}", shader_name))
+        }
+        GpuError::ComputePassFailed { .. } => {
+            PropagationError::InternalError("Compute pass execution failed".to_string())
+        }
+        GpuError::DeviceLost { .. } => {
+            PropagationError::InternalError("GPU device was lost".to_string())
+        }
+        GpuError::OutOfMemory { .. } => {
+            PropagationError::InternalError("GPU out of memory".to_string())
+        }
+        _ => PropagationError::InternalError(format!("GPU error: {}", error)),
     }
 }
