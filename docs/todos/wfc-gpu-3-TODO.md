@@ -127,7 +127,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - [x] `wfc-gpu/src/coordination/entropy.rs` - Entropy-specific coordination
 
   - **Dependencies**:
-    - [ ] Must be implemented after entropy and propagation strategies are completed
+    - [x] Must be implemented after entropy and propagation strategies are completed
     - [ ] Coordination strategies should compose existing strategies rather than duplicate logic
 
 ## 2. Enhance Shader Component System
