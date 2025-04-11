@@ -5,9 +5,9 @@
 //! and constraint propagation.
 
 use crate::{
-    buffers::GpuBuffers,
+    buffers::{DownloadRequest, GpuBuffers},
     entropy::{EntropyStrategy, GpuEntropyCalculator},
-    gpu::sync::GpuSynchronizer,
+    gpu::{sync::GpuSynchronizer, GpuAccelerator},
     propagator::GpuConstraintPropagator,
     utils::debug_viz::DebugVisualizer,
     utils::error_recovery::{GpuError, GridCoord},
@@ -40,7 +40,8 @@ pub enum CoordinationEvent {
     PhaseCompleted(String),
 }
 
-pub trait CoordinationStrategy {}
+// The CoordinationStrategy is now defined in the strategy.rs module
+// pub trait CoordinationStrategy {}
 
 // --- Traits --- //
 
@@ -83,7 +84,12 @@ impl Clone for Box<dyn WfcCoordinator + Send + Sync> {
 
 /// Defines the interface for a WFC coordination strategy.
 /// Implementations will manage the overall algorithm loop.
+/// This is now a deprecated alias for the CoordinationStrategy trait in the strategy module.
 #[async_trait]
+#[deprecated(
+    since = "0.1.0",
+    note = "Use strategy::CoordinationStrategy instead which provides a more comprehensive interface"
+)]
 pub trait WfcCoordinatorTrait: Send + Sync {
     // Add bounds
     /// Runs the main WFC algorithm loop.
@@ -144,6 +150,21 @@ impl DefaultCoordinator {
         // Can't modify the calculator directly due to Arc, so this is a placeholder
         // In a real implementation, would need to manage this differently
         trace!("Setting entropy strategy on DefaultCoordinator (placeholder)");
+        self
+    }
+
+    /// Set a specific entropy coordination strategy
+    pub fn with_entropy_coordination_strategy<S: entropy::EntropyCoordinationStrategy + 'static>(
+        &mut self,
+        strategy: S,
+    ) -> &mut Self {
+        if let Some(ref mut coordinator) = self.entropy_coordinator {
+            // Create a new coordinator with the strategy
+            self.entropy_coordinator = Some(
+                entropy::EntropyCoordinator::new(self.entropy_calculator.clone())
+                    .with_strategy(strategy),
+            );
+        }
         self
     }
 }
@@ -249,9 +270,13 @@ impl WfcCoordinator for DefaultCoordinator {
 
 pub mod entropy;
 pub mod propagation; // Added entropy coordination module
+pub mod strategy; // New strategy module for coordination strategies
 
 // For convenience, re-export key types from submodules
-pub use self::entropy::EntropyCoordinator;
+pub use self::entropy::{
+    EntropyCoordinationStrategy, EntropyCoordinationStrategyFactory, EntropyCoordinator,
+};
+pub use self::strategy::{CoordinationStrategy, CoordinationStrategyFactory, StepResult};
 pub mod coordinator {
     pub use super::DefaultCoordinator;
 }

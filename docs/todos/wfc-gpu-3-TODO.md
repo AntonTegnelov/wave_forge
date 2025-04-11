@@ -97,9 +97,9 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
 - [ ] **Add Algorithm Coordination Strategies**:
 
-  - [ ] **Create coordination strategy interface**:
-    - [ ] `wfc-gpu/src/coordination/strategy.rs` - Define coordination strategies
-    - [ ] `wfc-gpu/src/coordination/entropy.rs` - Add entropy coordination
+  - [x] **Create coordination strategy interface**:
+    - [x] `wfc-gpu/src/coordination/strategy.rs` - Define coordination strategies
+    - [x] `wfc-gpu/src/coordination/entropy.rs` - Add entropy coordination
 
   **Implementation Details**:
 
@@ -107,28 +107,28 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/coordination/mod.rs`:
 
-      - Formalize the `CoordinationStrategy` trait (currently just a placeholder on line 47)
-      - Update `WfcCoordinator` to leverage the strategy pattern
-      - Add new coordinator implementations using the strategy pattern
-      - Implement strategy factory methods
+      - [ ] Formalize the `CoordinationStrategy` trait (currently just a placeholder on line 47)
+      - [ ] Update `WfcCoordinator` to leverage the strategy pattern
+      - [ ] Add new coordinator implementations using the strategy pattern
+      - [ ] Implement strategy factory methods
 
     - `wfc-gpu/src/coordination/propagation.rs`:
 
-      - Update to use the new coordination strategy interfaces
-      - Implement specific strategy for propagation coordination
+      - [ ] Update to use the new coordination strategy interfaces
+      - [ ] Implement specific strategy for propagation coordination
 
     - `wfc-gpu/src/gpu/accelerator.rs`:
-      - Update to configure the right coordination strategy
-      - Add method to select coordination strategy
+      - [ ] Update to configure the right coordination strategy
+      - [ ] Add method to select coordination strategy
 
   - **New files**:
 
-    - `wfc-gpu/src/coordination/strategy.rs` - Core coordination strategy interfaces
-    - `wfc-gpu/src/coordination/entropy.rs` - Entropy-specific coordination
+    - [x] `wfc-gpu/src/coordination/strategy.rs` - Core coordination strategy interfaces
+    - [x] `wfc-gpu/src/coordination/entropy.rs` - Entropy-specific coordination
 
   - **Dependencies**:
-    - Must be implemented after entropy and propagation strategies are completed
-    - Coordination strategies should compose existing strategies rather than duplicate logic
+    - [ ] Must be implemented after entropy and propagation strategies are completed
+    - [ ] Coordination strategies should compose existing strategies rather than duplicate logic
 
 ## 2. Enhance Shader Component System
 
@@ -150,40 +150,40 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/shader/shaders/components/registry.json`:
 
-      - Expand to include explicit dependencies between components
-      - Add version fields for all components
-      - Add GPU capability requirements
+      - [ ] Expand to include explicit dependencies between components
+      - [ ] Add version fields for all components
+      - [ ] Add GPU capability requirements
 
     - `wfc-gpu/src/shader/shader_registry.rs`:
 
-      - Update to parse and validate enhanced component metadata
-      - Add dependency resolution and version checks
-      - Modify component loading to handle nested structure
+      - [ ] Update to parse and validate enhanced component metadata
+      - [ ] Add dependency resolution and version checks
+      - [ ] Modify component loading to handle nested structure
 
     - `wfc-gpu/src/shader/shader_compiler.rs`:
 
-      - Update to assemble modular components based on dependencies
-      - Add support for conditional compilation based on features
-      - Ensure robust error reporting for missing dependencies
+      - [ ] Update to assemble modular components based on dependencies
+      - [ ] Add support for conditional compilation based on features
+      - [ ] Ensure robust error reporting for missing dependencies
 
     - `wfc-gpu/src/shader/shaders.rs`:
 
-      - Update shader loading code to work with the enhanced component system
-      - Add versioning support for shader components
+      - [ ] Update shader loading code to work with the enhanced component system
+      - [ ] Add versioning support for shader components
 
     - `wfc-gpu/build.rs`:
-      - Update build process to validate shader component dependencies
-      - Add component validation during build
+      - [ ] Update build process to validate shader component dependencies
+      - [ ] Add component validation during build
 
   - **New files**:
 
-    - Multiple new WGSL component files in specialized subdirectories:
-      - `wfc-gpu/src/shader/shaders/components/entropy/`
-      - `wfc-gpu/src/shader/shaders/components/propagation/`
-      - `wfc-gpu/src/shader/shaders/components/entropy/shannon.wgsl`, etc.
+    - [ ] Multiple new WGSL component files in specialized subdirectories:
+      - [ ] `wfc-gpu/src/shader/shaders/components/entropy/`
+      - [ ] `wfc-gpu/src/shader/shaders/components/propagation/`
+      - [ ] `wfc-gpu/src/shader/shaders/components/entropy/shannon.wgsl`, etc.
 
   - **Dependencies**:
-    - Must be coordinated with algorithm strategy implementations to ensure shader components match algorithm implementations
+    - [ ] Must be coordinated with algorithm strategy implementations to ensure shader components match algorithm implementations
 
 - [ ] **Implement comprehensive feature detection**:
 
@@ -202,30 +202,30 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/gpu/backend.rs`:
 
-      - Enhance feature detection and reporting
-      - Add methods to query specific capability groups
-      - Update to report comprehensive feature information
+      - [ ] Enhance feature detection and reporting
+      - [ ] Add methods to query specific capability groups
+      - [ ] Update to report comprehensive feature information
 
     - `wfc-gpu/src/shader/shader_compiler.rs`:
 
-      - Update to use feature flags during shader compilation
-      - Add conditional path selection based on available features
-      - Implement fallback mechanism for missing features
+      - [ ] Update to use feature flags during shader compilation
+      - [ ] Add conditional path selection based on available features
+      - [ ] Implement fallback mechanism for missing features
 
     - `wfc-gpu/src/gpu/accelerator.rs`:
-      - Update initialization to detect and configure for hardware capabilities
-      - Add adaptive behavior based on detected features
+      - [ ] Update initialization to detect and configure for hardware capabilities
+      - [ ] Add adaptive behavior based on detected features
 
   - **New files/directories**:
 
-    - `wfc-gpu/src/gpu/features/` - New directory
-    - `wfc-gpu/src/gpu/features/mod.rs` - Feature detection system
-    - `wfc-gpu/src/gpu/features/atomics.rs` - Atomics support
-    - `wfc-gpu/src/gpu/features/workgroups.rs` - Workgroup capabilities
+    - [ ] `wfc-gpu/src/gpu/features/` - New directory
+    - [ ] `wfc-gpu/src/gpu/features/mod.rs` - Feature detection system
+    - [ ] `wfc-gpu/src/gpu/features/atomics.rs` - Atomics support
+    - [ ] `wfc-gpu/src/gpu/features/workgroups.rs` - Workgroup capabilities
 
   - **Dependencies**:
-    - Must be implemented before shader optimizations
-    - Requires coordination with backend changes
+    - [ ] Must be implemented before shader optimizations
+    - [ ] Requires coordination with backend changes
 
 - [ ] **Build advanced shader optimization system**:
 
@@ -243,26 +243,26 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/build.rs`:
 
-      - Enhance to run shader optimization during build
-      - Add validation step for shader components
-      - Generate optimized variants for common configurations
-      - Add proper error reporting during build
+      - [ ] Enhance to run shader optimization during build
+      - [ ] Add validation step for shader components
+      - [ ] Generate optimized variants for common configurations
+      - [ ] Add proper error reporting during build
 
     - `wfc-gpu/src/shader/shaders.rs`:
-      - Update to load optimized shader variants
-      - Add fallback mechanism for missing variants
-      - Improve error reporting for shader loading
+      - [ ] Update to load optimized shader variants
+      - [ ] Add fallback mechanism for missing variants
+      - [ ] Improve error reporting for shader loading
 
   - **New files/directories**:
 
-    - `wfc-gpu/tools/` - New directory for build tools
-    - `wfc-gpu/tools/shader_optimizer.rs` - Optimization tool
-    - `wfc-gpu/tools/shader_validator.rs` - Validation tool
-    - `wfc-gpu/src/shader/shaders/variants/` - Directory for generated shader variants
+    - [ ] `wfc-gpu/tools/` - New directory for build tools
+    - [ ] `wfc-gpu/tools/shader_optimizer.rs` - Optimization tool
+    - [ ] `wfc-gpu/tools/shader_validator.rs` - Validation tool
+    - [ ] `wfc-gpu/src/shader/shaders/variants/` - Directory for generated shader variants
 
   - **Dependencies**:
-    - Requires feature detection system to be implemented first
-    - Optimization should happen after shader component system is enhanced
+    - [ ] Requires feature detection system to be implemented first
+    - [ ] Optimization should happen after shader component system is enhanced
 
 ## 3. Decouple Error Handling and Recovery
 
@@ -284,32 +284,32 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/utils/error_recovery.rs` (21KB, 583 lines):
 
-      - Extract types to dedicated module files
-      - Move `GpuError` enum to `error/gpu_error.rs`
-      - Move recovery logic to strategy-based implementation
-      - Update to use the Strategy pattern
+      - [ ] Extract types to dedicated module files
+      - [ ] Move `GpuError` enum to `error/gpu_error.rs`
+      - [ ] Move recovery logic to strategy-based implementation
+      - [ ] Update to use the Strategy pattern
 
     - `wfc-gpu/src/lib.rs`:
 
-      - Update module declarations and re-exports
-      - Add the new error module to the module tree
+      - [ ] Update module declarations and re-exports
+      - [ ] Add the new error module to the module tree
 
     - Files with error handling code (e.g., `gpu/accelerator.rs`, `propagator/gpu_constraint_propagator.rs`, `entropy/calculator.rs`):
-      - Update to use the new error types
-      - Replace direct error handling with strategy-based recovery
+      - [ ] Update to use the new error types
+      - [ ] Replace direct error handling with strategy-based recovery
 
   - **New files/directories**:
 
-    - `wfc-gpu/src/utils/error/` - New directory
-    - `wfc-gpu/src/utils/error/mod.rs` - Main error module
-    - `wfc-gpu/src/utils/error/gpu_error.rs` - GPU-specific errors
-    - `wfc-gpu/src/utils/error/io_error.rs` - I/O and resource errors
-    - `wfc-gpu/src/utils/error_recovery/mod.rs` - Refactored from existing file
-    - `wfc-gpu/src/utils/error_recovery/strategies.rs` - Recovery strategies
+    - [ ] `wfc-gpu/src/utils/error/` - New directory
+    - [ ] `wfc-gpu/src/utils/error/mod.rs` - Main error module
+    - [ ] `wfc-gpu/src/utils/error/gpu_error.rs` - GPU-specific errors
+    - [ ] `wfc-gpu/src/utils/error/io_error.rs` - I/O and resource errors
+    - [ ] `wfc-gpu/src/utils/error_recovery/mod.rs` - Refactored from existing file
+    - [ ] `wfc-gpu/src/utils/error_recovery/strategies.rs` - Recovery strategies
 
   - **Dependencies**:
-    - Error handling changes should be made before other major refactoring
-    - All other modules will need to be updated to use the new error types
+    - [ ] Error handling changes should be made before other major refactoring
+    - [ ] All other modules will need to be updated to use the new error types
 
 - [ ] **Enhance error reporting**:
 
@@ -328,25 +328,25 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/utils/error_recovery.rs` and/or new `error` module files:
 
-      - Add context fields to error types (location, state info)
-      - Add helper methods for diagnostic reporting
-      - Implement user-defined recovery hooks
+      - [ ] Add context fields to error types (location, state info)
+      - [ ] Add helper methods for diagnostic reporting
+      - [ ] Implement user-defined recovery hooks
 
     - Error-producing code (most files):
 
-      - Update error creation to include context information
-      - Use consistent error mapping conventions
-      - Capture relevant state information at error sites
+      - [ ] Update error creation to include context information
+      - [ ] Use consistent error mapping conventions
+      - [ ] Capture relevant state information at error sites
 
     - `wfc-gpu/src/gpu/accelerator.rs`:
-      - Add methods for registering user-defined recovery hooks
-      - Improve error reporting to application code
+      - [ ] Add methods for registering user-defined recovery hooks
+      - [ ] Improve error reporting to application code
 
   - **Specific inconsistencies to address**:
-    - In `entropy/calculator.rs`, `From<GpuError> for CoreEntropyError` conversion uses different mapping than in other files
-    - `gpu/accelerator.rs` uses both `GpuError` and `WfcError` for similar failures
-    - `propagator/gpu_constraint_propagator.rs` uses custom error conversions
-    - `utils/error_recovery.rs` inconsistently handles buffers across error types
+    - [ ] In `entropy/calculator.rs`, `From<GpuError> for CoreEntropyError` conversion uses different mapping than in other files
+    - [ ] `gpu/accelerator.rs` uses both `GpuError` and `WfcError` for similar failures
+    - [ ] `propagator/gpu_constraint_propagator.rs` uses custom error conversions
+    - [ ] `utils/error_recovery.rs` inconsistently handles buffers across error types
 
 ## 4. Hardware Abstraction Improvements
 
@@ -367,31 +367,31 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/gpu/backend.rs` (17KB, 516 lines):
 
-      - Extract interface to separate file
-      - Move WGPU implementation to separate file
-      - Add capability negotiation system
-      - Remove direct wgpu dependencies from interface
+      - [ ] Extract interface to separate file
+      - [ ] Move WGPU implementation to separate file
+      - [ ] Add capability negotiation system
+      - [ ] Remove direct wgpu dependencies from interface
 
     - `wfc-gpu/src/lib.rs`:
 
-      - Update module declarations for backend
-      - Update re-exports for backend types
+      - [ ] Update module declarations for backend
+      - [ ] Update re-exports for backend types
 
     - `wfc-gpu/src/gpu/accelerator.rs`:
-      - Update to use backend abstraction for device creation
-      - Add checks for required capabilities
-      - Add adaptive behavior based on capabilities
+      - [ ] Update to use backend abstraction for device creation
+      - [ ] Add checks for required capabilities
+      - [ ] Add adaptive behavior based on capabilities
 
   - **New files/directories**:
 
-    - `wfc-gpu/src/gpu/backend/` - New directory
-    - `wfc-gpu/src/gpu/backend/mod.rs` - Main backend module with traits
-    - `wfc-gpu/src/gpu/backend/wgpu.rs` - WGPU implementation
-    - `wfc-gpu/src/gpu/backend/mock.rs` - Mock implementation for testing
+    - [ ] `wfc-gpu/src/gpu/backend/` - New directory
+    - [ ] `wfc-gpu/src/gpu/backend/mod.rs` - Main backend module with traits
+    - [ ] `wfc-gpu/src/gpu/backend/wgpu.rs` - WGPU implementation
+    - [ ] `wfc-gpu/src/gpu/backend/mock.rs` - Mock implementation for testing
 
   - **Dependencies**:
-    - Should be implemented alongside or after feature detection
-    - Will significantly impact many other modules that currently use wgpu directly
+    - [ ] Should be implemented alongside or after feature detection
+    - [ ] Will significantly impact many other modules that currently use wgpu directly
 
 ## 5. Testing and Documentation
 
@@ -413,14 +413,14 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/tests.rs` (~7.9KB, ~229 lines):
 
-      - Refactor into multiple files with focused tests
-      - Add tests for new components and strategies
-      - Add error handling testing
+      - [ ] Refactor into multiple files with focused tests
+      - [ ] Add tests for new components and strategies
+      - [ ] Add error handling testing
 
     - `wfc-gpu/src/test_utils.rs`:
-      - Enhance with mock implementations
-      - Add test helpers for strategy testing
-      - Add fixtures for common test cases
+      - [ ] Enhance with mock implementations
+      - [ ] Add test helpers for strategy testing
+      - [ ] Add fixtures for common test cases
 
 - [ ] **Update documentation**:
 
@@ -437,10 +437,10 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
   **Implementation Details**:
 
   - **Files to modify**:
-    - Code documentation in most files
-    - Update inline documentation to reflect new architecture
+    - [ ] Code documentation in most files
+    - [ ] Update inline documentation to reflect new architecture
   - **New files**:
-    - Architecture and usage documentation files
+    - [ ] Architecture and usage documentation files
 
 ## 6. Public API Refactoring
 
@@ -463,9 +463,9 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
   - **Files to modify**:
     - `wfc-gpu/src/lib.rs`:
-      - Update all module declarations as specified above
-      - Adjust pub use statements to only expose the intended public API
-      - Ensure backward compatibility with existing client code
+      - [ ] Update all module declarations as specified above
+      - [ ] Adjust pub use statements to only expose the intended public API
+      - [ ] Ensure backward compatibility with existing client code
 
 - [ ] **Adjust pub use statements in lib.rs**:
 
@@ -484,9 +484,9 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
   - **Files to modify**:
     - `wfc-gpu/src/lib.rs`:
-      - Audit all `pub use` statements against the desired public API
-      - Remove any that expose internal implementation details
-      - Add `#[doc(hidden)]` to types that must remain public for technical reasons but shouldn't be in public docs
+      - [ ] Audit all `pub use` statements against the desired public API
+      - [ ] Remove any that expose internal implementation details
+      - [ ] Add `#[doc(hidden)]` to types that must remain public for technical reasons but shouldn't be in public docs
 
 - [ ] **Restrict Visibility within Individual Modules**:
 
@@ -525,12 +525,21 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
   - **Files to modify**:
     - All source files in the `wfc-gpu` module
     - For each file:
-      - Audit all `pub` declarations
-      - Change to `pub(crate)` for implementation details
-      - Keep public only types/functions intended for the public API
-      - Ensure changes maintain backward compatibility with existing code
+      - [ ] Audit all `pub` declarations
+      - [ ] Change to `pub(crate)` for implementation details
+      - [ ] Keep public only types/functions intended for the public API
+      - [ ] Ensure changes maintain backward compatibility with existing code
 
-- [x] **Add Public API Design Documentation**:
+- [ ] **Create public API documentation**:
+
+  - [ ] **Create public API documentation**:
+    - [ ] `wfc-gpu/docs/public_api.md` - Document the public API design and usage
+    - [ ] Add examples of proper API usage
+  - [ ] **Update existing documentation**:
+    - [ ] Update docstrings to reflect the new public/private distinction
+    - [ ] Mark internal-use-only APIs with appropriate documentation annotations
+
+- [ ] **Add Public API Design Documentation**:
 
   - [ ] **Create public API documentation**:
     - [ ] `wfc-gpu/docs/public_api.md` - Document the public API design and usage
