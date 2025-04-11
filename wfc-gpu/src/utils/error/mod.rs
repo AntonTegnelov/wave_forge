@@ -143,6 +143,168 @@ impl WfcError {
             solution
         )
     }
+
+    /// Returns a user-friendly recovery action suggestion
+    ///
+    /// This method suggests concrete actions that user code can take to
+    /// recover from or respond to the error.
+    pub fn suggested_action(&self) -> RecoveryAction {
+        match self {
+            WfcError::Gpu(err) => {
+                match err.severity() {
+                    ErrorSeverity::Recoverable => {
+                        // For recoverable GPU errors, suggest appropriate actions
+                        if err.to_string().contains("timeout") {
+                            RecoveryAction::Retry
+                        } else if err.to_string().contains("device lost") {
+                            RecoveryAction::ReportError
+                        } else if err.to_string().contains("contradiction") {
+                            RecoveryAction::UseAlternative
+                        } else {
+                            RecoveryAction::RetryWithModifiedParams
+                        }
+                    }
+                    ErrorSeverity::Warning => RecoveryAction::Retry,
+                    ErrorSeverity::Fatal => RecoveryAction::ReportError,
+                }
+            }
+            WfcError::Io(err) => match err.severity() {
+                ErrorSeverity::Recoverable => RecoveryAction::Retry,
+                _ => RecoveryAction::ReportError,
+            },
+            WfcError::Algorithm(_) => RecoveryAction::UseAlternative,
+            WfcError::Validation(_) => RecoveryAction::RetryWithModifiedParams,
+            WfcError::Configuration(_) => RecoveryAction::RetryWithModifiedParams,
+            WfcError::Other(_) => RecoveryAction::ReportError,
+        }
+    }
+
+    /// Returns true if this error is expected during normal operation
+    ///
+    /// Some errors, like WFC contradictions, are expected parts of the algorithm.
+    /// This helper method helps distinguish between expected errors and true failures.
+    pub fn is_expected(&self) -> bool {
+        match self {
+            WfcError::Gpu(err) => {
+                matches!(err, GpuError::ContradictionDetected { .. })
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns true if this error suggests the operation should be retried
+    pub fn should_retry(&self) -> bool {
+        matches!(
+            self.suggested_action(),
+            RecoveryAction::Retry | RecoveryAction::RetryWithModifiedParams
+        )
+    }
+
+    /// Returns true if this error suggests using an alternative approach
+    pub fn should_use_alternative(&self) -> bool {
+        matches!(self.suggested_action(), RecoveryAction::UseAlternative)
+    }
+
+    /// Returns true if the application should continue with reduced quality
+    pub fn should_reduce_quality(&self) -> bool {
+        matches!(self.suggested_action(), RecoveryAction::ReduceQuality)
+    }
+
+    /// Extract GPU-specific error details if this is a GPU error
+    pub fn gpu_error(&self) -> Option<&GpuError> {
+        match self {
+            WfcError::Gpu(err) => Some(err),
+            _ => None,
+        }
+    }
+
+    /// Extract I/O-specific error details if this is an I/O error
+    pub fn io_error(&self) -> Option<&IoError> {
+        match self {
+            WfcError::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+
+    /// Returns a more detailed description of actions user code can take to handle this error
+    pub fn recovery_instructions(&self) -> String {
+        match self.suggested_action() {
+            RecoveryAction::Retry => format!(
+                "This error is potentially transient. Retry the operation.\n\
+                Consider implementing an exponential backoff strategy if retrying multiple times."
+            ),
+            RecoveryAction::RetryWithModifiedParams => {
+                let mut instructions =
+                    String::from("Retry the operation with adjusted parameters:\n");
+
+                match self {
+                    WfcError::Gpu(err) => {
+                        if err.to_string().contains("memory")
+                            || err.to_string().contains("allocation")
+                        {
+                            instructions.push_str(
+                                "- Reduce grid size or complexity\n\
+                                 - Consider using subgrid processing\n\
+                                 - Check for memory leaks in your application",
+                            );
+                        } else {
+                            instructions.push_str(
+                                "- Adjust timeouts or buffer sizes\n\
+                                 - Consider simplifying the workload\n\
+                                 - Check GPU driver status",
+                            );
+                        }
+                    }
+                    WfcError::Configuration(msg) => {
+                        instructions.push_str(
+                            "- Review configuration parameters\n\
+                             - Check for incompatible settings\n\
+                             - Consider using default values",
+                        );
+                    }
+                    WfcError::Validation(msg) => {
+                        instructions.push_str(
+                            "- Validate input data before passing to the algorithm\n\
+                             - Check value ranges and input format\n\
+                             - Ensure all required fields are populated",
+                        );
+                    }
+                    _ => {
+                        instructions.push_str(
+                            "- Review operation parameters\n\
+                             - Check logs for additional details\n\
+                             - Consider using alternative approaches",
+                        );
+                    }
+                }
+
+                instructions
+            }
+            RecoveryAction::UseAlternative => format!(
+                "Consider an alternative approach:\n\
+                - If this is a contradiction in WFC, try different starting constraints\n\
+                - If algorithm-specific, consider a different algorithm variant\n\
+                - For GPU-specific issues, consider CPU fallback if available"
+            ),
+            RecoveryAction::ReduceQuality => format!(
+                "Continue with reduced quality or functionality:\n\
+                - Reduce grid resolution or detail level\n\
+                - Simplify ruleset or constraints\n\
+                - Disable advanced features"
+            ),
+            RecoveryAction::ReportError => format!(
+                "This error requires intervention:\n\
+                - Log detailed error information\n\
+                - Check system requirements and GPU compatibility\n\
+                - Report the issue if it persists"
+            ),
+            RecoveryAction::NoAction => format!(
+                "No recovery action is possible:\n\
+                - Operation cannot continue\n\
+                - Review logs and error details for diagnostic information"
+            ),
+        }
+    }
 }
 
 impl ErrorWithContext for WfcError {
@@ -286,4 +448,21 @@ macro_rules! error_report {
         use $crate::utils::error::ErrorWithContext;
         $error.diagnostic_report()
     }};
+}
+
+/// Represents possible user-friendly recovery actions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryAction {
+    /// Retry the operation that failed
+    Retry,
+    /// Retry with modified parameters
+    RetryWithModifiedParams,
+    /// Use an alternative approach
+    UseAlternative,
+    /// Reduce functionality or quality to proceed
+    ReduceQuality,
+    /// Report the error and seek assistance
+    ReportError,
+    /// No action is possible - operation cannot continue
+    NoAction,
 }

@@ -314,12 +314,12 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
 - [ ] **Enhance error reporting**:
 
-  - [ ] **Improve diagnostic information**:
-    - [ ] Add location context to errors
-    - [ ] Capture GPU state for debugging
-    - [ ] Add suggested solutions to common errors
+  - [x] **Improve diagnostic information**:
+    - [x] Add location context to errors
+    - [x] Capture GPU state for debugging
+    - [x] Add suggested solutions to common errors
   - [ ] **Update error interfaces**:
-    - [ ] Make errors more actionable by user code
+    - [x] Make errors more actionable by user code
     - [ ] Ensure consistent error types across the library
     - [ ] Add recovery hooks for user-defined recovery logic
 
@@ -329,8 +329,8 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - `wfc-gpu/src/utils/error_recovery.rs` and/or new `error` module files:
 
-      - [ ] Add context fields to error types (location, state info)
-      - [ ] Add helper methods for diagnostic reporting
+      - [x] Add context fields to error types (location, state info)
+      - [x] Add helper methods for diagnostic reporting
       - [ ] Implement user-defined recovery hooks
 
     - Error-producing code (most files):
