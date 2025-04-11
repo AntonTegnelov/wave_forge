@@ -183,7 +183,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
       - [x] `wfc-gpu/src/shader/shaders/components/entropy/shannon.wgsl`, etc.
 
   - **Dependencies**:
-    - [ ] Must be coordinated with algorithm strategy implementations to ensure shader components match algorithm implementations
+    - [x] Must be coordinated with algorithm strategy implementations to ensure shader components match algorithm implementations
 
 - [x] **Create dedicated feature detection files**:
 
@@ -225,8 +225,8 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - [ ] `wfc-gpu/src/gpu/features/workgroups.rs` - Workgroup capabilities
 
   - **Dependencies**:
-    - [ ] Must be implemented before shader optimizations
-    - [ ] Requires coordination with backend changes
+    - [x] Must be implemented before shader optimizations
+    - [x] Requires coordination with backend changes
 
 - [ ] **Build advanced shader optimization system**:
 
@@ -548,3 +548,14 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
   - [ ] **Update existing documentation**:
     - [ ] Update docstrings to reflect the new public/private distinction
     - [ ] Mark internal-use-only APIs with appropriate documentation annotations
+
+- [x] **Implement comprehensive feature detection**:
+
+  - [x] **Create dedicated feature detection files**:
+    - [x] `wfc-gpu/src/gpu/features/mod.rs` - Feature detection system
+    - [x] `wfc-gpu/src/gpu/features/atomics.rs` - Atomics support detection
+    - [x] `wfc-gpu/src/gpu/features/workgroups.rs` - Workgroup capabilities
+  - [x] **Enhance shader compilation with feature flags**:
+    - [x] Modify `shader/shader_compiler.rs` to use feature detection
+    - [x] Add conditional compilation in shaders based on features
+    - [x] Implement fallback paths for less capable hardware
