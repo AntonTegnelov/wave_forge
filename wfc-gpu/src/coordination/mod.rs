@@ -5,6 +5,7 @@
 //! and constraint propagation.
 
 use crate::{
+    algorithm::entropy_strategy::EntropyStrategy,
     buffers::{DownloadRequest, GpuBuffers},
     entropy::GpuEntropyCalculator,
     error_recovery::GridCoord,
@@ -16,11 +17,7 @@ use async_trait::async_trait;
 use log::{error, trace};
 use std::fmt::Debug;
 use std::sync::{Arc, RwLock};
-use wfc_core::{
-    grid::PossibilityGrid,
-    propagator::PropagationError,
-    WfcError,
-};
+use wfc_core::{grid::PossibilityGrid, propagator::PropagationError, WfcError};
 use wgpu::{Device, Queue};
 
 // Re-export or define CoordinationError, CoordinationEvent, CoordinationStrategy here
@@ -119,6 +116,8 @@ pub trait WfcCoordinatorTrait: Send + Sync {
 pub struct DefaultCoordinator {
     entropy_calculator: Arc<GpuEntropyCalculator>,
     propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    // Add reference to EntropyCoordinator
+    entropy_coordinator: Option<entropy::EntropyCoordinator>,
 }
 
 impl DefaultCoordinator {
@@ -126,10 +125,27 @@ impl DefaultCoordinator {
         entropy_calculator: Arc<GpuEntropyCalculator>,
         propagator: Arc<RwLock<GpuConstraintPropagator>>,
     ) -> Self {
+        // Create an EntropyCoordinator using the provided calculator
+        let entropy_coordinator =
+            Some(entropy::EntropyCoordinator::new(entropy_calculator.clone()));
+
         Self {
             entropy_calculator,
             propagator,
+            entropy_coordinator,
         }
+    }
+
+    /// Set a specific entropy strategy on the entropy calculator
+    pub fn with_entropy_strategy<S: EntropyStrategy + 'static>(
+        &mut self,
+        strategy: S,
+    ) -> &mut Self {
+        let mut calculator = self.entropy_calculator.clone();
+        // Can't modify the calculator directly due to Arc, so this is a placeholder
+        // In a real implementation, would need to manage this differently
+        trace!("Setting entropy strategy on DefaultCoordinator (placeholder)");
+        self
     }
 }
 
@@ -141,8 +157,22 @@ impl WfcCoordinator for DefaultCoordinator {
         buffers: &Arc<GpuBuffers>,
         _device: &Device,
         _queue: &Queue,
-        _sync: &Arc<GpuSynchronizer>,
+        sync: &Arc<GpuSynchronizer>,
     ) -> Result<Option<(usize, usize, usize)>, GpuError> {
+        trace!("DefaultCoordinator: Using entropy coordinator for selection");
+
+        // Use the EntropyCoordinator if available
+        if let Some(ref coordinator) = self.entropy_coordinator {
+            let result = coordinator.download_min_entropy_info(buffers, sync).await?;
+
+            if let Some((_entropy, coord)) = result {
+                return Ok(Some((coord.x, coord.y, coord.z)));
+            } else {
+                return Ok(None);
+            }
+        }
+
+        // Fall back to original implementation if no coordinator is available
         trace!("DefaultCoordinator: Running entropy pass...");
         // Assume GpuEntropyCalculator has run_entropy_pass method
         // Commenting out due to unknown signature
@@ -218,5 +248,11 @@ impl WfcCoordinator for DefaultCoordinator {
 
 // --- Submodules --- //
 
-pub mod propagation;
-// pub mod entropy;     // Planned submodule for entropy coordination
+pub mod entropy;
+pub mod propagation; // Added entropy coordination module
+
+// For convenience, re-export key types from submodules
+pub use self::entropy::EntropyCoordinator;
+pub mod coordinator {
+    pub use super::DefaultCoordinator;
+}

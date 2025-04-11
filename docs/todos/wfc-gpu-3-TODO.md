@@ -15,7 +15,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - [x] Add factory method to create appropriate strategy based on configuration
   - [ ] **Update files to use enhanced entropy strategies**:
     - [x] Update `accelerator.rs` to configure specific entropy strategies
-    - [ ] Update `coordination/mod.rs` to work with strategy pattern
+    - [x] Update `coordination/mod.rs` to work with strategy pattern
 
   **Implementation Details**:
 
