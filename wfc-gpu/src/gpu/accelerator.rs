@@ -941,8 +941,8 @@ impl GpuAccelerator {
     /// `&mut Self` for method chaining
     pub fn register_recovery_hook<P, F>(&mut self, predicate: P, hook: F) -> &mut Self
     where
-        P: Fn(&WfcError) -> bool + Send + Sync + 'static,
-        F: Fn(&WfcError) -> Option<RecoveryAction> + Send + Sync + 'static,
+        P: Fn(&wfc_core::WfcError) -> bool + Send + Sync + 'static,
+        F: Fn(&wfc_core::WfcError) -> Option<RecoveryAction> + Send + Sync + 'static,
     {
         let mut hooks = self
             .instance
@@ -951,7 +951,7 @@ impl GpuAccelerator {
             .recovery_hooks
             .write()
             .unwrap();
-        hooks.register(predicate, hook);
+        hooks.register_for_core_errors(predicate, hook);
         info!("Registered custom recovery hook");
         self
     }
@@ -1051,9 +1051,14 @@ impl GpuAccelerator {
     /// # Returns
     ///
     /// `Option<RecoveryAction>` if a hook was able to handle the error
-    pub(crate) fn try_handle_error(&self, error: &WfcError) -> Option<RecoveryAction> {
+    pub(crate) fn try_handle_error(&self, error: &wfc_core::WfcError) -> Option<RecoveryAction> {
         let hooks = self.instance.read().unwrap().recovery_hooks.read().unwrap();
-        hooks.try_handle(error)
+
+        // Convert the core error to our local error type
+        let local_error = crate::utils::error::WfcError::from_core_error(error);
+
+        // Try to handle the error with registered hooks
+        hooks.try_handle(&local_error)
     }
 }
 

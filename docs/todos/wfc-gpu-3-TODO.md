@@ -312,13 +312,13 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - [ ] Error handling changes should be made before other major refactoring
     - [ ] All other modules will need to be updated to use the new error types
 
-- [ ] **Enhance error reporting**:
+- [x] **Enhance error reporting**:
 
   - [x] **Improve diagnostic information**:
     - [x] Add location context to errors
     - [x] Capture GPU state for debugging
     - [x] Add suggested solutions to common errors
-  - [ ] **Update error interfaces**:
+  - [x] **Update error interfaces**:
     - [x] Make errors more actionable by user code
     - [x] Ensure consistent error types across the library
     - [x] Add recovery hooks for user-defined recovery logic

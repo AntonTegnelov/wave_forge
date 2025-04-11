@@ -305,6 +305,47 @@ impl WfcError {
             ),
         }
     }
+
+    /// Converts a wfc_core::WfcError into our local WfcError
+    pub fn from_core_error(error: &wfc_core::WfcError) -> Self {
+        match error {
+            wfc_core::WfcError::Contradiction(x, y, z) => {
+                Self::Algorithm(format!("Contradiction found at ({}, {}, {})", x, y, z))
+            }
+            wfc_core::WfcError::GridError(msg) => Self::Validation(msg.clone()),
+            wfc_core::WfcError::ConfigurationError(msg) => Self::Configuration(msg.clone()),
+            wfc_core::WfcError::InternalError(msg) => Self::Other(msg.clone()),
+            wfc_core::WfcError::IncompleteCollapse => {
+                Self::Algorithm("WFC finished with incomplete collapse".to_string())
+            }
+            wfc_core::WfcError::TimeoutOrInfiniteLoop => {
+                Self::Algorithm("Potential infinite loop detected".to_string())
+            }
+            wfc_core::WfcError::TileSetError(err) => Self::Configuration(err.to_string()),
+            wfc_core::WfcError::Interrupted => Self::Other("WFC run interrupted".to_string()),
+            wfc_core::WfcError::Unknown => Self::Other("Unknown WFC error".to_string()),
+            wfc_core::WfcError::CheckpointError(msg) => {
+                Self::Io(IoError::other(msg.clone(), IoErrorContext::default()))
+            }
+            wfc_core::WfcError::WeightedChoiceError(err) => Self::Algorithm(err.to_string()),
+            wfc_core::WfcError::EntropyError(err) => Self::Algorithm(err.to_string()),
+            wfc_core::WfcError::MaxIterationsReached(max) => {
+                Self::Algorithm(format!("Maximum iterations ({}) reached", max))
+            }
+            wfc_core::WfcError::ShutdownSignalReceived => {
+                Self::Other("Shutdown signal received".to_string())
+            }
+            wfc_core::WfcError::PropagationError(err) => Self::Algorithm(err.to_string()),
+            wfc_core::WfcError::Propagation(err) => Self::Algorithm(err.to_string()),
+        }
+    }
+}
+
+// From implementation to allow automatic conversion
+impl From<wfc_core::WfcError> for WfcError {
+    fn from(error: wfc_core::WfcError) -> Self {
+        Self::from_core_error(&error)
+    }
 }
 
 impl ErrorWithContext for WfcError {
@@ -483,13 +524,55 @@ impl RecoveryHookRegistry {
         Self { hooks: Vec::new() }
     }
 
-    /// Register a hook that will be called for errors matching the predicate
+    /// Register a hook for specific error conditions.
+    ///
+    /// # Arguments
+    ///
+    /// * `predicate` - A function that determines if the hook applies to a given error
+    /// * `hook` - A function that returns a recovery action for the error
     pub fn register<P, F>(&mut self, predicate: P, hook: F)
     where
         P: Fn(&WfcError) -> bool + Send + Sync + 'static,
         F: Fn(&WfcError) -> Option<RecoveryAction> + Send + Sync + 'static,
     {
         self.hooks.push((Box::new(predicate), Box::new(hook)));
+    }
+
+    /// Register a hook for core WFC errors.
+    ///
+    /// # Arguments
+    ///
+    /// * `predicate` - A function that determines if the hook applies to a given error
+    /// * `hook` - A function that returns a recovery action for the error
+    pub fn register_for_core_errors<P, F>(&mut self, predicate: P, hook: F)
+    where
+        P: Fn(&wfc_core::WfcError) -> bool + Send + Sync + 'static,
+        F: Fn(&wfc_core::WfcError) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        // Create a wrapper that converts between error types
+        let wrapped_predicate = move |err: &WfcError| -> bool {
+            // This is a simplistic approach - in a real implementation, we would need
+            // a more sophisticated mapping between error types
+            if let Some(msg) = err.to_string().strip_prefix("Algorithm error: ") {
+                let dummy_err = wfc_core::WfcError::InternalError(msg.to_string());
+                predicate(&dummy_err)
+            } else {
+                false
+            }
+        };
+
+        let wrapped_hook = move |err: &WfcError| -> Option<RecoveryAction> {
+            // Again, simplified mapping between error types
+            if let Some(msg) = err.to_string().strip_prefix("Algorithm error: ") {
+                let dummy_err = wfc_core::WfcError::InternalError(msg.to_string());
+                hook(&dummy_err)
+            } else {
+                None
+            }
+        };
+
+        self.hooks
+            .push((Box::new(wrapped_predicate), Box::new(wrapped_hook)));
     }
 
     /// Register a hook specifically for GPU errors

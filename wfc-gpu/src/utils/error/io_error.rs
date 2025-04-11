@@ -154,6 +154,14 @@ pub enum IoError {
         msg: String,
         context: IoErrorContext,
     },
+
+    /// Create an error for file or resource loading failures
+    #[error("Resource error: {msg}")]
+    ResourceError {
+        kind: IoResourceType,
+        message: String,
+        context: IoErrorContext,
+    },
 }
 
 impl IoError {
@@ -212,6 +220,15 @@ impl IoError {
         }
     }
 
+    /// Create an error for file or resource loading failures
+    pub fn loading<S: Into<String>>(msg: S) -> Self {
+        Self::ResourceError {
+            kind: IoResourceType::File,
+            message: msg.into(),
+            context: IoErrorContext::default(),
+        }
+    }
+
     /// Get the context information for this error
     pub fn get_context(&self) -> &IoErrorContext {
         match self {
@@ -223,6 +240,7 @@ impl IoError {
             Self::ResourceNotAvailable { context, .. } => context,
             Self::MemoryError { context, .. } => context,
             Self::Other { context, .. } => context,
+            Self::ResourceError { context, .. } => context,
         }
     }
 }
@@ -238,6 +256,7 @@ impl ErrorWithContext for IoError {
             Self::ResourceNotAvailable { msg, context } => format!("{}: {}", context, msg),
             Self::MemoryError { msg, context } => format!("{}: {}", context, msg),
             Self::Other { msg, context } => format!("{}: {}", context, msg),
+            Self::ResourceError { msg, context, .. } => format!("{}: {}", context, msg),
         }
     }
 
@@ -398,6 +417,7 @@ impl ErrorWithContext for IoError {
                 )
                 .to_string(),
             ),
+            Self::ResourceError { msg, .. } => Some(msg.clone()),
         }
     }
 
@@ -420,6 +440,9 @@ impl ErrorWithContext for IoError {
 
             // Other errors are fatal by default
             Self::Other { .. } => ErrorSeverity::Fatal,
+
+            // Resource errors are fatal by default
+            Self::ResourceError { .. } => ErrorSeverity::Fatal,
         }
     }
 }

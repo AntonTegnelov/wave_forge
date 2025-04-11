@@ -122,6 +122,12 @@ impl GpuEntropyCalculator {
         self
     }
 
+    /// Sets a new entropy strategy (same as with_strategy but with a more consistent naming)
+    pub fn set_strategy_boxed(&mut self, strategy: Box<dyn EntropyStrategy>) -> &mut Self {
+        self.strategy = strategy;
+        self
+    }
+
     /// Asynchronous version of calculate_entropy that allows proper async/await patterns
     pub async fn calculate_entropy_async(
         &self,
