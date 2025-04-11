@@ -18,7 +18,6 @@ mod shaders;
 // --- Public Modules ---
 // These form the public API surface of the crate.
 pub mod accelerator;
-pub mod algorithm;
 pub mod buffers;
 pub mod coordination;
 pub mod debug_viz;
@@ -34,8 +33,10 @@ pub mod sync;
 pub use accelerator::GpuAccelerator;
 
 // Algorithm strategy types
-pub use algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory};
-pub use algorithm::propagator_strategy::{PropagationStrategy, PropagationStrategyFactory};
+pub use propagator::algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory};
+pub use propagator::algorithm::propagator_strategy::{
+    PropagationStrategy, PropagationStrategyFactory,
+};
 
 // Buffer related types
 pub use buffers::{DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults};

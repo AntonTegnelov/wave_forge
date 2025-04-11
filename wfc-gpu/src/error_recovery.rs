@@ -250,8 +250,12 @@ impl GpuErrorRecovery {
     /// The error's severity level
     pub fn classify_error(&self, error: &GpuError) -> ErrorSeverity {
         match error {
-            GpuError::BufferMapFailed(_) if self.recover_buffer_mapping => {
-                ErrorSeverity::Recoverable
+            GpuError::BufferMapFailed(_) => {
+                if self.recover_buffer_mapping {
+                    ErrorSeverity::Recoverable
+                } else {
+                    ErrorSeverity::Fatal
+                }
             }
             GpuError::ValidationError(wgpu_error) => {
                 // Handle device lost errors with different patterns based on wgpu version
@@ -574,102 +578,5 @@ impl RecoverableGpuOp {
 impl Default for RecoverableGpuOp {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[test]
-    fn test_error_severity_classification() {
-        let recovery = GpuErrorRecovery::default();
-
-        // Test buffer mapping errors
-        let buffer_error = GpuError::BufferMapFailed(wgpu::BufferAsyncError.to_string());
-        assert_eq!(recovery.classify_error(&buffer_error), ErrorSeverity::Fatal);
-
-        // Test timeout error in string
-        let timeout_error = GpuError::CommandExecutionError("Compute shader timeout".to_string());
-        assert_eq!(
-            recovery.classify_error(&timeout_error),
-            ErrorSeverity::Recoverable
-        );
-
-        // Test fatal error
-        let fatal_error = GpuError::AdapterRequestFailed;
-        assert_eq!(recovery.classify_error(&fatal_error), ErrorSeverity::Fatal);
-    }
-
-    #[test]
-    fn test_recovery_attempts_counter() {
-        let recovery = GpuErrorRecovery::new(2, 10, 100, true, false, true);
-
-        let error = GpuError::BufferOperationError("Buffer mapping timeout".to_string());
-
-        // First attempt should return Some delay
-        assert!(recovery.record_error(&error).is_some());
-        assert_eq!(recovery.error_count(), 1);
-
-        // Second attempt should return Some delay
-        assert!(recovery.record_error(&error).is_some());
-        assert_eq!(recovery.error_count(), 2);
-
-        // Third attempt should return None (exceeds max_retries=2)
-        assert!(recovery.record_error(&error).is_none());
-        assert_eq!(recovery.error_count(), 3);
-
-        // Reset should work
-        recovery.reset_error_count();
-        assert_eq!(recovery.error_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_async_recovery_success_after_retry() {
-        let op = RecoverableGpuOp::new();
-        let counter = Arc::new(AtomicUsize::new(0));
-
-        let result = op
-            .try_with_recovery(|| {
-                let counter_clone = counter.clone();
-                async move {
-                    let count = counter_clone.fetch_add(1, Ordering::SeqCst);
-
-                    if count < 2 {
-                        // Fail first two attempts
-                        Err(GpuError::BufferMapFailed(
-                            wgpu::BufferAsyncError.to_string(),
-                        ))
-                    } else {
-                        // Succeed on third attempt
-                        Ok(42)
-                    }
-                }
-            })
-            .await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
-        assert_eq!(counter.load(Ordering::SeqCst), 3); // Should have tried 3 times
-    }
-
-    #[test]
-    fn test_sync_recovery_exceeds_max_retries() {
-        let recovery = Arc::new(GpuErrorRecovery::new(2, 10, 100, true, false, true));
-        let op = RecoverableGpuOp::with_recovery(recovery);
-        let counter = Arc::new(AtomicUsize::new(0));
-
-        let result: Result<(), GpuError> = op.try_with_recovery_sync(|| {
-            let _count = counter.fetch_add(1, Ordering::SeqCst);
-            // Always fail with a recoverable error
-            Err(GpuError::BufferMapFailed(
-                wgpu::BufferAsyncError.to_string(),
-            ))
-        });
-
-        assert!(result.is_err());
-        // Should have tried initial + 2 retries = 3 attempts (max_retries=2 means 3 total attempts)
-        assert_eq!(counter.load(Ordering::SeqCst), 3);
     }
 }

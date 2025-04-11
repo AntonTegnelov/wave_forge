@@ -1,10 +1,10 @@
 //! Module responsible for coordinating entropy calculation and min-entropy cell selection.
 
 use crate::{
-    algorithm::entropy_strategy::EntropyStrategy,
-    buffers::{DownloadRequest, GpuBuffers},
+    buffers::GpuBuffers,
     entropy::GpuEntropyCalculator,
     error_recovery::{GpuError, GridCoord},
+    propagator::algorithm::entropy_strategy::EntropyStrategy,
     sync::GpuSynchronizer,
 };
 use log::trace;

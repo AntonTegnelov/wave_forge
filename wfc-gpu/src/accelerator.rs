@@ -1,6 +1,5 @@
 #![allow(clippy::redundant_field_names)]
 use crate::{
-    algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory},
     backend::{GpuBackend, WgpuBackend},
     buffers::{GpuBuffers, GpuParamsUniform},
     coordination::{
@@ -15,7 +14,8 @@ use crate::{
     entropy::GpuEntropyCalculator,
     error_recovery::{GpuError, GridCoord},
     pipeline::ComputePipelines,
-    propagator::GpuConstraintPropagator,
+    propagator::algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory},
+    propagator::algorithm::propagator_strategy::{PropagationStrategy, PropagationStrategyFactory},
     subgrid::SubgridConfig,
     sync::GpuSynchronizer,
 };
@@ -23,11 +23,13 @@ use anyhow::Error as AnyhowError;
 use log::{error, info, trace};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
+use wfc_core::propagator::PropagationError;
 use wfc_core::{
     adjacency::AdjacencyRules,
     entropy::{EntropyCalculator, EntropyHeuristicType as CoreEntropyHeuristicType},
     grid::{BoundaryCondition, PossibilityGrid},
     progress::ProgressInfo,
+    WfcError,
 };
 
 /// Grid definition info
