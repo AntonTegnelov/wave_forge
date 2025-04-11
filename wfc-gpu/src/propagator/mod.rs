@@ -7,4 +7,8 @@ mod utils;
 pub use utils::*;
 
 // Propagation strategies
-pub mod algorithm;
+mod propagator_strategy;
+pub use propagator_strategy::{
+    AdaptivePropagationStrategy, DirectPropagationStrategy, PropagationStrategy,
+    PropagationStrategyFactory, SubgridPropagationStrategy,
+};

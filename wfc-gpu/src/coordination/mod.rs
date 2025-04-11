@@ -5,10 +5,14 @@
 //! and constraint propagation.
 
 use crate::{
-    buffers::GpuBuffers, debug_viz::DebugVisualizer, entropy::GpuEntropyCalculator,
-    error_recovery::GpuError, error_recovery::GridCoord,
-    propagator::algorithm::entropy_strategy::EntropyStrategy, propagator::GpuConstraintPropagator,
-    sync::GpuSynchronizer, GpuAccelerator,
+    buffers::GpuBuffers,
+    debug_viz::DebugVisualizer,
+    entropy::{EntropyStrategy, GpuEntropyCalculator},
+    error_recovery::GpuError,
+    error_recovery::GridCoord,
+    propagator::GpuConstraintPropagator,
+    sync::GpuSynchronizer,
+    GpuAccelerator,
 };
 use async_trait::async_trait;
 use log::{error, trace};

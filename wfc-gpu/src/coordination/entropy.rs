@@ -1,19 +1,20 @@
 //! Module responsible for coordinating entropy calculation and min-entropy cell selection.
 
 use crate::{
-    buffers::GpuBuffers,
-    entropy::GpuEntropyCalculator,
+    buffers::{DownloadRequest, GpuBuffers},
+    entropy::{EntropyStrategy, GpuEntropyCalculator},
     error_recovery::{GpuError, GridCoord},
-    propagator::algorithm::entropy_strategy::EntropyStrategy,
     sync::GpuSynchronizer,
 };
 use log::trace;
 use std::sync::Arc;
+use wfc_core::entropy::EntropyCalculator;
 use wfc_core::grid::EntropyGrid;
 
 /// Coordinator for entropy calculation and cell selection.
 /// This type manages the process of calculating entropy and selecting
 /// the next cell to collapse using the current entropy strategy.
+#[derive(Debug, Clone)]
 pub struct EntropyCoordinator {
     entropy_calculator: Arc<GpuEntropyCalculator>,
 }

@@ -30,10 +30,8 @@ pub mod sync;
 pub use accelerator::GpuAccelerator;
 
 // Algorithm strategy types
-pub use propagator::algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory};
-pub use propagator::algorithm::propagator_strategy::{
-    PropagationStrategy, PropagationStrategyFactory,
-};
+pub use entropy::{EntropyStrategy, EntropyStrategyFactory};
+pub use propagator::propagator_strategy::{PropagationStrategy, PropagationStrategyFactory};
 
 // Buffer related types
 pub use buffers::{DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults};
