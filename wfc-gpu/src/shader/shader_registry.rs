@@ -8,6 +8,7 @@
 
 use super::shaders::ShaderType;
 use crate::GpuError; // Or define a specific RegistryError
+use semver::Version;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -26,6 +27,12 @@ pub enum ShaderComponent {
     Utils,
     Coords,
     Rules,
+    // Entropy-specific components
+    ShannonEntropy,
+    CountBasedEntropy,
+    // Propagation-specific components
+    DirectPropagation,
+    SubgridPropagation,
     // Feature-specific components (add as needed)
     // Atomics,
     // NoAtomics,
@@ -46,18 +53,51 @@ pub enum RegistryError {
     InvalidComponentName(String),
     #[error("Cyclic dependency detected involving component: {0}")]
     CyclicDependency(String),
+    #[error("Version parsing error for component {0}: {1}")]
+    VersionParseError(String, String),
+    #[error("GPU capability not available: {0}")]
+    MissingCapability(String),
+    #[error("Missing required feature for component {0}: {1}")]
+    MissingFeature(String, String),
 }
 
-/// Placeholder for metadata about a single shader component.
-#[derive(Debug, Clone, Deserialize)] // Add Deserialize
+/// Metadata about a single shader component.
+#[derive(Debug, Clone, Deserialize)]
 pub struct ComponentInfo {
     path: String,
+    #[serde(default)] // Use default empty string if missing
+    version: String,
     #[serde(default)] // Use default empty vec if missing
     dependencies: Vec<String>, // Load dependencies as Strings first
     #[serde(default)]
     required_features: HashSet<String>,
     #[serde(default)]
     provided_features: HashSet<String>,
+    #[serde(default)]
+    gpu_capabilities: HashSet<String>,
+}
+
+impl ComponentInfo {
+    /// Get the version as a semver::Version
+    pub fn get_version(&self) -> Result<Version, RegistryError> {
+        if self.version.is_empty() {
+            // Default to 0.1.0 if no version specified
+            return Ok(Version::new(0, 1, 0));
+        }
+
+        Version::parse(&self.version)
+            .map_err(|e| RegistryError::VersionParseError(self.path.clone(), e.to_string()))
+    }
+
+    /// Check if this component requires a specific GPU capability
+    pub fn requires_capability(&self, capability: &str) -> bool {
+        self.gpu_capabilities.contains(capability)
+    }
+
+    /// Get all GPU capabilities required by this component
+    pub fn required_capabilities(&self) -> &HashSet<String> {
+        &self.gpu_capabilities
+    }
 }
 
 // Struct to directly deserialize the registry.json file
@@ -106,6 +146,10 @@ impl ShaderRegistry {
                 "WorklistManagement" => ShaderComponent::WorklistManagement,
                 "ContradictionDetection" => ShaderComponent::ContradictionDetection,
                 "CellCollapse" => ShaderComponent::CellCollapse,
+                "ShannonEntropy" => ShaderComponent::ShannonEntropy,
+                "CountBasedEntropy" => ShaderComponent::CountBasedEntropy,
+                "DirectPropagation" => ShaderComponent::DirectPropagation,
+                "SubgridPropagation" => ShaderComponent::SubgridPropagation,
                 // Add other components as they are defined
                 _ => return Err(RegistryError::InvalidComponentName(name)),
             };
@@ -113,8 +157,8 @@ impl ShaderRegistry {
             name_to_component.insert(name, component_enum);
         }
 
-        // TODO: Validate dependencies (check if all referenced components exist and detect cycles)
-        // Self::validate_dependencies(&components, &name_to_component)?;
+        // Validate dependencies (check if all referenced components exist and detect cycles)
+        Self::validate_dependencies(&components, &name_to_component)?;
 
         Ok(Self {
             components,
@@ -133,37 +177,124 @@ impl ShaderRegistry {
     }
 
     /// Determines the list of components required for a specific shader variant.
-    ///
-    /// TODO: This needs a proper implementation using component dependencies and feature flags.
     pub fn get_shader_variant_components(
         &self,
         shader_type: ShaderType,
         features: &[&str],
     ) -> Result<Vec<ShaderComponent>, RegistryError> {
         println!(
-            "Getting components for {:?} with features {:?} (using placeholder logic)",
+            "Getting components for {:?} with features {:?}",
             shader_type, features
         );
-        // Placeholder: Use the static helper function for now.
-        // This should be replaced with dependency resolution logic.
-        let basic_components = get_required_components(shader_type);
-        Ok(basic_components)
-        // TODO: Implement dependency resolution logic here:
-        // 1. Start with base components for shader_type (needs definition)
-        // 2. Use a worklist and a set of included components
-        // 3. While worklist is not empty:
-        //    - Pop component C
-        //    - If C is already included, continue
-        //    - Check if C's required_features are met by `features`
-        //    - Add C to included set
-        //    - Get dependencies of C from self.components
-        //    - Push dependencies onto worklist
-        // 4. Return included set (potentially ordered)
-        // Err(RegistryError::LoadError { path: "Not Implemented".to_string(), source: "Dependency resolution not implemented".into() })
+
+        // Start with base components for shader type
+        let base_components = match shader_type {
+            ShaderType::Entropy => vec![ShaderComponent::EntropyCalculation],
+            ShaderType::Propagation => {
+                // Check if "subgrid" feature is requested, otherwise use direct propagation
+                if features.contains(&"subgrid") {
+                    vec![ShaderComponent::SubgridPropagation]
+                } else {
+                    vec![ShaderComponent::DirectPropagation]
+                }
+            }
+        };
+
+        // Convert features to a HashSet for easier lookup
+        let feature_set: HashSet<&str> = features.iter().copied().collect();
+
+        // Use a worklist algorithm to resolve all dependencies
+        let mut worklist = base_components.clone();
+        let mut included = HashSet::new();
+        let mut provided_features = HashSet::new();
+
+        while let Some(component) = worklist.pop() {
+            // Skip if already processed
+            if included.contains(&component) {
+                continue;
+            }
+
+            // Get component info
+            let info = self.get_component_info(component)?;
+
+            // Check if all required features are available
+            for req_feature in &info.required_features {
+                if !provided_features.contains(req_feature)
+                    && !feature_set.contains(req_feature.as_str())
+                {
+                    return Err(RegistryError::MissingFeature(
+                        format!("{:?}", component),
+                        req_feature.clone(),
+                    ));
+                }
+            }
+
+            // Add component's provided features
+            provided_features.extend(info.provided_features.iter().cloned());
+
+            // Mark as included
+            included.insert(component);
+
+            // Add dependencies to worklist
+            for dep_name in &info.dependencies {
+                if let Some(&dep_enum) = self.name_to_component.get(dep_name) {
+                    if !included.contains(&dep_enum) {
+                        worklist.push(dep_enum);
+                    }
+                } else {
+                    return Err(RegistryError::DependencyError(dep_name.clone()));
+                }
+            }
+        }
+
+        // Convert the included set to a vector in dependency order
+        // (components with no dependencies first)
+        let mut result = Vec::new();
+        let mut remaining = included.clone();
+
+        // First add components with no dependencies
+        for component in &included {
+            let info = self.get_component_info(*component)?;
+            if info.dependencies.is_empty() {
+                result.push(*component);
+                remaining.remove(component);
+            }
+        }
+
+        // Then add components whose dependencies are already in the result
+        while !remaining.is_empty() {
+            let mut added_any = false;
+            let components_to_check: Vec<_> = remaining.iter().copied().collect();
+
+            for component in components_to_check {
+                let info = self.get_component_info(component)?;
+                let deps_satisfied = info.dependencies.iter().all(|dep_name| {
+                    if let Some(&dep_enum) = self.name_to_component.get(dep_name) {
+                        !remaining.contains(&dep_enum)
+                    } else {
+                        false
+                    }
+                });
+
+                if deps_satisfied {
+                    result.push(component);
+                    remaining.remove(&component);
+                    added_any = true;
+                }
+            }
+
+            if !added_any && !remaining.is_empty() {
+                // This should never happen if we validated dependencies correctly
+                return Err(RegistryError::DependencyError(
+                    "Unexpected dependency resolution failure".to_string(),
+                ));
+            }
+        }
+
+        Ok(result)
     }
 
-    // --- Helper for dependency validation (TODO) ---
-    /*
+    /// Validate that all component dependencies exist and there are no cycles
     fn validate_dependencies(
         components: &HashMap<ShaderComponent, ComponentInfo>,
         name_to_component: &HashMap<String, ShaderComponent>,
@@ -171,7 +302,13 @@ impl ShaderRegistry {
         for (component_enum, info) in components {
             let mut visited = HashSet::new();
             let mut path = vec![*component_enum];
-            Self::check_cyclic_deps(components, name_to_component, *component_enum, &mut visited, &mut path)?;
+            Self::check_cyclic_deps(
+                components,
+                name_to_component,
+                *component_enum,
+                &mut visited,
+                &mut path,
+            )?;
             for dep_name in &info.dependencies {
                 if !name_to_component.contains_key(dep_name) {
                     return Err(RegistryError::DependencyError(format!(
@@ -184,6 +321,7 @@ impl ShaderRegistry {
         Ok(())
     }
 
+    /// Check for cyclic dependencies
     fn check_cyclic_deps(
         components: &HashMap<ShaderComponent, ComponentInfo>,
         name_to_component: &HashMap<String, ShaderComponent>,
@@ -198,12 +336,22 @@ impl ShaderRegistry {
                     if path.contains(&dep_enum) {
                         // Cycle detected
                         path.push(dep_enum); // Add the repeated node to show the cycle
-                        let cycle_str = path.iter().map(|c| format!("{:?}", c)).collect::<Vec<_>>().join(" -> ");
+                        let cycle_str = path
+                            .iter()
+                            .map(|c| format!("{:?}", c))
+                            .collect::<Vec<_>>()
+                            .join(" -> ");
                         return Err(RegistryError::CyclicDependency(cycle_str));
                     }
                     if !visited.contains(&dep_enum) {
                         path.push(dep_enum);
-                        Self::check_cyclic_deps(components, name_to_component, dep_enum, visited, path)?;
+                        Self::check_cyclic_deps(
+                            components,
+                            name_to_component,
+                            dep_enum,
+                            visited,
+                            path,
+                        )?;
                         path.pop();
                     }
                 }
@@ -212,7 +360,23 @@ impl ShaderRegistry {
         }
         Ok(())
     }
-    */
+
+    /// Check if the required GPU capabilities are available
+    pub fn validate_capabilities(
+        &self,
+        components: &[ShaderComponent],
+        available_capabilities: &HashSet<String>,
+    ) -> Result<(), RegistryError> {
+        for &component in components {
+            let info = self.get_component_info(component)?;
+            for capability in &info.gpu_capabilities {
+                if !available_capabilities.contains(capability) {
+                    return Err(RegistryError::MissingCapability(capability.clone()));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Placeholder function to get the source code path for a component.
@@ -233,11 +397,20 @@ pub fn get_component_path(component: ShaderComponent) -> &'static str {
         ShaderComponent::Utils => "src/shader/shaders/utils.wgsl",
         ShaderComponent::Coords => "src/shader/shaders/coords.wgsl",
         ShaderComponent::Rules => "src/shader/shaders/rules.wgsl",
+        ShaderComponent::ShannonEntropy => "src/shader/shaders/components/entropy/shannon.wgsl",
+        ShaderComponent::CountBasedEntropy => {
+            "src/shader/shaders/components/entropy/count_based.wgsl"
+        }
+        ShaderComponent::DirectPropagation => {
+            "src/shader/shaders/components/propagation/direct.wgsl"
+        }
+        ShaderComponent::SubgridPropagation => {
+            "src/shader/shaders/components/propagation/subgrid.wgsl"
+        }
     }
 }
 
 /// Placeholder function to define the required components for a given shader type.
-/// TODO: This logic will be more sophisticated, considering features, in the ShaderRegistry::get_shader_variant_components method.
 pub fn get_required_components(shader_type: ShaderType) -> Vec<ShaderComponent> {
     match shader_type {
         ShaderType::Entropy => vec![
@@ -248,21 +421,18 @@ pub fn get_required_components(shader_type: ShaderType) -> Vec<ShaderComponent> 
             // TODO: Add feature components like Atomics/NoAtomics based on config
         ],
         ShaderType::Propagation => vec![
-            ShaderComponent::Utils,
-            ShaderComponent::Coords,
-            ShaderComponent::Rules,
+            ShaderComponent::Utils,  // Basic utilities
+            ShaderComponent::Coords, // Coordinate calculations
+            ShaderComponent::Rules,  // Adjacency rule evaluation
             ShaderComponent::WorklistManagement,
             ShaderComponent::ContradictionDetection,
-            // ShaderComponent::CellCollapse, // Collapse might be separate shader or part of host logic
-            // TODO: Add feature components
+            ShaderComponent::DirectPropagation, // Default is direct propagation
         ],
     }
 }
 
-// Map RegistryError to GpuError if needed
 impl From<RegistryError> for GpuError {
     fn from(err: RegistryError) -> Self {
-        // Choose an appropriate GpuError variant, e.g., ShaderError or a new one
-        GpuError::ShaderError(format!("Shader Registry Error: {}", err))
+        GpuError::ShaderError(err.to_string())
     }
 }

@@ -139,10 +139,10 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - [x] `shader/shaders/components/entropy/count_based.wgsl` - Count-based entropy
     - [x] `shader/shaders/components/propagation/direct.wgsl` - Direct propagation
     - [x] `shader/shaders/components/propagation/subgrid.wgsl` - Subgrid propagation
-  - [ ] **Update registry to track component dependencies**:
-    - [ ] Enhance component metadata to include explicit dependencies
-    - [ ] Add version information to components
-    - [ ] Add capability requirements to components
+  - [x] **Update registry to track component dependencies**:
+    - [x] Enhance component metadata to include explicit dependencies
+    - [x] Add version information to components
+    - [x] Add capability requirements to components
 
   **Implementation Details**:
 
