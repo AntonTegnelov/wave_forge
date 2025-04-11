@@ -296,8 +296,8 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
       - [x] Add the new error module to the module tree
 
     - Files with error handling code (e.g., `gpu/accelerator.rs`, `propagator/gpu_constraint_propagator.rs`, `entropy/calculator.rs`):
-      - [ ] Update to use the new error types
-      - [ ] Replace direct error handling with strategy-based recovery
+      - [x] Update to use the new error types
+      - [x] Replace direct error handling with strategy-based recovery
 
   - **New files/directories**:
 
@@ -335,9 +335,9 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
     - Error-producing code (most files):
 
-      - [ ] Update error creation to include context information
-      - [ ] Use consistent error mapping conventions
-      - [ ] Capture relevant state information at error sites
+      - [x] Update error creation to include context information
+      - [x] Use consistent error mapping conventions
+      - [x] Capture relevant state information at error sites
 
     - `wfc-gpu/src/gpu/accelerator.rs`:
       - [x] Add methods for registering user-defined recovery hooks
