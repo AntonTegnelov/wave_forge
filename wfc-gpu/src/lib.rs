@@ -35,6 +35,7 @@ pub use accelerator::GpuAccelerator;
 
 // Algorithm strategy types
 pub use algorithm::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory};
+pub use algorithm::propagator_strategy::{PropagationStrategy, PropagationStrategyFactory};
 
 // Buffer related types
 pub use buffers::{DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults};

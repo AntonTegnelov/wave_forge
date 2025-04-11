@@ -4,16 +4,16 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
 ## 1. Complete Algorithm Strategy Pattern Implementation
 
-- [ ] **Enhance Entropy Calculation Strategies**:
+- [x] **Enhance Entropy Calculation Strategies**:
 
-  - [ ] **Create strategy interface for entropy calculations**:
+  - [x] **Create strategy interface for entropy calculations**:
     - [x] `wfc-gpu/src/algorithm/entropy_strategy.rs` - Define core entropy calculation strategies
     - [x] Extract existing entropy implementations into separate strategy classes
     - [x] Implement Shannon, Count, CountSimple, and WeightedCount strategies
-  - [ ] **Modify entropy calculator to use strategies**:
+  - [x] **Modify entropy calculator to use strategies**:
     - [x] Update `entropy.rs` to delegate to specific strategies
     - [x] Add factory method to create appropriate strategy based on configuration
-  - [ ] **Update files to use enhanced entropy strategies**:
+  - [x] **Update files to use enhanced entropy strategies**:
     - [x] Update `accelerator.rs` to configure specific entropy strategies
     - [x] Update `coordination/mod.rs` to work with strategy pattern
 
@@ -50,13 +50,13 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 - [ ] **Complete Propagation Strategy Pattern**:
 
   - [ ] **Create dedicated strategy files**:
-    - [ ] `wfc-gpu/src/algorithm/propagator_strategy.rs` - Core propagation strategies
+    - [x] `wfc-gpu/src/algorithm/propagator_strategy.rs` - Core propagation strategies
     - [ ] Extract direct propagation logic from `propagator.rs`
     - [ ] Extract subgrid propagation logic into its own strategy
   - [ ] **Implement additional propagation strategies**:
-    - [ ] `DirectPropagationStrategy` - Standard propagation approach
-    - [ ] `SubgridPropagationStrategy` - For large grid optimization
-    - [ ] `AdaptivePropagationStrategy` - Selects optimal strategy based on grid size
+    - [x] `DirectPropagationStrategy` - Standard propagation approach
+    - [x] `SubgridPropagationStrategy` - For large grid optimization
+    - [x] `AdaptivePropagationStrategy` - Selects optimal strategy based on grid size
   - [ ] **Update propagator to use strategy pattern**:
     - [ ] Modify `propagator.rs` to delegate to strategies
     - [ ] Reduce file size by extracting strategy implementations
