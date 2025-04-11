@@ -1,8 +1,16 @@
 #![allow(clippy::redundant_field_names)]
+use std::{
+    fmt::Debug,
+    future::IntoFuture,
+    pin::Pin,
+    sync::{Arc, RwLock},
+};
+
 use super::{
     backend::{GpuBackend, WgpuBackend},
     sync::GpuSynchronizer,
 };
+
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     coordination::{
@@ -20,18 +28,18 @@ use crate::{
     utils::error_recovery::{GpuError, GridCoord},
     utils::subgrid::SubgridConfig,
 };
+
 use anyhow::Error as AnyhowError;
 use log::{error, info, trace};
-use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use wfc_core::propagator::PropagationError;
 use wfc_core::{
-    adjacency::AdjacencyRules,
     entropy::{EntropyCalculator, EntropyHeuristicType as CoreEntropyHeuristicType},
     grid::PossibilityGrid,
-    progress::ProgressInfo,
-    BoundaryCondition, WfcError,
+    BoundaryCondition, ProgressInfo, WfcError,
 };
+use wfc_rules::AdjacencyRules;
+use wgpu::Features;
 
 /// Grid definition info
 #[derive(Debug, Clone)]
@@ -221,10 +229,37 @@ impl GpuAccelerator {
             params,
         );
 
+        // Choose an appropriate propagation strategy based on grid size and subgrid configuration
         if let Some(ref config) = subgrid_config {
-            propagator_concrete =
-                propagator_concrete.with_parallel_subgrid_processing(config.clone());
+            if initial_grid.width * initial_grid.height * initial_grid.depth > 4096 {
+                // For large grids with subgrid config, use subgrid propagation
+                propagator_concrete = propagator_concrete.with_subgrid_propagation(
+                    1000, // Default max iterations
+                    config.max_subgrid_size as u32,
+                );
+                info!(
+                    "Using subgrid propagation strategy with subgrid size {}",
+                    config.max_subgrid_size
+                );
+            } else {
+                // For smaller grids, even with subgrid config, use direct propagation
+                propagator_concrete = propagator_concrete.with_direct_propagation(1000);
+                info!("Using direct propagation strategy (grid too small for subgrid)");
+            }
+        } else if initial_grid.width * initial_grid.height * initial_grid.depth > 4096 {
+            // For large grids without explicit subgrid config, use adaptive strategy
+            propagator_concrete = propagator_concrete.with_adaptive_propagation(
+                1000, // Default max iterations
+                16,   // Default subgrid size
+                4096, // Default threshold
+            );
+            info!("Using adaptive propagation strategy");
+        } else {
+            // For smaller grids, use direct propagation
+            propagator_concrete = propagator_concrete.with_direct_propagation(1000);
+            info!("Using direct propagation strategy");
         }
+
         let propagator = Arc::new(RwLock::new(propagator_concrete));
 
         let mut entropy_calculator_concrete = GpuEntropyCalculator::new(
@@ -612,16 +647,121 @@ impl GpuAccelerator {
     /// Lower-level method to set a boxed strategy
     pub fn with_entropy_strategy_boxed(&mut self, strategy: Box<dyn EntropyStrategy>) -> &mut Self {
         let mut instance = self.instance.write().unwrap();
-
-        // Get a mutable reference to the entropy calculator
-        let entropy_calculator = Arc::get_mut(&mut instance.entropy_calculator)
-            .expect("Could not get exclusive access to entropy calculator");
-
-        // Set the new strategy
-        entropy_calculator.with_strategy(strategy);
-
-        info!("Entropy strategy configured using factory.");
+        instance.entropy_calculator.set_strategy_boxed(strategy);
         self
+    }
+
+    /// Sets the propagation strategy to use.
+    ///
+    /// # Arguments
+    ///
+    /// * `strategy` - The propagation strategy to use.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_propagation_strategy<S: PropagationStrategy + 'static>(
+        &mut self,
+        strategy: S,
+    ) -> &mut Self {
+        let mut instance = self.instance.write().unwrap();
+        let boxed_strategy = Box::new(strategy) as Box<dyn PropagationStrategy>;
+
+        let mut propagator = instance.propagator.write().unwrap();
+        *propagator = propagator.clone().with_strategy(boxed_strategy);
+
+        self
+    }
+
+    /// Sets the propagation strategy to use.
+    ///
+    /// # Arguments
+    ///
+    /// * `strategy` - Boxed propagation strategy.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_propagation_strategy_boxed(
+        &mut self,
+        strategy: Box<dyn PropagationStrategy>,
+    ) -> &mut Self {
+        let mut instance = self.instance.write().unwrap();
+        let mut propagator = instance.propagator.write().unwrap();
+        *propagator = propagator.clone().with_strategy(strategy);
+        self
+    }
+
+    /// Sets the propagation strategy to direct propagation.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_iterations` - The maximum number of propagation iterations.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_direct_propagation(&mut self, max_iterations: u32) -> &mut Self {
+        let strategy = PropagationStrategyFactory::create_direct(max_iterations);
+        self.with_propagation_strategy_boxed(strategy)
+    }
+
+    /// Sets the propagation strategy to subgrid propagation.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_iterations` - The maximum number of propagation iterations.
+    /// * `subgrid_size` - The size of each subgrid.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_subgrid_propagation(
+        &mut self,
+        max_iterations: u32,
+        subgrid_size: u32,
+    ) -> &mut Self {
+        let strategy = PropagationStrategyFactory::create_subgrid(max_iterations, subgrid_size);
+        self.with_propagation_strategy_boxed(strategy)
+    }
+
+    /// Sets the propagation strategy to adaptive propagation.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_iterations` - The maximum number of propagation iterations.
+    /// * `subgrid_size` - The size of each subgrid.
+    /// * `size_threshold` - The grid size threshold for switching strategies.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_adaptive_propagation(
+        &mut self,
+        max_iterations: u32,
+        subgrid_size: u32,
+        size_threshold: usize,
+    ) -> &mut Self {
+        let strategy = PropagationStrategyFactory::create_adaptive(
+            max_iterations,
+            subgrid_size,
+            size_threshold,
+        );
+        self.with_propagation_strategy_boxed(strategy)
+    }
+
+    /// Sets the propagation strategy based on the grid size.
+    ///
+    /// Automatically selects the best strategy based on the grid size.
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining.
+    pub fn with_auto_propagation(&mut self) -> &mut Self {
+        let dims = self.grid_definition().dims;
+        let grid = PossibilityGrid::new(dims.0, dims.1, dims.2, self.grid_definition().num_tiles);
+        let strategy = PropagationStrategyFactory::create_for_grid(&grid);
+        self.with_propagation_strategy_boxed(strategy)
     }
 }
 

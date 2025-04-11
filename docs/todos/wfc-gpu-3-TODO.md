@@ -48,20 +48,20 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
     - ~~`wfc-gpu/src/algorithm/mod.rs` - Register submodules~~ (Now at `wfc-gpu/src/entropy/mod.rs`)
     - ~~`wfc-gpu/src/algorithm/entropy_strategy.rs` - Create strategy interface and implementations~~ (Now at `wfc-gpu/src/entropy/entropy_strategy.rs`)
 
-- [ ] **Complete Propagation Strategy Pattern**:
+- [x] **Complete Propagation Strategy Pattern**:
 
-  - [ ] **Create dedicated strategy files**:
+  - [x] **Create dedicated strategy files**:
     - [x] `wfc-gpu/src/propagator/propagator_strategy.rs` - Core propagation strategies
     - [x] Extract direct propagation logic from `propagator/gpu_constraint_propagator.rs`
     - [x] Extract subgrid propagation logic into its own strategy
-  - [ ] **Implement additional propagation strategies**:
+  - [x] **Implement additional propagation strategies**:
     - [x] `DirectPropagationStrategy` - Standard propagation approach
     - [x] `SubgridPropagationStrategy` - For large grid optimization
     - [x] `AdaptivePropagationStrategy` - Selects optimal strategy based on grid size
-  - [ ] **Update propagator to use strategy pattern**:
+  - [x] **Update propagator to use strategy pattern**:
     - [x] Modify `propagator/gpu_constraint_propagator.rs` to delegate to strategies
     - [x] Reduce file size by extracting strategy implementations
-    - [ ] Update strategy selection based on configuration
+    - [x] Update strategy selection based on configuration
 
   **Implementation Details**:
 
