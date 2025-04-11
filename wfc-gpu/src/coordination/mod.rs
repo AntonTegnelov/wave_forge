@@ -6,11 +6,11 @@
 
 use crate::{
     buffers::GpuBuffers,
-    debug_viz::DebugVisualizer,
     entropy::{EntropyStrategy, GpuEntropyCalculator},
-    error_recovery::{GpuError, GridCoord},
     gpu::sync::GpuSynchronizer,
     propagator::GpuConstraintPropagator,
+    utils::debug_viz::DebugVisualizer,
+    utils::error_recovery::{GpuError, GridCoord},
 };
 use async_trait::async_trait;
 use log::{error, trace};

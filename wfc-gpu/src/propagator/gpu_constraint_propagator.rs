@@ -1,9 +1,9 @@
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
-    debug_viz::DebugVisualizer,
     gpu::sync::GpuSynchronizer,
     shader::pipeline::ComputePipelines,
-    subgrid::{
+    utils::debug_viz::DebugVisualizer,
+    utils::subgrid::{
         divide_into_subgrids, extract_subgrid, merge_subgrids, SubgridConfig, SubgridRegion,
     },
 };

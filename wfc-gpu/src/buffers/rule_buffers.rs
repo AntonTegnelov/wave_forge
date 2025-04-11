@@ -4,7 +4,7 @@
 
 use crate::buffers::DynamicBufferConfig;
 use crate::buffers::GpuBuffers; // For GpuBuffers::create_buffer
-use crate::error_recovery::GpuError;
+use crate::utils::error_recovery::GpuError;
 use std::sync::Arc;
 use wfc_rules::AdjacencyRules;
 use wgpu::{util::DeviceExt, BufferUsages}; // Import DynamicBufferConfig

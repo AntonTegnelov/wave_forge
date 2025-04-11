@@ -3,7 +3,7 @@
 //! Module organizing different GPU buffer types used in WFC-GPU.
 
 // Imports
-use crate::error_recovery::GpuError;
+use crate::utils::error_recovery::GpuError;
 use bytemuck::{Pod, Zeroable};
 use futures::future::FusedFuture;
 use log::{debug, error, info, trace, warn};

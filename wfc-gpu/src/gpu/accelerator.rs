@@ -13,12 +13,12 @@ use crate::{
         },
         WfcCoordinator,
     },
-    debug_viz::{DebugVisualizationConfig, DebugVisualizer},
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator},
-    error_recovery::{GpuError, GridCoord},
     propagator::{GpuConstraintPropagator, PropagationStrategy, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
-    subgrid::SubgridConfig,
+    utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer},
+    utils::error_recovery::{GpuError, GridCoord},
+    utils::subgrid::SubgridConfig,
 };
 use anyhow::Error as AnyhowError;
 use log::{error, info, trace};

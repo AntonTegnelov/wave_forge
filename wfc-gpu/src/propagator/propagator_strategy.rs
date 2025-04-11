@@ -2,7 +2,11 @@
 //! This module provides different strategies for propagating constraints
 //! after a cell collapse in the Wave Function Collapse algorithm.
 
-use crate::{buffers::GpuBuffers, error_recovery::GridCoord, gpu::sync::GpuSynchronizer, GpuError};
+use crate::{
+    buffers::GpuBuffers,
+    gpu::sync::GpuSynchronizer,
+    utils::error_recovery::{GpuError, GridCoord},
+};
 use std::sync::Arc;
 use wfc_core::{grid::PossibilityGrid, propagator::PropagationError};
 

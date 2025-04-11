@@ -8,7 +8,6 @@
 
 // --- Private/Internal Modules ---
 // These are implementation details not part of the public API unless re-exported.
-mod error_recovery;
 pub mod gpu;
 pub mod shader; // New shader module that contains all shader-related functionality // New gpu module that contains all GPU-related functionality
 
@@ -16,10 +15,9 @@ pub mod shader; // New shader module that contains all shader-related functional
 // These form the public API surface of the crate.
 pub mod buffers;
 pub mod coordination;
-pub mod debug_viz;
 pub mod entropy;
 pub mod propagator;
-pub mod subgrid;
+pub mod utils; // New utils module that contains debug_viz, error_recovery, and subgrid
 
 // --- Public Re-exports --- //
 // Re-export key types for easier access by users of the crate.
@@ -36,8 +34,8 @@ pub use buffers::{DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadR
 
 // Configuration types
 pub use coordination::WfcCoordinator;
-pub use debug_viz::{DebugVisualizationConfig, DebugVisualizer, VisualizationType};
-pub use subgrid::SubgridConfig; // Coordination API
+pub use utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer, VisualizationType};
+pub use utils::subgrid::SubgridConfig; // Coordination API
 
 // Add re-exports for propagation coordination
 pub use coordination::propagation::{
@@ -45,7 +43,7 @@ pub use coordination::propagation::{
 };
 
 // Error type
-pub use error_recovery::GpuError;
+pub use utils::error_recovery::GpuError;
 
 // Re-export types from dependencies if they are part of the public API
 // (e.g., from wfc_core if needed for function signatures)
