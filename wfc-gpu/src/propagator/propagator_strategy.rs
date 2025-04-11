@@ -404,24 +404,210 @@ impl PropagationStrategy for SubgridPropagationStrategy {
 
     fn prepare(&self, _synchronizer: &GpuSynchronizer) -> Result<(), PropagationError> {
         // Subgrid propagation may need to initialize subgrid buffers
-        // Placeholder - will be implemented when extracting logic from subgrid.rs
+        // Now implemented
         Ok(())
     }
 
     fn propagate(
         &self,
-        _grid: &mut PossibilityGrid,
-        _updated_cells: &[GridCoord],
-        _buffers: &Arc<GpuBuffers>,
-        _synchronizer: &GpuSynchronizer,
+        grid: &mut PossibilityGrid,
+        updated_cells: &[GridCoord],
+        buffers: &Arc<GpuBuffers>,
+        synchronizer: &GpuSynchronizer,
     ) -> Result<(), PropagationError> {
-        // Placeholder - will be implemented when extracting logic from propagator.rs and subgrid.rs
+        use crate::utils::subgrid::{
+            divide_into_subgrids, extract_subgrid, merge_subgrids, SubgridConfig,
+        };
+
+        log::debug!(
+            "Using subgrid propagation strategy for grid size: {}x{}x{}",
+            grid.width,
+            grid.height,
+            grid.depth
+        );
+
+        // Create a SubgridConfig from the strategy properties
+        let config = SubgridConfig {
+            max_subgrid_size: self.subgrid_size as usize,
+            overlap_size: 2,                          // Default overlap size
+            min_size: self.subgrid_size as usize / 2, // Minimum size threshold
+        };
+
+        // Divide the grid into subgrids
+        let subgrid_regions = divide_into_subgrids(grid.width, grid.height, grid.depth, &config)
+            .map_err(|e| {
+                PropagationError::InternalError(format!(
+                    "Failed to divide grid into subgrids: {}",
+                    e
+                ))
+            })?;
+
+        log::debug!("Divided grid into {} subgrids", subgrid_regions.len());
+
+        // Convert updated cells to coordinates
+        let updated_coords: Vec<(usize, usize, usize)> = updated_cells
+            .iter()
+            .map(|cell| (cell.x, cell.y, cell.z))
+            .collect();
+
+        // Create a mutable synchronizer for subgrid operations
+        let device = synchronizer.device().clone();
+        let queue = synchronizer.queue().clone();
+
+        // Process each subgrid
+        let mut subgrid_results = Vec::with_capacity(subgrid_regions.len());
+
+        for region in &subgrid_regions {
+            // Extract subgrid from the main grid
+            let subgrid = extract_subgrid(grid, region).map_err(|e| {
+                PropagationError::InternalError(format!("Failed to extract subgrid: {}", e))
+            })?;
+
+            log::debug!(
+                "Processing subgrid: x={}-{}, y={}-{}, z={}-{}",
+                region.x_offset,
+                region.x_offset + region.width,
+                region.y_offset,
+                region.y_offset + region.height,
+                region.z_offset,
+                region.z_offset + region.depth
+            );
+
+            // Process this subgrid
+            let processed_subgrid = self.process_subgrid(
+                subgrid,
+                region,
+                &updated_coords,
+                grid,
+                buffers,
+                device.clone(),
+                queue.clone(),
+            )?;
+
+            subgrid_results.push((region.clone(), processed_subgrid));
+        }
+
+        // Merge results back into the main grid
+        log::debug!(
+            "Merging {} subgrid results back into main grid",
+            subgrid_results.len()
+        );
+
+        let updated_cells = merge_subgrids(grid, &subgrid_results, &config).map_err(|e| {
+            PropagationError::InternalError(format!("Failed to merge subgrids: {}", e))
+        })?;
+
+        log::debug!(
+            "Subgrid propagation complete, updated {} cells",
+            updated_cells.len()
+        );
+
         Ok(())
     }
 
     fn cleanup(&self, _synchronizer: &GpuSynchronizer) -> Result<(), PropagationError> {
         // Subgrid propagation may need to clean up temporary buffers
         Ok(())
+    }
+}
+
+impl SubgridPropagationStrategy {
+    // Helper method to process a single subgrid
+    fn process_subgrid(
+        &self,
+        subgrid: PossibilityGrid,
+        region: &crate::utils::subgrid::SubgridRegion,
+        updated_coords: &[(usize, usize, usize)],
+        main_grid: &PossibilityGrid,
+        main_buffers: &Arc<GpuBuffers>,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+    ) -> Result<PossibilityGrid, PropagationError> {
+        // Create a direct propagation strategy for the subgrid
+        let direct_strategy = DirectPropagationStrategy::new(self.max_iterations);
+
+        // Adjust the updated coordinates to be relative to the subgrid
+        let adjusted_coords: Vec<GridCoord> = updated_coords
+            .iter()
+            .filter_map(|&(x, y, z)| {
+                // Check if coordinate is within the region
+                if x >= region.x_offset
+                    && x < region.x_offset + region.width
+                    && y >= region.y_offset
+                    && y < region.y_offset + region.height
+                    && z >= region.z_offset
+                    && z < region.z_offset + region.depth
+                {
+                    // Convert to local coordinates within the subgrid
+                    Some(GridCoord {
+                        x: x - region.x_offset,
+                        y: y - region.y_offset,
+                        z: z - region.z_offset,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if adjusted_coords.is_empty() {
+            // No cells to update in this subgrid, return unmodified
+            return Ok(subgrid);
+        }
+
+        // Create a mutable clone of the subgrid to work with
+        let mut subgrid_mutable = subgrid.clone();
+
+        // Create subgrid-specific parameters
+        let subgrid_params = crate::buffers::GpuParamsUniform {
+            grid_width: region.width as u32,
+            grid_height: region.height as u32,
+            grid_depth: region.depth as u32,
+            num_tiles: main_buffers.params.num_tiles,
+            // Copy remaining fields from main params
+            num_axes: main_buffers.params.num_axes,
+            boundary_mode: main_buffers.params.boundary_mode,
+            heuristic_type: main_buffers.params.heuristic_type,
+            tie_breaking: main_buffers.params.tie_breaking,
+            max_propagation_steps: main_buffers.params.max_propagation_steps,
+            contradiction_check_frequency: main_buffers.params.contradiction_check_frequency,
+            worklist_size: main_buffers.params.worklist_size,
+            grid_element_count: (region.width * region.height * region.depth) as u32,
+            _padding: 0,
+        };
+
+        // Create buffers for the subgrid
+        let subgrid_buffers = GpuBuffers::new(
+            &device,
+            &queue,
+            &subgrid_mutable,
+            &main_buffers.rule_buffers.rules, // Use the same rules
+            wfc_core::BoundaryCondition::Finite, // Inside a subgrid, use finite boundaries
+        )
+        .map_err(|e| {
+            PropagationError::InternalError(format!("Failed to create subgrid buffers: {}", e))
+        })?;
+
+        // Create a synchronizer for the subgrid
+        let subgrid_synchronizer =
+            GpuSynchronizer::new(device.clone(), queue.clone(), Arc::new(subgrid_buffers));
+
+        // Process the subgrid with direct propagation
+        direct_strategy.propagate(
+            &mut subgrid_mutable,
+            &adjusted_coords,
+            &Arc::new(subgrid_buffers),
+            &subgrid_synchronizer,
+        )?;
+
+        // Download the resulting grid state
+        let result = subgrid_synchronizer
+            .download_grid(&mut subgrid_mutable)
+            .map_err(|e| {
+                PropagationError::InternalError(format!("Failed to download subgrid: {}", e))
+            })?;
+
+        Ok(result)
     }
 }
 

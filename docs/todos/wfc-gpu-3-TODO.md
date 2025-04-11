@@ -53,7 +53,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
   - [ ] **Create dedicated strategy files**:
     - [x] `wfc-gpu/src/propagator/propagator_strategy.rs` - Core propagation strategies
     - [x] Extract direct propagation logic from `propagator/gpu_constraint_propagator.rs`
-    - [ ] Extract subgrid propagation logic into its own strategy
+    - [x] Extract subgrid propagation logic into its own strategy
   - [ ] **Implement additional propagation strategies**:
     - [x] `DirectPropagationStrategy` - Standard propagation approach
     - [x] `SubgridPropagationStrategy` - For large grid optimization
