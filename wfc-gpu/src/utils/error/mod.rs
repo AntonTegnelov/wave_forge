@@ -466,3 +466,109 @@ pub enum RecoveryAction {
     /// No action is possible - operation cannot continue
     NoAction,
 }
+
+/// A type for user-defined recovery hooks that can be registered to handle specific errors
+pub type RecoveryHookFn = Box<dyn Fn(&WfcError) -> Option<RecoveryAction> + Send + Sync>;
+
+/// Registry for user-defined error recovery hooks
+#[derive(Default)]
+pub struct RecoveryHookRegistry {
+    /// Hooks registered for specific error types
+    hooks: Vec<(Box<dyn Fn(&WfcError) -> bool + Send + Sync>, RecoveryHookFn)>,
+}
+
+impl RecoveryHookRegistry {
+    /// Create a new empty registry
+    pub fn new() -> Self {
+        Self { hooks: Vec::new() }
+    }
+
+    /// Register a hook that will be called for errors matching the predicate
+    pub fn register<P, F>(&mut self, predicate: P, hook: F)
+    where
+        P: Fn(&WfcError) -> bool + Send + Sync + 'static,
+        F: Fn(&WfcError) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        self.hooks.push((Box::new(predicate), Box::new(hook)));
+    }
+
+    /// Register a hook specifically for GPU errors
+    pub fn register_for_gpu_errors<F>(&mut self, hook: F)
+    where
+        F: Fn(&GpuError) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        self.register(
+            |err| matches!(err, WfcError::Gpu(_)),
+            move |err| {
+                if let WfcError::Gpu(gpu_err) = err {
+                    hook(gpu_err)
+                } else {
+                    None
+                }
+            },
+        );
+    }
+
+    /// Register a hook for algorithm errors
+    pub fn register_for_algorithm_errors<F>(&mut self, hook: F)
+    where
+        F: Fn(&str) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        self.register(
+            |err| matches!(err, WfcError::Algorithm(_)),
+            move |err| {
+                if let WfcError::Algorithm(msg) = err {
+                    hook(msg)
+                } else {
+                    None
+                }
+            },
+        );
+    }
+
+    /// Register a hook for validation errors
+    pub fn register_for_validation_errors<F>(&mut self, hook: F)
+    where
+        F: Fn(&str) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        self.register(
+            |err| matches!(err, WfcError::Validation(_)),
+            move |err| {
+                if let WfcError::Validation(msg) = err {
+                    hook(msg)
+                } else {
+                    None
+                }
+            },
+        );
+    }
+
+    /// Register a hook for configuration errors
+    pub fn register_for_configuration_errors<F>(&mut self, hook: F)
+    where
+        F: Fn(&str) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        self.register(
+            |err| matches!(err, WfcError::Configuration(_)),
+            move |err| {
+                if let WfcError::Configuration(msg) = err {
+                    hook(msg)
+                } else {
+                    None
+                }
+            },
+        );
+    }
+
+    /// Try to handle an error with registered hooks
+    pub fn try_handle(&self, error: &WfcError) -> Option<RecoveryAction> {
+        for (predicate, hook) in &self.hooks {
+            if predicate(error) {
+                if let Some(action) = hook(error) {
+                    return Some(action);
+                }
+            }
+        }
+        None
+    }
+}

@@ -25,6 +25,7 @@ use crate::{
     propagator::{GpuConstraintPropagator, PropagationStrategy, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
     utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer},
+    utils::error::{gpu_error::GpuError as NewGpuError, RecoveryAction, RecoveryHookRegistry},
     utils::error_recovery::{GpuError, GridCoord},
     utils::subgrid::SubgridConfig,
 };
@@ -79,6 +80,7 @@ pub struct AcceleratorInstance {
     progress_callback:
         Option<Box<dyn FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync>>,
     debug_visualizer: Option<DebugVisualizer>,
+    recovery_hooks: Arc<RwLock<RecoveryHookRegistry>>,
 }
 
 // Custom Debug implementation to handle types that don't implement Debug
@@ -298,6 +300,7 @@ impl GpuAccelerator {
             subgrid_config,
             progress_callback: None,
             debug_visualizer: None,
+            recovery_hooks: Arc::new(RwLock::new(RecoveryHookRegistry::new())),
         };
 
         let accelerator = Self {
@@ -461,15 +464,69 @@ impl GpuAccelerator {
                     run_result.stats.contradictions += 1;
                     run_result.stats.iterations = iteration as usize;
                     if let Some(c) = coord {
-                        return Err(WfcError::Contradiction(c.x, c.y, c.z));
+                        let wfc_error = WfcError::Contradiction(c.x, c.y, c.z);
+
+                        // Try user-defined recovery hooks first
+                        if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                            info!(
+                                "User-defined recovery hook is handling contradiction: {:?}",
+                                recovery_action
+                            );
+                            match recovery_action {
+                                RecoveryAction::Retry => {
+                                    // Just continue to the next iteration
+                                    continue;
+                                }
+                                RecoveryAction::RetryWithModifiedParams => {
+                                    // Skip this cell and continue
+                                    continue;
+                                }
+                                RecoveryAction::UseAlternative => {
+                                    // Try a different cell
+                                    continue;
+                                }
+                                _ => {
+                                    // Other actions - default to returning the error
+                                    return Err(wfc_error);
+                                }
+                            }
+                        }
+
+                        return Err(wfc_error);
                     } else {
                         error!("Contradiction detected by GPU but location unknown.");
-                        return Err(WfcError::Interrupted);
+                        let wfc_error = WfcError::Interrupted;
+
+                        // Try user-defined recovery hooks
+                        if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                            info!("User-defined recovery hook is handling unknown contradiction: {:?}", recovery_action);
+                            match recovery_action {
+                                RecoveryAction::Retry => continue,
+                                _ => return Err(wfc_error),
+                            }
+                        }
+
+                        return Err(wfc_error);
                     }
                 }
                 Err(e) => {
                     error!("GPU error during entropy calculation: {}", e);
-                    return Err(WfcError::InternalError(e.to_string()));
+                    let wfc_error = WfcError::InternalError(e.to_string());
+
+                    // Try user-defined recovery hooks
+                    if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                        info!(
+                            "User-defined recovery hook is handling GPU error: {:?}",
+                            recovery_action
+                        );
+                        match recovery_action {
+                            RecoveryAction::Retry => continue,
+                            RecoveryAction::RetryWithModifiedParams => continue,
+                            _ => return Err(wfc_error),
+                        }
+                    }
+
+                    return Err(wfc_error);
                 }
             };
 
@@ -499,11 +556,41 @@ impl GpuAccelerator {
                     );
                     run_result.stats.contradictions += 1;
                     run_result.stats.iterations = iteration as usize;
-                    return Err(WfcError::Contradiction(x, y, z));
+
+                    let wfc_error = WfcError::Contradiction(x, y, z);
+
+                    // Try user-defined recovery hooks
+                    if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                        info!("User-defined recovery hook is handling propagation contradiction: {:?}", recovery_action);
+                        match recovery_action {
+                            RecoveryAction::Retry => continue,
+                            RecoveryAction::RetryWithModifiedParams => continue,
+                            RecoveryAction::UseAlternative => continue,
+                            _ => return Err(wfc_error),
+                        }
+                    }
+
+                    return Err(wfc_error);
                 }
                 Err(e) => {
                     error!("Propagation error: {}", e);
-                    return Err(WfcError::Propagation(e));
+
+                    let wfc_error = WfcError::Propagation(e);
+
+                    // Try user-defined recovery hooks
+                    if let Some(recovery_action) = self.try_handle_error(&wfc_error) {
+                        info!(
+                            "User-defined recovery hook is handling propagation error: {:?}",
+                            recovery_action
+                        );
+                        match recovery_action {
+                            RecoveryAction::Retry => continue,
+                            RecoveryAction::RetryWithModifiedParams => continue,
+                            _ => return Err(wfc_error),
+                        }
+                    }
+
+                    return Err(wfc_error);
                 }
             }
 
@@ -840,6 +927,133 @@ impl GpuAccelerator {
 
         trace!("Set adaptive coordination strategy based on grid size");
         self
+    }
+
+    /// Register a user-defined recovery hook for specific error types
+    ///
+    /// # Arguments
+    ///
+    /// * `predicate` - A function that determines if the hook should be applied to an error
+    /// * `hook` - A function that performs the recovery action
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining
+    pub fn register_recovery_hook<P, F>(&mut self, predicate: P, hook: F) -> &mut Self
+    where
+        P: Fn(&WfcError) -> bool + Send + Sync + 'static,
+        F: Fn(&WfcError) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        let mut hooks = self
+            .instance
+            .read()
+            .unwrap()
+            .recovery_hooks
+            .write()
+            .unwrap();
+        hooks.register(predicate, hook);
+        info!("Registered custom recovery hook");
+        self
+    }
+
+    /// Register a recovery hook specifically for GPU errors
+    ///
+    /// # Arguments
+    ///
+    /// * `hook` - A function that performs the recovery action for GPU errors
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining
+    pub fn register_gpu_error_hook<F>(&mut self, hook: F) -> &mut Self
+    where
+        F: Fn(&NewGpuError) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        let mut hooks = self
+            .instance
+            .read()
+            .unwrap()
+            .recovery_hooks
+            .write()
+            .unwrap();
+        hooks.register_for_gpu_errors(hook);
+        info!("Registered GPU error recovery hook");
+        self
+    }
+
+    /// Register a recovery hook for algorithm errors
+    ///
+    /// # Arguments
+    ///
+    /// * `hook` - A function that performs the recovery action for algorithm errors
+    ///
+    /// # Returns
+    ///
+    /// `&mut Self` for method chaining
+    pub fn register_algorithm_error_hook<F>(&mut self, hook: F) -> &mut Self
+    where
+        F: Fn(&str) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        let mut hooks = self
+            .instance
+            .read()
+            .unwrap()
+            .recovery_hooks
+            .write()
+            .unwrap();
+        hooks.register_for_algorithm_errors(hook);
+        info!("Registered algorithm error recovery hook");
+        self
+    }
+
+    /// Register a recovery hook for validation errors
+    pub fn register_validation_error_hook<F>(&mut self, hook: F) -> &mut Self
+    where
+        F: Fn(&str) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        let mut hooks = self
+            .instance
+            .read()
+            .unwrap()
+            .recovery_hooks
+            .write()
+            .unwrap();
+        hooks.register_for_validation_errors(hook);
+        info!("Registered validation error recovery hook");
+        self
+    }
+
+    /// Register a recovery hook for configuration errors
+    pub fn register_configuration_error_hook<F>(&mut self, hook: F) -> &mut Self
+    where
+        F: Fn(&str) -> Option<RecoveryAction> + Send + Sync + 'static,
+    {
+        let mut hooks = self
+            .instance
+            .read()
+            .unwrap()
+            .recovery_hooks
+            .write()
+            .unwrap();
+        hooks.register_for_configuration_errors(hook);
+        info!("Registered configuration error recovery hook");
+        self
+    }
+
+    /// Try to handle an error with registered hooks
+    ///
+    /// This method is intended for internal use within the WFC algorithm.
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - The error to handle
+    ///
+    /// # Returns
+    ///
+    /// `Option<RecoveryAction>` if a hook was able to handle the error
+    pub(crate) fn try_handle_error(&self, error: &WfcError) -> Option<RecoveryAction> {
+        let hooks = self.instance.read().unwrap().recovery_hooks.read().unwrap();
+        hooks.try_handle(error)
     }
 }
 

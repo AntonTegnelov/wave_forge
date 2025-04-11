@@ -321,7 +321,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
   - [ ] **Update error interfaces**:
     - [x] Make errors more actionable by user code
     - [x] Ensure consistent error types across the library
-    - [ ] Add recovery hooks for user-defined recovery logic
+    - [x] Add recovery hooks for user-defined recovery logic
 
   **Implementation Details**:
 
@@ -331,7 +331,7 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
 
       - [x] Add context fields to error types (location, state info)
       - [x] Add helper methods for diagnostic reporting
-      - [ ] Implement user-defined recovery hooks
+      - [x] Implement user-defined recovery hooks
 
     - Error-producing code (most files):
 
@@ -340,8 +340,8 @@ This document outlines a specific plan to align the wfc-gpu module with its inte
       - [ ] Capture relevant state information at error sites
 
     - `wfc-gpu/src/gpu/accelerator.rs`:
-      - [ ] Add methods for registering user-defined recovery hooks
-      - [ ] Improve error reporting to application code
+      - [x] Add methods for registering user-defined recovery hooks
+      - [x] Improve error reporting to application code
 
   - **Specific inconsistencies to address**:
     - [x] In `entropy/calculator.rs`, `From<GpuError> for CoreEntropyError` conversion uses different mapping than in other files
