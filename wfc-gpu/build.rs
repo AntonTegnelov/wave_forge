@@ -6,6 +6,14 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod tools {
+    pub mod shader_optimizer;
+    pub mod shader_validator;
+}
+
+use tools::shader_optimizer::{FeatureVariant, OptimizerConfig, ShaderOptimizer};
+use tools::shader_validator::{ShaderValidator, ValidatorConfig};
+
 // --- Duplicated Definitions (needed because build.rs runs before crate is compiled) ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -170,12 +178,108 @@ fn validate_features(registry: &ShaderRegistryData) -> Result<(), String> {
     Ok(())
 }
 
+/// Generate optimized shader variants
+fn generate_shader_variants(registry_path: &Path, out_dir: &Path) -> Result<(), String> {
+    println!("[Build Script] Generating shader variants...");
+
+    // Create optimizer configuration
+    let optimizer_config = OptimizerConfig {
+        src_dir: PathBuf::from("src/shader/shaders"),
+        out_dir: out_dir.join("shaders").join("variants"),
+        aggressive: false,
+        default_features: vec![],
+        variants: vec![
+            // Entropy variants
+            FeatureVariant {
+                name: "entropy_atomics".to_string(),
+                features: vec!["atomics".to_string()],
+                workgroup_size: Some((8, 8, 1)),
+                defines: HashMap::new(),
+            },
+            FeatureVariant {
+                name: "entropy_no_atomics".to_string(),
+                features: vec![],
+                workgroup_size: Some((8, 8, 1)),
+                defines: HashMap::new(),
+            },
+            // Propagation variants
+            FeatureVariant {
+                name: "propagation_atomics".to_string(),
+                features: vec!["atomics".to_string()],
+                workgroup_size: Some((8, 8, 1)),
+                defines: HashMap::new(),
+            },
+            FeatureVariant {
+                name: "propagation_no_atomics".to_string(),
+                features: vec![],
+                workgroup_size: Some((8, 8, 1)),
+                defines: HashMap::new(),
+            },
+        ],
+        debug: true,
+    };
+
+    // Create optimizer
+    let mut optimizer = ShaderOptimizer::new(optimizer_config);
+
+    // Load registry
+    match optimizer.load_registry(registry_path) {
+        Ok(_) => println!("[Build Script] Successfully loaded shader registry"),
+        Err(e) => return Err(format!("Failed to load shader registry: {}", e)),
+    }
+
+    // Generate variants
+    match optimizer.generate_variants() {
+        Ok(_) => println!("[Build Script] Successfully generated shader variants"),
+        Err(e) => return Err(format!("Failed to generate shader variants: {}", e)),
+    }
+
+    Ok(())
+}
+
+/// Validate generated shader variants
+fn validate_shader_variants(out_dir: &Path) -> Result<(), String> {
+    println!("[Build Script] Validating shader variants...");
+
+    // Create validator configuration
+    let validator_config = ValidatorConfig {
+        naga_validator_path: None, // Use internal validator
+        tint_validator_path: None,
+        shader_dir: out_dir.join("shaders").join("variants"),
+        report_path: Some(out_dir.join("shader_validation_report.txt")),
+        warnings: true,
+    };
+
+    // Create validator
+    let mut validator = ShaderValidator::new(validator_config);
+
+    // Validate shaders
+    match validator.validate_directory() {
+        Ok(true) => println!("[Build Script] All shader variants are valid"),
+        Ok(false) => {
+            println!("[Build Script] Some shader variants have validation errors");
+            println!("[Build Script] See validation report for details");
+        }
+        Err(e) => return Err(format!("Failed to validate shader variants: {}", e)),
+    }
+
+    Ok(())
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     // Update registry path to reflect new structure
     let registry_path_str = "src/shader/shaders/components/registry.json";
     println!("cargo:rerun-if-changed={}", registry_path_str);
+
+    // Get output directory
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
+    let out_dir_path = Path::new(&out_dir);
+    let variants_dir = out_dir_path.join("shaders").join("variants");
+
+    // Ensure the target directory for compiled variants exists
+    fs::create_dir_all(&variants_dir).expect("Failed to create variants output directory");
 
     // Parse the registry to get component paths
     let registry_content = match fs::read_to_string(registry_path_str) {
@@ -224,85 +328,17 @@ fn main() {
 
     println!("Running WFC-GPU build script...");
 
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
-    let variants_dir = Path::new(&out_dir).join("shaders").join("variants");
-
-    // Ensure the target directory for compiled variants exists
-    fs::create_dir_all(&variants_dir).expect("Failed to create variants output directory");
-
-    // --- Actual Build-Time Shader Generation ---
-
-    // 1. Initialize Registry
-    // Use the crate's code directly by specifying the path relative to Cargo.toml
-    // This requires adding the crate itself as a build-dependency in Cargo.toml
-    // For now, we assume the necessary types are available directly.
-    // We need to parse registry.json and use the compiler logic here.
-    // NOTE: Actually *using* crate::shader_registry::ShaderRegistry here is complex
-    // because build.rs runs before the crate is fully compiled.
-    // A common pattern is to duplicate simplified loading/compiling logic
-    // or use a separate helper crate.
-    // For this step, we will SIMULATE the process using placeholder logic.
-
-    println!(
-        "[Build Script] Registry loaded with {} components",
-        registry_data.components.len()
-    );
-
-    // 2. Initialize Compiler (Simulated)
-    println!("[Build Script] Simulating Shader Compiler initialization...");
-    // let compiler = wfc_gpu::shader_compiler::ShaderCompiler::new();
-
-    // 3. Define Target Variants (Example: Entropy with/without atomics)
-    // Use local BuildShaderType enum
-    let targets = vec![
-        (BuildShaderType::Entropy, vec!["atomics"]), // Request atomics version
-        (BuildShaderType::Entropy, vec![]),          // Request fallback version
-        (BuildShaderType::Propagation, vec!["atomics"]), // Request atomics version
-        (BuildShaderType::Propagation, vec![]),      // Request fallback version
-    ];
-    println!("[Build Script] Defined target variants: {:?}", targets);
-
-    // 4. Loop through targets, compile (simulated), and write to OUT_DIR
-    for (shader_type, features) in targets {
-        println!(
-            "[Build Script] Processing {:?} with features: {:?}",
-            shader_type, features
-        );
-
-        // TODO: Determine required specialization constants (e.g., NUM_TILES_U32_VALUE)
-        // This might require reading config or passing build-time env vars.
-        let specialization: std::collections::HashMap<String, u32> =
-            std::collections::HashMap::new(); // Placeholder
-
-        // Simulate compilation using the compiler (replace with actual call later)
-        println!(
-            "[Build Script Stub] Would call compiler.compile({:?}, {:?}, {:?})",
-            shader_type, features, specialization
-        );
-        // let compiled_source = compiler.compile(shader_type, &features, &specialization)
-        //     .expect(&format!("Failed to compile {:?} with {:?}", shader_type, features));
-
-        // --- Placeholder Source Generation --- (Remove once compiler works)
-        let placeholder_source = format!(
-            "// Placeholder for {:?} with features {:?}\n// Specialization: {:?}\nfn main() {{}}",
-            shader_type, features, specialization
-        );
-        let compiled_source = placeholder_source; // Use placeholder
-                                                  // --- End Placeholder Source Generation ---
-
-        // Determine output path
-        // Use local get_variant_filename function
-        let variant_filename = get_variant_filename(shader_type, &features);
-        let out_path = variants_dir.join(&variant_filename);
-
-        // Write the (placeholder) compiled shader
-        let error_msg = format!("Failed to write compiled shader to {:?}", out_path);
-        fs::write(&out_path, compiled_source).expect(&error_msg);
-        println!(
-            "[Build Script] Wrote placeholder shader variant to: {:?}",
-            out_path
-        );
+    // Generate optimized shader variants
+    match generate_shader_variants(Path::new(registry_path_str), out_dir_path) {
+        Ok(_) => {}
+        Err(e) => println!("cargo:warning=Failed to generate shader variants: {}", e),
     }
 
-    println!("WFC-GPU build script finished generating placeholder shader variants.");
+    // Validate generated shader variants
+    match validate_shader_variants(out_dir_path) {
+        Ok(_) => {}
+        Err(e) => println!("cargo:warning=Failed to validate shader variants: {}", e),
+    }
+
+    println!("WFC-GPU build script finished shader variant generation and validation.");
 }
