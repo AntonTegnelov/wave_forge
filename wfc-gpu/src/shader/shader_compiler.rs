@@ -391,6 +391,9 @@ impl ShaderCompiler {
 // Map CompilationError to GpuError if needed, or handle separately
 impl From<CompilationError> for GpuError {
     fn from(err: CompilationError) -> Self {
-        GpuError::ShaderError(err.to_string())
+        GpuError::shader_error(
+            err.to_string(),
+            crate::utils::error::GpuErrorContext::default(),
+        )
     }
 }

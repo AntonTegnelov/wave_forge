@@ -169,7 +169,7 @@ impl ShaderManager {
             "Utils".to_string(),
             ShaderComponentInfo {
                 name: "Utils".to_string(),
-                path: PathBuf::from("src/shaders/utils.wgsl"),
+                path: PathBuf::from("src/shader/shaders/utils.wgsl"),
                 dependencies: vec![],
                 features: vec![],
                 version: "1.0.0".to_string(),
@@ -183,7 +183,7 @@ impl ShaderManager {
             "Coords".to_string(),
             ShaderComponentInfo {
                 name: "Coords".to_string(),
-                path: PathBuf::from("src/shaders/coords.wgsl"),
+                path: PathBuf::from("src/shader/shaders/coords.wgsl"),
                 dependencies: vec![],
                 features: vec![],
                 version: "1.0.0".to_string(),

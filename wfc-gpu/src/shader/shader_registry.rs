@@ -438,6 +438,9 @@ pub fn get_required_components(shader_type: ShaderType) -> Vec<ShaderComponent> 
 
 impl From<RegistryError> for GpuError {
     fn from(err: RegistryError) -> Self {
-        GpuError::ShaderError(err.to_string())
+        GpuError::shader_error(
+            err.to_string(),
+            crate::utils::error::GpuErrorContext::default(),
+        )
     }
 }

@@ -8,7 +8,7 @@ use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
 // Import ShaderManager and related types
 use super::shaders::{ShaderManager, ShaderType};
-use crate::GpuError;
+use crate::utils::error::{GpuError, GpuErrorContext, GpuResourceType};
 use lazy_static::lazy_static;
 
 // --- Cache Definitions ---
@@ -85,13 +85,13 @@ fn compile_shader(
     device: &wgpu::Device,
     shader_type: ShaderType, // Use ShaderType enum
     features: &[&str],
-    shader_manager: &ShaderManager, // Pass ShaderManager instance
-    _num_tiles_u32: u32,            // May be needed for specialization in future compiler
+    shader_manager: &mut ShaderManager, // Pass ShaderManager instance as mutable
+    _num_tiles_u32: u32,                // May be needed for specialization in future compiler
 ) -> Result<(Arc<wgpu::ShaderModule>, u64), GpuError> {
     // 1. Load/Assemble source using ShaderManager
     let source_code = shader_manager
         .load_shader_variant(shader_type, features)
-        .map_err(|e| GpuError::ShaderError(e.to_string()))?;
+        .map_err(|e| GpuError::shader_error(e.to_string(), GpuErrorContext::default()))?;
 
     // TODO: Apply specialization constants (like NUM_TILES_U32_VALUE) using the compiler
     // let processed_source = future_shader_compiler.specialize(&source_code, num_tiles_u32);
@@ -103,7 +103,7 @@ fn compile_shader(
     };
     let mut cache = SHADER_MODULE_CACHE
         .lock()
-        .map_err(|e| GpuError::MutexError(e.to_string()))?;
+        .map_err(|e| GpuError::mutex_error(e.to_string(), GpuErrorContext::default()))?;
 
     if let Some(module) = cache.get(&shader_key) {
         log::debug!("Shader cache hit for {:?}", shader_type);
@@ -207,8 +207,8 @@ impl ComputePipelines {
         features: &[&str],
     ) -> Result<Self, GpuError> {
         // Create ShaderManager instance
-        let shader_manager =
-            ShaderManager::new().map_err(|e| GpuError::ShaderError(e.to_string()))?;
+        let mut shader_manager = ShaderManager::new()
+            .map_err(|e| GpuError::shader_error(e.to_string(), GpuErrorContext::default()))?;
 
         // Query device limits
         let limits = device.limits();
@@ -236,14 +236,14 @@ impl ComputePipelines {
             device,
             ShaderType::Entropy,
             features,
-            &shader_manager,
+            &mut shader_manager,
             num_tiles_u32,
         )?;
         let (propagation_shader_module, propagation_hash) = compile_shader(
             device,
             ShaderType::Propagation,
             features,
-            &shader_manager,
+            &mut shader_manager,
             num_tiles_u32,
         )?;
 
@@ -489,7 +489,7 @@ impl ComputePipelines {
         // Access the cache using the lazy_static macro
         let mut cache = COMPUTE_PIPELINE_CACHE
             .lock()
-            .map_err(|e| GpuError::MutexError(e.to_string()))?;
+            .map_err(|e| GpuError::mutex_error(e.to_string(), GpuErrorContext::default()))?;
 
         if let Some(pipeline) = cache.get(&key) {
             log::debug!(

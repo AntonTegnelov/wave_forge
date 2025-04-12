@@ -3,7 +3,8 @@
 
 use crate::{
     buffers::{DownloadRequest, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
-    utils::error_recovery::GpuError,
+    utils::error::gpu_error::{GpuError as NewGpuError, GpuErrorContext, GpuResourceType},
+    utils::error_recovery::{GpuError as OldGpuError, GridCoord},
 };
 use log::{debug, error, trace, warn};
 use std::borrow::Cow;
@@ -11,6 +12,9 @@ use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wgpu;
 use wgpu::util::DeviceExt;
+
+// Type alias for backward compatibility
+pub type GpuError = OldGpuError;
 
 /// Handles synchronization between CPU and GPU for Wave Function Collapse data.
 ///
@@ -633,6 +637,160 @@ impl GpuSynchronizer {
         Err(GpuError::InternalError(
             "Failed to download grid data".to_string(),
         ))
+    }
+
+    /// Create a new error context for buffer operations
+    fn create_buffer_error_context(&self, buffer_name: &str) -> GpuErrorContext {
+        GpuErrorContext::new(GpuResourceType::Buffer).with_label(buffer_name.to_string())
+    }
+
+    /// Convert from old GpuError to new NewGpuError for consistent error handling
+    pub fn convert_to_new_error(&self, error: &OldGpuError, buffer_name: &str) -> NewGpuError {
+        let context = self.create_buffer_error_context(buffer_name);
+
+        match error {
+            OldGpuError::BufferMapFailed(msg) => NewGpuError::buffer_map_failed(msg, context),
+            OldGpuError::ValidationError(e) => NewGpuError::validation_error(e.clone(), context),
+            OldGpuError::CommandExecutionError(msg) => {
+                NewGpuError::command_execution_error(msg, context)
+            }
+            OldGpuError::BufferOperationError(msg) => {
+                NewGpuError::buffer_operation_error(msg, context)
+            }
+            OldGpuError::TransferError(msg) => NewGpuError::transfer_error(msg, context),
+            OldGpuError::ResourceCreationFailed(msg) => {
+                NewGpuError::resource_creation_failed(msg, context)
+            }
+            OldGpuError::ShaderError(msg) => NewGpuError::shader_error(msg, context),
+            OldGpuError::BufferSizeMismatch(msg) => NewGpuError::buffer_size_mismatch(msg, context),
+            OldGpuError::Timeout(msg) => NewGpuError::timeout(msg, context),
+            OldGpuError::DeviceLost(msg) => NewGpuError::device_lost(msg, context),
+            OldGpuError::AdapterRequestFailed => NewGpuError::adapter_request_failed(context),
+            OldGpuError::DeviceRequestFailed(e) => {
+                NewGpuError::device_request_failed(e.clone(), context)
+            }
+            OldGpuError::MutexError(msg) => NewGpuError::mutex_error(msg, context),
+            OldGpuError::BufferError(msg) => NewGpuError::buffer_operation_error(msg, context),
+            OldGpuError::BufferMapError(msg) => NewGpuError::buffer_map_failed(msg, context),
+            OldGpuError::BufferMapTimeout(msg) => NewGpuError::timeout(msg, context),
+            OldGpuError::ContradictionDetected { coord } => {
+                let mut ctx = context;
+                if let Some(c) = coord {
+                    ctx = ctx.with_grid_coord(*c);
+                }
+                NewGpuError::contradiction_detected(ctx)
+            }
+            OldGpuError::Other(msg) => NewGpuError::other(msg, context),
+            OldGpuError::InternalError(msg) => NewGpuError::other(msg, context),
+        }
+    }
+
+    /// Download buffer data with consistent error handling
+    pub fn download_buffer_consistent<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        offset: u64,
+        size: usize,
+        buffer_name: &str,
+    ) -> Result<Vec<T>, NewGpuError> {
+        match self.download_buffer::<T>(buffer, offset, size) {
+            Ok(data) => Ok(data),
+            Err(err) => Err(self.convert_to_new_error(&err, buffer_name)),
+        }
+    }
+
+    /// Generic buffer download method - reads data from a GPU buffer into a vector
+    pub fn download_buffer<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        offset: u64,
+        size: usize,
+    ) -> Result<Vec<T>, GpuError> {
+        // Create a staging buffer to copy data from the device to the host
+        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Staging Buffer for Download"),
+            size: size as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Create command encoder and copy from the source buffer to the staging buffer
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Buffer Download Encoder"),
+            });
+        encoder.copy_buffer_to_buffer(buffer, offset, &staging_buffer, 0, size as u64);
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map the staging buffer for reading
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+
+        // Wait for the mapping to complete
+        self.device.poll(wgpu::MaintainBase::Wait);
+
+        // Check the mapping status
+        match pollster::block_on(receiver) {
+            Ok(Ok(())) => {
+                // Successfully mapped, copy data
+                let mapped_range = buffer_slice.get_mapped_range();
+                let data = bytemuck::cast_slice(&mapped_range).to_vec();
+                drop(mapped_range);
+                staging_buffer.unmap();
+                Ok(data)
+            }
+            _ => Err(GpuError::BufferMapFailed(
+                "Failed to map staging buffer for download".to_string(),
+            )),
+        }
+    }
+
+    /// Upload buffer data with consistent error handling
+    pub fn upload_buffer_consistent<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        offset: u64,
+        data: &[T],
+        buffer_name: &str,
+    ) -> Result<(), NewGpuError> {
+        match self.upload_buffer(buffer, offset, data) {
+            Ok(()) => Ok(()),
+            Err(err) => Err(self.convert_to_new_error(&err, buffer_name)),
+        }
+    }
+
+    /// Generic buffer upload method - writes data to a GPU buffer
+    pub fn upload_buffer<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        offset: u64,
+        data: &[T],
+    ) -> Result<(), GpuError> {
+        // Calculate the byte size of the data
+        let data_bytes = bytemuck::cast_slice(data);
+        let data_size = data_bytes.len() as u64;
+
+        // Ensure the buffer can accommodate the data
+        if offset + data_size > buffer.size() {
+            return Err(GpuError::BufferSizeMismatch(format!(
+                "Data size ({}) exceeds buffer capacity ({}) at offset {}",
+                data_size,
+                buffer.size(),
+                offset
+            )));
+        }
+
+        // Write data to the buffer
+        self.queue.write_buffer(buffer, offset, data_bytes);
+
+        // Ensure the write is processed
+        self.device.poll(wgpu::MaintainBase::Wait);
+
+        Ok(())
     }
 }
 
