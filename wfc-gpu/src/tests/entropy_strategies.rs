@@ -3,11 +3,10 @@ use std::sync::Arc;
 use log::{debug, warn};
 use wgpu::{Adapter, Device, Queue};
 
-use crate::entropy::entropy_strategy::{
-    CountEntropyStrategy, CountSimpleEntropyStrategy, ShannonEntropyStrategy,
-    WeightedCountEntropyStrategy,
+use crate::entropy::{
+    CountEntropyStrategy, CountSimpleEntropyStrategy, EntropyHeuristicType, EntropyStrategy,
+    EntropyStrategyFactory, ShannonEntropyStrategy, WeightedCountEntropyStrategy,
 };
-use crate::entropy::{EntropyHeuristicType, EntropyStrategy};
 use crate::gpu::backend::GpuBackend;
 use crate::utils::error::WfcError;
 
@@ -26,10 +25,13 @@ mod entropy_strategy_tests {
     /// Test that the Shannon entropy strategy calculates correctly
     #[tokio::test]
     async fn test_shannon_entropy_strategy() -> Result<(), WfcError> {
-        let (_adapter, device, queue) = init_gpu().await?;
+        let (_adapter, _device, _queue) = init_gpu().await?;
 
         // Create a Shannon entropy strategy
-        let strategy = ShannonEntropyStrategy::new(Arc::new(device), Arc::new(queue))?;
+        let strategy = ShannonEntropyStrategy::new(
+            128, // num_tiles
+            4,   // u32s_per_cell
+        );
 
         // Check that the strategy returns the expected heuristic type
         assert_eq!(strategy.heuristic_type(), EntropyHeuristicType::Shannon);
@@ -43,10 +45,13 @@ mod entropy_strategy_tests {
     /// Test that the Count entropy strategy calculates correctly
     #[tokio::test]
     async fn test_count_entropy_strategy() -> Result<(), WfcError> {
-        let (_adapter, device, queue) = init_gpu().await?;
+        let (_adapter, _device, _queue) = init_gpu().await?;
 
         // Create a Count entropy strategy
-        let strategy = CountEntropyStrategy::new(Arc::new(device), Arc::new(queue))?;
+        let strategy = CountEntropyStrategy::new(
+            128, // num_tiles
+            4,   // u32s_per_cell
+        );
 
         // Check that the strategy returns the expected heuristic type
         assert_eq!(strategy.heuristic_type(), EntropyHeuristicType::Count);
@@ -57,10 +62,13 @@ mod entropy_strategy_tests {
     /// Test that the Simple Count entropy strategy calculates correctly
     #[tokio::test]
     async fn test_count_simple_entropy_strategy() -> Result<(), WfcError> {
-        let (_adapter, device, queue) = init_gpu().await?;
+        let (_adapter, _device, _queue) = init_gpu().await?;
 
         // Create a Simple Count entropy strategy
-        let strategy = CountSimpleEntropyStrategy::new(Arc::new(device), Arc::new(queue))?;
+        let strategy = CountSimpleEntropyStrategy::new(
+            128, // num_tiles
+            4,   // u32s_per_cell
+        );
 
         // Check that the strategy returns the expected heuristic type
         assert_eq!(strategy.heuristic_type(), EntropyHeuristicType::CountSimple);
@@ -71,10 +79,13 @@ mod entropy_strategy_tests {
     /// Test that the Weighted Count entropy strategy calculates correctly
     #[tokio::test]
     async fn test_weighted_count_entropy_strategy() -> Result<(), WfcError> {
-        let (_adapter, device, queue) = init_gpu().await?;
+        let (_adapter, _device, _queue) = init_gpu().await?;
 
         // Create a Weighted Count entropy strategy
-        let strategy = WeightedCountEntropyStrategy::new(Arc::new(device), Arc::new(queue))?;
+        let strategy = WeightedCountEntropyStrategy::new(
+            128, // num_tiles
+            4,   // u32s_per_cell
+        );
 
         // Check that the strategy returns the expected heuristic type
         assert_eq!(
@@ -88,35 +99,32 @@ mod entropy_strategy_tests {
     /// Test strategy factory to ensure it creates the right strategies
     #[tokio::test]
     async fn test_strategy_factory() -> Result<(), WfcError> {
-        let (_adapter, device, queue) = init_gpu().await?;
+        let (_adapter, _device, _queue) = init_gpu().await?;
 
         // Create all strategies from factory method
-        let device_arc = Arc::new(device);
-        let queue_arc = Arc::new(queue);
-
-        let shannon = EntropyStrategy::create_strategy(
+        let shannon = EntropyStrategyFactory::create_strategy(
             EntropyHeuristicType::Shannon,
-            device_arc.clone(),
-            queue_arc.clone(),
-        )?;
+            128, // num_tiles
+            4,   // u32s_per_cell
+        );
 
-        let count = EntropyStrategy::create_strategy(
+        let count = EntropyStrategyFactory::create_strategy(
             EntropyHeuristicType::Count,
-            device_arc.clone(),
-            queue_arc.clone(),
-        )?;
+            128, // num_tiles
+            4,   // u32s_per_cell
+        );
 
-        let count_simple = EntropyStrategy::create_strategy(
+        let count_simple = EntropyStrategyFactory::create_strategy(
             EntropyHeuristicType::CountSimple,
-            device_arc.clone(),
-            queue_arc.clone(),
-        )?;
+            128, // num_tiles
+            4,   // u32s_per_cell
+        );
 
-        let weighted_count = EntropyStrategy::create_strategy(
+        let weighted_count = EntropyStrategyFactory::create_strategy(
             EntropyHeuristicType::WeightedCount,
-            device_arc.clone(),
-            queue_arc.clone(),
-        )?;
+            128, // num_tiles
+            4,   // u32s_per_cell
+        );
 
         // Verify all strategies created correctly
         assert_eq!(shannon.heuristic_type(), EntropyHeuristicType::Shannon);

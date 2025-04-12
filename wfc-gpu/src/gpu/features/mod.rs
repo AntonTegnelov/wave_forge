@@ -174,7 +174,7 @@ impl GpuCapabilities {
             workgroup_limits,
             max_buffer_size: limits.max_buffer_size as u64,
             max_bindings: limits.max_storage_buffers_per_shader_stage,
-            is_high_performance: info.device_type.is_discrete(),
+            is_high_performance: info.device_type == wgpu::DeviceType::DiscreteGpu,
             device_type: format!("{:?}", info.device_type),
         })
     }

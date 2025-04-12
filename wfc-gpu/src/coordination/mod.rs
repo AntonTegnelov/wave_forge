@@ -332,13 +332,13 @@ impl WfcCoordinator for DefaultCoordinator {
 
             // Create dummy rules - in a real implementation, we would
             // get the proper rules
-            let rules = wfc_rules::AdjacencyRules::new();
+            let rules = wfc_rules::AdjacencyRules::from_allowed_tuples(0, 0, Vec::new());
 
             return strategy
                 .coordinate_propagation(propagator_lock, &mut grid, coords_vec, &rules)
                 .await
                 .map_err(|e| {
-                    PropagationError::Other(format!("Strategy propagation failed: {}", e))
+                    PropagationError::InternalError(format!("Strategy propagation failed: {}", e))
                 });
         }
 
@@ -553,7 +553,7 @@ impl WfcCoordinator for StrategicCoordinator {
         let mut dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
 
         // Create dummy rules - in a real implementation, we would get the proper rules
-        let rules = wfc_rules::AdjacencyRules::new();
+        let rules = wfc_rules::AdjacencyRules::from_allowed_tuples(0, 0, Vec::new());
 
         // Use the PropagationCoordinationStrategy factory to create an appropriate strategy,
         // reusing the same components that would be used by the coordination strategy internally
@@ -562,7 +562,9 @@ impl WfcCoordinator for StrategicCoordinator {
         strategy
             .coordinate_propagation(propagator, &mut dummy_grid, coords_vec, &rules)
             .await
-            .map_err(|e| PropagationError::Other(format!("Strategy propagation failed: {}", e)))
+            .map_err(|e| {
+                PropagationError::InternalError(format!("Strategy propagation failed: {}", e))
+            })
     }
 
     fn clone_box(&self) -> Box<dyn WfcCoordinator + Send + Sync> {

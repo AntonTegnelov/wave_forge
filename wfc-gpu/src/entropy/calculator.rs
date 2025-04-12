@@ -498,3 +498,24 @@ impl GpuEntropyCalculatorExt for GpuEntropyCalculator {
 fn map_gpu_error_to_entropy_error(gpu_error: GpuError) -> CoreEntropyError {
     gpu_error.into()
 }
+
+/// Trait for entropy calculation strategies in the WFC algorithm.
+pub trait EntropyStrategy: Send + Sync + std::fmt::Debug {
+    /// Get the heuristic type used by this strategy
+    fn heuristic_type(&self) -> EntropyHeuristicType;
+
+    /// Configure shader parameters for this strategy
+    fn configure_shader_params(&self, params: &mut GpuEntropyShaderParams);
+
+    /// Prepare the strategy for execution
+    fn prepare(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError>;
+
+    /// Execute the entropy calculation on the GPU
+    fn calculate_entropy(
+        &self,
+        buffers: &GpuBuffers,
+        pipelines: &ComputePipelines,
+        queue: &wgpu::Queue,
+        grid_dims: (usize, usize, usize),
+    ) -> Result<(), CoreEntropyError>;
+}
