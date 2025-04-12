@@ -77,10 +77,13 @@ impl GridBuffers {
                 for x in 0..width {
                     if let Some(cell_possibilities) = initial_grid.get(x, y, z) {
                         if cell_possibilities.len() != num_tiles {
-                            return Err(GpuError::BufferOperationError(format!(
-                                "Possibility grid cell ({}, {}, {}) has unexpected length: {} (expected {})",
-                                x, y, z, cell_possibilities.len(), num_tiles
-                            )));
+                            return Err(GpuError::BufferOperationError {
+                                msg: format!(
+                                    "Possibility grid cell ({}, {}, {}) has unexpected length: {} (expected {})",
+                                    x, y, z, cell_possibilities.len(), num_tiles
+                                ),
+                                context: crate::utils::error::gpu_error::GpuErrorContext::default()
+                            });
                         }
                         // Pack the BitSlice into u32s
                         let iter = cell_possibilities.chunks_exact(32);
@@ -98,21 +101,27 @@ impl GridBuffers {
                             packed_possibilities.push(last_u32);
                         }
                     } else {
-                        return Err(GpuError::BufferOperationError(format!(
-                            "Failed to get possibility grid cell ({}, {}, {})",
-                            x, y, z
-                        )));
+                        return Err(GpuError::BufferOperationError {
+                            msg: format!(
+                                "Failed to get possibility grid cell ({}, {}, {})",
+                                x, y, z
+                            ),
+                            context: crate::utils::error::gpu_error::GpuErrorContext::default(),
+                        });
                     }
                 }
             }
         }
 
         if packed_possibilities.len() != _num_cells * u32s_per_cell {
-            return Err(GpuError::BufferOperationError(format!(
-                "Internal Error: Packed possibilities size mismatch. Expected {}, Got {}.",
-                _num_cells * u32s_per_cell,
-                packed_possibilities.len()
-            )));
+            return Err(GpuError::BufferOperationError {
+                msg: format!(
+                    "Internal Error: Packed possibilities size mismatch. Expected {}, Got {}.",
+                    _num_cells * u32s_per_cell,
+                    packed_possibilities.len()
+                ),
+                context: crate::utils::error::gpu_error::GpuErrorContext::default(),
+            });
         }
         Ok(packed_possibilities)
     }

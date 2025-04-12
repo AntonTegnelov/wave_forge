@@ -256,7 +256,9 @@ impl ErrorWithContext for IoError {
             Self::ResourceNotAvailable { msg, context } => format!("{}: {}", context, msg),
             Self::MemoryError { msg, context } => format!("{}: {}", context, msg),
             Self::Other { msg, context } => format!("{}: {}", context, msg),
-            Self::ResourceError { msg, context, .. } => format!("{}: {}", context, msg),
+            Self::ResourceError {
+                message, context, ..
+            } => format!("{}: {}", context, message),
         }
     }
 
@@ -417,7 +419,7 @@ impl ErrorWithContext for IoError {
                 )
                 .to_string(),
             ),
-            Self::ResourceError { msg, .. } => Some(msg.clone()),
+            Self::ResourceError { message, .. } => Some(message.clone()),
         }
     }
 

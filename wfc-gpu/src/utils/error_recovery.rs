@@ -29,7 +29,7 @@ impl From<(usize, usize, usize)> for GridCoord {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum GpuError {
     #[error("Buffer map failed: {0}")]
     BufferMapFailed(String),
@@ -252,7 +252,7 @@ impl GpuErrorRecovery {
         match error {
             GpuError::BufferMapFailed(_)
             | GpuError::BufferError(_)
-            | GpuError::BufferOperationError(_)
+            | GpuError::BufferOperationError { .. }
             | GpuError::BufferMapError(_)
             | GpuError::BufferMapTimeout(_)
             | GpuError::BufferSizeMismatch(_) => {
@@ -484,7 +484,7 @@ impl RecoverableGpuOp {
                         err,
                         GpuError::BufferMapFailed(_)
                             | GpuError::BufferError(_)
-                            | GpuError::BufferOperationError(_)
+                            | GpuError::BufferOperationError { .. }
                             | GpuError::BufferMapError(_)
                             | GpuError::BufferMapTimeout(_)
                             | GpuError::BufferSizeMismatch(_)
@@ -551,7 +551,7 @@ impl RecoverableGpuOp {
                         err,
                         GpuError::BufferMapFailed(_)
                             | GpuError::BufferError(_)
-                            | GpuError::BufferOperationError(_)
+                            | GpuError::BufferOperationError { .. }
                             | GpuError::BufferMapError(_)
                             | GpuError::BufferMapTimeout(_)
                             | GpuError::BufferSizeMismatch(_)

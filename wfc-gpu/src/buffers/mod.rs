@@ -3,7 +3,7 @@
 //! Module organizing different GPU buffer types used in WFC-GPU.
 
 // Imports
-use crate::utils::error_recovery::GpuError;
+use crate::utils::error::gpu_error::{GpuError, GpuErrorContext};
 use bytemuck::{Pod, Zeroable};
 use futures::future::FusedFuture;
 use log::{debug, error, info, trace, warn};
@@ -505,11 +505,14 @@ impl GpuBuffers {
         let expected_data_size = num_cells * u32s_per_cell;
 
         if data.len() < expected_data_size {
-            return Err(GpuError::BufferSizeMismatch(format!(
-                "Grid possibilities data is too small: expected at least {} elements, got {}",
-                expected_data_size,
-                data.len()
-            )));
+            return Err(GpuError::BufferSizeMismatch {
+                msg: format!(
+                    "Grid possibilities data is too small: expected at least {} elements, got {}",
+                    expected_data_size,
+                    data.len()
+                ),
+                context: GpuErrorContext::default(),
+            });
         }
 
         // Create a new grid with the specified dimensions
@@ -584,21 +587,27 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
 
     // Ensure buffers are large enough
     if source_buffer.size() < buffer_size {
-        return Err(GpuError::BufferSizeMismatch(format!(
-            "Source buffer for '{}' is smaller than required size ({} < {})",
-            label_str,
-            source_buffer.size(),
-            buffer_size
-        )));
+        return Err(GpuError::BufferSizeMismatch {
+            msg: format!(
+                "Source buffer for '{}' is smaller than required size ({} < {})",
+                label_str,
+                source_buffer.size(),
+                buffer_size
+            ),
+            context: GpuErrorContext::default(),
+        });
     }
 
     if staging_buffer.size() < buffer_size {
-        return Err(GpuError::BufferSizeMismatch(format!(
-            "Staging buffer for '{}' is smaller than required size ({} < {})",
-            label_str,
-            staging_buffer.size(),
-            buffer_size
-        )));
+        return Err(GpuError::BufferSizeMismatch {
+            msg: format!(
+                "Staging buffer for '{}' is smaller than required size ({} < {})",
+                label_str,
+                staging_buffer.size(),
+                buffer_size
+            ),
+            context: GpuErrorContext::default(),
+        });
     }
 
     // Create command encoder
@@ -655,10 +664,10 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
         Err(_) => Err(wgpu::BufferAsyncError),
     };
     if let Err(e) = result {
-        return Err(GpuError::BufferOperationError(format!(
-            "Failed to map buffer '{}': {:?}",
-            label_str, e
-        )));
+        return Err(GpuError::BufferOperationError {
+            msg: format!("Failed to map buffer '{}': {:?}", label_str, e),
+            context: GpuErrorContext::default(),
+        });
     }
 
     // Read data from the mapped buffer
@@ -697,16 +706,23 @@ impl GpuDownloadResults {
         let num_cells = width * height * depth;
         let u32s_per_cell = (num_tiles + 31) / 32;
 
-        let grid_possibilities = self.grid_possibilities.as_ref().ok_or_else(|| {
-            GpuError::BufferOperationError("Grid possibilities data not downloaded".to_string())
-        })?;
+        let grid_possibilities =
+            self.grid_possibilities
+                .as_ref()
+                .ok_or_else(|| GpuError::BufferOperationError {
+                    msg: "Grid possibilities data not downloaded".to_string(),
+                    context: GpuErrorContext::default(),
+                })?;
 
         if grid_possibilities.len() < num_cells * u32s_per_cell {
-            return Err(GpuError::BufferSizeMismatch(format!(
-                "Downloaded grid data size mismatch: expected {} u32s, got {}",
-                num_cells * u32s_per_cell,
-                grid_possibilities.len()
-            )));
+            return Err(GpuError::BufferSizeMismatch {
+                msg: format!(
+                    "Downloaded grid data size mismatch: expected {} u32s, got {}",
+                    num_cells * u32s_per_cell,
+                    grid_possibilities.len()
+                ),
+                context: GpuErrorContext::default(),
+            });
         }
 
         let mut grid = PossibilityGrid::new(width, height, depth, num_tiles);

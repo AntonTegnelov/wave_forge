@@ -21,3 +21,8 @@ proptest = "1.4"
 [features]
 default = []
 serde = ["dep:serde", "dep:serde_json"]
+
+[lints.clippy]
+restriction = "warn"
+pedantic = "warn"
+nursery = "warn"

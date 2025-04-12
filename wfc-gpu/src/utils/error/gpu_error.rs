@@ -3,7 +3,7 @@
 //! This module defines specialized error types for GPU operations,
 //! with detailed context information to aid in debugging and recovery.
 
-use super::{ErrorLocation, ErrorSeverity, ErrorWithContext};
+use crate::utils::error::{ErrorLocation, ErrorSeverity, ErrorWithContext};
 use crate::utils::error_recovery::GridCoord;
 use std::fmt;
 use thiserror::Error;
