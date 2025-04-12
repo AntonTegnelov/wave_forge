@@ -332,6 +332,9 @@ pub enum GpuError {
         context: GpuErrorContext,
     },
 
+    #[error("Buffer mapping timed out: {0}")]
+    BufferMapTimeout(String, GpuErrorContext),
+
     #[error("Validation error: {0}")]
     ValidationError(wgpu::Error, GpuErrorContext),
 
@@ -412,6 +415,11 @@ impl GpuError {
             msg: msg.into(),
             context,
         }
+    }
+
+    /// Create a new buffer map timeout error
+    pub fn buffer_map_timeout<S: Into<String>>(label: S, context: GpuErrorContext) -> Self {
+        Self::BufferMapTimeout(label.into(), context)
     }
 
     /// Create a new validation error
@@ -518,6 +526,7 @@ impl GpuError {
     pub fn get_context(&self) -> &GpuErrorContext {
         match self {
             Self::BufferMapFailed { context, .. } => context,
+            Self::BufferMapTimeout(_, context) => context,
             Self::ValidationError(_, context) => context,
             Self::CommandExecutionError { context, .. } => context,
             Self::BufferOperationError { context, .. } => context,
@@ -540,6 +549,7 @@ impl ErrorWithContext for GpuError {
     fn context(&self) -> String {
         match self {
             Self::BufferMapFailed { msg, context } => format!("{}: {}", context, msg),
+            Self::BufferMapTimeout(label, context) => format!("{}: {}", context, label),
             Self::ValidationError(err, context) => format!("{}: {}", context, err),
             Self::CommandExecutionError { msg, context } => format!("{}: {}", context, msg),
             Self::BufferOperationError { msg, context } => format!("{}: {}", context, msg),
@@ -575,6 +585,16 @@ impl ErrorWithContext for GpuError {
                     "3. Check that the buffer size is sufficient for the mapping range\n",
                     "4. Verify that the GPU device hasn't been lost during the operation\n",
                     "5. Consider using a staging buffer with GPU-only buffers"
+                ).to_string())
+            }
+            Self::BufferMapTimeout(_, _) => {
+                Some(concat!(
+                    "Buffer mapping timed out. Try the following:\n",
+                    "1. Increase the timeout duration for buffer mapping operations\n",
+                    "2. Check for GPU driver issues or high system load\n",
+                    "3. Ensure the GPU is not being used by other intensive applications\n",
+                    "4. Consider breaking operations into smaller chunks\n",
+                    "5. Verify that the GPU is not in a sleep state or power-saving mode"
                 ).to_string())
             }
             Self::ValidationError(err, _) => {
@@ -743,6 +763,7 @@ impl ErrorWithContext for GpuError {
             Self::ShaderError { .. } => ErrorSeverity::Fatal,
             Self::ContradictionDetected { .. } => ErrorSeverity::Recoverable, // WFC contradictions are expected
             Self::BufferMapFailed { .. } => ErrorSeverity::Recoverable,
+            Self::BufferMapTimeout(_, _) => ErrorSeverity::Recoverable,
             Self::Timeout { .. } => ErrorSeverity::Recoverable,
             Self::TransferError { .. } => ErrorSeverity::Recoverable,
             Self::BufferOperationError { .. } => ErrorSeverity::Recoverable,

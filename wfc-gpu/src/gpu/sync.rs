@@ -16,6 +16,63 @@ use wgpu::util::DeviceExt;
 // Type alias for backward compatibility
 pub type GpuError = OldGpuError;
 
+// Conversion function to handle error type mismatch
+impl From<crate::utils::error::gpu_error::GpuError> for OldGpuError {
+    fn from(err: crate::utils::error::gpu_error::GpuError) -> Self {
+        match err {
+            crate::utils::error::gpu_error::GpuError::BufferMapFailed { msg, .. } => {
+                OldGpuError::BufferMapping(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::BufferMapTimeout(msg, ..) => {
+                OldGpuError::BufferMapping(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::ValidationError(e, ..) => {
+                OldGpuError::Other(e.to_string())
+            }
+            crate::utils::error::gpu_error::GpuError::CommandExecutionError { msg, .. } => {
+                OldGpuError::KernelExecution(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::BufferOperationError { msg, .. } => {
+                OldGpuError::BufferCopy(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::TransferError { msg, .. } => {
+                OldGpuError::BufferCopy(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::ResourceCreationFailed { msg, .. } => {
+                OldGpuError::MemoryAllocation(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::ShaderError { msg, .. } => {
+                OldGpuError::Other(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::BufferSizeMismatch { msg, .. } => {
+                OldGpuError::BufferCopy(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::Timeout { msg, .. } => {
+                OldGpuError::ComputationTimeout {
+                    grid_size: (0, 0),                           // We don't have grid size info here
+                    duration: std::time::Duration::from_secs(0), // We don't have duration info here
+                }
+            }
+            crate::utils::error::gpu_error::GpuError::DeviceLost { msg, .. } => {
+                OldGpuError::DeviceLost(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::AdapterRequestFailed { .. } => {
+                OldGpuError::Other("Adapter request failed".to_string())
+            }
+            crate::utils::error::gpu_error::GpuError::DeviceRequestFailed(e, ..) => {
+                OldGpuError::Other(format!("Device request failed: {}", e))
+            }
+            crate::utils::error::gpu_error::GpuError::MutexError { msg, .. } => {
+                OldGpuError::Other(msg)
+            }
+            crate::utils::error::gpu_error::GpuError::ContradictionDetected { .. } => {
+                OldGpuError::InvalidState("Contradiction detected".to_string())
+            }
+            crate::utils::error::gpu_error::GpuError::Other { msg, .. } => OldGpuError::Other(msg),
+        }
+    }
+}
+
 /// Handles synchronization between CPU and GPU for Wave Function Collapse data.
 ///
 /// This struct manages the transfer of grid states, rules, and other data between
@@ -196,7 +253,7 @@ impl GpuSynchronizer {
                     // Unmap before returning error
                     drop(mapped_range); // Drop mapped_range to potentially trigger unmap implicitly
                     self.buffers.grid_buffers.grid_possibilities_buf.unmap();
-                    return Err(GpuError::BufferError(
+                    return Err(GpuError::BufferCopy(
                         "GPU possibility buffer size does not match target grid dimensions"
                             .to_string(),
                     ));
@@ -220,14 +277,12 @@ impl GpuSynchronizer {
             }
             Ok(Err(e)) => {
                 error!("Failed to map possibility buffer: {}", e);
-                return Err(GpuError::BufferMapError(e.to_string()));
+                return Err(GpuError::BufferMapping(e.to_string()));
             }
             Err(e) => {
                 error!("Map future cancelled or panicked: {}", e);
                 // Don't try to unmap if the channel was cancelled before mapping finished.
-                return Err(GpuError::InternalError(
-                    "Buffer map future cancelled".to_string(),
-                ));
+                return Err(GpuError::Other("Buffer map future cancelled".to_string()));
             }
         }
 
@@ -261,7 +316,7 @@ impl GpuSynchronizer {
         )
         .await
         .map_err(|e| {
-            GpuError::TransferError(format!("Failed to download contradiction flag: {}", e))
+            GpuError::BufferCopy(format!("Failed to download contradiction flag: {}", e))
         })?;
 
         let has_contradiction = flag_data.first().map_or(false, |&flag| flag != 0);
@@ -280,7 +335,7 @@ impl GpuSynchronizer {
             )
             .await
             .map_err(|e| {
-                GpuError::TransferError(format!("Failed to download contradiction location: {}", e))
+                GpuError::BufferCopy(format!("Failed to download contradiction location: {}", e))
             })?;
 
             contradiction_location = loc_data.first().cloned();
@@ -363,7 +418,7 @@ impl GpuSynchronizer {
         // self.buffers.worklist_buffers.ensure_buffer_size(&self.device, data_size, config)?;
 
         if worklist_buffer.size() < data_size {
-            return Err(GpuError::BufferSizeMismatch(
+            return Err(GpuError::BufferCopy(
                 "Worklist buffer too small".to_string(),
             ));
         }
@@ -401,9 +456,10 @@ impl GpuSynchronizer {
             download_contradiction_flag: false,
             download_contradiction_location: false,
         };
-        let results = self.buffers.download_results(request).await.map_err(|e| {
-            GpuError::TransferError(format!("Failed to download min entropy: {}", e))
-        })?;
+        let results =
+            self.buffers.download_results(request).await.map_err(|e| {
+                GpuError::BufferCopy(format!("Failed to download min entropy: {}", e))
+            })?;
 
         Ok(results.min_entropy_info)
     }
@@ -562,7 +618,7 @@ impl GpuSynchronizer {
         )
         .await
         .map_err(|e| {
-            GpuError::TransferError(format!("Failed to download contradiction flag: {}", e))
+            GpuError::BufferCopy(format!("Failed to download contradiction flag: {}", e))
         })?;
 
         Ok(flag_data.first().map_or(false, |&flag| flag != 0))
@@ -589,7 +645,7 @@ impl GpuSynchronizer {
         )
         .await
         .map_err(|e| {
-            GpuError::TransferError(format!("Failed to download contradiction location: {}", e))
+            GpuError::BufferCopy(format!("Failed to download contradiction location: {}", e))
         })?;
 
         Ok(loc_data.first().cloned())
@@ -627,16 +683,15 @@ impl GpuSynchronizer {
         // Convert results to grid
         if let Some(grid_data) = results.grid_possibilities {
             let (width, height, depth) = self.buffers.grid_dims;
-            return self.buffers.to_possibility_grid_from_data(
+            // Map the buffer data to a PossibilityGrid
+            return Ok(self.buffers.to_possibility_grid_from_data(
                 &grid_data,
                 (width, height, depth),
                 self.buffers.num_tiles,
-            );
+            )?);
         }
 
-        Err(GpuError::InternalError(
-            "Failed to download grid data".to_string(),
-        ))
+        Err(GpuError::Other("Failed to download grid data".to_string()))
     }
 
     /// Create a new error context for buffer operations
@@ -743,7 +798,7 @@ impl GpuSynchronizer {
                 staging_buffer.unmap();
                 Ok(data)
             }
-            _ => Err(GpuError::BufferMapFailed(
+            _ => Err(GpuError::BufferMapping(
                 "Failed to map staging buffer for download".to_string(),
             )),
         }
@@ -776,7 +831,7 @@ impl GpuSynchronizer {
 
         // Ensure the buffer can accommodate the data
         if offset + data_size > buffer.size() {
-            return Err(GpuError::BufferSizeMismatch(format!(
+            return Err(GpuError::BufferCopy(format!(
                 "Data size ({}) exceeds buffer capacity ({}) at offset {}",
                 data_size,
                 buffer.size(),

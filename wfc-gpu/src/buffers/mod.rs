@@ -647,7 +647,10 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
 
         if Instant::now() > map_start + map_timeout {
             error!("Buffer {:?} mapping timed out after 2 seconds", label_str);
-            return Err(GpuError::BufferMapTimeout(label_str.to_string()));
+            return Err(GpuError::buffer_map_timeout(
+                label_str.to_string(),
+                GpuErrorContext::default(),
+            ));
         }
 
         // Yield periodically to avoid blocking the executor

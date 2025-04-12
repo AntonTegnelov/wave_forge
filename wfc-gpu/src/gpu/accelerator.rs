@@ -12,16 +12,18 @@ use super::{
 };
 
 use crate::{
-    buffers::{GpuBuffers, GpuParamsUniform},
+    buffers::{
+        DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults, GpuParamsUniform,
+    },
     coordination::{
-        self,
-        coordinator::DefaultCoordinator,
+        entropy::{EntropyCoordinationStrategy, EntropyCoordinator},
         propagation::{
             DirectPropagationCoordinator, PropagationCoordinator, SubgridPropagationCoordinator,
         },
-        WfcCoordinator,
+        strategy::{CoordinationStrategy, CoordinationStrategyFactory},
+        DefaultCoordinator, WfcCoordinator,
     },
-    entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator},
+    entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
     propagator::{GpuConstraintPropagator, PropagationStrategy, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
     utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer},
@@ -703,7 +705,7 @@ impl GpuAccelerator {
     }
 
     /// Creates a new GPU accelerator with a specific entropy strategy
-    pub fn with_entropy_strategy<S: EntropyStrategy + 'static>(
+    pub fn with_entropy_strategy<S: GpuEntropyStrategy + 'static>(
         &mut self,
         strategy: S,
     ) -> &mut Self {
@@ -739,7 +741,10 @@ impl GpuAccelerator {
     }
 
     /// Lower-level method to set a boxed strategy
-    pub fn with_entropy_strategy_boxed(&mut self, strategy: Box<dyn EntropyStrategy>) -> &mut Self {
+    pub fn with_entropy_strategy_boxed(
+        &mut self,
+        strategy: Box<dyn GpuEntropyStrategy>,
+    ) -> &mut Self {
         let mut instance = self.instance.write().unwrap();
         instance.entropy_calculator.set_strategy_boxed(strategy);
         self
@@ -872,14 +877,23 @@ impl GpuAccelerator {
         strategy: S,
     ) -> &mut Self {
         let mut instance = self.instance.write().unwrap();
-        instance.coordinator = Box::new(coordination::coordinator::DefaultCoordinator::new(
+        instance.coordinator = Box::new(DefaultCoordinator::new(
             instance.entropy_calculator.clone(),
             instance.propagator.clone(),
         ));
 
-        // In a real implementation with a more complete integration, this would store
-        // and use the strategy directly. For now, we're focusing on the interface.
-        trace!("Set custom coordination strategy.");
+        Ok(instance)
+            .and_then(|mut instance| {
+                instance
+                    .coordinator
+                    .downcast_mut::<DefaultCoordinator>()
+                    .ok_or(())
+            })
+            .map(|coordinator| coordinator.with_coordination_strategy(strategy))
+            .unwrap_or_else(|_| {
+                log::warn!("Failed to set coordination strategy: DefaultCoordinator not available");
+            });
+
         self
     }
 
@@ -896,43 +910,85 @@ impl GpuAccelerator {
         &mut self,
         strategy: Box<dyn coordination::strategy::CoordinationStrategy>,
     ) -> &mut Self {
-        // In a real implementation, this would update the main coordination strategy
-        // used by the run method. In this interface implementation, we just log that
-        // a strategy was set.
-        trace!("Set boxed coordination strategy");
+        let mut instance = self.instance.write().unwrap();
+        instance.coordinator = Box::new(DefaultCoordinator::new(
+            instance.entropy_calculator.clone(),
+            instance.propagator.clone(),
+        ));
+
+        Ok(instance)
+            .and_then(|mut instance| {
+                instance
+                    .coordinator
+                    .downcast_mut::<DefaultCoordinator>()
+                    .ok_or(())
+            })
+            .map(|coordinator| coordinator.with_coordination_strategy_boxed(strategy))
+            .unwrap_or_else(|_| {
+                log::warn!("Failed to set coordination strategy: DefaultCoordinator not available");
+            });
+
         self
     }
 
-    /// Sets the coordination strategy to the default implementation.
-    ///
-    /// # Returns
-    ///
-    /// `&mut Self` for method chaining.
+    /// Use the default coordination strategy for WFC algorithm execution.
     pub fn with_default_coordination(&mut self) -> &mut Self {
         let mut instance = self.instance.write().unwrap();
-        let strategy = coordination::strategy::CoordinationStrategyFactory::create_default(
+        let strategy = CoordinationStrategyFactory::create_default(
             instance.entropy_calculator.clone(),
             instance.propagator.clone(),
         );
 
-        trace!("Set default coordination strategy");
+        instance.coordinator = Box::new(DefaultCoordinator::new(
+            instance.entropy_calculator.clone(),
+            instance.propagator.clone(),
+        ));
+
+        Ok(instance)
+            .and_then(|mut instance| {
+                instance
+                    .coordinator
+                    .downcast_mut::<DefaultCoordinator>()
+                    .ok_or(())
+            })
+            .map(|coordinator| coordinator.with_coordination_strategy_boxed(strategy))
+            .unwrap_or_else(|_| {
+                log::warn!(
+                    "Failed to set default coordination strategy: DefaultCoordinator not available"
+                );
+            });
+
         self
     }
 
-    /// Sets the coordination strategy to an adaptive implementation based on grid size.
-    ///
-    /// # Returns
-    ///
-    /// `&mut Self` for method chaining.
+    /// Use an adaptive coordination strategy for WFC algorithm execution.
+    /// This strategy selects the most appropriate coordination approach based on grid size.
     pub fn with_adaptive_coordination(&mut self) -> &mut Self {
         let mut instance = self.instance.write().unwrap();
-        let strategy = coordination::strategy::CoordinationStrategyFactory::create_adaptive(
+        let grid_size = instance.grid_definition.dims;
+        let strategy = CoordinationStrategyFactory::create_adaptive(
             instance.entropy_calculator.clone(),
             instance.propagator.clone(),
-            instance.grid_definition.dims,
+            grid_size,
         );
 
-        trace!("Set adaptive coordination strategy based on grid size");
+        instance.coordinator = Box::new(DefaultCoordinator::new(
+            instance.entropy_calculator.clone(),
+            instance.propagator.clone(),
+        ));
+
+        Ok(instance)
+            .and_then(|mut instance| {
+                instance
+                    .coordinator
+                    .downcast_mut::<DefaultCoordinator>()
+                    .ok_or(())
+            })
+            .map(|coordinator| coordinator.with_coordination_strategy_boxed(strategy))
+            .unwrap_or_else(|_| {
+                log::warn!("Failed to set adaptive coordination strategy: DefaultCoordinator not available");
+            });
+
         self
     }
 

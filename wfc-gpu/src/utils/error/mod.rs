@@ -10,7 +10,7 @@ use std::fmt;
 use thiserror::Error;
 
 pub use gpu_error::{GpuError, GpuErrorContext, GpuResourceType};
-pub use io_error::{IoError, IoResourceType};
+pub use io_error::{IoError, IoErrorContext, IoResourceType};
 
 /// Common trait for all error types in the WFC-GPU module.
 pub trait ErrorWithContext: std::error::Error {

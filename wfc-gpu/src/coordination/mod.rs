@@ -480,7 +480,7 @@ impl StrategicCoordinator {
         let mut iterations = 0;
         loop {
             if iterations >= max_iterations {
-                return Err(WfcError::MaxIterationsExceeded);
+                return Err(WfcError::MaxIterationsReached(max_iterations));
             }
 
             match self.run_step(accelerator, grid).await? {
@@ -488,7 +488,7 @@ impl StrategicCoordinator {
                     break;
                 }
                 strategy::StepResult::Contradiction => {
-                    return Err(WfcError::Contradiction);
+                    return Err(WfcError::Contradiction(0, 0, 0));
                 }
                 strategy::StepResult::InProgress => {
                     iterations += 1;

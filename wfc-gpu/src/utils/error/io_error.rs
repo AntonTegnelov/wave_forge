@@ -156,7 +156,7 @@ pub enum IoError {
     },
 
     /// Create an error for file or resource loading failures
-    #[error("Resource error: {msg}")]
+    #[error("Resource error: {message}")]
     ResourceError {
         kind: IoResourceType,
         message: String,

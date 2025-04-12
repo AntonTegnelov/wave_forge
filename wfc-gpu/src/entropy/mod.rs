@@ -5,7 +5,7 @@ mod calculator;
 mod entropy_strategy;
 
 // Re-export main types from calculator
-pub use calculator::{GpuEntropyCalculator, GpuEntropyCalculatorExt};
+pub use calculator::{GpuEntropyCalculator, GpuEntropyCalculatorExt, GpuEntropyStrategy};
 
 // Re-export entropy types from core
 pub use wfc_core::entropy::EntropyHeuristicType;

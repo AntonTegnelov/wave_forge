@@ -11,6 +11,7 @@ bitvec = "1.0.1"
 bytes = "1.5.0"
 futures = "0.3.30" # Required by pollster
 futures-intrusive = "0.5" # For async channel in buffer download
+function_name = "0.3.0" # For error location information
 glam = { version = "0.27.0", features = ["bytemuck"] }
 bytemuck = { version = "1.15", features = ["derive"] }
 log = "0.4.21"

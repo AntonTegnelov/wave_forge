@@ -1,6 +1,6 @@
 use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams},
-    entropy::entropy_strategy::{EntropyStrategy, EntropyStrategyFactory},
+    entropy::entropy_strategy::EntropyStrategy as ImportedEntropyStrategy,
     gpu::sync::GpuSynchronizer,
     shader::pipeline::ComputePipelines,
     utils::error::gpu_error::GpuError,
@@ -25,14 +25,14 @@ pub struct GpuEntropyCalculator {
     buffers: Arc<GpuBuffers>,
     synchronizer: Arc<GpuSynchronizer>,
     grid_dims: (usize, usize, usize),
-    strategy: Box<dyn EntropyStrategy>,
+    strategy: Box<dyn GpuEntropyStrategy>,
 }
 
-// Manual clone implementation since Box<dyn EntropyStrategy> is not Clone
+// Manual clone implementation since Box<dyn GpuEntropyStrategy> is not Clone
 impl Clone for GpuEntropyCalculator {
     fn clone(&self) -> Self {
         // Create a new strategy of the same type
-        let strategy = EntropyStrategyFactory::create_strategy(
+        let strategy = ImportedEntropyStrategy::create_strategy(
             self.strategy.heuristic_type(),
             self.buffers.num_tiles,
             self.buffers.grid_buffers.u32s_per_cell,
@@ -66,7 +66,7 @@ impl GpuEntropyCalculator {
         ));
 
         // Use factory to create the default Shannon strategy
-        let strategy = EntropyStrategyFactory::create_strategy(
+        let strategy = ImportedEntropyStrategy::create_strategy(
             EntropyHeuristicType::default(),
             buffers.num_tiles,
             buffers.grid_buffers.u32s_per_cell,
@@ -99,7 +99,7 @@ impl GpuEntropyCalculator {
         ));
 
         // Use factory to create the specified strategy
-        let strategy = EntropyStrategyFactory::create_strategy(
+        let strategy = ImportedEntropyStrategy::create_strategy(
             heuristic_type,
             buffers.num_tiles,
             buffers.grid_buffers.u32s_per_cell,
@@ -117,13 +117,13 @@ impl GpuEntropyCalculator {
     }
 
     /// Sets a new entropy strategy
-    pub fn with_strategy(&mut self, strategy: Box<dyn EntropyStrategy>) -> &mut Self {
+    pub fn with_strategy(&mut self, strategy: Box<dyn GpuEntropyStrategy>) -> &mut Self {
         self.strategy = strategy;
         self
     }
 
     /// Sets a new entropy strategy (same as with_strategy but with a more consistent naming)
-    pub fn set_strategy_boxed(&mut self, strategy: Box<dyn EntropyStrategy>) -> &mut Self {
+    pub fn set_strategy_boxed(&mut self, strategy: Box<dyn GpuEntropyStrategy>) -> &mut Self {
         self.strategy = strategy;
         self
     }
@@ -146,6 +146,9 @@ impl GpuEntropyCalculator {
 
         // Call strategy's prepare method
         self.strategy.prepare(&self.synchronizer)?;
+
+        // Upload strategy data if needed (now available in the trait)
+        self.strategy.upload_data(&self.synchronizer)?;
 
         // Convert grid possibilities to u32 arrays and upload them
         let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
@@ -198,35 +201,6 @@ impl GpuEntropyCalculator {
         self.synchronizer
             .upload_entropy_params(&entropy_shader_params)?;
 
-        // Upload any strategy-specific data
-        self.strategy.upload_data(&self.synchronizer)?;
-
-        // --- Create bind groups for the entropy shader ---
-        let entropy_params_bind_group_layout =
-            self.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Entropy Params Bind Group Layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
-
-        let entropy_params_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Entropy Params Bind Group"),
-            layout: &entropy_params_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.buffers.entropy_params_buffer.as_entire_binding(),
-            }],
-        });
-
         // --- Dispatch Compute Shader ---
         let mut encoder = self
             .device
@@ -268,6 +242,16 @@ impl GpuEntropyCalculator {
                         .as_entire_binding(),
                 },
             ],
+        });
+
+        // Create entropy parameters bind group (group 1)
+        let entropy_params_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Entropy Parameters Bind Group"),
+            layout: &self.pipelines.entropy_bind_group_layout_1,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.buffers.entropy_params_buffer.as_entire_binding(),
+            }],
         });
 
         {
@@ -320,7 +304,7 @@ impl GpuEntropyCalculator {
         )
         .await?;
 
-        // Let the strategy do any post-processing
+        // Call post-process if needed (now available in the trait)
         self.strategy.post_process(&self.synchronizer)?;
 
         debug!("Exiting calculate_entropy_async");
@@ -408,6 +392,16 @@ impl GpuEntropyCalculator {
             }
         }
     }
+
+    fn upload_data_from_strategy(&self) -> Result<(), CoreEntropyError> {
+        // Implementation that would call a suitable method on self.strategy
+        Ok(())
+    }
+
+    fn post_process_from_strategy(&self) -> Result<(), CoreEntropyError> {
+        // Implementation that would call a suitable method on self.strategy
+        Ok(())
+    }
 }
 
 impl EntropyCalculator for GpuEntropyCalculator {
@@ -426,7 +420,7 @@ impl EntropyCalculator for GpuEntropyCalculator {
 
     fn set_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> bool {
         // Create a new strategy using the factory
-        let strategy = EntropyStrategyFactory::create_strategy(
+        let strategy = ImportedEntropyStrategy::create_strategy(
             heuristic_type,
             self.buffers.num_tiles,
             self.buffers.grid_buffers.u32s_per_cell,
@@ -444,35 +438,66 @@ impl EntropyCalculator for GpuEntropyCalculator {
 }
 
 impl From<GpuError> for CoreEntropyError {
-    fn from(gpu_error: GpuError) -> Self {
-        match gpu_error {
-            GpuError::BufferOperationError { msg, .. }
-            | GpuError::CommandExecutionError { msg, .. }
-            | GpuError::TransferError { msg, .. }
-            | GpuError::BufferSizeMismatch { msg, .. } => {
-                CoreEntropyError::Other(format!("GPU Communication Error: {}", msg))
+    fn from(error: GpuError) -> Self {
+        match error {
+            GpuError::MemoryAllocation(msg) => {
+                CoreEntropyError::MemoryError(format!("GPU memory allocation error: {}", msg))
             }
-            GpuError::ShaderError { msg, .. } => {
-                CoreEntropyError::Other(format!("GPU Shader Error: {}", msg))
+            GpuError::ComputationTimeout { .. } => {
+                CoreEntropyError::Timeout("GPU entropy calculation timed out".into())
             }
-            GpuError::ValidationError(e, _) => {
-                CoreEntropyError::Other(format!("GPU Validation Error: {}", e))
+            GpuError::KernelExecution(msg) => {
+                CoreEntropyError::ComputationError(format!("GPU kernel execution error: {}", msg))
             }
-            GpuError::ContradictionDetected { .. } => CoreEntropyError::Contradiction,
-            GpuError::DeviceLost { msg, .. }
-            | GpuError::BufferMapFailed { msg, .. }
-            | GpuError::ResourceCreationFailed { msg, .. }
-            | GpuError::Timeout { msg, .. }
-            | GpuError::MutexError { msg, .. } => {
-                CoreEntropyError::Other(format!("GPU Resource Error: {}", msg))
+            GpuError::QueueSubmission(msg) => {
+                CoreEntropyError::ComputationError(format!("GPU queue submission error: {}", msg))
             }
-            GpuError::DeviceRequestFailed(e, _) => {
-                CoreEntropyError::Other(format!("GPU Device Error: {}", e))
+            GpuError::DeviceLost(msg) => CoreEntropyError::HardwareError(format!(
+                "GPU device lost during entropy calculation: {}",
+                msg
+            )),
+            GpuError::InvalidState(msg) => {
+                CoreEntropyError::InvalidInput(format!("Invalid GPU state: {}", msg))
             }
-            GpuError::AdapterRequestFailed { .. } => {
-                CoreEntropyError::Other("GPU Adapter request failed".to_string())
+            GpuError::BarrierSynchronization(msg) => {
+                CoreEntropyError::ComputationError(format!("GPU barrier error: {}", msg))
             }
-            GpuError::Other { msg, .. } => CoreEntropyError::Other(format!("GPU Error: {}", msg)),
+            GpuError::BufferCopy(msg) => {
+                CoreEntropyError::IOError(format!("GPU buffer copy error: {}", msg))
+            }
+            GpuError::BufferMapping(msg) => {
+                CoreEntropyError::IOError(format!("GPU buffer mapping error: {}", msg))
+            }
+            GpuError::Other(msg) => CoreEntropyError::Other(format!("GPU error: {}", msg)),
+        }
+    }
+}
+
+impl From<crate::utils::error::gpu_error::GpuError> for CoreEntropyError {
+    fn from(error: crate::utils::error::gpu_error::GpuError) -> Self {
+        match error {
+            crate::utils::error::gpu_error::GpuError::BufferMapFailed { msg, .. } => {
+                CoreEntropyError::IOError(format!("GPU buffer mapping failed: {}", msg))
+            }
+            crate::utils::error::gpu_error::GpuError::ShaderError { msg, .. } => {
+                CoreEntropyError::ConfigurationError(format!("GPU shader error: {}", msg))
+            }
+            crate::utils::error::gpu_error::GpuError::ResourceCreationFailed { msg, .. } => {
+                CoreEntropyError::MemoryError(format!("GPU resource creation failed: {}", msg))
+            }
+            crate::utils::error::gpu_error::GpuError::CommandExecutionError { msg, .. } => {
+                CoreEntropyError::ComputationError(format!("GPU command execution error: {}", msg))
+            }
+            crate::utils::error::gpu_error::GpuError::DeviceLost { msg, .. } => {
+                CoreEntropyError::HardwareError(format!(
+                    "GPU device lost during entropy calculation: {}",
+                    msg
+                ))
+            }
+            crate::utils::error::gpu_error::GpuError::Timeout { msg, .. } => {
+                CoreEntropyError::Timeout(format!("GPU entropy calculation timed out: {}", msg))
+            }
+            _ => CoreEntropyError::Other(format!("GPU error: {:?}", error)),
         }
     }
 }
@@ -499,8 +524,8 @@ fn map_gpu_error_to_entropy_error(gpu_error: GpuError) -> CoreEntropyError {
     gpu_error.into()
 }
 
-/// Trait for entropy calculation strategies in the WFC algorithm.
-pub trait EntropyStrategy: Send + Sync + std::fmt::Debug {
+/// Trait for GPU-specific entropy calculation strategies in the WFC algorithm.
+pub trait GpuEntropyStrategy: Send + Sync + std::fmt::Debug {
     /// Get the heuristic type used by this strategy
     fn heuristic_type(&self) -> EntropyHeuristicType;
 
@@ -518,4 +543,16 @@ pub trait EntropyStrategy: Send + Sync + std::fmt::Debug {
         queue: &wgpu::Queue,
         grid_dims: (usize, usize, usize),
     ) -> Result<(), CoreEntropyError>;
+
+    /// Upload strategy-specific data to GPU if needed
+    fn upload_data(&self, _synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+        // Default implementation does nothing
+        Ok(())
+    }
+
+    /// Any post-processing needed after shader execution
+    fn post_process(&self, _synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+        // Default implementation does nothing
+        Ok(())
+    }
 }

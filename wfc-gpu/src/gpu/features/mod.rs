@@ -139,12 +139,12 @@ impl GpuCapabilities {
         supported_features.insert(GpuFeature::StorageBuffers);
 
         // Map specific wgpu features
-        if features.contains(WgpuFeatures::SHADER_INT16) {
+        if features.contains(WgpuFeatures::SHADER_I16) {
             // This is just an example - actual mapping would depend on our needs
         }
 
         // Atomics
-        if features.contains(WgpuFeatures::SHADER_ATOMIC_INT32) {
+        if features.contains(WgpuFeatures::SHADER_INT64) {
             supported_features.insert(GpuFeature::Atomics);
         }
 
@@ -153,7 +153,7 @@ impl GpuCapabilities {
         supported_features.insert(GpuFeature::WorkgroupBarriers);
 
         // Subgroups
-        if features.contains(WgpuFeatures::SHADER_SUBGROUPS) {
+        if features.contains(WgpuFeatures::SUBGROUP) {
             supported_features.insert(GpuFeature::Subgroups);
         }
 

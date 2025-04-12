@@ -9,8 +9,24 @@ use crate::{
     utils::error_recovery::{GpuError, GridCoord},
 };
 use futures::TryFutureExt;
+use log::trace;
 use std::sync::Arc;
 use wfc_core::{grid::PossibilityGrid, propagator::PropagationError};
+use wfc_rules::AdjacencyRules;
+
+/// Data structure for holding SubgridData properties
+#[derive(Debug)]
+struct SubgridData {
+    num_tiles: u32,
+    num_axes: u32,
+    boundary_mode: wfc_core::BoundaryCondition,
+    heuristic_type: u32,
+    tie_breaking: u32,
+    max_propagation_steps: u32,
+    contradiction_check_frequency: u32,
+    worklist_size: u32,
+    propagator: Box<dyn PropagationStrategy>,
+}
 
 /// Strategy trait for constraint propagation in WFC algorithm.
 /// This defines the interface for different propagation strategies,
@@ -166,14 +182,124 @@ impl PropagationStrategy for DirectPropagationStrategy {
                 compute_pass.set_pipeline(&synchronizer.device().create_compute_pipeline(
                     &wgpu::ComputePipelineDescriptor {
                         label: Some("Propagation Pipeline"),
-                        layout: None,
+                        layout: Some(device.create_bind_group_layout(
+                            &wgpu::BindGroupLayoutDescriptor {
+                                label: Some("PropagationBindGroupLayout"),
+                                entries: &[
+                                    // Grid possibilities buffer
+                                    wgpu::BindGroupLayoutEntry {
+                                        binding: 0,
+                                        visibility: wgpu::ShaderStages::COMPUTE,
+                                        ty: wgpu::BindingType::Buffer {
+                                            ty: wgpu::BufferBindingType::Storage {
+                                                read_only: false,
+                                            },
+                                            has_dynamic_offset: false,
+                                            min_binding_size: None,
+                                        },
+                                        count: None,
+                                    },
+                                    // Adjacency rules buffer
+                                    wgpu::BindGroupLayoutEntry {
+                                        binding: 1,
+                                        visibility: wgpu::ShaderStages::COMPUTE,
+                                        ty: wgpu::BindingType::Buffer {
+                                            ty: wgpu::BufferBindingType::Storage {
+                                                read_only: true,
+                                            },
+                                            has_dynamic_offset: false,
+                                            min_binding_size: None,
+                                        },
+                                        count: None,
+                                    },
+                                    // Input worklist buffer
+                                    wgpu::BindGroupLayoutEntry {
+                                        binding: 2,
+                                        visibility: wgpu::ShaderStages::COMPUTE,
+                                        ty: wgpu::BindingType::Buffer {
+                                            ty: wgpu::BufferBindingType::Storage {
+                                                read_only: true,
+                                            },
+                                            has_dynamic_offset: false,
+                                            min_binding_size: None,
+                                        },
+                                        count: None,
+                                    },
+                                    // Output worklist buffer
+                                    wgpu::BindGroupLayoutEntry {
+                                        binding: 3,
+                                        visibility: wgpu::ShaderStages::COMPUTE,
+                                        ty: wgpu::BindingType::Buffer {
+                                            ty: wgpu::BufferBindingType::Storage {
+                                                read_only: false,
+                                            },
+                                            has_dynamic_offset: false,
+                                            min_binding_size: None,
+                                        },
+                                        count: None,
+                                    },
+                                    // Input worklist count buffer
+                                    wgpu::BindGroupLayoutEntry {
+                                        binding: 4,
+                                        visibility: wgpu::ShaderStages::COMPUTE,
+                                        ty: wgpu::BindingType::Buffer {
+                                            ty: wgpu::BufferBindingType::Storage {
+                                                read_only: true,
+                                            },
+                                            has_dynamic_offset: false,
+                                            min_binding_size: None,
+                                        },
+                                        count: None,
+                                    },
+                                    // Output worklist count buffer
+                                    wgpu::BindGroupLayoutEntry {
+                                        binding: 5,
+                                        visibility: wgpu::ShaderStages::COMPUTE,
+                                        ty: wgpu::BindingType::Buffer {
+                                            ty: wgpu::BufferBindingType::Storage {
+                                                read_only: false,
+                                            },
+                                            has_dynamic_offset: false,
+                                            min_binding_size: None,
+                                        },
+                                        count: None,
+                                    },
+                                    // Parameters buffer
+                                    wgpu::BindGroupLayoutEntry {
+                                        binding: 6,
+                                        visibility: wgpu::ShaderStages::COMPUTE,
+                                        ty: wgpu::BindingType::Buffer {
+                                            ty: wgpu::BufferBindingType::Uniform,
+                                            has_dynamic_offset: false,
+                                            min_binding_size: None,
+                                        },
+                                        count: None,
+                                    },
+                                    // Contradiction flag buffer
+                                    wgpu::BindGroupLayoutEntry {
+                                        binding: 7,
+                                        visibility: wgpu::ShaderStages::COMPUTE,
+                                        ty: wgpu::BindingType::Buffer {
+                                            ty: wgpu::BufferBindingType::Storage {
+                                                read_only: false,
+                                            },
+                                            has_dynamic_offset: false,
+                                            min_binding_size: None,
+                                        },
+                                        count: None,
+                                    },
+                                ],
+                            },
+                        )),
                         module: &synchronizer.device().create_shader_module(
                             wgpu::ShaderModuleDescriptor {
                                 label: Some("Propagation Shader"),
                                 source: wgpu::ShaderSource::Wgsl("".into()),
                             },
                         ),
-                        entry_point: "main",
+                        entry_point: Some("main"),
+                        compilation_options: None,
+                        cache: None,
                     },
                 ));
                 compute_pass.set_bind_group(0, &bind_group, &[]);
@@ -207,14 +333,124 @@ impl PropagationStrategy for DirectPropagationStrategy {
                     compute_pass.set_pipeline(&synchronizer.device().create_compute_pipeline(
                         &wgpu::ComputePipelineDescriptor {
                             label: Some("Propagation Pipeline"),
-                            layout: None,
+                            layout: Some(device.create_bind_group_layout(
+                                &wgpu::BindGroupLayoutDescriptor {
+                                    label: Some("PropagationBindGroupLayout"),
+                                    entries: &[
+                                        // Grid possibilities buffer
+                                        wgpu::BindGroupLayoutEntry {
+                                            binding: 0,
+                                            visibility: wgpu::ShaderStages::COMPUTE,
+                                            ty: wgpu::BindingType::Buffer {
+                                                ty: wgpu::BufferBindingType::Storage {
+                                                    read_only: false,
+                                                },
+                                                has_dynamic_offset: false,
+                                                min_binding_size: None,
+                                            },
+                                            count: None,
+                                        },
+                                        // Adjacency rules buffer
+                                        wgpu::BindGroupLayoutEntry {
+                                            binding: 1,
+                                            visibility: wgpu::ShaderStages::COMPUTE,
+                                            ty: wgpu::BindingType::Buffer {
+                                                ty: wgpu::BufferBindingType::Storage {
+                                                    read_only: true,
+                                                },
+                                                has_dynamic_offset: false,
+                                                min_binding_size: None,
+                                            },
+                                            count: None,
+                                        },
+                                        // Input worklist buffer
+                                        wgpu::BindGroupLayoutEntry {
+                                            binding: 2,
+                                            visibility: wgpu::ShaderStages::COMPUTE,
+                                            ty: wgpu::BindingType::Buffer {
+                                                ty: wgpu::BufferBindingType::Storage {
+                                                    read_only: true,
+                                                },
+                                                has_dynamic_offset: false,
+                                                min_binding_size: None,
+                                            },
+                                            count: None,
+                                        },
+                                        // Output worklist buffer
+                                        wgpu::BindGroupLayoutEntry {
+                                            binding: 3,
+                                            visibility: wgpu::ShaderStages::COMPUTE,
+                                            ty: wgpu::BindingType::Buffer {
+                                                ty: wgpu::BufferBindingType::Storage {
+                                                    read_only: false,
+                                                },
+                                                has_dynamic_offset: false,
+                                                min_binding_size: None,
+                                            },
+                                            count: None,
+                                        },
+                                        // Input worklist count buffer
+                                        wgpu::BindGroupLayoutEntry {
+                                            binding: 4,
+                                            visibility: wgpu::ShaderStages::COMPUTE,
+                                            ty: wgpu::BindingType::Buffer {
+                                                ty: wgpu::BufferBindingType::Storage {
+                                                    read_only: true,
+                                                },
+                                                has_dynamic_offset: false,
+                                                min_binding_size: None,
+                                            },
+                                            count: None,
+                                        },
+                                        // Output worklist count buffer
+                                        wgpu::BindGroupLayoutEntry {
+                                            binding: 5,
+                                            visibility: wgpu::ShaderStages::COMPUTE,
+                                            ty: wgpu::BindingType::Buffer {
+                                                ty: wgpu::BufferBindingType::Storage {
+                                                    read_only: false,
+                                                },
+                                                has_dynamic_offset: false,
+                                                min_binding_size: None,
+                                            },
+                                            count: None,
+                                        },
+                                        // Parameters buffer
+                                        wgpu::BindGroupLayoutEntry {
+                                            binding: 6,
+                                            visibility: wgpu::ShaderStages::COMPUTE,
+                                            ty: wgpu::BindingType::Buffer {
+                                                ty: wgpu::BufferBindingType::Uniform,
+                                                has_dynamic_offset: false,
+                                                min_binding_size: None,
+                                            },
+                                            count: None,
+                                        },
+                                        // Contradiction flag buffer
+                                        wgpu::BindGroupLayoutEntry {
+                                            binding: 7,
+                                            visibility: wgpu::ShaderStages::COMPUTE,
+                                            ty: wgpu::BindingType::Buffer {
+                                                ty: wgpu::BufferBindingType::Storage {
+                                                    read_only: false,
+                                                },
+                                                has_dynamic_offset: false,
+                                                min_binding_size: None,
+                                            },
+                                            count: None,
+                                        },
+                                    ],
+                                },
+                            )),
                             module: &synchronizer.device().create_shader_module(
                                 wgpu::ShaderModuleDescriptor {
                                     label: Some("Propagation Shader"),
                                     source: wgpu::ShaderSource::Wgsl("".into()),
                                 },
                             ),
-                            entry_point: "main",
+                            entry_point: Some("main"),
+                            compilation_options: None,
+                            cache: None,
                         },
                     ));
                     compute_pass.set_bind_group(0, &bind_group, &[]);
@@ -244,7 +480,7 @@ impl PropagationStrategy for DirectPropagationStrategy {
                 .map_err(gpu_error_to_propagation_error)?;
 
             if contradiction_flag[0] != 0 {
-                return Err(PropagationError::Contradiction);
+                return Err(PropagationError::Contradiction(0, 0, 0));
             }
 
             // Check the output worklist size to determine whether to continue
@@ -632,11 +868,16 @@ impl SubgridPropagationStrategy {
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
     ) -> Result<PossibilityGrid, PropagationError> {
-        // Create a direct propagation strategy for the subgrid
-        let direct_strategy = DirectPropagationStrategy::new(self.max_iterations);
+        // Create a struct for 3D coordinates
+        #[derive(Debug, Clone, Copy)]
+        struct LocalCoord3D {
+            x: usize,
+            y: usize,
+            z: usize,
+        }
 
         // Adjust the updated coordinates to be relative to the subgrid
-        let adjusted_coords: Vec<GridCoord> = updated_coords
+        let adjusted_coords_3d: Vec<LocalCoord3D> = updated_coords
             .iter()
             .filter_map(|&(x, y, z)| {
                 // Check if coordinate is within the region
@@ -648,7 +889,7 @@ impl SubgridPropagationStrategy {
                     && z < region.z_offset + region.depth
                 {
                     // Convert to local coordinates within the subgrid
-                    Some(GridCoord {
+                    Some(LocalCoord3D {
                         x: x - region.x_offset,
                         y: y - region.y_offset,
                         z: z - region.z_offset,
@@ -656,6 +897,15 @@ impl SubgridPropagationStrategy {
                 } else {
                     None
                 }
+            })
+            .collect();
+
+        // Convert to GridCoord objects for propagation (omitting z since GridCoord is 2D)
+        let adjusted_coords: Vec<GridCoord> = adjusted_coords_3d
+            .iter()
+            .map(|coord| GridCoord {
+                x: coord.x,
+                y: coord.y,
             })
             .collect();
 
@@ -702,6 +952,7 @@ impl SubgridPropagationStrategy {
             .map_err(gpu_error_to_propagation_error)?;
 
         // Process the subgrid with direct propagation
+        let direct_strategy = DirectPropagationStrategy::new(self.max_iterations);
         direct_strategy.propagate(
             &mut subgrid_mutable,
             &adjusted_coords,
