@@ -2,13 +2,11 @@
 
 //! Module responsible for coordinating different constraint propagation strategies.
 
-use crate::{
-    coordination::strategy::CoordinationStrategy,
-    propagator::{GpuConstraintPropagator, PropagationStrategy},
-};
+use crate::propagator::GpuConstraintPropagator;
+use crate::utils::RwLock; // Use the type alias
 use async_trait::async_trait;
 use std::fmt::Debug;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use wfc_core::{
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
@@ -129,12 +127,13 @@ impl PropagationCoordinationStrategy for DirectPropagationCoordinationStrategy {
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        // Get mutable access to the propagator
-        let propagator_guard = propagator.write().unwrap();
+        // Get a write lock asynchronously. The tokio lock guard is Send,
+        // so it can be held across the await point
+        let mut propagator_guard = propagator.write().await;
 
-        // Simply delegate to the propagator's default implementation
+        // Call propagate and await the result while holding the lock
         propagator_guard
-            .propagate(grid, updated_coords, rules)
+            .propagate(grid, updated_coords.clone(), rules)
             .await
     }
 
@@ -163,13 +162,13 @@ impl PropagationCoordinationStrategy for SubgridPropagationCoordinationStrategy 
         updated_coords: Vec<(usize, usize, usize)>,
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        // Get mutable access to the propagator
-        let propagator_guard = propagator.write().unwrap();
+        // Get a write lock asynchronously. The tokio lock guard is Send,
+        // so it can be held across the await point
+        let mut propagator_guard = propagator.write().await;
 
-        // Delegate to the propagator's subgrid-specific logic
-        // The propagator should handle subgridding internally if configured properly
+        // Call propagate and await the result while holding the lock
         propagator_guard
-            .propagate(grid, updated_coords, rules)
+            .propagate(grid, updated_coords.clone(), rules)
             .await
     }
 

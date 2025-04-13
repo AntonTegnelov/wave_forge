@@ -9,6 +9,7 @@ use crate::{
 use log::{debug, error, trace, warn};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
+use wfc_rules::AdjacencyRules;
 use wgpu;
 
 // Type alias for backward compatibility
@@ -836,6 +837,40 @@ impl GpuSynchronizer {
 
         // Ensure the write is processed
         self.device.poll(wgpu::MaintainBase::Wait);
+
+        Ok(())
+    }
+
+    /// Uploads adjacency rules to the GPU
+    pub fn upload_rules(&self, rules: &AdjacencyRules) -> Result<(), GpuError> {
+        trace!("Uploading adjacency rules to GPU");
+
+        let num_tiles = rules.num_tiles();
+        let num_axes = rules.num_axes();
+
+        // Prepare weighted rules data for the buffer
+        let mut weighted_rules_data = Vec::new();
+        for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
+            // Only include rules with non-default weights
+            if *weight < 1.0 || *weight > 1.0 {
+                let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
+                weighted_rules_data.push(rule_idx as u32);
+                weighted_rules_data.push(weight.to_bits()); // Store f32 weight as u32 bits
+            }
+        }
+
+        // If no specific weights are found, add a dummy entry
+        if weighted_rules_data.is_empty() {
+            weighted_rules_data.push(0); // Dummy index
+            weighted_rules_data.push(1.0f32.to_bits()); // Dummy weight (1.0)
+        }
+
+        // Upload the data to the GPU buffer
+        self.queue.write_buffer(
+            &self.buffers.rule_buffers.adjacency_rules_buf,
+            0,
+            bytemuck::cast_slice(&weighted_rules_data),
+        );
 
         Ok(())
     }

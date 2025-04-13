@@ -17,3 +17,7 @@ pub use debug_viz::{DebugSnapshot, DebugVisualizer, VisualizationType};
 pub use error::{ErrorLocation, ErrorSeverity, ErrorWithContext, WfcError};
 pub use error_recovery::{GpuError, RecoverableGpuOp};
 pub use subgrid::{SubgridConfig, SubgridRegion};
+
+// Type aliases for synchronization primitives
+// This allows us to easily switch between std and tokio implementations
+pub type RwLock<T> = tokio::sync::RwLock<T>;

@@ -1,14 +1,12 @@
-use crate::{
-    buffers::GpuEntropyShaderParams,
-    gpu::sync::GpuSynchronizer,
-};
+use crate::{buffers::GpuEntropyShaderParams, gpu::sync::GpuSynchronizer};
+use std::fmt::Debug;
 use wfc_core::entropy::EntropyError as CoreEntropyError;
 use wfc_core::entropy::EntropyHeuristicType;
 
 /// Strategy trait for calculating entropy and selecting cells in WFC algorithm.
 /// This strategy pattern allows for different entropy calculation algorithms
 /// to be swapped in without changing the core implementation.
-pub trait EntropyStrategy: Send + Sync {
+pub trait EntropyStrategy: Send + Sync + Debug {
     /// Get the type of entropy heuristic this strategy implements
     fn heuristic_type(&self) -> EntropyHeuristicType;
 
@@ -28,6 +26,7 @@ pub trait EntropyStrategy: Send + Sync {
 /// Shannon entropy calculation strategy - uses information theory entropy
 /// calculation for cell selection. This is the most "correct" entropy measure
 /// but can be more computationally expensive.
+#[derive(Debug)]
 pub struct ShannonEntropyStrategy {
     num_tiles: usize,
     u32s_per_cell: usize,
@@ -71,6 +70,7 @@ impl EntropyStrategy for ShannonEntropyStrategy {
 
 /// Count-based entropy strategy - uses the count of possible tiles
 /// as the entropy measure. Simpler than Shannon but still effective.
+#[derive(Debug)]
 pub struct CountEntropyStrategy {
     num_tiles: usize,
     u32s_per_cell: usize,
@@ -114,6 +114,7 @@ impl EntropyStrategy for CountEntropyStrategy {
 
 /// Simple count-based entropy strategy - uses just the raw count
 /// of possible tiles without normalization.
+#[derive(Debug)]
 pub struct CountSimpleEntropyStrategy {
     num_tiles: usize,
     u32s_per_cell: usize,
@@ -157,6 +158,7 @@ impl EntropyStrategy for CountSimpleEntropyStrategy {
 
 /// Weighted count entropy strategy - takes into account tile weights
 /// when calculating entropy.
+#[derive(Debug)]
 pub struct WeightedCountEntropyStrategy {
     num_tiles: usize,
     u32s_per_cell: usize,
@@ -200,6 +202,7 @@ impl EntropyStrategy for WeightedCountEntropyStrategy {
 }
 
 /// Factory for creating entropy strategy instances based on heuristic type
+#[derive(Debug)]
 pub struct EntropyStrategyFactory;
 
 impl EntropyStrategyFactory {

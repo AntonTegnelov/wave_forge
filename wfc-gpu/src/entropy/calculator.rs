@@ -1,18 +1,62 @@
 use crate::utils::error_recovery::GpuError as OldGpuError;
 use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams},
-    entropy::entropy_strategy::EntropyStrategy as ImportedEntropyStrategy,
+    entropy::entropy_strategy::{
+        EntropyStrategy as ImportedEntropyStrategy, EntropyStrategyFactory,
+    },
     gpu::sync::GpuSynchronizer,
     shader::pipeline::ComputePipelines,
-    utils::error::gpu_error::GpuError as NewGpuError,
+    utils::error::gpu_error::{GpuError as NewGpuError, GpuErrorContext},
 };
 use log::{debug, error, warn};
 use pollster;
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 use wfc_core::{
     entropy::{EntropyCalculator, EntropyError as CoreEntropyError, EntropyHeuristicType},
     grid::{EntropyGrid, PossibilityGrid},
 };
+
+// Adapter to convert EntropyStrategy to GpuEntropyStrategy
+struct EntropyStrategyAdapter(Box<dyn ImportedEntropyStrategy>);
+
+impl Debug for EntropyStrategyAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "EntropyStrategyAdapter")
+    }
+}
+
+impl GpuEntropyStrategy for EntropyStrategyAdapter {
+    fn heuristic_type(&self) -> EntropyHeuristicType {
+        self.0.heuristic_type()
+    }
+
+    fn configure_shader_params(&self, params: &mut GpuEntropyShaderParams) {
+        self.0.configure_shader_params(params)
+    }
+
+    fn prepare(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+        self.0.prepare(synchronizer)
+    }
+
+    fn calculate_entropy(
+        &self,
+        _buffers: &GpuBuffers,
+        _pipelines: &ComputePipelines,
+        _queue: &wgpu::Queue,
+        _grid_dims: (usize, usize, usize),
+    ) -> Result<(), CoreEntropyError> {
+        // Default implementation as this isn't used in the imported strategy
+        Ok(())
+    }
+
+    fn upload_data(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+        self.0.upload_data(synchronizer)
+    }
+
+    fn post_process(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+        self.0.post_process(synchronizer)
+    }
+}
 
 /// GPU-accelerated entropy calculator for use in WFC algorithm.
 ///
@@ -33,11 +77,14 @@ pub struct GpuEntropyCalculator {
 impl Clone for GpuEntropyCalculator {
     fn clone(&self) -> Self {
         // Create a new strategy of the same type
-        let strategy = <dyn ImportedEntropyStrategy>::create_strategy(
+        let base_strategy = EntropyStrategyFactory::create_strategy(
             self.strategy.heuristic_type(),
             self.buffers.num_tiles,
             self.buffers.grid_buffers.u32s_per_cell,
         );
+
+        // Wrap with adapter
+        let strategy = Box::new(EntropyStrategyAdapter(base_strategy));
 
         Self {
             device: self.device.clone(),
@@ -67,11 +114,14 @@ impl GpuEntropyCalculator {
         ));
 
         // Use factory to create the default Shannon strategy
-        let strategy = <dyn ImportedEntropyStrategy>::create_strategy(
+        let base_strategy = EntropyStrategyFactory::create_strategy(
             EntropyHeuristicType::default(),
             buffers.num_tiles,
             buffers.grid_buffers.u32s_per_cell,
         );
+
+        // Wrap with adapter
+        let strategy = Box::new(EntropyStrategyAdapter(base_strategy));
 
         Self {
             device,
@@ -100,11 +150,14 @@ impl GpuEntropyCalculator {
         ));
 
         // Use factory to create the specified strategy
-        let strategy = <dyn ImportedEntropyStrategy>::create_strategy(
+        let base_strategy = EntropyStrategyFactory::create_strategy(
             heuristic_type,
             buffers.num_tiles,
             buffers.grid_buffers.u32s_per_cell,
         );
+
+        // Wrap with adapter
+        let strategy = Box::new(EntropyStrategyAdapter(base_strategy));
 
         Self {
             device,
@@ -421,11 +474,14 @@ impl EntropyCalculator for GpuEntropyCalculator {
 
     fn set_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> bool {
         // Create a new strategy using the factory
-        let strategy = <dyn ImportedEntropyStrategy>::create_strategy(
+        let base_strategy = EntropyStrategyFactory::create_strategy(
             heuristic_type,
             self.buffers.num_tiles,
             self.buffers.grid_buffers.u32s_per_cell,
         );
+
+        // Wrap with adapter
+        let strategy = Box::new(EntropyStrategyAdapter(base_strategy));
 
         // Replace the current strategy
         self.strategy = strategy;
@@ -442,67 +498,95 @@ impl From<OldGpuError> for CoreEntropyError {
     fn from(error: OldGpuError) -> Self {
         match error {
             OldGpuError::MemoryAllocation(msg) => {
-                CoreEntropyError::ResourceError(format!("GPU memory allocation failed: {}", msg))
+                CoreEntropyError::Other(format!("GPU memory allocation failed: {}", msg))
             }
             OldGpuError::ComputationTimeout {
                 grid_size,
                 duration,
-            } => CoreEntropyError::TimeoutError(format!(
+            } => CoreEntropyError::Other(format!(
                 "GPU computation timed out after {:?} for grid size {:?}",
                 duration, grid_size
             )),
             OldGpuError::KernelExecution(msg) => {
-                CoreEntropyError::ComputationError(format!("GPU kernel execution error: {}", msg))
+                CoreEntropyError::Other(format!("GPU kernel execution error: {}", msg))
             }
             OldGpuError::QueueSubmission(msg) => {
-                CoreEntropyError::ComputationError(format!("GPU queue submission error: {}", msg))
+                CoreEntropyError::Other(format!("GPU queue submission error: {}", msg))
             }
             OldGpuError::DeviceLost(msg) => {
-                CoreEntropyError::DeviceError(format!("GPU device lost: {}", msg))
+                CoreEntropyError::Other(format!("GPU device lost: {}", msg))
             }
             OldGpuError::InvalidState(msg) => {
-                CoreEntropyError::ComputationError(format!("GPU invalid state: {}", msg))
+                CoreEntropyError::Other(format!("GPU invalid state: {}", msg))
             }
             OldGpuError::BarrierSynchronization(msg) => {
-                CoreEntropyError::ComputationError(format!("GPU barrier sync error: {}", msg))
+                CoreEntropyError::Other(format!("GPU barrier sync error: {}", msg))
             }
             OldGpuError::BufferCopy(msg) => {
-                CoreEntropyError::TransferError(format!("GPU buffer copy error: {}", msg))
+                CoreEntropyError::Other(format!("GPU buffer copy error: {}", msg))
             }
             OldGpuError::BufferMapping(msg) => {
-                CoreEntropyError::ResourceError(format!("GPU buffer mapping error: {}", msg))
+                CoreEntropyError::Other(format!("GPU buffer mapping error: {}", msg))
             }
             OldGpuError::ContradictionDetected { context } => {
-                CoreEntropyError::ContradictionError(format!("Contradiction detected: {}", context))
+                CoreEntropyError::Other(format!("Contradiction detected: {}", context))
             }
-            OldGpuError::Other(msg) => {
-                CoreEntropyError::UnknownError(format!("GPU error: {}", msg))
+            OldGpuError::Other(msg) => CoreEntropyError::Other(format!("GPU error: {}", msg)),
+        }
+    }
+}
+
+fn parse_coords_from_context(context: &GpuErrorContext) -> Option<(usize, usize, usize)> {
+    // Check if we have grid coordinates directly
+    if let Some(coord) = &context.grid_coord {
+        return Some((coord.x, coord.y, coord.z));
+    }
+
+    // Fallback to parsing from details if available
+    if let Some(details) = &context.details {
+        let parts: Vec<&str> = details.split(&['(', ',', ')'][..]).collect();
+        if parts.len() >= 4 {
+            if let (Ok(x), Ok(y), Ok(z)) = (
+                parts[1].trim().parse::<usize>(),
+                parts[2].trim().parse::<usize>(),
+                parts[3].trim().parse::<usize>(),
+            ) {
+                return Some((x, y, z));
             }
         }
     }
+    None
 }
 
 impl From<NewGpuError> for CoreEntropyError {
     fn from(error: NewGpuError) -> Self {
         match error {
             NewGpuError::BufferMapFailed { msg, .. } => {
-                CoreEntropyError::IOError(format!("GPU buffer mapping failed: {}", msg))
+                CoreEntropyError::Other(format!("GPU buffer mapping failed: {}", msg))
             }
             NewGpuError::ShaderError { msg, .. } => {
-                CoreEntropyError::ConfigurationError(format!("GPU shader error: {}", msg))
+                CoreEntropyError::Other(format!("GPU shader error: {}", msg))
             }
             NewGpuError::ResourceCreationFailed { msg, .. } => {
-                CoreEntropyError::MemoryError(format!("GPU resource creation failed: {}", msg))
+                CoreEntropyError::Other(format!("GPU resource creation failed: {}", msg))
             }
             NewGpuError::CommandExecutionError { msg, .. } => {
-                CoreEntropyError::ComputationError(format!("GPU command execution error: {}", msg))
+                CoreEntropyError::Other(format!("GPU command execution error: {}", msg))
             }
-            NewGpuError::DeviceLost { msg, .. } => CoreEntropyError::HardwareError(format!(
+            NewGpuError::DeviceLost { msg, .. } => CoreEntropyError::Other(format!(
                 "GPU device lost during entropy calculation: {}",
                 msg
             )),
             NewGpuError::Timeout { msg, .. } => {
-                CoreEntropyError::Timeout(format!("GPU entropy calculation timed out: {}", msg))
+                CoreEntropyError::Other(format!("GPU entropy calculation timed out: {}", msg))
+            }
+            NewGpuError::ContradictionDetected { context } => {
+                // Try to parse coordinates from context
+                if let Some((x, y, z)) = parse_coords_from_context(&context) {
+                    CoreEntropyError::GridAccessError(x, y, z)
+                } else {
+                    CoreEntropyError::Other(format!("Contradiction detected: {:?}", context))
+                }
             }
             _ => CoreEntropyError::Other(format!("GPU error: {:?}", error)),
         }

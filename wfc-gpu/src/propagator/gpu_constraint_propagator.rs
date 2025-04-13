@@ -2,7 +2,7 @@ use crate::propagator::propagator_strategy::gpu_error_to_propagation_error;
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     gpu::sync::GpuSynchronizer,
-    propagator::{PropagationStrategy, PropagationStrategyFactory},
+    propagator::{AsyncPropagationStrategy, PropagationStrategy, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
     utils::debug_viz::DebugVisualizer,
     utils::error_recovery::GridCoord,
@@ -10,10 +10,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use log::debug;
-use std::sync::{
-    atomic::AtomicUsize,
-    Arc,
-};
+use std::sync::{atomic::AtomicUsize, Arc};
 use wfc_core::{
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
@@ -37,7 +34,7 @@ pub struct GpuConstraintPropagator {
     // GPU synchronizer
     synchronizer: Arc<GpuSynchronizer>,
     // Propagation strategy
-    strategy: Box<dyn PropagationStrategy>,
+    strategy: Box<dyn AsyncPropagationStrategy + Send + Sync>,
 }
 
 // Manual Clone implementation that handles strategy cloning by creating a new one
@@ -45,7 +42,7 @@ impl Clone for GpuConstraintPropagator {
     fn clone(&self) -> Self {
         // Create a new direct strategy - this is a compromise but we need to implement Clone
         // In practice, a clone is rarely if ever called and users can reconfigure as needed
-        let strategy = PropagationStrategyFactory::create_direct(1000);
+        let strategy = PropagationStrategyFactory::create_direct_async(1000);
 
         Self {
             device: self.device.clone(),
@@ -85,7 +82,7 @@ impl GpuConstraintPropagator {
             grid_dims.2,
             params.num_tiles as usize,
         );
-        let strategy = PropagationStrategyFactory::create_for_grid(&grid);
+        let strategy = PropagationStrategyFactory::create_for_grid_async(&grid);
 
         Self {
             device,
@@ -109,7 +106,10 @@ impl GpuConstraintPropagator {
     /// # Returns
     ///
     /// `Self` for method chaining.
-    pub fn with_strategy(mut self, strategy: Box<dyn PropagationStrategy>) -> Self {
+    pub fn with_strategy(
+        mut self,
+        strategy: Box<dyn AsyncPropagationStrategy + Send + Sync>,
+    ) -> Self {
         self.strategy = strategy;
         self
     }
@@ -124,7 +124,9 @@ impl GpuConstraintPropagator {
     ///
     /// `Self` for method chaining.
     pub fn with_direct_propagation(self, max_iterations: u32) -> Self {
-        self.with_strategy(PropagationStrategyFactory::create_direct(max_iterations))
+        self.with_strategy(PropagationStrategyFactory::create_direct_async(
+            max_iterations,
+        ))
     }
 
     /// Uses subgrid propagation strategy.
@@ -138,7 +140,7 @@ impl GpuConstraintPropagator {
     ///
     /// `Self` for method chaining.
     pub fn with_subgrid_propagation(self, max_iterations: u32, subgrid_size: u32) -> Self {
-        self.with_strategy(PropagationStrategyFactory::create_subgrid(
+        self.with_strategy(PropagationStrategyFactory::create_subgrid_async(
             max_iterations,
             subgrid_size,
         ))
@@ -161,7 +163,7 @@ impl GpuConstraintPropagator {
         subgrid_size: u32,
         size_threshold: usize,
     ) -> Self {
-        self.with_strategy(PropagationStrategyFactory::create_adaptive(
+        self.with_strategy(PropagationStrategyFactory::create_adaptive_async(
             max_iterations,
             subgrid_size,
             size_threshold,
@@ -224,7 +226,7 @@ impl GpuConstraintPropagator {
     }
 
     /// Gets a reference to the current propagation strategy.
-    pub fn strategy(&self) -> &dyn PropagationStrategy {
+    pub fn strategy(&self) -> &dyn AsyncPropagationStrategy {
         self.strategy.as_ref()
     }
 
@@ -305,10 +307,11 @@ impl ConstraintPropagator for GpuConstraintPropagator {
             .upload_rules(rules)
             .map_err(gpu_error_to_propagation_error)?;
 
-        // Delegate to the strategy
-        let result =
-            self.strategy
-                .propagate(grid, &updated_cells, &self.buffers, &self.synchronizer);
+        // Delegate to the strategy - now with await
+        let result = self
+            .strategy
+            .propagate(grid, &updated_cells, &self.buffers, &self.synchronizer)
+            .await;
 
         // Clean up strategy resources
         self.strategy.cleanup(&self.synchronizer)?;

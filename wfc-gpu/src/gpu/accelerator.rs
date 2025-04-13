@@ -12,7 +12,10 @@ use super::{
 use crate::coordination::strategy;
 use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
-    coordination::{strategy::CoordinationStrategyFactory, DefaultCoordinator, WfcCoordinator},
+    coordination::{
+        strategy::CoordinationStrategyFactory, DefaultCoordinator, PropagationCoordinator,
+        WfcCoordinator,
+    },
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
     propagator::{GpuConstraintPropagator, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
@@ -22,6 +25,7 @@ use crate::{
     },
     utils::error_recovery::{GpuError, GridCoord},
     utils::subgrid::SubgridConfig,
+    utils::RwLock as GpuRwLock,
 };
 
 use anyhow::Error as AnyhowError;
@@ -70,7 +74,7 @@ pub struct AcceleratorInstance {
     buffers: Arc<GpuBuffers>,
     sync: Arc<GpuSynchronizer>,
     entropy_calculator: Arc<GpuEntropyCalculator>,
-    propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    propagator: Arc<GpuRwLock<GpuConstraintPropagator>>,
     coordinator: Box<dyn WfcCoordinator + Send + Sync>,
     subgrid_config: Option<SubgridConfig>,
     progress_callback:
@@ -254,7 +258,7 @@ impl GpuAccelerator {
             info!("Using direct propagation strategy");
         }
 
-        let propagator = Arc::new(RwLock::new(propagator_concrete));
+        let propagator = Arc::new(GpuRwLock::new(propagator_concrete));
 
         let mut entropy_calculator_concrete = GpuEntropyCalculator::new(
             device.clone(),
@@ -738,56 +742,74 @@ impl GpuAccelerator {
 
     /// Sets the propagation strategy to use.
     ///
+    /// This method allows providing a custom implementation of the
+    /// AsyncPropagationStrategy trait to be used for constraint propagation.
+    ///
     /// # Arguments
     ///
-    /// * `strategy` - The propagation strategy to use.
+    /// * `strategy` - A type implementing the AsyncPropagationStrategy trait
     ///
     /// # Returns
     ///
     /// `&mut Self` for method chaining.
-    pub fn with_propagation_strategy<S: crate::propagator::PropagationStrategy + 'static>(
+    pub fn with_propagation_strategy<S: crate::propagator::AsyncPropagationStrategy + 'static>(
         &mut self,
         strategy: S,
     ) -> &mut Self {
-        let boxed_strategy = Box::new(strategy) as Box<dyn crate::propagator::PropagationStrategy>;
+        let boxed_strategy = Box::new(strategy)
+            as Box<dyn crate::propagator::AsyncPropagationStrategy + Send + Sync>;
         self.with_propagation_strategy_boxed(boxed_strategy)
     }
 
     /// Sets the propagation strategy to use.
     ///
+    /// This method allows providing a boxed implementation of the
+    /// AsyncPropagationStrategy trait to be used for constraint propagation.
+    ///
     /// # Arguments
     ///
-    /// * `strategy` - Boxed propagation strategy.
+    /// * `strategy` - A boxed type implementing the AsyncPropagationStrategy trait
     ///
     /// # Returns
     ///
     /// `&mut Self` for method chaining.
     pub fn with_propagation_strategy_boxed(
         &mut self,
-        strategy: Box<dyn crate::propagator::PropagationStrategy>,
+        strategy: Box<dyn crate::propagator::AsyncPropagationStrategy + Send + Sync>,
     ) -> &mut Self {
         // Create a new propagator with the new strategy
         {
-            let instance = self.instance.read().unwrap();
-            let mut propagator_guard = instance.propagator.write().unwrap();
+            // Lock the instance for writing
+            let mut instance = self.instance.write().unwrap();
 
-            // Create a new propagator with the new strategy
-            let device = propagator_guard.device.clone();
-            let queue = propagator_guard.queue.clone();
-            let pipelines = propagator_guard.pipelines.clone();
-            let buffers = propagator_guard.buffers.clone();
-            let grid_dims = self.instance.read().unwrap().grid_definition.dims;
-            let boundary_condition = self.instance.read().unwrap().boundary_condition;
+            // Get a mutable reference to the propagator - use async lock in sync context
+            let mut propagator_guard =
+                futures::executor::block_on(async { instance.propagator.write().await });
+
+            // Get the needed GPU resources
+            let device = instance.backend.device();
+            let queue = instance.backend.queue();
+            let pipelines = instance.pipelines.clone();
+            let buffers = instance.buffers.clone();
+
+            // Set up configuration parameters for propagator
+            let grid_dims = (
+                instance.grid_definition.dims.0,
+                instance.grid_definition.dims.1,
+                instance.grid_definition.dims.2,
+            );
+
+            // Create parameters uniform similar to the existing one
             let params = propagator_guard.params.clone();
 
-            // Create a new propagator with the same parameters but new strategy
-            let new_propagator = GpuConstraintPropagator::new(
-                device,
-                queue,
+            // Create a new propagator with the provided strategy
+            let new_propagator = crate::propagator::GpuConstraintPropagator::new(
+                device.clone(),
+                queue.clone(),
                 pipelines,
                 buffers,
                 grid_dims,
-                boundary_condition,
+                instance.boundary_condition,
                 params,
             )
             .with_strategy(strategy);
@@ -795,11 +817,10 @@ impl GpuAccelerator {
             // Replace the old propagator with the new one
             *propagator_guard = new_propagator;
         }
-
         self
     }
 
-    /// Sets the propagation strategy to direct propagation.
+    /// Uses direct propagation strategy.
     ///
     /// # Arguments
     ///
@@ -809,7 +830,7 @@ impl GpuAccelerator {
     ///
     /// `&mut Self` for method chaining.
     pub fn with_direct_propagation(&mut self, max_iterations: u32) -> &mut Self {
-        let strategy = PropagationStrategyFactory::create_direct(max_iterations);
+        let strategy = PropagationStrategyFactory::create_direct_async(max_iterations);
         self.with_propagation_strategy_boxed(strategy)
     }
 
@@ -828,7 +849,8 @@ impl GpuAccelerator {
         max_iterations: u32,
         subgrid_size: u32,
     ) -> &mut Self {
-        let strategy = PropagationStrategyFactory::create_subgrid(max_iterations, subgrid_size);
+        let strategy =
+            PropagationStrategyFactory::create_subgrid_async(max_iterations, subgrid_size);
         self.with_propagation_strategy_boxed(strategy)
     }
 
@@ -849,7 +871,7 @@ impl GpuAccelerator {
         subgrid_size: u32,
         size_threshold: usize,
     ) -> &mut Self {
-        let strategy = PropagationStrategyFactory::create_adaptive(
+        let strategy = PropagationStrategyFactory::create_adaptive_async(
             max_iterations,
             subgrid_size,
             size_threshold,
@@ -859,23 +881,22 @@ impl GpuAccelerator {
 
     /// Sets the propagation strategy based on the grid size.
     ///
-    /// Automatically selects the best strategy based on the grid size.
+    /// This will automatically select an appropriate propagation strategy
+    /// based on the size of the grid.
     ///
     /// # Returns
     ///
     /// `&mut Self` for method chaining.
     pub fn with_auto_propagation(&mut self) -> &mut Self {
-        let dims;
-        let num_tiles;
-
-        {
+        // Get grid dimensions to compute an appropriate strategy
+        let dims = {
             let instance = self.instance.read().unwrap();
-            dims = instance.grid_definition.dims;
-            num_tiles = instance.grid_definition.num_tiles;
-        }
+            instance.grid_definition.dims
+        };
 
+        let num_tiles = self.num_tiles();
         let grid = PossibilityGrid::new(dims.0, dims.1, dims.2, num_tiles);
-        let strategy = PropagationStrategyFactory::create_for_grid(&grid);
+        let strategy = PropagationStrategyFactory::create_for_grid_async(&grid);
         self.with_propagation_strategy_boxed(strategy)
     }
 
