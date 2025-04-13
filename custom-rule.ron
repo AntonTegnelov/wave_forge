@@ -1,0 +1,26 @@
+(
+    tiles: [
+        ( name: "Empty", weight: 2.0 ),
+        ( name: "Block", weight: 1.0 ),
+    ],
+    adjacency: [
+        ("Empty", "Empty", "+x"),
+        ("Empty", "Empty", "-x"),
+        ("Empty", "Empty", "+y"),
+        ("Empty", "Empty", "-y"),
+        ("Empty", "Empty", "+z"),
+        ("Empty", "Empty", "-z"),
+        ("Block", "Block", "+x"),
+        ("Block", "Block", "-x"),
+        ("Block", "Block", "+y"),
+        ("Block", "Block", "-y"),
+        ("Block", "Block", "+z"),
+        ("Block", "Block", "-z"),
+        ("Empty", "Block", "+x"),
+        ("Block", "Empty", "-x"),
+        ("Empty", "Block", "+y"),
+        ("Block", "Empty", "-y"),
+        ("Empty", "Block", "+z"),
+        ("Block", "Empty", "-z"),
+    ]
+) 

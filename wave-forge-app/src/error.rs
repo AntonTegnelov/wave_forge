@@ -1,6 +1,6 @@
 use thiserror::Error;
 use wfc_core::WfcError as CoreWfcError;
-use wfc_gpu::GpuError as CoreGpuError;
+use wfc_gpu::utils::error::gpu_error::GpuError as CoreGpuError;
 
 #[derive(Error, Debug)]
 pub enum AppError {

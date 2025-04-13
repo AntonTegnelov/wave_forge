@@ -2,18 +2,18 @@
 //!
 //! Main executable entry point.
 
-// Remove pub mod declarations
-// pub mod config;
-// pub mod error;
-// pub mod logging;
-// pub mod output;
-// pub mod profiler;
-// pub mod progress;
-// pub mod setup;
-// pub mod visualization;
+mod benchmark;
+mod config;
+mod error;
+mod logging;
+mod output;
+mod profiler;
+mod progress;
+mod setup;
+mod visualization;
 
-// Use the library crate
-use wave_forge_app::{config::AppConfig, setup}; // Removed unused error::AppError
+use config::AppConfig;
+use setup::visualization::VizMessage;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -23,7 +23,6 @@ use figment::{
     Figment,
 };
 use log;
-// Note: We will call functions using their library path, e.g., wave_forge_app::logging::init_logger
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -71,14 +70,13 @@ pub async fn main() -> Result<()> {
     // Add other validations here...
 
     // Initialize logging with the configured log level
-    wave_forge_app::logging::init_logger(&config);
+    logging::init_logger(&config);
 
     log::info!("Wave Forge App Starting");
     log::debug!("Loaded Config: {:?}", config);
 
     // --- Initialize Visualizer in a separate thread if configured ---
-    let (viz_tx, main_viz_handle) =
-        wave_forge_app::setup::visualization::setup_visualization(&config);
+    let (viz_tx, main_viz_handle) = setup::visualization::setup_visualization(&config);
 
     // --- End Visualizer Initialization ---
 
@@ -111,9 +109,7 @@ pub async fn main() -> Result<()> {
     // Initial visualization of the empty grid
     if let Some(tx) = &viz_tx {
         log::info!("Sending initial grid state to visualization thread");
-        if let Err(e) = tx.send(
-            wave_forge_app::setup::visualization::VizMessage::UpdateGrid(Box::new(grid.clone())),
-        ) {
+        if let Err(e) = tx.send(VizMessage::UpdateGrid(Box::new(grid.clone()))) {
             log::error!("Failed to send initial grid state: {}", e);
         }
     }

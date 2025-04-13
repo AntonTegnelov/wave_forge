@@ -13,18 +13,12 @@ pub mod progress;
 pub mod setup;
 pub mod visualization;
 
+// Include main.rs as a module
+pub mod main;
+
 // Optionally re-export key types if needed elsewhere
 pub use config::AppConfig;
 pub use error::AppError;
 
-// Make main module public for external access
-pub mod main;
-
-/// Calls the main function from main.rs to allow the root crate to invoke it.
-/// Returns Result<()> which should be handled by the caller.
-pub fn main() -> anyhow::Result<()> {
-    // We need to block on the future since the main() function is async
-    tokio::runtime::Runtime::new()
-        .expect("Failed to create Tokio runtime")
-        .block_on(main::main())
-}
+// Re-export the main function so it can be called from the root crate
+pub use crate::main::main;

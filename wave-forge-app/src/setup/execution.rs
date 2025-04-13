@@ -26,7 +26,7 @@ use wfc_core::{
     runner::{ProgressCallback, WfcConfig},
     BoundaryCondition, ProgressInfo, WfcError,
 };
-use wfc_gpu::{accelerator::GpuAccelerator, GpuError};
+use wfc_gpu::{gpu::accelerator::GpuAccelerator, utils::error::gpu_error::GpuError};
 use wfc_rules::{loader::load_from_file, AdjacencyRules, TileSet};
 use wgpu::Instance;
 
@@ -106,7 +106,7 @@ pub async fn run_benchmark_mode(
     {
         Ok(adapter) => adapter.get_info(),
         Err(_) => {
-            return Err(GpuError::AdapterRequestFailed.into());
+            return Err(GpuError::adapter_request_failed(Default::default()).into());
         }
     };
     log::info!(
@@ -504,7 +504,11 @@ pub async fn run_standard_mode(
         Ok(acc) => acc,
         Err(e) => {
             error!("Failed to initialize GPU accelerator: {}", e);
-            return Err(AppError::GpuInitializationError(e));
+            // Convert WfcError to AppError::GpuInitializationError
+            return Err(AppError::GpuError(GpuError::other(
+                format!("GPU accelerator initialization failed: {}", e),
+                Default::default(),
+            )));
         }
     };
 

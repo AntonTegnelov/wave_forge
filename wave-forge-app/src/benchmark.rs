@@ -17,7 +17,7 @@ use wfc_core::{
     runner::{self},
     BoundaryCondition, ExecutionMode, ProgressInfo, WfcError,
 };
-use wfc_gpu::accelerator::GpuAccelerator;
+use wfc_gpu::{gpu::accelerator::GpuAccelerator, utils::error::WfcError as GpuWfcError};
 use wfc_rules::{AdjacencyRules, TileSet};
 
 /// Represents the aggregated results of a single benchmark run.
@@ -74,8 +74,7 @@ pub async fn run_single_wfc_benchmark(
     let profiler = Profiler::new(&format!("{:?}", core_execution_mode));
     let _overall_guard = profiler.profile("total_benchmark_run");
 
-    let grid =
-        PossibilityGrid::new(config.width, config.height, config.depth, rules.num_tiles());
+    let grid = PossibilityGrid::new(config.width, config.height, config.depth, rules.num_tiles());
     let _total_cells = grid.width * grid.height * grid.depth;
 
     let latest_progress: Arc<Mutex<Option<ProgressInfo>>> = Arc::new(Mutex::new(None));

@@ -1,11 +1,5 @@
-// Main entry point that forwards to the wave-forge-app binary
-fn main() {
-    // Exit with the same code as the app
-    std::process::exit(match wave_forge_app::main() {
-        Ok(_) => 0,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            1
-        }
-    });
+fn main() -> anyhow::Result<()> {
+    // Use the wave_forge_app binary directly
+    // The tokio runtime is already set up inside wave_forge_app's main function
+    wave_forge_app::main()
 }
