@@ -26,8 +26,8 @@ impl From<crate::utils::error::gpu_error::GpuError> for OldGpuError {
             crate::utils::error::gpu_error::GpuError::BufferMapTimeout(msg, ..) => {
                 OldGpuError::BufferMapping(msg)
             }
-            crate::utils::error::gpu_error::GpuError::ValidationError(e, ..) => {
-                OldGpuError::Other(e.to_string())
+            crate::utils::error::gpu_error::GpuError::ValidationError { msg, .. } => {
+                OldGpuError::Other(msg)
             }
             crate::utils::error::gpu_error::GpuError::CommandExecutionError { msg, .. } => {
                 OldGpuError::KernelExecution(msg)
@@ -47,7 +47,7 @@ impl From<crate::utils::error::gpu_error::GpuError> for OldGpuError {
             crate::utils::error::gpu_error::GpuError::BufferSizeMismatch { msg, .. } => {
                 OldGpuError::BufferCopy(msg)
             }
-            crate::utils::error::gpu_error::GpuError::Timeout { msg, .. } => {
+            crate::utils::error::gpu_error::GpuError::Timeout { msg: _, .. } => {
                 OldGpuError::ComputationTimeout {
                     grid_size: (0, 0),                           // We don't have grid size info here
                     duration: std::time::Duration::from_secs(0), // We don't have duration info here

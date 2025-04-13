@@ -335,8 +335,11 @@ pub enum GpuError {
     #[error("Buffer mapping timed out: {0}")]
     BufferMapTimeout(String, GpuErrorContext),
 
-    #[error("Validation error: {0}")]
-    ValidationError(wgpu::Error, GpuErrorContext),
+    #[error("Validation error: {msg}")]
+    ValidationError {
+        msg: String,
+        context: GpuErrorContext,
+    },
 
     #[error("Command execution error: {msg}")]
     CommandExecutionError {
@@ -424,7 +427,10 @@ impl GpuError {
 
     /// Create a new validation error
     pub fn validation_error(err: wgpu::Error, context: GpuErrorContext) -> Self {
-        Self::ValidationError(err, context)
+        Self::ValidationError {
+            msg: err.to_string(),
+            context,
+        }
     }
 
     /// Create a new command execution error
@@ -527,7 +533,7 @@ impl GpuError {
         match self {
             Self::BufferMapFailed { context, .. } => context,
             Self::BufferMapTimeout(_, context) => context,
-            Self::ValidationError(_, context) => context,
+            Self::ValidationError { context, .. } => context,
             Self::CommandExecutionError { context, .. } => context,
             Self::BufferOperationError { context, .. } => context,
             Self::TransferError { context, .. } => context,
@@ -550,7 +556,7 @@ impl ErrorWithContext for GpuError {
         match self {
             Self::BufferMapFailed { msg, context } => format!("{}: {}", context, msg),
             Self::BufferMapTimeout(label, context) => format!("{}: {}", context, label),
-            Self::ValidationError(err, context) => format!("{}: {}", context, err),
+            Self::ValidationError { msg, context } => format!("{}: {}", context, msg),
             Self::CommandExecutionError { msg, context } => format!("{}: {}", context, msg),
             Self::BufferOperationError { msg, context } => format!("{}: {}", context, msg),
             Self::TransferError { msg, context } => format!("{}: {}", context, msg),
@@ -597,24 +603,23 @@ impl ErrorWithContext for GpuError {
                     "5. Verify that the GPU is not in a sleep state or power-saving mode"
                 ).to_string())
             }
-            Self::ValidationError(err, _) => {
+            Self::ValidationError { msg, .. } => {
                 let basic_msg = "Validation error in GPU operation. Try the following:\n\
                 1. Check resource usage flags and ensure they match the operation\n\
                 2. Verify bind group layouts match pipeline expectations\n\
                 3. Ensure buffer sizes are sufficient for the operation";
                 
                 // Add more specific advice based on the error message
-                let err_str = err.to_string().to_lowercase();
-                let specific_advice = if err_str.contains("out of memory") {
+                let specific_advice = if msg.contains("out of memory") {
                     "\n4. Reduce resource usage or buffer sizes\n\
                      5. Consider batching operations into smaller chunks"
-                } else if err_str.contains("bind group") {
+                } else if msg.contains("bind group") {
                     "\n4. Check bind group entries match the layout\n\
                      5. Ensure all required bindings are provided"
-                } else if err_str.contains("buffer") {
+                } else if msg.contains("buffer") {
                     "\n4. Verify buffer alignment requirements\n\
                      5. Check buffer usage flags"
-                } else if err_str.contains("shader") {
+                } else if msg.contains("shader") {
                     "\n4. Review shader code for validation errors\n\
                      5. Ensure shader inputs match pipeline configuration"
                 } else {
@@ -756,7 +761,7 @@ impl ErrorWithContext for GpuError {
 
     fn severity(&self) -> ErrorSeverity {
         match self {
-            Self::ValidationError(_, _) => ErrorSeverity::Fatal,
+            Self::ValidationError { .. } => ErrorSeverity::Fatal,
             Self::AdapterRequestFailed { .. } => ErrorSeverity::Fatal,
             Self::DeviceRequestFailed(_, _) => ErrorSeverity::Fatal,
             Self::DeviceLost { .. } => ErrorSeverity::Fatal, // Can be Recoverable with proper reinit

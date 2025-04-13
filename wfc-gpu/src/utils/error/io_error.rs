@@ -114,7 +114,7 @@ impl fmt::Display for IoErrorContext {
 }
 
 /// Enumeration of all possible I/O errors
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum IoError {
     #[error("File not found")]
     NotFound { context: IoErrorContext },
@@ -122,8 +122,11 @@ pub enum IoError {
     #[error("Permission denied")]
     PermissionDenied { context: IoErrorContext },
 
-    #[error("I/O error: {0}")]
-    Io(std::io::Error, IoErrorContext),
+    #[error("I/O error: {msg}")]
+    Io {
+        msg: String,
+        context: IoErrorContext,
+    },
 
     #[error("Serialization error: {msg}")]
     Serialization {
@@ -177,7 +180,10 @@ impl IoError {
 
     /// Create a new I/O error
     pub fn io(err: std::io::Error, context: IoErrorContext) -> Self {
-        Self::Io(err, context)
+        Self::Io {
+            msg: err.to_string(),
+            context,
+        }
     }
 
     /// Create a new serialization error
@@ -234,7 +240,7 @@ impl IoError {
         match self {
             Self::NotFound { context } => context,
             Self::PermissionDenied { context } => context,
-            Self::Io(_, context) => context,
+            Self::Io { context, .. } => context,
             Self::Serialization { context, .. } => context,
             Self::Deserialization { context, .. } => context,
             Self::ResourceNotAvailable { context, .. } => context,
@@ -250,7 +256,7 @@ impl ErrorWithContext for IoError {
         match self {
             Self::NotFound { context } => format!("{}", context),
             Self::PermissionDenied { context } => format!("{}", context),
-            Self::Io(err, context) => format!("{}: {}", context, err),
+            Self::Io { msg, context } => format!("{}: {}", context, msg),
             Self::Serialization { msg, context } => format!("{}: {}", context, msg),
             Self::Deserialization { msg, context } => format!("{}: {}", context, msg),
             Self::ResourceNotAvailable { msg, context } => format!("{}: {}", context, msg),
@@ -294,7 +300,7 @@ impl ErrorWithContext for IoError {
                 )
                 .to_string(),
             ),
-            Self::Io(err, _) => {
+            Self::Io { .. } => {
                 let default_msg = concat!(
                     "I/O error occurred. Try the following:\n",
                     "1. Check if the device or resource is available\n",
@@ -305,62 +311,96 @@ impl ErrorWithContext for IoError {
                 );
 
                 // Add more specific advice based on the error kind
-                match err.kind() {
-                    std::io::ErrorKind::AlreadyExists => Some(
-                        concat!(
-                            "Resource already exists. Try the following:\n",
-                            "1. Use a different name for the resource\n",
-                            "2. Delete or move the existing resource first\n",
-                            "3. Check if the application can overwrite existing resources\n",
-                            "4. Use a unique naming scheme for resources\n",
-                            "5. Consider implementing versioning for resources"
-                        )
-                        .to_string(),
-                    ),
-                    std::io::ErrorKind::Interrupted => Some(
-                        concat!(
-                            "Operation interrupted. Try the following:\n",
-                            "1. Retry the operation\n",
-                            "2. Implement retry logic with backoff\n",
-                            "3. Check for system signals that might be interrupting operation\n",
-                            "4. Handle interruption gracefully in the application\n",
-                            "5. Consider using async I/O for better handling of interruptions"
-                        )
-                        .to_string(),
-                    ),
-                    std::io::ErrorKind::Unsupported => Some(
-                        concat!(
-                            "Unsupported operation. Try the following:\n",
-                            "1. Check if the operation is supported on this platform\n",
-                            "2. Use an alternative approach that is supported\n",
-                            "3. Verify feature requirements for the operation\n",
-                            "4. Check documentation for platform-specific limitations\n",
-                            "5. Consider using abstraction libraries for cross-platform support"
-                        )
-                        .to_string(),
-                    ),
-                    std::io::ErrorKind::ConnectionRefused => Some(
-                        concat!(
-                            "Connection refused. Try the following:\n",
-                            "1. Verify the server is running and accessible\n",
-                            "2. Check network connectivity and firewall settings\n",
-                            "3. Verify connection parameters (host, port)\n",
-                            "4. Ensure the service is accepting connections\n",
-                            "5. Implement connection retry with exponential backoff"
-                        )
-                        .to_string(),
-                    ),
-                    std::io::ErrorKind::TimedOut => Some(
-                        concat!(
-                            "Operation timed out. Try the following:\n",
-                            "1. Increase timeout duration if possible\n",
-                            "2. Check if the resource is overloaded or slow\n",
-                            "3. Verify network connectivity for remote resources\n",
-                            "4. Implement retry logic with backoff\n",
-                            "5. Consider breaking the operation into smaller chunks"
-                        )
-                        .to_string(),
-                    ),
+                match self {
+                    Self::Io { msg, .. } => {
+                        if msg.contains("not found") {
+                            Some(
+                                concat!(
+                                    "Resource not found. Try the following:\n",
+                                    "1. Check if the resource exists and is accessible\n",
+                                    "2. Verify that external dependencies are installed\n",
+                                    "3. Ensure sufficient system resources (memory, disk space)\n",
+                                    "4. Check if resource is locked by another process\n",
+                                    "5. Implement resource availability checking before use"
+                                )
+                                .to_string(),
+                            )
+                        } else if msg.contains("permission denied") {
+                            Some(
+                                concat!(
+                                    "Permission denied. Try the following:\n",
+                                    "1. Check file permissions for current user\n",
+                                    "2. Run the application with elevated privileges if necessary\n",
+                                    "3. Verify that the file is not locked by another process\n",
+                                    "4. Check if the resource is read-only\n",
+                                    "5. Ensure proper access rights on network resources"
+                                )
+                                .to_string(),
+                            )
+                        } else if msg.contains("already exists") {
+                            Some(
+                                concat!(
+                                    "Resource already exists. Try the following:\n",
+                                    "1. Use a different name for the resource\n",
+                                    "2. Delete or move the existing resource first\n",
+                                    "3. Check if the application can overwrite existing resources\n",
+                                    "4. Use a unique naming scheme for resources\n",
+                                    "5. Consider implementing versioning for resources"
+                                )
+                                .to_string(),
+                            )
+                        } else if msg.contains("interrupted") {
+                            Some(
+                                concat!(
+                                    "Operation interrupted. Try the following:\n",
+                                    "1. Retry the operation\n",
+                                    "2. Implement retry logic with backoff\n",
+                                    "3. Check for system signals that might be interrupting operation\n",
+                                    "4. Handle interruption gracefully in the application\n",
+                                    "5. Consider using async I/O for better handling of interruptions"
+                                )
+                                .to_string(),
+                            )
+                        } else if msg.contains("unsupported") {
+                            Some(
+                                concat!(
+                                    "Unsupported operation. Try the following:\n",
+                                    "1. Check if the operation is supported on this platform\n",
+                                    "2. Use an alternative approach that is supported\n",
+                                    "3. Verify feature requirements for the operation\n",
+                                    "4. Check documentation for platform-specific limitations\n",
+                                    "5. Consider using abstraction libraries for cross-platform support"
+                                )
+                                .to_string(),
+                            )
+                        } else if msg.contains("refused") {
+                            Some(
+                                concat!(
+                                    "Connection refused. Try the following:\n",
+                                    "1. Verify the server is running and accessible\n",
+                                    "2. Check network connectivity and firewall settings\n",
+                                    "3. Verify connection parameters (host, port)\n",
+                                    "4. Ensure the service is accepting connections\n",
+                                    "5. Implement connection retry with exponential backoff"
+                                )
+                                .to_string(),
+                            )
+                        } else if msg.contains("timed out") {
+                            Some(
+                                concat!(
+                                    "Operation timed out. Try the following:\n",
+                                    "1. Increase timeout duration if possible\n",
+                                    "2. Check if the resource is overloaded or slow\n",
+                                    "3. Verify network connectivity for remote resources\n",
+                                    "4. Implement retry logic with backoff\n",
+                                    "5. Consider breaking the operation into smaller chunks"
+                                )
+                                .to_string(),
+                            )
+                        } else {
+                            Some(default_msg.to_string())
+                        }
+                    }
                     _ => Some(default_msg.to_string()),
                 }
             }
@@ -429,7 +469,7 @@ impl ErrorWithContext for IoError {
             // external resources that might become available later
             Self::NotFound { .. } => ErrorSeverity::Recoverable,
             Self::PermissionDenied { .. } => ErrorSeverity::Recoverable,
-            Self::Io(_, _) => ErrorSeverity::Recoverable,
+            Self::Io { .. } => ErrorSeverity::Recoverable,
             Self::ResourceNotAvailable { .. } => ErrorSeverity::Recoverable,
 
             // Format/parsing errors are usually fatal since they indicate
