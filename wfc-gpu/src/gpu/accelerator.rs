@@ -723,19 +723,19 @@ impl GpuAccelerator {
         &mut self,
         strategy: Box<dyn GpuEntropyStrategy>,
     ) -> &mut Self {
-        // First get the data needed under read lock
-        let existing_calculator = {
+        // Clone calculator and set the strategy
+        let mut calculator = {
             let instance = self.instance.read().unwrap();
-            instance.entropy_calculator.clone()
+            (*instance.entropy_calculator).clone()
         };
 
-        // Create a new calculator with the same data but new strategy
-        let mut new_calculator = existing_calculator;
-        new_calculator.set_strategy_boxed(strategy);
+        calculator.set_strategy_boxed(strategy);
 
-        // Update the instance with the new calculator under write lock
-        let mut instance = self.instance.write().unwrap();
-        instance.entropy_calculator = Arc::new(new_calculator);
+        // Update the instance with the new calculator
+        {
+            let mut instance = self.instance.write().unwrap();
+            instance.entropy_calculator = Arc::new(calculator);
+        }
 
         self
     }
@@ -770,7 +770,7 @@ impl GpuAccelerator {
         &mut self,
         strategy: Box<dyn crate::propagator::PropagationStrategy>,
     ) -> &mut Self {
-        // Use a limited scope for the lock
+        // Create a new propagator with the new strategy
         {
             let instance = self.instance.read().unwrap();
             let mut propagator_guard = instance.propagator.write().unwrap();
