@@ -11,6 +11,7 @@ use super::{
     sync::GpuSynchronizer,
 };
 
+use crate::coordination::strategy;
 use crate::{
     buffers::{
         DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults, GpuParamsUniform,
@@ -459,65 +460,49 @@ impl GpuAccelerator {
                     run_result.stats.iterations = iteration as usize;
                     break;
                 }
-                Err(GpuError::ContradictionDetected { coord }) => {
+                Err(GpuError::ContradictionDetected { context }) => {
                     error!(
                         "Contradiction detected during entropy calculation at {:?}",
-                        coord
+                        context
                     );
                     run_result.stats.contradictions += 1;
                     run_result.stats.iterations = iteration as usize;
-                    if let Some(c) = coord {
-                        let error = WfcError::algorithm(format!(
-                            "Contradiction found at ({}, {}, {})",
-                            c.x, c.y, c.z
-                        ));
+                    let error = WfcError::contradiction_detected(
+                        "GPU accelerator detected contradiction",
+                        crate::utils::error::ErrorContext::default().with_module("wfc-gpu"),
+                    );
 
-                        // Try user-defined recovery hooks first
-                        if let Some(recovery_action) = self.try_handle_local_error(&error) {
-                            info!(
-                                "User-defined recovery hook is handling contradiction: {:?}",
-                                recovery_action
-                            );
-                            match recovery_action {
-                                RecoveryAction::Retry => {
-                                    // Just continue to the next iteration
-                                    continue;
-                                }
-                                RecoveryAction::RetryWithModifiedParams => {
-                                    // Skip this cell and continue
-                                    continue;
-                                }
-                                RecoveryAction::UseAlternative => {
-                                    // Try a different cell
-                                    continue;
-                                }
-                                _ => {
-                                    // Other actions - default to returning the error
-                                    return Err(error);
-                                }
+                    // Try user-defined recovery hooks first
+                    if let Some(recovery_action) = self.try_handle_local_error(&error) {
+                        info!(
+                            "User-defined recovery hook is handling contradiction: {:?}",
+                            recovery_action
+                        );
+                        match recovery_action {
+                            RecoveryAction::Retry => {
+                                // Just continue to the next iteration
+                                continue;
+                            }
+                            RecoveryAction::RetryWithModifiedParams => {
+                                // Skip this cell and continue
+                                continue;
+                            }
+                            RecoveryAction::UseAlternative => {
+                                // Try a different cell
+                                continue;
+                            }
+                            _ => {
+                                // Other actions - default to returning the error
+                                return Err(error);
                             }
                         }
-
-                        return Err(error);
-                    } else {
-                        error!("Contradiction detected by GPU but location unknown.");
-                        let error = WfcError::other("WFC run interrupted due to contradiction");
-
-                        // Try user-defined recovery hooks
-                        if let Some(recovery_action) = self.try_handle_local_error(&error) {
-                            info!("User-defined recovery hook is handling unknown contradiction: {:?}", recovery_action);
-                            match recovery_action {
-                                RecoveryAction::Retry => continue,
-                                _ => return Err(error),
-                            }
-                        }
-
-                        return Err(error);
                     }
+
+                    return Err(error);
                 }
                 Err(e) => {
                     error!("GPU error during entropy calculation: {}", e);
-                    let error = WfcError::Gpu(NewGpuError::from(e));
+                    let error = WfcError::gpu_error(e);
 
                     // Try user-defined recovery hooks
                     if let Some(recovery_action) = self.try_handle_local_error(&error) {
@@ -759,17 +744,12 @@ impl GpuAccelerator {
     /// # Returns
     ///
     /// `&mut Self` for method chaining.
-    pub fn with_propagation_strategy<S: PropagationStrategy + 'static>(
+    pub fn with_propagation_strategy<S: crate::propagator::PropagationStrategy + 'static>(
         &mut self,
         strategy: S,
     ) -> &mut Self {
-        let mut instance = self.instance.write().unwrap();
-        let boxed_strategy = Box::new(strategy) as Box<dyn PropagationStrategy>;
-
-        let mut propagator = instance.propagator.write().unwrap();
-        *propagator = propagator.clone().with_strategy(boxed_strategy);
-
-        self
+        let boxed_strategy = Box::new(strategy) as Box<dyn crate::propagator::PropagationStrategy>;
+        self.with_propagation_strategy_boxed(boxed_strategy)
     }
 
     /// Sets the propagation strategy to use.
@@ -783,11 +763,15 @@ impl GpuAccelerator {
     /// `&mut Self` for method chaining.
     pub fn with_propagation_strategy_boxed(
         &mut self,
-        strategy: Box<dyn PropagationStrategy>,
+        strategy: Box<dyn crate::propagator::PropagationStrategy>,
     ) -> &mut Self {
-        let mut instance = self.instance.write().unwrap();
-        let mut propagator = instance.propagator.write().unwrap();
-        *propagator = propagator.clone().with_strategy(strategy);
+        // Use a limited scope for the lock
+        {
+            let instance = self.instance.read().unwrap();
+            let mut propagator_guard = instance.propagator.write().unwrap();
+            propagator_guard.set_strategy_boxed(strategy);
+        }
+
         self
     }
 
@@ -857,10 +841,84 @@ impl GpuAccelerator {
     ///
     /// `&mut Self` for method chaining.
     pub fn with_auto_propagation(&mut self) -> &mut Self {
-        let dims = self.grid_definition().dims;
-        let grid = PossibilityGrid::new(dims.0, dims.1, dims.2, self.grid_definition().num_tiles);
+        let dims;
+        let num_tiles;
+
+        {
+            let instance = self.instance.read().unwrap();
+            dims = instance.grid_definition.dims;
+            num_tiles = instance.grid_definition.num_tiles;
+        }
+
+        let grid = PossibilityGrid::new(dims.0, dims.1, dims.2, num_tiles);
         let strategy = PropagationStrategyFactory::create_for_grid(&grid);
         self.with_propagation_strategy_boxed(strategy)
+    }
+
+    /// Use an adaptive coordination strategy for WFC algorithm execution.
+    /// This strategy selects the most appropriate coordination approach based on grid size.
+    pub fn with_adaptive_coordination(&mut self) -> &mut Self {
+        // Create the needed components outside the instance lock scope
+        let grid_size;
+        let entropy_calculator_clone;
+        let propagator_clone;
+
+        {
+            // Limit the scope of the instance borrow
+            let instance = self.instance.read().unwrap();
+            grid_size = instance.grid_definition.dims;
+            entropy_calculator_clone = instance.entropy_calculator.clone();
+            propagator_clone = instance.propagator.clone();
+        }
+
+        // Create the strategy outside the instance lock
+        let strategy = CoordinationStrategyFactory::create_adaptive(
+            entropy_calculator_clone,
+            propagator_clone,
+            grid_size,
+        );
+
+        // Create a new DefaultCoordinator and set the strategy
+        let mut coordinator = DefaultCoordinator::new(entropy_calculator_clone, propagator_clone);
+        coordinator.with_coordination_strategy_boxed(strategy);
+
+        // Set the coordinator with a separate lock scope
+        {
+            let mut instance = self.instance.write().unwrap();
+            instance.coordinator = Box::new(coordinator);
+        }
+
+        self
+    }
+
+    /// Use the default coordination strategy for WFC algorithm execution.
+    pub fn with_default_coordination(&mut self) -> &mut Self {
+        // Create the needed components outside the instance lock scope
+        let entropy_calculator_clone;
+        let propagator_clone;
+
+        {
+            // Limit the scope of the instance borrow
+            let instance = self.instance.read().unwrap();
+            entropy_calculator_clone = instance.entropy_calculator.clone();
+            propagator_clone = instance.propagator.clone();
+        }
+
+        // Create the strategy outside the instance lock
+        let strategy =
+            CoordinationStrategyFactory::create_default(entropy_calculator_clone, propagator_clone);
+
+        // Create a new DefaultCoordinator and set the strategy
+        let mut coordinator = DefaultCoordinator::new(entropy_calculator_clone, propagator_clone);
+        coordinator.with_coordination_strategy_boxed(strategy);
+
+        // Set the coordinator with a separate lock scope
+        {
+            let mut instance = self.instance.write().unwrap();
+            instance.coordinator = Box::new(coordinator);
+        }
+
+        self
     }
 
     /// Sets the coordination strategy to use.
@@ -872,27 +930,30 @@ impl GpuAccelerator {
     /// # Returns
     ///
     /// `&mut Self` for method chaining.
-    pub fn with_coordination_strategy<S: coordination::strategy::CoordinationStrategy + 'static>(
+    pub fn with_coordination_strategy<S: strategy::CoordinationStrategy + 'static>(
         &mut self,
         strategy: S,
     ) -> &mut Self {
-        let mut instance = self.instance.write().unwrap();
-        instance.coordinator = Box::new(DefaultCoordinator::new(
-            instance.entropy_calculator.clone(),
-            instance.propagator.clone(),
-        ));
+        // Create the needed components outside the instance lock scope
+        let entropy_calculator_clone;
+        let propagator_clone;
 
-        Ok(instance)
-            .and_then(|mut instance| {
-                instance
-                    .coordinator
-                    .downcast_mut::<DefaultCoordinator>()
-                    .ok_or(())
-            })
-            .map(|coordinator| coordinator.with_coordination_strategy(strategy))
-            .unwrap_or_else(|_| {
-                log::warn!("Failed to set coordination strategy: DefaultCoordinator not available");
-            });
+        {
+            // Limit the scope of the instance borrow
+            let instance = self.instance.read().unwrap();
+            entropy_calculator_clone = instance.entropy_calculator.clone();
+            propagator_clone = instance.propagator.clone();
+        }
+
+        // Create a new DefaultCoordinator and set the strategy
+        let mut coordinator = DefaultCoordinator::new(entropy_calculator_clone, propagator_clone);
+        coordinator.with_coordination_strategy(strategy);
+
+        // Set the coordinator with a separate lock scope
+        {
+            let mut instance = self.instance.write().unwrap();
+            instance.coordinator = Box::new(coordinator);
+        }
 
         self
     }
@@ -908,86 +969,28 @@ impl GpuAccelerator {
     /// `&mut Self` for method chaining.
     pub fn with_coordination_strategy_boxed(
         &mut self,
-        strategy: Box<dyn coordination::strategy::CoordinationStrategy>,
+        strategy: Box<dyn strategy::CoordinationStrategy>,
     ) -> &mut Self {
-        let mut instance = self.instance.write().unwrap();
-        instance.coordinator = Box::new(DefaultCoordinator::new(
-            instance.entropy_calculator.clone(),
-            instance.propagator.clone(),
-        ));
+        // Create the needed components outside the instance lock scope
+        let entropy_calculator_clone;
+        let propagator_clone;
 
-        Ok(instance)
-            .and_then(|mut instance| {
-                instance
-                    .coordinator
-                    .downcast_mut::<DefaultCoordinator>()
-                    .ok_or(())
-            })
-            .map(|coordinator| coordinator.with_coordination_strategy_boxed(strategy))
-            .unwrap_or_else(|_| {
-                log::warn!("Failed to set coordination strategy: DefaultCoordinator not available");
-            });
+        {
+            // Limit the scope of the instance borrow
+            let instance = self.instance.read().unwrap();
+            entropy_calculator_clone = instance.entropy_calculator.clone();
+            propagator_clone = instance.propagator.clone();
+        }
 
-        self
-    }
+        // Create a new DefaultCoordinator and set the strategy
+        let mut coordinator = DefaultCoordinator::new(entropy_calculator_clone, propagator_clone);
+        coordinator.with_coordination_strategy_boxed(strategy);
 
-    /// Use the default coordination strategy for WFC algorithm execution.
-    pub fn with_default_coordination(&mut self) -> &mut Self {
-        let mut instance = self.instance.write().unwrap();
-        let strategy = CoordinationStrategyFactory::create_default(
-            instance.entropy_calculator.clone(),
-            instance.propagator.clone(),
-        );
-
-        instance.coordinator = Box::new(DefaultCoordinator::new(
-            instance.entropy_calculator.clone(),
-            instance.propagator.clone(),
-        ));
-
-        Ok(instance)
-            .and_then(|mut instance| {
-                instance
-                    .coordinator
-                    .downcast_mut::<DefaultCoordinator>()
-                    .ok_or(())
-            })
-            .map(|coordinator| coordinator.with_coordination_strategy_boxed(strategy))
-            .unwrap_or_else(|_| {
-                log::warn!(
-                    "Failed to set default coordination strategy: DefaultCoordinator not available"
-                );
-            });
-
-        self
-    }
-
-    /// Use an adaptive coordination strategy for WFC algorithm execution.
-    /// This strategy selects the most appropriate coordination approach based on grid size.
-    pub fn with_adaptive_coordination(&mut self) -> &mut Self {
-        let mut instance = self.instance.write().unwrap();
-        let grid_size = instance.grid_definition.dims;
-        let strategy = CoordinationStrategyFactory::create_adaptive(
-            instance.entropy_calculator.clone(),
-            instance.propagator.clone(),
-            grid_size,
-        );
-
-        instance.coordinator = Box::new(DefaultCoordinator::new(
-            instance.entropy_calculator.clone(),
-            instance.propagator.clone(),
-        ));
-
-        Ok(instance)
-            .and_then(|mut instance| {
-                instance
-                    .coordinator
-                    .downcast_mut::<DefaultCoordinator>()
-                    .ok_or(())
-            })
-            .map(|coordinator| coordinator.with_coordination_strategy_boxed(strategy))
-            .unwrap_or_else(|_| {
-                log::warn!("Failed to set adaptive coordination strategy: DefaultCoordinator not available");
-            });
+        // Set the coordinator with a separate lock scope
+        {
+            let mut instance = self.instance.write().unwrap();
+            instance.coordinator = Box::new(coordinator);
+        }
 
         self
     }
@@ -1007,15 +1010,16 @@ impl GpuAccelerator {
         P: Fn(&wfc_core::WfcError) -> bool + Send + Sync + 'static,
         F: Fn(&wfc_core::WfcError) -> Option<RecoveryAction> + Send + Sync + 'static,
     {
-        let mut hooks = self
-            .instance
-            .read()
-            .unwrap()
-            .recovery_hooks
-            .write()
-            .unwrap();
-        hooks.register_for_core_errors(predicate, hook);
-        info!("Registered custom recovery hook");
+        // Get the recovery hooks with a limited scope
+        {
+            // First get a read lock on the instance
+            let instance = self.instance.read().unwrap();
+            // Then get a write lock on the hooks
+            let mut hooks = instance.recovery_hooks.write().unwrap();
+            hooks.register_for_core_errors(predicate, hook);
+            info!("Registered custom recovery hook");
+        }
+
         self
     }
 
@@ -1032,15 +1036,16 @@ impl GpuAccelerator {
     where
         F: Fn(&NewGpuError) -> Option<RecoveryAction> + Send + Sync + 'static,
     {
-        let mut hooks = self
-            .instance
-            .read()
-            .unwrap()
-            .recovery_hooks
-            .write()
-            .unwrap();
-        hooks.register_for_gpu_errors(hook);
-        info!("Registered GPU error recovery hook");
+        // Get the recovery hooks with a limited scope
+        {
+            // First get a read lock on the instance
+            let instance = self.instance.read().unwrap();
+            // Then get a write lock on the hooks
+            let mut hooks = instance.recovery_hooks.write().unwrap();
+            hooks.register_for_gpu_errors(hook);
+            info!("Registered GPU error recovery hook");
+        }
+
         self
     }
 
@@ -1057,15 +1062,16 @@ impl GpuAccelerator {
     where
         F: Fn(&str) -> Option<RecoveryAction> + Send + Sync + 'static,
     {
-        let mut hooks = self
-            .instance
-            .read()
-            .unwrap()
-            .recovery_hooks
-            .write()
-            .unwrap();
-        hooks.register_for_algorithm_errors(hook);
-        info!("Registered algorithm error recovery hook");
+        // Get the recovery hooks with a limited scope
+        {
+            // First get a read lock on the instance
+            let instance = self.instance.read().unwrap();
+            // Then get a write lock on the hooks
+            let mut hooks = instance.recovery_hooks.write().unwrap();
+            hooks.register_for_algorithm_errors(hook);
+            info!("Registered algorithm error recovery hook");
+        }
+
         self
     }
 
@@ -1074,15 +1080,16 @@ impl GpuAccelerator {
     where
         F: Fn(&str) -> Option<RecoveryAction> + Send + Sync + 'static,
     {
-        let mut hooks = self
-            .instance
-            .read()
-            .unwrap()
-            .recovery_hooks
-            .write()
-            .unwrap();
-        hooks.register_for_validation_errors(hook);
-        info!("Registered validation error recovery hook");
+        // Get the recovery hooks with a limited scope
+        {
+            // First get a read lock on the instance
+            let instance = self.instance.read().unwrap();
+            // Then get a write lock on the hooks
+            let mut hooks = instance.recovery_hooks.write().unwrap();
+            hooks.register_for_validation_errors(hook);
+            info!("Registered validation error recovery hook");
+        }
+
         self
     }
 
@@ -1091,15 +1098,16 @@ impl GpuAccelerator {
     where
         F: Fn(&str) -> Option<RecoveryAction> + Send + Sync + 'static,
     {
-        let mut hooks = self
-            .instance
-            .read()
-            .unwrap()
-            .recovery_hooks
-            .write()
-            .unwrap();
-        hooks.register_for_configuration_errors(hook);
-        info!("Registered configuration error recovery hook");
+        // Get the recovery hooks with a limited scope
+        {
+            // First get a read lock on the instance
+            let instance = self.instance.read().unwrap();
+            // Then get a write lock on the hooks
+            let mut hooks = instance.recovery_hooks.write().unwrap();
+            hooks.register_for_configuration_errors(hook);
+            info!("Registered configuration error recovery hook");
+        }
+
         self
     }
 
@@ -1115,7 +1123,9 @@ impl GpuAccelerator {
     ///
     /// `Option<RecoveryAction>` if a hook was able to handle the error
     pub(crate) fn try_handle_local_error(&self, error: &WfcError) -> Option<RecoveryAction> {
-        let hooks = self.instance.read().unwrap().recovery_hooks.read().unwrap();
+        // Use limited scope for the lock
+        let instance = self.instance.read().unwrap();
+        let hooks = instance.recovery_hooks.read().unwrap();
         hooks.try_handle(error)
     }
 

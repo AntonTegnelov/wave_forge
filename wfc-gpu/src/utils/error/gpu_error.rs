@@ -324,7 +324,7 @@ impl fmt::Display for GpuErrorContext {
 }
 
 /// Enumeration of all possible GPU errors
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum GpuError {
     #[error("Buffer mapping failed: {msg}")]
     BufferMapFailed {

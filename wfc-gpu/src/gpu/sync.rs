@@ -4,7 +4,7 @@
 use crate::{
     buffers::{DownloadRequest, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
     utils::error::gpu_error::{GpuError as NewGpuError, GpuErrorContext, GpuResourceType},
-    utils::error_recovery::{GpuError as OldGpuError, GridCoord},
+    utils::error_recovery::{GpuError as OldGpuError, GridCoord, ParseGridCoord},
 };
 use log::{debug, error, trace, warn};
 use std::borrow::Cow;
@@ -65,8 +65,10 @@ impl From<crate::utils::error::gpu_error::GpuError> for OldGpuError {
             crate::utils::error::gpu_error::GpuError::MutexError { msg, .. } => {
                 OldGpuError::Other(msg)
             }
-            crate::utils::error::gpu_error::GpuError::ContradictionDetected { .. } => {
-                OldGpuError::InvalidState("Contradiction detected".to_string())
+            crate::utils::error::gpu_error::GpuError::ContradictionDetected { context } => {
+                OldGpuError::ContradictionDetected {
+                    context: context.to_string(),
+                }
             }
             crate::utils::error::gpu_error::GpuError::Other { msg, .. } => OldGpuError::Other(msg),
         }
@@ -704,39 +706,31 @@ impl GpuSynchronizer {
         let context = self.create_buffer_error_context(buffer_name);
 
         match error {
-            OldGpuError::BufferMapFailed(msg) => NewGpuError::buffer_map_failed(msg, context),
-            OldGpuError::ValidationError(e) => NewGpuError::validation_error(e.clone(), context),
-            OldGpuError::CommandExecutionError(msg) => {
-                NewGpuError::command_execution_error(msg, context)
-            }
-            OldGpuError::BufferOperationError(msg) => {
-                NewGpuError::buffer_operation_error(msg, context)
-            }
-            OldGpuError::TransferError(msg) => NewGpuError::transfer_error(msg, context),
-            OldGpuError::ResourceCreationFailed(msg) => {
+            OldGpuError::MemoryAllocation(msg) => {
                 NewGpuError::resource_creation_failed(msg, context)
             }
-            OldGpuError::ShaderError(msg) => NewGpuError::shader_error(msg, context),
-            OldGpuError::BufferSizeMismatch(msg) => NewGpuError::buffer_size_mismatch(msg, context),
-            OldGpuError::Timeout(msg) => NewGpuError::timeout(msg, context),
-            OldGpuError::DeviceLost(msg) => NewGpuError::device_lost(msg, context),
-            OldGpuError::AdapterRequestFailed => NewGpuError::adapter_request_failed(context),
-            OldGpuError::DeviceRequestFailed(e) => {
-                NewGpuError::device_request_failed(e.clone(), context)
+            OldGpuError::ComputationTimeout { .. } => {
+                NewGpuError::timeout("Computation timed out", context)
             }
-            OldGpuError::MutexError(msg) => NewGpuError::mutex_error(msg, context),
-            OldGpuError::BufferError(msg) => NewGpuError::buffer_operation_error(msg, context),
-            OldGpuError::BufferMapError(msg) => NewGpuError::buffer_map_failed(msg, context),
-            OldGpuError::BufferMapTimeout(msg) => NewGpuError::timeout(msg, context),
-            OldGpuError::ContradictionDetected { coord } => {
+            OldGpuError::KernelExecution(msg) => NewGpuError::command_execution_error(msg, context),
+            OldGpuError::QueueSubmission(msg) => NewGpuError::command_execution_error(msg, context),
+            OldGpuError::DeviceLost(msg) => NewGpuError::device_lost(msg, context),
+            OldGpuError::InvalidState(msg) => NewGpuError::other(msg, context),
+            OldGpuError::BarrierSynchronization(msg) => {
+                NewGpuError::command_execution_error(msg, context)
+            }
+            OldGpuError::BufferCopy(msg) => NewGpuError::buffer_operation_error(msg, context),
+            OldGpuError::BufferMapping(msg) => NewGpuError::buffer_map_failed(msg, context),
+            OldGpuError::ContradictionDetected {
+                context: contradiction_context,
+            } => {
                 let mut ctx = context;
-                if let Some(c) = coord {
-                    ctx = ctx.with_grid_coord(*c);
+                if let Some(grid_coord) = contradiction_context.parse_grid_coord() {
+                    ctx = ctx.with_grid_coord(grid_coord);
                 }
                 NewGpuError::contradiction_detected(ctx)
             }
             OldGpuError::Other(msg) => NewGpuError::other(msg, context),
-            OldGpuError::InternalError(msg) => NewGpuError::other(msg, context),
         }
     }
 

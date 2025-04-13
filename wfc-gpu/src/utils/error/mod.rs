@@ -60,7 +60,7 @@ pub trait ErrorWithContext: std::error::Error {
 }
 
 /// Main error type for the WFC-GPU library, encompassing all possible error scenarios.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum WfcError {
     /// GPU-related errors
     #[error("GPU error: {0}")]

@@ -369,10 +369,10 @@ impl DebugVisualizer {
                     trace!("Downloaded entropy data for visualization.");
                 }
                 _ => {
-                    return Err(GpuError::Other(format!(
-                        "Failed to interpret entropy data: {:?}",
-                        e
-                    )));
+                    return Err(GpuError::Other(
+                        "Failed to interpret entropy data: No entropy values were downloaded"
+                            .to_string(),
+                    ));
                 }
             }
         }
@@ -389,10 +389,9 @@ impl DebugVisualizer {
                     trace!("Downloaded min entropy index data for visualization.");
                 }
                 _ => {
-                    return Err(GpuError::Other(format!(
-                        "Failed to interpret grid possibilities data: {:?}",
-                        e
-                    )));
+                    return Err(GpuError::Other(
+                        "Failed to interpret grid possibilities data: No min entropy info was downloaded".to_string()
+                    ));
                 }
             }
         }

@@ -4223,6 +4223,7 @@ dependencies = [
  "proptest",
  "rand",
  "rayon",
+ "regex",
  "seahash",
  "semver",
  "serde",

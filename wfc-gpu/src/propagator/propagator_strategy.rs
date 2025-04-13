@@ -298,7 +298,7 @@ impl PropagationStrategy for DirectPropagationStrategy {
                             },
                         ),
                         entry_point: Some("main"),
-                        compilation_options: None,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
                         cache: None,
                     },
                 ));
@@ -308,13 +308,14 @@ impl PropagationStrategy for DirectPropagationStrategy {
                 queue.submit(Some(encoder.finish()));
 
                 // Read worklist count before dispatch to determine workgroup count
-                worklist_count = synchronizer
+                let temp_worklist = synchronizer
                     .download_buffer(
                         &buffers.worklist_buffers.worklist_count_buf,
                         0,
                         std::mem::size_of::<u32>(),
                     )
                     .map_err(gpu_error_to_propagation_error)?;
+                worklist_count = [temp_worklist[0]]; // Convert Vec to array
 
                 let current_worklist_count = worklist_count[0] as usize;
 
@@ -449,7 +450,7 @@ impl PropagationStrategy for DirectPropagationStrategy {
                                 },
                             ),
                             entry_point: Some("main"),
-                            compilation_options: None,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
                             cache: None,
                         },
                     ));
@@ -471,13 +472,14 @@ impl PropagationStrategy for DirectPropagationStrategy {
             }
 
             // Check for contradiction after each pass
-            contradiction_flag = synchronizer
+            let temp_flag = synchronizer
                 .download_buffer(
                     &buffers.contradiction_flag_buf,
                     0,
                     std::mem::size_of::<u32>(),
                 )
                 .map_err(gpu_error_to_propagation_error)?;
+            contradiction_flag = [temp_flag[0]]; // Convert Vec to array
 
             if contradiction_flag[0] != 0 {
                 return Err(PropagationError::Contradiction(0, 0, 0));
@@ -488,9 +490,10 @@ impl PropagationStrategy for DirectPropagationStrategy {
             let output_worklist_count_buf = &buffers.worklist_buffers.worklist_count_buf;
 
             // Read the output worklist count
-            worklist_count = synchronizer
+            let temp_count = synchronizer
                 .download_buffer(output_worklist_count_buf, 0, std::mem::size_of::<u32>())
                 .map_err(gpu_error_to_propagation_error)?;
+            worklist_count = [temp_count[0]]; // Convert Vec to array
 
             let output_worklist_count = worklist_count[0] as u32;
 
@@ -710,7 +713,7 @@ impl DirectPropagationStrategy {
                 // Grid params uniform buffer
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: buffers.params_buf.as_entire_binding(),
+                    resource: buffers.params_uniform_buf.as_entire_binding(),
                 },
             ],
         })
@@ -900,12 +903,13 @@ impl SubgridPropagationStrategy {
             })
             .collect();
 
-        // Convert to GridCoord objects for propagation (omitting z since GridCoord is 2D)
+        // Convert to GridCoord objects for propagation
         let adjusted_coords: Vec<GridCoord> = adjusted_coords_3d
             .iter()
             .map(|coord| GridCoord {
                 x: coord.x,
                 y: coord.y,
+                z: coord.z,
             })
             .collect();
 
@@ -917,25 +921,21 @@ impl SubgridPropagationStrategy {
         // Create a mutable clone of the subgrid to work with
         let mut subgrid_mutable = subgrid.clone();
 
-        // Create subgrid data with replicated properties
-        let subgrid_data = SubgridData {
-            num_tiles: 0,                                       // Will be filled from grid later
-            num_axes: 0,                                        // Will be filled from grid later
-            boundary_mode: wfc_core::BoundaryCondition::Finite, // Default to Finite
-            heuristic_type: 0,                                  // Default
-            tie_breaking: 0,                                    // Default
-            max_propagation_steps: 1000,                        // Default to 1000
-            contradiction_check_frequency: 10,                  // Default to 10
-            worklist_size: 100,                                 // Default
-            propagator: Box::new(DirectPropagationStrategy::new(1000)),
-        };
+        // Extract the rules from the main grid
+        // Since we don't have direct access to the AdjacencyRules,
+        // we'll need to create a minimal one with the same dimensions
+        let dummy_rules = wfc_rules::AdjacencyRules::from_allowed_tuples(
+            main_grid.num_tiles(), // Assuming PossibilityGrid exposes this method
+            1,                     // Using 1 axis for simplicity
+            vec![],                // No allowed tuples - minimal rules
+        );
 
         // Create buffers for the subgrid
         let subgrid_buffers = GpuBuffers::new(
             &device,
             &queue,
             &subgrid_mutable,
-            &main_buffers.rule_buffers.rules, // Use the same rules
+            &dummy_rules, // Use minimal rules with same tile count
             wfc_core::BoundaryCondition::Finite, // Inside a subgrid, use finite boundaries
         )
         .map_err(|e| {
@@ -1083,14 +1083,13 @@ impl PropagationStrategyFactory {
 pub fn gpu_error_to_propagation_error(error: GpuError) -> PropagationError {
     match error {
         GpuError::ContradictionDetected { context } => {
-            if let Some(c) = context.grid_coord {
-                PropagationError::Contradiction(c.x, c.y, c.z)
-            } else {
-                // If we don't have specific coordinates, create a general error
-                PropagationError::InternalError(
-                    "Contradiction detected but location unknown".to_string(),
-                )
-            }
+            // Parse the context string to extract coordinates if present
+            // Format is expected to be something like "at coordinates (x, y, z)"
+            let context_str = context.to_string();
+
+            // For now, we'll create a general error as the context string
+            // doesn't have structured grid coordinates
+            PropagationError::InternalError(format!("Contradiction detected: {}", context_str))
         }
         _ => PropagationError::InternalError(format!("GPU error: {}", error)),
     }

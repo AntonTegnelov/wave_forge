@@ -21,11 +21,34 @@ pub use strategies::{
 pub struct GridCoord {
     pub x: usize,
     pub y: usize,
+    pub z: usize,
 }
 
 impl fmt::Display for GridCoord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({}, {})", self.x, self.y)
+        write!(f, "({}, {}, {})", self.x, self.y, self.z)
+    }
+}
+
+/// Extension trait for String to parse GridCoord from context
+pub trait ParseGridCoord {
+    /// Attempts to extract a GridCoord from a string
+    /// Expected format: "... at coordinates (x, y, z) ..." or similar
+    fn parse_grid_coord(&self) -> Option<GridCoord>;
+}
+
+impl ParseGridCoord for String {
+    fn parse_grid_coord(&self) -> Option<GridCoord> {
+        // Look for patterns like (123, 456, 789) in the string
+        let re = regex::Regex::new(r"\((\d+),\s*(\d+),\s*(\d+)\)").ok()?;
+        if let Some(captures) = re.captures(self) {
+            let x = captures.get(1)?.as_str().parse::<usize>().ok()?;
+            let y = captures.get(2)?.as_str().parse::<usize>().ok()?;
+            let z = captures.get(3)?.as_str().parse::<usize>().ok()?;
+            Some(GridCoord { x, y, z })
+        } else {
+            None
+        }
     }
 }
 
@@ -62,8 +85,46 @@ pub enum GpuError {
     /// Buffer mapping error
     BufferMapping(String),
 
+    /// Contradiction detected in Wave Function Collapse
+    ContradictionDetected { context: String },
+
     /// Other GPU error
     Other(String),
+}
+
+impl fmt::Display for GpuError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MemoryAllocation(msg) => write!(f, "GPU memory allocation error: {}", msg),
+            Self::ComputationTimeout {
+                grid_size,
+                duration,
+            } => {
+                write!(
+                    f,
+                    "GPU computation timeout for grid {}x{} after {:?}",
+                    grid_size.0, grid_size.1, duration
+                )
+            }
+            Self::KernelExecution(msg) => write!(f, "GPU kernel execution error: {}", msg),
+            Self::QueueSubmission(msg) => write!(f, "GPU queue submission error: {}", msg),
+            Self::DeviceLost(msg) => write!(f, "GPU device lost: {}", msg),
+            Self::InvalidState(msg) => write!(f, "Invalid GPU state: {}", msg),
+            Self::BarrierSynchronization(msg) => {
+                write!(f, "GPU barrier synchronization error: {}", msg)
+            }
+            Self::BufferCopy(msg) => write!(f, "GPU buffer copy error: {}", msg),
+            Self::BufferMapping(msg) => write!(f, "GPU buffer mapping error: {}", msg),
+            Self::ContradictionDetected { context } => {
+                write!(
+                    f,
+                    "Wave Function Collapse contradiction detected: {}",
+                    context
+                )
+            }
+            Self::Other(msg) => write!(f, "Other GPU error: {}", msg),
+        }
+    }
 }
 
 /// Operations that can be retried if they fail
@@ -269,6 +330,7 @@ impl GpuErrorRecovery {
             GpuError::BarrierSynchronization(_) => ErrorSeverity::Recoverable,
             GpuError::BufferCopy(_) => ErrorSeverity::Recoverable,
             GpuError::BufferMapping(_) => ErrorSeverity::Recoverable,
+            GpuError::ContradictionDetected { .. } => ErrorSeverity::Fatal,
             GpuError::Other(_) => ErrorSeverity::Recoverable,
         }
     }

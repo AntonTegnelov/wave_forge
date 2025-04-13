@@ -1,9 +1,10 @@
+use crate::utils::error_recovery::GpuError as OldGpuError;
 use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams},
     entropy::entropy_strategy::EntropyStrategy as ImportedEntropyStrategy,
     gpu::sync::GpuSynchronizer,
     shader::pipeline::ComputePipelines,
-    utils::error::gpu_error::GpuError,
+    utils::error::gpu_error::GpuError as NewGpuError,
 };
 use log::{debug, error, warn};
 use pollster;
@@ -437,64 +438,70 @@ impl EntropyCalculator for GpuEntropyCalculator {
     }
 }
 
-impl From<GpuError> for CoreEntropyError {
-    fn from(error: GpuError) -> Self {
+impl From<OldGpuError> for CoreEntropyError {
+    fn from(error: OldGpuError) -> Self {
         match error {
-            GpuError::MemoryAllocation(msg) => {
-                CoreEntropyError::MemoryError(format!("GPU memory allocation error: {}", msg))
+            OldGpuError::MemoryAllocation(msg) => {
+                CoreEntropyError::ResourceError(format!("GPU memory allocation failed: {}", msg))
             }
-            GpuError::ComputationTimeout { .. } => {
-                CoreEntropyError::Timeout("GPU entropy calculation timed out".into())
-            }
-            GpuError::KernelExecution(msg) => {
+            OldGpuError::ComputationTimeout {
+                grid_size,
+                duration,
+            } => CoreEntropyError::TimeoutError(format!(
+                "GPU computation timed out after {:?} for grid size {:?}",
+                duration, grid_size
+            )),
+            OldGpuError::KernelExecution(msg) => {
                 CoreEntropyError::ComputationError(format!("GPU kernel execution error: {}", msg))
             }
-            GpuError::QueueSubmission(msg) => {
+            OldGpuError::QueueSubmission(msg) => {
                 CoreEntropyError::ComputationError(format!("GPU queue submission error: {}", msg))
             }
-            GpuError::DeviceLost(msg) => CoreEntropyError::HardwareError(format!(
-                "GPU device lost during entropy calculation: {}",
-                msg
-            )),
-            GpuError::InvalidState(msg) => {
-                CoreEntropyError::InvalidInput(format!("Invalid GPU state: {}", msg))
+            OldGpuError::DeviceLost(msg) => {
+                CoreEntropyError::DeviceError(format!("GPU device lost: {}", msg))
             }
-            GpuError::BarrierSynchronization(msg) => {
-                CoreEntropyError::ComputationError(format!("GPU barrier error: {}", msg))
+            OldGpuError::InvalidState(msg) => {
+                CoreEntropyError::ComputationError(format!("GPU invalid state: {}", msg))
             }
-            GpuError::BufferCopy(msg) => {
-                CoreEntropyError::IOError(format!("GPU buffer copy error: {}", msg))
+            OldGpuError::BarrierSynchronization(msg) => {
+                CoreEntropyError::ComputationError(format!("GPU barrier sync error: {}", msg))
             }
-            GpuError::BufferMapping(msg) => {
-                CoreEntropyError::IOError(format!("GPU buffer mapping error: {}", msg))
+            OldGpuError::BufferCopy(msg) => {
+                CoreEntropyError::TransferError(format!("GPU buffer copy error: {}", msg))
             }
-            GpuError::Other(msg) => CoreEntropyError::Other(format!("GPU error: {}", msg)),
+            OldGpuError::BufferMapping(msg) => {
+                CoreEntropyError::ResourceError(format!("GPU buffer mapping error: {}", msg))
+            }
+            OldGpuError::ContradictionDetected { context } => {
+                CoreEntropyError::ContradictionError(format!("Contradiction detected: {}", context))
+            }
+            OldGpuError::Other(msg) => {
+                CoreEntropyError::UnknownError(format!("GPU error: {}", msg))
+            }
         }
     }
 }
 
-impl From<crate::utils::error::gpu_error::GpuError> for CoreEntropyError {
-    fn from(error: crate::utils::error::gpu_error::GpuError) -> Self {
+impl From<NewGpuError> for CoreEntropyError {
+    fn from(error: NewGpuError) -> Self {
         match error {
-            crate::utils::error::gpu_error::GpuError::BufferMapFailed { msg, .. } => {
+            NewGpuError::BufferMapFailed { msg, .. } => {
                 CoreEntropyError::IOError(format!("GPU buffer mapping failed: {}", msg))
             }
-            crate::utils::error::gpu_error::GpuError::ShaderError { msg, .. } => {
+            NewGpuError::ShaderError { msg, .. } => {
                 CoreEntropyError::ConfigurationError(format!("GPU shader error: {}", msg))
             }
-            crate::utils::error::gpu_error::GpuError::ResourceCreationFailed { msg, .. } => {
+            NewGpuError::ResourceCreationFailed { msg, .. } => {
                 CoreEntropyError::MemoryError(format!("GPU resource creation failed: {}", msg))
             }
-            crate::utils::error::gpu_error::GpuError::CommandExecutionError { msg, .. } => {
+            NewGpuError::CommandExecutionError { msg, .. } => {
                 CoreEntropyError::ComputationError(format!("GPU command execution error: {}", msg))
             }
-            crate::utils::error::gpu_error::GpuError::DeviceLost { msg, .. } => {
-                CoreEntropyError::HardwareError(format!(
-                    "GPU device lost during entropy calculation: {}",
-                    msg
-                ))
-            }
-            crate::utils::error::gpu_error::GpuError::Timeout { msg, .. } => {
+            NewGpuError::DeviceLost { msg, .. } => CoreEntropyError::HardwareError(format!(
+                "GPU device lost during entropy calculation: {}",
+                msg
+            )),
+            NewGpuError::Timeout { msg, .. } => {
                 CoreEntropyError::Timeout(format!("GPU entropy calculation timed out: {}", msg))
             }
             _ => CoreEntropyError::Other(format!("GPU error: {:?}", error)),
@@ -520,7 +527,7 @@ impl GpuEntropyCalculatorExt for GpuEntropyCalculator {
 
 /// Maps a GPU error encountered during entropy calculation to a core WFC EntropyError.
 /// This is consistent with the From<GpuError> implementation above.
-fn map_gpu_error_to_entropy_error(gpu_error: GpuError) -> CoreEntropyError {
+fn map_gpu_error_to_entropy_error(gpu_error: NewGpuError) -> CoreEntropyError {
     gpu_error.into()
 }
 
