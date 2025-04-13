@@ -6,7 +6,7 @@
 use crate::GpuError;
 use std::collections::HashSet;
 use std::fmt::{Debug, Display};
-use wgpu::{Adapter, Features as WgpuFeatures, Limits as WgpuLimits};
+use wgpu::{Adapter, Features as WgpuFeatures};
 
 /// A GPU feature capability that can be used to guide shader compilation and algorithm selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

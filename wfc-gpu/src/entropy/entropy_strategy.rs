@@ -1,14 +1,9 @@
 use crate::{
-    buffers::{GpuBuffers, GpuEntropyShaderParams},
+    buffers::GpuEntropyShaderParams,
     gpu::sync::GpuSynchronizer,
-    GpuError,
 };
-use std::sync::Arc;
 use wfc_core::entropy::EntropyError as CoreEntropyError;
-use wfc_core::{
-    entropy::EntropyHeuristicType,
-    grid::{EntropyGrid, PossibilityGrid},
-};
+use wfc_core::entropy::EntropyHeuristicType;
 
 /// Strategy trait for calculating entropy and selecting cells in WFC algorithm.
 /// This strategy pattern allows for different entropy calculation algorithms

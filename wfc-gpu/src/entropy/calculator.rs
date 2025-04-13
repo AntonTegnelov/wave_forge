@@ -33,7 +33,7 @@ pub struct GpuEntropyCalculator {
 impl Clone for GpuEntropyCalculator {
     fn clone(&self) -> Self {
         // Create a new strategy of the same type
-        let strategy = ImportedEntropyStrategy::create_strategy(
+        let strategy = <dyn ImportedEntropyStrategy>::create_strategy(
             self.strategy.heuristic_type(),
             self.buffers.num_tiles,
             self.buffers.grid_buffers.u32s_per_cell,
@@ -67,7 +67,7 @@ impl GpuEntropyCalculator {
         ));
 
         // Use factory to create the default Shannon strategy
-        let strategy = ImportedEntropyStrategy::create_strategy(
+        let strategy = <dyn ImportedEntropyStrategy>::create_strategy(
             EntropyHeuristicType::default(),
             buffers.num_tiles,
             buffers.grid_buffers.u32s_per_cell,
@@ -100,7 +100,7 @@ impl GpuEntropyCalculator {
         ));
 
         // Use factory to create the specified strategy
-        let strategy = ImportedEntropyStrategy::create_strategy(
+        let strategy = <dyn ImportedEntropyStrategy>::create_strategy(
             heuristic_type,
             buffers.num_tiles,
             buffers.grid_buffers.u32s_per_cell,
@@ -421,7 +421,7 @@ impl EntropyCalculator for GpuEntropyCalculator {
 
     fn set_entropy_heuristic(&mut self, heuristic_type: EntropyHeuristicType) -> bool {
         // Create a new strategy using the factory
-        let strategy = ImportedEntropyStrategy::create_strategy(
+        let strategy = <dyn ImportedEntropyStrategy>::create_strategy(
             heuristic_type,
             self.buffers.num_tiles,
             self.buffers.grid_buffers.u32s_per_cell,

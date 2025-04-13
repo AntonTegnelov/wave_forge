@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+wave-forge-app = { path = "wave-forge-app" }
+anyhow = "1.0"
 
 [workspace]
 members = [

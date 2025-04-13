@@ -2,9 +2,9 @@
 
 use crate::{
     buffers::{DownloadRequest, GpuBuffers},
-    entropy::{EntropyStrategy, GpuEntropyCalculator},
+    entropy::GpuEntropyCalculator,
     gpu::sync::GpuSynchronizer,
-    utils::error_recovery::{GpuError, GridCoord},
+    utils::error_recovery::GpuError,
 };
 use log::trace;
 use std::fmt::Debug;

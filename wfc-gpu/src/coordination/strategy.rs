@@ -5,16 +5,14 @@
 //! and constraint propagation) work together within the Wave Function Collapse algorithm.
 
 use crate::{
-    buffers::GpuBuffers,
     entropy::GpuEntropyCalculator,
     gpu::GpuAccelerator,
     propagator::GpuConstraintPropagator,
-    utils::error_recovery::{GpuError, GridCoord},
 };
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::{Arc, RwLock};
-use wfc_core::{grid::PossibilityGrid, propagator::PropagationError, WfcError};
+use wfc_core::{grid::PossibilityGrid, WfcError};
 
 /// The core strategy interface for WFC algorithm coordination.
 /// Implementations provide different approaches to running the WFC algorithm

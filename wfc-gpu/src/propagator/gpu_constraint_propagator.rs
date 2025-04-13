@@ -5,21 +5,18 @@ use crate::{
     propagator::{PropagationStrategy, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
     utils::debug_viz::DebugVisualizer,
-    utils::error_recovery::{GpuError, GridCoord},
-    utils::subgrid::{
-        divide_into_subgrids, extract_subgrid, merge_subgrids, SubgridConfig, SubgridRegion,
-    },
+    utils::error_recovery::GridCoord,
+    utils::subgrid::SubgridConfig,
 };
 use async_trait::async_trait;
-use log::{debug, error, info};
+use log::debug;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::AtomicUsize,
     Arc,
 };
 use wfc_core::{
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    BoundaryCondition,
 };
 use wfc_rules::AdjacencyRules;
 use wgpu;

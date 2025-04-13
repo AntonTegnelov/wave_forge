@@ -6,7 +6,7 @@
 use crate::utils::error::{ErrorSeverity, ErrorWithContext, WfcError};
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Trait for error recovery strategies
 pub trait RecoveryStrategy: fmt::Debug + Send + Sync {

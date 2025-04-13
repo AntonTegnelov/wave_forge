@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
 
-use crate::utils::error::{ErrorSeverity, WfcError};
+use crate::utils::error::ErrorSeverity;
 
 // Re-export strategy types
 pub use strategies::{

@@ -1,8 +1,6 @@
 #![allow(clippy::redundant_field_names)]
 use std::{
     fmt::Debug,
-    future::IntoFuture,
-    pin::Pin,
     sync::{Arc, RwLock},
 };
 
@@ -13,23 +11,18 @@ use super::{
 
 use crate::coordination::strategy;
 use crate::{
-    buffers::{
-        DownloadRequest, DynamicBufferConfig, GpuBuffers, GpuDownloadResults, GpuParamsUniform,
-    },
+    buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
     coordination::{
-        entropy::{EntropyCoordinationStrategy, EntropyCoordinator},
-        propagation::{
-            DirectPropagationCoordinator, PropagationCoordinator, SubgridPropagationCoordinator,
-        },
-        strategy::{CoordinationStrategy, CoordinationStrategyFactory},
+        propagation::PropagationCoordinator, strategy::CoordinationStrategyFactory,
         DefaultCoordinator, WfcCoordinator,
     },
+    entropy::entropy_strategy::EntropyStrategy as ImportedEntropyStrategy,
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
-    propagator::{GpuConstraintPropagator, PropagationStrategy, PropagationStrategyFactory},
+    propagator::{GpuConstraintPropagator, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
     utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer},
     utils::error::{
-        self, gpu_error::GpuError as NewGpuError, RecoveryAction, RecoveryHookRegistry, WfcError,
+        gpu_error::GpuError as NewGpuError, RecoveryAction, RecoveryHookRegistry, WfcError,
     },
     utils::error_recovery::{GpuError, GridCoord},
     utils::subgrid::SubgridConfig,
@@ -45,7 +38,6 @@ use wfc_core::{
     BoundaryCondition, ProgressInfo,
 };
 use wfc_rules::AdjacencyRules;
-use wgpu::Features;
 
 /// Grid definition info
 #[derive(Debug, Clone)]
@@ -712,11 +704,15 @@ impl GpuAccelerator {
         let instance = self.instance.read().unwrap();
 
         // Create a new strategy using the factory
-        let strategy = EntropyStrategyFactory::create_strategy(
+        let base_strategy = EntropyStrategyFactory::create_strategy(
             heuristic,
             instance.grid_definition.num_tiles,
             instance.buffers.grid_buffers.u32s_per_cell,
         );
+
+        // Cast the base strategy to GpuEntropyStrategy
+        let strategy: Box<dyn GpuEntropyStrategy> =
+            Box::new(ImportedStrategyAdapter(base_strategy));
 
         // Set the strategy (dropping the read lock first to avoid deadlock)
         drop(instance);
@@ -768,7 +764,30 @@ impl GpuAccelerator {
         {
             let instance = self.instance.read().unwrap();
             let mut propagator_guard = instance.propagator.write().unwrap();
-            propagator_guard.set_strategy_boxed(strategy);
+
+            // Create a new propagator with the new strategy
+            let device = propagator_guard.device.clone();
+            let queue = propagator_guard.queue.clone();
+            let pipelines = propagator_guard.pipelines.clone();
+            let buffers = propagator_guard.buffers.clone();
+            let grid_dims = self.instance.read().unwrap().grid_definition.dims;
+            let boundary_condition = self.instance.read().unwrap().boundary_condition;
+            let params = propagator_guard.params.clone();
+
+            // Create a new propagator with the same parameters but new strategy
+            let new_propagator = GpuConstraintPropagator::new(
+                device,
+                queue,
+                pipelines,
+                buffers,
+                grid_dims,
+                boundary_condition,
+                params,
+            )
+            .with_strategy(strategy);
+
+            // Replace the old propagator with the new one
+            *propagator_guard = new_propagator;
         }
 
         self
@@ -872,8 +891,8 @@ impl GpuAccelerator {
 
         // Create the strategy outside the instance lock
         let strategy = CoordinationStrategyFactory::create_adaptive(
-            entropy_calculator_clone,
-            propagator_clone,
+            entropy_calculator_clone.clone(),
+            propagator_clone.clone(),
             grid_size,
         );
 
@@ -904,8 +923,10 @@ impl GpuAccelerator {
         }
 
         // Create the strategy outside the instance lock
-        let strategy =
-            CoordinationStrategyFactory::create_default(entropy_calculator_clone, propagator_clone);
+        let strategy = CoordinationStrategyFactory::create_default(
+            entropy_calculator_clone.clone(),
+            propagator_clone.clone(),
+        );
 
         // Create a new DefaultCoordinator and set the strategy
         let mut coordinator = DefaultCoordinator::new(entropy_calculator_clone, propagator_clone);
@@ -1187,5 +1208,47 @@ impl PossibilityGridExt for PossibilityGrid {
             }
         }
         count
+    }
+}
+
+// An adapter to convert EntropyStrategy to GpuEntropyStrategy
+struct ImportedStrategyAdapter(Box<dyn EntropyStrategy>);
+
+impl Debug for ImportedStrategyAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ImportedStrategyAdapter")
+    }
+}
+
+impl GpuEntropyStrategy for ImportedStrategyAdapter {
+    fn heuristic_type(&self) -> EntropyHeuristicType {
+        self.0.heuristic_type()
+    }
+
+    fn configure_shader_params(&self, params: &mut GpuEntropyShaderParams) {
+        self.0.configure_shader_params(params)
+    }
+
+    fn prepare(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+        self.0.prepare(synchronizer)
+    }
+
+    fn calculate_entropy(
+        &self,
+        _buffers: &GpuBuffers,
+        _pipelines: &ComputePipelines,
+        _queue: &wgpu::Queue,
+        _grid_dims: (usize, usize, usize),
+    ) -> Result<(), CoreEntropyError> {
+        // Default implementation as this isn't used in the imported strategy
+        Ok(())
+    }
+
+    fn upload_data(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+        self.0.upload_data(synchronizer)
+    }
+
+    fn post_process(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+        self.0.post_process(synchronizer)
     }
 }

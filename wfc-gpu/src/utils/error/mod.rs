@@ -476,7 +476,6 @@ macro_rules! error_location {
 }
 
 // Re-export function_name for use with error_location! macro
-use function_name::named;
 
 /// Logs an error with detailed diagnostic information
 #[macro_export]

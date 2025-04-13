@@ -9,7 +9,6 @@ use crate::{
     entropy::{EntropyStrategy, GpuEntropyCalculator},
     gpu::{sync::GpuSynchronizer, GpuAccelerator},
     propagator::GpuConstraintPropagator,
-    utils::debug_viz::DebugVisualizer,
     utils::error_recovery::{GpuError, GridCoord},
 };
 use async_trait::async_trait;
@@ -139,8 +138,8 @@ impl DefaultCoordinator {
             Some(entropy::EntropyCoordinator::new(entropy_calculator.clone()));
 
         Self {
-            entropy_calculator,
-            propagator,
+            entropy_calculator: entropy_calculator.clone(),
+            propagator: propagator.clone(),
             entropy_coordinator,
             propagation_strategy: None,
             coordination_strategy: Some(strategy::CoordinationStrategyFactory::create_default(
@@ -155,7 +154,7 @@ impl DefaultCoordinator {
         &mut self,
         strategy: S,
     ) -> &mut Self {
-        let mut calculator = self.entropy_calculator.clone();
+        let calculator = self.entropy_calculator.clone();
         // Can't modify the calculator directly due to Arc, so this is a placeholder
         // In a real implementation, would need to manage this differently
         trace!("Setting entropy strategy on DefaultCoordinator (placeholder)");

@@ -3963,6 +3963,10 @@ dependencies = [
 [[package]]
 name = "wave_forge"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "wave-forge-app",
+]
 
 [[package]]
 name = "wayland-backend"

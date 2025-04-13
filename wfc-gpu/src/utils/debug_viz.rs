@@ -7,9 +7,8 @@
 
 use super::error_recovery::GpuError;
 use crate::{
-    buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults, GpuParamsUniform},
-    gpu::{backend::GpuBackend, sync::GpuSynchronizer, WgpuBackend},
-    shader::{pipeline::ComputePipelines, ShaderType},
+    buffers::{DownloadRequest, GpuBuffers, GpuDownloadResults},
+    gpu::{backend::GpuBackend, sync::GpuSynchronizer},
 };
 use image::{Rgba, RgbaImage};
 use log::trace;

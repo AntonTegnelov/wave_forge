@@ -2,17 +2,14 @@
 //! This module provides different strategies for propagating constraints
 //! after a cell collapse in the Wave Function Collapse algorithm.
 
-use crate::utils::subgrid::{self, SubgridRegion};
 use crate::{
     buffers::GpuBuffers,
     gpu::sync::GpuSynchronizer,
     utils::error_recovery::{GpuError, GridCoord},
 };
 use futures::TryFutureExt;
-use log::trace;
 use std::sync::Arc;
 use wfc_core::{grid::PossibilityGrid, propagator::PropagationError};
-use wfc_rules::AdjacencyRules;
 
 /// Data structure for holding SubgridData properties
 #[derive(Debug)]

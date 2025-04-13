@@ -41,7 +41,7 @@ use wfc_rules::loader::load_from_file;
 ///
 /// Uses `tokio` for the async runtime, primarily for the asynchronous GPU initialization.
 #[tokio::main]
-async fn main() -> Result<()> {
+pub async fn main() -> Result<()> {
     // --- Setup Shutdown Signal ---
     let shutdown_signal = Arc::new(AtomicBool::new(false));
     let signal_handler_shutdown = shutdown_signal.clone();

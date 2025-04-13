@@ -5,7 +5,6 @@
 use crate::{
     coordination::strategy::CoordinationStrategy,
     propagator::{GpuConstraintPropagator, PropagationStrategy},
-    utils::error_recovery::GpuError,
 };
 use async_trait::async_trait;
 use std::fmt::Debug;
@@ -13,7 +12,6 @@ use std::sync::{Arc, RwLock};
 use wfc_core::{
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    WfcError,
 };
 use wfc_rules::AdjacencyRules;
 
@@ -132,7 +130,7 @@ impl PropagationCoordinationStrategy for DirectPropagationCoordinationStrategy {
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
         // Get mutable access to the propagator
-        let mut propagator_guard = propagator.write().unwrap();
+        let propagator_guard = propagator.write().unwrap();
 
         // Simply delegate to the propagator's default implementation
         propagator_guard
@@ -166,7 +164,7 @@ impl PropagationCoordinationStrategy for SubgridPropagationCoordinationStrategy 
         rules: &AdjacencyRules,
     ) -> Result<(), PropagationError> {
         // Get mutable access to the propagator
-        let mut propagator_guard = propagator.write().unwrap();
+        let propagator_guard = propagator.write().unwrap();
 
         // Delegate to the propagator's subgrid-specific logic
         // The propagator should handle subgridding internally if configured properly
