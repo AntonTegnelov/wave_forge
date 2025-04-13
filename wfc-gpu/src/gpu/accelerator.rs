@@ -468,8 +468,7 @@ impl GpuAccelerator {
                     run_result.stats.contradictions += 1;
                     run_result.stats.iterations = iteration as usize;
                     let error = WfcError::contradiction_detected(
-                        "GPU accelerator detected contradiction",
-                        crate::utils::error::ErrorContext::default().with_module("wfc-gpu"),
+                        "GPU accelerator detected contradiction in wfc-gpu module",
                     );
 
                     // Try user-defined recovery hooks first
@@ -502,7 +501,7 @@ impl GpuAccelerator {
                 }
                 Err(e) => {
                     error!("GPU error during entropy calculation: {}", e);
-                    let error = WfcError::gpu_error(e);
+                    let error = WfcError::Gpu(e);
 
                     // Try user-defined recovery hooks
                     if let Some(recovery_action) = self.try_handle_local_error(&error) {
