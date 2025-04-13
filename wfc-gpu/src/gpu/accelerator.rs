@@ -684,18 +684,14 @@ impl GpuAccelerator {
         &mut self,
         strategy: S,
     ) -> &mut Self {
-        let mut instance = self.instance.write().unwrap();
-        let buffers = instance.buffers.clone();
+        // Scope the instance read lock to avoid borrowing conflicts
+        {
+            let instance = self.instance.read().unwrap();
+            // Here we could use instance.buffers but we don't need to
+        }
 
-        // Get a mutable reference to the entropy calculator
-        let entropy_calculator = Arc::get_mut(&mut instance.entropy_calculator)
-            .expect("Could not get exclusive access to entropy calculator");
-
-        // Set the new strategy
-        entropy_calculator.with_strategy(Box::new(strategy));
-
-        info!("Custom entropy strategy configured.");
-        self
+        // Set the new strategy using our boxed method
+        self.with_entropy_strategy_boxed(Box::new(strategy))
     }
 
     /// Configure the accelerator with a specific entropy heuristic
