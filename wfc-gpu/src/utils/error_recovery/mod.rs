@@ -24,6 +24,16 @@ pub struct GridCoord {
     pub z: usize,
 }
 
+impl From<(usize, usize, usize)> for GridCoord {
+    fn from(coords: (usize, usize, usize)) -> Self {
+        Self {
+            x: coords.0,
+            y: coords.1,
+            z: coords.2,
+        }
+    }
+}
+
 impl fmt::Display for GridCoord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "({}, {}, {})", self.x, self.y, self.z)

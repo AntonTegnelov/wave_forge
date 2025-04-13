@@ -501,7 +501,7 @@ impl GpuAccelerator {
                 }
                 Err(e) => {
                     error!("GPU error during entropy calculation: {}", e);
-                    let error = WfcError::Gpu(e);
+                    let error = e.into();
 
                     // Try user-defined recovery hooks
                     if let Some(recovery_action) = self.try_handle_local_error(&error) {

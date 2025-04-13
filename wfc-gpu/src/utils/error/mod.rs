@@ -108,6 +108,11 @@ impl WfcError {
         Self::Other(msg.into())
     }
 
+    /// Create a new contradiction detected error
+    pub fn contradiction_detected<S: Into<String>>(msg: S) -> Self {
+        Self::Algorithm(msg.into())
+    }
+
     /// Format diagnostic information as JSON for easier parsing
     pub fn as_json(&self) -> String {
         let severity = match self.severity() {
@@ -653,5 +658,42 @@ impl RecoveryHookRegistry {
             }
         }
         None
+    }
+}
+
+// Add the From implementation for error_recovery::GpuError
+impl From<crate::utils::error_recovery::GpuError> for WfcError {
+    fn from(error: crate::utils::error_recovery::GpuError) -> Self {
+        use crate::utils::error_recovery::GpuError;
+
+        match error {
+            GpuError::ContradictionDetected { context } => Self::contradiction_detected(context),
+            GpuError::MemoryAllocation(msg) => {
+                Self::other(format!("GPU memory allocation error: {}", msg))
+            }
+            GpuError::ComputationTimeout {
+                grid_size,
+                duration,
+            } => Self::other(format!(
+                "GPU computation timeout for grid {}x{} after {:?}",
+                grid_size.0, grid_size.1, duration
+            )),
+            GpuError::KernelExecution(msg) => {
+                Self::other(format!("GPU kernel execution error: {}", msg))
+            }
+            GpuError::QueueSubmission(msg) => {
+                Self::other(format!("GPU queue submission error: {}", msg))
+            }
+            GpuError::DeviceLost(msg) => Self::other(format!("GPU device lost: {}", msg)),
+            GpuError::InvalidState(msg) => Self::other(format!("Invalid GPU state: {}", msg)),
+            GpuError::BarrierSynchronization(msg) => {
+                Self::other(format!("GPU barrier synchronization error: {}", msg))
+            }
+            GpuError::BufferCopy(msg) => Self::other(format!("GPU buffer copy error: {}", msg)),
+            GpuError::BufferMapping(msg) => {
+                Self::other(format!("GPU buffer mapping error: {}", msg))
+            }
+            GpuError::Other(msg) => Self::other(format!("Other GPU error: {}", msg)),
+        }
     }
 }

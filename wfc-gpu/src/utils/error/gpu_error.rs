@@ -780,3 +780,65 @@ impl ErrorWithContext for GpuError {
         }
     }
 }
+
+impl From<crate::utils::error_recovery::GpuError> for GpuError {
+    fn from(err: crate::utils::error_recovery::GpuError) -> Self {
+        use crate::utils::error_recovery::GpuError as RecoveryGpuError;
+        
+        match err {
+            RecoveryGpuError::MemoryAllocation(msg) => Self::BufferOperationError {
+                msg,
+                context: GpuErrorContext::new(GpuResourceType::Buffer)
+                    .with_details("Memory allocation failed"),
+            },
+            RecoveryGpuError::ComputationTimeout { grid_size, duration } => Self::Timeout {
+                msg: format!("Computation timeout for grid {}x{} after {:?}", grid_size.0, grid_size.1, duration),
+                context: GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details("GPU computation timed out"),
+            },
+            RecoveryGpuError::KernelExecution(msg) => Self::CommandExecutionError {
+                msg,
+                context: GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details("Kernel execution error"),
+            },
+            RecoveryGpuError::QueueSubmission(msg) => Self::CommandExecutionError {
+                msg,
+                context: GpuErrorContext::new(GpuResourceType::Queue)
+                    .with_details("Queue submission error"),
+            },
+            RecoveryGpuError::DeviceLost(msg) => Self::DeviceLost {
+                msg,
+                context: GpuErrorContext::new(GpuResourceType::Device)
+                    .with_details("Device lost"),
+            },
+            RecoveryGpuError::InvalidState(msg) => Self::ValidationError {
+                msg,
+                context: GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details("Invalid state"),
+            },
+            RecoveryGpuError::BarrierSynchronization(msg) => Self::CommandExecutionError {
+                msg,
+                context: GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details("Barrier synchronization error"),
+            },
+            RecoveryGpuError::BufferCopy(msg) => Self::TransferError {
+                msg,
+                context: GpuErrorContext::new(GpuResourceType::Buffer)
+                    .with_details("Buffer copy error"),
+            },
+            RecoveryGpuError::BufferMapping(msg) => Self::BufferMapFailed {
+                msg,
+                context: GpuErrorContext::new(GpuResourceType::Buffer)
+                    .with_details("Buffer mapping error"),
+            },
+            RecoveryGpuError::ContradictionDetected { context } => Self::ContradictionDetected {
+                context: GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details(format!("Contradiction detected: {}", context)),
+            },
+            RecoveryGpuError::Other(msg) => Self::Other {
+                msg,
+                context: GpuErrorContext::new(GpuResourceType::Other),
+            },
+        }
+    }
+}
