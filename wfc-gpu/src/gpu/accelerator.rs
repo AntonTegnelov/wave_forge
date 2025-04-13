@@ -12,11 +12,7 @@ use super::{
 use crate::coordination::strategy;
 use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
-    coordination::{
-        propagation::PropagationCoordinator, strategy::CoordinationStrategyFactory,
-        DefaultCoordinator, WfcCoordinator,
-    },
-    entropy::entropy_strategy::EntropyStrategy as ImportedEntropyStrategy,
+    coordination::{strategy::CoordinationStrategyFactory, DefaultCoordinator, WfcCoordinator},
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
     propagator::{GpuConstraintPropagator, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
@@ -33,7 +29,10 @@ use log::{error, info, trace};
 use std::time::Instant;
 use wfc_core::propagator::PropagationError;
 use wfc_core::{
-    entropy::{EntropyCalculator, EntropyHeuristicType as CoreEntropyHeuristicType},
+    entropy::{
+        EntropyCalculator, EntropyError as CoreEntropyError,
+        EntropyHeuristicType as CoreEntropyHeuristicType,
+    },
     grid::PossibilityGrid,
     BoundaryCondition, ProgressInfo,
 };
@@ -711,8 +710,7 @@ impl GpuAccelerator {
         );
 
         // Cast the base strategy to GpuEntropyStrategy
-        let strategy: Box<dyn GpuEntropyStrategy> =
-            Box::new(ImportedStrategyAdapter(base_strategy));
+        let strategy: Box<dyn GpuEntropyStrategy> = Box::new(EntropyStrategyAdapter(base_strategy));
 
         // Set the strategy (dropping the read lock first to avoid deadlock)
         drop(instance);
@@ -725,8 +723,20 @@ impl GpuAccelerator {
         &mut self,
         strategy: Box<dyn GpuEntropyStrategy>,
     ) -> &mut Self {
+        // First get the data needed under read lock
+        let existing_calculator = {
+            let instance = self.instance.read().unwrap();
+            instance.entropy_calculator.clone()
+        };
+
+        // Create a new calculator with the same data but new strategy
+        let mut new_calculator = existing_calculator;
+        new_calculator.set_strategy_boxed(strategy);
+
+        // Update the instance with the new calculator under write lock
         let mut instance = self.instance.write().unwrap();
-        instance.entropy_calculator.set_strategy_boxed(strategy);
+        instance.entropy_calculator = Arc::new(new_calculator);
+
         self
     }
 
@@ -1212,16 +1222,16 @@ impl PossibilityGridExt for PossibilityGrid {
 }
 
 // An adapter to convert EntropyStrategy to GpuEntropyStrategy
-struct ImportedStrategyAdapter(Box<dyn EntropyStrategy>);
+struct EntropyStrategyAdapter(Box<dyn EntropyStrategy>);
 
-impl Debug for ImportedStrategyAdapter {
+impl Debug for EntropyStrategyAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ImportedStrategyAdapter")
+        write!(f, "EntropyStrategyAdapter")
     }
 }
 
-impl GpuEntropyStrategy for ImportedStrategyAdapter {
-    fn heuristic_type(&self) -> EntropyHeuristicType {
+impl GpuEntropyStrategy for EntropyStrategyAdapter {
+    fn heuristic_type(&self) -> CoreEntropyHeuristicType {
         self.0.heuristic_type()
     }
 
