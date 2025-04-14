@@ -170,7 +170,7 @@ impl crate::propagator::AsyncPropagationStrategy for SubgridPropagationStrategy 
         &self,
         grid: &mut PossibilityGrid,
         updated_cells: &[GridCoord],
-        buffers: &Arc<GpuBuffers>,
+        _buffers: &Arc<GpuBuffers>,
         synchronizer: &GpuSynchronizer,
     ) -> Result<(), PropagationError> {
         use crate::utils::subgrid::{
