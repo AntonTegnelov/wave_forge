@@ -234,10 +234,8 @@ impl WfcError {
     /// Returns a more detailed description of actions user code can take to handle this error
     pub fn recovery_instructions(&self) -> String {
         match self.suggested_action() {
-            RecoveryAction::Retry => format!(
-                "This error is potentially transient. Retry the operation.\n\
-                Consider implementing an exponential backoff strategy if retrying multiple times."
-            ),
+            RecoveryAction::Retry => "This error is potentially transient. Retry the operation.\n\
+                Consider implementing an exponential backoff strategy if retrying multiple times.".to_string(),
             RecoveryAction::RetryWithModifiedParams => {
                 let mut instructions =
                     String::from("Retry the operation with adjusted parameters:\n");
@@ -285,29 +283,21 @@ impl WfcError {
 
                 instructions
             }
-            RecoveryAction::UseAlternative => format!(
-                "Consider an alternative approach:\n\
+            RecoveryAction::UseAlternative => "Consider an alternative approach:\n\
                 - If this is a contradiction in WFC, try different starting constraints\n\
                 - If algorithm-specific, consider a different algorithm variant\n\
-                - For GPU-specific issues, consider CPU fallback if available"
-            ),
-            RecoveryAction::ReduceQuality => format!(
-                "Continue with reduced quality or functionality:\n\
+                - For GPU-specific issues, consider CPU fallback if available".to_string(),
+            RecoveryAction::ReduceQuality => "Continue with reduced quality or functionality:\n\
                 - Reduce grid resolution or detail level\n\
                 - Simplify ruleset or constraints\n\
-                - Disable advanced features"
-            ),
-            RecoveryAction::ReportError => format!(
-                "This error requires intervention:\n\
+                - Disable advanced features".to_string(),
+            RecoveryAction::ReportError => "This error requires intervention:\n\
                 - Log detailed error information\n\
                 - Check system requirements and GPU compatibility\n\
-                - Report the issue if it persists"
-            ),
-            RecoveryAction::NoAction => format!(
-                "No recovery action is possible:\n\
+                - Report the issue if it persists".to_string(),
+            RecoveryAction::NoAction => "No recovery action is possible:\n\
                 - Operation cannot continue\n\
-                - Review logs and error details for diagnostic information"
-            ),
+                - Review logs and error details for diagnostic information".to_string(),
         }
     }
 

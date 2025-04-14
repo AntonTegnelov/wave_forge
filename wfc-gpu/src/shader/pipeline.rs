@@ -509,7 +509,7 @@ impl ComputePipelines {
         let desc = wgpu::ComputePipelineDescriptor {
             label: Some(&label),
             layout: Some(layout),
-            module: &module,
+            module,
             entry_point: Some(entry_point),
             compilation_options: Default::default(),
             cache: None,

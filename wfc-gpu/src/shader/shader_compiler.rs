@@ -173,7 +173,7 @@ impl ShaderCompiler {
         for define in features.shader_defines() {
             assembled_source.push_str(&format!("#define {}\n", define));
         }
-        assembled_source.push_str("\n");
+        assembled_source.push('\n');
 
         // 3. Process components recursively (handling includes)
         for component in required_components {

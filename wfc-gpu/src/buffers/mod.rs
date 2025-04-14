@@ -741,10 +741,8 @@ impl GpuDownloadResults {
                                 let bits = grid_possibilities[base_index + i];
                                 for bit_pos in 0..32 {
                                     let tile_idx = i * 32 + bit_pos;
-                                    if tile_idx < num_tiles {
-                                        if ((bits >> bit_pos) & 1) == 1 {
-                                            cell.set(tile_idx, true);
-                                        }
+                                    if tile_idx < num_tiles && ((bits >> bit_pos) & 1) == 1 {
+                                        cell.set(tile_idx, true);
                                     }
                                 }
                             }

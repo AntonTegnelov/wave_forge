@@ -1,0 +1,30 @@
+# Clippy configuration file
+# Disables specific lints from the enabled categories
+
+# Restriction lints that are too restrictive
+disallowed-methods = { enabled = false }
+disallowed-types = { enabled = false }
+missing-docs-in-private-items = { enabled = false }
+missing-inline-in-public-items = { enabled = false }
+unwrap-used = { enabled = true }
+expect-used = { enabled = true }
+float-arithmetic = { enabled = false }
+integer-arithmetic = { enabled = false }
+mod-module-files = { enabled = false }
+implicit-return = { enabled = false }
+unreachable = { enabled = false }
+
+# Pedantic lints to disable
+cast-precision-loss = { enabled = false }
+cast-sign-loss = { enabled = false }
+cast-possible-truncation = { enabled = false }
+module-name-repetitions = { enabled = false }
+doc-markdown = { enabled = false }
+must-use-candidate = { enabled = false }
+match-bool = { enabled = false }
+if-not-else = { enabled = false }
+enum-variant-names = { enabled = false }
+
+# Nursery lints that are experimental
+cargo-common-metadata = { enabled = false }
+fallible-impl-from = { enabled = false } 

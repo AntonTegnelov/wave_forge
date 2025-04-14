@@ -73,7 +73,7 @@ impl Profiler {
     }
 }
 
-impl<'a> Drop for ProfilerGuard<'a> {
+impl Drop for ProfilerGuard<'_> {
     fn drop(&mut self) {
         let elapsed = self.start_time.elapsed();
         let mut metrics_guard = self.profiler.metrics.lock().expect("Metrics lock poisoned");

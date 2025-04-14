@@ -384,7 +384,7 @@ impl DebugVisualizer {
             };
             match gpu_buffers.download_results(request).await? {
                 results if results.min_entropy_info.is_some() => {
-                    self.last_min_entropy_index = results.min_entropy_info.map(|(e, i)| (e, i));
+                    self.last_min_entropy_index = results.min_entropy_info;
                     trace!("Downloaded min entropy index data for visualization.");
                 }
                 _ => {

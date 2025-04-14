@@ -15,7 +15,7 @@ pub mod subgrid;
 // Re-export commonly used types
 pub use debug_viz::{DebugSnapshot, DebugVisualizer, VisualizationType};
 pub use error::{ErrorLocation, ErrorSeverity, ErrorWithContext, WfcError};
-pub use error_recovery::{GpuError, RecoverableGpuOp};
+pub use error_recovery::{gpu_error_to_propagation_error, GpuError, RecoverableGpuOp};
 pub use subgrid::{SubgridConfig, SubgridRegion};
 
 // Type aliases for synchronization primitives

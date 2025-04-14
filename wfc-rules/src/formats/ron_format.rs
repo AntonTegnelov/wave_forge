@@ -15,6 +15,12 @@ use crate::generator::generate_transformed_rules;
 /// A parser implementation for RON (Rusty Object Notation) format rules.
 pub struct RonFormatParser;
 
+impl Default for RonFormatParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RonFormatParser {
     /// Creates a new RON format parser
     pub fn new() -> Self {
@@ -61,7 +67,7 @@ fn axis_name_to_index(axis_name: &str) -> Result<usize, LoadError> {
         "+z" => Ok(4),
         "-z" => Ok(5),
         _ => {
-            return Err(LoadError::InvalidData(format!(
+            Err(LoadError::InvalidData(format!(
                 "Invalid axis name: {axis_name}"
             )))
         }
@@ -78,7 +84,7 @@ impl FormatParser for RonFormatParser {
     fn parse(&self, ron_content: &str) -> Result<(TileSet, AdjacencyRules), LoadError> {
         // 1. Deserialize the RON string
         let rule_file: RonRuleFile = ron::from_str(ron_content).map_err(|e| {
-            return LoadError::ParseError(format!("RON deserialization failed: {e}"));
+            LoadError::ParseError(format!("RON deserialization failed: {e}"))
         })?;
 
         // 2. Validate tiles
@@ -109,10 +115,10 @@ impl FormatParser for RonFormatParser {
         for (t1_name, t2_name, axis_name) in &rule_file.adjacency {
             let tile1_id = *tile_name_to_id
                 .get(t1_name)
-                .ok_or_else(|| return LoadError::InvalidData(format!("Unknown tile: {t1_name}")))?;
+                .ok_or_else(|| LoadError::InvalidData(format!("Unknown tile: {t1_name}")))?;
             let tile2_id = *tile_name_to_id
                 .get(t2_name)
-                .ok_or_else(|| return LoadError::InvalidData(format!("Unknown tile: {t2_name}")))?;
+                .ok_or_else(|| LoadError::InvalidData(format!("Unknown tile: {t2_name}")))?;
             let axis_index = axis_name_to_index(axis_name)?;
             base_rules.push((tile1_id, tile2_id, axis_index));
         }
@@ -151,6 +157,6 @@ pub fn parse_ron_rules(ron_content: &str) -> Result<(TileSet, AdjacencyRules), L
 // This impl doesn't depend on serde, so it stays outside cfg blocks
 impl From<TileSetError> for LoadError {
     fn from(error: TileSetError) -> Self {
-        return Self::InvalidData(format!("TileSet Error: {error}"));
+        Self::InvalidData(format!("TileSet Error: {error}"))
     }
 }

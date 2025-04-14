@@ -238,7 +238,7 @@ impl GpuSynchronizer {
                 // Assume data is tightly packed array of u32 bitmasks.
                 let num_tiles = target.num_tiles();
                 let tiles_per_u32 = 32;
-                let u32_per_cell = (num_tiles + tiles_per_u32 - 1) / tiles_per_u32;
+                let u32_per_cell = num_tiles.div_ceil(tiles_per_u32);
                 let expected_size = target.width
                     * target.height
                     * target.depth
@@ -310,8 +310,8 @@ impl GpuSynchronizer {
         let flag_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*flag_buffer_gpu,
-            &*flag_buffer_staging,
+            flag_buffer_gpu,
+            flag_buffer_staging,
             std::mem::size_of::<u32>() as u64,
             Some("Check Contradiction Flag".to_string()),
         )
@@ -320,7 +320,7 @@ impl GpuSynchronizer {
             GpuError::BufferCopy(format!("Failed to download contradiction flag: {}", e))
         })?;
 
-        let has_contradiction = flag_data.first().map_or(false, |&flag| flag != 0);
+        let has_contradiction = flag_data.first().is_some_and(|&flag| flag != 0);
 
         if has_contradiction {
             let loc_buffer_gpu = &self.buffers.contradiction_location_buf;
@@ -329,8 +329,8 @@ impl GpuSynchronizer {
             let loc_data = crate::buffers::download_buffer_data::<u32>(
                 Some(self.device.clone()),
                 Some(self.queue.clone()),
-                &*loc_buffer_gpu,
-                &*loc_buffer_staging,
+                loc_buffer_gpu,
+                loc_buffer_staging,
                 3 * std::mem::size_of::<u32>() as u64,
                 Some("Download Contradiction Location".to_string()),
             )
@@ -353,8 +353,8 @@ impl GpuSynchronizer {
         let count_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*count_buffer_gpu,
-            &*staging_count_buffer,
+            count_buffer_gpu,
+            staging_count_buffer,
             std::mem::size_of::<u32>() as u64,
             Some("Download Worklist Count".to_string()),
         )
@@ -412,7 +412,7 @@ impl GpuSynchronizer {
         };
         let count_buffer = &self.buffers.worklist_buffers.worklist_count_buf; // Use single count buffer
 
-        let data_size = (updated_indices.len() * std::mem::size_of::<u32>()) as u64;
+        let data_size = std::mem::size_of_val(updated_indices) as u64;
 
         // Ensure buffer is large enough (use worklist_buffers method)
         // Note: This might require mutable access or coordination if called concurrently
@@ -612,8 +612,8 @@ impl GpuSynchronizer {
         let flag_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*flag_buffer_gpu,
-            &*flag_buffer_staging,
+            flag_buffer_gpu,
+            flag_buffer_staging,
             std::mem::size_of::<u32>() as u64,
             Some("Check Contradiction Flag".to_string()),
         )
@@ -622,7 +622,7 @@ impl GpuSynchronizer {
             GpuError::BufferCopy(format!("Failed to download contradiction flag: {}", e))
         })?;
 
-        Ok(flag_data.first().map_or(false, |&flag| flag != 0))
+        Ok(flag_data.first().is_some_and(|&flag| flag != 0))
     }
 
     /// Downloads the location of the first contradiction, if one occurred.
@@ -639,8 +639,8 @@ impl GpuSynchronizer {
         let loc_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*loc_buffer_gpu,
-            &*loc_buffer_staging,
+            loc_buffer_gpu,
+            loc_buffer_staging,
             3 * std::mem::size_of::<u32>() as u64,
             Some("Download Contradiction Location".to_string()),
         )
@@ -660,8 +660,8 @@ impl GpuSynchronizer {
         let count_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*count_buffer_gpu,
-            &*staging_count_buffer,
+            count_buffer_gpu,
+            staging_count_buffer,
             std::mem::size_of::<u32>() as u64,
             Some("Download Worklist Count".to_string()),
         )
@@ -779,7 +779,7 @@ impl GpuSynchronizer {
         });
 
         // Wait for the mapping to complete
-        self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::MaintainBase::Wait);
 
         // Check the mapping status
         match pollster::block_on(receiver) {
@@ -836,7 +836,7 @@ impl GpuSynchronizer {
         self.queue.write_buffer(buffer, offset, data_bytes);
 
         // Ensure the write is processed
-        self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::MaintainBase::Wait);
 
         Ok(())
     }
@@ -846,13 +846,13 @@ impl GpuSynchronizer {
         trace!("Uploading adjacency rules to GPU");
 
         let num_tiles = rules.num_tiles();
-        let num_axes = rules.num_axes();
+        let _num_axes = rules.num_axes();
 
         // Prepare weighted rules data for the buffer
         let mut weighted_rules_data = Vec::new();
         for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
             // Only include rules with non-default weights
-            if *weight < 1.0 || *weight > 1.0 {
+            if *weight != 1.0 {
                 let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
                 weighted_rules_data.push(rule_idx as u32);
                 weighted_rules_data.push(weight.to_bits()); // Store f32 weight as u32 bits

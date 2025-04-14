@@ -10,7 +10,7 @@ fn test_data_path(filename: &str) -> std::path::PathBuf {
     path.push("tests");
     path.push("rules_data");
     path.push(filename);
-    return path
+    path
 }
 
 #[test]

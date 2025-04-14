@@ -1,7 +1,6 @@
 // wave-forge-app/src/progress.rs
 
 use anyhow::Result;
-use log;
 use std::time::{Duration, Instant};
 use wfc_core::ProgressInfo;
 use wfc_core::WfcError;

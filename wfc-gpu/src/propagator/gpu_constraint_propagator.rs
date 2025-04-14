@@ -1,12 +1,13 @@
-use crate::propagator::propagator_strategy::gpu_error_to_propagation_error;
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     gpu::sync::GpuSynchronizer,
     propagator::{AsyncPropagationStrategy, PropagationStrategy, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
-    utils::debug_viz::DebugVisualizer,
-    utils::error_recovery::GridCoord,
     utils::subgrid::SubgridConfig,
+    utils::{
+        debug_viz::DebugVisualizer,
+        error_recovery::{gpu_error_to_propagation_error, GridCoord},
+    },
 };
 use async_trait::async_trait;
 use log::debug;
@@ -50,7 +51,7 @@ impl Clone for GpuConstraintPropagator {
             pipelines: self.pipelines.clone(),
             buffers: self.buffers.clone(),
             current_worklist_idx: self.current_worklist_idx.clone(),
-            params: self.params.clone(),
+            params: self.params,
             debug_visualizer: self.debug_visualizer.clone(),
             synchronizer: self.synchronizer.clone(),
             strategy,

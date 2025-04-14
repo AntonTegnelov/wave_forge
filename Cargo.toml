@@ -41,7 +41,32 @@ lto = true
 strip = true
 codegen-units = 1
 
+[workspace.lints.rust]
+unsafe_code = "warn"
+missing_docs = "warn"
+unused_crate_dependencies = "warn"
+
 [workspace.lints.clippy]
-restriction = "warn"
+# Specific clippy lints we care about
 pedantic = "warn"
+style = "warn"
+complexity = "warn"
+perf = "warn"
 nursery = "warn"
+suspicious = "warn"
+
+# Individual lints
+unwrap_used = "warn"
+expect_used = "warn"
+todo = "warn"
+dbg_macro = "warn"
+unimplemented = "warn"
+
+# Disable specific pedantic lints that are too noisy
+module-name-repetitions = { level = "allow", priority = 1 }
+cast-possible-truncation = { level = "allow", priority = 1 }
+cast-precision-loss = { level = "allow", priority = 1 }
+cast-sign-loss = { level = "allow", priority = 1 }
+doc-markdown = { level = "allow", priority = 1 }
+must-use-candidate = { level = "allow", priority = 1 }
+missing-errors-doc = { level = "allow", priority = 1 }
