@@ -106,9 +106,10 @@ impl EntropyCoordinator {
 
     /// Calculate entropy grid using the current strategy
     pub async fn calculate_entropy(&self, grid: &PossibilityGrid) -> Result<EntropyGrid, GpuError> {
-        // The entropy calculator delegates to the current strategy
+        // Delegate directly to entropy calculator
         self.entropy_calculator
-            .calculate_entropy(grid)
+            .calculate_entropy_async(grid)
+            .await
             .map_err(|e| GpuError::Other(format!("Entropy calculation failed: {}", e)))
     }
 
@@ -117,10 +118,11 @@ impl EntropyCoordinator {
         &self,
         entropy_grid: &EntropyGrid,
     ) -> Result<Option<Coord3D>, GpuError> {
-        // The entropy calculator delegates to the current strategy
+        // Delegate directly to entropy calculator
         let result = self
             .entropy_calculator
-            .select_lowest_entropy_cell(entropy_grid);
+            .select_lowest_entropy_cell_async(entropy_grid)
+            .await;
 
         Ok(result.map(|(x, y, z)| Coord3D { x, y, z }))
     }
@@ -156,49 +158,33 @@ impl EntropyCoordinator {
                 .await;
         }
 
-        // Fall back to default implementation
+        // Otherwise download min entropy directly using GpuEntropyCalculator
         trace!("EntropyCoordinator: Downloading entropy results...");
 
-        let request = DownloadRequest {
-            download_min_entropy_info: true,
-            download_contradiction_flag: false,
-            ..Default::default()
-        };
-
-        let results = buffers.download_results(request).await?;
-
-        trace!(
-            "EntropyCoordinator: Received min entropy info: {:?}",
-            results.min_entropy_info
+        // Create a dummy entropy grid just for the API - the calculator doesn't actually use it
+        let dummy_grid = EntropyGrid::new(
+            buffers.grid_dims.0,
+            buffers.grid_dims.1,
+            buffers.grid_dims.2,
         );
 
-        if let Some(min_data) = results.min_entropy_info {
-            // Check if grid is fully collapsed
-            if min_data.1 == u32::MAX {
-                trace!(
-                    "EntropyCoordinator: Grid appears to be fully collapsed or in contradiction"
-                );
-                return Ok(None);
-            }
-
-            let (width, height, _depth) = buffers.grid_dims;
-            let flat_index = min_data.1 as usize;
-            let z = flat_index / (width * height);
-            let y = (flat_index % (width * height)) / width;
-            let x = flat_index % width;
-
+        // Delegate to the GpuEntropyCalculator's implementation for both coords and value
+        if let Some(((x, y, z), entropy_value)) = self
+            .entropy_calculator
+            .select_lowest_entropy_cell_with_value_async(&dummy_grid)
+            .await
+        {
             trace!(
                 "EntropyCoordinator: Selected cell at ({}, {}, {}) with entropy {}",
                 x,
                 y,
                 z,
-                min_data.0
+                entropy_value
             );
-
-            Ok(Some((min_data.0, Coord3D { x, y, z })))
+            return Ok(Some((entropy_value, Coord3D { x, y, z })));
         } else {
-            trace!("EntropyCoordinator: No min entropy info found, grid may be fully collapsed");
-            Ok(None)
+            trace!("EntropyCoordinator: No cell with positive entropy found (grid fully collapsed or contradiction).");
+            return Ok(None);
         }
     }
 
@@ -207,57 +193,9 @@ impl EntropyCoordinator {
         buffers: &GpuBuffers,
         synchronizer: &GpuSynchronizer,
     ) -> Result<Option<(f32, Coord3D)>, GpuError> {
-        // Create download request for the min entropy buffer
-        let request = DownloadRequest {
-            download_min_entropy_info: true,
-            download_contradiction_flag: false,
-            download_entropy: false,
-            download_grid_possibilities: false,
-            download_contradiction_location: false,
-        };
-
-        // Download result using the provided synchronizer
-        let results = buffers.download_results(request).await?;
-
-        // Check if min entropy info was found
-        if let Some(min_data) = results.min_entropy_info {
-            trace!("EntropyCoordinator: Min entropy info found: {:?}", min_data);
-
-            // Check if the min index is valid (not u32::MAX which indicates no valid min)
-            if min_data.1 != u32::MAX {
-                let grid_dims = buffers.grid_dims;
-
-                // Convert flat index to 3D coordinates
-                let flat_index = min_data.1 as usize;
-                let width = grid_dims.0;
-                let height = grid_dims.1;
-                let area = width * height;
-
-                let z = flat_index / area;
-                let y = (flat_index % area) / width;
-                let x = flat_index % width;
-
-                Ok(Some((min_data.0, Coord3D { x, y, z })))
-            } else {
-                trace!(
-                    "EntropyCoordinator: No min entropy info found, grid may be fully collapsed"
-                );
-                Ok(None)
-            }
-        } else {
-            // No min entropy data available
-            let grid_dims = buffers.grid_dims;
-
-            // Calculate grid size
-            let width = grid_dims.0;
-            let height = grid_dims.1;
-            let depth = grid_dims.2;
-            let x = 0;
-            let y = 0;
-            let z = 0;
-
-            Ok(Some((0.0, Coord3D { x, y, z })))
-        }
+        // Delegate to download_min_entropy_info which now properly uses the GpuEntropyCalculator
+        self.download_min_entropy_info(&Arc::new(buffers.clone()), &Arc::new(synchronizer.clone()))
+            .await
     }
 }
 
@@ -279,7 +217,7 @@ impl EntropyCoordinationStrategy for DefaultEntropyCoordinationStrategy {
         &self,
         _grid: &PossibilityGrid,
         buffers: &Arc<GpuBuffers>,
-        sync: &Arc<GpuSynchronizer>,
+        _sync: &Arc<GpuSynchronizer>,
     ) -> Result<Option<(f32, Coord3D)>, GpuError> {
         trace!("DefaultEntropyCoordinationStrategy: Downloading entropy results...");
 
@@ -332,12 +270,12 @@ impl EntropyCoordinationStrategy for ShannonEntropyCoordinationStrategy {
         &self,
         _grid: &PossibilityGrid,
         buffers: &Arc<GpuBuffers>,
-        sync: &Arc<GpuSynchronizer>,
+        _sync: &Arc<GpuSynchronizer>,
     ) -> Result<Option<(f32, Coord3D)>, GpuError> {
         // Shannon entropy-specific implementation (similar to default for now)
         // In a full implementation, this would use Shannon-specific optimizations
         DefaultEntropyCoordinationStrategy::new(self.entropy_calculator.clone())
-            .calculate_and_select(_grid, buffers, sync)
+            .calculate_and_select(_grid, buffers, _sync)
             .await
     }
 
@@ -364,12 +302,12 @@ impl EntropyCoordinationStrategy for CountBasedEntropyCoordinationStrategy {
         &self,
         _grid: &PossibilityGrid,
         buffers: &Arc<GpuBuffers>,
-        sync: &Arc<GpuSynchronizer>,
+        _sync: &Arc<GpuSynchronizer>,
     ) -> Result<Option<(f32, Coord3D)>, GpuError> {
         // Count-based entropy-specific implementation (similar to default for now)
         // In a full implementation, this would use count-based specific optimizations
         DefaultEntropyCoordinationStrategy::new(self.entropy_calculator.clone())
-            .calculate_and_select(_grid, buffers, sync)
+            .calculate_and_select(_grid, buffers, _sync)
             .await
     }
 
