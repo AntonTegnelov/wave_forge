@@ -1,7 +1,7 @@
 [package]
 name = "wave_forge"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 wave-forge-app = { path = "wave-forge-app" }

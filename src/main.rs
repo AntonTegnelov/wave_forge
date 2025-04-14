@@ -3,3 +3,6 @@ fn main() -> anyhow::Result<()> {
     // The tokio runtime is already set up inside wave_forge_app's main function
     wave_forge_app::main()
 }
+        Err(e) => Err(anyhow::anyhow!("Failed to create Tokio runtime: {}", e)),
+    }
+}

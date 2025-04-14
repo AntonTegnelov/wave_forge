@@ -3,9 +3,13 @@ name = "wave-forge-app"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "wave_forge_app"
+path = "src/lib.rs"
+
 [[bin]]
 name = "wave-forge"
-path = "src/main.rs"
+path = "src/bin.rs"
 
 [dependencies]
 wfc-core = { path = "../wfc-core" }

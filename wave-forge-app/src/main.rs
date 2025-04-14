@@ -1,19 +1,11 @@
-//! # Wave Forge Application (Binary)
+//! # Wave Forge Application Main Module
 //!
-//! Main executable entry point.
+//! Contains the main application logic.
 
-mod benchmark;
-mod config;
-mod error;
-mod logging;
-mod output;
-mod profiler;
-mod progress;
-mod setup;
-mod visualization;
-
-use config::AppConfig;
-use setup::visualization::VizMessage;
+use crate::config::AppConfig;
+use crate::logging;
+use crate::setup;
+use crate::setup::visualization::VizMessage;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -39,7 +31,6 @@ use wfc_rules::loader::load_from_file;
 /// Orchestrates progress reporting and final output saving.
 ///
 /// Uses `tokio` for the async runtime, primarily for the asynchronous GPU initialization.
-#[tokio::main]
 pub async fn main() -> Result<()> {
     // --- Setup Shutdown Signal ---
     let shutdown_signal = Arc::new(AtomicBool::new(false));
