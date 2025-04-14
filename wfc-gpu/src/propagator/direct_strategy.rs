@@ -21,17 +21,12 @@ impl DirectPropagationStrategy {
         }
     }
 
-    /// Create a new strategy with default settings
-    pub fn default() -> Self {
-        Self::new(1000)
-    }
-
     /// Helper method to create a bind group for a propagation pass
     fn create_propagation_bind_group_for_pass(
         &self,
-        device: &wgpu::Device,
-        buffers: &GpuBuffers,
-        current_worklist_idx: usize,
+        _device: &wgpu::Device,
+        _buffers: &GpuBuffers,
+        _current_worklist_idx: usize,
     ) -> wgpu::BindGroup {
         // Implementation details...
         todo!()
@@ -65,10 +60,10 @@ impl crate::propagator::PropagationStrategy for DirectPropagationStrategy {
 impl crate::propagator::AsyncPropagationStrategy for DirectPropagationStrategy {
     async fn propagate(
         &self,
-        grid: &mut PossibilityGrid,
-        updated_cells: &[GridCoord],
-        buffers: &Arc<GpuBuffers>,
-        synchronizer: &GpuSynchronizer,
+        _grid: &mut PossibilityGrid,
+        _updated_cells: &[GridCoord],
+        _buffers: &Arc<GpuBuffers>,
+        _synchronizer: &GpuSynchronizer,
     ) -> Result<(), PropagationError> {
         // Implementation details...
         todo!()
