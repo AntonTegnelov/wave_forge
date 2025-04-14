@@ -319,7 +319,7 @@ impl GpuEntropyCalculator {
             compute_pass.set_bind_group(1, &entropy_params_bind_group, &[]); // Entropy specific params
 
             // Calculate workgroups
-            let workgroup_size = self.pipelines.entropy_workgroup_size as u32;
+            let workgroup_size = self.pipelines.entropy_workgroup_size;
             // Cast width and height to u32 for division
             let workgroup_x = (width as u32).div_ceil(workgroup_size);
             let workgroup_y = (height as u32).div_ceil(workgroup_size);
@@ -351,8 +351,8 @@ impl GpuEntropyCalculator {
         let entropy_data = crate::buffers::download_buffer_data::<f32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*self.buffers.entropy_buffers.entropy_buf,
-            &*self.buffers.entropy_buffers.staging_entropy_buf,
+            &self.buffers.entropy_buffers.entropy_buf,
+            &self.buffers.entropy_buffers.staging_entropy_buf,
             self.buffers.entropy_buffers.entropy_buf.size(),
             Some("Entropy Data Download".to_string()),
         )
@@ -407,8 +407,8 @@ impl GpuEntropyCalculator {
         let min_info_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*self.buffers.entropy_buffers.min_entropy_info_buf,
-            &*self.buffers.entropy_buffers.staging_min_entropy_info_buf,
+            &self.buffers.entropy_buffers.min_entropy_info_buf,
+            &self.buffers.entropy_buffers.staging_min_entropy_info_buf,
             self.buffers.entropy_buffers.min_entropy_info_buf.size(),
             Some("Min Entropy Info Download".to_string()),
         )
@@ -435,6 +435,82 @@ impl GpuEntropyCalculator {
                     let x = idx % width;
                     debug!("Selected lowest entropy cell: ({}, {}, {})", x, y, z);
                     Some((x, y, z))
+                } else {
+                    debug!("No cell with positive entropy found (or grid fully collapsed/contradiction).");
+                    None // Grid might be fully collapsed or in a contradiction state
+                }
+            }
+            Err(e) => {
+                error!("Failed to download min entropy info: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Asynchronously selects the cell with the lowest positive entropy and returns
+    /// both the coordinates and the entropy value in a single call.
+    pub async fn select_lowest_entropy_cell_with_value_async(
+        &self,
+        _entropy_grid: &EntropyGrid, // Grid itself is not needed as data is on GPU
+    ) -> Option<((usize, usize, usize), f32)> {
+        debug!("Entering select_lowest_entropy_cell_with_value_async");
+
+        // --- Download Min Entropy Info ---
+        // Create encoder for copy
+        let mut copy_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Copy Min Entropy Info Encoder"),
+                });
+        copy_encoder.copy_buffer_to_buffer(
+            &self.buffers.entropy_buffers.min_entropy_info_buf,
+            0,
+            &self.buffers.entropy_buffers.staging_min_entropy_info_buf,
+            0,
+            self.buffers.entropy_buffers.min_entropy_info_buf.size(),
+        );
+        self.queue.submit(Some(copy_encoder.finish()));
+
+        // Use the centralized download function
+        let min_info_data = crate::buffers::download_buffer_data::<u32>(
+            Some(self.device.clone()),
+            Some(self.queue.clone()),
+            &self.buffers.entropy_buffers.min_entropy_info_buf,
+            &self.buffers.entropy_buffers.staging_min_entropy_info_buf,
+            self.buffers.entropy_buffers.min_entropy_info_buf.size(),
+            Some("Min Entropy Info Download".to_string()),
+        )
+        .await;
+
+        match min_info_data {
+            Ok(data) => {
+                if data.len() < 2 {
+                    warn!(
+                        "Downloaded min_entropy_info data has insufficient length ({})",
+                        data.len()
+                    );
+                    return None;
+                }
+
+                let min_entropy_bits = data[0];
+                let min_index = data[1];
+
+                // Check if a valid minimum was found (index != u32::MAX)
+                if min_index != u32::MAX {
+                    let (width, height, _depth) = self.grid_dims;
+                    let idx = min_index as usize;
+                    let z = idx / (width * height);
+                    let y = (idx % (width * height)) / width;
+                    let x = idx % width;
+
+                    // Convert the bits back to float
+                    let min_entropy = f32::from_bits(min_entropy_bits);
+
+                    debug!(
+                        "Selected lowest entropy cell: ({}, {}, {}) with entropy {}",
+                        x, y, z, min_entropy
+                    );
+                    Some(((x, y, z), min_entropy))
                 } else {
                     debug!("No cell with positive entropy found (or grid fully collapsed/contradiction).");
                     None // Grid might be fully collapsed or in a contradiction state
