@@ -685,12 +685,6 @@ impl GpuEntropyCalculatorExt for GpuEntropyCalculator {
     }
 }
 
-/// Maps a GPU error encountered during entropy calculation to a core WFC EntropyError.
-/// This is consistent with the From<GpuError> implementation above.
-fn map_gpu_error_to_entropy_error(gpu_error: NewGpuError) -> CoreEntropyError {
-    gpu_error.into()
-}
-
 /// Trait for GPU-specific entropy calculation strategies in the WFC algorithm.
 pub trait GpuEntropyStrategy: Send + Sync + std::fmt::Debug {
     /// Get the heuristic type used by this strategy

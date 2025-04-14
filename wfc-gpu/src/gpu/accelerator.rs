@@ -13,7 +13,7 @@ use crate::coordination::strategy;
 use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
     coordination::{
-        strategy::CoordinationStrategyFactory, DefaultCoordinator, PropagationCoordinator,
+        strategy::CoordinationStrategyFactory, DefaultCoordinator, PropagationCoordinationStrategy,
         WfcCoordinator,
     },
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
@@ -174,12 +174,12 @@ impl GpuAccelerator {
 
         let pipelines = Arc::new(
             ComputePipelines::new(&device, num_tiles_u32 as u32, &features_ref)
-                .map_err(|e| WfcError::Gpu(e))?,
+                .map_err(WfcError::Gpu)?,
         );
 
         let buffers = Arc::new(
             GpuBuffers::new(&device, &queue, initial_grid, rules, boundary_condition)
-                .map_err(|e| WfcError::Gpu(e))?,
+                .map_err(WfcError::Gpu)?,
         );
 
         let synchronizer = Arc::new(GpuSynchronizer::new(
@@ -435,8 +435,8 @@ impl GpuAccelerator {
                 .coordinate_entropy_and_selection(
                     &instance_guard.entropy_calculator,
                     &instance_guard.buffers,
-                    &*instance_guard.backend.device(),
-                    &*instance_guard.backend.queue(),
+                    &instance_guard.backend.device(),
+                    &instance_guard.backend.queue(),
                     &instance_guard.sync,
                 )
                 .await;
@@ -523,8 +523,8 @@ impl GpuAccelerator {
                 .coordinate_propagation(
                     &instance_guard.propagator,
                     &instance_guard.buffers,
-                    &*instance_guard.backend.device(),
-                    &*instance_guard.backend.queue(),
+                    &instance_guard.backend.device(),
+                    &instance_guard.backend.queue(),
                     update_coords,
                 )
                 .await;
@@ -627,7 +627,7 @@ impl GpuAccelerator {
             if let Some(visualizer) = &mut instance_guard.debug_visualizer {
                 trace!("Updating debug visualizer for iteration {}...", iteration);
 
-                if let Err(e) = visualizer.update(&*backend_ref, &*buffers_ref).await {
+                if let Err(e) = visualizer.update(&*backend_ref, &buffers_ref).await {
                     error!("Failed to update debug visualizer: {}", e);
                 }
             }
@@ -780,7 +780,7 @@ impl GpuAccelerator {
         // Create a new propagator with the new strategy
         {
             // Lock the instance for writing
-            let mut instance = self.instance.write().unwrap();
+            let instance = self.instance.write().unwrap();
 
             // Get a mutable reference to the propagator - use async lock in sync context
             let mut propagator_guard =
@@ -800,7 +800,7 @@ impl GpuAccelerator {
             );
 
             // Create parameters uniform similar to the existing one
-            let params = propagator_guard.params.clone();
+            let params = propagator_guard.params;
 
             // Create a new propagator with the provided strategy
             let new_propagator = crate::propagator::GpuConstraintPropagator::new(

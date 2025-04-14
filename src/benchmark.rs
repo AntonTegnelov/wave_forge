@@ -4,7 +4,6 @@
 use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
 use crate::{config::AppConfig, error::AppError};
 use anyhow::Error;
-use csv;
 use std::{
     collections::HashMap,
     fs::File,
@@ -17,7 +16,7 @@ use wfc_core::{
     runner::{self},
     BoundaryCondition, ExecutionMode, ProgressInfo, WfcError,
 };
-use wfc_gpu::{gpu::accelerator::GpuAccelerator, utils::error::WfcError as GpuWfcError};
+use wfc_gpu::gpu::accelerator::GpuAccelerator;
 use wfc_rules::{AdjacencyRules, TileSet};
 
 /// Represents the aggregated results of a single benchmark run.
@@ -69,7 +68,7 @@ pub async fn run_single_wfc_benchmark(
     gpu_accelerator_arc: Option<Arc<GpuAccelerator>>,
 ) -> Result<BenchmarkResult, AppError> {
     let core_execution_mode: ExecutionMode = config.execution_mode.clone().into();
-    let core_boundary_mode: BoundaryCondition = config.boundary_mode.clone().into();
+    let core_boundary_mode: BoundaryCondition = config.boundary_mode.into();
 
     let profiler = Profiler::new(&format!("{:?}", core_execution_mode));
     let _overall_guard = profiler.profile("total_benchmark_run");
@@ -89,7 +88,7 @@ pub async fn run_single_wfc_benchmark(
     };
 
     let start_time = Instant::now();
-    let initial_memory_res = get_memory_usage().map_err(|e| AppError::Anyhow(e));
+    let initial_memory_res = get_memory_usage().map_err(AppError::Anyhow);
 
     let accelerator = match gpu_accelerator_arc {
         Some(arc) => arc,
@@ -107,7 +106,7 @@ pub async fn run_single_wfc_benchmark(
 
     let duration = start_time.elapsed();
 
-    let final_memory_res = get_memory_usage().map_err(|e| AppError::Anyhow(e));
+    let final_memory_res = get_memory_usage().map_err(AppError::Anyhow);
     let memory_usage = match (initial_memory_res, final_memory_res) {
         (Ok(initial), Ok(final_val)) => Some(final_val.saturating_sub(initial)),
         _ => None,

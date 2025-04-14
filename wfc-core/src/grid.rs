@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(grid.height, 3);
         assert_eq!(grid.depth, 1);
         assert_eq!(grid.num_tiles(), 4);
-        assert_eq!(grid.data.len(), 2 * 3 * 1);
+        assert_eq!(grid.data.len(), (2 * 3));
 
         // Check all bits are set initially
         for cell_bits in &grid.data {

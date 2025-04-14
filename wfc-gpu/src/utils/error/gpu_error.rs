@@ -48,6 +48,7 @@ impl fmt::Display for GpuResourceType {
 
 /// Debug information about GPU state
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct GpuStateInfo {
     /// Available GPU memory at the time of error (if available)
     pub available_memory: Option<u64>,
@@ -69,21 +70,6 @@ pub struct GpuStateInfo {
     pub frame_number: Option<u64>,
 }
 
-impl Default for GpuStateInfo {
-    fn default() -> Self {
-        Self {
-            available_memory: None,
-            total_memory: None,
-            gpu_utilization: None,
-            active_commands: None,
-            buffer_count: None,
-            active_debug_markers: None,
-            adapter_info: None,
-            enabled_features: None,
-            frame_number: None,
-        }
-    }
-}
 
 impl GpuStateInfo {
     /// Create a new GPU state info

@@ -2,7 +2,7 @@
 
 ## Format Handling Improvements
 
-- [ ] Create a proper trait/interface for format parsers to implement
+- [x] Create a proper trait/interface for format parsers to implement
 - [ ] Implement full support for bitcode serialization format as default (https://crates.io/crates/bitcode)
 - [ ] Separate format-specific parsing from validation logic
 

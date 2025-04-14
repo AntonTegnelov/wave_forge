@@ -37,11 +37,6 @@ pub use coordination::WfcCoordinator;
 pub use utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer, VisualizationType};
 pub use utils::subgrid::SubgridConfig; // Coordination API
 
-// Add re-exports for propagation coordination
-pub use coordination::propagation::{
-    DirectPropagationCoordinator, PropagationCoordinator, SubgridPropagationCoordinator,
-};
-
 // Error types (updated to use the new error module)
 pub use utils::error::gpu_error::{GpuError, GpuErrorContext, GpuResourceType};
 pub use utils::error::io_error::{IoError, IoResourceType};

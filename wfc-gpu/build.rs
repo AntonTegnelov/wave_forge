@@ -22,14 +22,14 @@ enum BuildShaderType {
     Propagation,
 }
 
-/// Duplicated logic from ShaderManager to avoid build dependency
+/// Duplicated logic from `ShaderManager` to avoid build dependency
 fn get_variant_filename(shader_type: BuildShaderType, features: &[&str]) -> String {
     let base_name = match shader_type {
         BuildShaderType::Entropy => "Entropy",
         BuildShaderType::Propagation => "Propagation",
     };
     if features.is_empty() {
-        format!("{}.wgsl", base_name)
+        format!("{base_name}.wgsl")
     } else {
         let mut sorted_features = features.to_vec();
         sorted_features.sort_unstable();
@@ -71,16 +71,14 @@ fn validate_version(component_name: &str, version: &str) -> Result<(), String> {
     let parts: Vec<&str> = version.split('.').collect();
     if parts.len() != 3 {
         return Err(format!(
-            "Invalid version format for '{}': '{}'. Expected 'major.minor.patch'",
-            component_name, version
+            "Invalid version format for '{component_name}': '{version}'. Expected 'major.minor.patch'"
         ));
     }
 
     for part in parts {
         if part.parse::<u32>().is_err() {
             return Err(format!(
-                "Invalid version number in '{}' for '{}'. Each part must be a number",
-                version, component_name
+                "Invalid version number in '{version}' for '{component_name}'. Each part must be a number"
             ));
         }
     }
@@ -95,8 +93,7 @@ fn validate_dependencies(registry: &ShaderRegistryData) -> Result<(), String> {
         for dep_name in &info.dependencies {
             if !registry.components.contains_key(dep_name) {
                 return Err(format!(
-                    "Component '{}' depends on '{}', but '{}' is not in the registry",
-                    component_name, dep_name, dep_name
+                    "Component '{component_name}' depends on '{dep_name}', but '{dep_name}' is not in the registry"
                 ));
             }
         }
@@ -122,11 +119,11 @@ fn check_circular_dependencies(
     visited: &mut HashSet<String>,
     path: &mut Vec<String>,
 ) -> Result<(), String> {
-    if path.contains(&current.to_string()) {
+    if path.contains(&current.to_owned()) {
         // Found a cycle
-        path.push(current.to_string());
+        path.push(current.to_owned());
         let cycle_path = path.join(" -> ");
-        return Err(format!("Circular dependency detected: {}", cycle_path));
+        return Err(format!("Circular dependency detected: {cycle_path}"));
     }
 
     if visited.contains(current) {
@@ -135,7 +132,7 @@ fn check_circular_dependencies(
     }
 
     // Add to current path
-    path.push(current.to_string());
+    path.push(current.to_owned());
 
     // Get dependencies
     if let Some(info) = registry.components.get(current) {
@@ -148,7 +145,7 @@ fn check_circular_dependencies(
     path.pop();
 
     // Mark as visited
-    visited.insert(current.to_string());
+    visited.insert(current.to_owned());
 
     Ok(())
 }
@@ -168,8 +165,7 @@ fn validate_features(registry: &ShaderRegistryData) -> Result<(), String> {
         for feature in &info.required_features {
             if !all_provided_features.contains(feature) {
                 return Err(format!(
-                    "Component '{}' requires feature '{}', but this feature is not provided by any component",
-                    component_name, feature
+                    "Component '{component_name}' requires feature '{feature}', but this feature is not provided by any component"
                 ));
             }
         }
@@ -191,26 +187,26 @@ fn generate_shader_variants(registry_path: &Path, out_dir: &Path) -> Result<(), 
         variants: vec![
             // Entropy variants
             FeatureVariant {
-                name: "entropy_atomics".to_string(),
-                features: vec!["atomics".to_string()],
+                name: "entropy_atomics".to_owned(),
+                features: vec!["atomics".to_owned()],
                 workgroup_size: Some((8, 8, 1)),
                 defines: HashMap::new(),
             },
             FeatureVariant {
-                name: "entropy_no_atomics".to_string(),
+                name: "entropy_no_atomics".to_owned(),
                 features: vec![],
                 workgroup_size: Some((8, 8, 1)),
                 defines: HashMap::new(),
             },
             // Propagation variants
             FeatureVariant {
-                name: "propagation_atomics".to_string(),
-                features: vec!["atomics".to_string()],
+                name: "propagation_atomics".to_owned(),
+                features: vec!["atomics".to_owned()],
                 workgroup_size: Some((8, 8, 1)),
                 defines: HashMap::new(),
             },
             FeatureVariant {
-                name: "propagation_no_atomics".to_string(),
+                name: "propagation_no_atomics".to_owned(),
                 features: vec![],
                 workgroup_size: Some((8, 8, 1)),
                 defines: HashMap::new(),
@@ -224,14 +220,14 @@ fn generate_shader_variants(registry_path: &Path, out_dir: &Path) -> Result<(), 
 
     // Load registry
     match optimizer.load_registry(registry_path) {
-        Ok(_) => println!("[Build Script] Successfully loaded shader registry"),
-        Err(e) => return Err(format!("Failed to load shader registry: {}", e)),
+        Ok(()) => println!("[Build Script] Successfully loaded shader registry"),
+        Err(e) => return Err(format!("Failed to load shader registry: {e}")),
     }
 
     // Generate variants
     match optimizer.generate_variants() {
-        Ok(_) => println!("[Build Script] Successfully generated shader variants"),
-        Err(e) => return Err(format!("Failed to generate shader variants: {}", e)),
+        Ok(()) => println!("[Build Script] Successfully generated shader variants"),
+        Err(e) => return Err(format!("Failed to generate shader variants: {e}")),
     }
 
     Ok(())
@@ -260,7 +256,7 @@ fn validate_shader_variants(out_dir: &Path) -> Result<(), String> {
             println!("[Build Script] Some shader variants have validation errors");
             println!("[Build Script] See validation report for details");
         }
-        Err(e) => return Err(format!("Failed to validate shader variants: {}", e)),
+        Err(e) => return Err(format!("Failed to validate shader variants: {e}")),
     }
 
     Ok(())
@@ -271,7 +267,7 @@ fn main() {
 
     // Update registry path to reflect new structure
     let registry_path_str = "src/shader/shaders/components/registry.json";
-    println!("cargo:rerun-if-changed={}", registry_path_str);
+    println!("cargo:rerun-if-changed={registry_path_str}");
 
     // Get output directory
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
@@ -285,7 +281,7 @@ fn main() {
     let registry_content = match fs::read_to_string(registry_path_str) {
         Ok(content) => content,
         Err(e) => {
-            println!("cargo:warning=Failed to read shader registry file: {}", e);
+            println!("cargo:warning=Failed to read shader registry file: {e}");
             // Return early but don't fail the build
             return;
         }
@@ -294,7 +290,7 @@ fn main() {
     let registry_data: ShaderRegistryData = match serde_json::from_str(&registry_content) {
         Ok(data) => data,
         Err(e) => {
-            println!("cargo:warning=Failed to parse shader registry JSON: {}", e);
+            println!("cargo:warning=Failed to parse shader registry JSON: {e}");
             // Return early but don't fail the build
             return;
         }
@@ -302,18 +298,18 @@ fn main() {
 
     // Validate dependencies and versions
     if let Err(e) = validate_dependencies(&registry_data) {
-        println!("cargo:warning=Dependency validation error: {}", e);
+        println!("cargo:warning=Dependency validation error: {e}");
         // Don't fail the build, just warn
     }
 
     // Validate features
     if let Err(e) = validate_features(&registry_data) {
-        println!("cargo:warning=Feature validation error: {}", e);
+        println!("cargo:warning=Feature validation error: {e}");
         // Don't fail the build, just warn
     }
 
     // Add rerun triggers for all component files listed in the registry
-    for (name, component) in registry_data.components.iter() {
+    for (name, component) in &registry_data.components {
         // Ensure the path exists before adding the trigger
         let component_path = PathBuf::from(&component.path);
         if component_path.exists() {
@@ -330,14 +326,14 @@ fn main() {
 
     // Generate optimized shader variants
     match generate_shader_variants(Path::new(registry_path_str), out_dir_path) {
-        Ok(_) => {}
-        Err(e) => println!("cargo:warning=Failed to generate shader variants: {}", e),
+        Ok(()) => {}
+        Err(e) => println!("cargo:warning=Failed to generate shader variants: {e}"),
     }
 
     // Validate generated shader variants
     match validate_shader_variants(out_dir_path) {
-        Ok(_) => {}
-        Err(e) => println!("cargo:warning=Failed to validate shader variants: {}", e),
+        Ok(()) => {}
+        Err(e) => println!("cargo:warning=Failed to validate shader variants: {e}"),
     }
 
     println!("WFC-GPU build script finished shader variant generation and validation.");

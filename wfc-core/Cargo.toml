@@ -33,8 +33,3 @@ pollster = "0.3.0" # Added pollster for blocking async calls in tests
 default = []
 clap = ["dep:clap"]
 serde = ["dep:serde", "dep:serde_json", "wfc-rules/serde"] # Added dep:serde_json
-
-[lints.clippy]
-restriction = "warn"
-pedantic = "warn"
-nursery = "warn"

@@ -1,12 +1,10 @@
 //! Handles command-line argument parsing and application configuration.
 
 use clap::{Parser, ValueEnum};
-use serde;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
-use wfc_core;
 // Corrected import path // Import the crate itself
 
 /// Represents the different visualization modes available.
@@ -34,12 +32,14 @@ pub enum ProgressLogLevel {
 
 /// Global log level for all application components.
 #[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Default)]
 pub enum GlobalLogLevel {
     /// Trace level - extremely verbose (all details)
     Trace,
     /// Debug level - detailed information for debugging
     Debug,
     /// Info level - general information about program execution
+    #[default]
     Info,
     /// Warn level - potentially harmful situations
     Warn,
@@ -47,11 +47,6 @@ pub enum GlobalLogLevel {
     Error,
 }
 
-impl Default for GlobalLogLevel {
-    fn default() -> Self {
-        GlobalLogLevel::Info
-    }
-}
 
 /// Defines the execution backend for WFC (CLI/Config version).
 #[derive(ValueEnum, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -197,7 +192,7 @@ mod tests {
         assert_eq!(config.height, 10); // Default
         assert_eq!(config.depth, 10); // Default
         assert_eq!(config.output_path, PathBuf::from("out.txt"));
-        assert_eq!(config.benchmark_mode, false); // Default
+        assert!(!config.benchmark_mode); // Default
         assert_eq!(config.report_progress_interval, None); // Default
         assert_eq!(config.visualization_mode, VisualizationMode::None); // Default
     }

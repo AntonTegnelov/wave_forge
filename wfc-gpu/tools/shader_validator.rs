@@ -8,11 +8,10 @@
 //! 4. Resource binding conflicts
 //! 5. Workgroup memory usage issues
 
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::fs::{self};
+use std::io::{self};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 /// Configuration for shader validation.
 #[derive(Debug, Clone)]
@@ -89,7 +88,7 @@ pub struct ShaderValidator {
 
 impl ShaderValidator {
     /// Create a new shader validator with the given configuration.
-    pub fn new(config: ValidatorConfig) -> Self {
+    pub const fn new(config: ValidatorConfig) -> Self {
         Self {
             config,
             validation_results: Vec::new(),
@@ -104,8 +103,7 @@ impl ShaderValidator {
 
         let shader_dir = &self.config.shader_dir;
         self.report.push_str(&format!(
-            "# Shader Validation Report\n\nValidating shaders in: {:?}\n\n",
-            shader_dir
+            "# Shader Validation Report\n\nValidating shaders in: {shader_dir:?}\n\n"
         ));
 
         let mut all_valid = true;
@@ -115,13 +113,13 @@ impl ShaderValidator {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "wgsl") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "wgsl") {
                 let result = self.validate_shader(&path)?;
                 all_valid = all_valid && result.success;
                 self.validation_results.push(result);
             } else if path.is_dir() {
                 // Recursively validate shaders in subdirectories
-                let mut subdir_validator = ShaderValidator {
+                let mut subdir_validator = Self {
                     config: ValidatorConfig {
                         shader_dir: path.clone(),
                         ..self.config.clone()
@@ -165,9 +163,9 @@ impl ShaderValidator {
                 .count()
         ));
         self.report
-            .push_str(&format!("- Total errors: {}\n", errors));
+            .push_str(&format!("- Total errors: {errors}\n"));
         self.report
-            .push_str(&format!("- Total warnings: {}\n", warnings));
+            .push_str(&format!("- Total warnings: {warnings}\n"));
 
         // Write report to file if specified
         if let Some(report_path) = &self.config.report_path {
@@ -186,7 +184,7 @@ impl ShaderValidator {
             .to_string_lossy();
 
         self.report
-            .push_str(&format!("## Validating shader: {}\n\n", file_name));
+            .push_str(&format!("## Validating shader: {file_name}\n\n"));
 
         let mut result = ShaderValidationResult {
             file_path: shader_path.to_path_buf(),
@@ -207,24 +205,24 @@ impl ShaderValidator {
 
         // Add results to report
         if result.errors.is_empty() && result.warnings.is_empty() {
-            self.report.push_str("✅ No issues found\n\n");
+            self.report.push_str("\u{2705} No issues found\n\n");
         } else {
             // Add errors
             if !result.errors.is_empty() {
                 self.report.push_str("### Errors\n\n");
                 for error in &result.errors {
                     let location = if let (Some(line), Some(column)) = (error.line, error.column) {
-                        format!("line {}, column {}", line, column)
+                        format!("line {line}, column {column}")
                     } else if let Some(line) = error.line {
-                        format!("line {}", line)
+                        format!("line {line}")
                     } else {
-                        "unknown location".to_string()
+                        "unknown location".to_owned()
                     };
 
                     self.report
-                        .push_str(&format!("- 🔴 {}: {}\n", location, error.message));
+                        .push_str(&format!("- \u{1f534} {}: {}\n", location, error.message));
                 }
-                self.report.push_str("\n");
+                self.report.push('\n');
             }
 
             // Add warnings
@@ -233,17 +231,17 @@ impl ShaderValidator {
                 for warning in &result.warnings {
                     let location =
                         if let (Some(line), Some(column)) = (warning.line, warning.column) {
-                            format!("line {}, column {}", line, column)
+                            format!("line {line}, column {column}")
                         } else if let Some(line) = warning.line {
-                            format!("line {}", line)
+                            format!("line {line}")
                         } else {
-                            "unknown location".to_string()
+                            "unknown location".to_owned()
                         };
 
                     self.report
-                        .push_str(&format!("- 🟡 {}: {}\n", location, warning.message));
+                        .push_str(&format!("- \u{1f7e1} {}: {}\n", location, warning.message));
                 }
-                self.report.push_str("\n");
+                self.report.push('\n');
             }
         }
 
@@ -281,7 +279,7 @@ impl ShaderValidator {
 
                     result.errors.push(ValidationMessage {
                         message_type: MessageType::Error,
-                        message: parts[1].trim().to_string(),
+                        message: parts[1].trim().to_owned(),
                         line: line_num,
                         column: column_num,
                     });
@@ -300,7 +298,7 @@ impl ShaderValidator {
 
                         result.warnings.push(ValidationMessage {
                             message_type: MessageType::Warning,
-                            message: parts[1].trim().to_string(),
+                            message: parts[1].trim().to_owned(),
                             line: line_num,
                             column: column_num,
                         });
@@ -339,7 +337,7 @@ impl ShaderValidator {
 
                     result.errors.push(ValidationMessage {
                         message_type: MessageType::Error,
-                        message: parts[1].trim().to_string(),
+                        message: parts[1].trim().to_owned(),
                         line: line_num,
                         column: column_num,
                     });
@@ -358,7 +356,7 @@ impl ShaderValidator {
 
                         result.warnings.push(ValidationMessage {
                             message_type: MessageType::Warning,
-                            message: parts[1].trim().to_string(),
+                            message: parts[1].trim().to_owned(),
                             line: line_num,
                             column: column_num,
                         });
@@ -415,7 +413,7 @@ impl ShaderValidator {
                 {
                     result.warnings.push(ValidationMessage {
                         message_type: MessageType::Warning,
-                        message: "Possible missing semicolon".to_string(),
+                        message: "Possible missing semicolon".to_owned(),
                         line: Some(line_num),
                         column: None,
                     });
@@ -428,7 +426,7 @@ impl ShaderValidator {
                 if line.contains("@binding(") && !line.contains("@group") {
                     result.warnings.push(ValidationMessage {
                         message_type: MessageType::Warning,
-                        message: "Binding specified without group".to_string(),
+                        message: "Binding specified without group".to_owned(),
                         line: Some(line_num),
                         column: None,
                     });
@@ -436,15 +434,13 @@ impl ShaderValidator {
             }
 
             // Check workgroup size declaration
-            if line.contains("@workgroup_size") {
-                if !line.contains("@compute") {
-                    result.errors.push(ValidationMessage {
-                        message_type: MessageType::Error,
-                        message: "@workgroup_size attribute must be used with @compute".to_string(),
-                        line: Some(line_num),
-                        column: None,
-                    });
-                }
+            if line.contains("@workgroup_size") && !line.contains("@compute") {
+                result.errors.push(ValidationMessage {
+                    message_type: MessageType::Error,
+                    message: "@workgroup_size attribute must be used with @compute".to_owned(),
+                    line: Some(line_num),
+                    column: None,
+                });
             }
         }
 
@@ -452,7 +448,7 @@ impl ShaderValidator {
         if brace_count != 0 {
             result.errors.push(ValidationMessage {
                 message_type: MessageType::Error,
-                message: format!("Unbalanced braces: {}", brace_count),
+                message: format!("Unbalanced braces: {brace_count}"),
                 line: None,
                 column: None,
             });
@@ -461,7 +457,7 @@ impl ShaderValidator {
         if bracket_count != 0 {
             result.errors.push(ValidationMessage {
                 message_type: MessageType::Error,
-                message: format!("Unbalanced brackets: {}", bracket_count),
+                message: format!("Unbalanced brackets: {bracket_count}"),
                 line: None,
                 column: None,
             });
@@ -470,7 +466,7 @@ impl ShaderValidator {
         if paren_count != 0 {
             result.errors.push(ValidationMessage {
                 message_type: MessageType::Error,
-                message: format!("Unbalanced parentheses: {}", paren_count),
+                message: format!("Unbalanced parentheses: {paren_count}"),
                 line: None,
                 column: None,
             });
@@ -483,7 +479,7 @@ impl ShaderValidator {
         {
             result.warnings.push(ValidationMessage {
                 message_type: MessageType::Warning,
-                message: "Shader might be missing an entry point function".to_string(),
+                message: "Shader might be missing an entry point function".to_owned(),
                 line: None,
                 column: None,
             });
@@ -537,9 +533,9 @@ pub fn main() -> io::Result<()> {
     let all_valid = validator.validate_directory()?;
 
     if all_valid {
-        println!("✅ All shaders passed validation!");
+        println!("\u{2705} All shaders passed validation!");
     } else {
-        println!("❌ Some shaders failed validation. See the report for details.");
+        println!("\u{274c} Some shaders failed validation. See the report for details.");
     }
 
     println!("Report saved to {:?}", validator.config.report_path);

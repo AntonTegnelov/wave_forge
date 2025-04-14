@@ -35,7 +35,7 @@ impl RuleBuffers {
         for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
             // Only include rules with non-default weights (assuming default is 1.0)
             // TODO: Clarify how default weights are handled. Are they omitted or included?
-            if *weight < 1.0 || *weight > 1.0 {
+            if *weight != 1.0 {
                 // Assuming we store deviations from 1.0
                 // Calculate index based on axis, tile1, tile2
                 // This assumes a specific packing order, document this!

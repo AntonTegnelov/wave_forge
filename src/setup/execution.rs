@@ -7,7 +7,7 @@ use crate::{
     output,
     setup::visualization::VizMessage,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::{error, info};
 use std::{
     fs::OpenOptions,
@@ -191,7 +191,7 @@ pub async fn run_benchmark_mode(
             // Requires grid/rules available here
             let scenario_grid = PossibilityGrid::new(width, height, depth, tileset.weights.len());
             let scenario_grid_snapshot = Arc::new(Mutex::new(scenario_grid.clone()));
-            let core_boundary_mode: BoundaryCondition = config.boundary_mode.clone().into();
+            let core_boundary_mode: BoundaryCondition = config.boundary_mode.into();
 
             // Lock the grid snapshot to pass a reference to the inner grid
             let grid_guard = scenario_grid_snapshot
@@ -492,7 +492,7 @@ pub async fn run_standard_mode(
     };
 
     // --- Initialize GPU Accelerator ---
-    let core_boundary_mode: BoundaryCondition = config.boundary_mode.clone().into();
+    let core_boundary_mode: BoundaryCondition = config.boundary_mode.into();
     // Lock the grid snapshot to pass a reference to the inner grid
     let grid_guard = grid_snapshot
         .lock()

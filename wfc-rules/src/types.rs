@@ -76,13 +76,13 @@ impl Transformation {
     /// Returns the inverse transformation.
     #[must_use] pub const fn inverse(self) -> Self {
         match self {
-            Self::Identity => return Self::Identity,
-            Self::Rot90 => return Self::Rot270,
-            Self::Rot180 => return Self::Rot180,
-            Self::Rot270 => return Self::Rot90,
-            Self::FlipX => return Self::FlipX, // Reflections are self-inverse
-            Self::FlipY => return Self::FlipY,
-            Self::FlipZ => return Self::FlipZ,
+            Self::Identity => Self::Identity,
+            Self::Rot90 => Self::Rot270,
+            Self::Rot180 => Self::Rot180,
+            Self::Rot270 => Self::Rot90,
+            Self::FlipX => Self::FlipX, // Reflections are self-inverse
+            Self::FlipY => Self::FlipY,
+            Self::FlipZ => Self::FlipZ,
         }
     }
 
@@ -113,10 +113,10 @@ impl Transformation {
                     _ => 0,
                 };
                 match (self_val + other_val) % 4 {
-                    0 => return Self::Identity,
-                    1 => return Self::Rot90,
-                    2 => return Self::Rot180,
-                    3 => return Self::Rot270,
+                    0 => Self::Identity,
+                    1 => Self::Rot90,
+                    2 => Self::Rot180,
+                    3 => Self::Rot270,
                     _ => unreachable!(),
                 }
             }
