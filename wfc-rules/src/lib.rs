@@ -8,7 +8,7 @@ pub mod formats;
 pub mod generator;
 /// Contains the main rule loading functions.
 pub mod loader;
-/// Contains the core types (TileId, TileSet, AdjacencyRules).
+/// Contains the core types (`TileId`, `TileSet`, `AdjacencyRules`).
 pub mod types;
 
 /// Re-export core types for easier access
