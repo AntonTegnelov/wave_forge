@@ -29,11 +29,6 @@ impl AdaptivePropagationStrategy {
         }
     }
 
-    /// Create a new strategy with default settings
-    pub fn default() -> Self {
-        Self::new(1000, 32, 64)
-    }
-
     /// Select the appropriate strategy based on grid size
     fn select_strategy(&self, grid: &PossibilityGrid) -> Strategy {
         let total_cells = grid.width * grid.height * grid.depth;

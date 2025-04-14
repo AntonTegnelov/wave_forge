@@ -218,7 +218,7 @@ impl DefaultCoordinator {
     /// Set a specific entropy strategy on the entropy calculator
     pub fn with_entropy_strategy<S: EntropyStrategy + 'static>(
         &mut self,
-        strategy: S,
+        _strategy: S,
     ) -> &mut Self {
         let _calculator = self.entropy_calculator.clone();
         // Can't modify the calculator directly due to Arc, so this is a placeholder

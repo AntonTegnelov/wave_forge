@@ -52,7 +52,7 @@ impl EntropyStrategy for ShannonEntropyStrategy {
         params.u32s_per_cell = self.u32s_per_cell as u32;
     }
 
-    fn prepare(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+    fn prepare(&self, _synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
         // Shannon entropy doesn't need special preparation
         Ok(())
     }
@@ -96,7 +96,7 @@ impl EntropyStrategy for CountEntropyStrategy {
         params.u32s_per_cell = self.u32s_per_cell as u32;
     }
 
-    fn prepare(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+    fn prepare(&self, _synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
         // Count entropy doesn't need special preparation
         Ok(())
     }
@@ -140,7 +140,7 @@ impl EntropyStrategy for CountSimpleEntropyStrategy {
         params.u32s_per_cell = self.u32s_per_cell as u32;
     }
 
-    fn prepare(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+    fn prepare(&self, _synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
         // Count simple entropy doesn't need special preparation
         Ok(())
     }
@@ -185,7 +185,7 @@ impl EntropyStrategy for WeightedCountEntropyStrategy {
         params.u32s_per_cell = self.u32s_per_cell as u32;
     }
 
-    fn prepare(&self, synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
+    fn prepare(&self, _synchronizer: &GpuSynchronizer) -> Result<(), CoreEntropyError> {
         // Weighted count entropy might need special preparation for weights
         Ok(())
     }

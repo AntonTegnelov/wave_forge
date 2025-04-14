@@ -394,7 +394,7 @@ impl BatchedCoordinationStrategy {
     async fn select_batch(
         &mut self,
         _accelerator: &mut GpuAccelerator,
-        grid: &PossibilityGrid,
+        _grid: &PossibilityGrid,
     ) -> Result<Vec<(usize, usize, usize)>, WfcError> {
         // In a real implementation, this would use a modified entropy calculation
         // that returns multiple low-entropy cells instead of just the minimum.

@@ -67,7 +67,7 @@ impl GpuConstraintPropagator {
         pipelines: Arc<ComputePipelines>,
         buffers: Arc<GpuBuffers>,
         grid_dims: (usize, usize, usize),
-        boundary_mode: wfc_core::BoundaryCondition,
+        _boundary_mode: wfc_core::BoundaryCondition,
         params: GpuParamsUniform,
     ) -> Self {
         let synchronizer = Arc::new(GpuSynchronizer::new(
