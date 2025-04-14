@@ -2,9 +2,9 @@
 //!
 //! Contains the main application logic.
 
-use crate::setup::visualization;
+use crate::config::AppConfig;
+use crate::setup::execution;
 use crate::setup::visualization::VizMessage;
-use crate::AppConfig;
 use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
@@ -13,13 +13,22 @@ use figment::{
     Figment,
 };
 use log;
-use logging;
-use setup::execution;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
+
+mod benchmark;
+mod config;
+mod error;
+mod logging;
+mod output;
+mod profiler;
+mod progress;
+mod setup;
+mod visualization;
 
 /// thin wrapper around the atual entry point since main can´t be async
 pub fn main() -> anyhow::Result<()> {
@@ -75,7 +84,8 @@ pub async fn run_app() -> Result<()> {
     log::debug!("Loaded Config: {:?}", config);
 
     // --- Initialize Visualizer in a separate thread if configured ---
-    let (viz_tx, main_viz_handle) = visualization::setup_visualization(&config);
+    let (viz_tx, main_viz_handle): (Option<Sender<VizMessage>>, Option<thread::JoinHandle<()>>) =
+        setup::visualization::setup_visualization(&config);
 
     // --- End Visualizer Initialization ---
 
@@ -139,7 +149,9 @@ pub async fn run_app() -> Result<()> {
     };
 
     // Handle the AppError after await
-    run_result.map_err(|app_err| anyhow::Error::new(app_err))?;
+    if let Err(app_err) = run_result {
+        return Err(anyhow::anyhow!("{}", app_err));
+    }
 
     log::info!("Wave Forge App Finished.");
 

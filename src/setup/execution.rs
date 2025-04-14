@@ -368,7 +368,13 @@ pub async fn run_standard_mode(
             .create(true)
             .append(true)
             .open(path)
-            .with_context(|| format!("Failed to open progress log file: {:?}", path))?;
+            .map_err(|e| {
+                AppError::Anyhow(anyhow::anyhow!(
+                    "Failed to open progress log file: {:?}: {}",
+                    path,
+                    e
+                ))
+            })?;
         Some(Arc::new(Mutex::new(BufWriter::new(file)))) // Wrap in Arc<Mutex> for thread safety
     } else {
         None
