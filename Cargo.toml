@@ -4,15 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wave-forge-app = { path = "wave-forge-app" }
 anyhow = "1.0"
+tokio = { version = "1", features = ["full"] }
 
 [workspace]
 members = [
     "wfc-core",
     "wfc-rules",
     "wfc-gpu",
-    "wave-forge-app",
 ]
 
 [workspace.dependencies]

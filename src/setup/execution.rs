@@ -90,7 +90,7 @@ pub async fn run_benchmark_mode(
     _shutdown_signal: Arc<AtomicBool>,
 ) -> Result<(), AppError> {
     log::info!(
-        "Benchmark mode enabled (GPU only). Runs per scenario: {}",
+        "Benchmark mode enabled. Runs per scenario: {}",
         config.benchmark_runs_per_scenario
     );
     if config.benchmark_runs_per_scenario == 0 {
