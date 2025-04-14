@@ -26,7 +26,7 @@ use log::debug;
 ///   This holds for simple rotational symmetry but might need refinement for more complex symmetries
 ///   or rules involving the axis of rotation itself (e.g., Z-axis rules with Z-axis rotation).
 ///
-pub fn generate_transformed_rules(
+#[must_use] pub fn generate_transformed_rules(
     base_rules: &[(TileId, TileId, usize)],
     tileset: &TileSet,
     num_axes: usize,
@@ -44,10 +44,7 @@ pub fn generate_transformed_rules(
     for &(base1_id, base2_id, base_axis) in base_rules {
         if base_axis >= num_axes {
             log::warn!(
-                "Skipping base rule {:?} -> {:?} along invalid axis {}",
-                base1_id,
-                base2_id,
-                base_axis
+                "Skipping base rule {base1_id:?} -> {base2_id:?} along invalid axis {base_axis}"
             );
             continue;
         }
@@ -74,14 +71,12 @@ pub fn generate_transformed_rules(
                     .expect("Failed to get transformed ID (tile2)");
 
                 if transformed_axis >= num_axes {
-                    log::error!("Derived rule {:?} -> {:?} resulted in invalid transformed axis {} from base axis {} and transform {:?}",
-                                ttid1, ttid2, transformed_axis, base_axis, tform1);
+                    log::error!("Derived rule {ttid1:?} -> {ttid2:?} resulted in invalid transformed axis {transformed_axis} from base axis {base_axis} and transform {tform1:?}");
                     continue;
                 }
 
                 debug!(
-                    "Rule derived: ({:?}, {:?}) + ({:?}, {:?}) along axis {} (orig base axis {}) -> Add tuple ({}, {}, {})",
-                    base1_id, tform1, base2_id, required_tform2, transformed_axis, base_axis, transformed_axis, ttid1, ttid2
+                    "Rule derived: ({base1_id:?}, {tform1:?}) + ({base2_id:?}, {required_tform2:?}) along axis {transformed_axis} (orig base axis {base_axis}) -> Add tuple ({transformed_axis}, {ttid1}, {ttid2})"
                 );
                 allowed_tuples_set.insert((transformed_axis, ttid1, ttid2));
             }
