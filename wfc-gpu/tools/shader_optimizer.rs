@@ -7,8 +7,8 @@
 //! 4. Generating specialized variants for common configurations
 
 use std::collections::{HashMap, HashSet};
-use std::fs::{self};
-use std::io::{self, Read as _};
+use std::fs;
+use std::io::{self};
 use std::path::{Path, PathBuf};
 
 /// Configuration for shader optimization.
@@ -304,7 +304,12 @@ impl ShaderOptimizer {
                     .chain(["SubgridPropagation"].iter())
                     .copied()
                     .for_each(|c| {
-                        self.add_component_with_deps(c, &mut result, &mut visited, &mut feature_set);
+                        self.add_component_with_deps(
+                            c,
+                            &mut result,
+                            &mut visited,
+                            &mut feature_set,
+                        );
                     });
             } else {
                 core_components
@@ -312,7 +317,12 @@ impl ShaderOptimizer {
                     .chain(["DirectPropagation"].iter())
                     .copied()
                     .for_each(|c| {
-                        self.add_component_with_deps(c, &mut result, &mut visited, &mut feature_set);
+                        self.add_component_with_deps(
+                            c,
+                            &mut result,
+                            &mut visited,
+                            &mut feature_set,
+                        );
                     });
             }
         } else if shader_type == "entropy" {
@@ -322,7 +332,12 @@ impl ShaderOptimizer {
                     .chain(["ShannonEntropy"].iter())
                     .copied()
                     .for_each(|c| {
-                        self.add_component_with_deps(c, &mut result, &mut visited, &mut feature_set);
+                        self.add_component_with_deps(
+                            c,
+                            &mut result,
+                            &mut visited,
+                            &mut feature_set,
+                        );
                     });
             } else if feature_set.contains("count_based") {
                 core_components
@@ -330,7 +345,12 @@ impl ShaderOptimizer {
                     .chain(["CountBasedEntropy"].iter())
                     .copied()
                     .for_each(|c| {
-                        self.add_component_with_deps(c, &mut result, &mut visited, &mut feature_set);
+                        self.add_component_with_deps(
+                            c,
+                            &mut result,
+                            &mut visited,
+                            &mut feature_set,
+                        );
                     });
             } else {
                 core_components.iter().copied().for_each(|c| {
@@ -385,11 +405,12 @@ impl ShaderOptimizer {
 
     /// Apply optimizations to shader content.
     fn optimize_shader_content(&self, content: &str) -> String {
-        let optimized = content.to_owned();
+        // First run preprocessor
+        let optimized = content.to_string();
 
         // Remove comments
         let mut result = String::new();
-        let in_comment = false;
+        let _in_comment = false;
         let mut i = 0;
         let chars: Vec<char> = optimized.chars().collect();
 

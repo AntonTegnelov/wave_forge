@@ -1,7 +1,7 @@
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     gpu::sync::GpuSynchronizer,
-    propagator::{AsyncPropagationStrategy, PropagationStrategy, PropagationStrategyFactory},
+    propagator::{AsyncPropagationStrategy, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
     utils::subgrid::SubgridConfig,
     utils::{

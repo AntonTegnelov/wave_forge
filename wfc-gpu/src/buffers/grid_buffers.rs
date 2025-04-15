@@ -82,7 +82,7 @@ impl GridBuffers {
                                     "Possibility grid cell ({}, {}, {}) has unexpected length: {} (expected {})",
                                     x, y, z, cell_possibilities.len(), num_tiles
                                 ),
-                                context: crate::utils::error::gpu_error::GpuErrorContext::default()
+                                context: Box::new(crate::utils::error::gpu_error::GpuErrorContext::default())
                             });
                         }
                         // Pack the BitSlice into u32s
@@ -106,7 +106,9 @@ impl GridBuffers {
                                 "Failed to get possibility grid cell ({}, {}, {})",
                                 x, y, z
                             ),
-                            context: crate::utils::error::gpu_error::GpuErrorContext::default(),
+                            context: Box::new(
+                                crate::utils::error::gpu_error::GpuErrorContext::default(),
+                            ),
                         });
                     }
                 }
@@ -120,7 +122,7 @@ impl GridBuffers {
                     _num_cells * u32s_per_cell,
                     packed_possibilities.len()
                 ),
-                context: crate::utils::error::gpu_error::GpuErrorContext::default(),
+                context: Box::new(crate::utils::error::gpu_error::GpuErrorContext::default()),
             });
         }
         Ok(packed_possibilities)

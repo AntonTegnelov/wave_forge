@@ -154,7 +154,7 @@ impl CoordinationStrategyFactory {
 /// The default coordination strategy implementation.
 #[derive(Debug, Clone)]
 struct DefaultCoordinationStrategy {
-    entropy_calculator: Arc<GpuEntropyCalculator>,
+    _entropy_calculator: Arc<GpuEntropyCalculator>,
     propagator: Arc<RwLock<GpuConstraintPropagator>>,
     grid: Arc<RwLock<PossibilityGrid>>,
     rules: Arc<RwLock<AdjacencyRules>>,
@@ -175,7 +175,7 @@ impl DefaultCoordinationStrategy {
         )));
 
         Self {
-            entropy_calculator,
+            _entropy_calculator: entropy_calculator,
             propagator,
             grid,
             rules,
@@ -255,7 +255,7 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
 /// A coordination strategy optimized for large grids.
 #[derive(Debug, Clone)]
 struct LargeGridCoordinationStrategy {
-    entropy_calculator: Arc<GpuEntropyCalculator>,
+    _entropy_calculator: Arc<GpuEntropyCalculator>,
     propagator: Arc<RwLock<GpuConstraintPropagator>>,
     grid: Arc<RwLock<PossibilityGrid>>,
     rules: Arc<RwLock<AdjacencyRules>>,
@@ -276,7 +276,7 @@ impl LargeGridCoordinationStrategy {
         )));
 
         Self {
-            entropy_calculator,
+            _entropy_calculator: entropy_calculator,
             propagator,
             grid,
             rules,
@@ -357,11 +357,11 @@ impl CoordinationStrategy for LargeGridCoordinationStrategy {
 /// points and increasing parallelism.
 #[derive(Debug, Clone)]
 struct BatchedCoordinationStrategy {
-    entropy_calculator: Arc<GpuEntropyCalculator>,
+    _entropy_calculator: Arc<GpuEntropyCalculator>,
     propagator: Arc<RwLock<GpuConstraintPropagator>>,
     grid: Arc<RwLock<PossibilityGrid>>,
     rules: Arc<RwLock<AdjacencyRules>>,
-    batch_size: usize,
+    _batch_size: usize,
     // Additional state for batch processing
     current_batch: Vec<(usize, usize, usize)>,
 }
@@ -381,11 +381,11 @@ impl BatchedCoordinationStrategy {
         )));
 
         Self {
-            entropy_calculator,
+            _entropy_calculator: entropy_calculator,
             propagator,
             grid,
             rules,
-            batch_size: batch_size.max(1), // Ensure batch size is at least 1
+            _batch_size: batch_size,
             current_batch: Vec::new(),
         }
     }
@@ -412,34 +412,22 @@ impl CoordinationStrategy for BatchedCoordinationStrategy {
         _accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<StepResult, WfcError> {
-        // Update our internal grid with the current grid state
-        {
-            let mut internal_grid = self.grid.write().await;
-            *internal_grid = grid.clone();
-        }
-
-        // If we don't have a batch in progress, select a new batch
+        // Check if we have a batch to process
         if self.current_batch.is_empty() {
-            self.current_batch = self.select_batch(_accelerator, grid).await?;
-
-            // If we couldn't find any cells to collapse, we're done
-            if self.current_batch.is_empty() {
+            // No cells to process, select a new batch
+            let new_batch = self.select_batch(_accelerator, grid).await?;
+            if new_batch.is_empty() {
+                // No more cells to select, we're done
                 return Ok(StepResult::Completed);
             }
+            self.current_batch = new_batch;
         }
 
-        // Process one cell from the current batch
-        let cell = self.current_batch.pop().unwrap();
+        // Process one cell from the batch
+        let _cell = self.current_batch.pop().unwrap();
 
-        // In a real implementation, this would:
-        // 1. Collapse the cell
-        // 2. Propagate constraints
-        // 3. Check for contradictions
-
-        // This is a placeholder - the actual implementation would process the cell
-
-        // If we've processed all cells in the batch, return InProgress to get a new batch
-        // Otherwise, return a special result indicating we have more cells in the current batch
+        // Process the cell and propagate constraints
+        // This is a placeholder - a real implementation would do actual work
         Ok(StepResult::InProgress)
     }
 

@@ -439,7 +439,7 @@ impl DebugVisualizer {
                         } else {
                             0.0
                         };
-                        let gray = (normalized.max(0.0).min(1.0) * 255.0) as u8;
+                        let gray = (normalized.clamp(0.0, 1.0) * 255.0) as u8;
                         img.put_pixel(x as u32, y as u32, Rgba([gray, gray, gray, 255]));
                     } else {
                         img.put_pixel(x as u32, y as u32, Rgba([255, 0, 0, 255]));

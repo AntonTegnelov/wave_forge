@@ -511,7 +511,7 @@ impl GpuBuffers {
                     expected_data_size,
                     data.len()
                 ),
-                context: GpuErrorContext::default(),
+                context: Box::new(GpuErrorContext::default()),
             });
         }
 
@@ -594,7 +594,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
                 source_buffer.size(),
                 buffer_size
             ),
-            context: GpuErrorContext::default(),
+            context: Box::new(GpuErrorContext::default()),
         });
     }
 
@@ -606,7 +606,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
                 staging_buffer.size(),
                 buffer_size
             ),
-            context: GpuErrorContext::default(),
+            context: Box::new(GpuErrorContext::default()),
         });
     }
 
@@ -669,7 +669,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
     if let Err(e) = result {
         return Err(GpuError::BufferOperationError {
             msg: format!("Failed to map buffer '{}': {:?}", label_str, e),
-            context: GpuErrorContext::default(),
+            context: Box::new(GpuErrorContext::default()),
         });
     }
 
@@ -714,7 +714,7 @@ impl GpuDownloadResults {
                 .as_ref()
                 .ok_or_else(|| GpuError::BufferOperationError {
                     msg: "Grid possibilities data not downloaded".to_string(),
-                    context: GpuErrorContext::default(),
+                    context: Box::new(GpuErrorContext::default()),
                 })?;
 
         if grid_possibilities.len() < num_cells * u32s_per_cell {
@@ -724,7 +724,7 @@ impl GpuDownloadResults {
                     num_cells * u32s_per_cell,
                     grid_possibilities.len()
                 ),
-                context: GpuErrorContext::default(),
+                context: Box::new(GpuErrorContext::default()),
             });
         }
 
