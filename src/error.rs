@@ -30,14 +30,6 @@ pub enum AppError {
 
     #[error("Anyhow Error: {0}")]
     Anyhow(#[from] anyhow::Error),
-
-    // Specific GPU Init Error (can wrap CoreGpuError)
-    #[error("GPU Accelerator Initialization Error: {0}")]
-    GpuInitializationError(CoreGpuError),
-
-    // Keep WfcError variant if used directly
-    #[error("WFC Error: {0}")]
-    WfcError(CoreWfcError),
 }
 
 // We implement Send + Sync manually because underlying errors

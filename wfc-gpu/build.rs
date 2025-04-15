@@ -309,7 +309,7 @@ fn main() {
     }
 
     // Add rerun triggers for all component files listed in the registry
-    for (name, component) in &registry_data.components {
+    for component in registry_data.components.values() {
         // Ensure the path exists before adding the trigger
         let component_path = PathBuf::from(&component.path);
         if component_path.exists() {

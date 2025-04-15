@@ -12,10 +12,7 @@ use super::{
 use crate::coordination::strategy;
 use crate::{
     buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
-    coordination::{
-        strategy::CoordinationStrategyFactory, DefaultCoordinator, PropagationCoordinationStrategy,
-        WfcCoordinator,
-    },
+    coordination::{strategy::CoordinationStrategyFactory, DefaultCoordinator, WfcCoordinator},
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
     propagator::{GpuConstraintPropagator, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
@@ -68,7 +65,7 @@ pub struct GridStats {
 pub struct AcceleratorInstance {
     backend: Arc<dyn GpuBackend>,
     grid_definition: GridDefinition,
-    rules: Arc<AdjacencyRules>,
+    _rules: Arc<AdjacencyRules>,
     boundary_condition: BoundaryCondition,
     pipelines: Arc<ComputePipelines>,
     buffers: Arc<GpuBuffers>,
@@ -285,7 +282,7 @@ impl GpuAccelerator {
         let instance = AcceleratorInstance {
             backend: Arc::new(backend),
             grid_definition,
-            rules: Arc::new(rules.clone()),
+            _rules: Arc::new(rules.clone()),
             boundary_condition,
             pipelines,
             buffers,
@@ -331,14 +328,14 @@ impl GpuAccelerator {
     }
 
     pub async fn get_intermediate_result(&self) -> Result<PossibilityGrid, GpuError> {
-        let instance = self.instance.read().unwrap();
+        let _instance = self.instance.read().unwrap();
         let target_grid = PossibilityGrid::new(
-            instance.grid_definition.dims.0,
-            instance.grid_definition.dims.1,
-            instance.grid_definition.dims.2,
-            instance.grid_definition.num_tiles,
+            _instance.grid_definition.dims.0,
+            _instance.grid_definition.dims.1,
+            _instance.grid_definition.dims.2,
+            _instance.grid_definition.num_tiles,
         );
-        instance
+        _instance
             .sync
             .download_grid(&target_grid)
             .await
@@ -346,11 +343,11 @@ impl GpuAccelerator {
     }
 
     pub fn enable_default_debug_visualization(&mut self) {
-        let mut instance = self.instance.write().unwrap();
-        if instance.debug_visualizer.is_none() {
+        let mut _instance = self.instance.write().unwrap();
+        if _instance.debug_visualizer.is_none() {
             let config = DebugVisualizationConfig::default();
-            let sync_clone = instance.sync.clone();
-            instance.debug_visualizer = Some(DebugVisualizer::new(config, sync_clone));
+            let sync_clone = _instance.sync.clone();
+            _instance.debug_visualizer = Some(DebugVisualizer::new(config, sync_clone));
             info!("Debug visualization enabled.");
         }
     }
@@ -367,19 +364,19 @@ impl GpuAccelerator {
         F: FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync + 'static,
     {
         let start_time = Instant::now();
-        let mut instance_guard = self.instance.write().unwrap();
+        let mut _instance_guard = self.instance.write().unwrap();
 
         info!(
             "Running WFC on GPU for grid {}x{}x{} with {} tiles. Max iterations: {}",
-            instance_guard.grid_definition.dims.0,
-            instance_guard.grid_definition.dims.1,
-            instance_guard.grid_definition.dims.2,
-            instance_guard.grid_definition.num_tiles,
+            _instance_guard.grid_definition.dims.0,
+            _instance_guard.grid_definition.dims.1,
+            _instance_guard.grid_definition.dims.2,
+            _instance_guard.grid_definition.num_tiles,
             max_iterations
         );
 
         let mut iteration: u64 = 0;
-        let total_cells = instance_guard.grid_definition.total_cells();
+        let total_cells = _instance_guard.grid_definition.total_cells();
 
         let mut run_result = WfcRunResult {
             grid: initial_grid.clone(),
@@ -387,20 +384,20 @@ impl GpuAccelerator {
         };
 
         trace!("Uploading initial grid state to GPU...");
-        instance_guard
+        _instance_guard
             .sync
             .upload_grid(initial_grid)
             .map_err(|e| WfcError::other(e.to_string()))?;
 
-        instance_guard
+        _instance_guard
             .sync
             .reset_contradiction_flag()
             .map_err(|e| WfcError::other(e.to_string()))?;
-        instance_guard
+        _instance_guard
             .sync
             .reset_contradiction_location()
             .map_err(|e| WfcError::other(e.to_string()))?;
-        instance_guard
+        _instance_guard
             .sync
             .reset_worklist_count()
             .map_err(|e| WfcError::other(e.to_string()))?;
@@ -430,14 +427,14 @@ impl GpuAccelerator {
             trace!("--- WFC Iteration {} ---", iteration);
 
             trace!("Coordinating entropy calculation and selection...");
-            let selection_result = instance_guard
+            let selection_result = _instance_guard
                 .coordinator
                 .coordinate_entropy_and_selection(
-                    &instance_guard.entropy_calculator,
-                    &instance_guard.buffers,
-                    &instance_guard.backend.device(),
-                    &instance_guard.backend.queue(),
-                    &instance_guard.sync,
+                    &_instance_guard.entropy_calculator,
+                    &_instance_guard.buffers,
+                    &_instance_guard.backend.device(),
+                    &_instance_guard.backend.queue(),
+                    &_instance_guard.sync,
                 )
                 .await;
 
@@ -518,13 +515,13 @@ impl GpuAccelerator {
             trace!("Coordinating constraint propagation...");
             let update_coords = vec![GridCoord::from(selected_coords)];
 
-            let propagation_result = instance_guard
+            let propagation_result = _instance_guard
                 .coordinator
                 .coordinate_propagation(
-                    &instance_guard.propagator,
-                    &instance_guard.buffers,
-                    &instance_guard.backend.device(),
-                    &instance_guard.backend.queue(),
+                    &_instance_guard.propagator,
+                    &_instance_guard.buffers,
+                    &_instance_guard.backend.device(),
+                    &_instance_guard.backend.queue(),
                     update_coords,
                 )
                 .await;
@@ -583,18 +580,18 @@ impl GpuAccelerator {
             }
 
             // Extract all the grid information we need before entering the callback blocks
-            let grid_width = instance_guard.grid_definition.dims.0;
-            let grid_height = instance_guard.grid_definition.dims.1;
-            let grid_depth = instance_guard.grid_definition.dims.2;
-            let num_tiles = instance_guard.grid_definition.num_tiles;
+            let grid_width = _instance_guard.grid_definition.dims.0;
+            let grid_height = _instance_guard.grid_definition.dims.1;
+            let grid_depth = _instance_guard.grid_definition.dims.2;
+            let num_tiles = _instance_guard.grid_definition.num_tiles;
 
             // Clone the backend and buffers references outside of any blocks
-            let backend_ref = instance_guard.backend.clone();
-            let buffers_ref = instance_guard.buffers.clone();
+            let backend_ref = _instance_guard.backend.clone();
+            let buffers_ref = _instance_guard.buffers.clone();
 
             run_result.stats.iterations = iteration as usize;
 
-            if let Some(cb) = &mut instance_guard.progress_callback {
+            if let Some(cb) = &mut _instance_guard.progress_callback {
                 trace!("Calling progress callback for iteration {}...", iteration);
 
                 let progress_info = ProgressInfo {
@@ -624,7 +621,7 @@ impl GpuAccelerator {
                 }
             }
 
-            if let Some(visualizer) = &mut instance_guard.debug_visualizer {
+            if let Some(visualizer) = &mut _instance_guard.debug_visualizer {
                 trace!("Updating debug visualizer for iteration {}...", iteration);
 
                 if let Err(e) = visualizer.update(&*backend_ref, &buffers_ref).await {
@@ -635,7 +632,7 @@ impl GpuAccelerator {
             let _progress = run_result.stats.collapsed_cells as f32 / total_cells as f32;
         }
 
-        drop(instance_guard);
+        drop(_instance_guard);
         let final_instance_guard = self.instance.read().unwrap();
 
         trace!("Downloading final grid state from GPU...");
@@ -668,9 +665,9 @@ impl GpuAccelerator {
     }
 
     pub fn with_debug_visualization(&mut self, config: DebugVisualizationConfig) {
-        let mut instance = self.instance.write().unwrap();
-        let sync_clone = instance.sync.clone();
-        instance.debug_visualizer = Some(DebugVisualizer::new(config, sync_clone));
+        let mut _instance = self.instance.write().unwrap();
+        let sync_clone = _instance.sync.clone();
+        _instance.debug_visualizer = Some(DebugVisualizer::new(config, sync_clone));
         info!("Debug visualization enabled with custom config.");
     }
 
@@ -678,8 +675,8 @@ impl GpuAccelerator {
     where
         F: FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync + 'static,
     {
-        let mut instance = self.instance.write().unwrap();
-        instance.progress_callback = Some(Box::new(callback));
+        let mut _instance = self.instance.write().unwrap();
+        _instance.progress_callback = Some(Box::new(callback));
         info!("Progress callback set.");
     }
 
@@ -690,7 +687,7 @@ impl GpuAccelerator {
     ) -> &mut Self {
         // Scope the instance read lock to avoid borrowing conflicts
         {
-            let instance = self.instance.read().unwrap();
+            let _instance = self.instance.read().unwrap();
             // Here we could use instance.buffers but we don't need to
         }
 
@@ -700,20 +697,20 @@ impl GpuAccelerator {
 
     /// Configure the accelerator with a specific entropy heuristic
     pub fn with_entropy_heuristic(&mut self, heuristic: CoreEntropyHeuristicType) -> &mut Self {
-        let instance = self.instance.read().unwrap();
+        let _instance = self.instance.read().unwrap();
 
         // Create a new strategy using the factory
         let base_strategy = EntropyStrategyFactory::create_strategy(
             heuristic,
-            instance.grid_definition.num_tiles,
-            instance.buffers.grid_buffers.u32s_per_cell,
+            _instance.grid_definition.num_tiles,
+            _instance.buffers.grid_buffers.u32s_per_cell,
         );
 
         // Cast the base strategy to GpuEntropyStrategy
         let strategy: Box<dyn GpuEntropyStrategy> = Box::new(EntropyStrategyAdapter(base_strategy));
 
         // Set the strategy (dropping the read lock first to avoid deadlock)
-        drop(instance);
+        drop(_instance);
 
         self.with_entropy_strategy_boxed(strategy)
     }
@@ -725,16 +722,16 @@ impl GpuAccelerator {
     ) -> &mut Self {
         // Clone calculator and set the strategy
         let mut calculator = {
-            let instance = self.instance.read().unwrap();
-            (*instance.entropy_calculator).clone()
+            let _instance = self.instance.read().unwrap();
+            (*_instance.entropy_calculator).clone()
         };
 
         calculator.set_strategy_boxed(strategy);
 
         // Update the instance with the new calculator
         {
-            let mut instance = self.instance.write().unwrap();
-            instance.entropy_calculator = Arc::new(calculator);
+            let mut _instance = self.instance.write().unwrap();
+            _instance.entropy_calculator = Arc::new(calculator);
         }
 
         self
@@ -780,23 +777,23 @@ impl GpuAccelerator {
         // Create a new propagator with the new strategy
         {
             // Lock the instance for writing
-            let instance = self.instance.write().unwrap();
+            let _instance = self.instance.write().unwrap();
 
             // Get a mutable reference to the propagator - use async lock in sync context
             let mut propagator_guard =
-                futures::executor::block_on(async { instance.propagator.write().await });
+                futures::executor::block_on(async { _instance.propagator.write().await });
 
             // Get the needed GPU resources
-            let device = instance.backend.device();
-            let queue = instance.backend.queue();
-            let pipelines = instance.pipelines.clone();
-            let buffers = instance.buffers.clone();
+            let device = _instance.backend.device();
+            let queue = _instance.backend.queue();
+            let pipelines = _instance.pipelines.clone();
+            let buffers = _instance.buffers.clone();
 
             // Set up configuration parameters for propagator
             let grid_dims = (
-                instance.grid_definition.dims.0,
-                instance.grid_definition.dims.1,
-                instance.grid_definition.dims.2,
+                _instance.grid_definition.dims.0,
+                _instance.grid_definition.dims.1,
+                _instance.grid_definition.dims.2,
             );
 
             // Create parameters uniform similar to the existing one
@@ -809,7 +806,7 @@ impl GpuAccelerator {
                 pipelines,
                 buffers,
                 grid_dims,
-                instance.boundary_condition,
+                _instance.boundary_condition,
                 params,
             )
             .with_strategy(strategy);
@@ -890,8 +887,8 @@ impl GpuAccelerator {
     pub fn with_auto_propagation(&mut self) -> &mut Self {
         // Get grid dimensions to compute an appropriate strategy
         let dims = {
-            let instance = self.instance.read().unwrap();
-            instance.grid_definition.dims
+            let _instance = self.instance.read().unwrap();
+            _instance.grid_definition.dims
         };
 
         let num_tiles = self.num_tiles();
@@ -910,10 +907,10 @@ impl GpuAccelerator {
 
         {
             // Limit the scope of the instance borrow
-            let instance = self.instance.read().unwrap();
-            grid_size = instance.grid_definition.dims;
-            entropy_calculator_clone = instance.entropy_calculator.clone();
-            propagator_clone = instance.propagator.clone();
+            let _instance = self.instance.read().unwrap();
+            grid_size = _instance.grid_definition.dims;
+            entropy_calculator_clone = _instance.entropy_calculator.clone();
+            propagator_clone = _instance.propagator.clone();
         }
 
         // Create the strategy outside the instance lock
@@ -929,8 +926,8 @@ impl GpuAccelerator {
 
         // Set the coordinator with a separate lock scope
         {
-            let mut instance = self.instance.write().unwrap();
-            instance.coordinator = Box::new(coordinator);
+            let mut _instance = self.instance.write().unwrap();
+            _instance.coordinator = Box::new(coordinator);
         }
 
         self
@@ -944,9 +941,9 @@ impl GpuAccelerator {
 
         {
             // Limit the scope of the instance borrow
-            let instance = self.instance.read().unwrap();
-            entropy_calculator_clone = instance.entropy_calculator.clone();
-            propagator_clone = instance.propagator.clone();
+            let _instance = self.instance.read().unwrap();
+            entropy_calculator_clone = _instance.entropy_calculator.clone();
+            propagator_clone = _instance.propagator.clone();
         }
 
         // Create the strategy outside the instance lock
@@ -961,8 +958,8 @@ impl GpuAccelerator {
 
         // Set the coordinator with a separate lock scope
         {
-            let mut instance = self.instance.write().unwrap();
-            instance.coordinator = Box::new(coordinator);
+            let mut _instance = self.instance.write().unwrap();
+            _instance.coordinator = Box::new(coordinator);
         }
 
         self
@@ -987,9 +984,9 @@ impl GpuAccelerator {
 
         {
             // Limit the scope of the instance borrow
-            let instance = self.instance.read().unwrap();
-            entropy_calculator_clone = instance.entropy_calculator.clone();
-            propagator_clone = instance.propagator.clone();
+            let _instance = self.instance.read().unwrap();
+            entropy_calculator_clone = _instance.entropy_calculator.clone();
+            propagator_clone = _instance.propagator.clone();
         }
 
         // Create a new DefaultCoordinator and set the strategy
@@ -998,8 +995,8 @@ impl GpuAccelerator {
 
         // Set the coordinator with a separate lock scope
         {
-            let mut instance = self.instance.write().unwrap();
-            instance.coordinator = Box::new(coordinator);
+            let mut _instance = self.instance.write().unwrap();
+            _instance.coordinator = Box::new(coordinator);
         }
 
         self
@@ -1024,9 +1021,9 @@ impl GpuAccelerator {
 
         {
             // Limit the scope of the instance borrow
-            let instance = self.instance.read().unwrap();
-            entropy_calculator_clone = instance.entropy_calculator.clone();
-            propagator_clone = instance.propagator.clone();
+            let _instance = self.instance.read().unwrap();
+            entropy_calculator_clone = _instance.entropy_calculator.clone();
+            propagator_clone = _instance.propagator.clone();
         }
 
         // Create a new DefaultCoordinator and set the strategy
@@ -1035,8 +1032,8 @@ impl GpuAccelerator {
 
         // Set the coordinator with a separate lock scope
         {
-            let mut instance = self.instance.write().unwrap();
-            instance.coordinator = Box::new(coordinator);
+            let mut _instance = self.instance.write().unwrap();
+            _instance.coordinator = Box::new(coordinator);
         }
 
         self
@@ -1060,9 +1057,9 @@ impl GpuAccelerator {
         // Get the recovery hooks with a limited scope
         {
             // First get a read lock on the instance
-            let instance = self.instance.read().unwrap();
+            let _instance = self.instance.read().unwrap();
             // Then get a write lock on the hooks
-            let mut hooks = instance.recovery_hooks.write().unwrap();
+            let mut hooks = _instance.recovery_hooks.write().unwrap();
             hooks.register_for_core_errors(predicate, hook);
             info!("Registered custom recovery hook");
         }
@@ -1086,9 +1083,9 @@ impl GpuAccelerator {
         // Get the recovery hooks with a limited scope
         {
             // First get a read lock on the instance
-            let instance = self.instance.read().unwrap();
+            let _instance = self.instance.read().unwrap();
             // Then get a write lock on the hooks
-            let mut hooks = instance.recovery_hooks.write().unwrap();
+            let mut hooks = _instance.recovery_hooks.write().unwrap();
             hooks.register_for_gpu_errors(hook);
             info!("Registered GPU error recovery hook");
         }
@@ -1112,9 +1109,9 @@ impl GpuAccelerator {
         // Get the recovery hooks with a limited scope
         {
             // First get a read lock on the instance
-            let instance = self.instance.read().unwrap();
+            let _instance = self.instance.read().unwrap();
             // Then get a write lock on the hooks
-            let mut hooks = instance.recovery_hooks.write().unwrap();
+            let mut hooks = _instance.recovery_hooks.write().unwrap();
             hooks.register_for_algorithm_errors(hook);
             info!("Registered algorithm error recovery hook");
         }
@@ -1130,9 +1127,9 @@ impl GpuAccelerator {
         // Get the recovery hooks with a limited scope
         {
             // First get a read lock on the instance
-            let instance = self.instance.read().unwrap();
+            let _instance = self.instance.read().unwrap();
             // Then get a write lock on the hooks
-            let mut hooks = instance.recovery_hooks.write().unwrap();
+            let mut hooks = _instance.recovery_hooks.write().unwrap();
             hooks.register_for_validation_errors(hook);
             info!("Registered validation error recovery hook");
         }
@@ -1148,9 +1145,9 @@ impl GpuAccelerator {
         // Get the recovery hooks with a limited scope
         {
             // First get a read lock on the instance
-            let instance = self.instance.read().unwrap();
+            let _instance = self.instance.read().unwrap();
             // Then get a write lock on the hooks
-            let mut hooks = instance.recovery_hooks.write().unwrap();
+            let mut hooks = _instance.recovery_hooks.write().unwrap();
             hooks.register_for_configuration_errors(hook);
             info!("Registered configuration error recovery hook");
         }
@@ -1171,8 +1168,8 @@ impl GpuAccelerator {
     /// `Option<RecoveryAction>` if a hook was able to handle the error
     pub(crate) fn try_handle_local_error(&self, error: &WfcError) -> Option<RecoveryAction> {
         // Use limited scope for the lock
-        let instance = self.instance.read().unwrap();
-        let hooks = instance.recovery_hooks.read().unwrap();
+        let _instance = self.instance.read().unwrap();
+        let hooks = _instance.recovery_hooks.read().unwrap();
         hooks.try_handle(error)
     }
 
@@ -1187,6 +1184,7 @@ impl GpuAccelerator {
     /// # Returns
     ///
     /// `Option<RecoveryAction>` if a hook was able to handle the error
+    #[allow(dead_code)]
     pub(crate) fn try_handle_error(&self, error: &wfc_core::WfcError) -> Option<RecoveryAction> {
         // Convert the core error to our local error type
         let local_error = crate::utils::error::WfcError::from_core_error(error);

@@ -21,10 +21,8 @@ use std::{
     time::{Duration, Instant},
 };
 use wfc_core::{
-    entropy::EntropyHeuristicType,
-    grid::PossibilityGrid,
-    runner::{ProgressCallback, WfcConfig},
-    BoundaryCondition, ProgressInfo, WfcError,
+    entropy::EntropyHeuristicType, grid::PossibilityGrid, runner::WfcConfig, BoundaryCondition,
+    ProgressInfo, WfcError,
 };
 use wfc_gpu::{gpu::accelerator::GpuAccelerator, utils::error::gpu_error::GpuError};
 use wfc_rules::{loader::load_from_file, AdjacencyRules, TileSet};
@@ -82,6 +80,15 @@ fn calculate_std_dev(data: &[f64], mean: f64) -> Option<f64> {
     Some(variance.sqrt())
 }
 // --- End Statistics Helper Functions ---
+
+// Update the WfcProgressCallback definition to match its usage
+// Define the two different callback types
+/// Type alias for a callback function that reports progress information
+type ProgressCallback = Option<Box<dyn Fn(ProgressInfo) -> Result<(), WfcError> + Send + Sync>>;
+
+/// Type alias for a callback function that can access grid state during WFC execution
+type WfcProgressCallback =
+    Option<Box<dyn Fn(&PossibilityGrid, u64) -> Result<(), WfcError> + Send + Sync>>;
 
 pub async fn run_benchmark_mode(
     config: &AppConfig,
@@ -193,18 +200,22 @@ pub async fn run_benchmark_mode(
             let scenario_grid_snapshot = Arc::new(Mutex::new(scenario_grid.clone()));
             let core_boundary_mode: BoundaryCondition = config.boundary_mode.into();
 
-            // Lock the grid snapshot to pass a reference to the inner grid
-            let grid_guard = scenario_grid_snapshot
-                .lock()
-                .expect("Benchmark grid lock failed");
+            // Create a clone of the grid outside the mutex lock to avoid holding the lock across the await point
+            let grid_for_accelerator = {
+                let grid_guard = scenario_grid_snapshot
+                    .lock()
+                    .expect("Benchmark grid lock failed");
+                grid_guard.clone()
+            };
+
+            // Now initialize the GPU accelerator using the cloned grid without holding mutex across await
             let accelerator_res = pollster::block_on(GpuAccelerator::new(
-                &grid_guard,
+                &grid_for_accelerator,
                 &rules,
                 core_boundary_mode,
                 EntropyHeuristicType::Shannon,
                 None,
             ));
-            drop(grid_guard); // Drop the guard after the call
 
             // Store the accelerator directly, not Arc
             let accelerator = match accelerator_res {
@@ -432,7 +443,7 @@ pub async fn run_standard_mode(
     let report_interval = config.report_progress_interval;
     let progress_log_level = config.progress_log_level.clone();
     let progress_log_writer_clone = progress_log_writer.clone();
-    let progress_callback: Option<ProgressCallback> = if let Some(interval) = report_interval {
+    let progress_callback: ProgressCallback = if let Some(interval) = report_interval {
         let last_report_time_clone = Arc::clone(&last_report_time);
         Some(Box::new(move |info: ProgressInfo| {
             let now = Instant::now();
@@ -493,24 +504,29 @@ pub async fn run_standard_mode(
 
     // --- Initialize GPU Accelerator ---
     let core_boundary_mode: BoundaryCondition = config.boundary_mode.into();
-    // Lock the grid snapshot to pass a reference to the inner grid
-    let grid_guard = grid_snapshot
-        .lock()
-        .expect("Standard grid lock failed for GPU init");
+
+    // Create a clone of the grid outside the mutex lock to avoid holding the lock across the await point
+    let grid_for_accelerator = {
+        let grid_guard = grid_snapshot
+            .lock()
+            .expect("Standard grid lock failed for GPU init");
+        grid_guard.clone()
+    };
+
+    // Now initialize the GPU accelerator using the cloned grid without holding mutex across await
     let accelerator_res = pollster::block_on(GpuAccelerator::new(
-        &grid_guard,
+        &grid_for_accelerator,
         rules,
         core_boundary_mode,
         EntropyHeuristicType::Shannon,
         None,
     ));
-    drop(grid_guard); // Drop the guard after the call
 
-    let gpu_accelerator = match accelerator_res {
+    let mut gpu_accelerator = match accelerator_res {
         Ok(acc) => acc,
         Err(e) => {
             error!("Failed to initialize GPU accelerator: {}", e);
-            // Convert WfcError to AppError::GpuInitializationError
+            // Convert WfcError to AppError::GpuError
             return Err(AppError::GpuError(GpuError::other(
                 format!("GPU accelerator initialization failed: {}", e),
                 Default::default(),
@@ -523,41 +539,38 @@ pub async fn run_standard_mode(
     let gpu_accelerator_clone = gpu_accelerator.clone();
 
     // Setup progressive results callback if visualization is enabled
-    let progressive_results_callback = if viz_tx.is_some() {
+    let progressive_results_callback: WfcProgressCallback = if viz_tx.is_some() {
         let grid_snapshot_clone = Arc::clone(&grid_snapshot);
         let gpu_clone = gpu_accelerator_clone.clone();
 
-        // Explicitly cast the closure to the expected type
-        let callback: Box<dyn Fn(&PossibilityGrid, u64) -> Result<(), WfcError> + Send + Sync> =
-            Box::new(
-                move |_grid: &PossibilityGrid, iteration: u64| -> Result<(), WfcError> {
-                    // We'll fetch the latest state directly from GPU rather than using the provided grid
-                    // since the GPU might have more up-to-date information
-                    if iteration % 10 == 0 {
-                        // Only process every 10th iteration to reduce overhead
-                        // Use async_std to run the async method in a sync context
-                        match pollster::block_on(gpu_clone.get_intermediate_result()) {
-                            Ok(latest_grid) => {
-                                // Update the grid snapshot with the latest state from GPU
-                                if let Ok(mut guard) = grid_snapshot_clone.lock() {
-                                    *guard = latest_grid;
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to get intermediate result from GPU: {}", e);
+        // Creating a callback of the right type
+        Some(Box::new(
+            move |_grid: &PossibilityGrid, iteration: u64| -> Result<(), WfcError> {
+                // We'll fetch the latest state directly from GPU rather than using the provided grid
+                // since the GPU might have more up-to-date information
+                if iteration % 10 == 0 {
+                    // Only process every 10th iteration to reduce overhead
+                    // Use async_std to run the async method in a sync context
+                    match pollster::block_on(gpu_clone.get_intermediate_result()) {
+                        Ok(latest_grid) => {
+                            // Update the grid snapshot with the latest state from GPU
+                            if let Ok(mut guard) = grid_snapshot_clone.lock() {
+                                *guard = latest_grid;
                             }
                         }
+                        Err(e) => {
+                            log::warn!("Failed to get intermediate result from GPU: {}", e);
+                        }
                     }
-                    Ok(())
-                },
-            );
-
-        Some(callback)
+                }
+                Ok(())
+            },
+        ))
     } else {
         None
     };
 
-    let wfc_config = WfcConfig {
+    let _wfc_config = WfcConfig {
         boundary_condition: core_boundary_mode,
         progress_callback,
         progressive_results_callback,
@@ -580,32 +593,31 @@ pub async fn run_standard_mode(
         grid_guard.clone()
     };
 
-    // Try to directly execute with the given accelerator components
-    // We'll have this fail intentionally for now
-    let message =
-        "Direct GPU execution not implemented properly yet. Use custom propagator/calculator.";
+    // Execute using the GPU accelerator
+    let runner_grid_ref = runner_grid;
+    // Clone the shutdown signal for use in the closure
+    let shutdown_signal_clone = shutdown_signal.clone();
 
-    let wfc_run_result: Result<(), WfcError> = Err(WfcError::InternalError(message.to_string()));
-
-    // The following code is commented out to prevent compilation errors
-    /*
-    let _ = runner::run(
-        &mut runner_grid,
+    let wfc_run_result = pollster::block_on(gpu_accelerator.run_with_callback(
+        &runner_grid_ref,
         rules,
-        gpu_accelerator.clone(),
-        gpu_accelerator,
-        wfc_config,
-    );
-    */
+        config.max_iterations.unwrap_or(u64::MAX),
+        move |_info: ProgressInfo| -> Result<bool, anyhow::Error> {
+            // Simply continue unless shutdown is requested
+            let continue_execution = !shutdown_signal_clone.load(Ordering::SeqCst);
+            Ok(continue_execution)
+        },
+        None, // No tokio shutdown signal
+    ));
 
     log::info!("WFC core algorithm finished.");
 
     // --- Process Result ---
     match wfc_run_result {
-        Ok(_) => {
+        Ok(final_grid) => {
             info!("WFC completed successfully.");
             // Update the original grid with the final state from runner_grid
-            *grid = runner_grid;
+            *grid = final_grid;
 
             // --- Save Output ---
             if !config.output_path.as_os_str().is_empty() {
@@ -629,7 +641,11 @@ pub async fn run_standard_mode(
             if shutdown_signal.load(Ordering::SeqCst) {
                 Err(AppError::Cancelled)
             } else {
-                Err(AppError::WfcError(e))
+                // Convert wfc_gpu::WfcError to AppError
+                Err(AppError::GpuError(GpuError::other(
+                    format!("GPU WFC execution failed: {}", e),
+                    Default::default(),
+                )))
             }
         }
     }

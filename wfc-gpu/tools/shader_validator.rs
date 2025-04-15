@@ -162,8 +162,7 @@ impl ShaderValidator {
                 .filter(|r| !r.errors.is_empty())
                 .count()
         ));
-        self.report
-            .push_str(&format!("- Total errors: {errors}\n"));
+        self.report.push_str(&format!("- Total errors: {errors}\n"));
         self.report
             .push_str(&format!("- Total warnings: {warnings}\n"));
 
@@ -194,9 +193,9 @@ impl ShaderValidator {
         };
 
         // Try to use external validator if specified
-        if let Some(validator_path) = &self.config.naga_validator_path {
+        if let Some(_validator_path) = &self.config.naga_validator_path {
             return self.validate_with_naga(shader_path);
-        } else if let Some(validator_path) = &self.config.tint_validator_path {
+        } else if let Some(_validator_path) = &self.config.tint_validator_path {
             return self.validate_with_tint(shader_path);
         }
 

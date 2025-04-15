@@ -9,7 +9,6 @@ use crate::{
 use log::trace;
 use std::fmt::Debug;
 use std::sync::Arc;
-use wfc_core::entropy::EntropyCalculator;
 use wfc_core::grid::{EntropyGrid, PossibilityGrid};
 
 /// A coordinate in 3D space (x, y, z).
@@ -181,10 +180,10 @@ impl EntropyCoordinator {
                 z,
                 entropy_value
             );
-            return Ok(Some((entropy_value, Coord3D { x, y, z })));
+            Ok(Some((entropy_value, Coord3D { x, y, z })))
         } else {
             trace!("EntropyCoordinator: No cell with positive entropy found (grid fully collapsed or contradiction).");
-            return Ok(None);
+            Ok(None)
         }
     }
 
@@ -202,12 +201,14 @@ impl EntropyCoordinator {
 /// The default implementation of the entropy coordination strategy.
 #[derive(Debug, Clone)]
 struct DefaultEntropyCoordinationStrategy {
-    entropy_calculator: Arc<GpuEntropyCalculator>,
+    _entropy_calculator: Arc<GpuEntropyCalculator>,
 }
 
 impl DefaultEntropyCoordinationStrategy {
     fn new(entropy_calculator: Arc<GpuEntropyCalculator>) -> Self {
-        Self { entropy_calculator }
+        Self {
+            _entropy_calculator: entropy_calculator,
+        }
     }
 }
 

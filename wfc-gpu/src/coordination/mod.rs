@@ -23,9 +23,9 @@ use wfc_core::{
 };
 use wgpu::{Device, Queue};
 
-// Local module imports
-pub(crate) use self::entropy::EntropyCoordinationStrategy;
-pub(crate) use self::strategy::CoordinationStrategy;
+// Local module imports - removing unused ones
+// pub(crate) use self::entropy::EntropyCoordinationStrategy;
+// pub(crate) use self::strategy::CoordinationStrategy;
 
 // Re-export or define CoordinationError, CoordinationEvent, CoordinationStrategy here
 // For now, let's assume they should be defined in this file or imported differently.
@@ -168,9 +168,9 @@ impl PropagationCoordinationStrategy for DirectPropagationCoordinationStrategy {
         updated_cells: &[(usize, usize, usize)],
         rules: &wfc_rules::AdjacencyRules,
     ) -> Result<(), PropagationError> {
-        let mut propagator_guard = propagator.write().await;
+        let propagator_guard = propagator.write().await;
         // Access the underlying GpuConstraintPropagator through the trait method
-        ConstraintPropagator::propagate(&mut *propagator_guard, grid, updated_cells.to_vec(), rules)
+        ConstraintPropagator::propagate(&*propagator_guard, grid, updated_cells.to_vec(), rules)
             .await
     }
 
@@ -415,8 +415,8 @@ impl WfcCoordinator for DefaultCoordinator {
 /// This implementation delegates all coordination decisions to strategy implementations.
 #[derive(Debug, Clone)]
 pub struct StrategicCoordinator {
-    entropy_calculator: Arc<GpuEntropyCalculator>,
-    propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    _entropy_calculator: Arc<GpuEntropyCalculator>,
+    _propagator: Arc<RwLock<GpuConstraintPropagator>>,
     // Strategy for overall coordination
     coordination_strategy: Box<dyn strategy::CoordinationStrategy>,
     // Synchronizer for GPU operations
@@ -431,8 +431,8 @@ impl StrategicCoordinator {
         coordination_strategy: Box<dyn strategy::CoordinationStrategy>,
     ) -> Self {
         Self {
-            entropy_calculator,
-            propagator,
+            _entropy_calculator: entropy_calculator,
+            _propagator: propagator,
             coordination_strategy,
             sync: None,
         }
@@ -558,6 +558,7 @@ impl StrategicCoordinator {
         self.finalize(accelerator, grid).await
     }
 
+    #[allow(dead_code)]
     async fn coordinate_propagation(
         &self,
         propagator: &Arc<RwLock<GpuConstraintPropagator>>,
@@ -598,8 +599,8 @@ impl WfcCoordinator for StrategicCoordinator {
         &self,
         entropy_calculator: &Arc<GpuEntropyCalculator>,
         buffers: &Arc<GpuBuffers>,
-        device: &Device,
-        queue: &Queue,
+        _device: &Device,
+        _queue: &Queue,
         sync: &Arc<GpuSynchronizer>,
     ) -> Result<Option<(usize, usize, usize)>, GpuError> {
         trace!("StrategicCoordinator: Delegating entropy calculation to strategy");
