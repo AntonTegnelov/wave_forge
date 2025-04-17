@@ -535,28 +535,28 @@ impl ComputePipelines {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: resources.params_uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
                     resource: resources.grid_possibilities_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
+                    binding: 1,
                     resource: resources.adjacency_rules_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 3,
+                    binding: 2,
                     resource: resources.rule_weights_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 3,
                     resource: resources.worklist_bufs[0].as_entire_binding(),
                 }, // Input worklist
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 4,
                     resource: resources.output_worklist_bufs[0].as_entire_binding(),
                 }, // Output worklist
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: resources.params_uniform_buf.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: resources.worklist_count_bufs[0].as_entire_binding(),
@@ -582,28 +582,28 @@ impl ComputePipelines {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: resources.params_uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
                     resource: resources.grid_possibilities_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
+                    binding: 1,
                     resource: resources.adjacency_rules_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 3,
+                    binding: 2,
                     resource: resources.rule_weights_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 3,
                     resource: resources.worklist_bufs[1].as_entire_binding(),
                 }, // Input worklist (ping-pong)
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 4,
                     resource: resources.output_worklist_bufs[1].as_entire_binding(),
                 }, // Output worklist (ping-pong)
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: resources.params_uniform_buf.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: resources.worklist_count_bufs[1].as_entire_binding(),
