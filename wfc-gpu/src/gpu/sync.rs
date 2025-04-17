@@ -226,6 +226,9 @@ impl GpuSynchronizer {
         // Poll the device while waiting for the map operation to complete
         let _ = self.device.poll(wgpu::MaintainBase::Wait);
 
+        // Create target_grid outside the match scope
+        let mut target_grid = target.clone();
+
         // Wait for the mapping result
         match receiver.await {
             Ok(Ok(())) => {
@@ -236,7 +239,6 @@ impl GpuSynchronizer {
                 // Copy data from mapped buffer to target grid
                 let mapped_data = bytemuck::cast_slice::<u8, u32>(&mapped_range);
                 let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
-                let mut target_grid = target.clone();
 
                 for z in 0..target_grid.depth {
                     for y in 0..target_grid.height {
