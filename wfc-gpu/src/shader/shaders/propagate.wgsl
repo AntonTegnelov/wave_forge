@@ -42,12 +42,12 @@ const AXIS_POS_Z: u32 = 4u;
 const AXIS_NEG_Z: u32 = 5u;
 
 // Bind group 0: Parameters and buffers
-@group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read_write> grid_possibilities: array<atomic<u32>>;
-@group(0) @binding(2) var<storage, read> adjacency_rules: array<u32>;
-@group(0) @binding(3) var<storage, read> rule_weights: array<u32>;
-@group(0) @binding(4) var<storage, read> worklist: array<u32>;
-@group(0) @binding(5) var<storage, read_write> output_worklist: array<atomic<u32>>;
+@group(0) @binding(0) var<storage, read_write> grid_possibilities: array<atomic<u32>>;
+@group(0) @binding(1) var<storage, read> adjacency_rules: array<u32>;
+@group(0) @binding(2) var<storage, read> rule_weights: array<u32>;
+@group(0) @binding(3) var<storage, read> worklist: array<u32>;
+@group(0) @binding(4) var<storage, read_write> output_worklist: array<atomic<u32>>;
+@group(0) @binding(5) var<uniform> params: Params;
 @group(0) @binding(6) var<storage, read_write> worklist_count: array<atomic<u32>>;
 @group(0) @binding(7) var<storage, read_write> contradiction_flag: atomic<u32>;
 @group(0) @binding(8) var<storage, read_write> contradiction_location: atomic<u32>;
