@@ -249,13 +249,20 @@ impl GpuSynchronizer {
                             // Copy the u32 chunks for this cell's possibilities
                             for i in 0..u32s_per_cell {
                                 if buffer_start + i < mapped_data.len() {
-                                    target_grid.set_possibility_chunk(
-                                        x,
-                                        y,
-                                        z,
-                                        i,
-                                        mapped_data[buffer_start + i],
-                                    );
+                                    target_grid
+                                        .set_possibility_chunk(
+                                            x,
+                                            y,
+                                            z,
+                                            i,
+                                            mapped_data[buffer_start + i],
+                                        )
+                                        .map_err(|e| {
+                                            GpuError::BufferCopy(format!(
+                                                "Failed to set possibility chunk: {}",
+                                                e
+                                            ))
+                                        })?;
                                 }
                             }
                         }
