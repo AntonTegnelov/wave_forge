@@ -264,9 +264,13 @@ fn update_neighbor(neighbor_idx: u32, allowed_neighbor_mask: PossibilityMask) ->
 }
 
 // Main propagation function
-fn propagate_constraints() {
+@compute @workgroup_size(256)
+fn propagate_constraints(
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+) {
     // Get global thread ID
-    let global_id = workgroup_index.x * workgroup_size.x + local_id.x;
+    let global_id = workgroup_id.x * 256u + local_id.x;
     
     // Check if this thread should process a cell from the worklist
     if (global_id >= atomicLoad(&worklist_count[0])) {
