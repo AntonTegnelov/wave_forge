@@ -458,7 +458,7 @@ impl ComputePipelines {
             device,
             &propagation_pipeline_layout,
             &propagation_shader_module,
-            "main_propagate", // Entry point
+            "propagate_constraints", // Entry point
             propagation_hash,
         )?;
 
