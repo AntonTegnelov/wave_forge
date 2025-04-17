@@ -17,6 +17,7 @@ use wfc_rules::{AdjacencyRules, TileSet};
 
 /// Represents the aggregated results of a single benchmark run.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct BenchmarkResult {
     /// Width of the grid used.
     pub grid_width: usize,
