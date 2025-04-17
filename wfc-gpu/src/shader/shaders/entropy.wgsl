@@ -15,7 +15,7 @@ struct Params {
 
 // Bind group 1: Output & Global Minimum
 @group(1) @binding(0) var<storage, read_write> entropy_grid: array<f32>; // For debug or other uses
-@group(1) @binding(1) var<storage, read_write> min_entropy_info: atomic<u32>; // [0] = min_entropy_bits, [1] = flat_index
+@group(1) @binding(1) var<storage, read_write> min_entropy_info: array<atomic<u32>, 2>; // [0] = min_entropy_bits, [1] = flat_index
 
 // Shared memory for workgroup reduction
 struct MinInfo {

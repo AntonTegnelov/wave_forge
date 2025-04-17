@@ -159,7 +159,7 @@ fn verify_adjacency_rules(grid: &PossibilityGrid, rules: &AdjacencyRules) -> usi
                     if cell.count_ones() == 1 {
                         let tile = cell.iter_ones().next().unwrap();
                         // Check each direction
-                        for (dx, dy, dz, axis, positive) in [
+                        for (dx, dy, dz, axis, _positive) in [
                             (1, 0, 0, 0, true),   // +x
                             (-1, 0, 0, 0, false), // -x
                             (0, 1, 0, 1, true),   // +y
