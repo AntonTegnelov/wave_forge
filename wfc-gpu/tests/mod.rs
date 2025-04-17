@@ -63,7 +63,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use wfc_core::entropy::EntropyHeuristicType;
 use wfc_core::grid::PossibilityGrid;
-use wfc_core::BoundaryCondition;
+use wfc_core::{BoundaryCondition, ProgressInfo};
 use wfc_gpu::gpu::accelerator::GpuAccelerator;
 use wfc_rules::{AdjacencyRules, TileSet, Transformation};
 
@@ -127,7 +127,7 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
     assert!(result.is_ok(), "WFC algorithm failed: {:?}", result.err());
 
     // Verify grid is fully collapsed
-    let is_collapsed = grid.is_fully_collapsed()?;
+    let is_collapsed = grid.is_fully_collapsed().map_err(|e| anyhow::anyhow!(e))?;
     assert!(is_collapsed, "Not all cells were collapsed");
 
     // Get grid dimensions
@@ -147,29 +147,37 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
 // Helper function to verify adjacency rules
 fn verify_adjacency_rules(grid: &PossibilityGrid, rules: &AdjacencyRules) -> usize {
     let mut violations = 0;
-    let (w, h, d) = grid.dimensions();
+    let w = grid.width;
+    let h = grid.height;
+    let d = grid.depth;
 
     // Check each cell's neighbors
     for x in 0..w {
         for y in 0..h {
             for z in 0..d {
-                if let Some(tile) = grid.get_collapsed_state(x, y, z) {
-                    // Check each direction
-                    for (dx, dy, dz, axis, positive) in [
-                        (1, 0, 0, 0, true),   // +x
-                        (-1, 0, 0, 0, false), // -x
-                        (0, 1, 0, 1, true),   // +y
-                        (0, -1, 0, 1, false), // -y
-                        (0, 0, 1, 2, true),   // +z
-                        (0, 0, -1, 2, false), // -z
-                    ] {
-                        let nx = (x as i32 + dx).rem_euclid(w as i32) as usize;
-                        let ny = (y as i32 + dy).rem_euclid(h as i32) as usize;
-                        let nz = (z as i32 + dz).rem_euclid(d as i32) as usize;
+                if let Some(cell) = grid.get(x, y, z) {
+                    if cell.count_ones() == 1 {
+                        let tile = cell.iter_ones().next().unwrap();
+                        // Check each direction
+                        for (dx, dy, dz, axis, positive) in [
+                            (1, 0, 0, 0, true),   // +x
+                            (-1, 0, 0, 0, false), // -x
+                            (0, 1, 0, 1, true),   // +y
+                            (0, -1, 0, 1, false), // -y
+                            (0, 0, 1, 2, true),   // +z
+                            (0, 0, -1, 2, false), // -z
+                        ] {
+                            let nx = (x as i32 + dx).rem_euclid(w as i32) as usize;
+                            let ny = (y as i32 + dy).rem_euclid(h as i32) as usize;
+                            let nz = (z as i32 + dz).rem_euclid(d as i32) as usize;
 
-                        if let Some(neighbor_tile) = grid.get_collapsed_state(nx, ny, nz) {
-                            if !rules.check(tile, neighbor_tile, axis) {
-                                violations += 1;
+                            if let Some(neighbor_cell) = grid.get(nx, ny, nz) {
+                                if neighbor_cell.count_ones() == 1 {
+                                    let neighbor_tile = neighbor_cell.iter_ones().next().unwrap();
+                                    if !rules.check(tile, neighbor_tile, axis) {
+                                        violations += 1;
+                                    }
+                                }
                             }
                         }
                     }
