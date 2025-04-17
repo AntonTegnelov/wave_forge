@@ -21,8 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 use wfc_core::{
-    entropy::EntropyHeuristicType, grid::PossibilityGrid, runner::WfcConfig, BoundaryCondition,
-    ProgressInfo, WfcError,
+    entropy::EntropyHeuristicType, grid::PossibilityGrid, BoundaryCondition, ProgressInfo, WfcError,
 };
 use wfc_gpu::{gpu::accelerator::GpuAccelerator, utils::error::gpu_error::GpuError};
 use wfc_rules::{loader::load_from_file, AdjacencyRules, TileSet};
@@ -195,27 +194,18 @@ pub async fn run_benchmark_mode(
             let mut successful_collapsed_cells: Vec<usize> = Vec::new();
 
             // Prepare GPU Accelerator *once* per scenario if possible
-            // Requires grid/rules available here
             let scenario_grid = PossibilityGrid::new(width, height, depth, tileset.weights.len());
-            let scenario_grid_snapshot = Arc::new(Mutex::new(scenario_grid.clone()));
             let core_boundary_mode: BoundaryCondition = config.boundary_mode.into();
 
-            // Create a clone of the grid outside the mutex lock to avoid holding the lock across the await point
-            let grid_for_accelerator = {
-                let grid_guard = scenario_grid_snapshot
-                    .lock()
-                    .expect("Benchmark grid lock failed");
-                grid_guard.clone()
-            };
-
-            // Now initialize the GPU accelerator using the cloned grid without holding mutex across await
-            let accelerator_res = pollster::block_on(GpuAccelerator::new(
-                &grid_for_accelerator,
+            // Initialize the GPU accelerator without mutex
+            let accelerator_res = GpuAccelerator::new(
+                &scenario_grid,
                 &rules,
                 core_boundary_mode,
                 EntropyHeuristicType::Shannon,
                 None,
-            ));
+            )
+            .await;
 
             // Store the accelerator directly, not Arc
             let accelerator = match accelerator_res {
@@ -237,14 +227,16 @@ pub async fn run_benchmark_mode(
                     height,
                     depth
                 );
-                // Grid is implicitly handled by accelerator in benchmark func
 
-                // Pass Some(Arc::new(accelerator.clone()))
+                // Create Arc wrapper for the accelerator clone (still necessary for the function signature)
+                let accelerator_for_run = Arc::new(accelerator.clone());
+
+                // Run the benchmark with the provided accelerator
                 let result = benchmark::run_single_wfc_benchmark(
                     config,
                     &tileset,
                     &rules,
-                    Some(Arc::new(accelerator.clone())), // Wrap cloned accelerator
+                    Some(accelerator_for_run),
                 )
                 .await;
 
@@ -253,7 +245,7 @@ pub async fn run_benchmark_mode(
                         log::info!(
                             "  Run {} completed successfully in {:.3} ms ({} iterations)",
                             run_index + 1,
-                            bench_res.total_time.as_secs_f64() * 1000.0, // Access is correct
+                            bench_res.total_time.as_secs_f64() * 1000.0,
                             bench_res.iterations.unwrap_or(0)
                         );
                         successful_times_ms.push(bench_res.total_time.as_secs_f64() * 1000.0);
@@ -282,7 +274,6 @@ pub async fn run_benchmark_mode(
             let median_total_time_ms = calculate_median(&mut sorted_times);
             let stddev_total_time_ms =
                 avg_total_time_ms.and_then(|avg| calculate_std_dev(&successful_times_ms, avg));
-            // ADD similar calculations for iterations and collapsed_cells if needed
 
             all_scenario_results.push(BenchmarkScenarioResult {
                 rule_file: rule_file_path.clone(),
@@ -296,7 +287,6 @@ pub async fn run_benchmark_mode(
                 avg_total_time_ms,
                 median_total_time_ms,
                 stddev_total_time_ms,
-                // ADD other stats fields if BenchmarkScenarioResult is updated
             });
         }
     }
@@ -349,7 +339,6 @@ pub async fn run_benchmark_mode(
     // 5. Write to CSV if requested
     if let Some(csv_path) = &config.benchmark_csv_output {
         log::info!("Writing benchmark suite results to {:?}", csv_path);
-        // Use the function from benchmark module
         match benchmark::write_scenario_results_to_csv(&all_scenario_results, csv_path) {
             Ok(_) => log::info!("Benchmark results successfully written to {:?}", csv_path),
             Err(e) => {
@@ -363,9 +352,9 @@ pub async fn run_benchmark_mode(
 
 pub async fn run_standard_mode(
     config: &AppConfig,
-    _tileset: &TileSet, // Prefix with underscore since it's not used directly
+    _tileset: &TileSet,
     rules: &AdjacencyRules,
-    grid: &mut PossibilityGrid, // Original grid to update on success
+    grid: &mut PossibilityGrid,
     viz_tx: &Option<Sender<VizMessage>>,
     snapshot_handle: &mut Option<thread::JoinHandle<()>>,
     shutdown_signal: Arc<AtomicBool>,
@@ -443,7 +432,7 @@ pub async fn run_standard_mode(
     let report_interval = config.report_progress_interval;
     let progress_log_level = config.progress_log_level.clone();
     let progress_log_writer_clone = progress_log_writer.clone();
-    let progress_callback: ProgressCallback = if let Some(interval) = report_interval {
+    let _progress_callback: ProgressCallback = if let Some(interval) = report_interval {
         let last_report_time_clone = Arc::clone(&last_report_time);
         Some(Box::new(move |info: ProgressInfo| {
             let now = Instant::now();
@@ -494,8 +483,6 @@ pub async fn run_standard_mode(
                     }
                 }
             }
-            // Check shutdown signal within callback? Optional, runner already checks.
-            // if shutdown_signal.load(Ordering::SeqCst) { return Err(WfcError::Interrupted); }
             Ok(())
         }))
     } else {
@@ -505,7 +492,7 @@ pub async fn run_standard_mode(
     // --- Initialize GPU Accelerator ---
     let core_boundary_mode: BoundaryCondition = config.boundary_mode.into();
 
-    // Create a clone of the grid outside the mutex lock to avoid holding the lock across the await point
+    // Get grid data from the snapshot, but don't keep the lock during async operation
     let grid_for_accelerator = {
         let grid_guard = grid_snapshot
             .lock()
@@ -513,20 +500,20 @@ pub async fn run_standard_mode(
         grid_guard.clone()
     };
 
-    // Now initialize the GPU accelerator using the cloned grid without holding mutex across await
-    let accelerator_res = pollster::block_on(GpuAccelerator::new(
+    // Initialize the GPU accelerator using the cloned grid
+    let accelerator_res = GpuAccelerator::new(
         &grid_for_accelerator,
         rules,
         core_boundary_mode,
         EntropyHeuristicType::Shannon,
         None,
-    ));
+    )
+    .await;
 
     let mut gpu_accelerator = match accelerator_res {
         Ok(acc) => acc,
         Err(e) => {
             error!("Failed to initialize GPU accelerator: {}", e);
-            // Convert WfcError to AppError::GpuError
             return Err(AppError::GpuError(GpuError::other(
                 format!("GPU accelerator initialization failed: {}", e),
                 Default::default(),
@@ -534,23 +521,20 @@ pub async fn run_standard_mode(
         }
     };
 
-    // --- Setup WfcConfig for runner ---
-    // Create an Arc clone of the GPU accelerator for progressive results callback
+    // Create a clone of the GPU accelerator for progressive results callback
     let gpu_accelerator_clone = gpu_accelerator.clone();
 
     // Setup progressive results callback if visualization is enabled
-    let progressive_results_callback: WfcProgressCallback = if viz_tx.is_some() {
+    let _progressive_results_callback: WfcProgressCallback = if viz_tx.is_some() {
         let grid_snapshot_clone = Arc::clone(&grid_snapshot);
-        let gpu_clone = gpu_accelerator_clone.clone();
+        let gpu_clone = gpu_accelerator_clone;
 
-        // Creating a callback of the right type
+        // Create callback of the right type
         Some(Box::new(
             move |_grid: &PossibilityGrid, iteration: u64| -> Result<(), WfcError> {
-                // We'll fetch the latest state directly from GPU rather than using the provided grid
-                // since the GPU might have more up-to-date information
+                // Fetch the latest state directly from GPU
                 if iteration % 10 == 0 {
                     // Only process every 10th iteration to reduce overhead
-                    // Use async_std to run the async method in a sync context
                     match pollster::block_on(gpu_clone.get_intermediate_result()) {
                         Ok(latest_grid) => {
                             // Update the grid snapshot with the latest state from GPU
@@ -570,22 +554,10 @@ pub async fn run_standard_mode(
         None
     };
 
-    let _wfc_config = WfcConfig {
-        boundary_condition: core_boundary_mode,
-        progress_callback,
-        progressive_results_callback,
-        shutdown_signal: shutdown_signal.clone(),
-        initial_checkpoint: None,
-        checkpoint_interval: None,
-        checkpoint_path: None,
-        max_iterations: config.max_iterations,
-        seed: config.seed,
-        max_backtrack_depth: None, // Backtracking disabled by default
-    };
-
     // --- Run WFC using the runner ---
     log::info!("Starting WFC core algorithm on GPU...");
-    // Clone the grid state *before* passing it to the runner, runner needs mutable grid
+
+    // Get a clone of the grid from the snapshot
     let runner_grid = {
         let grid_guard = grid_snapshot
             .lock()
@@ -593,22 +565,23 @@ pub async fn run_standard_mode(
         grid_guard.clone()
     };
 
-    // Execute using the GPU accelerator
-    let runner_grid_ref = runner_grid;
     // Clone the shutdown signal for use in the closure
     let shutdown_signal_clone = shutdown_signal.clone();
 
-    let wfc_run_result = pollster::block_on(gpu_accelerator.run_with_callback(
-        &runner_grid_ref,
-        rules,
-        config.max_iterations.unwrap_or(u64::MAX),
-        move |_info: ProgressInfo| -> Result<bool, anyhow::Error> {
-            // Simply continue unless shutdown is requested
-            let continue_execution = !shutdown_signal_clone.load(Ordering::SeqCst);
-            Ok(continue_execution)
-        },
-        None, // No tokio shutdown signal
-    ));
+    // Execute using the GPU accelerator
+    let wfc_run_result = gpu_accelerator
+        .run_with_callback(
+            &runner_grid,
+            rules,
+            config.max_iterations.unwrap_or(u64::MAX),
+            move |_info: ProgressInfo| -> Result<bool, anyhow::Error> {
+                // Simply continue unless shutdown is requested
+                let continue_execution = !shutdown_signal_clone.load(Ordering::SeqCst);
+                Ok(continue_execution)
+            },
+            None, // No tokio shutdown signal
+        )
+        .await;
 
     log::info!("WFC core algorithm finished.");
 

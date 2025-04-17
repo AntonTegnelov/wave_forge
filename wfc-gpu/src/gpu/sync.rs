@@ -6,7 +6,7 @@ use crate::{
     utils::error::gpu_error::{GpuError as NewGpuError, GpuErrorContext, GpuResourceType},
     utils::error_recovery::{GpuError as OldGpuError, ParseGridCoord},
 };
-use log::{debug, error, trace, warn};
+use log::{debug, error, trace};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::AdjacencyRules;
@@ -537,17 +537,14 @@ impl GpuSynchronizer {
 
     /// Updates the worklist size parameter in the propagation params uniform buffer.
     pub fn update_params_worklist_size(&self, worklist_size: u32) -> Result<(), GpuError> {
-        // Read current params
-        // This requires a download which is slow. Consider passing full params instead.
-        warn!("update_params_worklist_size is inefficient due to read-modify-write");
+        let current_params = GpuParamsUniform {
+            worklist_size,
+            ..GpuParamsUniform::default()
+        };
 
-        // Placeholder: Assume we have the current params or can reconstruct them.
-        // This function might need to be removed or redesigned.
-        let mut current_params = GpuParamsUniform::default(); // DUMMY
-        current_params.worklist_size = worklist_size;
-
+        // Create a new buffer with the updated params and upload to GPU
         self.queue.write_buffer(
-            &self.buffers.params_uniform_buf, // Direct access ok
+            &self.buffers.params_uniform_buf,
             0,
             bytemuck::cast_slice(&[current_params]),
         );

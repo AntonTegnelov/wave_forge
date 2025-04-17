@@ -14,31 +14,6 @@ mod tools {
 use tools::shader_optimizer::{FeatureVariant, OptimizerConfig, ShaderOptimizer};
 use tools::shader_validator::{ShaderValidator, ValidatorConfig};
 
-// --- Duplicated Definitions (needed because build.rs runs before crate is compiled) ---
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum BuildShaderType {
-    Entropy,
-    Propagation,
-}
-
-/// Duplicated logic from `ShaderManager` to avoid build dependency
-fn get_variant_filename(shader_type: BuildShaderType, features: &[&str]) -> String {
-    let base_name = match shader_type {
-        BuildShaderType::Entropy => "Entropy",
-        BuildShaderType::Propagation => "Propagation",
-    };
-    if features.is_empty() {
-        format!("{base_name}.wgsl")
-    } else {
-        let mut sorted_features = features.to_vec();
-        sorted_features.sort_unstable();
-        format!("{}_{}.wgsl", base_name, sorted_features.join("_"))
-    }
-}
-
-// --- End Duplicated Definitions ---
-
 // --- Registry Parsing Structs ---
 #[derive(Deserialize, Debug)]
 struct ShaderComponentInfo {
@@ -52,6 +27,7 @@ struct ShaderComponentInfo {
     #[serde(default)]
     provided_features: Vec<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     gpu_capabilities: Vec<String>,
 }
 
