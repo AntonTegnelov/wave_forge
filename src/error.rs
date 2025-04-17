@@ -17,6 +17,7 @@ pub enum AppError {
     GpuError(#[from] CoreGpuError),
 
     #[error("Visualization Error: {0}")]
+    #[allow(dead_code)]
     VisualizationError(String),
 
     #[error("Save Error: {0}")]

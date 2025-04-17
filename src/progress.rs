@@ -6,6 +6,7 @@ use wfc_core::ProgressInfo;
 use wfc_core::WfcError;
 
 /// Configuration for progress reporter behavior.
+#[allow(dead_code)]
 pub struct ReporterConfig {
     /// Minimum time that must elapse between progress reports.
     pub report_interval: Duration,
@@ -27,12 +28,15 @@ pub trait ProgressReporter: Send + Sync {
     ///
     /// * `Ok(())` if reporting was successful.
     /// * `Err(anyhow::Error)` if an error occurred during reporting.
+    #[allow(dead_code)]
     fn report(&mut self, info: &ProgressInfo) -> Result<()>;
 
     /// Called when the WFC process completes successfully.
+    #[allow(dead_code)]
     fn finish(&mut self) -> Result<()>;
 
     /// Called when the WFC process fails with an error.
+    #[allow(dead_code)]
     fn fail(&mut self, error: &WfcError) -> Result<()>;
 }
 
@@ -49,6 +53,7 @@ impl ConsoleProgressReporter {
     /// # Arguments
     ///
     /// * `report_interval` - The minimum time that must elapse between progress reports.
+    #[allow(dead_code)]
     pub fn new(report_interval: Duration) -> Self {
         let now = Instant::now();
         Self {

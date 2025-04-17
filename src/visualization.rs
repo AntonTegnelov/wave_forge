@@ -96,6 +96,7 @@ impl TerminalVisualizer {
     }
 
     /// Sets the Z-layer index to be displayed.
+    #[allow(dead_code)]
     pub fn set_layer(&mut self, z_layer: usize) {
         self.z_layer = z_layer;
     }
@@ -302,6 +303,7 @@ impl Simple2DVisualizer {
     }
 
     /// Sets the Z-layer index to be displayed.
+    #[allow(dead_code)]
     pub fn set_layer(&mut self, z_layer: usize) {
         self.z_layer = z_layer;
     }

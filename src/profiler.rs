@@ -67,6 +67,7 @@ impl Profiler {
     }
 
     /// Clears all metrics collected by this profiler.
+    #[allow(dead_code)]
     pub fn reset(&self) {
         let mut metrics_guard = self.metrics.lock().expect("Metrics lock poisoned");
         metrics_guard.clear();
@@ -152,6 +153,7 @@ pub fn print_profiler_summary(profiler: &Profiler) {
 }
 
 /// A global profiler for collecting performance metrics across components.
+#[allow(dead_code)]
 pub fn global_profiler() -> &'static Profiler {
     static INSTANCE: once_cell::sync::Lazy<Profiler> =
         once_cell::sync::Lazy::new(|| Profiler::new("Global"));
