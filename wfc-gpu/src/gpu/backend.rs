@@ -179,6 +179,7 @@ pub trait Synchronization: GpuBackend {
 #[derive(Debug)]
 pub struct WgpuBackend {
     /// WGPU instance
+    #[allow(dead_code)]
     instance: Arc<wgpu::Instance>,
     /// WGPU adapter (physical GPU)
     adapter: Option<Arc<wgpu::Adapter>>,
