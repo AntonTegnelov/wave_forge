@@ -99,8 +99,13 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
         allowed_tuples,
     );
 
-    // Initialize grid
-    let mut grid = PossibilityGrid::new(grid_size.0, grid_size.1, grid_size.2, num_tiles);
+    // Initialize grid with the number of transformed tiles
+    let mut grid = PossibilityGrid::new(
+        grid_size.0,
+        grid_size.1,
+        grid_size.2,
+        tileset.num_transformed_tiles(),
+    );
 
     // Create GPU accelerator
     let mut accelerator = GpuAccelerator::new(
