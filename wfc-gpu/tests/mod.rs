@@ -75,11 +75,18 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
     let grid_size = (16, 16, 16); // Small enough for quick testing, large enough to be meaningful
     let num_tiles = 2; // Simple binary tiles (e.g., "filled" and "empty")
 
+    println!("Grid size: {:?}", grid_size);
+
     // Create a simple tileset with equal weights and only Identity transformations
     let tileset = TileSet::new(
         vec![1.0; num_tiles],                            // weights
         vec![vec![Transformation::Identity]; num_tiles], // allowed_transformations
     )?;
+
+    println!(
+        "Number of transformed tiles: {}",
+        tileset.num_transformed_tiles()
+    );
 
     // Create simple adjacency rules: tiles can only connect to themselves
     let mut allowed_tuples = Vec::new();
@@ -106,6 +113,12 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
         grid_size.2,
         tileset.num_transformed_tiles(),
     );
+
+    println!(
+        "Grid dimensions: {}x{}x{}",
+        grid.width, grid.height, grid.depth
+    );
+    println!("Grid num_tiles: {}", grid.num_tiles());
 
     // Create GPU accelerator
     let mut accelerator = GpuAccelerator::new(

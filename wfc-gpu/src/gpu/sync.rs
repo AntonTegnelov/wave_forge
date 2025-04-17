@@ -233,40 +233,31 @@ impl GpuSynchronizer {
                 trace!("Possibility buffer mapped successfully.");
                 let mapped_range = possibility_buffer_slice.get_mapped_range();
 
-                // --- Copy data from mapped GPU buffer to CPU grid --- ///
-                // Safety: Ensure target_grid dimensions match GPU buffer layout
-                // Assume data is tightly packed array of u32 bitmasks.
-                let num_tiles = target.num_tiles();
-                let tiles_per_u32 = 32;
-                let u32_per_cell = num_tiles.div_ceil(tiles_per_u32);
-                let expected_size = target.width
-                    * target.height
-                    * target.depth
-                    * u32_per_cell
-                    * std::mem::size_of::<u32>();
+                // Copy data from mapped buffer to target grid
+                let mut target_grid = target.clone();
+                let mapped_data = bytemuck::cast_slice::<u8, u32>(&mapped_range);
 
-                if mapped_range.len() != expected_size {
-                    error!(
-                        "GPU buffer size mismatch. Expected: {}, Actual: {}",
-                        expected_size,
-                        mapped_range.len()
-                    );
-                    // Unmap before returning error
-                    drop(mapped_range); // Drop mapped_range to potentially trigger unmap implicitly
-                    self.buffers.grid_buffers.grid_possibilities_buf.unmap();
-                    return Err(GpuError::BufferCopy(
-                        "GPU possibility buffer size does not match target grid dimensions"
-                            .to_string(),
-                    ));
+                for z in 0..target.depth {
+                    for y in 0..target.height {
+                        for x in 0..target.width {
+                            let cell_idx = target_grid.get_index(x, y, z);
+                            let buffer_start = cell_idx * u32_per_cell;
+
+                            // Copy the u32 chunks for this cell's possibilities
+                            for i in 0..u32_per_cell {
+                                if buffer_start + i < mapped_data.len() {
+                                    target_grid.set_possibility_chunk(
+                                        x,
+                                        y,
+                                        z,
+                                        i,
+                                        mapped_data[buffer_start + i],
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
-
-                // TODO: Implement the actual data copy efficiently.
-                // This likely involves iterating through target_grid cells
-                // and copying the corresponding u32 chunks from mapped_range.
-                // Consider using unsafe code carefully for performance if needed,
-                // or libraries like `bytemuck`.
-                // Placeholder: Just log for now.
-                trace!("TODO: Implement actual grid data copy from mapped buffer.");
 
                 // Drop the mapped range view. This implicitly signals to WGPU
                 // that we are done with the mapped memory.
@@ -289,7 +280,7 @@ impl GpuSynchronizer {
 
         let duration = start_time.elapsed();
         trace!("Grid download completed in {:?}", duration);
-        Ok(target.clone())
+        Ok(target_grid)
     }
 
     /// Downloads the contradiction status (flag and location) from the GPU.
