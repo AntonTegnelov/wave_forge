@@ -66,10 +66,76 @@ const WORKGROUP_SIZE_X: u32 = 64u; // Hardcoded size
 const ONE: u32 = 1u; // Placeholder, will be dynamically set in source
 
 // Entry point
-@compute @workgroup_size(WORKGROUP_SIZE_X, 1, 1)
-fn main_propagate() {
-    // Call the main propagation function
-    propagate_constraints();
+@compute @workgroup_size(256)
+fn propagate_constraints(
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+) {
+    // Get global thread ID
+    let global_id = workgroup_id.x * 256u + local_id.x;
+    
+    // Check if this thread should process a cell from the worklist
+    if (global_id >= atomicLoad(&worklist_count[0])) {
+        return; // No more cells to process
+    }
+    
+    // Get the cell index from the worklist
+    let cell_idx = worklist[global_id];
+    
+    // Load cell's current possibilities
+    var current_possibilities = load_cell_possibilities(cell_idx);
+    
+    // Get cell's 3D coordinates
+    let z = cell_idx / (params.grid_width * params.grid_height);
+    let y = (cell_idx % (params.grid_width * params.grid_height)) / params.grid_width;
+    let x = cell_idx % params.grid_width;
+    
+    // Process each neighbor
+    for (var axis = 0u; axis < params.num_axes; axis = axis + 1u) {
+        // Compute allowed neighbor mask for this axis
+        let allowed_neighbor_mask = compute_allowed_neighbor_mask(&current_possibilities, axis);
+        
+        // Calculate neighbor coordinates based on axis
+        var nx = x;
+        var ny = y;
+        var nz = z;
+        
+        switch (axis) {
+            case AXIS_POS_X: { nx = x + 1u; }
+            case AXIS_NEG_X: { nx = x - 1u; }
+            case AXIS_POS_Y: { ny = y + 1u; }
+            case AXIS_NEG_Y: { ny = y - 1u; }
+            case AXIS_POS_Z: { nz = z + 1u; }
+            case AXIS_NEG_Z: { nz = z - 1u; }
+            default: { break; }
+        }
+        
+        // Handle boundary conditions
+        if (params.boundary_mode == 0u) { // Clamped
+            if (nx >= params.grid_width || ny >= params.grid_height || nz >= params.grid_depth) {
+                continue; // Skip out-of-bounds neighbors
+            }
+        } else { // Periodic
+            nx = wrap_coord(i32(nx), params.grid_width);
+            ny = wrap_coord(i32(ny), params.grid_height);
+            nz = wrap_coord(i32(nz), params.grid_depth);
+        }
+        
+        // Calculate neighbor's 1D index
+        let neighbor_idx = grid_index(nx, ny, nz);
+        
+        // Update neighbor's possibilities and add to worklist if changed
+        let changed = update_neighbor(neighbor_idx, allowed_neighbor_mask);
+        
+        // Add to next worklist if any changes were made (one atomic operation)
+        if (changed) {
+            let worklist_idx = atomicAdd(&worklist_count[0], 1u);
+            // Bounds check for worklist
+            if (worklist_idx < arrayLength(&output_worklist)) {
+                atomicStore(&output_worklist[worklist_idx], neighbor_idx);
+            }
+        }
+    }
 }
 
 // Helper function to get 1D index from 3D coords
@@ -261,77 +327,4 @@ fn update_neighbor(neighbor_idx: u32, allowed_neighbor_mask: PossibilityMask) ->
     }
     
     return changed;
-}
-
-// Main propagation function
-@compute @workgroup_size(256)
-fn propagate_constraints(
-    @builtin(workgroup_id) workgroup_id: vec3<u32>,
-    @builtin(local_invocation_id) local_id: vec3<u32>,
-) {
-    // Get global thread ID
-    let global_id = workgroup_id.x * 256u + local_id.x;
-    
-    // Check if this thread should process a cell from the worklist
-    if (global_id >= atomicLoad(&worklist_count[0])) {
-        return; // No more cells to process
-    }
-    
-    // Get the cell index from the worklist
-    let cell_idx = worklist[global_id];
-    
-    // Load cell's current possibilities
-    var current_possibilities = load_cell_possibilities(cell_idx);
-    
-    // Get cell's 3D coordinates
-    let z = cell_idx / (params.grid_width * params.grid_height);
-    let y = (cell_idx % (params.grid_width * params.grid_height)) / params.grid_width;
-    let x = cell_idx % params.grid_width;
-    
-    // Process each neighbor
-    for (var axis = 0u; axis < params.num_axes; axis = axis + 1u) {
-        // Compute allowed neighbor mask for this axis
-        let allowed_neighbor_mask = compute_allowed_neighbor_mask(&current_possibilities, axis);
-        
-        // Calculate neighbor coordinates based on axis
-        var nx = x;
-        var ny = y;
-        var nz = z;
-        
-        switch (axis) {
-            case AXIS_POS_X: { nx = x + 1u; }
-            case AXIS_NEG_X: { nx = x - 1u; }
-            case AXIS_POS_Y: { ny = y + 1u; }
-            case AXIS_NEG_Y: { ny = y - 1u; }
-            case AXIS_POS_Z: { nz = z + 1u; }
-            case AXIS_NEG_Z: { nz = z - 1u; }
-            default: { break; }
-        }
-        
-        // Handle boundary conditions
-        if (params.boundary_mode == 0u) { // Clamped
-            if (nx >= params.grid_width || ny >= params.grid_height || nz >= params.grid_depth) {
-                continue; // Skip out-of-bounds neighbors
-            }
-        } else { // Periodic
-            nx = wrap_coord(i32(nx), params.grid_width);
-            ny = wrap_coord(i32(ny), params.grid_height);
-            nz = wrap_coord(i32(nz), params.grid_depth);
-        }
-        
-        // Calculate neighbor's 1D index
-        let neighbor_idx = grid_index(nx, ny, nz);
-        
-        // Update neighbor's possibilities and add to worklist if changed
-        let changed = update_neighbor(neighbor_idx, allowed_neighbor_mask);
-        
-        // Add to next worklist if any changes were made (one atomic operation)
-        if (changed) {
-            let worklist_idx = atomicAdd(&worklist_count[0], 1u);
-            // Bounds check for worklist
-            if (worklist_idx < arrayLength(&output_worklist)) {
-                atomicStore(&output_worklist[worklist_idx], neighbor_idx);
-            }
-        }
-    }
 } 
