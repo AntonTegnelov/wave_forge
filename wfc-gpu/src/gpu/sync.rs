@@ -234,17 +234,18 @@ impl GpuSynchronizer {
                 let mapped_range = possibility_buffer_slice.get_mapped_range();
 
                 // Copy data from mapped buffer to target grid
-                let mut target_grid = target.clone();
                 let mapped_data = bytemuck::cast_slice::<u8, u32>(&mapped_range);
+                let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
+                let mut target_grid = target.clone();
 
-                for z in 0..target.depth {
-                    for y in 0..target.height {
-                        for x in 0..target.width {
+                for z in 0..target_grid.depth {
+                    for y in 0..target_grid.height {
+                        for x in 0..target_grid.width {
                             let cell_idx = target_grid.get_index(x, y, z);
-                            let buffer_start = cell_idx * u32_per_cell;
+                            let buffer_start = cell_idx * u32s_per_cell;
 
                             // Copy the u32 chunks for this cell's possibilities
-                            for i in 0..u32_per_cell {
+                            for i in 0..u32s_per_cell {
                                 if buffer_start + i < mapped_data.len() {
                                     target_grid.set_possibility_chunk(
                                         x,
