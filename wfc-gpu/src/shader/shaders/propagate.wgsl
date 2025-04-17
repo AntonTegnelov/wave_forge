@@ -66,13 +66,13 @@ const WORKGROUP_SIZE_X: u32 = 64u; // Hardcoded size
 const ONE: u32 = 1u; // Placeholder, will be dynamically set in source
 
 // Entry point
-@compute @workgroup_size(256)
+@compute @workgroup_size(64)
 fn propagate_constraints(
     @builtin(workgroup_id) workgroup_id: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
 ) {
     // Get global thread ID
-    let global_id = workgroup_id.x * 256u + local_id.x;
+    let global_id = workgroup_id.x * 64u + local_id.x;
     
     // Check if this thread should process a cell from the worklist
     if (global_id >= atomicLoad(&worklist_count[0])) {
