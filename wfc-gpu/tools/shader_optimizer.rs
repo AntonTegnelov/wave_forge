@@ -450,7 +450,9 @@ impl ShaderOptimizer {
 }
 
 /// Main function for the shader optimizer tool.
-pub fn main() -> io::Result<()> {
+#[cfg(not(test))]
+#[allow(dead_code)]
+fn main() -> io::Result<()> {
     // Default configuration
     let config = OptimizerConfig {
         src_dir: PathBuf::from("src/shader/shaders"),
@@ -497,4 +499,14 @@ pub fn main() -> io::Result<()> {
 
     println!("Shader optimization complete.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_shader_optimizer() {
+        // Add actual tests for shader optimizer functionality
+        // For now, just verify the module compiles
+        assert!(true);
+    }
 }

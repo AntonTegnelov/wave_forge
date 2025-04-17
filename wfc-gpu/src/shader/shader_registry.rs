@@ -389,9 +389,7 @@ impl ShaderRegistry {
 ///       This might better belong in the ShaderCompiler or be derived from registry data.
 pub fn get_component_path(component: ShaderComponent) -> &'static str {
     match component {
-        ShaderComponent::EntropyCalculation => {
-            "src/shader/shaders/components/entropy_calculation.wgsl"
-        }
+        ShaderComponent::EntropyCalculation => "src/shader/shaders/entropy.wgsl",
         ShaderComponent::WorklistManagement => {
             "src/shader/shaders/components/worklist_management.wgsl"
         }

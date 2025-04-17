@@ -563,6 +563,7 @@ impl GpuSynchronizer {
     }
 
     /// Internal helper to copy grid possibilities to staging buffer.
+    #[allow(dead_code)]
     pub(crate) fn stage_grid_possibilities_download(
         &self,
         encoder: &mut wgpu::CommandEncoder,

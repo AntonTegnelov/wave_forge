@@ -523,11 +523,13 @@ impl GpuEntropyCalculator {
         }
     }
 
+    #[allow(dead_code)]
     fn upload_data_from_strategy(&self) -> Result<(), CoreEntropyError> {
         // Implementation that would call a suitable method on self.strategy
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn post_process_from_strategy(&self) -> Result<(), CoreEntropyError> {
         // Implementation that would call a suitable method on self.strategy
         Ok(())

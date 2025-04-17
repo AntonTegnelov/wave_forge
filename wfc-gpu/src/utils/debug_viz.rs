@@ -186,6 +186,7 @@ impl DebugVisualizer {
     }
 
     /// Helper to get buffer size (example for possibilities buffer)
+    #[allow(dead_code)]
     fn get_grid_buffer_size(&self, buffers: &GpuBuffers) -> u64 {
         buffers.grid_buffers.grid_possibilities_buf.size()
     }
@@ -317,18 +318,21 @@ impl DebugVisualizer {
     }
 
     // Prefix unused parameter
+    #[allow(dead_code)]
     fn render_propagation_steps(_snapshot: &DebugSnapshot) -> Vec<u8> {
         // Placeholder: Render propagation steps (e.g., highlight updated cells)
         vec![0; 100] // Return dummy data
     }
 
     // Prefix unused parameter
+    #[allow(dead_code)]
     fn render_contradictions(_snapshot: &DebugSnapshot) -> Vec<u8> {
         // Placeholder: Render contradictions (e.g., highlight contradicted cells)
         vec![0; 100] // Return dummy data
     }
 
     // Prefix unused parameter
+    #[allow(dead_code)]
     fn get_snapshot_by_index(&self, _index: Option<usize>) -> Option<&DebugSnapshot> {
         // Placeholder: Get snapshot by index or latest
         self.snapshots.back()
@@ -406,6 +410,7 @@ impl DebugVisualizer {
 
     // Placeholder for a function to generate the actual visualization (e.g., an image)
     // This would use the downloaded data (last_entropy_values, etc.) and potentially the grid_state
+    #[allow(dead_code)]
     fn generate_visualization_image(
         &self, /* grid: &PossibilityGrid */
     ) -> Result<RgbaImage, GpuError> {

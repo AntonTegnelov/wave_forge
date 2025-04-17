@@ -9,6 +9,7 @@ use wfc_core::{grid::PossibilityGrid, propagator::PropagationError};
 #[derive(Debug)]
 pub struct DirectPropagationStrategy {
     name: String,
+    #[allow(dead_code)]
     max_iterations: u32,
 }
 
@@ -22,6 +23,7 @@ impl DirectPropagationStrategy {
     }
 
     /// Helper method to create a bind group for a propagation pass
+    #[allow(dead_code)]
     fn create_propagation_bind_group_for_pass(
         &self,
         _device: &wgpu::Device,

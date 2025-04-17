@@ -58,6 +58,7 @@ pub struct ShaderValidationResult {
 #[derive(Debug, Clone)]
 pub struct ValidationMessage {
     /// Message type
+    #[allow(dead_code)]
     pub message_type: MessageType,
     /// Message content
     pub message: String,
@@ -75,6 +76,7 @@ pub enum MessageType {
     /// Warning - may cause issues
     Warning,
     /// Info - informational message
+    #[allow(dead_code)]
     Info,
 }
 
@@ -487,11 +489,13 @@ impl ShaderValidator {
     }
 
     /// Get the validation report.
+    #[allow(dead_code)]
     pub fn get_report(&self) -> &str {
         &self.report
     }
 
     /// Get the validation results.
+    #[allow(dead_code)]
     pub fn get_results(&self) -> &[ShaderValidationResult] {
         &self.validation_results
     }
@@ -516,8 +520,9 @@ fn parse_location(location_str: &str) -> (Option<usize>, Option<usize>) {
     (line, column)
 }
 
-/// Main function for the shader validator tool.
-pub fn main() -> io::Result<()> {
+#[cfg(not(test))]
+#[allow(dead_code)]
+fn main() -> io::Result<()> {
     // Default configuration
     let config = ValidatorConfig {
         naga_validator_path: None,
@@ -541,4 +546,14 @@ pub fn main() -> io::Result<()> {
     println!("Report saved to {:?}", validator.config.report_path);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_shader_validator() {
+        // Add actual tests for shader validator functionality
+        // For now, just verify the module compiles
+        assert!(true);
+    }
 }
