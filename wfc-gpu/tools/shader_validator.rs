@@ -44,6 +44,7 @@ impl Default for ValidatorConfig {
 #[derive(Debug, Clone)]
 pub struct ShaderValidationResult {
     /// Path to the shader file
+    #[allow(dead_code)]
     pub file_path: PathBuf,
     /// List of errors found
     pub errors: Vec<ValidationMessage>,

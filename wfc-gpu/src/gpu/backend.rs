@@ -218,9 +218,11 @@ impl WgpuBackend {
 
         let adapter = Arc::new(adapter);
 
-        // Create limits with increased storage buffer capacity
-        let mut limits = wgpu::Limits::default();
-        limits.max_storage_buffers_per_shader_stage = 10;
+        // Configure limits
+        let limits = wgpu::Limits {
+            max_storage_buffers_per_shader_stage: 10,
+            ..wgpu::Limits::default()
+        };
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("WFC GPU Device"),

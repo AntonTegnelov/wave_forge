@@ -58,12 +58,14 @@ pub struct FeatureVariant {
 #[derive(Debug, Clone)]
 pub struct ShaderComponent {
     /// Component name
+    #[allow(dead_code)]
     pub name: String,
     /// Path to the component source
     pub path: PathBuf,
     /// Dependencies on other components
     pub dependencies: Vec<String>,
     /// Required GPU features
+    #[allow(dead_code)]
     pub required_features: HashSet<String>,
     /// Provided features
     pub provided_features: HashSet<String>,

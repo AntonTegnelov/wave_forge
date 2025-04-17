@@ -11,11 +11,7 @@ use std::{
     sync::{Arc, Mutex}, // Consolidated sync imports
     time::{Duration, Instant},
 };
-use wfc_core::{
-    grid::PossibilityGrid,
-    runner::{self},
-    BoundaryCondition, ExecutionMode, ProgressInfo, WfcError,
-};
+use wfc_core::{grid::PossibilityGrid, BoundaryCondition, ExecutionMode, ProgressInfo, WfcError};
 use wfc_gpu::gpu::accelerator::GpuAccelerator;
 use wfc_rules::{AdjacencyRules, TileSet};
 
@@ -63,7 +59,7 @@ pub struct BenchmarkScenarioResult {
 /// Runs a single WFC benchmark based on the provided configuration.
 pub async fn run_single_wfc_benchmark(
     config: &AppConfig,
-    _tileset: &TileSet,
+    tileset: &TileSet,
     rules: &AdjacencyRules,
     gpu_accelerator_arc: Option<Arc<GpuAccelerator>>,
 ) -> Result<BenchmarkResult, AppError> {
@@ -73,24 +69,21 @@ pub async fn run_single_wfc_benchmark(
     let profiler = Profiler::new(&format!("{:?}", core_execution_mode));
     let _overall_guard = profiler.profile("total_benchmark_run");
 
-    let grid = PossibilityGrid::new(config.width, config.height, config.depth, rules.num_tiles());
+    let grid = PossibilityGrid::new(
+        config.width,
+        config.height,
+        config.depth,
+        tileset.weights.len(),
+    );
     let _total_cells = grid.width * grid.height * grid.depth;
 
     let latest_progress: Arc<Mutex<Option<ProgressInfo>>> = Arc::new(Mutex::new(None));
-    let _progress_callback = {
-        let progress_clone = Arc::clone(&latest_progress);
-        let callback: runner::ProgressCallback = Box::new(move |info| {
-            let mut progress_guard = progress_clone.lock().unwrap();
-            *progress_guard = Some(info);
-            Ok(())
-        });
-        Some(callback)
-    };
 
     let start_time = Instant::now();
     let initial_memory_res = get_memory_usage().map_err(AppError::Anyhow);
 
-    let _accelerator = match gpu_accelerator_arc {
+    // Verify we have a GPU accelerator
+    let accelerator = match gpu_accelerator_arc {
         Some(arc) => arc,
         None => {
             return Err(AppError::Anyhow(anyhow::anyhow!(
@@ -99,29 +92,66 @@ pub async fn run_single_wfc_benchmark(
         }
     };
 
-    // Skip the actual execution for now since we don't have working adapters
-    let wfc_result = Err(WfcError::InternalError(
-        "GPU benchmark mode not fully implemented yet".to_string(),
-    ));
+    // Get a mutable clone for possible modification
+    let mut accelerator_clone = accelerator.as_ref().clone();
 
+    // Create a progress handler to collect metrics during the run
+    let progress_handler = {
+        let latest_progress_clone = Arc::clone(&latest_progress);
+        move |info: ProgressInfo| -> Result<bool, anyhow::Error> {
+            // Update the latest progress info
+            let mut progress_guard = latest_progress_clone.lock().unwrap();
+            *progress_guard = Some(info);
+
+            // Always continue in benchmark mode
+            Ok(true)
+        }
+    };
+
+    // Now execute the WFC algorithm using the GPU accelerator
+    let wfc_result = accelerator_clone
+        .run_with_callback(
+            &grid,
+            rules,
+            config.max_iterations.unwrap_or(u64::MAX),
+            progress_handler,
+            None, // No tokio shutdown signal for benchmarks
+        )
+        .await;
+
+    // Calculate the total time taken
     let duration = start_time.elapsed();
 
+    // Get memory usage if available
     let final_memory_res = get_memory_usage().map_err(AppError::Anyhow);
     let memory_usage = match (initial_memory_res, final_memory_res) {
         (Ok(initial), Ok(final_val)) => Some(final_val.saturating_sub(initial)),
         _ => None,
     };
 
+    // Get the final progress information
     let final_progress = latest_progress.lock().unwrap().clone();
+
+    // Print profiler summary for detailed insights
     print_profiler_summary(&profiler);
 
+    // Map the WFC result into BenchmarkResult format by converting the WfcError type
+    let converted_wfc_result = match wfc_result {
+        Ok(_) => Ok(()),
+        Err(gpu_error) => {
+            // Convert wfc_gpu::WfcError to wfc_core::WfcError
+            Err(WfcError::InternalError(format!("GPU error: {}", gpu_error)))
+        }
+    };
+
+    // Return the benchmark result
     Ok(BenchmarkResult {
         grid_width: config.width,
         grid_height: config.height,
         grid_depth: config.depth,
         num_tiles: rules.num_tiles(),
         total_time: duration,
-        wfc_result,
+        wfc_result: converted_wfc_result,
         iterations: final_progress.as_ref().map(|p| p.iterations),
         collapsed_cells: final_progress.as_ref().map(|p| p.collapsed_cells),
         profile_metrics: Some(profiler.get_metrics()),
