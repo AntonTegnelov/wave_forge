@@ -82,9 +82,13 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
     // Create simple adjacency rules: tiles can only connect to themselves
     let mut allowed_tuples = Vec::new();
     for tile in 0..num_tiles {
+        // Get the transformed tile ID for this tile with Identity transformation
+        let transformed_tile_id = tileset
+            .get_transformed_id(TileId(tile), Transformation::Identity)
+            .expect("Failed to get transformed tile ID");
         for axis in 0..6 {
             // 6 axes for 3D (+x, -x, +y, -y, +z, -z)
-            allowed_tuples.push((axis, tile, tile));
+            allowed_tuples.push((axis, transformed_tile_id, transformed_tile_id));
         }
     }
     let rules = AdjacencyRules::from_allowed_tuples(
