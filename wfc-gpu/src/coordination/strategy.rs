@@ -166,8 +166,9 @@ impl DefaultCoordinationStrategy {
         entropy_calculator: Arc<GpuEntropyCalculator>,
         propagator: Arc<RwLock<GpuConstraintPropagator>>,
     ) -> Self {
-        // Create empty placeholder grid and rules that will be initialized later
-        let grid = Arc::new(RwLock::new(PossibilityGrid::new(1, 1, 1, 0)));
+        // Create placeholder grid and rules that will be initialized later
+        // Use 1 tile instead of 0 to avoid assertion failure
+        let grid = Arc::new(RwLock::new(PossibilityGrid::new(1, 1, 1, 1)));
         let rules = Arc::new(RwLock::new(AdjacencyRules::from_allowed_tuples(
             0,
             0,

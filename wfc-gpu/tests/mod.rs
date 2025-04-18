@@ -183,13 +183,13 @@ fn verify_adjacency_rules(grid: &PossibilityGrid, rules: &AdjacencyRules) -> usi
                     if cell.count_ones() == 1 {
                         let tile = cell.iter_ones().next().unwrap();
                         // Check each direction
-                        for (dx, dy, dz, axis, _positive) in [
-                            (1, 0, 0, 0, true),   // +x
-                            (-1, 0, 0, 0, false), // -x
-                            (0, 1, 0, 1, true),   // +y
-                            (0, -1, 0, 1, false), // -y
-                            (0, 0, 1, 2, true),   // +z
-                            (0, 0, -1, 2, false), // -z
+                        for (dx, dy, dz, axis) in [
+                            (1, 0, 0, 0),  // +x (axis 0)
+                            (-1, 0, 0, 1), // -x (axis 1)
+                            (0, 1, 0, 2),  // +y (axis 2)
+                            (0, -1, 0, 3), // -y (axis 3)
+                            (0, 0, 1, 4),  // +z (axis 4)
+                            (0, 0, -1, 5), // -z (axis 5)
                         ] {
                             let nx = (x as i32 + dx).rem_euclid(w as i32) as usize;
                             let ny = (y as i32 + dy).rem_euclid(h as i32) as usize;

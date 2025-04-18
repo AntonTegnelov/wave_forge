@@ -524,6 +524,8 @@ impl GpuBuffers {
             for y in 0..height {
                 for x in 0..width {
                     if let Some(cell) = grid.get_mut(x, y, z) {
+                        cell.clear(); // Clear the cell first
+                        cell.resize(num_tiles, false); // Resize to the correct number of tiles
                         let data_start = cell_index * u32s_per_cell;
                         let data_end = data_start + u32s_per_cell;
 

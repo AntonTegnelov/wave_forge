@@ -139,8 +139,9 @@ impl PossibilityGrid {
             };
         }
         // Create a template BitVec with all possibilities set
-        let all_possible = bitvec![usize, Lsb0; 1; num_tiles]; // Use imported macro
-                                                               // Initialize the data vector by cloning the template
+        let mut all_possible = BitVec::with_capacity(num_tiles);
+        all_possible.resize(num_tiles, true);
+        // Initialize the data vector by cloning the template
         let data = vec![all_possible; size];
         Self {
             width,
