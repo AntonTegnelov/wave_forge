@@ -439,10 +439,10 @@ impl GpuAccelerator {
 
         // Get final grid dimensions for download
         let (grid_width, grid_height, grid_depth, num_tiles) = (
-            grid_definition.dims.0,
-            grid_definition.dims.1,
-            grid_definition.dims.2,
-            grid_definition.num_tiles,
+            initial_grid.width,
+            initial_grid.height,
+            initial_grid.depth,
+            initial_grid.num_tiles(),
         );
 
         // Download final grid
