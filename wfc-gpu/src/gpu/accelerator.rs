@@ -27,6 +27,7 @@ use crate::{
 
 use anyhow::Error as AnyhowError;
 use log::{info, trace};
+use rand;
 use std::time::Instant;
 use wfc_core::{
     entropy::{
