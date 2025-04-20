@@ -214,12 +214,35 @@ impl GpuSynchronizer {
         trace!("Downloading grid with request: {:?}", request);
         let start_time = std::time::Instant::now();
 
-        // Access buffer via grid_buffers
-        let possibility_buffer_slice = self.buffers.grid_buffers.grid_possibilities_buf.slice(..); // Get slice of the whole buffer
+        // Create a command encoder for the copy operation
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Grid Download Encoder"),
+            });
+
+        // Copy from the main buffer to the staging buffer
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.grid_buffers.grid_possibilities_buf,
+            0,
+            &self.buffers.grid_buffers.staging_grid_possibilities_buf,
+            0,
+            self.buffers.grid_buffers.grid_possibilities_buf.size(),
+        );
+
+        // Submit the copy command
+        self.queue.submit(Some(encoder.finish()));
+
+        // Map the staging buffer
+        let staging_buffer_slice = self
+            .buffers
+            .grid_buffers
+            .staging_grid_possibilities_buf
+            .slice(..);
 
         // Asynchronous map operation
         let (sender, receiver) = futures::channel::oneshot::channel();
-        possibility_buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+        staging_buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             sender.send(result).expect("Failed to send map result");
         });
 
@@ -233,8 +256,8 @@ impl GpuSynchronizer {
         match receiver.await {
             Ok(Ok(())) => {
                 // Buffer mapped successfully
-                trace!("Possibility buffer mapped successfully.");
-                let mapped_range = possibility_buffer_slice.get_mapped_range();
+                trace!("Staging buffer mapped successfully.");
+                let mapped_range = staging_buffer_slice.get_mapped_range();
 
                 // Copy data from mapped buffer to target grid
                 let mapped_data = bytemuck::cast_slice::<u8, u32>(&mapped_range);
@@ -269,21 +292,22 @@ impl GpuSynchronizer {
                     }
                 }
 
-                // Drop the mapped range view. This implicitly signals to WGPU
-                // that we are done with the mapped memory.
+                // Drop the mapped range view
                 drop(mapped_range);
 
-                // Explicitly unmap the buffer - access via grid_buffers
-                self.buffers.grid_buffers.grid_possibilities_buf.unmap();
-                trace!("Possibility buffer unmapped.");
+                // Unmap the staging buffer
+                self.buffers
+                    .grid_buffers
+                    .staging_grid_possibilities_buf
+                    .unmap();
+                trace!("Staging buffer unmapped.");
             }
             Ok(Err(e)) => {
-                error!("Failed to map possibility buffer: {}", e);
+                error!("Failed to map staging buffer: {}", e);
                 return Err(GpuError::BufferMapping(e.to_string()));
             }
             Err(e) => {
                 error!("Map future cancelled or panicked: {}", e);
-                // Don't try to unmap if the channel was cancelled before mapping finished.
                 return Err(GpuError::Other("Buffer map future cancelled".to_string()));
             }
         }

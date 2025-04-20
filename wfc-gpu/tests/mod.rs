@@ -120,7 +120,7 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
     );
     println!("Grid num_tiles: {}", grid.num_tiles());
 
-    // Create GPU accelerator
+    // Create GPU accelerator with appropriate configuration
     let mut accelerator = GpuAccelerator::new(
         &grid,
         &rules,
@@ -129,6 +129,11 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
         None,                          // No subgrid configuration
     )
     .await?;
+
+    // Configure the accelerator with appropriate strategies
+    accelerator
+        .with_entropy_heuristic(EntropyHeuristicType::Shannon)
+        .with_direct_propagation(1000); // Use direct propagation with max 1000 iterations
 
     // Run the algorithm with a progress callback
     let result = accelerator

@@ -20,7 +20,7 @@ use crate::{
     utils::error::{
         gpu_error::GpuError as NewGpuError, RecoveryAction, RecoveryHookRegistry, WfcError,
     },
-    utils::error_recovery::GpuError,
+    utils::error_recovery::{GpuError, GridCoord},
     utils::subgrid::SubgridConfig,
     utils::RwLock as GpuRwLock,
 };
@@ -370,19 +370,25 @@ impl GpuAccelerator {
     pub async fn run_with_callback<F>(
         &mut self,
         initial_grid: &PossibilityGrid,
-        _rules: &AdjacencyRules,
+        rules: &AdjacencyRules,
         max_iterations: u64,
-        progress_callback: F,
+        mut progress_callback: F,
         _shutdown_signal: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> Result<PossibilityGrid, WfcError>
     where
         F: FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync + 'static,
     {
-        let _start_time = Instant::now();
+        let start_time = Instant::now();
 
         // Get the required data while holding the lock briefly
         let grid_definition;
         let synchronizer;
+        let device;
+        let queue;
+        let buffers;
+        let entropy_calculator;
+        let propagator;
+        let coordinator;
 
         {
             let instance_guard = self.instance.read().unwrap();
@@ -390,6 +396,12 @@ impl GpuAccelerator {
             // Clone what we need before dropping the lock
             grid_definition = instance_guard.grid_definition.clone();
             synchronizer = instance_guard.sync.clone();
+            device = instance_guard.backend.device();
+            queue = instance_guard.backend.queue();
+            buffers = instance_guard.buffers.clone();
+            entropy_calculator = instance_guard.entropy_calculator.clone();
+            propagator = instance_guard.propagator.clone();
+            coordinator = instance_guard.coordinator.clone_box();
 
             info!(
                 "Running WFC on GPU for grid {}x{}x{} with {} tiles. Max iterations: {}",
@@ -401,61 +413,112 @@ impl GpuAccelerator {
             );
         }
 
-        // In a separate lock scope, upload initial grid state
-        {
-            let instance_guard = self.instance.read().unwrap();
-
-            trace!("Uploading initial grid state to GPU...");
-            instance_guard
-                .sync
-                .upload_grid(initial_grid)
-                .map_err(|e| WfcError::other(e.to_string()))?;
-
-            instance_guard
-                .sync
-                .reset_contradiction_flag()
-                .map_err(|e| WfcError::other(e.to_string()))?;
-            instance_guard
-                .sync
-                .reset_contradiction_location()
-                .map_err(|e| WfcError::other(e.to_string()))?;
-            instance_guard
-                .sync
-                .reset_worklist_count()
-                .map_err(|e| WfcError::other(e.to_string()))?;
-        }
-
-        // Get a boxed version of the callback
-        let boxed_callback = Box::new(progress_callback)
-            as Box<dyn FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync>;
-
-        // Update the instance with the boxed callback
-        {
-            let mut instance_guard = self.instance.write().unwrap();
-            instance_guard.progress_callback = Some(boxed_callback);
-        }
-
-        // ... here would be the actual algorithm implementation, which we're not changing
-
-        // Get final grid dimensions for download
-        let (grid_width, grid_height, grid_depth, num_tiles) = (
-            initial_grid.width,
-            initial_grid.height,
-            initial_grid.depth,
-            initial_grid.num_tiles(),
-        );
-
-        // Download final grid
-        trace!("Downloading final grid state from GPU...");
-        let final_grid_target =
-            PossibilityGrid::new(grid_width, grid_height, grid_depth, num_tiles);
-
-        let final_grid = synchronizer
-            .download_grid(&final_grid_target)
-            .await
+        // Upload initial grid state
+        trace!("Uploading initial grid state to GPU...");
+        synchronizer
+            .upload_grid(initial_grid)
             .map_err(|e| WfcError::other(e.to_string()))?;
 
-        Ok(final_grid)
+        synchronizer
+            .reset_contradiction_flag()
+            .map_err(|e| WfcError::other(e.to_string()))?;
+        synchronizer
+            .reset_contradiction_location()
+            .map_err(|e| WfcError::other(e.to_string()))?;
+        synchronizer
+            .reset_worklist_count()
+            .map_err(|e| WfcError::other(e.to_string()))?;
+
+        // Create a working copy of the grid
+        let mut current_grid = initial_grid.clone();
+        let total_cells = grid_definition.total_cells();
+        let mut collapsed_cells = 0;
+        let mut iterations = 0;
+
+        // Main WFC loop
+        while iterations < max_iterations {
+            // Calculate entropy and select cell
+            let selected_cell = coordinator
+                .coordinate_entropy_and_selection(
+                    &entropy_calculator,
+                    &buffers,
+                    &device,
+                    &queue,
+                    &synchronizer,
+                )
+                .await
+                .map_err(|e| WfcError::other(e.to_string()))?;
+
+            // If no cell was selected, we're done
+            if selected_cell.is_none() {
+                break;
+            }
+
+            let (x, y, z) = selected_cell.unwrap();
+
+            // Collapse the selected cell
+            let cell = current_grid.get_mut(x, y, z).unwrap();
+            let possible_states = cell.iter_ones().collect::<Vec<_>>();
+            if possible_states.is_empty() {
+                return Err(WfcError::other(
+                    "No possible states for selected cell".to_string(),
+                ));
+            }
+
+            // Choose a random state from possible states
+            let chosen_state = possible_states[rand::random::<usize>() % possible_states.len()];
+            cell.clear();
+            cell.set(chosen_state, true);
+            collapsed_cells += 1;
+
+            // Upload the updated cell state
+            synchronizer
+                .upload_grid(&current_grid)
+                .map_err(|e| WfcError::other(e.to_string()))?;
+
+            // Propagate constraints
+            coordinator
+                .coordinate_propagation(
+                    &propagator,
+                    &buffers,
+                    &device,
+                    &queue,
+                    vec![GridCoord { x, y, z }],
+                )
+                .await
+                .map_err(|e| WfcError::other(e.to_string()))?;
+
+            // Download the updated grid state
+            current_grid = synchronizer
+                .download_grid(&current_grid)
+                .await
+                .map_err(|e| WfcError::other(e.to_string()))?;
+
+            // Call progress callback
+            let progress = ProgressInfo {
+                collapsed_cells,
+                total_cells,
+                elapsed_time: start_time.elapsed(),
+                iterations,
+                grid_state: current_grid.clone(),
+            };
+
+            if let Err(e) = progress_callback(progress) {
+                return Err(WfcError::other(format!("Progress callback error: {}", e)));
+            }
+
+            iterations += 1;
+        }
+
+        // Check if we've fully collapsed
+        if !current_grid
+            .is_fully_collapsed()
+            .map_err(|e| WfcError::other(e.to_string()))?
+        {
+            return Err(WfcError::other("Failed to fully collapse grid".to_string()));
+        }
+
+        Ok(current_grid)
     }
 
     pub fn with_debug_visualization(&mut self, config: DebugVisualizationConfig) {
@@ -621,7 +684,8 @@ impl GpuAccelerator {
     ///
     /// `&mut Self` for method chaining.
     pub fn with_direct_propagation(&mut self, max_iterations: u32) -> &mut Self {
-        let strategy = PropagationStrategyFactory::create_direct_async(max_iterations);
+        let pipelines = self.instance.read().unwrap().pipelines.clone();
+        let strategy = PropagationStrategyFactory::create_direct_async(max_iterations, pipelines);
         self.with_propagation_strategy_boxed(strategy)
     }
 
@@ -640,8 +704,12 @@ impl GpuAccelerator {
         max_iterations: u32,
         subgrid_size: u32,
     ) -> &mut Self {
-        let strategy =
-            PropagationStrategyFactory::create_subgrid_async(max_iterations, subgrid_size);
+        let pipelines = self.instance.read().unwrap().pipelines.clone();
+        let strategy = PropagationStrategyFactory::create_subgrid_async(
+            max_iterations,
+            subgrid_size,
+            pipelines,
+        );
         self.with_propagation_strategy_boxed(strategy)
     }
 
@@ -662,10 +730,12 @@ impl GpuAccelerator {
         subgrid_size: u32,
         size_threshold: usize,
     ) -> &mut Self {
+        let pipelines = self.instance.read().unwrap().pipelines.clone();
         let strategy = PropagationStrategyFactory::create_adaptive_async(
             max_iterations,
             subgrid_size,
             size_threshold,
+            pipelines,
         );
         self.with_propagation_strategy_boxed(strategy)
     }
@@ -679,15 +749,17 @@ impl GpuAccelerator {
     ///
     /// `&mut Self` for method chaining.
     pub fn with_auto_propagation(&mut self) -> &mut Self {
-        // Get grid dimensions to compute an appropriate strategy
-        let dims = {
-            let _instance = self.instance.read().unwrap();
-            _instance.grid_definition.dims
-        };
+        let dims;
+        let pipelines;
+        {
+            let instance = self.instance.read().unwrap();
+            dims = instance.grid_definition.dims;
+            pipelines = instance.pipelines.clone();
+        }
 
         let num_tiles = self.num_tiles();
         let grid = PossibilityGrid::new(dims.0, dims.1, dims.2, num_tiles);
-        let strategy = PropagationStrategyFactory::create_for_grid_async(&grid);
+        let strategy = PropagationStrategyFactory::create_for_grid_async(&grid, pipelines);
         self.with_propagation_strategy_boxed(strategy)
     }
 

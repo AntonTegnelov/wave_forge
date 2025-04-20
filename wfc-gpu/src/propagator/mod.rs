@@ -19,100 +19,10 @@ pub use subgrid_strategy::SubgridPropagationStrategy;
 // These traits are defined directly in this module, no need to import them
 // pub use direct_strategy::{AsyncPropagationStrategy, PropagationStrategy};
 
-/// Factory for creating propagation strategy instances
-pub struct PropagationStrategyFactory;
-
-impl PropagationStrategyFactory {
-    /// Create a direct propagation strategy with custom settings
-    pub fn create_direct(max_iterations: u32) -> Box<dyn PropagationStrategy + Send + Sync> {
-        Box::new(DirectPropagationStrategy::new(max_iterations))
-    }
-
-    /// Create a subgrid propagation strategy with custom settings
-    pub fn create_subgrid(
-        max_iterations: u32,
-        subgrid_size: u32,
-    ) -> Box<dyn PropagationStrategy + Send + Sync> {
-        Box::new(SubgridPropagationStrategy::new(
-            max_iterations,
-            subgrid_size,
-        ))
-    }
-
-    /// Create an adaptive propagation strategy with custom settings
-    pub fn create_adaptive(
-        max_iterations: u32,
-        subgrid_size: u32,
-        size_threshold: usize,
-    ) -> Box<dyn PropagationStrategy + Send + Sync> {
-        Box::new(AdaptivePropagationStrategy::new(
-            max_iterations,
-            subgrid_size,
-            size_threshold,
-        ))
-    }
-
-    /// Create a strategy based on the grid size
-    pub fn create_for_grid(grid: &PossibilityGrid) -> Box<dyn PropagationStrategy + Send + Sync> {
-        let total_cells = grid.width * grid.height * grid.depth;
-        if total_cells > 4096 {
-            Self::create_subgrid(1000, 16)
-        } else {
-            Self::create_direct(1000)
-        }
-    }
-
-    /// Create a direct strategy that also implements AsyncPropagationStrategy
-    pub fn create_direct_async(
-        max_iterations: u32,
-    ) -> Box<dyn AsyncPropagationStrategy + Send + Sync> {
-        Box::new(DirectPropagationStrategy::new(max_iterations))
-    }
-
-    /// Create a subgrid strategy that also implements AsyncPropagationStrategy
-    pub fn create_subgrid_async(
-        max_iterations: u32,
-        subgrid_size: u32,
-    ) -> Box<dyn AsyncPropagationStrategy + Send + Sync> {
-        Box::new(SubgridPropagationStrategy::new(
-            max_iterations,
-            subgrid_size,
-        ))
-    }
-
-    /// Create an adaptive strategy that also implements AsyncPropagationStrategy
-    pub fn create_adaptive_async(
-        max_iterations: u32,
-        subgrid_size: u32,
-        size_threshold: usize,
-    ) -> Box<dyn AsyncPropagationStrategy + Send + Sync> {
-        Box::new(AdaptivePropagationStrategy::new(
-            max_iterations,
-            subgrid_size,
-            size_threshold,
-        ))
-    }
-
-    /// Create a strategy based on the grid size that also implements AsyncPropagationStrategy
-    pub fn create_for_grid_async(
-        grid: &PossibilityGrid,
-    ) -> Box<dyn AsyncPropagationStrategy + Send + Sync> {
-        let total_cells = grid.width * grid.height * grid.depth;
-        if total_cells > 4096 {
-            Self::create_subgrid_async(1000, 16)
-        } else {
-            Self::create_direct_async(1000)
-        }
-    }
-}
-
-// Utility functions
-mod utils;
-pub use utils::*;
-
 use crate::{
     buffers::GpuBuffers,
     gpu::sync::GpuSynchronizer,
+    shader::pipeline::ComputePipelines,
     utils::error_recovery::{GpuError, GridCoord},
 };
 use async_trait;
@@ -146,6 +56,113 @@ pub trait AsyncPropagationStrategy: PropagationStrategy {
         synchronizer: &GpuSynchronizer,
     ) -> Result<(), PropagationError>;
 }
+
+/// Factory for creating propagation strategy instances
+pub struct PropagationStrategyFactory;
+
+impl PropagationStrategyFactory {
+    /// Create a direct propagation strategy with custom settings
+    pub fn create_direct(
+        max_iterations: u32,
+        pipelines: Arc<ComputePipelines>,
+    ) -> Box<dyn PropagationStrategy + Send + Sync> {
+        Box::new(DirectPropagationStrategy::new(max_iterations, pipelines))
+    }
+
+    /// Create a subgrid propagation strategy with custom settings
+    pub fn create_subgrid(
+        max_iterations: u32,
+        subgrid_size: u32,
+        pipelines: Arc<ComputePipelines>,
+    ) -> Box<dyn PropagationStrategy + Send + Sync> {
+        Box::new(SubgridPropagationStrategy::new(
+            max_iterations,
+            subgrid_size,
+            pipelines,
+        ))
+    }
+
+    /// Create an adaptive propagation strategy with custom settings
+    pub fn create_adaptive(
+        max_iterations: u32,
+        subgrid_size: u32,
+        size_threshold: usize,
+        pipelines: Arc<ComputePipelines>,
+    ) -> Box<dyn PropagationStrategy + Send + Sync> {
+        Box::new(AdaptivePropagationStrategy::new(
+            max_iterations,
+            subgrid_size,
+            size_threshold,
+            pipelines,
+        ))
+    }
+
+    /// Create a strategy based on the grid size
+    pub fn create_for_grid(
+        grid: &PossibilityGrid,
+        pipelines: Arc<ComputePipelines>,
+    ) -> Box<dyn PropagationStrategy + Send + Sync> {
+        let total_cells = grid.width * grid.height * grid.depth;
+        if total_cells > 4096 {
+            Self::create_subgrid(1000, 16, pipelines.clone())
+        } else {
+            Self::create_direct(1000, pipelines)
+        }
+    }
+
+    /// Create a direct strategy that also implements AsyncPropagationStrategy
+    pub fn create_direct_async(
+        max_iterations: u32,
+        pipelines: Arc<ComputePipelines>,
+    ) -> Box<dyn AsyncPropagationStrategy + Send + Sync> {
+        Box::new(DirectPropagationStrategy::new(max_iterations, pipelines))
+    }
+
+    /// Create a subgrid strategy that also implements AsyncPropagationStrategy
+    pub fn create_subgrid_async(
+        max_iterations: u32,
+        subgrid_size: u32,
+        pipelines: Arc<ComputePipelines>,
+    ) -> Box<dyn AsyncPropagationStrategy + Send + Sync> {
+        Box::new(SubgridPropagationStrategy::new(
+            max_iterations,
+            subgrid_size,
+            pipelines,
+        ))
+    }
+
+    /// Create an adaptive strategy that also implements AsyncPropagationStrategy
+    pub fn create_adaptive_async(
+        max_iterations: u32,
+        subgrid_size: u32,
+        size_threshold: usize,
+        pipelines: Arc<ComputePipelines>,
+    ) -> Box<dyn AsyncPropagationStrategy + Send + Sync> {
+        Box::new(AdaptivePropagationStrategy::new(
+            max_iterations,
+            subgrid_size,
+            size_threshold,
+            pipelines,
+        ))
+    }
+
+    /// Create a strategy based on the grid size that also implements AsyncPropagationStrategy
+    pub fn create_for_grid_async(
+        grid: &PossibilityGrid,
+        pipelines: Arc<ComputePipelines>,
+    ) -> Box<dyn AsyncPropagationStrategy + Send + Sync> {
+        let total_cells = grid.width * grid.height * grid.depth;
+        if total_cells > 4096 {
+            Self::create_subgrid_async(1000, 16, pipelines.clone())
+        } else {
+            Self::create_direct_async(1000, pipelines)
+        }
+    }
+}
+
+// Utility functions
+mod utils;
+pub use utils::*;
 
 /// Convert a GPU error to a propagation error
 pub fn gpu_error_to_propagation_error(error: GpuError) -> PropagationError {
