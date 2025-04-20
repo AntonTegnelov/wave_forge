@@ -1,4 +1,7 @@
-use crate::{buffers::GpuBuffers, gpu::sync::GpuSynchronizer, utils::error_recovery::GridCoord};
+use crate::{
+    buffers::GpuBuffers, gpu::sync::GpuSynchronizer, shader::pipeline::ComputePipelines,
+    utils::error_recovery::GridCoord,
+};
 use async_trait;
 use std::default::Default;
 use std::sync::Arc;
@@ -20,11 +23,20 @@ pub struct AdaptivePropagationStrategy {
 
 impl AdaptivePropagationStrategy {
     /// Create a new adaptive propagation strategy
-    pub fn new(max_iterations: u32, subgrid_size: u32, size_threshold: usize) -> Self {
+    pub fn new(
+        max_iterations: u32,
+        subgrid_size: u32,
+        size_threshold: usize,
+        pipelines: Arc<ComputePipelines>,
+    ) -> Self {
         Self {
             name: "Adaptive Propagation".to_string(),
-            direct_strategy: DirectPropagationStrategy::new(max_iterations),
-            subgrid_strategy: SubgridPropagationStrategy::new(max_iterations, subgrid_size),
+            direct_strategy: DirectPropagationStrategy::new(max_iterations, pipelines.clone()),
+            subgrid_strategy: SubgridPropagationStrategy::new(
+                max_iterations,
+                subgrid_size,
+                pipelines,
+            ),
             size_threshold,
         }
     }
@@ -94,6 +106,8 @@ impl crate::propagator::AsyncPropagationStrategy for AdaptivePropagationStrategy
 /// Implement Default trait for AdaptivePropagationStrategy
 impl Default for AdaptivePropagationStrategy {
     fn default() -> Self {
-        Self::new(1000, 32, 64)
+        unimplemented!(
+            "AdaptivePropagationStrategy requires pipelines, cannot be created with default()"
+        )
     }
 }

@@ -1,6 +1,7 @@
 use crate::{
     buffers::GpuBuffers, gpu::sync::GpuSynchronizer, propagator::AsyncPropagationStrategy,
-    utils::error_recovery::GridCoord, utils::subgrid::SubgridRegion,
+    shader::pipeline::ComputePipelines, utils::error_recovery::GridCoord,
+    utils::subgrid::SubgridRegion,
 };
 use async_trait;
 use std::default::Default;
@@ -14,6 +15,7 @@ pub struct SubgridPropagationStrategy {
     name: String,
     max_iterations: u32,
     subgrid_size: u32,
+    pipelines: Arc<ComputePipelines>,
 }
 
 /// Parameters for processing a single subgrid
@@ -28,11 +30,12 @@ struct SubgridProcessContext {
 
 impl SubgridPropagationStrategy {
     /// Create a new subgrid propagation strategy
-    pub fn new(max_iterations: u32, subgrid_size: u32) -> Self {
+    pub fn new(max_iterations: u32, subgrid_size: u32, pipelines: Arc<ComputePipelines>) -> Self {
         Self {
             name: "Subgrid Propagation".to_string(),
             max_iterations,
             subgrid_size,
+            pipelines,
         }
     }
 
@@ -123,8 +126,10 @@ impl SubgridPropagationStrategy {
         );
 
         // Create a direct propagation strategy for the subgrid
-        let direct_strategy =
-            crate::propagator::DirectPropagationStrategy::new(self.max_iterations);
+        let direct_strategy = crate::propagator::DirectPropagationStrategy::new(
+            self.max_iterations,
+            self.pipelines.clone(),
+        );
 
         // Propagate constraints within the subgrid
         direct_strategy
@@ -144,7 +149,9 @@ impl SubgridPropagationStrategy {
 /// Implement Default trait for SubgridPropagationStrategy
 impl Default for SubgridPropagationStrategy {
     fn default() -> Self {
-        Self::new(1000, 32)
+        unimplemented!(
+            "SubgridPropagationStrategy requires pipelines, cannot be created with default()"
+        )
     }
 }
 
