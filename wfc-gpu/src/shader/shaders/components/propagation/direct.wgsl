@@ -13,13 +13,7 @@ fn propagate_constraints(
     possibilities: array<u32>,  // Grid possibilities array
     adjacency_rules: array<u32> // Adjacency rules defining allowed neighbors
 ) -> bool {
-    // This is a placeholder for the core propagation algorithm
-    // In a real implementation, this would:
-    // 1. Check if this cell has been collapsed to a single possibility
-    // 2. Loop through all adjacent cells
-    // 3. Apply constraints based on adjacency rules
-    // 4. Return whether any changes were made
-
+    // Get cell's 3D coordinates
     let x = cell_idx % grid_width;
     let y = (cell_idx / grid_width) % grid_height;
     let z = cell_idx / (grid_width * grid_height);
@@ -64,7 +58,6 @@ fn propagate_constraints(
     var changes_made = false;
     
     // Check all 6 directions for 3D (+-X, +-Y, +-Z)
-    // Loop through all 6 adjacent cells (in 3D)
     let directions = array<vec3<i32>, 6>(
         vec3<i32>(-1, 0, 0),  // -X
         vec3<i32>(1, 0, 0),   // +X
@@ -91,28 +84,53 @@ fn propagate_constraints(
         let neighbor_idx = u32(nz) * grid_width * grid_height + u32(ny) * grid_width + u32(nx);
         let neighbor_start = neighbor_idx * u32s_per_cell;
         
-        // Apply constraint from this cell to neighbor
-        // In a real implementation, this would use adjacency_rules to determine which
-        // possibilities should be removed from the neighbor based on this cell's state
-        // For demonstration, just showing how it would be structured
-        
-        // Example: Look up allowed neighbors in adjacency rules
-        // let rule_idx = (single_possibility_idx * 6) + dir_idx;
-        // let allowed_neighbors = adjacency_rules[rule_idx];
+        // Calculate the rule index for this direction
+        let rule_base_idx = u32(single_possibility_idx) * 6u;
+        let opposite_dir_idx = (dir_idx + 3u) % 6u;
         
         // For each u32 in the neighbor cell, apply constraints
         for (var i = 0u; i < u32s_per_cell; i++) {
             // Get current possibilities
             let current = possibilities[neighbor_start + i];
             
-            // Apply constraint (in a real implementation)
-            // let new_value = current & allowed_neighbors;
-            let new_value = current; // Placeholder
+            // Calculate which possibilities are allowed based on the rules
+            var new_value = 0u;
+            for (var bit = 0u; bit < 32u; bit++) {
+                let possibility = 1u << bit;
+                if ((current & possibility) != 0u) {
+                    // This possibility is currently set
+                    let neighbor_possibility_idx = i * 32u + bit;
+                    
+                    // Check if this cell's possibility allows the neighbor's possibility
+                    let forward_rule_idx = (rule_base_idx + dir_idx) / 32u;
+                    let forward_rule_bit = (rule_base_idx + dir_idx) % 32u;
+                    let forward_allowed = (adjacency_rules[forward_rule_idx] & (1u << forward_rule_bit)) != 0u;
+                    
+                    // Check if neighbor's possibility allows this cell's possibility
+                    let backward_rule_base = neighbor_possibility_idx * 6u;
+                    let backward_rule_idx = (backward_rule_base + opposite_dir_idx) / 32u;
+                    let backward_rule_bit = (backward_rule_base + opposite_dir_idx) % 32u;
+                    let backward_allowed = (adjacency_rules[backward_rule_idx] & (1u << backward_rule_bit)) != 0u;
+                    
+                    // Only allow if both directions are valid
+                    if (forward_allowed && backward_allowed) {
+                        new_value |= possibility;
+                    }
+                }
+            }
             
             // If changed, update and mark changes
             if (new_value != current) {
-                // Would update possibilities[neighbor_start + i] = new_value;
+                possibilities[neighbor_start + i] = new_value;
                 changes_made = true;
+                
+                // Check for contradictions (all possibilities removed)
+                if (new_value == 0u) {
+                    // Set contradiction flag and location
+                    atomicStore(&contradiction_flag, 1u);
+                    atomicStore(&contradiction_location, neighbor_idx);
+                    return true;
+                }
             }
         }
     }

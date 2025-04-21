@@ -195,6 +195,11 @@ impl GpuEntropyCalculator {
             return Ok(EntropyGrid::new(width, height, depth));
         }
 
+        debug!(
+            "Grid dimensions: {}x{}x{}, num_cells: {}",
+            width, height, depth, num_cells
+        );
+
         // Reset min entropy buffer
         self.synchronizer.reset_min_entropy_buffer()?;
 
@@ -207,20 +212,24 @@ impl GpuEntropyCalculator {
         // Convert grid possibilities to u32 arrays and upload them
         let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
         let mut packed_data = Vec::with_capacity(num_cells * u32s_per_cell);
+        let mut total_possibilities = 0;
         for z in 0..depth {
             for y in 0..height {
                 for x in 0..width {
                     if let Some(cell) = grid.get(x, y, z) {
                         let mut cell_data = vec![0u32; u32s_per_cell];
+                        let mut cell_possibilities = 0;
                         for (i, bit) in cell.iter().enumerate() {
                             if *bit {
                                 let u32_idx = i / 32;
                                 let bit_idx = i % 32;
                                 if u32_idx < cell_data.len() {
                                     cell_data[u32_idx] |= 1 << bit_idx;
+                                    cell_possibilities += 1;
                                 }
                             }
                         }
+                        total_possibilities += cell_possibilities;
                         packed_data.extend_from_slice(&cell_data);
                     } else {
                         // Handle case where grid.get might return None if dimensions are mismatched
@@ -229,6 +238,11 @@ impl GpuEntropyCalculator {
                 }
             }
         }
+
+        debug!(
+            "Average possibilities per cell: {:.2}",
+            total_possibilities as f32 / num_cells as f32
+        );
 
         // Upload the data to the GPU buffer
         self.queue.write_buffer(

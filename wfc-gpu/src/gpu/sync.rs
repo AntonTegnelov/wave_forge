@@ -2,6 +2,7 @@
 // This separates GPU synchronization concerns from algorithm logic
 
 use crate::{
+    buffers::rule_buffers::RuleBuffers,
     buffers::{DownloadRequest, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
     utils::error::gpu_error::{GpuError as NewGpuError, GpuErrorContext, GpuResourceType},
     utils::error_recovery::{GpuError as OldGpuError, ParseGridCoord},
@@ -11,6 +12,7 @@ use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::AdjacencyRules;
 use wgpu;
+use wgpu::BindGroup;
 
 // Type alias for backward compatibility
 pub type GpuError = OldGpuError;
@@ -890,7 +892,7 @@ impl GpuSynchronizer {
 
         // Upload the data to the GPU buffer
         self.queue.write_buffer(
-            &self.buffers.rule_buffers.adjacency_rules_buf,
+            &self.buffers.rule_buffers.rules_buf,
             0,
             bytemuck::cast_slice(&weighted_rules_data),
         );
@@ -918,4 +920,67 @@ impl Drop for GpuSynchronizer {
 
         // This is here to make the cleanup process explicit in the code, following RAII principles
     }
+}
+
+/// Creates bind groups for rule-related buffers.
+pub fn create_rule_bind_groups(
+    device: &wgpu::Device,
+    rule_buffers: &RuleBuffers,
+    layout: &wgpu::BindGroupLayout,
+) -> Result<BindGroup, GpuError> {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("WFC Rules Bind Group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &rule_buffers.rules_buf,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &rule_buffers.rule_weights_buf,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+        ],
+    });
+
+    Ok(bind_group)
+}
+
+/// Creates the bind group layout for rule-related buffers.
+pub fn create_rule_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("WFC Rules Bind Group Layout"),
+        entries: &[
+            // Basic adjacency rules buffer
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Rule weights buffer
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    })
 }
