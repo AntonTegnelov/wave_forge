@@ -23,7 +23,10 @@ use std::{
 use wfc_core::{
     entropy::EntropyHeuristicType, grid::PossibilityGrid, BoundaryCondition, ProgressInfo, WfcError,
 };
-use wfc_gpu::{gpu::accelerator::GpuAccelerator, utils::error::gpu_error::GpuError};
+use wfc_gpu::{
+    gpu::accelerator::GpuAccelerator,
+    utils::{error::gpu_error::GpuError, subgrid::SubgridConfig},
+};
 use wfc_rules::{loader::load_from_file, AdjacencyRules, TileSet};
 use wgpu::Instance;
 
@@ -202,14 +205,22 @@ pub async fn run_benchmark_mode(
                 &scenario_grid,
                 &rules,
                 core_boundary_mode,
-                EntropyHeuristicType::Shannon,
-                None,
+                EntropyHeuristicType::Count,
+                Some(SubgridConfig {
+                    max_subgrid_size: 8,
+                    overlap_size: 2,
+                    min_size: 4,
+                }),
             )
             .await;
 
             // Store the accelerator directly, not Arc
             let accelerator = match accelerator_res {
-                Ok(acc) => acc,
+                Ok(mut acc) => {
+                    // Configure propagation with 5000 iterations
+                    acc.with_subgrid_propagation(5000, 8);
+                    acc
+                }
                 Err(e) => {
                     log::error!("Failed to initialize GPU accelerator for scenario {:?} ({}x{}x{}): {}. Skipping scenario.",
                         rule_file_path.file_name().unwrap_or_default(), width, height, depth, e);
@@ -505,13 +516,21 @@ pub async fn run_standard_mode(
         &grid_for_accelerator,
         rules,
         core_boundary_mode,
-        EntropyHeuristicType::Shannon,
-        None,
+        EntropyHeuristicType::Count,
+        Some(SubgridConfig {
+            max_subgrid_size: 8,
+            overlap_size: 2,
+            min_size: 4,
+        }),
     )
     .await;
 
     let mut gpu_accelerator = match accelerator_res {
-        Ok(acc) => acc,
+        Ok(mut acc) => {
+            // Configure propagation with 5000 iterations
+            acc.with_subgrid_propagation(5000, 8);
+            acc
+        }
         Err(e) => {
             error!("Failed to initialize GPU accelerator: {}", e);
             return Err(AppError::GpuError(GpuError::other(

@@ -89,7 +89,7 @@ impl DirectPropagationStrategy {
                 // Bind the adjacency rules buffer
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: buffers.rule_buffers.adjacency_rules_buf.as_entire_binding(),
+                    resource: buffers.rule_buffers.rules_buf.as_entire_binding(),
                 },
             ],
         })
