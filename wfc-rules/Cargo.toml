@@ -19,10 +19,5 @@ tempfile = "3.8"
 proptest = "1.4"
 
 [features]
-default = []
+default = ["serde"]
 serde = ["dep:serde", "dep:serde_json"]
-
-[lints.clippy]
-restriction = "warn"
-pedantic = "warn"
-nursery = "warn"

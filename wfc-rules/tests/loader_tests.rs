@@ -65,7 +65,7 @@ fn test_load_invalid_dup_name() {
     let result = load_from_file(&path);
     assert!(result.is_err());
     match result.err().unwrap() {
-        LoadError::InvalidData(msg) => assert!(msg.contains("Duplicate tile name found: A")),
+        LoadError::InvalidData(msg) => assert!(msg.contains("Duplicate tile name: A")),
         _ => panic!("Expected InvalidData error for duplicate name"),
     }
 }
@@ -80,10 +80,9 @@ fn test_load_invalid_neg_weight() {
             // Make assertion less brittle, check for key phrases
             assert!(
                 msg.contains("non-positive weight"),
-                "Error message missing 'non-positive weight': {}",
-                msg
+                "Error message missing 'non-positive weight': {msg}"
             );
-            assert!(msg.contains("-1"), "Error message missing '-1': {}", msg);
+            assert!(msg.contains("-1"), "Error message missing '-1': {msg}");
         }
         _ => panic!("Expected InvalidData error for negative weight"),
     }
@@ -107,7 +106,7 @@ fn test_load_invalid_unknown_tile() {
     assert!(result.is_err());
     match result.err().unwrap() {
         LoadError::InvalidData(msg) => {
-            assert!(msg.contains("Rule references unknown tile name: Unknown"))
+            assert!(msg.contains("Unknown tile: Unknown"));
         }
         _ => panic!("Expected InvalidData error for unknown tile"),
     }

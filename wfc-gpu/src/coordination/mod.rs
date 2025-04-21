@@ -8,7 +8,7 @@ use crate::{
     buffers::{DownloadRequest, GpuBuffers},
     entropy::{EntropyStrategy, GpuEntropyCalculator},
     gpu::{sync::GpuSynchronizer, GpuAccelerator},
-    propagator::GpuConstraintPropagator,
+    propagator::gpu_constraint_propagator::GpuConstraintPropagator,
     utils::error_recovery::{GpuError, GridCoord},
     utils::RwLock,
 };
@@ -16,13 +16,16 @@ use async_trait::async_trait;
 use log::{error, trace};
 use std::fmt::Debug;
 use std::sync::Arc;
-use wfc_core::{grid::PossibilityGrid, propagator::PropagationError, WfcError};
+use wfc_core::{
+    grid::PossibilityGrid,
+    propagator::{ConstraintPropagator, PropagationError},
+    WfcError,
+};
 use wgpu::{Device, Queue};
 
-// Local module imports
-pub(crate) use self::entropy::EntropyCoordinationStrategy;
-pub(crate) use self::propagation::PropagationCoordinationStrategy;
-pub(crate) use self::strategy::CoordinationStrategy;
+// Local module imports - removing unused ones
+// pub(crate) use self::entropy::EntropyCoordinationStrategy;
+// pub(crate) use self::strategy::CoordinationStrategy;
 
 // Re-export or define CoordinationError, CoordinationEvent, CoordinationStrategy here
 // For now, let's assume they should be defined in this file or imported differently.
@@ -73,8 +76,8 @@ pub trait WfcCoordinator: Debug + Send + Sync {
         &self,
         propagator: &Arc<RwLock<GpuConstraintPropagator>>,
         buffers: &Arc<GpuBuffers>,
-        device: &Device,
-        queue: &Queue,
+        _device: &Device,
+        _queue: &Queue,
         updated_coords: Vec<GridCoord>,
     ) -> Result<(), PropagationError>;
 
@@ -120,6 +123,62 @@ pub trait WfcCoordinatorTrait: Send + Sync {
     // e.g., step(), initialize(), finalize().
 }
 
+/// Trait for propagation coordination strategies
+#[async_trait]
+pub trait PropagationCoordinationStrategy: Send + Sync + Debug {
+    /// Coordinate the propagation of constraints
+    async fn coordinate_propagation(
+        &mut self,
+        propagator: &Arc<RwLock<GpuConstraintPropagator>>,
+        grid: &mut PossibilityGrid,
+        updated_cells: &[(usize, usize, usize)],
+        rules: &wfc_rules::AdjacencyRules,
+    ) -> Result<(), PropagationError>;
+
+    /// Allows cloning the strategy into a Box.
+    fn clone_box(&self) -> Box<dyn PropagationCoordinationStrategy>;
+}
+
+impl Clone for Box<dyn PropagationCoordinationStrategy> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+/// Factory for creating propagation coordination strategies
+pub struct PropagationCoordinationStrategyFactory;
+
+impl PropagationCoordinationStrategyFactory {
+    /// Create a direct propagation coordination strategy
+    pub fn create_direct() -> Box<dyn PropagationCoordinationStrategy> {
+        Box::new(DirectPropagationCoordinationStrategy)
+    }
+}
+
+/// Direct propagation coordination strategy implementation
+#[derive(Debug, Clone)]
+struct DirectPropagationCoordinationStrategy;
+
+#[async_trait]
+impl PropagationCoordinationStrategy for DirectPropagationCoordinationStrategy {
+    async fn coordinate_propagation(
+        &mut self,
+        propagator: &Arc<RwLock<GpuConstraintPropagator>>,
+        grid: &mut PossibilityGrid,
+        updated_cells: &[(usize, usize, usize)],
+        rules: &wfc_rules::AdjacencyRules,
+    ) -> Result<(), PropagationError> {
+        let propagator_guard = propagator.write().await;
+        // Access the underlying GpuConstraintPropagator through the trait method
+        ConstraintPropagator::propagate(&*propagator_guard, grid, updated_cells.to_vec(), rules)
+            .await
+    }
+
+    fn clone_box(&self) -> Box<dyn PropagationCoordinationStrategy> {
+        Box::new(self.clone())
+    }
+}
+
 // --- Structs --- //
 
 /// The default coordinator implementation.
@@ -159,9 +218,9 @@ impl DefaultCoordinator {
     /// Set a specific entropy strategy on the entropy calculator
     pub fn with_entropy_strategy<S: EntropyStrategy + 'static>(
         &mut self,
-        strategy: S,
+        _strategy: S,
     ) -> &mut Self {
-        let calculator = self.entropy_calculator.clone();
+        let _calculator = self.entropy_calculator.clone();
         // Can't modify the calculator directly due to Arc, so this is a placeholder
         // In a real implementation, would need to manage this differently
         trace!("Setting entropy strategy on DefaultCoordinator (placeholder)");
@@ -173,7 +232,7 @@ impl DefaultCoordinator {
         &mut self,
         strategy: S,
     ) -> &mut Self {
-        if let Some(ref mut coordinator) = self.entropy_coordinator {
+        if let Some(ref mut _coordinator) = self.entropy_coordinator {
             // Create a new coordinator with the strategy
             self.entropy_coordinator = Some(
                 entropy::EntropyCoordinator::new(self.entropy_calculator.clone())
@@ -315,43 +374,35 @@ impl WfcCoordinator for DefaultCoordinator {
         &self,
         propagator_lock: &Arc<RwLock<GpuConstraintPropagator>>,
         buffers: &Arc<GpuBuffers>,
-        device: &Device,
-        queue: &Queue,
+        _device: &Device,
+        _queue: &Queue,
         updated_coords: Vec<GridCoord>,
     ) -> Result<(), PropagationError> {
         trace!("DefaultCoordinator: Running propagation...");
 
         // If a propagation strategy is set, use it
-        if let Some(ref mut strategy) = self.propagation_strategy.clone() {
+        if let Some(ref strategy) = self.propagation_strategy {
             let coords_vec: Vec<(usize, usize, usize)> =
                 updated_coords.iter().map(|c| (c.x, c.y, c.z)).collect();
 
-            // Create a dummy grid for now - in a real implementation, we would
-            // download the grid state first
+            // Create a temporary grid for propagation
             let grid_dims = buffers.grid_dims;
-            let mut grid = PossibilityGrid::new(
-                grid_dims.0,
-                grid_dims.1,
-                grid_dims.2,
-                0, // Placeholder
-            );
+            let mut _dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
 
             // Create dummy rules - in a real implementation, we would
             // get the proper rules
             let rules = wfc_rules::AdjacencyRules::from_allowed_tuples(0, 0, Vec::new());
 
             return strategy
-                .coordinate_propagation(propagator_lock, &mut grid, coords_vec, &rules)
-                .await
-                .map_err(|e| {
-                    PropagationError::InternalError(format!("Strategy propagation failed: {}", e))
-                });
+                .clone()
+                .coordinate_propagation(propagator_lock, &mut _dummy_grid, &coords_vec, &rules)
+                .await;
         }
 
         // Otherwise, use the default implementation
-        let _propagator = propagator_lock.write().await;
+        let _propagator_guard = propagator_lock.write().await;
 
-        // Handle propagation operations
+        // For now just return Ok since actual propagation implementation is missing
         Ok(())
     }
 
@@ -364,8 +415,8 @@ impl WfcCoordinator for DefaultCoordinator {
 /// This implementation delegates all coordination decisions to strategy implementations.
 #[derive(Debug, Clone)]
 pub struct StrategicCoordinator {
-    entropy_calculator: Arc<GpuEntropyCalculator>,
-    propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    _entropy_calculator: Arc<GpuEntropyCalculator>,
+    _propagator: Arc<RwLock<GpuConstraintPropagator>>,
     // Strategy for overall coordination
     coordination_strategy: Box<dyn strategy::CoordinationStrategy>,
     // Synchronizer for GPU operations
@@ -380,8 +431,8 @@ impl StrategicCoordinator {
         coordination_strategy: Box<dyn strategy::CoordinationStrategy>,
     ) -> Self {
         Self {
-            entropy_calculator,
-            propagator,
+            _entropy_calculator: entropy_calculator,
+            _propagator: propagator,
             coordination_strategy,
             sync: None,
         }
@@ -507,12 +558,13 @@ impl StrategicCoordinator {
         self.finalize(accelerator, grid).await
     }
 
+    #[allow(dead_code)]
     async fn coordinate_propagation(
         &self,
         propagator: &Arc<RwLock<GpuConstraintPropagator>>,
         buffers: &Arc<GpuBuffers>,
-        device: &Device,
-        queue: &Queue,
+        _device: &Device,
+        _queue: &Queue,
         updated_coords: Vec<GridCoord>,
     ) -> Result<(), PropagationError> {
         trace!("StrategicCoordinator: Delegating propagation to strategy");
@@ -523,17 +575,17 @@ impl StrategicCoordinator {
 
         // Create a temporary grid for propagation
         let grid_dims = buffers.grid_dims;
-        let mut dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
+        let mut _dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
 
         // Create dummy rules - in a real implementation, we would get the proper rules
         let rules = wfc_rules::AdjacencyRules::from_allowed_tuples(0, 0, Vec::new());
 
         // Use the PropagationCoordinationStrategy factory to create an appropriate strategy,
         // reusing the same components that would be used by the coordination strategy internally
-        let mut strategy = propagation::PropagationCoordinationStrategyFactory::create_direct();
+        let mut strategy = PropagationCoordinationStrategyFactory::create_direct();
 
         strategy
-            .coordinate_propagation(propagator, &mut dummy_grid, coords_vec, &rules)
+            .coordinate_propagation(propagator, &mut _dummy_grid, &coords_vec, &rules)
             .await
             .map_err(|e| {
                 PropagationError::InternalError(format!("Strategy propagation failed: {}", e))
@@ -547,8 +599,8 @@ impl WfcCoordinator for StrategicCoordinator {
         &self,
         entropy_calculator: &Arc<GpuEntropyCalculator>,
         buffers: &Arc<GpuBuffers>,
-        device: &Device,
-        queue: &Queue,
+        _device: &Device,
+        _queue: &Queue,
         sync: &Arc<GpuSynchronizer>,
     ) -> Result<Option<(usize, usize, usize)>, GpuError> {
         trace!("StrategicCoordinator: Delegating entropy calculation to strategy");
@@ -559,7 +611,7 @@ impl WfcCoordinator for StrategicCoordinator {
 
         // Create a temporary grid for calculation
         let grid_dims = buffers.grid_dims;
-        let dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
+        let mut _dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
 
         // Use the EntropyCoordinator as a helper, which is the same component
         // that would be used by the coordination strategies internally
@@ -577,8 +629,8 @@ impl WfcCoordinator for StrategicCoordinator {
         &self,
         propagator: &Arc<RwLock<GpuConstraintPropagator>>,
         buffers: &Arc<GpuBuffers>,
-        device: &Device,
-        queue: &Queue,
+        _device: &Device,
+        _queue: &Queue,
         updated_coords: Vec<GridCoord>,
     ) -> Result<(), PropagationError> {
         trace!("StrategicCoordinator: Delegating propagation to strategy");
@@ -589,17 +641,17 @@ impl WfcCoordinator for StrategicCoordinator {
 
         // Create a temporary grid for propagation
         let grid_dims = buffers.grid_dims;
-        let mut dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
+        let mut _dummy_grid = PossibilityGrid::new(grid_dims.0, grid_dims.1, grid_dims.2, 0);
 
         // Create dummy rules - in a real implementation, we would get the proper rules
         let rules = wfc_rules::AdjacencyRules::from_allowed_tuples(0, 0, Vec::new());
 
         // Use the PropagationCoordinationStrategy factory to create an appropriate strategy,
         // reusing the same components that would be used by the coordination strategy internally
-        let mut strategy = propagation::PropagationCoordinationStrategyFactory::create_direct();
+        let mut strategy = PropagationCoordinationStrategyFactory::create_direct();
 
         strategy
-            .coordinate_propagation(propagator, &mut dummy_grid, coords_vec, &rules)
+            .coordinate_propagation(propagator, &mut _dummy_grid, &coords_vec, &rules)
             .await
             .map_err(|e| {
                 PropagationError::InternalError(format!("Strategy propagation failed: {}", e))
@@ -613,18 +665,11 @@ impl WfcCoordinator for StrategicCoordinator {
 
 // --- Submodules --- //
 
-pub mod entropy;
-pub mod propagation; // Added entropy coordination module
+pub mod entropy; // Added entropy coordination module
 pub mod strategy; // New strategy module for coordination strategies
 
 // For convenience, re-export key types from submodules
 pub use self::entropy::{EntropyCoordinationStrategyFactory, EntropyCoordinator};
-pub use self::propagation::{
-    DirectPropagationCoordinator,
-    PropagationCoordinationStrategyFactory,
-    PropagationCoordinator, // Legacy
-    SubgridPropagationCoordinator,
-};
 pub use self::strategy::{CoordinationStrategyFactory, StepResult};
 pub mod coordinator {
     pub use super::DefaultCoordinator;

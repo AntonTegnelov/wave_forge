@@ -12,7 +12,6 @@ use figment::{
     providers::{Env, Format, Serialized, Toml},
     Figment,
 };
-use log;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;

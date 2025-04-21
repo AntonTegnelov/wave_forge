@@ -139,8 +139,9 @@ impl PossibilityGrid {
             };
         }
         // Create a template BitVec with all possibilities set
-        let all_possible = bitvec![usize, Lsb0; 1; num_tiles]; // Use imported macro
-                                                               // Initialize the data vector by cloning the template
+        let mut all_possible = BitVec::with_capacity(num_tiles);
+        all_possible.resize(num_tiles, true);
+        // Initialize the data vector by cloning the template
         let data = vec![all_possible; size];
         Self {
             width,
@@ -167,6 +168,11 @@ impl PossibilityGrid {
         &self.data
     }
 
+    /// Returns a reference to the underlying data vector
+    pub fn data(&self) -> &Vec<BitVec> {
+        &self.data
+    }
+
     /// Calculates the 1D index into the `data` vector for the given 3D coordinates.
     ///
     /// Returns `None` if the coordinates `(x, y, z)` are outside the grid boundaries.
@@ -174,9 +180,55 @@ impl PossibilityGrid {
     #[inline]
     fn index(&self, x: usize, y: usize, z: usize) -> Option<usize> {
         if x < self.width && y < self.height && z < self.depth {
-            Some(z * self.width * self.height + y * self.width + x)
+            Some(self.get_index(x, y, z))
         } else {
             None
+        }
+    }
+
+    /// Returns the 1D index into the data vector for the given 3D coordinates.
+    /// This is a public version of the internal index method.
+    /// Note: This does not check bounds - use with caution!
+    #[inline]
+    pub fn get_index(&self, x: usize, y: usize, z: usize) -> usize {
+        z * self.width * self.height + y * self.width + x
+    }
+
+    /// Sets a chunk of possibilities for a cell using a packed u32 representation.
+    /// Each bit in the chunk_data represents whether a tile is possible (1) or not (0).
+    /// The chunk_index determines which group of 32 tiles this chunk represents.
+    /// For example, chunk_index 0 represents tiles 0-31, chunk_index 1 represents tiles 32-63, etc.
+    ///
+    /// # Arguments
+    /// * `x`, `y`, `z` - The coordinates of the cell to modify
+    /// * `chunk_index` - Which group of 32 tiles this chunk represents
+    /// * `chunk_data` - A u32 where each bit represents a tile possibility
+    ///
+    /// # Returns
+    /// `Ok(())` if successful, `Err(String)` if coordinates are invalid
+    pub fn set_possibility_chunk(
+        &mut self,
+        x: usize,
+        y: usize,
+        z: usize,
+        chunk_index: usize,
+        chunk_data: u32,
+    ) -> Result<(), String> {
+        let num_tiles = self.num_tiles; // Get num_tiles before mutable borrow
+        if let Some(cell) = self.get_mut(x, y, z) {
+            let start_bit = chunk_index * 32;
+            for bit_offset in 0..32 {
+                let tile_id = start_bit + bit_offset;
+                if tile_id < num_tiles {
+                    cell.set(tile_id, (chunk_data & (1 << bit_offset)) != 0);
+                }
+            }
+            Ok(())
+        } else {
+            Err(format!(
+                "Invalid coordinates ({}, {}, {}) for setting possibility chunk",
+                x, y, z
+            ))
         }
     }
 
@@ -374,7 +426,7 @@ mod tests {
         assert_eq!(grid.height, 3);
         assert_eq!(grid.depth, 1);
         assert_eq!(grid.num_tiles(), 4);
-        assert_eq!(grid.data.len(), 2 * 3 * 1);
+        assert_eq!(grid.data.len(), (2 * 3));
 
         // Check all bits are set initially
         for cell_bits in &grid.data {

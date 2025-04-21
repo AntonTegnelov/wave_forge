@@ -173,7 +173,7 @@ impl ShaderCompiler {
         for define in features.shader_defines() {
             assembled_source.push_str(&format!("#define {}\n", define));
         }
-        assembled_source.push_str("\n");
+        assembled_source.push('\n');
 
         // 3. Process components recursively (handling includes)
         for component in required_components {
@@ -234,7 +234,7 @@ impl ShaderCompiler {
         component: ShaderComponent,
         included_files: &mut HashSet<String>,
         features: &ShaderFeatures,
-        specialization: &HashMap<String, u32>,
+        _specialization: &HashMap<String, u32>,
     ) -> Result<String, CompilationError> {
         // Check component cache first
         if let Some(cached) = self.component_cache.get(&component) {
@@ -279,7 +279,7 @@ impl ShaderCompiler {
                     included_component,
                     included_files,
                     features,
-                    specialization,
+                    _specialization,
                 )?;
 
                 processed_content.push_str(&included_content);

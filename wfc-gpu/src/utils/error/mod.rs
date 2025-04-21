@@ -234,10 +234,9 @@ impl WfcError {
     /// Returns a more detailed description of actions user code can take to handle this error
     pub fn recovery_instructions(&self) -> String {
         match self.suggested_action() {
-            RecoveryAction::Retry => format!(
-                "This error is potentially transient. Retry the operation.\n\
+            RecoveryAction::Retry => "This error is potentially transient. Retry the operation.\n\
                 Consider implementing an exponential backoff strategy if retrying multiple times."
-            ),
+                .to_string(),
             RecoveryAction::RetryWithModifiedParams => {
                 let mut instructions =
                     String::from("Retry the operation with adjusted parameters:\n");
@@ -260,14 +259,14 @@ impl WfcError {
                             );
                         }
                     }
-                    WfcError::Configuration(msg) => {
+                    WfcError::Configuration(_msg) => {
                         instructions.push_str(
                             "- Review configuration parameters\n\
                              - Check for incompatible settings\n\
                              - Consider using default values",
                         );
                     }
-                    WfcError::Validation(msg) => {
+                    WfcError::Validation(_msg) => {
                         instructions.push_str(
                             "- Validate input data before passing to the algorithm\n\
                              - Check value ranges and input format\n\
@@ -285,29 +284,25 @@ impl WfcError {
 
                 instructions
             }
-            RecoveryAction::UseAlternative => format!(
-                "Consider an alternative approach:\n\
+            RecoveryAction::UseAlternative => "Consider an alternative approach:\n\
                 - If this is a contradiction in WFC, try different starting constraints\n\
                 - If algorithm-specific, consider a different algorithm variant\n\
                 - For GPU-specific issues, consider CPU fallback if available"
-            ),
-            RecoveryAction::ReduceQuality => format!(
-                "Continue with reduced quality or functionality:\n\
+                .to_string(),
+            RecoveryAction::ReduceQuality => "Continue with reduced quality or functionality:\n\
                 - Reduce grid resolution or detail level\n\
                 - Simplify ruleset or constraints\n\
                 - Disable advanced features"
-            ),
-            RecoveryAction::ReportError => format!(
-                "This error requires intervention:\n\
+                .to_string(),
+            RecoveryAction::ReportError => "This error requires intervention:\n\
                 - Log detailed error information\n\
                 - Check system requirements and GPU compatibility\n\
                 - Report the issue if it persists"
-            ),
-            RecoveryAction::NoAction => format!(
-                "No recovery action is possible:\n\
+                .to_string(),
+            RecoveryAction::NoAction => "No recovery action is possible:\n\
                 - Operation cannot continue\n\
                 - Review logs and error details for diagnostic information"
-            ),
+                .to_string(),
         }
     }
 
@@ -515,11 +510,13 @@ pub enum RecoveryAction {
 /// A type for user-defined recovery hooks that can be registered to handle specific errors
 pub type RecoveryHookFn = Box<dyn Fn(&WfcError) -> Option<RecoveryAction> + Send + Sync>;
 
+/// Type alias for a recovery hook with its predicate
+type RecoveryHookWithPredicate = (Box<dyn Fn(&WfcError) -> bool + Send + Sync>, RecoveryHookFn);
+
 /// Registry for user-defined error recovery hooks
-#[derive(Default)]
 pub struct RecoveryHookRegistry {
     /// Hooks registered for specific error types
-    hooks: Vec<(Box<dyn Fn(&WfcError) -> bool + Send + Sync>, RecoveryHookFn)>,
+    hooks: Vec<RecoveryHookWithPredicate>,
 }
 
 impl RecoveryHookRegistry {
@@ -657,6 +654,13 @@ impl RecoveryHookRegistry {
             }
         }
         None
+    }
+}
+
+// Add default implementation as suggested by clippy
+impl Default for RecoveryHookRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

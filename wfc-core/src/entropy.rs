@@ -243,7 +243,7 @@ mod tests {
             for z in 0..entropy_grid.depth {
                 for y in 0..entropy_grid.height {
                     for x in 0..entropy_grid.width {
-                        if entropy_grid.get(x, y, z).map_or(false, |&e| e > 1.0) {
+                        if entropy_grid.get(x, y, z).is_some_and(|&e| e > 1.0) {
                             return Some((x, y, z));
                         }
                     }

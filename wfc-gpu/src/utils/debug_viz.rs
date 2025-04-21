@@ -186,6 +186,7 @@ impl DebugVisualizer {
     }
 
     /// Helper to get buffer size (example for possibilities buffer)
+    #[allow(dead_code)]
     fn get_grid_buffer_size(&self, buffers: &GpuBuffers) -> u64 {
         buffers.grid_buffers.grid_possibilities_buf.size()
     }
@@ -317,18 +318,21 @@ impl DebugVisualizer {
     }
 
     // Prefix unused parameter
+    #[allow(dead_code)]
     fn render_propagation_steps(_snapshot: &DebugSnapshot) -> Vec<u8> {
         // Placeholder: Render propagation steps (e.g., highlight updated cells)
         vec![0; 100] // Return dummy data
     }
 
     // Prefix unused parameter
+    #[allow(dead_code)]
     fn render_contradictions(_snapshot: &DebugSnapshot) -> Vec<u8> {
         // Placeholder: Render contradictions (e.g., highlight contradicted cells)
         vec![0; 100] // Return dummy data
     }
 
     // Prefix unused parameter
+    #[allow(dead_code)]
     fn get_snapshot_by_index(&self, _index: Option<usize>) -> Option<&DebugSnapshot> {
         // Placeholder: Get snapshot by index or latest
         self.snapshots.back()
@@ -384,7 +388,7 @@ impl DebugVisualizer {
             };
             match gpu_buffers.download_results(request).await? {
                 results if results.min_entropy_info.is_some() => {
-                    self.last_min_entropy_index = results.min_entropy_info.map(|(e, i)| (e, i));
+                    self.last_min_entropy_index = results.min_entropy_info;
                     trace!("Downloaded min entropy index data for visualization.");
                 }
                 _ => {
@@ -406,6 +410,7 @@ impl DebugVisualizer {
 
     // Placeholder for a function to generate the actual visualization (e.g., an image)
     // This would use the downloaded data (last_entropy_values, etc.) and potentially the grid_state
+    #[allow(dead_code)]
     fn generate_visualization_image(
         &self, /* grid: &PossibilityGrid */
     ) -> Result<RgbaImage, GpuError> {
@@ -439,7 +444,7 @@ impl DebugVisualizer {
                         } else {
                             0.0
                         };
-                        let gray = (normalized.max(0.0).min(1.0) * 255.0) as u8;
+                        let gray = (normalized.clamp(0.0, 1.0) * 255.0) as u8;
                         img.put_pixel(x as u32, y as u32, Rgba([gray, gray, gray, 255]));
                     } else {
                         img.put_pixel(x as u32, y as u32, Rgba([255, 0, 0, 255]));

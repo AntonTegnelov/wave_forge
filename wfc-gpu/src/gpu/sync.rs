@@ -2,15 +2,17 @@
 // This separates GPU synchronization concerns from algorithm logic
 
 use crate::{
+    buffers::rule_buffers::RuleBuffers,
     buffers::{DownloadRequest, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
     utils::error::gpu_error::{GpuError as NewGpuError, GpuErrorContext, GpuResourceType},
     utils::error_recovery::{GpuError as OldGpuError, ParseGridCoord},
 };
-use log::{debug, error, trace, warn};
+use log::{debug, error, trace};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::AdjacencyRules;
 use wgpu;
+use wgpu::BindGroup;
 
 // Type alias for backward compatibility
 pub type GpuError = OldGpuError;
@@ -214,82 +216,107 @@ impl GpuSynchronizer {
         trace!("Downloading grid with request: {:?}", request);
         let start_time = std::time::Instant::now();
 
-        // Access buffer via grid_buffers
-        let possibility_buffer_slice = self.buffers.grid_buffers.grid_possibilities_buf.slice(..); // Get slice of the whole buffer
+        // Create a command encoder for the copy operation
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Grid Download Encoder"),
+            });
+
+        // Copy from the main buffer to the staging buffer
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.grid_buffers.grid_possibilities_buf,
+            0,
+            &self.buffers.grid_buffers.staging_grid_possibilities_buf,
+            0,
+            self.buffers.grid_buffers.grid_possibilities_buf.size(),
+        );
+
+        // Submit the copy command
+        self.queue.submit(Some(encoder.finish()));
+
+        // Map the staging buffer
+        let staging_buffer_slice = self
+            .buffers
+            .grid_buffers
+            .staging_grid_possibilities_buf
+            .slice(..);
 
         // Asynchronous map operation
         let (sender, receiver) = futures::channel::oneshot::channel();
-        possibility_buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+        staging_buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             sender.send(result).expect("Failed to send map result");
         });
 
         // Poll the device while waiting for the map operation to complete
         let _ = self.device.poll(wgpu::MaintainBase::Wait);
 
+        // Create target_grid outside the match scope
+        let mut target_grid = target.clone();
+
         // Wait for the mapping result
         match receiver.await {
             Ok(Ok(())) => {
                 // Buffer mapped successfully
-                trace!("Possibility buffer mapped successfully.");
-                let mapped_range = possibility_buffer_slice.get_mapped_range();
+                trace!("Staging buffer mapped successfully.");
+                let mapped_range = staging_buffer_slice.get_mapped_range();
 
-                // --- Copy data from mapped GPU buffer to CPU grid --- ///
-                // Safety: Ensure target_grid dimensions match GPU buffer layout
-                // Assume data is tightly packed array of u32 bitmasks.
-                let num_tiles = target.num_tiles();
-                let tiles_per_u32 = 32;
-                let u32_per_cell = (num_tiles + tiles_per_u32 - 1) / tiles_per_u32;
-                let expected_size = target.width
-                    * target.height
-                    * target.depth
-                    * u32_per_cell
-                    * std::mem::size_of::<u32>();
+                // Copy data from mapped buffer to target grid
+                let mapped_data = bytemuck::cast_slice::<u8, u32>(&mapped_range);
+                let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
 
-                if mapped_range.len() != expected_size {
-                    error!(
-                        "GPU buffer size mismatch. Expected: {}, Actual: {}",
-                        expected_size,
-                        mapped_range.len()
-                    );
-                    // Unmap before returning error
-                    drop(mapped_range); // Drop mapped_range to potentially trigger unmap implicitly
-                    self.buffers.grid_buffers.grid_possibilities_buf.unmap();
-                    return Err(GpuError::BufferCopy(
-                        "GPU possibility buffer size does not match target grid dimensions"
-                            .to_string(),
-                    ));
+                for z in 0..target_grid.depth {
+                    for y in 0..target_grid.height {
+                        for x in 0..target_grid.width {
+                            let cell_idx = target_grid.get_index(x, y, z);
+                            let buffer_start = cell_idx * u32s_per_cell;
+
+                            // Copy the u32 chunks for this cell's possibilities
+                            for i in 0..u32s_per_cell {
+                                if buffer_start + i < mapped_data.len() {
+                                    target_grid
+                                        .set_possibility_chunk(
+                                            x,
+                                            y,
+                                            z,
+                                            i,
+                                            mapped_data[buffer_start + i],
+                                        )
+                                        .map_err(|e| {
+                                            GpuError::BufferCopy(format!(
+                                                "Failed to set possibility chunk: {}",
+                                                e
+                                            ))
+                                        })?;
+                                }
+                            }
+                        }
+                    }
                 }
 
-                // TODO: Implement the actual data copy efficiently.
-                // This likely involves iterating through target_grid cells
-                // and copying the corresponding u32 chunks from mapped_range.
-                // Consider using unsafe code carefully for performance if needed,
-                // or libraries like `bytemuck`.
-                // Placeholder: Just log for now.
-                trace!("TODO: Implement actual grid data copy from mapped buffer.");
-
-                // Drop the mapped range view. This implicitly signals to WGPU
-                // that we are done with the mapped memory.
+                // Drop the mapped range view
                 drop(mapped_range);
 
-                // Explicitly unmap the buffer - access via grid_buffers
-                self.buffers.grid_buffers.grid_possibilities_buf.unmap();
-                trace!("Possibility buffer unmapped.");
+                // Unmap the staging buffer
+                self.buffers
+                    .grid_buffers
+                    .staging_grid_possibilities_buf
+                    .unmap();
+                trace!("Staging buffer unmapped.");
             }
             Ok(Err(e)) => {
-                error!("Failed to map possibility buffer: {}", e);
+                error!("Failed to map staging buffer: {}", e);
                 return Err(GpuError::BufferMapping(e.to_string()));
             }
             Err(e) => {
                 error!("Map future cancelled or panicked: {}", e);
-                // Don't try to unmap if the channel was cancelled before mapping finished.
                 return Err(GpuError::Other("Buffer map future cancelled".to_string()));
             }
         }
 
         let duration = start_time.elapsed();
         trace!("Grid download completed in {:?}", duration);
-        Ok(target.clone())
+        Ok(target_grid)
     }
 
     /// Downloads the contradiction status (flag and location) from the GPU.
@@ -310,8 +337,8 @@ impl GpuSynchronizer {
         let flag_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*flag_buffer_gpu,
-            &*flag_buffer_staging,
+            flag_buffer_gpu,
+            flag_buffer_staging,
             std::mem::size_of::<u32>() as u64,
             Some("Check Contradiction Flag".to_string()),
         )
@@ -320,7 +347,7 @@ impl GpuSynchronizer {
             GpuError::BufferCopy(format!("Failed to download contradiction flag: {}", e))
         })?;
 
-        let has_contradiction = flag_data.first().map_or(false, |&flag| flag != 0);
+        let has_contradiction = flag_data.first().is_some_and(|&flag| flag != 0);
 
         if has_contradiction {
             let loc_buffer_gpu = &self.buffers.contradiction_location_buf;
@@ -329,8 +356,8 @@ impl GpuSynchronizer {
             let loc_data = crate::buffers::download_buffer_data::<u32>(
                 Some(self.device.clone()),
                 Some(self.queue.clone()),
-                &*loc_buffer_gpu,
-                &*loc_buffer_staging,
+                loc_buffer_gpu,
+                loc_buffer_staging,
                 3 * std::mem::size_of::<u32>() as u64,
                 Some("Download Contradiction Location".to_string()),
             )
@@ -353,8 +380,8 @@ impl GpuSynchronizer {
         let count_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*count_buffer_gpu,
-            &*staging_count_buffer,
+            count_buffer_gpu,
+            staging_count_buffer,
             std::mem::size_of::<u32>() as u64,
             Some("Download Worklist Count".to_string()),
         )
@@ -412,7 +439,7 @@ impl GpuSynchronizer {
         };
         let count_buffer = &self.buffers.worklist_buffers.worklist_count_buf; // Use single count buffer
 
-        let data_size = (updated_indices.len() * std::mem::size_of::<u32>()) as u64;
+        let data_size = std::mem::size_of_val(updated_indices) as u64;
 
         // Ensure buffer is large enough (use worklist_buffers method)
         // Note: This might require mutable access or coordination if called concurrently
@@ -537,17 +564,14 @@ impl GpuSynchronizer {
 
     /// Updates the worklist size parameter in the propagation params uniform buffer.
     pub fn update_params_worklist_size(&self, worklist_size: u32) -> Result<(), GpuError> {
-        // Read current params
-        // This requires a download which is slow. Consider passing full params instead.
-        warn!("update_params_worklist_size is inefficient due to read-modify-write");
+        let current_params = GpuParamsUniform {
+            worklist_size,
+            ..GpuParamsUniform::default()
+        };
 
-        // Placeholder: Assume we have the current params or can reconstruct them.
-        // This function might need to be removed or redesigned.
-        let mut current_params = GpuParamsUniform::default(); // DUMMY
-        current_params.worklist_size = worklist_size;
-
+        // Create a new buffer with the updated params and upload to GPU
         self.queue.write_buffer(
-            &self.buffers.params_uniform_buf, // Direct access ok
+            &self.buffers.params_uniform_buf,
             0,
             bytemuck::cast_slice(&[current_params]),
         );
@@ -566,6 +590,7 @@ impl GpuSynchronizer {
     }
 
     /// Internal helper to copy grid possibilities to staging buffer.
+    #[allow(dead_code)]
     pub(crate) fn stage_grid_possibilities_download(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -612,8 +637,8 @@ impl GpuSynchronizer {
         let flag_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*flag_buffer_gpu,
-            &*flag_buffer_staging,
+            flag_buffer_gpu,
+            flag_buffer_staging,
             std::mem::size_of::<u32>() as u64,
             Some("Check Contradiction Flag".to_string()),
         )
@@ -622,7 +647,7 @@ impl GpuSynchronizer {
             GpuError::BufferCopy(format!("Failed to download contradiction flag: {}", e))
         })?;
 
-        Ok(flag_data.first().map_or(false, |&flag| flag != 0))
+        Ok(flag_data.first().is_some_and(|&flag| flag != 0))
     }
 
     /// Downloads the location of the first contradiction, if one occurred.
@@ -639,8 +664,8 @@ impl GpuSynchronizer {
         let loc_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*loc_buffer_gpu,
-            &*loc_buffer_staging,
+            loc_buffer_gpu,
+            loc_buffer_staging,
             3 * std::mem::size_of::<u32>() as u64,
             Some("Download Contradiction Location".to_string()),
         )
@@ -660,8 +685,8 @@ impl GpuSynchronizer {
         let count_data = crate::buffers::download_buffer_data::<u32>(
             Some(self.device.clone()),
             Some(self.queue.clone()),
-            &*count_buffer_gpu,
-            &*staging_count_buffer,
+            count_buffer_gpu,
+            staging_count_buffer,
             std::mem::size_of::<u32>() as u64,
             Some("Download Worklist Count".to_string()),
         )
@@ -779,7 +804,7 @@ impl GpuSynchronizer {
         });
 
         // Wait for the mapping to complete
-        self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::MaintainBase::Wait);
 
         // Check the mapping status
         match pollster::block_on(receiver) {
@@ -836,7 +861,7 @@ impl GpuSynchronizer {
         self.queue.write_buffer(buffer, offset, data_bytes);
 
         // Ensure the write is processed
-        self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::MaintainBase::Wait);
 
         Ok(())
     }
@@ -846,13 +871,13 @@ impl GpuSynchronizer {
         trace!("Uploading adjacency rules to GPU");
 
         let num_tiles = rules.num_tiles();
-        let num_axes = rules.num_axes();
+        let _num_axes = rules.num_axes();
 
         // Prepare weighted rules data for the buffer
         let mut weighted_rules_data = Vec::new();
         for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
             // Only include rules with non-default weights
-            if *weight < 1.0 || *weight > 1.0 {
+            if *weight != 1.0 {
                 let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
                 weighted_rules_data.push(rule_idx as u32);
                 weighted_rules_data.push(weight.to_bits()); // Store f32 weight as u32 bits
@@ -867,7 +892,7 @@ impl GpuSynchronizer {
 
         // Upload the data to the GPU buffer
         self.queue.write_buffer(
-            &self.buffers.rule_buffers.adjacency_rules_buf,
+            &self.buffers.rule_buffers.rules_buf,
             0,
             bytemuck::cast_slice(&weighted_rules_data),
         );
@@ -895,4 +920,67 @@ impl Drop for GpuSynchronizer {
 
         // This is here to make the cleanup process explicit in the code, following RAII principles
     }
+}
+
+/// Creates bind groups for rule-related buffers.
+pub fn create_rule_bind_groups(
+    device: &wgpu::Device,
+    rule_buffers: &RuleBuffers,
+    layout: &wgpu::BindGroupLayout,
+) -> Result<BindGroup, GpuError> {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("WFC Rules Bind Group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &rule_buffers.rules_buf,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &rule_buffers.rule_weights_buf,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+        ],
+    });
+
+    Ok(bind_group)
+}
+
+/// Creates the bind group layout for rule-related buffers.
+pub fn create_rule_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("WFC Rules Bind Group Layout"),
+        entries: &[
+            // Basic adjacency rules buffer
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Rule weights buffer
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    })
 }

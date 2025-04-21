@@ -48,6 +48,7 @@ impl fmt::Display for GpuResourceType {
 
 /// Debug information about GPU state
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct GpuStateInfo {
     /// Available GPU memory at the time of error (if available)
     pub available_memory: Option<u64>,
@@ -69,21 +70,6 @@ pub struct GpuStateInfo {
     pub frame_number: Option<u64>,
 }
 
-impl Default for GpuStateInfo {
-    fn default() -> Self {
-        Self {
-            available_memory: None,
-            total_memory: None,
-            gpu_utilization: None,
-            active_commands: None,
-            buffer_count: None,
-            active_debug_markers: None,
-            adapter_info: None,
-            enabled_features: None,
-            frame_number: None,
-        }
-    }
-}
 
 impl GpuStateInfo {
     /// Create a new GPU state info
@@ -329,85 +315,85 @@ pub enum GpuError {
     #[error("Buffer mapping failed: {msg}")]
     BufferMapFailed {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("Buffer mapping timed out: {0}")]
-    BufferMapTimeout(String, GpuErrorContext),
+    BufferMapTimeout(String, Box<GpuErrorContext>),
 
     #[error("Validation error: {msg}")]
     ValidationError {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("Command execution error: {msg}")]
     CommandExecutionError {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("Buffer operation error: {msg}")]
     BufferOperationError {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("Data transfer error: {msg}")]
     TransferError {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("GPU resource creation failed: {msg}")]
     ResourceCreationFailed {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("Shader compilation failed: {msg}")]
     ShaderError {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("Buffer size mismatch: {msg}")]
     BufferSizeMismatch {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("Timeout occurred: {msg}")]
     Timeout {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("Device lost: {msg}")]
     DeviceLost {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("GPU Adapter request failed")]
-    AdapterRequestFailed { context: GpuErrorContext },
+    AdapterRequestFailed { context: Box<GpuErrorContext> },
 
     #[error("GPU Device request failed: {0}")]
-    DeviceRequestFailed(wgpu::RequestDeviceError, GpuErrorContext),
+    DeviceRequestFailed(wgpu::RequestDeviceError, Box<GpuErrorContext>),
 
     #[error("Mutex lock error: {msg}")]
     MutexError {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 
     #[error("Contradiction detected")]
-    ContradictionDetected { context: GpuErrorContext },
+    ContradictionDetected { context: Box<GpuErrorContext> },
 
     #[error("Other GPU error: {msg}")]
     Other {
         msg: String,
-        context: GpuErrorContext,
+        context: Box<GpuErrorContext>,
     },
 }
 
@@ -416,20 +402,20 @@ impl GpuError {
     pub fn buffer_map_failed<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::BufferMapFailed {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
     /// Create a new buffer map timeout error
     pub fn buffer_map_timeout<S: Into<String>>(label: S, context: GpuErrorContext) -> Self {
-        Self::BufferMapTimeout(label.into(), context)
+        Self::BufferMapTimeout(label.into(), Box::new(context))
     }
 
     /// Create a new validation error
     pub fn validation_error(err: wgpu::Error, context: GpuErrorContext) -> Self {
         Self::ValidationError {
             msg: err.to_string(),
-            context,
+            context: Box::new(context),
         }
     }
 
@@ -437,7 +423,7 @@ impl GpuError {
     pub fn command_execution_error<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::CommandExecutionError {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
@@ -445,7 +431,7 @@ impl GpuError {
     pub fn buffer_operation_error<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::BufferOperationError {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
@@ -453,7 +439,7 @@ impl GpuError {
     pub fn transfer_error<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::TransferError {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
@@ -461,7 +447,7 @@ impl GpuError {
     pub fn resource_creation_failed<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::ResourceCreationFailed {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
@@ -469,7 +455,7 @@ impl GpuError {
     pub fn shader_error<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::ShaderError {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
@@ -477,7 +463,7 @@ impl GpuError {
     pub fn buffer_size_mismatch<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::BufferSizeMismatch {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
@@ -485,7 +471,7 @@ impl GpuError {
     pub fn timeout<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::Timeout {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
@@ -493,38 +479,42 @@ impl GpuError {
     pub fn device_lost<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::DeviceLost {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
     /// Create a new adapter request failed error
     pub fn adapter_request_failed(context: GpuErrorContext) -> Self {
-        Self::AdapterRequestFailed { context }
+        Self::AdapterRequestFailed {
+            context: Box::new(context),
+        }
     }
 
     /// Create a new device request failed error
     pub fn device_request_failed(err: wgpu::RequestDeviceError, context: GpuErrorContext) -> Self {
-        Self::DeviceRequestFailed(err, context)
+        Self::DeviceRequestFailed(err, Box::new(context))
     }
 
     /// Create a new mutex error
     pub fn mutex_error<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::MutexError {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
     /// Create a new contradiction detected error
     pub fn contradiction_detected(context: GpuErrorContext) -> Self {
-        Self::ContradictionDetected { context }
+        Self::ContradictionDetected {
+            context: Box::new(context),
+        }
     }
 
     /// Create a new other error
     pub fn other<S: Into<String>>(msg: S, context: GpuErrorContext) -> Self {
         Self::Other {
             msg: msg.into(),
-            context,
+            context: Box::new(context),
         }
     }
 
@@ -788,56 +778,56 @@ impl From<crate::utils::error_recovery::GpuError> for GpuError {
         match err {
             RecoveryGpuError::MemoryAllocation(msg) => Self::BufferOperationError {
                 msg,
-                context: GpuErrorContext::new(GpuResourceType::Buffer)
-                    .with_details("Memory allocation failed"),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Buffer)
+                    .with_details("Memory allocation failed")),
             },
             RecoveryGpuError::ComputationTimeout { grid_size, duration } => Self::Timeout {
                 msg: format!("Computation timeout for grid {}x{} after {:?}", grid_size.0, grid_size.1, duration),
-                context: GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details("GPU computation timed out"),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details("GPU computation timed out")),
             },
             RecoveryGpuError::KernelExecution(msg) => Self::CommandExecutionError {
                 msg,
-                context: GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details("Kernel execution error"),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details("Kernel execution error")),
             },
             RecoveryGpuError::QueueSubmission(msg) => Self::CommandExecutionError {
                 msg,
-                context: GpuErrorContext::new(GpuResourceType::Queue)
-                    .with_details("Queue submission error"),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Queue)
+                    .with_details("Queue submission error")),
             },
             RecoveryGpuError::DeviceLost(msg) => Self::DeviceLost {
                 msg,
-                context: GpuErrorContext::new(GpuResourceType::Device)
-                    .with_details("Device lost"),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Device)
+                    .with_details("Device lost")),
             },
             RecoveryGpuError::InvalidState(msg) => Self::ValidationError {
                 msg,
-                context: GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details("Invalid state"),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details("Invalid state")),
             },
             RecoveryGpuError::BarrierSynchronization(msg) => Self::CommandExecutionError {
                 msg,
-                context: GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details("Barrier synchronization error"),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details("Barrier synchronization error")),
             },
             RecoveryGpuError::BufferCopy(msg) => Self::TransferError {
                 msg,
-                context: GpuErrorContext::new(GpuResourceType::Buffer)
-                    .with_details("Buffer copy error"),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Buffer)
+                    .with_details("Buffer copy error")),
             },
             RecoveryGpuError::BufferMapping(msg) => Self::BufferMapFailed {
                 msg,
-                context: GpuErrorContext::new(GpuResourceType::Buffer)
-                    .with_details("Buffer mapping error"),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Buffer)
+                    .with_details("Buffer mapping error")),
             },
             RecoveryGpuError::ContradictionDetected { context } => Self::ContradictionDetected {
-                context: GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details(format!("Contradiction detected: {}", context)),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
+                    .with_details(format!("Contradiction detected: {}", context))),
             },
             RecoveryGpuError::Other(msg) => Self::Other {
                 msg,
-                context: GpuErrorContext::new(GpuResourceType::Other),
+                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)),
             },
         }
     }

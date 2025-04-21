@@ -10,11 +10,28 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::utils::error::ErrorSeverity;
+use wfc_core::propagator::PropagationError;
 
 // Re-export strategy types
 pub use strategies::{
     FallbackStrategy, GracefulDegradationStrategy, RecoveryAction, RecoveryStrategy, RetryStrategy,
 };
+
+/// Helper function to convert GpuError to PropagationError consistently
+pub fn gpu_error_to_propagation_error(error: GpuError) -> PropagationError {
+    match error {
+        GpuError::ContradictionDetected { context } => {
+            // Parse the context string to extract coordinates if present
+            // Format is expected to be something like "at coordinates (x, y, z)"
+            let context_str = context.to_string();
+
+            // For now, we'll create a general error as the context string
+            // doesn't have structured grid coordinates
+            PropagationError::InternalError(format!("Contradiction detected: {}", context_str))
+        }
+        _ => PropagationError::InternalError(format!("GPU error: {}", error)),
+    }
+}
 
 /// Represents a coordinate in the WFC grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

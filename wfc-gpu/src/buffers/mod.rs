@@ -511,7 +511,7 @@ impl GpuBuffers {
                     expected_data_size,
                     data.len()
                 ),
-                context: GpuErrorContext::default(),
+                context: Box::new(GpuErrorContext::default()),
             });
         }
 
@@ -524,6 +524,8 @@ impl GpuBuffers {
             for y in 0..height {
                 for x in 0..width {
                     if let Some(cell) = grid.get_mut(x, y, z) {
+                        cell.clear(); // Clear the cell first
+                        cell.resize(num_tiles, false); // Resize to the correct number of tiles
                         let data_start = cell_index * u32s_per_cell;
                         let data_end = data_start + u32s_per_cell;
 
@@ -594,7 +596,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
                 source_buffer.size(),
                 buffer_size
             ),
-            context: GpuErrorContext::default(),
+            context: Box::new(GpuErrorContext::default()),
         });
     }
 
@@ -606,7 +608,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
                 staging_buffer.size(),
                 buffer_size
             ),
-            context: GpuErrorContext::default(),
+            context: Box::new(GpuErrorContext::default()),
         });
     }
 
@@ -669,7 +671,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
     if let Err(e) = result {
         return Err(GpuError::BufferOperationError {
             msg: format!("Failed to map buffer '{}': {:?}", label_str, e),
-            context: GpuErrorContext::default(),
+            context: Box::new(GpuErrorContext::default()),
         });
     }
 
@@ -714,7 +716,7 @@ impl GpuDownloadResults {
                 .as_ref()
                 .ok_or_else(|| GpuError::BufferOperationError {
                     msg: "Grid possibilities data not downloaded".to_string(),
-                    context: GpuErrorContext::default(),
+                    context: Box::new(GpuErrorContext::default()),
                 })?;
 
         if grid_possibilities.len() < num_cells * u32s_per_cell {
@@ -724,7 +726,7 @@ impl GpuDownloadResults {
                     num_cells * u32s_per_cell,
                     grid_possibilities.len()
                 ),
-                context: GpuErrorContext::default(),
+                context: Box::new(GpuErrorContext::default()),
             });
         }
 
@@ -741,10 +743,8 @@ impl GpuDownloadResults {
                                 let bits = grid_possibilities[base_index + i];
                                 for bit_pos in 0..32 {
                                     let tile_idx = i * 32 + bit_pos;
-                                    if tile_idx < num_tiles {
-                                        if ((bits >> bit_pos) & 1) == 1 {
-                                            cell.set(tile_idx, true);
-                                        }
+                                    if tile_idx < num_tiles && ((bits >> bit_pos) & 1) == 1 {
+                                        cell.set(tile_idx, true);
                                     }
                                 }
                             }

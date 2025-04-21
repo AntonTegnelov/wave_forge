@@ -14,8 +14,8 @@ pub trait RecoveryStrategy: fmt::Debug + Send + Sync {
     ///
     /// Returns:
     /// - `Ok(RecoveryAction)`: Recovery attempt result and recommended action
-    /// - `Err(WfcError)`: If recovery failed or is not possible
-    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, WfcError>;
+    /// - `Err(Box<WfcError>)`: If recovery failed or is not possible
+    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, Box<WfcError>>;
 
     /// Check if this strategy is applicable to the given error.
     fn is_applicable(&self, error: &WfcError) -> bool;
@@ -88,9 +88,9 @@ impl RetryStrategy {
 }
 
 impl RecoveryStrategy for RetryStrategy {
-    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, WfcError> {
+    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, Box<WfcError>> {
         if !error.is_recoverable() {
-            return Err(error.clone());
+            return Err(Box::new(error.clone()));
         }
 
         let retry_count = self.retry_counter.fetch_add(1, Ordering::Relaxed);
@@ -98,7 +98,7 @@ impl RecoveryStrategy for RetryStrategy {
         if retry_count >= self.max_retries {
             // Max retries exceeded
             self.reset();
-            return Err(error.clone());
+            return Err(Box::new(error.clone()));
         }
 
         // Sleep for backoff delay
@@ -132,7 +132,7 @@ impl FallbackStrategy {
 }
 
 impl RecoveryStrategy for FallbackStrategy {
-    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, WfcError> {
+    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, Box<WfcError>> {
         // Based on error type, suggest a fallback approach
         match error {
             // For example, if a buffer failed, we might suggest reinitialization
@@ -140,10 +140,10 @@ impl RecoveryStrategy for FallbackStrategy {
                 // Simplified example - would need more sophistication in practice
                 match gpu_error.severity() {
                     ErrorSeverity::Recoverable => Ok(RecoveryAction::UseAlternative),
-                    _ => Err(error.clone()),
+                    _ => Err(Box::new(error.clone())),
                 }
             }
-            _ => Err(error.clone()),
+            _ => Err(Box::new(error.clone())),
         }
     }
 
@@ -171,7 +171,7 @@ impl GracefulDegradationStrategy {
 }
 
 impl RecoveryStrategy for GracefulDegradationStrategy {
-    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, WfcError> {
+    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, Box<WfcError>> {
         // This would analyze the error and suggest a way to continue
         // with reduced functionality or quality
 
@@ -181,7 +181,7 @@ impl RecoveryStrategy for GracefulDegradationStrategy {
                 // For GPU errors, we might suggest skipping certain operations
                 Ok(RecoveryAction::Skip)
             }
-            _ => Err(error.clone()),
+            _ => Err(Box::new(error.clone())),
         }
     }
 
@@ -221,19 +221,27 @@ impl CompositeRecoveryStrategy {
 }
 
 impl RecoveryStrategy for CompositeRecoveryStrategy {
-    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, WfcError> {
-        // Try each strategy in order
+    fn attempt_recovery(&self, error: &WfcError) -> Result<RecoveryAction, Box<WfcError>> {
+        // Try each applicable strategy in order
+        let mut last_error: Option<Box<WfcError>> = None;
+
         for strategy in &self.strategies {
             if strategy.is_applicable(error) {
                 match strategy.attempt_recovery(error) {
                     Ok(action) => return Ok(action),
-                    Err(_) => continue, // Try the next strategy
+                    Err(err) => {
+                        last_error = Some(err);
+                        // Continue to the next strategy
+                    }
                 }
             }
         }
 
-        // If no strategy worked, return the original error
-        Err(error.clone())
+        // If we got here, all strategies failed or none were applicable
+        match last_error {
+            Some(err) => Err(err),
+            None => Err(Box::new(error.clone())),
+        }
     }
 
     fn is_applicable(&self, error: &WfcError) -> bool {

@@ -3,6 +3,16 @@
 // This module contains functions for working with adjacency rules, including
 // checking if specific tile combinations are allowed across different axes.
 
+struct RuleBuffers {
+    // Basic adjacency rules packed as bits
+    rules: array<u32>,
+    // Array of (rule_idx, weight) pairs for weighted rules
+    rule_weights: array<u32>,
+}
+
+@group(1) @binding(0)
+var<storage, read> rule_buffers: RuleBuffers;
+
 // Helper function to check adjacency rule
 // Assumes rules are packed tightly: rule[axis][tile1][tile2]
 fn check_rule(tile1: u32, tile2: u32, axis: u32, params: Params, adjacency_rules: array<u32>) -> bool {
@@ -89,4 +99,32 @@ fn compute_allowed_neighbor_mask(current_possibilities: ptr<function, Possibilit
     }
     
     return allowed_neighbor_mask;
+}
+
+// Check if a rule is allowed based on the bit array
+fn is_rule_allowed(axis: u32, tile1: u32, tile2: u32) -> bool {
+    let num_tiles = get_num_tiles();
+    let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
+    let u32_idx = rule_idx / 32u;
+    let bit_idx = rule_idx % 32u;
+    return (rule_buffers.rules[u32_idx] & (1u << bit_idx)) != 0u;
+}
+
+// Get the weight for a rule, returns 1.0 if no specific weight is defined
+fn get_rule_weight(axis: u32, tile1: u32, tile2: u32) -> f32 {
+    let num_tiles = get_num_tiles();
+    let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
+    
+    // Search for the rule in the weights buffer
+    let num_weights = arrayLength(&rule_buffers.rule_weights) / 2u;
+    for (var i = 0u; i < num_weights; i += 1u) {
+        let stored_idx = rule_buffers.rule_weights[i * 2u];
+        if (stored_idx == rule_idx) {
+            // Convert bits back to f32
+            return bitcast<f32>(rule_buffers.rule_weights[i * 2u + 1u]);
+        }
+    }
+    
+    // Return default weight if no specific weight found
+    return 1.0;
 } 

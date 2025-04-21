@@ -1,12 +1,13 @@
-use crate::propagator::propagator_strategy::gpu_error_to_propagation_error;
 use crate::{
     buffers::{GpuBuffers, GpuParamsUniform},
     gpu::sync::GpuSynchronizer,
-    propagator::{AsyncPropagationStrategy, PropagationStrategy, PropagationStrategyFactory},
+    propagator::{AsyncPropagationStrategy, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
-    utils::debug_viz::DebugVisualizer,
-    utils::error_recovery::GridCoord,
     utils::subgrid::SubgridConfig,
+    utils::{
+        debug_viz::DebugVisualizer,
+        error_recovery::{gpu_error_to_propagation_error, GridCoord},
+    },
 };
 use async_trait::async_trait;
 use log::debug;
@@ -42,7 +43,8 @@ impl Clone for GpuConstraintPropagator {
     fn clone(&self) -> Self {
         // Create a new direct strategy - this is a compromise but we need to implement Clone
         // In practice, a clone is rarely if ever called and users can reconfigure as needed
-        let strategy = PropagationStrategyFactory::create_direct_async(1000);
+        let strategy =
+            PropagationStrategyFactory::create_direct_async(1000, self.pipelines.clone());
 
         Self {
             device: self.device.clone(),
@@ -50,7 +52,7 @@ impl Clone for GpuConstraintPropagator {
             pipelines: self.pipelines.clone(),
             buffers: self.buffers.clone(),
             current_worklist_idx: self.current_worklist_idx.clone(),
-            params: self.params.clone(),
+            params: self.params,
             debug_visualizer: self.debug_visualizer.clone(),
             synchronizer: self.synchronizer.clone(),
             strategy,
@@ -66,7 +68,7 @@ impl GpuConstraintPropagator {
         pipelines: Arc<ComputePipelines>,
         buffers: Arc<GpuBuffers>,
         grid_dims: (usize, usize, usize),
-        boundary_mode: wfc_core::BoundaryCondition,
+        _boundary_mode: wfc_core::BoundaryCondition,
         params: GpuParamsUniform,
     ) -> Self {
         let synchronizer = Arc::new(GpuSynchronizer::new(
@@ -82,7 +84,7 @@ impl GpuConstraintPropagator {
             grid_dims.2,
             params.num_tiles as usize,
         );
-        let strategy = PropagationStrategyFactory::create_for_grid_async(&grid);
+        let strategy = PropagationStrategyFactory::create_for_grid_async(&grid, pipelines.clone());
 
         Self {
             device,
@@ -124,8 +126,10 @@ impl GpuConstraintPropagator {
     ///
     /// `Self` for method chaining.
     pub fn with_direct_propagation(self, max_iterations: u32) -> Self {
+        let pipelines = self.pipelines.clone();
         self.with_strategy(PropagationStrategyFactory::create_direct_async(
             max_iterations,
+            pipelines,
         ))
     }
 
@@ -140,9 +144,11 @@ impl GpuConstraintPropagator {
     ///
     /// `Self` for method chaining.
     pub fn with_subgrid_propagation(self, max_iterations: u32, subgrid_size: u32) -> Self {
+        let pipelines = self.pipelines.clone();
         self.with_strategy(PropagationStrategyFactory::create_subgrid_async(
             max_iterations,
             subgrid_size,
+            pipelines,
         ))
     }
 
@@ -163,10 +169,12 @@ impl GpuConstraintPropagator {
         subgrid_size: u32,
         size_threshold: usize,
     ) -> Self {
+        let pipelines = self.pipelines.clone();
         self.with_strategy(PropagationStrategyFactory::create_adaptive_async(
             max_iterations,
             subgrid_size,
             size_threshold,
+            pipelines,
         ))
     }
 

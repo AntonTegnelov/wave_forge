@@ -11,7 +11,8 @@ use crate::{
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
-use wfc_core::{grid::PossibilityGrid, WfcError};
+use wfc_core::{grid::PossibilityGrid, propagator::ConstraintPropagator, WfcError};
+use wfc_rules::AdjacencyRules;
 
 /// The core strategy interface for WFC algorithm coordination.
 /// Implementations provide different approaches to running the WFC algorithm
@@ -30,7 +31,7 @@ pub trait CoordinationStrategy: Debug + Send + Sync {
     /// * `Err(WfcError)` if an error occurred
     async fn step(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<StepResult, WfcError>;
 
@@ -45,7 +46,7 @@ pub trait CoordinationStrategy: Debug + Send + Sync {
     /// * `Err(WfcError)` if initialization fails
     async fn initialize(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &PossibilityGrid,
     ) -> Result<(), WfcError>;
 
@@ -60,12 +61,25 @@ pub trait CoordinationStrategy: Debug + Send + Sync {
     /// * `Err(WfcError)` if finalization fails
     async fn finalize(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<PossibilityGrid, WfcError>;
 
     /// Creates a clone of this strategy.
     fn clone_box(&self) -> Box<dyn CoordinationStrategy>;
+
+    /// Coordinates the propagation of constraints through the grid.
+    ///
+    /// # Arguments
+    /// * `worklist` - List of coordinates to propagate constraints from
+    ///
+    /// # Returns
+    /// * `Ok(())` if propagation is successful
+    /// * `Err(WfcError)` if propagation fails
+    async fn coordinate_propagation(
+        &mut self,
+        worklist: &[(usize, usize, usize)],
+    ) -> Result<(), WfcError>;
 }
 
 impl Clone for Box<dyn CoordinationStrategy> {
@@ -140,8 +154,10 @@ impl CoordinationStrategyFactory {
 /// The default coordination strategy implementation.
 #[derive(Debug, Clone)]
 struct DefaultCoordinationStrategy {
-    entropy_calculator: Arc<GpuEntropyCalculator>,
+    _entropy_calculator: Arc<GpuEntropyCalculator>,
     propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    grid: Arc<RwLock<PossibilityGrid>>,
+    rules: Arc<RwLock<AdjacencyRules>>,
     // Add additional state as needed
 }
 
@@ -150,9 +166,20 @@ impl DefaultCoordinationStrategy {
         entropy_calculator: Arc<GpuEntropyCalculator>,
         propagator: Arc<RwLock<GpuConstraintPropagator>>,
     ) -> Self {
+        // Create placeholder grid and rules that will be initialized later
+        // Use 1 tile instead of 0 to avoid assertion failure
+        let grid = Arc::new(RwLock::new(PossibilityGrid::new(1, 1, 1, 1)));
+        let rules = Arc::new(RwLock::new(AdjacencyRules::from_allowed_tuples(
+            0,
+            0,
+            Vec::new(),
+        )));
+
         Self {
-            entropy_calculator,
+            _entropy_calculator: entropy_calculator,
             propagator,
+            grid,
+            rules,
         }
     }
 }
@@ -161,9 +188,15 @@ impl DefaultCoordinationStrategy {
 impl CoordinationStrategy for DefaultCoordinationStrategy {
     async fn step(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<StepResult, WfcError> {
+        // Update our internal grid with the current grid state
+        {
+            let mut internal_grid = self.grid.write().await;
+            *internal_grid = grid.clone();
+        }
+
         // Default implementation of a WFC step
         // 1. Calculate entropy
         // 2. Select min entropy cell
@@ -178,16 +211,24 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
 
     async fn initialize(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &PossibilityGrid,
     ) -> Result<(), WfcError> {
         // Initialize resources needed for coordination
+        let mut internal_grid = self.grid.write().await;
+        *internal_grid = grid.clone();
+
+        // In a real implementation, we would initialize the rules here too
+        // For now, we'll use placeholder empty rules
+        let mut internal_rules = self.rules.write().await;
+        *internal_rules = AdjacencyRules::from_allowed_tuples(0, 0, Vec::new());
+
         Ok(())
     }
 
     async fn finalize(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<PossibilityGrid, WfcError> {
         // Finalize and clean up resources
@@ -197,13 +238,28 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
     fn clone_box(&self) -> Box<dyn CoordinationStrategy> {
         Box::new(self.clone())
     }
+
+    async fn coordinate_propagation(
+        &mut self,
+        worklist: &[(usize, usize, usize)],
+    ) -> Result<(), WfcError> {
+        let propagator = self.propagator.write().await;
+        let grid = &mut self.grid.write().await;
+        let rules = &self.rules.read().await;
+        propagator
+            .propagate(grid, worklist.to_vec(), rules)
+            .await
+            .map_err(WfcError::PropagationError)
+    }
 }
 
 /// A coordination strategy optimized for large grids.
 #[derive(Debug, Clone)]
 struct LargeGridCoordinationStrategy {
-    entropy_calculator: Arc<GpuEntropyCalculator>,
+    _entropy_calculator: Arc<GpuEntropyCalculator>,
     propagator: Arc<RwLock<GpuConstraintPropagator>>,
+    grid: Arc<RwLock<PossibilityGrid>>,
+    rules: Arc<RwLock<AdjacencyRules>>,
     // Add additional state as needed for large grid optimization
 }
 
@@ -212,9 +268,19 @@ impl LargeGridCoordinationStrategy {
         entropy_calculator: Arc<GpuEntropyCalculator>,
         propagator: Arc<RwLock<GpuConstraintPropagator>>,
     ) -> Self {
+        // Create empty placeholder grid and rules that will be initialized later
+        let grid = Arc::new(RwLock::new(PossibilityGrid::new(1, 1, 1, 0)));
+        let rules = Arc::new(RwLock::new(AdjacencyRules::from_allowed_tuples(
+            0,
+            0,
+            Vec::new(),
+        )));
+
         Self {
-            entropy_calculator,
+            _entropy_calculator: entropy_calculator,
             propagator,
+            grid,
+            rules,
         }
     }
 }
@@ -223,9 +289,15 @@ impl LargeGridCoordinationStrategy {
 impl CoordinationStrategy for LargeGridCoordinationStrategy {
     async fn step(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<StepResult, WfcError> {
+        // Update our internal grid with the current grid state
+        {
+            let mut internal_grid = self.grid.write().await;
+            *internal_grid = grid.clone();
+        }
+
         // Large grid optimization of a WFC step
         // Potentially using different batching strategies or
         // more aggressive parallelization
@@ -237,16 +309,24 @@ impl CoordinationStrategy for LargeGridCoordinationStrategy {
 
     async fn initialize(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &PossibilityGrid,
     ) -> Result<(), WfcError> {
         // Initialize resources needed for large grid coordination
+        let mut internal_grid = self.grid.write().await;
+        *internal_grid = grid.clone();
+
+        // In a real implementation, we would initialize the rules here too
+        // For now, we'll use placeholder empty rules
+        let mut internal_rules = self.rules.write().await;
+        *internal_rules = AdjacencyRules::from_allowed_tuples(0, 0, Vec::new());
+
         Ok(())
     }
 
     async fn finalize(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<PossibilityGrid, WfcError> {
         // Finalize and clean up resources
@@ -255,6 +335,19 @@ impl CoordinationStrategy for LargeGridCoordinationStrategy {
 
     fn clone_box(&self) -> Box<dyn CoordinationStrategy> {
         Box::new(self.clone())
+    }
+
+    async fn coordinate_propagation(
+        &mut self,
+        worklist: &[(usize, usize, usize)],
+    ) -> Result<(), WfcError> {
+        let propagator = self.propagator.write().await;
+        let grid = &mut self.grid.write().await;
+        let rules = &self.rules.read().await;
+        propagator
+            .propagate(grid, worklist.to_vec(), rules)
+            .await
+            .map_err(WfcError::PropagationError)
     }
 }
 
@@ -265,9 +358,11 @@ impl CoordinationStrategy for LargeGridCoordinationStrategy {
 /// points and increasing parallelism.
 #[derive(Debug, Clone)]
 struct BatchedCoordinationStrategy {
-    entropy_calculator: Arc<GpuEntropyCalculator>,
+    _entropy_calculator: Arc<GpuEntropyCalculator>,
     propagator: Arc<RwLock<GpuConstraintPropagator>>,
-    batch_size: usize,
+    grid: Arc<RwLock<PossibilityGrid>>,
+    rules: Arc<RwLock<AdjacencyRules>>,
+    _batch_size: usize,
     // Additional state for batch processing
     current_batch: Vec<(usize, usize, usize)>,
 }
@@ -278,10 +373,20 @@ impl BatchedCoordinationStrategy {
         propagator: Arc<RwLock<GpuConstraintPropagator>>,
         batch_size: usize,
     ) -> Self {
+        // Create empty placeholder grid and rules that will be initialized later
+        let grid = Arc::new(RwLock::new(PossibilityGrid::new(1, 1, 1, 0)));
+        let rules = Arc::new(RwLock::new(AdjacencyRules::from_allowed_tuples(
+            0,
+            0,
+            Vec::new(),
+        )));
+
         Self {
-            entropy_calculator,
+            _entropy_calculator: entropy_calculator,
             propagator,
-            batch_size: batch_size.max(1), // Ensure batch size is at least 1
+            grid,
+            rules,
+            _batch_size: batch_size,
             current_batch: Vec::new(),
         }
     }
@@ -289,8 +394,8 @@ impl BatchedCoordinationStrategy {
     /// Select multiple low-entropy cells for simultaneous collapse
     async fn select_batch(
         &mut self,
-        accelerator: &mut GpuAccelerator,
-        grid: &PossibilityGrid,
+        _accelerator: &mut GpuAccelerator,
+        _grid: &PossibilityGrid,
     ) -> Result<Vec<(usize, usize, usize)>, WfcError> {
         // In a real implementation, this would use a modified entropy calculation
         // that returns multiple low-entropy cells instead of just the minimum.
@@ -305,47 +410,49 @@ impl BatchedCoordinationStrategy {
 impl CoordinationStrategy for BatchedCoordinationStrategy {
     async fn step(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<StepResult, WfcError> {
-        // If we don't have a batch in progress, select a new batch
+        // Check if we have a batch to process
         if self.current_batch.is_empty() {
-            self.current_batch = self.select_batch(accelerator, grid).await?;
-
-            // If we couldn't find any cells to collapse, we're done
-            if self.current_batch.is_empty() {
+            // No cells to process, select a new batch
+            let new_batch = self.select_batch(_accelerator, grid).await?;
+            if new_batch.is_empty() {
+                // No more cells to select, we're done
                 return Ok(StepResult::Completed);
             }
+            self.current_batch = new_batch;
         }
 
-        // Process one cell from the current batch
-        let cell = self.current_batch.pop().unwrap();
+        // Process one cell from the batch
+        let _cell = self.current_batch.pop().unwrap();
 
-        // In a real implementation, this would:
-        // 1. Collapse the cell
-        // 2. Propagate constraints
-        // 3. Check for contradictions
-
-        // This is a placeholder - the actual implementation would process the cell
-
-        // If we've processed all cells in the batch, return InProgress to get a new batch
-        // Otherwise, return a special result indicating we have more cells in the current batch
+        // Process the cell and propagate constraints
+        // This is a placeholder - a real implementation would do actual work
         Ok(StepResult::InProgress)
     }
 
     async fn initialize(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &PossibilityGrid,
     ) -> Result<(), WfcError> {
         // Initialize resources needed for batched coordination
+        let mut internal_grid = self.grid.write().await;
+        *internal_grid = grid.clone();
+
+        // In a real implementation, we would initialize the rules here too
+        // For now, we'll use placeholder empty rules
+        let mut internal_rules = self.rules.write().await;
+        *internal_rules = AdjacencyRules::from_allowed_tuples(0, 0, Vec::new());
+
         self.current_batch.clear();
         Ok(())
     }
 
     async fn finalize(
         &mut self,
-        accelerator: &mut GpuAccelerator,
+        _accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<PossibilityGrid, WfcError> {
         // Finalize and clean up resources
@@ -355,5 +462,18 @@ impl CoordinationStrategy for BatchedCoordinationStrategy {
 
     fn clone_box(&self) -> Box<dyn CoordinationStrategy> {
         Box::new(self.clone())
+    }
+
+    async fn coordinate_propagation(
+        &mut self,
+        worklist: &[(usize, usize, usize)],
+    ) -> Result<(), WfcError> {
+        let propagator = self.propagator.write().await;
+        let grid = &mut self.grid.write().await;
+        let rules = &self.rules.read().await;
+        propagator
+            .propagate(grid, worklist.to_vec(), rules)
+            .await
+            .map_err(WfcError::PropagationError)
     }
 }

@@ -25,10 +25,10 @@ impl Transformation {
     /// Calculates the resulting axis index after applying the transformation.
     /// Assumes a standard 3D axis convention:
     /// 0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
-    pub fn transform_axis(self, axis: usize) -> usize {
+    #[must_use] pub fn transform_axis(self, axis: usize) -> usize {
         match self {
-            Transformation::Identity => axis,
-            Transformation::Rot90 => match axis {
+            Self::Identity => axis,
+            Self::Rot90 => match axis {
                 0 => 2,
                 1 => 3,
                 2 => 1,
@@ -36,7 +36,7 @@ impl Transformation {
                 4 | 5 => axis,
                 _ => panic!("Invalid axis"),
             },
-            Transformation::Rot180 => match axis {
+            Self::Rot180 => match axis {
                 0 => 1,
                 1 => 0,
                 2 => 3,
@@ -44,7 +44,7 @@ impl Transformation {
                 4 | 5 => axis,
                 _ => panic!("Invalid axis"),
             },
-            Transformation::Rot270 => match axis {
+            Self::Rot270 => match axis {
                 0 => 3,
                 1 => 2,
                 2 => 0,
@@ -52,19 +52,19 @@ impl Transformation {
                 4 | 5 => axis,
                 _ => panic!("Invalid axis"),
             },
-            Transformation::FlipX => match axis {
+            Self::FlipX => match axis {
                 0 => 1,
                 1 => 0,
                 2..=5 => axis,
                 _ => panic!("Invalid axis"),
             },
-            Transformation::FlipY => match axis {
+            Self::FlipY => match axis {
                 2 => 3,
                 3 => 2,
                 0 | 1 | 4 | 5 => axis,
                 _ => panic!("Invalid axis"),
             },
-            Transformation::FlipZ => match axis {
+            Self::FlipZ => match axis {
                 4 => 5,
                 5 => 4,
                 0..=3 => axis,
@@ -74,67 +74,63 @@ impl Transformation {
     }
 
     /// Returns the inverse transformation.
-    pub fn inverse(self) -> Transformation {
+    #[must_use] pub const fn inverse(self) -> Self {
         match self {
-            Transformation::Identity => Transformation::Identity,
-            Transformation::Rot90 => Transformation::Rot270,
-            Transformation::Rot180 => Transformation::Rot180,
-            Transformation::Rot270 => Transformation::Rot90,
-            Transformation::FlipX => Transformation::FlipX, // Reflections are self-inverse
-            Transformation::FlipY => Transformation::FlipY,
-            Transformation::FlipZ => Transformation::FlipZ,
+            Self::Identity => Self::Identity,
+            Self::Rot90 => Self::Rot270,
+            Self::Rot180 => Self::Rot180,
+            Self::Rot270 => Self::Rot90,
+            Self::FlipX => Self::FlipX, // Reflections are self-inverse
+            Self::FlipY => Self::FlipY,
+            Self::FlipZ => Self::FlipZ,
         }
     }
 
     /// Combines this transformation with another (applies `other` then `self`).
     /// Equivalent to matrix multiplication: `self * other`.
     /// NOTE: Combination logic for reflections is currently unimplemented.
-    pub fn combine(self, other: Transformation) -> Transformation {
+    #[must_use] pub fn combine(self, other: Self) -> Self {
         match (self, other) {
             // Identity cases
-            (Transformation::Identity, _) => other,
-            (_, Transformation::Identity) => self,
+            (Self::Identity, _) => other,
+            (_, Self::Identity) => self,
 
             // Rotation * Rotation
             (
-                Transformation::Rot90 | Transformation::Rot180 | Transformation::Rot270,
-                Transformation::Rot90 | Transformation::Rot180 | Transformation::Rot270,
+                Self::Rot90 | Self::Rot180 | Self::Rot270,
+                Self::Rot90 | Self::Rot180 | Self::Rot270,
             ) => {
                 let self_val = match self {
-                    Transformation::Rot90 => 1,
-                    Transformation::Rot180 => 2,
-                    Transformation::Rot270 => 3,
+                    Self::Rot90 => 1,
+                    Self::Rot180 => 2,
+                    Self::Rot270 => 3,
                     _ => 0,
                 };
                 let other_val = match other {
-                    Transformation::Rot90 => 1,
-                    Transformation::Rot180 => 2,
-                    Transformation::Rot270 => 3,
+                    Self::Rot90 => 1,
+                    Self::Rot180 => 2,
+                    Self::Rot270 => 3,
                     _ => 0,
                 };
                 match (self_val + other_val) % 4 {
-                    0 => Transformation::Identity,
-                    1 => Transformation::Rot90,
-                    2 => Transformation::Rot180,
-                    3 => Transformation::Rot270,
+                    0 => Self::Identity,
+                    1 => Self::Rot90,
+                    2 => Self::Rot180,
+                    3 => Self::Rot270,
                     _ => unreachable!(),
                 }
             }
 
             // Any combination involving a Flip is currently unimplemented
-            (Transformation::FlipX, _)
-            | (_, Transformation::FlipX)
-            | (Transformation::FlipY, _)
-            | (_, Transformation::FlipY)
-            | (Transformation::FlipZ, _)
-            | (_, Transformation::FlipZ) => {
+            (Self::FlipX | Self::FlipY | Self::FlipZ, _) |
+(_, Self::FlipX | Self::FlipY | Self::FlipZ) => {
                 panic!("Transformation::combine is not implemented for reflections yet.");
             }
         }
     }
 }
 
-/// Errors that can occur during TileSet creation or validation.
+/// Errors that can occur during `TileSet` creation or validation.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum TileSetError {
     /// Error indicating the provided list of weights was empty.
@@ -172,9 +168,9 @@ pub struct TileSet {
     pub allowed_transformations: Vec<Vec<Transformation>>,
     /// Total number of unique transformed tile states (base tile + allowed transformation).
     num_transformed_tiles: usize,
-    /// Maps (Base TileId, Transformation) to a unique TransformedTileId (usize index).
+    /// Maps (Base `TileId`, Transformation) to a unique `TransformedTileId` (usize index).
     transformed_tile_map: HashMap<(TileId, Transformation), usize>,
-    /// Maps a TransformedTileId (usize index) back to (Base TileId, Transformation).
+    /// Maps a `TransformedTileId` (usize index) back to (Base `TileId`, Transformation).
     reverse_transformed_map: Vec<(TileId, Transformation)>,
 }
 
@@ -261,13 +257,13 @@ impl TileSet {
     }
 
     /// Gets the total number of unique transformed tile states.
-    pub fn num_transformed_tiles(&self) -> usize {
+    #[must_use] pub const fn num_transformed_tiles(&self) -> usize {
         self.num_transformed_tiles
     }
 
     /// Gets the unique `TransformedTileId` (usize index) for a given base tile and transformation.
     /// Returns `None` if the transformation is not allowed for the base tile.
-    pub fn get_transformed_id(
+    #[must_use] pub fn get_transformed_id(
         &self,
         base_id: TileId,
         transformation: Transformation,
@@ -279,7 +275,7 @@ impl TileSet {
 
     /// Gets the base tile and transformation corresponding to a `TransformedTileId` (usize index).
     /// Returns `None` if the index is out of bounds.
-    pub fn get_base_tile_and_transform(
+    #[must_use] pub fn get_base_tile_and_transform(
         &self,
         transformed_id: usize,
     ) -> Option<(TileId, Transformation)> {
@@ -289,14 +285,14 @@ impl TileSet {
     /// Gets the weight for a specific `TileId`.
     ///
     /// Returns `None` if the `TileId` is out of bounds.
-    pub fn get_weight(&self, tile_id: TileId) -> Option<f32> {
+    #[must_use] pub fn get_weight(&self, tile_id: TileId) -> Option<f32> {
         self.weights.get(tile_id.0).copied()
     }
 }
 
 /// Represents adjacency rules between tiles for different axes.
 ///
-/// Stores the rules efficiently for potentially sparse rule sets using a HashMap.
+/// Stores the rules efficiently for potentially sparse rule sets using a `HashMap`.
 #[derive(Debug, Clone)]
 pub struct AdjacencyRules {
     num_tiles: usize,
@@ -332,7 +328,7 @@ impl AdjacencyRules {
     ///
     /// * `num_transformed_tiles` - Total number of unique transformed tile states used in these rules.
     /// * `num_axes` - Number of axes/directions these rules are defined for.
-    /// * `weighted_tuples` - An iterator of tuples (axis, tile1_id, tile2_id, weight) where weight is a value in [0.0, 1.0].
+    /// * `weighted_tuples` - An iterator of tuples (axis, `tile1_id`, `tile2_id`, weight) where weight is a value in [0.0, 1.0].
     ///
     /// # Returns
     ///
@@ -368,18 +364,18 @@ impl AdjacencyRules {
     }
 
     /// Gets the total number of unique transformed tile states used in these rules.
-    pub fn num_tiles(&self) -> usize {
+    #[must_use] pub const fn num_tiles(&self) -> usize {
         self.num_tiles
     }
 
     /// Gets the number of axes/directions these rules are defined for.
-    pub fn num_axes(&self) -> usize {
+    #[must_use] pub const fn num_axes(&self) -> usize {
         self.num_axes
     }
 
-    /// Provides read-only access to the internal HashMap storing allowed adjacencies.
+    /// Provides read-only access to the internal `HashMap` storing allowed adjacencies.
     /// Useful for debugging or advanced analysis.
-    pub fn get_allowed_rules_map(&self) -> &HashMap<(usize, usize, usize), bool> {
+    #[must_use] pub const fn get_allowed_rules_map(&self) -> &HashMap<(usize, usize, usize), bool> {
         &self.allowed
     }
 
@@ -388,7 +384,7 @@ impl AdjacencyRules {
     /// Performs bounds checks internally and returns `false` if indices are out of range.
     /// Returns `true` only if the specific rule `(axis, ttid1, ttid2)` exists in the map.
     #[inline]
-    pub fn check(
+    #[must_use] pub fn check(
         &self,
         transformed_tile1_id: usize,
         transformed_tile2_id: usize,
@@ -408,9 +404,9 @@ impl AdjacencyRules {
     /// Returns the opposite axis index.
     /// Assumes standard 3D axis convention:
     /// 0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
-    /// Panics if the input axis is invalid (>= num_axes, usually 6).
+    /// Panics if the input axis is invalid (>= `num_axes`, usually 6).
     #[inline]
-    pub fn opposite_axis(&self, axis: usize) -> usize {
+    #[must_use] pub fn opposite_axis(&self, axis: usize) -> usize {
         match axis {
             0 => 1,
             1 => 0,
@@ -418,7 +414,7 @@ impl AdjacencyRules {
             3 => 2,
             4 => 5,
             5 => 4,
-            _ => panic!("Invalid axis index: {}", axis),
+            _ => panic!("Invalid axis index: {axis}"),
         }
     }
 
@@ -439,7 +435,7 @@ impl AdjacencyRules {
     ///
     /// A value between 0.0 and 1.0 representing the weight of the rule.
     #[inline]
-    pub fn get_weight(
+    #[must_use] pub fn get_weight(
         &self,
         transformed_tile1_id: usize,
         transformed_tile2_id: usize,
@@ -467,15 +463,15 @@ impl AdjacencyRules {
             .unwrap_or(1.0)
     }
 
-    /// Provides read-only access to the internal HashMap storing weighted adjacencies.
+    /// Provides read-only access to the internal `HashMap` storing weighted adjacencies.
     /// Useful for debugging or advanced analysis.
-    pub fn get_weighted_rules_map(&self) -> &HashMap<(usize, usize, usize), f32> {
+    #[must_use] pub const fn get_weighted_rules_map(&self) -> &HashMap<(usize, usize, usize), f32> {
         &self.weighted
     }
 
     /// Returns the weight associated with the *base tile* underlying the `transformed_tile_id`.
-    /// **Placeholder:** Currently returns 1.0. Requires access to TileSet for correct implementation.
-    pub fn get_tile_weight(&self, transformed_tile_id: usize) -> f32 {
+    /// **Placeholder:** Currently returns 1.0. Requires access to `TileSet` for correct implementation.
+    #[must_use] pub const fn get_tile_weight(&self, transformed_tile_id: usize) -> f32 {
         // TODO: Implement correctly using TileSet access.
         // This requires either storing Arc<TileSet> or passing TileSet reference.
         if transformed_tile_id >= self.num_tiles {
