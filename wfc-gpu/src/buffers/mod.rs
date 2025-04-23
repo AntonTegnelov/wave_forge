@@ -610,12 +610,12 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
     debug!("Device polled for '{}'", label_str);
 
     // Calculate adaptive timeout based on buffer size
-    // Base timeout of 1 second, plus 100ms per KB for small buffers (< 1MB), or 1 second per MB for larger buffers
-    let base_timeout = std::time::Duration::from_secs(1);
+    // Base timeout of 5 seconds, plus 500ms per KB for small buffers (< 1MB), or 3 seconds per MB for larger buffers
+    let base_timeout = std::time::Duration::from_secs(5);
     let size_timeout = if download_size < 1024 * 1024 {
-        std::time::Duration::from_millis((download_size / 1024).max(1) * 100)
+        std::time::Duration::from_millis((download_size / 1024).max(1) * 500)
     } else {
-        std::time::Duration::from_secs((download_size / (1024 * 1024)).max(1))
+        std::time::Duration::from_secs((download_size / (1024 * 1024)).max(1) * 3)
     };
     let map_timeout = base_timeout + size_timeout;
     let map_start = std::time::Instant::now();
