@@ -371,7 +371,7 @@ impl GpuAccelerator {
     pub async fn run_with_callback<F>(
         &mut self,
         initial_grid: &PossibilityGrid,
-        rules: &AdjacencyRules,
+        _rules: &AdjacencyRules,
         max_iterations: u64,
         mut progress_callback: F,
         _shutdown_signal: Option<tokio::sync::watch::Receiver<bool>>,

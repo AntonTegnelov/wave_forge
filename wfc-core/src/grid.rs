@@ -1,6 +1,6 @@
 // use crate::error::GridError; // REMOVED
 // use crate::GridError; // REMOVED
-use bitvec::prelude::{bitvec, BitVec, Lsb0};
+use bitvec::prelude::BitVec;
 #[cfg(feature = "serde")] // Guard serde imports
 use serde::{Deserialize, Serialize};
 
@@ -328,6 +328,7 @@ pub type EntropyGrid = Grid<f32>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitvec::prelude::{bitvec, Lsb0};
 
     // --- Tests for generic Grid<T> ---
 

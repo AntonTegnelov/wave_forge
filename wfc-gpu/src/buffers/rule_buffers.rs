@@ -3,7 +3,6 @@
 //! Module for GPU buffers related to WFC rules and constraints.
 
 use crate::buffers::DynamicBufferConfig;
-use crate::buffers::GpuBuffers; // For GpuBuffers::create_buffer
 use crate::utils::error_recovery::GpuError;
 use std::sync::Arc;
 use wfc_rules::AdjacencyRules;
@@ -32,7 +31,7 @@ impl RuleBuffers {
         let mut bit_array = vec![0u32; num_u32s];
 
         // Pack each allowed rule into the bit array
-        for ((axis, tile1, tile2), _) in rules.get_allowed_rules_map() {
+        for (axis, tile1, tile2) in rules.get_allowed_rules_map().keys() {
             let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
             let u32_idx = rule_idx / 32;
             let bit_idx = rule_idx % 32;

@@ -572,58 +572,29 @@ impl GpuBuffers {
 ///
 /// * `Ok(Vec<T>)` - The downloaded data as a vector
 /// * `Err(GpuError)` - If an error occurred during download
-pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
+pub async fn download_buffer_data<T: bytemuck::Pod>(
     device: Option<Arc<wgpu::Device>>,
     queue: Option<Arc<wgpu::Queue>>,
-    source_buffer: &wgpu::Buffer,
+    buffer: &wgpu::Buffer,
     staging_buffer: &wgpu::Buffer,
-    buffer_size: u64,
+    download_size: u64,
     label: Option<String>,
 ) -> Result<Vec<T>, GpuError> {
-    // Create buffer slice
-    let label_str = label.as_deref().unwrap_or("unnamed buffer");
-    debug!(
-        "Starting download of '{}' ({} bytes)",
-        label_str, buffer_size
-    );
+    let label_str = label.unwrap_or_else(|| "Unnamed Buffer".to_string());
+    debug!("Starting download for buffer '{}'", label_str);
 
-    // Ensure buffers are large enough
-    if source_buffer.size() < buffer_size {
-        return Err(GpuError::BufferSizeMismatch {
-            msg: format!(
-                "Source buffer for '{}' is smaller than required size ({} < {})",
-                label_str,
-                source_buffer.size(),
-                buffer_size
-            ),
-            context: Box::new(GpuErrorContext::default()),
-        });
-    }
-
-    if staging_buffer.size() < buffer_size {
-        return Err(GpuError::BufferSizeMismatch {
-            msg: format!(
-                "Staging buffer for '{}' is smaller than required size ({} < {})",
-                label_str,
-                staging_buffer.size(),
-                buffer_size
-            ),
-            context: Box::new(GpuErrorContext::default()),
-        });
-    }
-
-    // Create command encoder
+    // Create command encoder and copy from buffer to staging buffer
     let mut encoder =
         device
             .as_ref()
             .unwrap()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some(&format!("Download encoder for '{}'", label_str)),
+                label: Some(&format!("Download Encoder for {}", label_str)),
             });
 
-    // Copy source buffer to staging buffer
-    encoder.copy_buffer_to_buffer(source_buffer, 0, staging_buffer, 0, buffer_size);
+    encoder.copy_buffer_to_buffer(buffer, 0, staging_buffer, 0, download_size);
 
+    // Submit copy command
     queue.as_ref().unwrap().submit(Some(encoder.finish()));
     debug!("Copy command submitted for '{}'", label_str);
 
@@ -638,17 +609,23 @@ pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
     let _ = device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
     debug!("Device polled for '{}'", label_str);
 
-    // Handle the mapping result
+    // Calculate adaptive timeout based on buffer size
+    // Base timeout of 2 seconds, plus 1 second per MB of data
+    let base_timeout = std::time::Duration::from_secs(2);
+    let size_timeout = std::time::Duration::from_secs((download_size / (1024 * 1024)).max(1));
+    let map_timeout = base_timeout + size_timeout;
     let map_start = std::time::Instant::now();
-    let map_timeout = std::time::Duration::from_secs(2);
 
-    // Wait for the mapping to complete with a timeout
+    // Handle the mapping result
     let mut retry_count = 0;
     while !receiver.is_terminated() {
         let _ = device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
 
         if Instant::now() > map_start + map_timeout {
-            error!("Buffer {:?} mapping timed out after 2 seconds", label_str);
+            error!(
+                "Buffer {:?} mapping timed out after {:?}",
+                label_str, map_timeout
+            );
             return Err(GpuError::buffer_map_timeout(
                 label_str.to_string(),
                 GpuErrorContext::default(),

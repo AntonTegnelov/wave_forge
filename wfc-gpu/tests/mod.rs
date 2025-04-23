@@ -59,16 +59,11 @@ mod error_recovery_tests {
 // You can define more test functions here, or use submodules
 // mod submodule_tests;
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use wfc_core::entropy::EntropyHeuristicType;
 use wfc_core::grid::PossibilityGrid;
-use wfc_core::{BoundaryCondition, ProgressInfo};
+use wfc_core::BoundaryCondition;
 use wfc_gpu::gpu::accelerator::GpuAccelerator;
 use wfc_rules::{AdjacencyRules, TileId, TileSet, Transformation};
-use wgpu::util::DeviceExt;
 
 #[tokio::test]
 async fn test_basic_3d_generation() -> anyhow::Result<()> {
