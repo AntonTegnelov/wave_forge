@@ -563,7 +563,7 @@ impl GpuBuffers {
 ///
 /// * `device` - Arc-wrapped WGPU device
 /// * `queue` - Arc-wrapped WGPU queue
-/// * `source_buffer` - The source buffer to download from
+/// * `buffer` - The source buffer to download from
 /// * `staging_buffer` - The staging buffer to use for the download
 /// * `buffer_size` - Size of the data to download in bytes
 /// * `label` - Optional label for debugging
@@ -594,45 +594,58 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
 
     encoder.copy_buffer_to_buffer(buffer, 0, staging_buffer, 0, download_size);
 
-    // Submit copy command
-    queue.as_ref().unwrap().submit(Some(encoder.finish()));
-    debug!("Copy command submitted for '{}'", label_str);
+    // Submit copy command and get a submission index for synchronization
+    let submission_index = queue.as_ref().unwrap().submit(Some(encoder.finish()));
+    debug!(
+        "Copy command submitted for '{}' (submission {})",
+        label_str, submission_index
+    );
+
+    // Wait for the copy to complete before mapping
+    device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
 
     // Map the staging buffer
     let buffer_slice = staging_buffer.slice(..);
-    let (sender, mut receiver) = futures::channel::oneshot::channel();
+    let (sender, receiver) = futures::channel::oneshot::channel();
     buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
         sender.send(result).unwrap();
     });
 
-    // Wait for the mapping operation to complete
-    let _ = device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
-    debug!("Device polled for '{}'", label_str);
-
     // Calculate adaptive timeout based on buffer size
-    // Base timeout of 5 seconds, plus 1 second per KB for small buffers (< 1MB), or 3 seconds per MB for larger buffers
-    let base_timeout = std::time::Duration::from_secs(5);
-    let size_timeout = if download_size < 1024 * 1024 {
-        std::time::Duration::from_millis((download_size / 1024).max(1) * 1000)
+    let base_timeout = std::time::Duration::from_millis(100); // Reduced base timeout for small buffers
+    let size_timeout = if download_size < 1024 {
+        std::time::Duration::from_millis(10) // Very small buffers get minimal timeout
+    } else if download_size < 1024 * 1024 {
+        std::time::Duration::from_millis((download_size / 1024).max(1) * 100) // 100ms per KB for small-medium buffers
     } else {
-        std::time::Duration::from_secs((download_size / (1024 * 1024)).max(1) * 3)
+        std::time::Duration::from_secs((download_size / (1024 * 1024)).max(1)) // 1s per MB for large buffers
     };
     let map_timeout = base_timeout + size_timeout;
     let map_start = std::time::Instant::now();
 
-    // Handle the mapping result with exponential backoff
+    // Handle the mapping result with exponential backoff and better error reporting
     let mut retry_count = 0;
-    let mut sleep_duration = std::time::Duration::from_millis(1);
-    while !receiver.is_terminated() {
-        let _ = device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
+    let mut sleep_duration = std::time::Duration::from_micros(100); // Start with 100 microseconds
+    let mut last_poll = std::time::Instant::now();
+    let poll_interval = std::time::Duration::from_millis(1);
 
-        if Instant::now() > map_start + map_timeout {
+    while !receiver.is_terminated() {
+        // Only poll if enough time has passed since last poll
+        if last_poll.elapsed() >= poll_interval {
+            device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
+            last_poll = std::time::Instant::now();
+        }
+
+        if map_start.elapsed() > map_timeout {
             error!(
-                "Buffer {:?} mapping timed out after {:?}",
-                label_str, map_timeout
+                "Buffer '{}' mapping timed out after {:?}. Size: {} bytes, Retries: {}",
+                label_str, map_timeout, download_size, retry_count
             );
             return Err(GpuError::buffer_map_timeout(
-                label_str.to_string(),
+                format!(
+                    "{} (size: {}, retries: {})",
+                    label_str, download_size, retry_count
+                ),
                 GpuErrorContext::default(),
             ));
         }
@@ -640,14 +653,23 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
         // Use exponential backoff for polling
         if retry_count > 0 {
             std::thread::sleep(sleep_duration);
-            sleep_duration =
-                std::cmp::min(sleep_duration * 2, std::time::Duration::from_millis(100));
+            sleep_duration = std::cmp::min(
+                sleep_duration * 2,
+                std::time::Duration::from_millis(10), // Cap at 10ms
+            );
         }
 
         // Yield periodically to avoid blocking the executor
-        if (retry_count + 1) % 32 == 0 {
+        if (retry_count + 1) % 64 == 0 {
+            debug!(
+                "Buffer '{}' mapping still pending after {} retries ({:?} elapsed)",
+                label_str,
+                retry_count,
+                map_start.elapsed()
+            );
             std::thread::yield_now();
         }
+
         retry_count += 1;
     }
 
@@ -657,9 +679,19 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
         Ok(None) => Err(wgpu::BufferAsyncError),
         Err(_) => Err(wgpu::BufferAsyncError),
     };
+
     if let Err(e) = result {
+        error!(
+            "Failed to map buffer '{}' after {:?}: {:?}",
+            label_str,
+            map_start.elapsed(),
+            e
+        );
         return Err(GpuError::BufferOperationError {
-            msg: format!("Failed to map buffer '{}': {:?}", label_str, e),
+            msg: format!(
+                "Failed to map buffer '{}' (size: {}): {:?}",
+                label_str, download_size, e
+            ),
             context: Box::new(GpuErrorContext::default()),
         });
     }
@@ -671,10 +703,14 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
         result
     };
 
+    // Unmap the buffer
+    staging_buffer.unmap();
+
     debug!(
-        "Download for '{}' completed in {:?}",
+        "Download for '{}' completed in {:?} ({} retries)",
         label_str,
-        map_start.elapsed()
+        map_start.elapsed(),
+        retry_count
     );
 
     Ok(data)
