@@ -610,18 +610,19 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
     debug!("Device polled for '{}'", label_str);
 
     // Calculate adaptive timeout based on buffer size
-    // Base timeout of 5 seconds, plus 500ms per KB for small buffers (< 1MB), or 3 seconds per MB for larger buffers
+    // Base timeout of 5 seconds, plus 1 second per KB for small buffers (< 1MB), or 3 seconds per MB for larger buffers
     let base_timeout = std::time::Duration::from_secs(5);
     let size_timeout = if download_size < 1024 * 1024 {
-        std::time::Duration::from_millis((download_size / 1024).max(1) * 500)
+        std::time::Duration::from_millis((download_size / 1024).max(1) * 1000)
     } else {
         std::time::Duration::from_secs((download_size / (1024 * 1024)).max(1) * 3)
     };
     let map_timeout = base_timeout + size_timeout;
     let map_start = std::time::Instant::now();
 
-    // Handle the mapping result
+    // Handle the mapping result with exponential backoff
     let mut retry_count = 0;
+    let mut sleep_duration = std::time::Duration::from_millis(1);
     while !receiver.is_terminated() {
         let _ = device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
 
@@ -636,8 +637,15 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
             ));
         }
 
+        // Use exponential backoff for polling
+        if retry_count > 0 {
+            std::thread::sleep(sleep_duration);
+            sleep_duration =
+                std::cmp::min(sleep_duration * 2, std::time::Duration::from_millis(100));
+        }
+
         // Yield periodically to avoid blocking the executor
-        if (retry_count + 1) % 128 == 0 {
+        if (retry_count + 1) % 32 == 0 {
             std::thread::yield_now();
         }
         retry_count += 1;
