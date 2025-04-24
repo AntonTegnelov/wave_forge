@@ -597,7 +597,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
     // Submit copy command and get a submission index for synchronization
     let submission_index = queue.as_ref().unwrap().submit(Some(encoder.finish()));
     debug!(
-        "Copy command submitted for '{}' (submission {})",
+        "Copy command submitted for '{}' (submission {:?})",
         label_str, submission_index
     );
 
