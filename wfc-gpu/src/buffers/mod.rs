@@ -606,7 +606,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
 
     // Map the staging buffer
     let buffer_slice = staging_buffer.slice(..);
-    let (sender, receiver) = futures::channel::oneshot::channel();
+    let (sender, mut receiver) = futures::channel::oneshot::channel();
     buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
         sender.send(result).unwrap();
     });
