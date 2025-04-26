@@ -363,10 +363,10 @@ impl GpuEntropyCalculator {
 
         // Use the centralized download function, cloning the necessary Arcs
         let entropy_data = crate::buffers::download_buffer_data::<f32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            &self.buffers.entropy_buffers.entropy_buf,
-            &self.buffers.entropy_buffers.staging_entropy_buf,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(&*self.buffers.entropy_buffers.entropy_buf),
+            Some(&*self.buffers.entropy_buffers.staging_entropy_buf),
             self.buffers.entropy_buffers.entropy_buf.size(),
             Some("Entropy Data Download".to_string()),
         )
@@ -419,10 +419,10 @@ impl GpuEntropyCalculator {
 
         // Use the centralized download function
         let min_info_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            &self.buffers.entropy_buffers.min_entropy_info_buf,
-            &self.buffers.entropy_buffers.staging_min_entropy_info_buf,
+            Some(&self.device),
+            Some(&self.queue),
+            None, // Don't need the source buffer since we already copied to staging
+            Some(&*self.buffers.entropy_buffers.staging_min_entropy_info_buf),
             self.buffers.entropy_buffers.min_entropy_info_buf.size(),
             Some("Min Entropy Info Download".to_string()),
         )
@@ -487,10 +487,10 @@ impl GpuEntropyCalculator {
 
         // Use the centralized download function
         let min_info_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            &self.buffers.entropy_buffers.min_entropy_info_buf,
-            &self.buffers.entropy_buffers.staging_min_entropy_info_buf,
+            Some(&self.device),
+            Some(&self.queue),
+            None, // Don't need the source buffer since we already copied to staging
+            Some(&*self.buffers.entropy_buffers.staging_min_entropy_info_buf),
             self.buffers.entropy_buffers.min_entropy_info_buf.size(),
             Some("Min Entropy Info Download".to_string()),
         )

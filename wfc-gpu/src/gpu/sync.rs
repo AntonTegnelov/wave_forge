@@ -330,15 +330,15 @@ impl GpuSynchronizer {
     /// * `has_contradiction` - Boolean indicating if a contradiction was detected
     /// * `contradiction_location` - Optional index of the cell where a contradiction occurred
     pub async fn download_contradiction_status(&self) -> Result<(bool, Option<u32>), GpuError> {
-        let flag_buffer_gpu = &self.buffers.contradiction_flag_buf;
-        let flag_buffer_staging = &self.buffers.staging_contradiction_flag_buf;
+        let flag_buffer_gpu = &*self.buffers.contradiction_flag_buf;
+        let flag_buffer_staging = &*self.buffers.staging_contradiction_flag_buf;
         let mut contradiction_location = None;
 
         let flag_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            flag_buffer_gpu,
-            flag_buffer_staging,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(flag_buffer_gpu),
+            Some(flag_buffer_staging),
             std::mem::size_of::<u32>() as u64,
             Some("Check Contradiction Flag".to_string()),
         )
@@ -350,14 +350,14 @@ impl GpuSynchronizer {
         let has_contradiction = flag_data.first().is_some_and(|&flag| flag != 0);
 
         if has_contradiction {
-            let loc_buffer_gpu = &self.buffers.contradiction_location_buf;
-            let loc_buffer_staging = &self.buffers.staging_contradiction_location_buf;
+            let loc_buffer_gpu = &*self.buffers.contradiction_location_buf;
+            let loc_buffer_staging = &*self.buffers.staging_contradiction_location_buf;
 
             let loc_data = crate::buffers::download_buffer_data::<u32>(
-                Some(self.device.clone()),
-                Some(self.queue.clone()),
-                loc_buffer_gpu,
-                loc_buffer_staging,
+                Some(&self.device),
+                Some(&self.queue),
+                Some(loc_buffer_gpu),
+                Some(loc_buffer_staging),
                 3 * std::mem::size_of::<u32>() as u64,
                 Some("Download Contradiction Location".to_string()),
             )
@@ -374,14 +374,14 @@ impl GpuSynchronizer {
 
     /// Downloads the current worklist size from the GPU.
     pub async fn download_worklist_size(&self) -> Result<u32, GpuError> {
-        let count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf;
-        let staging_count_buffer = &self.buffers.worklist_buffers.staging_worklist_count_buf;
+        let count_buffer_gpu = &*self.buffers.worklist_buffers.worklist_count_buf;
+        let staging_count_buffer = &*self.buffers.worklist_buffers.staging_worklist_count_buf;
 
         let count_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            count_buffer_gpu,
-            staging_count_buffer,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(count_buffer_gpu),
+            Some(staging_count_buffer),
             std::mem::size_of::<u32>() as u64,
             Some("Download Worklist Count".to_string()),
         )
@@ -631,14 +631,14 @@ impl GpuSynchronizer {
 
     /// Checks if a contradiction has occurred by downloading the contradiction flag.
     pub async fn check_for_contradiction(&self) -> Result<bool, GpuError> {
-        let flag_buffer_gpu = &self.buffers.contradiction_flag_buf;
-        let flag_buffer_staging = &self.buffers.staging_contradiction_flag_buf;
+        let flag_buffer_gpu = &*self.buffers.contradiction_flag_buf;
+        let flag_buffer_staging = &*self.buffers.staging_contradiction_flag_buf;
 
         let flag_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            flag_buffer_gpu,
-            flag_buffer_staging,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(flag_buffer_gpu),
+            Some(flag_buffer_staging),
             std::mem::size_of::<u32>() as u64,
             Some("Check Contradiction Flag".to_string()),
         )
@@ -652,8 +652,8 @@ impl GpuSynchronizer {
 
     /// Downloads the location of the first contradiction, if one occurred.
     pub async fn download_contradiction_location(&self) -> Result<Option<u32>, GpuError> {
-        let loc_buffer_gpu = &self.buffers.contradiction_location_buf;
-        let loc_buffer_staging = &self.buffers.staging_contradiction_location_buf;
+        let loc_buffer_gpu = &*self.buffers.contradiction_location_buf;
+        let loc_buffer_staging = &*self.buffers.staging_contradiction_location_buf;
 
         // First, check the flag
         if !self.check_for_contradiction().await? {
@@ -662,10 +662,10 @@ impl GpuSynchronizer {
 
         // If flag is set, download the location
         let loc_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            loc_buffer_gpu,
-            loc_buffer_staging,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(loc_buffer_gpu),
+            Some(loc_buffer_staging),
             3 * std::mem::size_of::<u32>() as u64,
             Some("Download Contradiction Location".to_string()),
         )
@@ -679,14 +679,14 @@ impl GpuSynchronizer {
 
     /// Downloads the current worklist count.
     pub async fn download_worklist_count(&self) -> Result<u32, GpuError> {
-        let count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf;
-        let staging_count_buffer = &self.buffers.worklist_buffers.staging_worklist_count_buf;
+        let count_buffer_gpu = &*self.buffers.worklist_buffers.worklist_count_buf;
+        let staging_count_buffer = &*self.buffers.worklist_buffers.staging_worklist_count_buf;
 
         let count_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            count_buffer_gpu,
-            staging_count_buffer,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(count_buffer_gpu),
+            Some(staging_count_buffer),
             std::mem::size_of::<u32>() as u64,
             Some("Download Worklist Count".to_string()),
         )

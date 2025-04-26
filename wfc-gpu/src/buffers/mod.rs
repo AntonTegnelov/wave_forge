@@ -323,7 +323,8 @@ impl GpuBuffers {
             .ensure_grid_possibilities_buffer(device, width, height, depth, num_tiles, config)?;
         let num_cells = (width * height * depth) as usize;
         self.entropy_buffers
-            .ensure_buffers(device, num_cells, config)?;
+            .ensure_buffers(device, num_cells, config)
+            .map_err(|e| e.to_string())?;
         self.worklist_buffers
             .ensure_worklist_buffers(device, width, height, depth, config)?;
         self.num_cells = num_cells;
@@ -358,8 +359,8 @@ impl GpuBuffers {
             let data = download_buffer_data::<f32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Entropy Data".to_string()),
             )
@@ -382,8 +383,8 @@ impl GpuBuffers {
             let data = download_buffer_data::<u32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Min Entropy Info".to_string()),
             )
@@ -413,8 +414,8 @@ impl GpuBuffers {
             let data = download_buffer_data::<u32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Grid Data".to_string()),
             )
@@ -437,8 +438,8 @@ impl GpuBuffers {
             let data = download_buffer_data::<u32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Contradiction Flag".to_string()),
             )
@@ -462,8 +463,8 @@ impl GpuBuffers {
             let data = download_buffer_data::<u32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Contradiction Location".to_string()),
             )
@@ -555,165 +556,142 @@ impl GpuBuffers {
 
         Ok(grid)
     }
+
+    pub async fn download_buffer<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        buffer_size: u64,
+        label: &str,
+    ) -> Result<Vec<T>, GpuError> {
+        // These are placeholders - for now, use None
+        let device = None;
+        let queue = None;
+
+        download_buffer_data::<T>(
+            device,
+            queue,
+            Some(buffer),
+            None,
+            buffer_size,
+            Some(label.to_string()),
+        )
+        .await
+    }
+
+    pub async fn download_staging_buffer<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        staging_buffer: &wgpu::Buffer,
+        buffer_size: u64,
+        label: &str,
+    ) -> Result<Vec<T>, GpuError> {
+        // These are placeholders - for now, use None
+        let device = None;
+        let queue = None;
+
+        download_buffer_data::<T>(
+            device,
+            queue,
+            Some(buffer),
+            Some(staging_buffer),
+            buffer_size,
+            Some(label.to_string()),
+        )
+        .await
+    }
 }
 
-/// Downloads data from a GPU buffer to CPU memory using a staging buffer.
-///
-/// # Arguments
-///
-/// * `device` - Arc-wrapped WGPU device
-/// * `queue` - Arc-wrapped WGPU queue
-/// * `buffer` - The source buffer to download from
-/// * `staging_buffer` - The staging buffer to use for the download
-/// * `buffer_size` - Size of the data to download in bytes
-/// * `label` - Optional label for debugging
-///
-/// # Returns
-///
-/// * `Ok(Vec<T>)` - The downloaded data as a vector
-/// * `Err(GpuError)` - If an error occurred during download
+fn calculate_timeout_ms(size_bytes: u64) -> u64 {
+    // Base timeout of 1 second for most operations
+    const BASE_TIMEOUT_MS: u64 = 1000;
+    const MIN_TIMEOUT_MS: u64 = 50;
+    const MAX_TIMEOUT_MS: u64 = 10000; // Cap at 10 seconds
+
+    let timeout = if size_bytes < 1024 {
+        // For very small buffers (< 1KB), use a shorter timeout
+        MIN_TIMEOUT_MS + (size_bytes / 16) // 50ms base + 1ms per 16 bytes
+    } else if size_bytes < 1024 * 1024 {
+        // For small-medium buffers (< 1MB), scale linearly but more gradually
+        BASE_TIMEOUT_MS + (size_bytes / 2048) // Add 1ms per 2KB
+    } else {
+        // For larger buffers, add 1ms per 8KB with a slower growth rate
+        BASE_TIMEOUT_MS + (size_bytes / (8 * 1024))
+    };
+
+    timeout.clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
+}
+
 pub async fn download_buffer_data<T: bytemuck::Pod>(
-    device: Option<Arc<wgpu::Device>>,
-    queue: Option<Arc<wgpu::Queue>>,
-    buffer: &wgpu::Buffer,
-    staging_buffer: &wgpu::Buffer,
-    download_size: u64,
+    device: Option<&Arc<wgpu::Device>>,
+    queue: Option<&Arc<wgpu::Queue>>,
+    buffer: Option<&wgpu::Buffer>,
+    staging_buffer: Option<&wgpu::Buffer>,
+    buffer_size: u64,
     label: Option<String>,
 ) -> Result<Vec<T>, GpuError> {
-    let label_str = label.unwrap_or_else(|| "Unnamed Buffer".to_string());
-    debug!("Starting download for buffer '{}'", label_str);
-
-    // Create command encoder and copy from buffer to staging buffer
-    let mut encoder =
-        device
-            .as_ref()
-            .unwrap()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some(&format!("Download Encoder for {}", label_str)),
-            });
-
-    encoder.copy_buffer_to_buffer(buffer, 0, staging_buffer, 0, download_size);
-
-    // Submit copy command and get a submission index for synchronization
-    let submission_index = queue.as_ref().unwrap().submit(Some(encoder.finish()));
-    debug!(
-        "Copy command submitted for '{}' (submission {:?})",
-        label_str, submission_index
-    );
-
-    // Wait for the copy to complete before mapping
-    device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
-
-    // Map the staging buffer
-    let buffer_slice = staging_buffer.slice(..);
+    let timeout_ms = calculate_timeout_ms(buffer_size);
+    let slice = buffer.unwrap().slice(..);
     let (sender, mut receiver) = futures::channel::oneshot::channel();
-    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-        sender.send(result).unwrap();
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = sender.send(result);
     });
 
-    // Calculate adaptive timeout based on buffer size
-    let base_timeout = std::time::Duration::from_millis(100); // Reduced base timeout for small buffers
-    let size_timeout = if download_size < 1024 {
-        std::time::Duration::from_millis(10) // Very small buffers get minimal timeout
-    } else if download_size < 1024 * 1024 {
-        std::time::Duration::from_millis((download_size / 1024).max(1) * 100) // 100ms per KB for small-medium buffers
-    } else {
-        std::time::Duration::from_secs((download_size / (1024 * 1024)).max(1)) // 1s per MB for large buffers
-    };
-    let map_timeout = base_timeout + size_timeout;
-    let map_start = std::time::Instant::now();
-
-    // Handle the mapping result with exponential backoff and better error reporting
-    let mut retry_count = 0;
+    let start = std::time::Instant::now();
     let mut sleep_duration = std::time::Duration::from_micros(100); // Start with 100 microseconds
-    let mut last_poll = std::time::Instant::now();
-    let poll_interval = std::time::Duration::from_millis(1);
+    let mut retries = 0;
+    let mut consecutive_no_progress = 0;
 
-    while !receiver.is_terminated() {
-        // Only poll if enough time has passed since last poll
-        if last_poll.elapsed() >= poll_interval {
-            device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
-            last_poll = std::time::Instant::now();
+    loop {
+        device.unwrap().poll(wgpu::MaintainBase::Wait);
+
+        if let Ok(Some(Ok(()))) = receiver.try_recv() {
+            let mapped_range = slice.get_mapped_range();
+            let data = bytemuck::cast_slice(&mapped_range).to_vec();
+            drop(mapped_range);
+            buffer.unwrap().unmap();
+            return Ok(data);
         }
 
-        if map_start.elapsed() > map_timeout {
-            error!(
-                "Buffer '{}' mapping timed out after {:?}. Size: {} bytes, Retries: {}",
-                label_str, map_timeout, download_size, retry_count
-            );
-            return Err(GpuError::buffer_map_timeout(
-                format!(
-                    "{} (size: {}, retries: {})",
-                    label_str, download_size, retry_count
+        if start.elapsed().as_millis() as u64 > timeout_ms {
+            buffer.unwrap().unmap();
+            return Err(GpuError::BufferMapFailed {
+                msg: format!(
+                    "Buffer mapping timeout after {} retries. Buffer size: {} bytes",
+                    retries, buffer_size
                 ),
-                GpuErrorContext::default(),
-            ));
+                context: Box::new(GpuErrorContext::default()),
+            });
         }
 
-        // Use exponential backoff for polling
-        if retry_count > 0 {
-            std::thread::sleep(sleep_duration);
-            sleep_duration = std::cmp::min(
-                sleep_duration * 2,
-                std::time::Duration::from_millis(10), // Cap at 10ms
-            );
+        retries += 1;
+        consecutive_no_progress += 1;
+
+        // Yield less frequently for small buffers, more frequently for larger ones
+        let yield_threshold = if buffer_size < 1024 {
+            64 // Small buffers
+        } else if buffer_size < 1024 * 1024 {
+            32 // Medium buffers
+        } else {
+            16 // Large buffers
+        };
+
+        if consecutive_no_progress >= yield_threshold {
+            tokio::task::yield_now().await;
+            consecutive_no_progress = 0;
         }
 
-        // Yield periodically to avoid blocking the executor
-        if (retry_count + 1) % 64 == 0 {
-            debug!(
-                "Buffer '{}' mapping still pending after {} retries ({:?} elapsed)",
-                label_str,
-                retry_count,
-                map_start.elapsed()
-            );
-            std::thread::yield_now();
-        }
+        // Exponential backoff with dynamic cap based on buffer size
+        let max_sleep = if buffer_size < 1024 {
+            std::time::Duration::from_millis(10) // Cap at 10ms for small buffers
+        } else if buffer_size < 1024 * 1024 {
+            std::time::Duration::from_millis(50) // Cap at 50ms for medium buffers
+        } else {
+            std::time::Duration::from_millis(100) // Cap at 100ms for large buffers
+        };
 
-        retry_count += 1;
+        sleep_duration = std::cmp::min(sleep_duration * 2, max_sleep);
+        tokio::time::sleep(sleep_duration).await;
     }
-
-    // Get the result from our receiver
-    let result = match receiver.try_recv() {
-        Ok(Some(res)) => res,
-        Ok(None) => Err(wgpu::BufferAsyncError),
-        Err(_) => Err(wgpu::BufferAsyncError),
-    };
-
-    if let Err(e) = result {
-        error!(
-            "Failed to map buffer '{}' after {:?}: {:?}",
-            label_str,
-            map_start.elapsed(),
-            e
-        );
-        return Err(GpuError::BufferOperationError {
-            msg: format!(
-                "Failed to map buffer '{}' (size: {}): {:?}",
-                label_str, download_size, e
-            ),
-            context: Box::new(GpuErrorContext::default()),
-        });
-    }
-
-    // Read data from the mapped buffer
-    let data = {
-        let mapped_range = buffer_slice.get_mapped_range();
-        let result: Vec<T> = bytemuck::cast_slice(&mapped_range).to_vec();
-        result
-    };
-
-    // Unmap the buffer
-    staging_buffer.unmap();
-
-    debug!(
-        "Download for '{}' completed in {:?} ({} retries)",
-        label_str,
-        map_start.elapsed(),
-        retry_count
-    );
-
-    Ok(data)
 }
 
 impl GpuDownloadResults {
