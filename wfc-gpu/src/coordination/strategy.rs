@@ -212,10 +212,9 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
         })?;
 
         match selection {
-            Some((coords_tuple, _entropy)) => {
-                // Convert tuple to Coord3D or directly use the tuple if collapse_cell_gpu expects it
+            Some((x, y, z, _entropy)) => {
                 // Assuming collapse_cell_gpu expects (usize, usize, usize)
-                let coords = (coords_tuple.0, coords_tuple.1, coords_tuple.2);
+                let coords = (x, y, z);
                 log::debug!("Coordinator selected cell {:?} for collapse", coords);
 
                 // 2. Choose a tile to collapse to

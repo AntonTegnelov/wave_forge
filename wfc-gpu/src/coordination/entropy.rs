@@ -164,7 +164,9 @@ impl EntropyCoordinator {
         let selection_result = self
             .entropy_calculator
             .select_lowest_entropy_cell_with_value_async() // No argument needed
-            .await;
+            .await
+            // Convert the GpuError from calculator to the one expected by this fn
+            .map_err(|gpu_err| GpuError::Other(gpu_err.to_string()));
 
         match selection_result {
             Ok(Some((x, y, z, entropy_value))) => {
@@ -183,7 +185,7 @@ impl EntropyCoordinator {
             }
             Err(e) => {
                 log::error!("GPU min entropy selection error in coordinator: {}", e);
-                Err(e) // Propagate the GpuError
+                Err(e) // Propagate the (now correctly typed) GpuError
             }
         }
     }

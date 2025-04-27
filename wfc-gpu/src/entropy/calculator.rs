@@ -1,6 +1,6 @@
 use crate::utils::error_recovery::GpuError as OldGpuError;
 use crate::{
-    buffers::entropy_buffers::{EntropyBuffers, MinEntropyResultBuffer},
+    buffers::entropy_buffers::EntropyBuffers,
     buffers::{GpuBuffers, GpuEntropyShaderParams},
     entropy::entropy_strategy::{
         EntropyStrategy as ImportedEntropyStrategy, EntropyStrategyFactory,
