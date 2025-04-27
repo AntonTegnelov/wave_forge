@@ -45,7 +45,10 @@ pub struct GpuParamsUniform {
     pub contradiction_check_frequency: u32,
     pub worklist_size: u32,
     pub grid_element_count: u32,
-    pub _padding: u32,
+    pub _padding0: u32,
+    pub _padding1: u32,
+    pub _padding2: u32,
+    pub _padding3: u32,
 }
 
 /// Uniform buffer structure for entropy shader parameters.
@@ -191,7 +194,10 @@ impl GpuBuffers {
             contradiction_check_frequency: 10,
             worklist_size: 0,
             grid_element_count: (num_cells * grid_buffers.u32s_per_cell) as u32,
-            _padding: 0,
+            _padding0: 0,
+            _padding1: 0,
+            _padding2: 0,
+            _padding3: 0,
         };
 
         let contradiction_buffer_size = std::mem::size_of::<u32>() as u64;
