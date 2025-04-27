@@ -5,8 +5,7 @@
 // Imports
 use crate::utils::error::gpu_error::{GpuError, GpuErrorContext};
 use bytemuck::{Pod, Zeroable};
-use futures::future::FusedFuture;
-use log::{debug, error, info, trace, warn};
+use log::{debug, info, trace, warn};
 use std::mem;
 use std::sync::Arc;
 use std::time::Instant;
@@ -372,7 +371,7 @@ impl GpuBuffers {
             // We'll refactor this to use a different approach that doesn't require different async block types
             let download_size = num_cells * mem::size_of::<f32>();
             let buffer = &*self.entropy_buffers.entropy_buf;
-            let staging_buffer = &*self.entropy_buffers.staging_entropy_buf;
+            let _staging_buffer = &*self.entropy_buffers.staging_entropy_buf;
 
             let data = download_buffer_data::<f32>(
                 device,
@@ -396,7 +395,7 @@ impl GpuBuffers {
 
             let download_size = 5 * mem::size_of::<u32>();
             let buffer = &*self.entropy_buffers.min_entropy_info_buf;
-            let staging_buffer = &*self.entropy_buffers.staging_min_entropy_info_buf;
+            let _staging_buffer = &*self.entropy_buffers.staging_min_entropy_info_buf;
 
             let data = download_buffer_data::<u32>(
                 device,
@@ -427,7 +426,7 @@ impl GpuBuffers {
             let u32s_per_cell = (self.num_tiles + 31) / 32; // Ceiling division by 32
             let download_size = num_cells * u32s_per_cell * mem::size_of::<u32>();
             let buffer = &*self.grid_buffers.grid_possibilities_buf;
-            let staging_buffer = &*self.grid_buffers.staging_grid_possibilities_buf;
+            let _staging_buffer = &*self.grid_buffers.staging_grid_possibilities_buf;
 
             let data = download_buffer_data::<u32>(
                 device,
@@ -451,7 +450,7 @@ impl GpuBuffers {
 
             let download_size = mem::size_of::<u32>();
             let buffer = &*self.contradiction_flag_buf;
-            let staging_buffer = &*self.staging_contradiction_flag_buf;
+            let _staging_buffer = &*self.staging_contradiction_flag_buf;
 
             let data = download_buffer_data::<u32>(
                 device,
@@ -476,7 +475,7 @@ impl GpuBuffers {
 
             let download_size = 3 * mem::size_of::<u32>();
             let buffer = &*self.contradiction_location_buf;
-            let staging_buffer = &*self.staging_contradiction_location_buf;
+            let _staging_buffer = &*self.staging_contradiction_location_buf;
 
             let data = download_buffer_data::<u32>(
                 device,
@@ -641,7 +640,7 @@ fn calculate_timeout_ms(size_bytes: u64) -> u64 {
 
 pub async fn download_buffer_data<T: bytemuck::Pod>(
     device: Option<&Arc<wgpu::Device>>,
-    queue: Option<&Arc<wgpu::Queue>>,
+    _queue: Option<&Arc<wgpu::Queue>>,
     buffer: Option<&wgpu::Buffer>,
     staging_buffer: Option<&wgpu::Buffer>,
     buffer_size: u64,
@@ -727,9 +726,6 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
                     ),
                     context: Box::new(GpuErrorContext::default()),
                 });
-            }
-            Err(_) => {
-                // Still pending, continue loop
             }
         }
 
