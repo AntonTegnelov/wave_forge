@@ -8,7 +8,7 @@ use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
 // Import ShaderManager and related types
 use super::shaders::{ShaderManager, ShaderType};
-use crate::buffers::{CollapseInfoUniform, GpuEntropyShaderParams};
+use crate::buffers::{CollapseInfoUniform, GpuParamsUniform};
 use crate::utils::error::{GpuError, GpuErrorContext, GpuResourceType};
 use lazy_static::lazy_static;
 
@@ -276,14 +276,15 @@ impl ComputePipelines {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1, // Params (Use GpuEntropyShaderParams)
+                        binding: 1, // Params
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<GpuEntropyShaderParams>() as u64, // Correct struct size
-                            ),
+                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                                GpuParamsUniform,
+                            >()
+                                as u64),
                         },
                         count: None,
                     },
@@ -387,7 +388,10 @@ impl ComputePipelines {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(64),
+                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                                GpuParamsUniform,
+                            >()
+                                as u64),
                         },
                         count: None,
                     },
@@ -468,7 +472,10 @@ impl ComputePipelines {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(64),
+                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                                GpuParamsUniform,
+                            >()
+                                as u64),
                         },
                         count: None,
                     },
