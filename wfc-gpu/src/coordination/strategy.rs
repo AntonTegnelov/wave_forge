@@ -219,7 +219,9 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
                 // 3. Collapse cell on GPU
                 accelerator
                     .collapse_cell_gpu(coords, chosen_tile_id)
-                    .map_err(|e| WfcError::General(format!("GPU collapse error: {}", e)))?; // Use General
+                    .map_err(|e| {
+                        wfc_core::WfcError::InternalError(format!("GPU collapse error: {}", e))
+                    })?; // Use wfc_core::InternalError
 
                 // 4. Propagate constraints starting from the collapsed cell
                 let worklist = vec![coords];
@@ -231,8 +233,11 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
                     .download_contradiction_status()
                     .await
                     .map_err(|e| {
-                        WfcError::General(format!("GPU contradiction check error: {}", e))
-                    })?; // Use General
+                        wfc_core::WfcError::InternalError(format!(
+                            "GPU contradiction check error: {}",
+                            e
+                        ))
+                    })?; // Use wfc_core::InternalError
 
                 if contradiction_status.0 {
                     log::warn!("Contradiction detected after propagation!");
