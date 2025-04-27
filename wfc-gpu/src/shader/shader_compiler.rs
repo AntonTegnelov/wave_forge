@@ -189,43 +189,11 @@ impl ShaderCompiler {
             assembled_source.push_str("\n\n");
         }
 
-        // 4. Add main entry point
-        assembled_source.push_str("// Entry point definition\n");
-
-        // Determine optimal workgroup size based on GPU capabilities
-        let workgroup_size = match shader_type {
-            ShaderType::Entropy => self.config.workgroup_sizes.entropy.unwrap_or_default(),
-            ShaderType::Propagation => self.config.workgroup_sizes.propagation.unwrap_or_default(),
-            ShaderType::Collapse => self.config.workgroup_sizes.collapse.unwrap_or_default(),
-        };
-
-        match shader_type {
-            ShaderType::Entropy => {
-                assembled_source.push_str(&format!(
-                    "@compute @workgroup_size({}, {}, {}) fn main_entropy() {{\n",
-                    workgroup_size.0, workgroup_size.1, workgroup_size.2
-                ));
-                assembled_source.push_str("    // TODO: Call entropy calculation function\n");
-                assembled_source.push_str("    calculate_entropy();\n");
-                assembled_source.push_str("}\n");
-            }
-            ShaderType::Propagation => {
-                assembled_source.push_str(&format!(
-                    "@compute @workgroup_size({}, {}, {}) fn main_propagate() {{\n",
-                    workgroup_size.0, workgroup_size.1, workgroup_size.2
-                ));
-                assembled_source.push_str("    // TODO: Call propagation function\n");
-                assembled_source.push_str("    propagate_constraints();\n");
-                assembled_source.push_str("}\n");
-            }
-            ShaderType::Collapse => {
-                // No specific constants for collapse currently
-            }
-        }
-
         // 5. Apply specialization constants
-        assembled_source = self.apply_specialization(assembled_source, specialization)?;
+        // The entry point (@compute ...) should be defined within the shader components themselves.
+        // assembled_source = self.apply_specialization(assembled_source, specialization)?;
 
+        // Return the assembled source without adding an entry point here.
         Ok(assembled_source)
     }
 
