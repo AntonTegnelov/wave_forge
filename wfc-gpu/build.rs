@@ -16,6 +16,7 @@ use tools::shader_validator::{ShaderValidator, ValidatorConfig};
 
 // --- Registry Parsing Structs ---
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct ShaderComponentInfo {
     path: String,
     #[serde(default)]
@@ -32,6 +33,7 @@ struct ShaderComponentInfo {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct ShaderRegistryData {
     components: HashMap<String, ShaderComponentInfo>,
 }
@@ -39,6 +41,7 @@ struct ShaderRegistryData {
 // --- End Registry Parsing Structs ---
 
 /// Simple version check to make sure component versions follow semver format (major.minor.patch)
+#[allow(dead_code)]
 fn validate_version(component_name: &str, version: &str) -> Result<(), String> {
     if version.is_empty() {
         return Ok(());
@@ -63,6 +66,7 @@ fn validate_version(component_name: &str, version: &str) -> Result<(), String> {
 }
 
 /// Validates dependencies between components in the registry
+#[allow(dead_code)]
 fn validate_dependencies(registry: &ShaderRegistryData) -> Result<(), String> {
     // Check that all dependencies exist
     for (component_name, info) in &registry.components {
@@ -89,6 +93,7 @@ fn validate_dependencies(registry: &ShaderRegistryData) -> Result<(), String> {
 }
 
 /// Helper function to check for circular dependencies using DFS
+#[allow(dead_code)]
 fn check_circular_dependencies(
     registry: &ShaderRegistryData,
     current: &str,
@@ -127,6 +132,7 @@ fn check_circular_dependencies(
 }
 
 /// Validate feature consistency - check that required features are provided somewhere
+#[allow(dead_code)]
 fn validate_features(registry: &ShaderRegistryData) -> Result<(), String> {
     // Collect all provided features
     let mut all_provided_features = HashSet::new();
@@ -151,6 +157,7 @@ fn validate_features(registry: &ShaderRegistryData) -> Result<(), String> {
 }
 
 /// Generate optimized shader variants
+#[allow(dead_code)]
 fn generate_shader_variants(registry_path: &Path, out_dir: &Path) -> Result<(), String> {
     println!("[Build Script] Generating shader variants...");
 
@@ -210,6 +217,7 @@ fn generate_shader_variants(registry_path: &Path, out_dir: &Path) -> Result<(), 
 }
 
 /// Validate generated shader variants
+#[allow(dead_code)]
 fn validate_shader_variants(out_dir: &Path) -> Result<(), String> {
     println!("[Build Script] Validating shader variants...");
 

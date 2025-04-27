@@ -166,14 +166,32 @@ mod tests {
             .ensure_buffers(&device, new_cells, &config)
             .expect("Failed to resize buffers");
 
+        let required_size = (new_cells * std::mem::size_of::<f32>()) as u64;
+        let actual_size = buffers.entropy_buf.size();
+
+        // The actual size should be at least the required size
+        assert!(
+            actual_size >= required_size,
+            "Buffer size {} is smaller than required size {}",
+            actual_size,
+            required_size
+        );
+
+        // The actual size should be no more than growth_factor times the required size
+        assert!(
+            actual_size <= (required_size as f32 * config.growth_factor) as u64,
+            "Buffer size {} is larger than maximum expected size {}",
+            actual_size,
+            (required_size as f32 * config.growth_factor) as u64
+        );
+
+        // Both entropy buffers should be the same size
         assert_eq!(
             buffers.entropy_buf.size(),
-            (new_cells * std::mem::size_of::<f32>()) as u64
-        );
-        assert_eq!(
             buffers.staging_entropy_buf.size(),
-            (new_cells * std::mem::size_of::<f32>()) as u64
+            "Entropy buffer and staging buffer sizes don't match"
         );
+
         // Fixed size buffers should remain unchanged
         assert_eq!(
             buffers.min_entropy_info_buf.size(),

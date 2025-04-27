@@ -11,7 +11,9 @@ use super::{
 
 use crate::coordination::strategy;
 use crate::{
-    buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
+    buffers::{
+        DownloadRequest, GpuBuffers, GpuDownloadResults, GpuEntropyShaderParams, GpuParamsUniform,
+    },
     coordination::{strategy::CoordinationStrategyFactory, DefaultCoordinator, WfcCoordinator},
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
     propagator::{GpuConstraintPropagator, PropagationStrategyFactory},
@@ -1058,6 +1060,15 @@ impl GpuAccelerator {
 
         // Delegate to the method that handles local errors
         self.try_handle_local_error(&local_error)
+    }
+
+    pub async fn download_results(
+        &self,
+        request: DownloadRequest,
+    ) -> Result<GpuDownloadResults, GpuError> {
+        self.buffers
+            .download_results(&self.device, &self.queue, request)
+            .await
     }
 }
 
