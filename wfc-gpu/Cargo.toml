@@ -7,42 +7,56 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bitvec = "1.0.1"
-bytes = "1.5.0"
-futures = "0.3.30" # Required by pollster
-futures-intrusive = "0.5" # For async channel in buffer download
-function_name = "0.3.0" # For error location information
-glam = { version = "0.27.0", features = ["bytemuck"] }
-bytemuck = { version = "1.15", features = ["derive"] }
-log = "0.4"
-env_logger = "0.11.3"
-num_cpus = "1.16.0"
-once_cell = "1.19.0" # For caching
-pollster = "0.3.0"
-rand = "0.8.5"  # Added for random number generation
-rayon = "1.10.0"
-seahash = "4.1.0"     # For hashing cache keys
-semver = "1.0.20"     # For version parsing in shader registry
-thiserror = "1.0.59"
-wgpu = { version = "25.0.0", features = ["dx12", "metal", "vulkan", "wgsl"] }
-wgpu-profiler = "0.22.0" # Latest version compatible with wgpu 25.0.0
-winit = "0.29"
-image = "0.25" # Added image crate
-
-wfc-core = { path = "../wfc-core", features = ["serde"] }
+wfc-core = { path = "../wfc-core" }
 wfc-rules = { path = "../wfc-rules" }
 
+wgpu = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
+log = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+lazy_static = { workspace = true }
+once_cell = { workspace = true }
+seahash = { workspace = true }
+ndarray = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true }
+cfg-if = { workspace = true }
+bitvec = { workspace = true }
+
+# Futures / Async
+futures = { workspace = true }
+futures-channel = { workspace = true }
+tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread", "time"] }
+
+# Specific versions for testing/profiling (potentially override workspace)
+# wgpu-profiler = { workspace = true } 
+
+# Add other dependencies needed by wfc-gpu
+anyhow = { workspace = true } # For application-level error handling
+regex = { workspace = true } # For parsing grid coordinates from error strings
+image = { workspace = true } # Used in tests/examples
+function_name = { workspace = true } # For error location information
+
+[dev-dependencies]
+tempfile = { workspace = true } # Used in tests
+
+[build-dependencies]
+serde = { workspace = true, features = ["derive"] } 
+toml = { workspace = true }
+
 # Add async-trait
-async-trait = "0.1"
+async-trait = { workspace = true }
 # Add tokio (time feature needed for sleep in tests)
-tokio = { version = "1", features = ["sync", "time"] }
-serde = { version = "1.0.219", features = ["derive"] }
+tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread", "time"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json = "1.0.140"
-lazy_static = "1.4.0" # Moved from build-dependencies
+lazy_static = { workspace = true }
 
 # Add other dependencies needed by wfc-gpu
 anyhow = "1.0"
-futures-channel = "0.3.31"
+futures-channel = { workspace = true }
 regex = "1.10.3"  # For parsing grid coordinates from error strings
 
 [dev-dependencies]

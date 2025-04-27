@@ -9,7 +9,8 @@ use log::{debug, info, trace, warn};
 use std::mem;
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::time::timeout;
 use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
 use wfc_rules::AdjacencyRules;
 use wgpu::util::DeviceExt;
@@ -647,128 +648,105 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
     buffer_size: u64,
     label: Option<String>,
 ) -> Result<Vec<T>, GpuError> {
-    let timeout_ms = calculate_timeout_ms(buffer_size);
+    let start_time = Instant::now();
+    let label_str = label.as_deref().unwrap_or("Unnamed Buffer");
+    trace!("Starting buffer download for: {}", label_str);
 
-    // Determine which buffer to map
-    let buffer_to_map = match (buffer, staging_buffer) {
-        (Some(buf), None) => buf, // Map original buffer if no staging buffer provided
-        (None, Some(staging_buf)) => staging_buf, // Map staging buffer if original is None
-        (Some(_), Some(staging_buf)) => staging_buf, // Prefer staging buffer if both provided (typical download flow)
-        (None, None) => {
-            return Err(GpuError::BufferOperationError {
-                msg: format!(
-                    "Download failed: Both buffer and staging_buffer are None for label: {:?}",
-                    label
-                ),
-                context: Box::new(GpuErrorContext::default()),
-            });
+    let current_device = device.ok_or_else(|| {
+        GpuError::ConfigurationError(
+            "GPU device reference is missing for buffer download".to_string(),
+            GpuErrorContext::default(),
+        )
+    })?;
+
+    let buffer_to_map = staging_buffer.ok_or_else(|| {
+        GpuError::ConfigurationError(
+            "Staging buffer reference is missing for buffer download".to_string(),
+            GpuErrorContext::new(GpuResourceType::Buffer).with_details(&label_str),
+        )
+    })?;
+
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let map_callback = move |result: Result<(), wgpu::BufferAsyncError>| {
+        if let Err(e) = tx.send(result) {
+            // If send fails, receiver was likely dropped.
+            // Log this, as it might indicate the caller stopped waiting.
+            warn!(
+                "Failed to send buffer map result for \"{}\". Receiver dropped? Error: {:?}",
+                label_str, e
+            );
         }
     };
 
-    let slice = buffer_to_map.slice(..); // Map the selected buffer
-    let (sender, mut receiver) = futures::channel::oneshot::channel();
-    slice.map_async(wgpu::MapMode::Read, move |result| {
-        let _ = sender.send(result);
-    });
+    // Request the buffer mapping
+    buffer_to_map
+        .slice(..buffer_size)
+        .map_async(wgpu::MapMode::Read, map_callback);
 
-    let start = std::time::Instant::now();
-    let mut sleep_duration = std::time::Duration::from_micros(100); // Start with 100 microseconds
-    let mut retries = 0;
-    let mut consecutive_no_progress = 0;
+    // Poll the device until the callback is invoked.
+    // This is crucial for map_async to complete.
+    trace!("Polling device for map_async completion for: {}", label_str);
+    current_device.poll(wgpu::Maintain::Wait);
+    trace!("Device poll completed for map_async for: {}", label_str);
 
-    let current_device = device.ok_or_else(|| GpuError::DeviceLost {
-        msg: "Device reference missing during buffer download".to_string(),
-        context: Box::new(GpuErrorContext::default()),
-    })?;
+    // Calculate timeout based on buffer size
+    let timeout_duration = Duration::from_millis(calculate_timeout_ms(buffer_size));
 
-    #[allow(clippy::never_loop)] // Allow lint: loop does continue on TryRecvError::Empty
-    loop {
-        current_device.poll(wgpu::MaintainBase::Wait); // Use the validated device reference
-
-        match receiver.try_recv() {
-            Ok(Some(Ok(()))) => {
-                let mapped_range = slice.get_mapped_range();
-                let data = bytemuck::cast_slice(&mapped_range).to_vec();
-                drop(mapped_range);
-                buffer_to_map.unmap(); // Unmap the correct buffer
-                trace!(
-                    "Buffer download successful for: {}",
-                    label.as_deref().unwrap_or("Unnamed Buffer")
-                );
-                return Ok(data);
-            }
-            Ok(Some(Err(e))) => {
-                buffer_to_map.unmap(); // Ensure unmap on error
-                return Err(GpuError::BufferMapFailed {
-                    msg: format!(
-                        "Buffer mapping failed for {:?}: {:?}. Retries: {}",
-                        label.as_deref().unwrap_or("Unnamed Buffer"),
-                        e,
-                        retries
-                    ),
-                    context: Box::new(GpuErrorContext::default()),
-                });
-            }
-            Ok(None) => {
-                // Channel closed, possibly sender dropped prematurely? Should not happen with oneshot.
-                buffer_to_map.unmap(); // Ensure unmap
-                return Err(GpuError::BufferMapFailed {
-                    msg: format!(
-                        "Buffer mapping channel closed unexpectedly for {:?}. Retries: {}",
-                        label.as_deref().unwrap_or("Unnamed Buffer"),
-                        retries
-                    ),
-                    context: Box::new(GpuErrorContext::default()),
-                });
-            }
-            Err(futures::channel::oneshot::Canceled) => {
-                // Sender was dropped before sending.
-                buffer_to_map.unmap(); // Ensure unmap
-                return Err(GpuError::BufferMapFailed {
-                    msg: format!(
-                        "Buffer mapping cancelled for {:?}. Retries: {}",
-                        label.as_deref().unwrap_or("Unnamed Buffer"),
-                        retries
-                    ),
-                    context: Box::new(GpuErrorContext::default()),
-                });
-            }
-            Err(futures::channel::oneshot::TryRecvError::Empty) => {
-                // Data not ready yet, continue the loop
-            }
+    // Wait for the result from the callback with a timeout
+    trace!(
+        "Waiting for map result receiver (timeout: {:?}) for: {}",
+        timeout_duration,
+        label_str
+    );
+    match timeout(timeout_duration, rx).await {
+        Ok(Ok(Ok(()))) => {
+            // Success path: map_async completed successfully
+            trace!("Map result received successfully for: {}", label_str);
+            let slice = buffer_to_map.slice(..buffer_size).get_mapped_range();
+            let data = bytemuck::cast_slice(&slice).to_vec();
+            drop(slice); // Drop mapped range before unmapping
+            buffer_to_map.unmap();
+            trace!("Buffer download successful for: {}", label_str);
+            Ok(data)
         }
-
-        // --- Timeout Check (Inside Loop, after match) ---
-        if start.elapsed().as_millis() as u64 > timeout_ms {
+        Ok(Ok(Err(e))) => {
+            // Map error occurred during map_async
+            warn!("Buffer map_async failed for {}: {:?}", label_str, e);
+            buffer_to_map.unmap(); // Ensure unmap on error
+            Err(GpuError::BufferMapFailed {
+                msg: format!(
+                    "GPU buffer map_async operation failed for buffer '{}': {:?}",
+                    label_str, e
+                ),
+                context: GpuErrorContext::new(GpuResourceType::Buffer).with_details(&label_str),
+            })
+        }
+        Ok(Err(futures::channel::oneshot::Canceled)) => {
+            // Receiver was canceled (e.g., GpuAccelerator dropped mid-operation)
+            warn!("GPU download receiver canceled for buffer: {}", label_str);
+            buffer_to_map.unmap(); // Attempt unmap just in case
+            Err(GpuError::OperationCancelled {
+                operation: "buffer download".to_string(),
+                reason: format!("Receiver canceled for buffer: {}", label_str),
+                context: GpuErrorContext::new(GpuResourceType::Buffer).with_details(&label_str),
+            })
+        }
+        Err(_elapsed) => {
+            // Timeout occurred
             warn!(
-                "Timeout waiting for GPU buffer map operation ({}>{}ms) for buffer: {}",
-                start.elapsed().as_millis(),
-                timeout_ms,
-                label.as_deref().unwrap_or("Unnamed Buffer")
+                "Timeout waiting for GPU buffer map operation ({:?}) for buffer: {}",
+                timeout_duration, label_str
             );
             buffer_to_map.unmap(); // Ensure unmap on timeout
-            return Err(GpuError::BufferMapFailed {
+            Err(GpuError::BufferMapFailed {
                 msg: format!(
-                    "Timeout waiting for GPU buffer map operation ({}>{}ms) for buffer: {}",
-                    start.elapsed().as_millis(),
-                    timeout_ms,
-                    label.as_deref().unwrap_or("Unnamed Buffer")
+                    "Timeout waiting for GPU buffer map operation ({:?}) for buffer: {}",
+                    timeout_duration, label_str
                 ),
-                context: Box::new(GpuErrorContext::default()),
-            });
+                context: GpuErrorContext::new(GpuResourceType::Buffer).with_details(&label_str),
+            })
         }
-
-        // --- Yielding Logic (Inside Loop, after timeout check) ---
-        consecutive_no_progress += 1;
-        if consecutive_no_progress >= yield_threshold {
-            trace!(
-                "Yielding in download loop for: {}",
-                label.as_deref().unwrap_or("Unnamed Buffer")
-            );
-            thread::yield_now();
-            consecutive_no_progress = 0;
-        }
-    } // End loop
+    }
 }
 
 impl GpuDownloadResults {
