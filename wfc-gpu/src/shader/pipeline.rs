@@ -468,10 +468,7 @@ impl ComputePipelines {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
-                                GpuParamsUniform,
-                            >()
-                                as u64),
+                            min_binding_size: wgpu::BufferSize::new(64),
                         },
                         count: None,
                     },
