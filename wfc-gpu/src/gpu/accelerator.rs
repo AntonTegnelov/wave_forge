@@ -209,10 +209,13 @@ impl GpuAccelerator {
             },
             tie_breaking: 0,
             max_propagation_steps: 1000,
-            contradiction_check_frequency: 100,
+            contradiction_check_frequency: 10,
             worklist_size: 0,
-            grid_element_count: total_cells as u32,
-            _padding: 0,
+            grid_element_count: (total_cells * 4) as u32,
+            _padding0: 0,
+            _padding1: 0,
+            _padding2: 0,
+            _padding3: 0,
         };
 
         synchronizer.update_propagation_params(&params)?;
