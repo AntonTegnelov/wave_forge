@@ -160,30 +160,31 @@ impl EntropyCoordinator {
         // Otherwise download min entropy directly using GpuEntropyCalculator
         trace!("EntropyCoordinator: Downloading entropy results...");
 
-        // Create a dummy entropy grid just for the API - the calculator doesn't actually use it
-        let dummy_grid = EntropyGrid::new(
-            buffers.grid_dims.0,
-            buffers.grid_dims.1,
-            buffers.grid_dims.2,
-        );
-
         // Delegate to the GpuEntropyCalculator's implementation for both coords and value
-        if let Some(((x, y, z), entropy_value)) = self
+        let selection_result = self
             .entropy_calculator
-            .select_lowest_entropy_cell_with_value_async(&dummy_grid)
-            .await
-        {
-            trace!(
-                "EntropyCoordinator: Selected cell at ({}, {}, {}) with entropy {}",
-                x,
-                y,
-                z,
-                entropy_value
-            );
-            Ok(Some((entropy_value, Coord3D { x, y, z })))
-        } else {
-            trace!("EntropyCoordinator: No cell with positive entropy found (grid fully collapsed or contradiction).");
-            Ok(None)
+            .select_lowest_entropy_cell_with_value_async() // No argument needed
+            .await;
+
+        match selection_result {
+            Ok(Some((x, y, z, entropy_value))) => {
+                trace!(
+                    "EntropyCoordinator: Selected cell at ({}, {}, {}) with entropy {}",
+                    x,
+                    y,
+                    z,
+                    entropy_value
+                );
+                Ok(Some((entropy_value, Coord3D { x, y, z })))
+            }
+            Ok(None) => {
+                trace!("EntropyCoordinator: No cell with positive entropy found (grid fully collapsed or contradiction).");
+                Ok(None)
+            }
+            Err(e) => {
+                log::error!("GPU min entropy selection error in coordinator: {}", e);
+                Err(e) // Propagate the GpuError
+            }
         }
     }
 

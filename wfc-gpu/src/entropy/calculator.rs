@@ -1,14 +1,15 @@
 use crate::utils::error_recovery::GpuError as OldGpuError;
 use crate::{
+    buffers::entropy_buffers::{EntropyBuffers, MinEntropyResultBuffer},
     buffers::{GpuBuffers, GpuEntropyShaderParams},
     entropy::entropy_strategy::{
         EntropyStrategy as ImportedEntropyStrategy, EntropyStrategyFactory,
     },
     gpu::sync::GpuSynchronizer,
     shader::pipeline::ComputePipelines,
-    utils::error::gpu_error::{GpuError as NewGpuError, GpuErrorContext},
+    utils::error::gpu_error::{GpuError, GpuErrorContext},
 };
-use log::{debug, error, warn};
+use log::{debug, error, trace, warn};
 use pollster;
 use std::{fmt::Debug, sync::Arc};
 use wfc_core::{
@@ -466,12 +467,10 @@ impl GpuEntropyCalculator {
     /// both the coordinates and the entropy value in a single call.
     pub async fn select_lowest_entropy_cell_with_value_async(
         &self,
-        _entropy_grid: &EntropyGrid, // Grid itself is not needed as data is on GPU
-    ) -> Option<((usize, usize, usize), f32)> {
-        debug!("Entering select_lowest_entropy_cell_with_value_async");
+    ) -> Result<Option<(usize, usize, usize, f32)>, GpuError> {
+        trace!("Starting async selection of lowest entropy cell with value");
 
-        // --- Download Min Entropy Info ---
-        // Create encoder for copy
+        // --- Download Min Entropy Info --- Similar to select_lowest_entropy_cell_async
         let mut copy_encoder =
             self.device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -486,54 +485,63 @@ impl GpuEntropyCalculator {
         );
         self.queue.submit(Some(copy_encoder.finish()));
 
-        // Use the centralized download function
-        let min_info_data = crate::buffers::download_buffer_data::<u32>(
+        // Use the centralized download function, expecting two u32s (f32 bits, u32 index)
+        let min_info_data_result = crate::buffers::download_buffer_data::<u32>(
             Some(&self.device),
             Some(&self.queue),
             None, // Don't need the source buffer since we already copied to staging
             Some(&*self.buffers.entropy_buffers.staging_min_entropy_info_buf),
-            self.buffers.entropy_buffers.min_entropy_info_buf.size(),
-            Some("Min Entropy Info Download".to_string()),
+            self.buffers.entropy_buffers.min_entropy_info_buf.size(), // Should be 8 bytes
+            Some("Min Entropy Info Download (Value)".to_string()),
         )
         .await;
 
-        match min_info_data {
+        match min_info_data_result {
             Ok(data) => {
+                trace!("Downloaded min entropy buffer result (raw u32): {:?}", data);
                 if data.len() < 2 {
                     warn!(
                         "Downloaded min_entropy_info data has insufficient length ({})",
                         data.len()
                     );
-                    return None;
+                    return Ok(None);
                 }
 
-                let min_entropy_bits = data[0];
-                let min_index = data[1];
+                let entropy_bits = data[0];
+                let index = data[1];
+                let entropy = f32::from_bits(entropy_bits);
 
-                // Check if a valid minimum was found (index != u32::MAX)
-                if min_index != u32::MAX {
+                // Check if a valid minimum was found (index != u32::MAX and entropy is positive finite)
+                if index != u32::MAX && entropy.is_finite() && entropy > 0.0 {
                     let (width, height, _depth) = self.grid_dims;
-                    let idx = min_index as usize;
+                    if width == 0 || height == 0 {
+                        error!("Grid dimensions are zero when converting lowest entropy index");
+                        // Use GpuError::Other as InvalidGridDimension doesn't exist
+                        return Err(GpuError::Other {
+                            msg: "Grid dimensions (width or height) are zero".to_string(),
+                            context: Box::new(GpuErrorContext::default()),
+                        });
+                    }
+                    let idx = index as usize;
                     let z = idx / (width * height);
                     let y = (idx % (width * height)) / width;
                     let x = idx % width;
-
-                    // Convert the bits back to float
-                    let min_entropy = f32::from_bits(min_entropy_bits);
-
                     debug!(
-                        "Selected lowest entropy cell: ({}, {}, {}) with entropy {}",
-                        x, y, z, min_entropy
+                        "Selected cell: ({}, {}, {}) with entropy {:.4e} (bits: {:08x}, index: {})",
+                        x, y, z, entropy, entropy_bits, index
                     );
-                    Some(((x, y, z), min_entropy))
+                    Ok(Some((x, y, z, entropy)))
                 } else {
-                    debug!("No cell with positive entropy found (or grid fully collapsed/contradiction).");
-                    None // Grid might be fully collapsed or in a contradiction state
+                    debug!("No valid positive entropy cell found (index=MAX or entropy<=0 or invalid: bits={:08x}, index={})", entropy_bits, index);
+                    Ok(None) // Grid might be fully collapsed, contradiction, or no positive entropy found
                 }
             }
             Err(e) => {
-                error!("Failed to download min entropy info: {}", e);
-                None
+                error!(
+                    "Failed to download min entropy info for value selection: {}",
+                    e
+                );
+                Err(e) // Propagate the original download error
             }
         }
     }
@@ -651,29 +659,29 @@ fn parse_coords_from_context(context: &GpuErrorContext) -> Option<(usize, usize,
     None
 }
 
-impl From<NewGpuError> for CoreEntropyError {
-    fn from(error: NewGpuError) -> Self {
+impl From<GpuError> for CoreEntropyError {
+    fn from(error: GpuError) -> Self {
         match error {
-            NewGpuError::BufferMapFailed { msg, .. } => {
+            GpuError::BufferMapFailed { msg, .. } => {
                 CoreEntropyError::Other(format!("GPU buffer mapping failed: {}", msg))
             }
-            NewGpuError::ShaderError { msg, .. } => {
+            GpuError::ShaderError { msg, .. } => {
                 CoreEntropyError::Other(format!("GPU shader error: {}", msg))
             }
-            NewGpuError::ResourceCreationFailed { msg, .. } => {
+            GpuError::ResourceCreationFailed { msg, .. } => {
                 CoreEntropyError::Other(format!("GPU resource creation failed: {}", msg))
             }
-            NewGpuError::CommandExecutionError { msg, .. } => {
+            GpuError::CommandExecutionError { msg, .. } => {
                 CoreEntropyError::Other(format!("GPU command execution error: {}", msg))
             }
-            NewGpuError::DeviceLost { msg, .. } => CoreEntropyError::Other(format!(
+            GpuError::DeviceLost { msg, .. } => CoreEntropyError::Other(format!(
                 "GPU device lost during entropy calculation: {}",
                 msg
             )),
-            NewGpuError::Timeout { msg, .. } => {
+            GpuError::Timeout { msg, .. } => {
                 CoreEntropyError::Other(format!("GPU entropy calculation timed out: {}", msg))
             }
-            NewGpuError::ContradictionDetected { context } => {
+            GpuError::ContradictionDetected { context } => {
                 // Try to parse coordinates from context
                 if let Some((x, y, z)) = parse_coords_from_context(&context) {
                     CoreEntropyError::GridAccessError(x, y, z)

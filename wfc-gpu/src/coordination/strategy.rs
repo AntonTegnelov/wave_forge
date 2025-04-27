@@ -201,18 +201,25 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
 
         // 1. Select min entropy cell by reading GPU result buffer
         // Note: Assumes the entropy calculation shader has already run before this step
-        let dummy_entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
-        let selection = self
+        let selection_result = self
             .entropy_calculator
-            .select_lowest_entropy_cell_with_value_async(&dummy_entropy_grid) // Pass dummy grid ref
+            .select_lowest_entropy_cell_with_value_async() // No argument needed
             .await;
 
+        // Handle the Result first
+        let selection = selection_result.map_err(|e| {
+            wfc_core::WfcError::InternalError(format!("GPU min entropy selection error: {}", e))
+        })?;
+
         match selection {
-            Some((coords, _entropy)) => {
+            Some((coords_tuple, _entropy)) => {
+                // Convert tuple to Coord3D or directly use the tuple if collapse_cell_gpu expects it
+                // Assuming collapse_cell_gpu expects (usize, usize, usize)
+                let coords = (coords_tuple.0, coords_tuple.1, coords_tuple.2);
                 log::debug!("Coordinator selected cell {:?} for collapse", coords);
 
                 // 2. Choose a tile to collapse to
-                // TODO: Implement actual tile selection logic.
+                // TODO: Implement actual tile selection logic. Use the entropy value?
                 let chosen_tile_id: u32 = 0; // Placeholder: Always pick tile 0
                 log::debug!("Collapsing cell {:?} to tile {}", coords, chosen_tile_id);
 
