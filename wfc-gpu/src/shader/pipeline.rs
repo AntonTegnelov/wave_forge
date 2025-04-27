@@ -9,7 +9,7 @@ use std::hash::{Hash, Hasher};
 // Import ShaderManager and related types
 use super::shaders::{ShaderManager, ShaderType};
 use crate::buffers::{CollapseInfoUniform, GpuParamsUniform};
-use crate::utils::error::{GpuError, GpuErrorContext};
+use crate::utils::error::{GpuError, GpuErrorContext, GpuResourceType};
 use lazy_static::lazy_static;
 
 // --- Cache Definitions ---
@@ -583,7 +583,7 @@ impl ComputePipelines {
         let mut cache = COMPUTE_PIPELINE_CACHE.lock().map_err(|e| {
             GpuError::mutex_error(
                 e.to_string(),
-                GpuErrorContext::compute_pipeline_creation("cache lock"),
+                GpuErrorContext::new(GpuResourceType::Pipeline).with_details("cache lock"),
             )
         })?;
 
