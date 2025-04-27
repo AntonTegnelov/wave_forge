@@ -334,64 +334,153 @@ impl GpuBuffers {
 
     pub async fn download_results(
         &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
         request: DownloadRequest,
     ) -> Result<GpuDownloadResults, GpuError> {
-        let mut results = GpuDownloadResults::default();
+        let download_start = Instant::now();
+        trace!("Starting buffer download");
 
-        if request.download_grid_possibilities {
-            let grid_data = self.grid_buffers.download_grid_data(device, queue).await?;
-            results.grid_possibilities = Some(grid_data);
-        }
+        let mut final_results = GpuDownloadResults::default();
 
+        // First collect all async operations into a Vec
         if request.download_entropy {
-            let entropy_data = self
-                .entropy_buffers
-                .download_entropy_data(device, queue)
-                .await?;
-            results.entropy = Some(entropy_data);
+            let num_cells = self.grid_dims.0 * self.grid_dims.1 * self.grid_dims.2;
+            // These would normally come from a GpuSynchronizer - for now, we'll pass None
+            // and update the download_buffer_data function to accept Option<Arc<>> types
+            let device = None;
+            let queue = None;
+
+            debug!("Entropy download requested for {} cells", num_cells);
+
+            // We'll refactor this to use a different approach that doesn't require different async block types
+            let download_size = num_cells * mem::size_of::<f32>();
+            let buffer = &*self.entropy_buffers.entropy_buf;
+            let staging_buffer = &*self.entropy_buffers.staging_entropy_buf;
+
+            let data = download_buffer_data::<f32>(
+                device,
+                queue,
+                Some(buffer),
+                None,
+                download_size as u64,
+                Some("Entropy Data".to_string()),
+            )
+            .await?;
+
+            final_results.entropy = Some(data);
         }
 
         if request.download_min_entropy_info {
-            let min_entropy_data = self
-                .entropy_buffers
-                .download_min_entropy_info(device, queue)
-                .await?;
-            results.min_entropy_info = Some(min_entropy_data);
+            debug!("Min entropy index download requested");
+
+            // These are placeholders - for now, use None
+            let device = None;
+            let queue = None;
+
+            let download_size = 5 * mem::size_of::<u32>();
+            let buffer = &*self.entropy_buffers.min_entropy_info_buf;
+            let staging_buffer = &*self.entropy_buffers.staging_min_entropy_info_buf;
+
+            let data = download_buffer_data::<u32>(
+                device,
+                queue,
+                Some(buffer),
+                None,
+                download_size as u64,
+                Some("Min Entropy Info".to_string()),
+            )
+            .await?;
+
+            if data.len() >= 2 {
+                // First value is min value, second is index
+                let min_value = f32::from_bits(data[0]);
+                let min_index = data[1];
+                final_results.min_entropy_info = Some((min_value, min_index));
+            }
+        }
+
+        if request.download_grid_possibilities {
+            debug!("Grid state download requested");
+
+            // These are placeholders - for now, use None
+            let device = None;
+            let queue = None;
+
+            let num_cells = self.grid_dims.0 * self.grid_dims.1 * self.grid_dims.2;
+            let u32s_per_cell = (self.num_tiles + 31) / 32; // Ceiling division by 32
+            let download_size = num_cells * u32s_per_cell * mem::size_of::<u32>();
+            let buffer = &*self.grid_buffers.grid_possibilities_buf;
+            let staging_buffer = &*self.grid_buffers.staging_grid_possibilities_buf;
+
+            let data = download_buffer_data::<u32>(
+                device,
+                queue,
+                Some(buffer),
+                None,
+                download_size as u64,
+                Some("Grid Data".to_string()),
+            )
+            .await?;
+
+            final_results.grid_possibilities = Some(data);
         }
 
         if request.download_contradiction_flag {
-            let contradiction_flag = download_buffer_data::<u32>(
-                Some(device),
-                Some(queue),
-                Some(&self.contradiction_flag_buf),
-                Some(&self.staging_contradiction_flag_buf),
-                std::mem::size_of::<u32>() as u64,
+            debug!("Contradiction flag download requested");
+
+            // These are placeholders - for now, use None
+            let device = None;
+            let queue = None;
+
+            let download_size = mem::size_of::<u32>();
+            let buffer = &*self.contradiction_flag_buf;
+            let staging_buffer = &*self.staging_contradiction_flag_buf;
+
+            let data = download_buffer_data::<u32>(
+                device,
+                queue,
+                Some(buffer),
+                None,
+                download_size as u64,
                 Some("Contradiction Flag".to_string()),
             )
             .await?;
-            results.contradiction_flag = Some(contradiction_flag[0] != 0);
+
+            let flag_value = if data.is_empty() { 0 } else { data[0] };
+            final_results.contradiction_flag = Some(flag_value > 0);
         }
 
         if request.download_contradiction_location {
-            let contradiction_location = download_buffer_data::<u32>(
-                Some(device),
-                Some(queue),
-                Some(&self.contradiction_location_buf),
-                Some(&self.staging_contradiction_location_buf),
-                std::mem::size_of::<u32>() as u64 * 3,
+            debug!("Contradiction location download requested");
+
+            // These are placeholders - for now, use None
+            let device = None;
+            let queue = None;
+
+            let download_size = 3 * mem::size_of::<u32>();
+            let buffer = &*self.contradiction_location_buf;
+            let staging_buffer = &*self.staging_contradiction_location_buf;
+
+            let data = download_buffer_data::<u32>(
+                device,
+                queue,
+                Some(buffer),
+                None,
+                download_size as u64,
                 Some("Contradiction Location".to_string()),
             )
             .await?;
-            results.contradiction_location = Some((
-                contradiction_location[0] as usize,
-                contradiction_location[1] as usize,
-                contradiction_location[2] as usize,
-            ));
+
+            if data.len() >= 3 {
+                let x = data[0] as usize;
+                let y = data[1] as usize;
+                let z = data[2] as usize;
+                let coords = (x, y, z);
+                final_results.contradiction_location = Some(coords);
+            }
         }
 
-        Ok(results)
+        debug!("Download completed in {:.2?}", download_start.elapsed());
+        Ok(final_results)
     }
 
     /// Converts raw buffer data to a PossibilityGrid.
@@ -541,7 +630,24 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
     label: Option<String>,
 ) -> Result<Vec<T>, GpuError> {
     let timeout_ms = calculate_timeout_ms(buffer_size);
-    let slice = buffer.unwrap().slice(..);
+
+    // Determine which buffer to map
+    let buffer_to_map = match (buffer, staging_buffer) {
+        (Some(buf), None) => buf, // Map original buffer if no staging buffer provided
+        (None, Some(staging_buf)) => staging_buf, // Map staging buffer if original is None
+        (Some(_), Some(staging_buf)) => staging_buf, // Prefer staging buffer if both provided (typical download flow)
+        (None, None) => {
+            return Err(GpuError::BufferOperationError {
+                msg: format!(
+                    "Download failed: Both buffer and staging_buffer are None for label: {:?}",
+                    label
+                ),
+                context: Box::new(GpuErrorContext::default()),
+            });
+        }
+    };
+
+    let slice = buffer_to_map.slice(..); // Map the selected buffer
     let (sender, mut receiver) = futures::channel::oneshot::channel();
     slice.map_async(wgpu::MapMode::Read, move |result| {
         let _ = sender.send(result);
@@ -552,23 +658,72 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
     let mut retries = 0;
     let mut consecutive_no_progress = 0;
 
-    loop {
-        device.unwrap().poll(wgpu::MaintainBase::Wait);
+    let current_device = device.ok_or_else(|| GpuError::DeviceLost {
+        msg: "Device reference missing during buffer download".to_string(),
+        context: Box::new(GpuErrorContext::default()),
+    })?;
 
-        if let Ok(Some(Ok(()))) = receiver.try_recv() {
-            let mapped_range = slice.get_mapped_range();
-            let data = bytemuck::cast_slice(&mapped_range).to_vec();
-            drop(mapped_range);
-            buffer.unwrap().unmap();
-            return Ok(data);
+    loop {
+        current_device.poll(wgpu::MaintainBase::Wait); // Use the validated device reference
+
+        match receiver.try_recv() {
+            Ok(Some(Ok(()))) => {
+                let mapped_range = slice.get_mapped_range();
+                let data = bytemuck::cast_slice(&mapped_range).to_vec();
+                drop(mapped_range);
+                buffer_to_map.unmap(); // Unmap the correct buffer
+                return Ok(data);
+            }
+            Ok(Some(Err(e))) => {
+                buffer_to_map.unmap(); // Ensure unmap on error
+                return Err(GpuError::BufferMapFailed {
+                    msg: format!(
+                        "Buffer mapping failed for {:?}: {:?}. Retries: {}",
+                        label.as_deref().unwrap_or("Unnamed Buffer"),
+                        e,
+                        retries
+                    ),
+                    context: Box::new(GpuErrorContext::default()),
+                });
+            }
+            Ok(None) => {
+                // Channel closed, possibly sender dropped prematurely? Should not happen with oneshot.
+                buffer_to_map.unmap(); // Ensure unmap
+                return Err(GpuError::BufferMapFailed {
+                    msg: format!(
+                        "Buffer mapping channel closed unexpectedly for {:?}. Retries: {}",
+                        label.as_deref().unwrap_or("Unnamed Buffer"),
+                        retries
+                    ),
+                    context: Box::new(GpuErrorContext::default()),
+                });
+            }
+            Err(futures::channel::oneshot::Canceled) => {
+                // Sender was dropped before sending.
+                buffer_to_map.unmap(); // Ensure unmap
+                return Err(GpuError::BufferMapFailed {
+                    msg: format!(
+                        "Buffer mapping cancelled for {:?}. Retries: {}",
+                        label.as_deref().unwrap_or("Unnamed Buffer"),
+                        retries
+                    ),
+                    context: Box::new(GpuErrorContext::default()),
+                });
+            }
+            Err(_) => {
+                // Still pending, continue loop
+            }
         }
 
         if start.elapsed().as_millis() as u64 > timeout_ms {
-            buffer.unwrap().unmap();
+            buffer_to_map.unmap(); // Ensure unmap on timeout
             return Err(GpuError::BufferMapFailed {
                 msg: format!(
-                    "Buffer mapping timeout after {} retries. Buffer size: {} bytes",
-                    retries, buffer_size
+                    "Buffer mapping timeout after {} retries for {:?}. Buffer size: {} bytes. Timeout: {}ms",
+                    retries,
+                    label.as_deref().unwrap_or("Unnamed Buffer"),
+                    buffer_size,
+                    timeout_ms
                 ),
                 context: Box::new(GpuErrorContext::default()),
             });

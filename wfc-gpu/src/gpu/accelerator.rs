@@ -11,9 +11,7 @@ use super::{
 
 use crate::coordination::strategy;
 use crate::{
-    buffers::{
-        DownloadRequest, GpuBuffers, GpuDownloadResults, GpuEntropyShaderParams, GpuParamsUniform,
-    },
+    buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
     coordination::{strategy::CoordinationStrategyFactory, DefaultCoordinator, WfcCoordinator},
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
     propagator::{GpuConstraintPropagator, PropagationStrategyFactory},
@@ -470,8 +468,13 @@ impl GpuAccelerator {
 
             // Choose a random state from possible states
             let chosen_state = possible_states[rand::random::<usize>() % possible_states.len()];
-            cell.clear();
-            cell.set(chosen_state, true);
+            // Use the grid's collapse method directly
+            current_grid.collapse(x, y, z, chosen_state).map_err(|e| {
+                WfcError::other(format!(
+                    "Failed to collapse cell ({},{},{}): {}",
+                    x, y, z, e
+                ))
+            })?;
             collapsed_cells += 1;
 
             // Upload the updated cell state
@@ -1060,15 +1063,6 @@ impl GpuAccelerator {
 
         // Delegate to the method that handles local errors
         self.try_handle_local_error(&local_error)
-    }
-
-    pub async fn download_results(
-        &self,
-        request: DownloadRequest,
-    ) -> Result<GpuDownloadResults, GpuError> {
-        self.buffers
-            .download_results(&self.device, &self.queue, request)
-            .await
     }
 }
 
