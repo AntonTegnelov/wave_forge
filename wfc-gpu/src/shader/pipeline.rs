@@ -8,7 +8,7 @@ use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
 // Import ShaderManager and related types
 use super::shaders::{ShaderManager, ShaderType};
-use crate::buffers::{CollapseInfoUniform, GpuEntropyShaderParams, GpuParamsUniform};
+use crate::buffers::{CollapseInfoUniform, GpuEntropyShaderParams};
 use crate::utils::error::{GpuError, GpuErrorContext, GpuResourceType};
 use lazy_static::lazy_static;
 

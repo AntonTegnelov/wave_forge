@@ -8,6 +8,7 @@ use bytemuck::{Pod, Zeroable};
 use log::{debug, info, trace, warn};
 use std::mem;
 use std::sync::Arc;
+use std::thread;
 use std::time::Instant;
 use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
 use wfc_rules::AdjacencyRules;
@@ -680,6 +681,7 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
         context: Box::new(GpuErrorContext::default()),
     })?;
 
+    #[allow(clippy::never_loop)] // Allow lint: loop does continue on TryRecvError::Empty
     loop {
         current_device.poll(wgpu::MaintainBase::Wait); // Use the validated device reference
 
@@ -689,6 +691,10 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
                 let data = bytemuck::cast_slice(&mapped_range).to_vec();
                 drop(mapped_range);
                 buffer_to_map.unmap(); // Unmap the correct buffer
+                trace!(
+                    "Buffer download successful for: {}",
+                    label.as_deref().unwrap_or("Unnamed Buffer")
+                );
                 return Ok(data);
             }
             Ok(Some(Err(e))) => {
@@ -727,51 +733,42 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
                     context: Box::new(GpuErrorContext::default()),
                 });
             }
+            Err(futures::channel::oneshot::TryRecvError::Empty) => {
+                // Data not ready yet, continue the loop
+            }
         }
 
+        // --- Timeout Check (Inside Loop, after match) ---
         if start.elapsed().as_millis() as u64 > timeout_ms {
+            warn!(
+                "Timeout waiting for GPU buffer map operation ({}>{}ms) for buffer: {}",
+                start.elapsed().as_millis(),
+                timeout_ms,
+                label.as_deref().unwrap_or("Unnamed Buffer")
+            );
             buffer_to_map.unmap(); // Ensure unmap on timeout
             return Err(GpuError::BufferMapFailed {
                 msg: format!(
-                    "Buffer mapping timeout after {} retries for {:?}. Buffer size: {} bytes. Timeout: {}ms",
-                    retries,
-                    label.as_deref().unwrap_or("Unnamed Buffer"),
-                    buffer_size,
-                    timeout_ms
+                    "Timeout waiting for GPU buffer map operation ({}>{}ms) for buffer: {}",
+                    start.elapsed().as_millis(),
+                    timeout_ms,
+                    label.as_deref().unwrap_or("Unnamed Buffer")
                 ),
                 context: Box::new(GpuErrorContext::default()),
             });
         }
 
-        retries += 1;
+        // --- Yielding Logic (Inside Loop, after timeout check) ---
         consecutive_no_progress += 1;
-
-        // Yield less frequently for small buffers, more frequently for larger ones
-        let yield_threshold = if buffer_size < 1024 {
-            64 // Small buffers
-        } else if buffer_size < 1024 * 1024 {
-            32 // Medium buffers
-        } else {
-            16 // Large buffers
-        };
-
         if consecutive_no_progress >= yield_threshold {
-            tokio::task::yield_now().await;
+            trace!(
+                "Yielding in download loop for: {}",
+                label.as_deref().unwrap_or("Unnamed Buffer")
+            );
+            thread::yield_now();
             consecutive_no_progress = 0;
         }
-
-        // Exponential backoff with dynamic cap based on buffer size
-        let max_sleep = if buffer_size < 1024 {
-            std::time::Duration::from_millis(10) // Cap at 10ms for small buffers
-        } else if buffer_size < 1024 * 1024 {
-            std::time::Duration::from_millis(50) // Cap at 50ms for medium buffers
-        } else {
-            std::time::Duration::from_millis(100) // Cap at 100ms for large buffers
-        };
-
-        sleep_duration = std::cmp::min(sleep_duration * 2, max_sleep);
-        tokio::time::sleep(sleep_duration).await;
-    }
+    } // End loop
 }
 
 impl GpuDownloadResults {
