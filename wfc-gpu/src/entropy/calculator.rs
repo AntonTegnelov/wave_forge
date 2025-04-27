@@ -200,9 +200,6 @@ impl GpuEntropyCalculator {
             width, height, depth, num_cells
         );
 
-        // Reset min entropy buffer
-        self.synchronizer.reset_min_entropy_buffer()?;
-
         // Call strategy's prepare method
         self.strategy.prepare(&self.synchronizer)?;
 
@@ -275,6 +272,10 @@ impl GpuEntropyCalculator {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Entropy Compute Encoder"),
             });
+
+        // Reset min entropy buffer *within the same command encoder*
+        self.synchronizer
+            .reset_min_entropy_buffer_in_encoder(&mut encoder)?;
 
         // Create main bind group (group 0)
         let grid_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {

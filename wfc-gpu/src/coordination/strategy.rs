@@ -188,7 +188,7 @@ impl DefaultCoordinationStrategy {
 impl CoordinationStrategy for DefaultCoordinationStrategy {
     async fn step(
         &mut self,
-        _accelerator: &mut GpuAccelerator,
+        accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<StepResult, WfcError> {
         // Update our internal grid with the current grid state
@@ -198,15 +198,51 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
         }
 
         // Default implementation of a WFC step
-        // 1. Calculate entropy
-        // 2. Select min entropy cell
-        // 3. Collapse cell
-        // 4. Propagate constraints
-        // 5. Return appropriate StepResult
 
-        // This is a placeholder - the actual implementation would use
-        // the entropy calculator and propagator to perform these steps
-        Ok(StepResult::InProgress)
+        // 1. Select min entropy cell
+        // NOTE: Selection happens by reading the result buffer populated by the entropy shader.
+        //       The actual entropy calculation + reduction is triggered elsewhere (likely before step?).
+        //       We need access to the GpuEntropyCalculator or a method on the accelerator.
+        // Example (conceptual):
+        // let selection = accelerator.get_lowest_entropy_cell().await?;
+        let selection: Option<((usize, usize, usize), f32)> = None; // Placeholder
+
+        match selection {
+            Some((coords, _entropy)) => {
+                // 2. Choose a tile to collapse to
+                // TODO: Implement logic to choose a tile based on current possibilities for the cell `coords`.
+                //       This might require reading cell possibilities from GPU or using a CPU-side representation.
+                let chosen_tile_id: u32 = 0; // Placeholder
+
+                // 3. Collapse cell on GPU
+                // TODO: Implement `collapse_cell_gpu` on GpuAccelerator/GpuSynchronizer.
+                //       This function should dispatch a compute shader to update the grid_possibilities_buf
+                //       for the cell `coords`, setting only the bit for `chosen_tile_id`.
+                // Example (conceptual):
+                // accelerator.collapse_cell_gpu(coords, chosen_tile_id).await?;
+                log::warn!("GPU cell collapse step not implemented yet!"); // Acknowledge missing step
+
+                // 4. Propagate constraints
+                let worklist = vec![coords];
+                self.coordinate_propagation(&worklist).await?;
+
+                // 5. Check for contradiction (optional here, might be part of propagation)
+                // let contradiction = accelerator.check_contradiction().await?;
+                // if contradiction {
+                //     return Ok(StepResult::Contradiction);
+                // }
+
+                // Return InProgress, assuming collapse/propagation happened
+                Ok(StepResult::InProgress)
+            }
+            None => {
+                // No cell found with positive entropy
+                Ok(StepResult::Completed)
+            }
+        }
+
+        // Old placeholder return:
+        // Ok(StepResult::InProgress)
     }
 
     async fn initialize(
