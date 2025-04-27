@@ -43,7 +43,6 @@ function_name = { workspace = true } # For error location information
 tempfile = { workspace = true } # Used in tests
 
 [build-dependencies]
-serde = { workspace = true, features = ["derive"] } 
 toml = { workspace = true }
 
 # Add async-trait
