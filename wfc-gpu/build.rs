@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Allow dead code for unused shader component system
+
 // wfc-gpu/build.rs
 
 use serde::Deserialize;
