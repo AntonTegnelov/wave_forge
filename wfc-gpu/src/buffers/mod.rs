@@ -60,6 +60,16 @@ pub struct GpuEntropyShaderParams {
     pub _padding2: u32,
 }
 
+/// Uniform data specifically for the cell collapse shader.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CollapseInfoUniform {
+    pub coord_x: u32,
+    pub coord_y: u32,
+    pub coord_z: u32,
+    pub chosen_tile_id: u32,
+}
+
 /// DynamicBufferConfig contains settings for how buffers are resized
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DynamicBufferConfig {
@@ -101,6 +111,7 @@ pub struct GpuBuffers {
     pub num_axes: usize,
     pub boundary_mode: wfc_core::BoundaryCondition,
     pub entropy_params_buffer: Arc<wgpu::Buffer>,
+    pub collapse_info_buf: Arc<wgpu::Buffer>,
     pub dynamic_buffer_config: Option<DynamicBufferConfig>,
 }
 
@@ -243,6 +254,12 @@ impl GpuBuffers {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
+        let collapse_info_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Collapse Info Uniform"),
+            size: std::mem::size_of::<CollapseInfoUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
 
         info!("GPU buffers created successfully.");
         Ok(Self {
@@ -264,6 +281,7 @@ impl GpuBuffers {
             num_axes,
             boundary_mode,
             entropy_params_buffer,
+            collapse_info_buf,
             dynamic_buffer_config: Some(default_dynamic_config),
         })
     }

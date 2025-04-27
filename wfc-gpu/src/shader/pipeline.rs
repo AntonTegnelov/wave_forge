@@ -8,6 +8,7 @@ use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
 // Import ShaderManager and related types
 use super::shaders::{ShaderManager, ShaderType};
+use crate::buffers::{CollapseInfoUniform, GpuParamsUniform};
 use crate::utils::error::{GpuError, GpuErrorContext};
 use lazy_static::lazy_static;
 
@@ -136,6 +137,8 @@ pub struct ComputePipelines {
     pub entropy_pipeline: Arc<wgpu::ComputePipeline>,
     /// The compiled compute pipeline for the constraint propagation shader (`propagate.wgsl`).
     pub propagation_pipeline: Arc<wgpu::ComputePipeline>,
+    /// The compiled compute pipeline for the cell collapse shader (`collapse_cell.wgsl`).
+    pub collapse_pipeline: Arc<wgpu::ComputePipeline>,
     /// The layout describing the binding structure for the entropy pipeline's bind group.
     /// Required for creating bind groups compatible with `entropy_pipeline`.
     pub entropy_bind_group_layout_0: Arc<wgpu::BindGroupLayout>,
@@ -145,6 +148,8 @@ pub struct ComputePipelines {
     /// The layout describing the binding structure for the propagation pipeline's bind group.
     /// Required for creating bind groups compatible with `propagation_pipeline`.
     pub propagation_bind_group_layout: Arc<wgpu::BindGroupLayout>,
+    /// The layout describing the binding structure for the collapse pipeline's bind group.
+    pub collapse_bind_group_layout: Arc<wgpu::BindGroupLayout>,
     /// Dynamically determined optimal workgroup size (X-dimension) for the entropy shader.
     pub entropy_workgroup_size: u32,
     /// Dynamically determined optimal workgroup size (X-dimension) for the propagation shader.
@@ -242,6 +247,13 @@ impl ComputePipelines {
         let (propagation_shader_module, propagation_hash) = compile_shader(
             device,
             ShaderType::Propagation,
+            features,
+            &mut shader_manager,
+            num_tiles_u32,
+        )?;
+        let (collapse_shader_module, collapse_hash) = compile_shader(
+            device,
+            ShaderType::Collapse,
             features,
             &mut shader_manager,
             num_tiles_u32,
@@ -431,6 +443,58 @@ impl ComputePipelines {
             },
         ));
 
+        // --- Create Collapse Bind Group Layout ---
+        let collapse_bind_group_layout = Arc::new(
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Collapse Bind Group Layout"),
+                entries: &[
+                    // @group(0) @binding(0): grid_possibilities (Storage RW)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // @group(0) @binding(1): params (Uniform)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: Some(
+                                std::num::NonZeroU64::new(
+                                    std::mem::size_of::<GpuParamsUniform>() as u64
+                                )
+                                .unwrap(),
+                            ),
+                        },
+                        count: None,
+                    },
+                    // @group(0) @binding(2): collapse_info (Uniform)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: Some(
+                                std::num::NonZeroU64::new(
+                                    std::mem::size_of::<CollapseInfoUniform>() as u64,
+                                )
+                                .unwrap(),
+                            ),
+                        },
+                        count: None,
+                    },
+                ],
+            }),
+        );
+
         // --- Create Pipeline Layouts ---
         let entropy_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -445,35 +509,50 @@ impl ComputePipelines {
                 bind_group_layouts: &[&propagation_bind_group_layout],
                 push_constant_ranges: &[],
             });
+        let collapse_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Collapse Pipeline Layout"),
+                bind_group_layouts: &[&collapse_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         // --- Create Compute Pipelines (check cache first) ---
         let entropy_pipeline = Self::get_or_create_compute_pipeline(
             device,
             &entropy_pipeline_layout,
             &entropy_shader_module,
-            "main", // Entry point
+            "main",
             entropy_hash,
         )?;
         let propagation_pipeline = Self::get_or_create_compute_pipeline(
             device,
             &propagation_pipeline_layout,
             &propagation_shader_module,
-            "propagate_constraints", // Entry point
+            "main",
             propagation_hash,
+        )?;
+        let collapse_pipeline = Self::get_or_create_compute_pipeline(
+            device,
+            &collapse_pipeline_layout,
+            &collapse_shader_module,
+            "main",
+            collapse_hash,
         )?;
 
         Ok(Self {
             entropy_pipeline,
             propagation_pipeline,
+            collapse_pipeline,
             entropy_bind_group_layout_0,
             entropy_bind_group_layout_1,
             propagation_bind_group_layout,
+            collapse_bind_group_layout,
             entropy_workgroup_size,
             propagation_workgroup_size,
         })
     }
 
-    // Helper function to get from cache or create compute pipeline
+    /// Helper function to get or create a compute pipeline, utilizing the cache.
     fn get_or_create_compute_pipeline(
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
@@ -486,40 +565,32 @@ impl ComputePipelines {
             entry_point: entry_point.to_string(),
         };
 
-        // Access the cache using the lazy_static macro
         let mut cache = COMPUTE_PIPELINE_CACHE
             .lock()
             .map_err(|e| GpuError::mutex_error(e.to_string(), GpuErrorContext::default()))?;
 
         if let Some(pipeline) = cache.get(&key) {
-            log::debug!(
-                "Compute pipeline cache hit for entry point: {}",
-                entry_point
-            );
+            log::trace!("Compute pipeline cache hit for entry: {}", entry_point);
             return Ok(pipeline.clone());
         }
 
-        log::debug!(
-            "Compute pipeline cache miss for entry point: {}. Creating new pipeline.",
+        log::trace!(
+            "Compute pipeline cache miss for entry: {}. Creating...",
             entry_point
         );
+        let pipeline = Arc::new(
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: None,
+                layout: Some(layout),
+                module,
+                entry_point: Some(entry_point),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            }),
+        );
 
-        // Create compute pipeline
-        let label = format!("Compute Pipeline: {}", entry_point);
-        let desc = wgpu::ComputePipelineDescriptor {
-            label: Some(&label),
-            layout: Some(layout),
-            module,
-            entry_point: Some(entry_point),
-            compilation_options: Default::default(),
-            cache: None,
-        };
-
-        let pipeline = device.create_compute_pipeline(&desc);
-        let pipeline_arc = Arc::new(pipeline);
-
-        cache.insert(key, pipeline_arc.clone());
-        Ok(pipeline_arc)
+        cache.insert(key, pipeline.clone());
+        Ok(pipeline)
     }
 
     pub fn create_propagation_bind_groups(

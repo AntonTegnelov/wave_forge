@@ -194,12 +194,9 @@ impl ShaderCompiler {
 
         // Determine optimal workgroup size based on GPU capabilities
         let workgroup_size = match shader_type {
-            ShaderType::Entropy => features.workgroups.recommended_workgroup_size(
-                crate::gpu::features::workgroups::OperationType::EntropyCalculation,
-            ),
-            ShaderType::Propagation => features.workgroups.recommended_workgroup_size(
-                crate::gpu::features::workgroups::OperationType::Propagation,
-            ),
+            ShaderType::Entropy => self.config.workgroup_sizes.entropy.unwrap_or_default(),
+            ShaderType::Propagation => self.config.workgroup_sizes.propagation.unwrap_or_default(),
+            ShaderType::Collapse => self.config.workgroup_sizes.collapse.unwrap_or_default(),
         };
 
         match shader_type {
@@ -220,6 +217,9 @@ impl ShaderCompiler {
                 assembled_source.push_str("    // TODO: Call propagation function\n");
                 assembled_source.push_str("    propagate_constraints();\n");
                 assembled_source.push_str("}\n");
+            }
+            ShaderType::Collapse => {
+                // No specific constants for collapse currently
             }
         }
 

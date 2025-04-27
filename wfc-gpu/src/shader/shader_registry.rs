@@ -203,6 +203,7 @@ impl ShaderRegistry {
                     vec![ShaderComponent::DirectPropagation]
                 }
             }
+            ShaderType::Collapse => vec![ShaderComponent::CellCollapse],
         };
 
         // Convert features to a HashSet for easier lookup
@@ -430,6 +431,12 @@ pub fn get_required_components(shader_type: ShaderType) -> Vec<ShaderComponent> 
             ShaderComponent::WorklistManagement,
             ShaderComponent::ContradictionDetection,
             ShaderComponent::DirectPropagation, // Default is direct propagation
+        ],
+        ShaderType::Collapse => vec![
+            ShaderComponent::Utils,
+            ShaderComponent::Coords,
+            ShaderComponent::Rules,
+            ShaderComponent::CellCollapse,
         ],
     }
 }

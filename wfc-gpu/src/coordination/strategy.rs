@@ -11,7 +11,9 @@ use crate::{
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
-use wfc_core::{grid::PossibilityGrid, propagator::ConstraintPropagator, WfcError};
+use wfc_core::{
+    grid::EntropyGrid, grid::PossibilityGrid, propagator::ConstraintPropagator, WfcError,
+};
 use wfc_rules::AdjacencyRules;
 
 /// The core strategy interface for WFC algorithm coordination.
@@ -154,7 +156,7 @@ impl CoordinationStrategyFactory {
 /// The default coordination strategy implementation.
 #[derive(Debug, Clone)]
 struct DefaultCoordinationStrategy {
-    _entropy_calculator: Arc<GpuEntropyCalculator>,
+    entropy_calculator: Arc<GpuEntropyCalculator>,
     propagator: Arc<RwLock<GpuConstraintPropagator>>,
     grid: Arc<RwLock<PossibilityGrid>>,
     rules: Arc<RwLock<AdjacencyRules>>,
@@ -176,7 +178,7 @@ impl DefaultCoordinationStrategy {
         )));
 
         Self {
-            _entropy_calculator: entropy_calculator,
+            entropy_calculator,
             propagator,
             grid,
             rules,
@@ -191,58 +193,62 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
         accelerator: &mut GpuAccelerator,
         grid: &mut PossibilityGrid,
     ) -> Result<StepResult, WfcError> {
-        // Update our internal grid with the current grid state
+        // Update our internal grid state (optional, depends if needed for tile selection)
         {
             let mut internal_grid = self.grid.write().await;
             *internal_grid = grid.clone();
         }
 
-        // Default implementation of a WFC step
-
-        // 1. Select min entropy cell
-        // NOTE: Selection happens by reading the result buffer populated by the entropy shader.
-        //       The actual entropy calculation + reduction is triggered elsewhere (likely before step?).
-        //       We need access to the GpuEntropyCalculator or a method on the accelerator.
-        // Example (conceptual):
-        // let selection = accelerator.get_lowest_entropy_cell().await?;
-        let selection: Option<((usize, usize, usize), f32)> = None; // Placeholder
+        // 1. Select min entropy cell by reading GPU result buffer
+        // Note: Assumes the entropy calculation shader has already run before this step
+        let dummy_entropy_grid = EntropyGrid::new(grid.width, grid.height, grid.depth);
+        let selection = self
+            .entropy_calculator
+            .select_lowest_entropy_cell_with_value_async(&dummy_entropy_grid) // Pass dummy grid ref
+            .await;
 
         match selection {
             Some((coords, _entropy)) => {
+                log::debug!("Coordinator selected cell {:?} for collapse", coords);
+
                 // 2. Choose a tile to collapse to
-                // TODO: Implement logic to choose a tile based on current possibilities for the cell `coords`.
-                //       This might require reading cell possibilities from GPU or using a CPU-side representation.
-                let chosen_tile_id: u32 = 0; // Placeholder
+                // TODO: Implement actual tile selection logic.
+                let chosen_tile_id: u32 = 0; // Placeholder: Always pick tile 0
+                log::debug!("Collapsing cell {:?} to tile {}", coords, chosen_tile_id);
 
                 // 3. Collapse cell on GPU
-                // TODO: Implement `collapse_cell_gpu` on GpuAccelerator/GpuSynchronizer.
-                //       This function should dispatch a compute shader to update the grid_possibilities_buf
-                //       for the cell `coords`, setting only the bit for `chosen_tile_id`.
-                // Example (conceptual):
-                // accelerator.collapse_cell_gpu(coords, chosen_tile_id).await?;
-                log::warn!("GPU cell collapse step not implemented yet!"); // Acknowledge missing step
+                accelerator
+                    .collapse_cell_gpu(coords, chosen_tile_id)
+                    .map_err(|e| WfcError::Other(format!("GPU collapse error: {}", e)))?; // Map to Other
 
-                // 4. Propagate constraints
+                // 4. Propagate constraints starting from the collapsed cell
                 let worklist = vec![coords];
                 self.coordinate_propagation(&worklist).await?;
 
-                // 5. Check for contradiction (optional here, might be part of propagation)
-                // let contradiction = accelerator.check_contradiction().await?;
-                // if contradiction {
-                //     return Ok(StepResult::Contradiction);
-                // }
+                // 5. Check for contradiction (can be done after propagation)
+                let contradiction_status = accelerator
+                    .synchronizer() // Use new method
+                    .download_contradiction_status()
+                    .await
+                    .map_err(|e| {
+                        WfcError::Other(format!("GPU contradiction check error: {}", e))
+                    })?; // Map to Other
 
-                // Return InProgress, assuming collapse/propagation happened
+                if contradiction_status.0 {
+                    log::warn!("Contradiction detected after propagation!");
+                    // TODO: Extract location from contradiction_status.1
+                    return Ok(StepResult::Contradiction);
+                }
+
+                // Return InProgress
                 Ok(StepResult::InProgress)
             }
             None => {
-                // No cell found with positive entropy
+                // No cell found with positive entropy - Algorithm likely completed
+                log::debug!("No cell with positive entropy found. Assuming completion.");
                 Ok(StepResult::Completed)
             }
         }
-
-        // Old placeholder return:
-        // Ok(StepResult::InProgress)
     }
 
     async fn initialize(

@@ -20,12 +20,12 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use thiserror::Error; // Added for registry
 
-/// Represents the main types of compute shaders used in the WFC algorithm.
+/// Enum representing the different types of core shaders used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShaderType {
     Entropy,
     Propagation,
-    // Add other types like Initialization, Collapse if needed
+    Collapse, // Added collapse shader type
 }
 
 #[derive(Error, Debug)]
@@ -364,6 +364,7 @@ impl ShaderManager {
         let shader_source = match shader_type {
             ShaderType::Entropy => include_str!("shaders/entropy.wgsl").to_string(),
             ShaderType::Propagation => include_str!("shaders/propagate.wgsl").to_string(),
+            ShaderType::Collapse => "collapse_cell.wgsl".to_string(), // Added case for collapse
         };
 
         info!("[ShaderManager] Successfully loaded fallback shader");
@@ -378,6 +379,7 @@ impl ShaderManager {
         let base_name = match shader_type {
             ShaderType::Entropy => "Entropy",
             ShaderType::Propagation => "Propagation",
+            ShaderType::Collapse => "collapse_cell", // Added case for collapse
         };
         if features.is_empty() {
             format!("{}.wgsl", base_name)
