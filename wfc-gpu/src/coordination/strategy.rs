@@ -11,9 +11,7 @@ use crate::{
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
-use wfc_core::{
-    grid::EntropyGrid, grid::PossibilityGrid, propagator::ConstraintPropagator, WfcError,
-};
+use wfc_core::{grid::PossibilityGrid, propagator::ConstraintPropagator, WfcError};
 use wfc_rules::AdjacencyRules;
 
 /// The core strategy interface for WFC algorithm coordination.
@@ -199,12 +197,21 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
             *internal_grid = grid.clone();
         }
 
-        // 1. Select min entropy cell by reading GPU result buffer
-        // Note: Assumes the entropy calculation shader has already run before this step
+        // 1. Dispatch GPU passes to calculate entropy & find minimum
+        log::debug!("Dispatching entropy calculation and reduction pass...");
+        self.entropy_calculator
+            .dispatch_entropy_calculation_pass()
+            .await
+            .map_err(|e| WfcError::InternalError(format!("GPU entropy dispatch failed: {}", e)))?;
+        log::debug!("Entropy pass dispatched.");
+
+        // 2. Select the minimum entropy cell by reading the result buffer
+        log::debug!("Selecting lowest entropy cell...");
         let selection_result = self
             .entropy_calculator
             .select_lowest_entropy_cell_with_value_async() // No argument needed
             .await;
+        log::debug!("Cell selection result: {:?}", selection_result);
 
         // Handle the Result first
         let selection = selection_result.map_err(|e| {
@@ -212,28 +219,48 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
         })?;
 
         match selection {
-            Some((x, y, z, _entropy)) => {
+            Some((x, y, z, entropy)) => {
+                // Check if entropy is actually positive and valid before proceeding
+                if entropy <= 0.0 {
+                    log::debug!(
+                        "Selected cell {:?} has non-positive entropy ({}). Assuming completion.",
+                        (x, y, z),
+                        entropy
+                    );
+                    return Ok(StepResult::Completed);
+                }
+
                 // Assuming collapse_cell_gpu expects (usize, usize, usize)
                 let coords = (x, y, z);
-                log::debug!("Coordinator selected cell {:?} for collapse", coords);
+                log::debug!(
+                    "Coordinator selected cell {:?} with entropy {} for collapse",
+                    coords,
+                    entropy
+                );
 
-                // 2. Choose a tile to collapse to
-                // TODO: Implement actual tile selection logic. Use the entropy value?
+                // 3. Choose a tile to collapse to
+                // TODO: Implement actual tile selection logic based on cell possibilities.
+                // This requires reading possibilities for the selected cell (x, y, z).
+                // For now, use the placeholder.
                 let chosen_tile_id: u32 = 0; // Placeholder: Always pick tile 0
                 log::debug!("Collapsing cell {:?} to tile {}", coords, chosen_tile_id);
 
-                // 3. Collapse cell on GPU
+                // 4. Collapse cell on GPU
                 accelerator
                     .collapse_cell_gpu(coords, chosen_tile_id)
                     .map_err(|e| {
                         wfc_core::WfcError::InternalError(format!("GPU collapse error: {}", e))
                     })?; // Use wfc_core::InternalError
+                log::debug!("GPU cell collapse dispatched for {:?}.", coords);
 
-                // 4. Propagate constraints starting from the collapsed cell
+                // 5. Propagate constraints starting from the collapsed cell
+                log::debug!("Coordinating propagation for {:?}...", coords);
                 let worklist = vec![coords];
                 self.coordinate_propagation(&worklist).await?;
+                log::debug!("Propagation coordinated.");
 
-                // 5. Check for contradiction (can be done after propagation)
+                // 6. Check for contradiction (can be done after propagation)
+                log::debug!("Checking for contradictions...");
                 let contradiction_status = accelerator
                     .synchronizer() // Use new method
                     .download_contradiction_status()
@@ -246,17 +273,41 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
                     })?; // Use wfc_core::InternalError
 
                 if contradiction_status.0 {
-                    log::warn!("Contradiction detected after propagation!");
                     // TODO: Extract location from contradiction_status.1
+                    if let Some(flat_index) = contradiction_status.1 {
+                        // Need grid dimensions to convert flat index to coordinates
+                        let grid = self.grid.read().await; // Read lock
+                        let (width, height, _depth) = (grid.width, grid.height, grid.depth);
+                        // Check for zero dimensions to avoid division by zero
+                        if width > 0 && height > 0 {
+                            let z = flat_index as usize / (width * height);
+                            let y = (flat_index as usize % (width * height)) / width;
+                            let x = flat_index as usize % width;
+                            log::warn!(
+                                "Contradiction detected after propagation! Flat Index: {}, Location: ({}, {}, {})",
+                                flat_index, x, y, z
+                            );
+                        } else {
+                            log::warn!(
+                                "Contradiction detected after propagation! Flat Index: {} (Cannot convert to coords due to zero grid dimensions)",
+                                flat_index
+                            );
+                        }
+                    } else {
+                        log::warn!("Contradiction detected after propagation, but location index is missing!");
+                    }
                     return Ok(StepResult::Contradiction);
                 }
+                log::debug!("No contradiction detected.");
 
                 // Return InProgress
                 Ok(StepResult::InProgress)
             }
             None => {
                 // No cell found with positive entropy - Algorithm likely completed
-                log::debug!("No cell with positive entropy found. Assuming completion.");
+                log::debug!(
+                    "No cell with positive entropy found by selector. Assuming completion."
+                );
                 Ok(StepResult::Completed)
             }
         }

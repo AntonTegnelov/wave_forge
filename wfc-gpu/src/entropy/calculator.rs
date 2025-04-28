@@ -1,6 +1,5 @@
 use crate::utils::error_recovery::GpuError as OldGpuError;
 use crate::{
-    buffers::entropy_buffers::EntropyBuffers,
     buffers::{GpuBuffers, GpuEntropyShaderParams},
     entropy::entropy_strategy::{
         EntropyStrategy as ImportedEntropyStrategy, EntropyStrategyFactory,
@@ -181,6 +180,132 @@ impl GpuEntropyCalculator {
     pub fn set_strategy_boxed(&mut self, strategy: Box<dyn GpuEntropyStrategy>) -> &mut Self {
         self.strategy = strategy;
         self
+    }
+
+    /// Dispatches the GPU compute passes to calculate entropy and find the minimum entropy cell.
+    /// Assumes the grid possibilities buffer is already up-to-date on the GPU.
+    /// Does not perform any CPU->GPU grid upload or GPU->CPU entropy download.
+    pub async fn dispatch_entropy_calculation_pass(&self) -> Result<(), GpuError> {
+        trace!("Dispatching entropy calculation GPU pass...");
+        let (width, height, depth) = self.grid_dims;
+
+        // Call strategy's prepare method
+        self.strategy
+            .prepare(&self.synchronizer)
+            .map_err(|e| GpuError::Other {
+                msg: format!("Entropy strategy prepare failed: {}", e),
+                context: Box::new(GpuErrorContext::default()),
+            })?;
+
+        // Upload strategy data if needed
+        self.strategy
+            .upload_data(&self.synchronizer)
+            .map_err(|e| GpuError::Other {
+                msg: format!("Entropy strategy upload_data failed: {}", e),
+                context: Box::new(GpuErrorContext::default()),
+            })?;
+
+        // --- Create and configure entropy parameters ---
+        let mut entropy_shader_params = GpuEntropyShaderParams {
+            grid_dims: [width as u32, height as u32, depth as u32],
+            heuristic_type: 0, // Will be set by strategy
+            num_tiles: 0,      // Will be set by strategy
+            u32s_per_cell: 0,  // Will be set by strategy
+            _padding1: 0,
+            _padding2: 0,
+        };
+        self.strategy
+            .configure_shader_params(&mut entropy_shader_params);
+
+        // --- Write entropy parameters to buffer ---
+        self.synchronizer
+            .upload_entropy_params(&entropy_shader_params)?;
+
+        // --- Dispatch Compute Shader ---
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Entropy Compute Encoder"),
+            });
+
+        // Reset min entropy buffer *within the same command encoder*
+        self.synchronizer
+            .reset_min_entropy_buffer_in_encoder(&mut encoder)?;
+
+        // Create main bind group (group 0)
+        let grid_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Grid Possibilities Bind Group (Entropy Pass)"), // Clarify label
+            layout: &self.pipelines.entropy_bind_group_layout_0,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self
+                        .buffers
+                        .grid_buffers
+                        .grid_possibilities_buf
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.buffers.entropy_buffers.entropy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.buffers.params_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self
+                        .buffers
+                        .entropy_buffers
+                        .min_entropy_info_buf
+                        .as_entire_binding(),
+                },
+            ],
+        });
+
+        // Create entropy parameters bind group (group 1)
+        let entropy_params_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Entropy Parameters Bind Group (Entropy Pass)"), // Clarify label
+            layout: &self.pipelines.entropy_bind_group_layout_1,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.buffers.entropy_params_buffer.as_entire_binding(),
+            }],
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Entropy Compute Pass"),
+                timestamp_writes: None,
+            });
+
+            compute_pass.set_pipeline(&self.pipelines.entropy_pipeline);
+            compute_pass.set_bind_group(0, &grid_bind_group, &[]);
+            compute_pass.set_bind_group(1, &entropy_params_bind_group, &[]);
+
+            // Calculate workgroups
+            let workgroup_size = self.pipelines.entropy_workgroup_size;
+            let workgroup_x = (width as u32).div_ceil(workgroup_size);
+            let workgroup_y = (height as u32).div_ceil(workgroup_size);
+            let workgroup_z = depth as u32;
+
+            compute_pass.dispatch_workgroups(workgroup_x, workgroup_y, workgroup_z);
+        } // End compute pass scope
+
+        // Submit to Queue
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Call strategy post-process if needed
+        self.strategy
+            .post_process(&self.synchronizer)
+            .map_err(|e| GpuError::Other {
+                msg: format!("Entropy strategy post_process failed: {}", e),
+                context: Box::new(GpuErrorContext::default()),
+            })?;
+
+        trace!("Entropy calculation GPU pass dispatched.");
+        Ok(())
     }
 
     /// Asynchronous version of calculate_entropy that allows proper async/await patterns
