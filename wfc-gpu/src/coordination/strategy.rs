@@ -253,11 +253,11 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
                     };
 
                     // Find the lowest valid tile ID
-                    chosen_tile_id = possibilities.iter_set_bits().next().ok_or_else(|| {
+                    chosen_tile_id = possibilities.iter_ones().next().ok_or_else(|| {
                         // This case implies entropy > 0 but no possibilities, which is a contradiction state
                         log::warn!("Contradiction detected during tile selection: Cell ({}, {}, {}) has positive entropy {} but no possibilities left: {:?}",
                             x, y, z, entropy, possibilities);
-                        WfcError::Contradiction(Some((x, y, z)))
+                        WfcError::Contradiction(x, y, z)
                     })? as u32;
                 } // Read lock released here
 
