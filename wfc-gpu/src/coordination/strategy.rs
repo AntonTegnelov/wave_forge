@@ -239,10 +239,28 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
                 );
 
                 // 3. Choose a tile to collapse to
-                // TODO: Implement actual tile selection logic based on cell possibilities.
-                // This requires reading possibilities for the selected cell (x, y, z).
-                // For now, use the placeholder.
-                let chosen_tile_id: u32 = 0; // Placeholder: Always pick tile 0
+                let chosen_tile_id: u32;
+                {
+                    let grid_guard = self.grid.read().await; // Read lock
+                    let possibilities = match grid_guard.get(x, y, z) {
+                        Some(p) => p,
+                        None => {
+                            return Err(WfcError::InternalError(format!(
+                                "Failed to get possibilities for selected cell ({}, {}, {})",
+                                x, y, z
+                            )))
+                        }
+                    };
+
+                    // Find the lowest valid tile ID
+                    chosen_tile_id = possibilities.iter_set_bits().next().ok_or_else(|| {
+                        // This case implies entropy > 0 but no possibilities, which is a contradiction state
+                        log::warn!("Contradiction detected during tile selection: Cell ({}, {}, {}) has positive entropy {} but no possibilities left: {:?}",
+                            x, y, z, entropy, possibilities);
+                        WfcError::Contradiction(Some((x, y, z)))
+                    })? as u32;
+                } // Read lock released here
+
                 log::debug!("Collapsing cell {:?} to tile {}", coords, chosen_tile_id);
 
                 // 4. Collapse cell on GPU
