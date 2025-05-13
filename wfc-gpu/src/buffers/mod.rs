@@ -164,6 +164,21 @@ impl GpuBuffers {
             "Creating GPU buffers with boundary mode: {:?}...",
             boundary_mode
         );
+        println!("[WFC-GPU DEBUG] GpuBuffers::new called.");
+        println!(
+            "[WFC-GPU DEBUG]   Initial grid: {}x{}x{} ({} tiles)",
+            initial_grid.width,
+            initial_grid.height,
+            initial_grid.depth,
+            initial_grid.num_tiles()
+        );
+        println!(
+            "[WFC-GPU DEBUG]   Rules: num_tiles={}, num_axes={}",
+            rules.num_tiles(),
+            rules.num_axes()
+        );
+        println!("[WFC-GPU DEBUG]   Boundary mode: {:?}", boundary_mode);
+
         let width = initial_grid.width;
         let height = initial_grid.height;
         let depth = initial_grid.depth;
@@ -173,9 +188,16 @@ impl GpuBuffers {
 
         let default_dynamic_config = DynamicBufferConfig::default();
         let grid_buffers = GridBuffers::new(device, initial_grid, &default_dynamic_config)?;
+        println!("[WFC-GPU DEBUG]   GridBuffers created successfully.");
         let worklist_buffers = WorklistBuffers::new(device, num_cells, &default_dynamic_config)?;
+        println!("[WFC-GPU DEBUG]   WorklistBuffers created successfully.");
         let entropy_buffers = EntropyBuffers::new(device, num_cells, &default_dynamic_config)?;
+        println!(
+            "[WFC-GPU DEBUG]   EntropyBuffers created successfully: {:?}",
+            entropy_buffers.min_entropy_info_buf.usage()
+        ); // Print usage of a key buffer
         let rule_buffers = RuleBuffers::new(device, rules, &default_dynamic_config)?;
+        println!("[WFC-GPU DEBUG]   RuleBuffers created successfully.");
 
         let params = GpuParamsUniform {
             grid_width: width as u32,
@@ -266,7 +288,8 @@ impl GpuBuffers {
             mapped_at_creation: false,
         }));
 
-        info!("GPU buffers created successfully.");
+        println!("[WFC-GPU DEBUG]   All primary GpuBuffers created (contradiction, params, stats, etc.).");
+
         Ok(Self {
             grid_buffers,
             rule_buffers,
@@ -297,14 +320,24 @@ impl GpuBuffers {
         usage: wgpu::BufferUsages,
         label: Option<&str>,
     ) -> Arc<wgpu::Buffer> {
-        let padded_size = size.max(4); // Ensure minimum size of 4 bytes for alignment
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let label_str = label.unwrap_or("Unnamed Buffer");
+        println!(
+            "[WFC-GPU DEBUG] GpuBuffers::create_buffer called: Label=\"{}\", Size={}, Usage={:?}",
+            label_str, size, usage
+        );
+        let buffer_descriptor = wgpu::BufferDescriptor {
             label,
-            size: padded_size,
+            size,
             usage,
             mapped_at_creation: false,
-        });
-        Arc::new(buffer)
+        };
+        let buffer = Arc::new(device.create_buffer(&buffer_descriptor));
+        println!(
+            "[WFC-GPU DEBUG]   Buffer \"{}\" created with ID: {:?}",
+            label_str,
+            buffer.global_id()
+        );
+        buffer
     }
 
     pub fn resize_buffer(

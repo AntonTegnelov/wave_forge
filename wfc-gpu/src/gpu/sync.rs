@@ -359,7 +359,7 @@ impl GpuSynchronizer {
                 Some(&self.queue),
                 Some(loc_buffer_gpu),
                 Some(loc_buffer_staging),
-                3 * std::mem::size_of::<u32>() as u64,
+                std::mem::size_of::<u32>() as u64,
                 Some("Download Contradiction Location".to_string()),
             )
             .await
@@ -493,32 +493,27 @@ impl GpuSynchronizer {
         Ok(results.min_entropy_info)
     }
 
-    // Add a helper method to create the initial data buffer once
-    fn get_or_create_min_entropy_init_buffer(&self) -> wgpu::Buffer {
-        // TODO: Consider storing this buffer in GpuSynchronizer or GpuBuffers
-        //       to avoid recreating it every time, though the cost is likely minimal.
-        let reset_data = [f32::MAX.to_bits(), u32::MAX];
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Min Entropy Reset Init Buffer"),
-                contents: bytemuck::cast_slice(&reset_data),
-                usage: wgpu::BufferUsages::COPY_SRC,
-            })
-    }
-
     /// Resets the minimum entropy buffer on the GPU using a command encoder.
     pub fn reset_min_entropy_buffer_in_encoder(
         &self,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<(), GpuError> {
-        let init_buffer = self.get_or_create_min_entropy_init_buffer();
-        encoder.copy_buffer_to_buffer(
-            &init_buffer,
+        // New approach: Write to staging buffer first, then copy to main buffer in encoder
+        let reset_data = [f32::MAX.to_bits(), u32::MAX];
+        self.queue.write_buffer(
+            &self.buffers.entropy_buffers.staging_min_entropy_info_buf,
             0,
-            &self.buffers.entropy_buffers.min_entropy_info_buf, // Use entropy_buffers
+            bytemuck::cast_slice(&reset_data),
+        );
+
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.entropy_buffers.staging_min_entropy_info_buf, // Source: staging buffer
+            0,
+            &self.buffers.entropy_buffers.min_entropy_info_buf, // Destination: main buffer
             0,
             self.buffers.entropy_buffers.min_entropy_info_buf.size(),
         );
+
         Ok(())
     }
 
@@ -678,7 +673,7 @@ impl GpuSynchronizer {
             Some(&self.queue),
             Some(loc_buffer_gpu),
             Some(loc_buffer_staging),
-            3 * std::mem::size_of::<u32>() as u64,
+            std::mem::size_of::<u32>() as u64,
             Some("Download Contradiction Location".to_string()),
         )
         .await
