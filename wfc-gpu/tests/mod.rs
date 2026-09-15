@@ -68,6 +68,77 @@ async fn pre_constrained_cells_propagate_before_first_collapse() -> anyhow::Resu
     Ok(())
 }
 
+/// Rule sets with more than 32 tile variants need several possibility words per cell.
+/// Regression test: the propagation shader used to read and write only the first word, so tiles
+/// 32 and above were silently ignored.
+#[tokio::test]
+async fn tile_sets_larger_than_32_tiles_propagate_across_words() -> anyhow::Result<()> {
+    // 70 tiles (three words) that may only touch themselves; pinning one cell to tile 69, which
+    // lives in the third word, forces the whole grid.
+    let num_tiles = 70;
+    let tileset = TileSet::new(
+        vec![1.0; num_tiles],
+        vec![vec![Transformation::Identity]; num_tiles],
+    )?;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).map(move |tile| (axis, tile, tile)))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(tileset.num_transformed_tiles(), 6, tuples);
+
+    let mut grid = PossibilityGrid::new(4, 3, 2, num_tiles);
+    grid.collapse(2, 1, 1, 69).map_err(anyhow::Error::msg)?;
+
+    let mut accelerator = GpuAccelerator::new(
+        &grid,
+        &rules,
+        BoundaryCondition::Finite,
+        EntropyHeuristicType::Count,
+        None,
+    )
+    .await?;
+    let collapses = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&collapses);
+    let result = accelerator
+        .run_with_callback(
+            &grid,
+            &rules,
+            1000,
+            move |_| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(true)
+            },
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+
+    assert_eq!(collapses.load(Ordering::SeqCst), 0, "solver collapsed cells that were already forced");
+    for z in 0..result.depth {
+        for y in 0..result.height {
+            for x in 0..result.width {
+                let tiles: Vec<usize> = result.get(x, y, z).expect("cell in bounds").iter_ones().collect();
+                assert_eq!(tiles, vec![69], "cell ({x}, {y}, {z})");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rule sets larger than the shader supports are rejected up front with a clear error instead of
+/// producing silently wrong propagation.
+#[tokio::test]
+async fn tile_sets_beyond_the_shader_limit_are_rejected() {
+    let num_tiles = wfc_gpu::shader::pipeline::MAX_TILES + 1;
+    let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, Vec::<(usize, usize, usize)>::new());
+    let grid = PossibilityGrid::new(1, 1, 1, num_tiles);
+    let Err(error) =
+        GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, EntropyHeuristicType::Count, None).await
+    else {
+        panic!("accelerator must refuse the rule set");
+    };
+    assert!(error.to_string().contains("at most"), "unexpected error: {error}");
+}
+
 /// The entropy pass must evaluate every cell, not just those in the first workgroup of each
 /// dispatch. Regression test: the host once dispatched with a larger workgroup size than the
 /// shader declares, so cells beyond the first 8 columns and rows were never selected.

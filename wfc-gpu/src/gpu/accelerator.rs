@@ -169,6 +169,12 @@ impl GpuAccelerator {
         }
 
         let num_tiles = initial_grid.num_tiles();
+        if num_tiles > crate::shader::pipeline::MAX_TILES {
+            return Err(WfcError::Configuration(format!(
+                "rule set has {num_tiles} tile variants, but the GPU propagation shader supports at most {}",
+                crate::shader::pipeline::MAX_TILES
+            )));
+        }
         let num_tiles_u32 = (num_tiles + 31) / 32;
 
         let features_ref: Vec<&str> = features.iter().map(|s| s.as_str()).collect();
