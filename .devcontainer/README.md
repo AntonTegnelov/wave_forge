@@ -62,7 +62,9 @@ adapter" at `RUST_LOG=wgpu_hal=warn`). The container sets
 instances built from the environment:
 
 ```rust
-let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::from_env_or_default());
+// wgpu 30: `from_env_or_default()` exists only on `InstanceFlags`, and
+// `Instance::new` takes the descriptor by value.
+let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
 ```
 
 `wgpu::Instance::default()` and a hand-built `InstanceDescriptor { .. }`
@@ -79,6 +81,17 @@ runaway shader can hang the GPU and make Windows reset the graphics driver
 (desktop flicker, possibly crashed apps), so keep GPU tests bounded with
 timeouts and small default grid sizes. dozen is marked non-conformant by
 Mesa; if a feature misbehaves, compare against lavapipe first.
+
+**Known issue: crash at thread exit.** When a wgpu instance on dozen is
+dropped, WSL's `libd3d12core.so` is unloaded while other threads still have
+its thread-local destructors registered, so multi-threaded binaries such as
+test runners die with `SIGSEGV` after their work is done (a backtrace ends
+in `__nptl_deallocate_tsd`). Preloading the library keeps it mapped:
+`LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so`. In the container this is set
+as a Cargo runner in `~/.cargo/config.toml`, so it applies to binaries run
+by `cargo test` / `cargo run` only, not to every process (a global preload
+adds roughly 13 ms to each process start). Set it by hand when running a
+test binary directly.
 
 ## One-time setup
 

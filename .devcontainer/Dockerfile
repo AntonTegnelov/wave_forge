@@ -7,7 +7,8 @@
 # it is built from source here (only the dzn ICD; no GL, no gallium, no LLVM)
 # and copied into the final image. Runtime needs /usr/lib/wsl/{lib,drivers}
 # mounted by docker-compose and `gpus: all`.
-FROM rust:1-bookworm AS dzn-build
+# Same pinned base as the final stage: reproducible, and the layers are shared.
+FROM rust:1.98.1-bookworm AS dzn-build
 
 ARG MESA_VERSION=26.2.2
 ENV DEBIAN_FRONTEND=noninteractive
@@ -143,8 +144,8 @@ RUN groupadd --gid "${DEV_GID}" "${DEV_USER}" \
 # WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER: Mesa marks dozen non-conformant
 # (conformanceVersion 0.0.0.0) and wgpu hides such adapters unless this flag
 # is set. It only takes effect for instances built with
-# `wgpu::InstanceDescriptor::from_env_or_default()` (Instance::default() does
-# not read the environment).
+# `wgpu::InstanceDescriptor::new_without_display_handle_from_env()` in wgpu 30
+# (Instance::default() does not read the environment).
 RUN printf '%s\n' \
         'PATH="/home/dev/.cargo/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' \
         'CARGO_HOME="/home/dev/.cargo"' \
