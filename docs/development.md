@@ -21,7 +21,7 @@ cargo test --workspace
 cargo run --release -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8
 ```
 
-See [testing.md](testing.md) for the test layers, artifacts and rendering tools, and [debugging.md](debugging.md) for tracing and debugging practices.
+See [testing.md](testing.md) for the test layers, artifacts and rendering tools, [debugging.md](debugging.md) for tracing and debugging practices, and [build-profiles.md](build-profiles.md) before timing or profiling anything.
 
 **Build output location matters.** The repository is bind-mounted from the host. The dev container redirects only the main checkout's `target/` to a named volume; git worktrees (for example under `.claude/worktrees/`) are not covered, and their build output would land on the host drive (several GB per worktree). When building from a worktree, point Cargo elsewhere:
 

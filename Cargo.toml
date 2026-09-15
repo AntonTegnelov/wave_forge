@@ -42,10 +42,18 @@ members = [
 [workspace.dependencies]
 # Add common dependencies here if needed later
 
+# Settings and the reasoning behind them are documented in docs/build-profiles.md.
 [profile.release]
 lto = true
 strip = true
 codegen-units = 1
+
+# Release with symbols, for profilers that map samples or instruction counts back to source.
+# It inherits every optimisation setting so measurements describe what actually ships.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
 
 [workspace.lints.rust]
 unsafe_code = "warn"
