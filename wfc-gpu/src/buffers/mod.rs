@@ -710,11 +710,24 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
     })?;
 
     loop {
-        current_device.poll(wgpu::MaintainBase::Wait); // Use the validated device reference
+        let _ = current_device.poll(wgpu::PollType::wait_indefinitely());
 
         match receiver.try_recv() {
             Ok(Some(Ok(()))) => {
-                let mapped_range = slice.get_mapped_range();
+                let mapped_range = match slice.get_mapped_range() {
+                    Ok(range) => range,
+                    Err(e) => {
+                        buffer_to_map.unmap();
+                        return Err(GpuError::BufferMapFailed {
+                            msg: format!(
+                                "Failed to access mapped range for {:?}: {}",
+                                label.as_deref().unwrap_or("Unnamed Buffer"),
+                                e
+                            ),
+                            context: Box::new(GpuErrorContext::default()),
+                        });
+                    }
+                };
                 let data = bytemuck::cast_slice(&mapped_range).to_vec();
                 // Drop guard to unmap buffer
                 drop(mapped_range);

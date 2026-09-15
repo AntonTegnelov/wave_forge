@@ -502,24 +502,24 @@ impl ComputePipelines {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Entropy Pipeline Layout"),
                 bind_group_layouts: &[
-                    &entropy_bind_group_layout_0, // Group 0
-                    &entropy_bind_group_layout_1, // Group 1
+                    Some(entropy_bind_group_layout_0.as_ref()), // Group 0
+                    Some(entropy_bind_group_layout_1.as_ref()), // Group 1
                 ],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             });
 
         let propagation_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Propagation Pipeline Layout"),
-                bind_group_layouts: &[&propagation_bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(propagation_bind_group_layout.as_ref())],
+                immediate_size: 0,
             });
 
         let collapse_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Collapse Pipeline Layout"),
-                bind_group_layouts: &[&collapse_bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(collapse_bind_group_layout.as_ref())],
+                immediate_size: 0,
             });
 
         // --- Create Compute Pipelines (using cache helper) ---

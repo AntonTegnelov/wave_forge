@@ -250,7 +250,7 @@ impl GpuSynchronizer {
         });
 
         // Poll the device while waiting for the map operation to complete
-        let _ = self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         // Create target_grid outside the match scope
         let mut target_grid = target.clone();
@@ -260,7 +260,9 @@ impl GpuSynchronizer {
             Ok(Ok(())) => {
                 // Buffer mapped successfully
                 trace!("Staging buffer mapped successfully.");
-                let mapped_range = staging_buffer_slice.get_mapped_range();
+                let mapped_range = staging_buffer_slice
+                    .get_mapped_range()
+                    .map_err(|e| GpuError::BufferMapping(e.to_string()))?;
 
                 // Copy data from mapped buffer to target grid
                 let mapped_data = bytemuck::cast_slice::<u8, u32>(&mapped_range);
@@ -809,13 +811,15 @@ impl GpuSynchronizer {
         });
 
         // Wait for the mapping to complete
-        let _ = self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         // Check the mapping status
         match pollster::block_on(receiver) {
             Ok(Ok(())) => {
                 // Successfully mapped, copy data
-                let mapped_range = buffer_slice.get_mapped_range();
+                let mapped_range = buffer_slice
+                    .get_mapped_range()
+                    .map_err(|e| GpuError::BufferMapping(e.to_string()))?;
                 let data = bytemuck::cast_slice(&mapped_range).to_vec();
                 drop(mapped_range);
                 staging_buffer.unmap();
@@ -866,7 +870,7 @@ impl GpuSynchronizer {
         self.queue.write_buffer(buffer, offset, data_bytes);
 
         // Ensure the write is processed
-        let _ = self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         Ok(())
     }
