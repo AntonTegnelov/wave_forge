@@ -320,24 +320,14 @@ impl GpuBuffers {
         usage: wgpu::BufferUsages,
         label: Option<&str>,
     ) -> Arc<wgpu::Buffer> {
-        let label_str = label.unwrap_or("Unnamed Buffer");
-        println!(
-            "[WFC-GPU DEBUG] GpuBuffers::create_buffer called: Label=\"{}\", Size={}, Usage={:?}",
-            label_str, size, usage
-        );
-        let buffer_descriptor = wgpu::BufferDescriptor {
+        let padded_size = size.max(4); // Ensure minimum size of 4 bytes for alignment
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label,
-            size,
+            size: padded_size,
             usage,
             mapped_at_creation: false,
-        };
-        let buffer = Arc::new(device.create_buffer(&buffer_descriptor));
-        println!(
-            "[WFC-GPU DEBUG]   Buffer \"{}\" created with ID: {:?}",
-            label_str,
-            buffer.global_id()
-        );
-        buffer
+        });
+        Arc::new(buffer)
     }
 
     pub fn resize_buffer(
