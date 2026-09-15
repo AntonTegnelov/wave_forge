@@ -19,7 +19,7 @@ pub struct RuleBuffers {
 
 impl RuleBuffers {
     /// Helper function to pack adjacency rules into a bit array
-    fn pack_adjacency_rules(rules: &AdjacencyRules) -> Vec<u32> {
+    pub(crate) fn pack_adjacency_rules(rules: &AdjacencyRules) -> Vec<u32> {
         let num_tiles = rules.num_tiles();
         let num_axes = rules.num_axes();
 
@@ -44,6 +44,29 @@ impl RuleBuffers {
     }
 
     /// Creates new rule-related GPU buffers.
+    /// Packs non-default rule weights as (rule index, f32 bits) pairs, with a dummy entry if none exist.
+    pub(crate) fn pack_rule_weights(rules: &AdjacencyRules) -> Vec<u32> {
+        let num_tiles = rules.num_tiles();
+        let mut weighted_rules_data = Vec::new();
+        for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
+            // Only include rules with non-default weights
+            if *weight != 1.0 {
+                let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
+                weighted_rules_data.push(rule_idx as u32);
+                weighted_rules_data.push(weight.to_bits()); // Store f32 weight as u32 bits
+            }
+        }
+
+        // If no specific weights are found, add a dummy entry
+        if weighted_rules_data.is_empty() {
+            weighted_rules_data.push(0); // Dummy index
+            weighted_rules_data.push(1.0f32.to_bits()); // Dummy weight (1.0)
+        }
+
+        // Create the weighted rules buffer
+        weighted_rules_data
+    }
+
     pub fn new(
         device: &wgpu::Device,
         rules: &AdjacencyRules,
@@ -64,23 +87,7 @@ impl RuleBuffers {
         );
 
         // Prepare weighted rules data
-        let mut weighted_rules_data = Vec::new();
-        for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
-            // Only include rules with non-default weights
-            if *weight != 1.0 {
-                let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
-                weighted_rules_data.push(rule_idx as u32);
-                weighted_rules_data.push(weight.to_bits()); // Store f32 weight as u32 bits
-            }
-        }
-
-        // If no specific weights are found, add a dummy entry
-        if weighted_rules_data.is_empty() {
-            weighted_rules_data.push(0); // Dummy index
-            weighted_rules_data.push(1.0f32.to_bits()); // Dummy weight (1.0)
-        }
-
-        // Create the weighted rules buffer
+        let weighted_rules_data = Self::pack_rule_weights(rules);
         let rule_weights_buf = Arc::new(device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("WFC Rule Weights Buffer"),

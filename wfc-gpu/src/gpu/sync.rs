@@ -7,7 +7,7 @@ use crate::{
     utils::error::gpu_error::{GpuError as NewGpuError, GpuErrorContext, GpuResourceType},
     utils::error_recovery::{GpuError as OldGpuError, ParseGridCoord},
 };
-use log::{debug, error, trace};
+use log::{debug, error, trace, warn};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::AdjacencyRules;
@@ -574,16 +574,11 @@ impl GpuSynchronizer {
 
     /// Updates the worklist size parameter in the propagation params uniform buffer.
     pub fn update_params_worklist_size(&self, worklist_size: u32) -> Result<(), GpuError> {
-        let current_params = GpuParamsUniform {
-            worklist_size,
-            ..GpuParamsUniform::default()
-        };
-
-        // Create a new buffer with the updated params and upload to GPU
+        // Only overwrite the worklist_size field so the rest of the params stay intact
         self.queue.write_buffer(
             &self.buffers.params_uniform_buf,
-            0,
-            bytemuck::cast_slice(&[current_params]),
+            std::mem::offset_of!(GpuParamsUniform, worklist_size) as u64,
+            bytemuck::bytes_of(&worklist_size),
         );
 
         Ok(())
@@ -880,32 +875,35 @@ impl GpuSynchronizer {
     pub fn upload_rules(&self, rules: &AdjacencyRules) -> Result<(), GpuError> {
         trace!("Uploading adjacency rules to GPU");
 
-        let num_tiles = rules.num_tiles();
-        let _num_axes = rules.num_axes();
-
-        // Prepare weighted rules data for the buffer
-        let mut weighted_rules_data = Vec::new();
-        for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
-            // Only include rules with non-default weights
-            if *weight != 1.0 {
-                let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
-                weighted_rules_data.push(rule_idx as u32);
-                weighted_rules_data.push(weight.to_bits()); // Store f32 weight as u32 bits
-            }
+        // The rule buffers are sized for the rule set they were created with.
+        if rules.num_tiles() != self.buffers.num_tiles || rules.num_axes() != self.buffers.num_axes {
+            warn!(
+                "Skipping rule upload: rules have {} tiles / {} axes but GPU buffers expect {} / {}",
+                rules.num_tiles(),
+                rules.num_axes(),
+                self.buffers.num_tiles,
+                self.buffers.num_axes
+            );
+            return Ok(());
         }
 
-        // If no specific weights are found, add a dummy entry
-        if weighted_rules_data.is_empty() {
-            weighted_rules_data.push(0); // Dummy index
-            weighted_rules_data.push(1.0f32.to_bits()); // Dummy weight (1.0)
-        }
-
-        // Upload the data to the GPU buffer
+        let adjacency_bits = RuleBuffers::pack_adjacency_rules(rules);
         self.queue.write_buffer(
             &self.buffers.rule_buffers.rules_buf,
             0,
-            bytemuck::cast_slice(&weighted_rules_data),
+            bytemuck::cast_slice(&adjacency_bits),
         );
+
+        let weighted_rules_data = RuleBuffers::pack_rule_weights(rules);
+        if weighted_rules_data.len() as u64 * std::mem::size_of::<u32>() as u64
+            <= self.buffers.rule_buffers.rule_weights_buf.size()
+        {
+            self.queue.write_buffer(
+                &self.buffers.rule_buffers.rule_weights_buf,
+                0,
+                bytemuck::cast_slice(&weighted_rules_data),
+            );
+        }
 
         Ok(())
     }

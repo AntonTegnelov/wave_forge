@@ -403,7 +403,7 @@ impl ComputePipelines {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
                             min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<u64>() as u64
+                                std::mem::size_of::<u32>() as u64
                             ), // Two atomic<u32>
                         },
                         count: None,

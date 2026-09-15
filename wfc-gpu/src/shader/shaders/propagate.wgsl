@@ -22,15 +22,24 @@
 // to the output worklist for further processing if needed.
 
 // Struct defining shader parameters
+// Mirrors GpuParamsUniform in buffers/mod.rs field for field
 struct Params {
     grid_width: u32,
     grid_height: u32,
     grid_depth: u32,
     num_tiles: u32,
     num_axes: u32,
-    worklist_size: u32,
     boundary_mode: u32, // 0: Clamped, 1: Periodic
-    _padding1: u32, // padding to align to 16 bytes
+    heuristic_type: u32,
+    tie_breaking: u32,
+    max_propagation_steps: u32,
+    contradiction_check_frequency: u32,
+    worklist_size: u32, // Number of cells in the input worklist for this pass
+    grid_element_count: u32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
+    _padding3: u32,
 };
 
 // Axis enums for easier readability
@@ -75,7 +84,8 @@ fn propagate_constraints(
     let global_id = workgroup_id.x * 64u + local_id.x;
     
     // Check if this thread should process a cell from the worklist
-    if (global_id >= atomicLoad(&worklist_count[0])) {
+    // worklist_count is the output counter for this pass; the input size comes from params
+    if (global_id >= params.worklist_size || global_id >= arrayLength(&worklist)) {
         return; // No more cells to process
     }
     
