@@ -18,7 +18,7 @@ pollster = "0.3.0"
 rand = "0.8.5"  # Added for random number generation
 seahash = "4.1.0"     # For hashing cache keys
 semver = "1.0.28"     # For version parsing in shader registry
-thiserror = "1.0.59"
+thiserror = "2.0.20"
 wgpu = { version = "25.0.0", features = ["dx12", "metal", "vulkan", "wgsl"] }
 image = "0.25.10" # Added image crate
 

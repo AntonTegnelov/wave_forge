@@ -2698,7 +2698,7 @@ dependencies = [
  "once_cell",
  "pollster",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "tokio",
  "wfc-core",
  "wfc-gpu",
@@ -2807,7 +2807,7 @@ dependencies = [
  "rand 0.8.8",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "tokio",
  "wfc-rules",
 ]
@@ -2834,7 +2834,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "tokio",
  "wfc-core",
  "wfc-rules",
@@ -2850,7 +2850,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

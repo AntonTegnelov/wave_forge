@@ -15,7 +15,7 @@ humantime = "2.4.0"
 bitvec = "1.1.1"
 colored = "2.0"
 minifb = "0.25"
-thiserror = "1.0"
+thiserror = "2.0.20"
 csv = "1.4.0"
 wgpu = { version = "25.0.0", features = ["dx12", "metal", "vulkan", "wgsl", "naga-ir"] }
 pollster = "0.3"
