@@ -70,7 +70,7 @@ Each cell holds a bitset of still-possible tiles. All cells' bitsets are stored 
 
 > **Misaligned today (A-4):** `PossibilityGrid` stores a `Vec<BitVec>` (one allocation per cell) and is repacked into `u32` words on every GPU upload and unpacked on every download.
 
-> **Resolved (A-5):** propagation now handles every 32-bit word of a cell. WGSL needs constant-size function-local arrays, so masks hold up at most 8 words (256 tile variants) and the host rejects larger rule sets. Realistic tile sets exceed 32 quickly: the city E2E set has 56 variants.
+> **Resolved (A-5):** propagation now handles every 32-bit word of a cell. WGSL needs constant-size function-local arrays, so masks hold up at most 8 words (256 tile variants) and the host rejects larger rule sets. Realistic tile sets exceed 32 quickly: the city E2E set has 52 variants.
 
 ### 3.4 Seeds and randomness
 
