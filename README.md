@@ -1,85 +1,32 @@
 # Wave Forge
 
-**Note:** This project is currently under heavy development and is not yet ready for use.
+A procedural world generator built to run inside games at runtime and scale to massive, complex worlds. It will ship as a **Rust library**, a **Bevy plugin** and a **Godot GDExtension** (via the Godot Asset Library), all under the MIT license.
 
-GPU-accelerated 3D terrain generation using Wave Function Collapse (WFC).
+Phase 1 is a standalone, GPU-accelerated **wave function collapse** generator for 2D and 3D grids. Phase 2 extends it into layered world generation that combines WFC with other techniques (noise landscapes, Voronoi-based coastlines) in the spirit of [LayerProcGen](https://github.com/runevision/LayerProcGen). The reasoning is in [docs/vision.md](docs/vision.md).
 
-## Building
+## Status
 
-_Instructions on how to build the project will go here._
+**Early development, not ready for use.** The GPU WFC solver works end to end for small 3D grids through a development CLI, but there is no library API yet, and the solver is slow for large grids and not yet deterministic. See [docs/status.md](docs/status.md) for exactly what works, what doesn't, and the plan to align the code with the architecture.
 
-## Usage
+## Try it
 
-_Instructions on how to run or use the project will go here._
+Requires Rust 1.98.1 (pinned via `rust-toolchain.toml`) and a Vulkan, Metal or DirectX 12 capable device. A software Vulkan driver such as Mesa llvmpipe also works.
 
-### Command-line Options
-
-Wave Forge supports various command-line options to configure its behavior:
-
-```
-USAGE:
-    wave-forge-app [OPTIONS] --rule-file <FILE>
-
-OPTIONS:
-    -r, --rule-file <FILE>                    Path to the RON rule file defining tiles and adjacencies
-        --width <WIDTH>                       Width of the output grid [default: 10]
-        --height <HEIGHT>                     Height of the output grid [default: 10]
-        --depth <DEPTH>                       Depth of the output grid [default: 10]
-        --seed <SEED>                         Optional seed for the random number generator
-    -o, --output-path <FILE>                  Path to save the generated output grid [default: output.txt]
-        --benchmark-mode                      Run in benchmark mode
-        --report-progress-interval <DURATION> Report progress updates every specified interval (e.g., "1s", "500ms")
-        --progress-log-level <LEVEL>          Log level to use for progress reporting [default: info]
-                                              [possible values: trace, debug, info, warn]
-        --visualization-mode <MODE>           Choose the visualization mode [default: none]
-                                              [possible values: none, terminal, simple2d]
-        --visualization-toggle-key <KEY>      Key to toggle visualization on/off during runtime [default: T]
-        --benchmark-csv-output <CSV_FILE>     Optional: Path to save benchmark results as a CSV file
+```bash
+cargo run --release -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8
+cargo run --release -- --help
 ```
 
-### Progress Reporting
+The output file (`output.txt` by default) lists the chosen tile index for every cell: one line per row, blank lines between Z layers.
 
-The project supports configurable progress reporting with two main settings:
+## Documentation
 
-1. **Report Interval** (`--report-progress-interval`):
+- [Vision](docs/vision.md): goals, priorities, phases
+- [Architecture](docs/architecture.md): target design and why
+- [Status](docs/status.md): current state and alignment tasks
+- [Roadmap](docs/roadmap.md): what comes next
+- [Development guide](docs/development.md): building, testing, conventions
 
-   - Controls how frequently progress updates are displayed
-   - Example: `--report-progress-interval 500ms` for updates every half second
-   - If not specified, progress reporting is disabled
+## License
 
-2. **Log Level** (`--progress-log-level`):
-   - Controls at which log level progress messages are emitted
-   - Options:
-     - `trace` - Very detailed logging, typically only visible when trace logging is enabled
-     - `debug` - Detailed logging visible when debug logging is enabled
-     - `info` - Standard logging level (default)
-     - `warn` - Less frequent, higher priority logging
-       You can also configure the progress log level in the project's configuration file.
-
-These settings allow you to control both the frequency and visibility of progress updates. For example:
-
-```
-# Show progress every second at INFO level (default)
-wave-forge-app --rule-file rules.ron --report-progress-interval 1s
-
-# Show progress every 100ms at DEBUG level (more verbose but requires debug logging enabled)
-wave-forge-app --rule-file rules.ron --report-progress-interval 100ms --progress-log-level debug
-```
-
-To control the overall log level at runtime, use the `RUST_LOG` environment variable:
-
-```
-# Windows PowerShell
-$env:RUST_LOG="debug"; wave-forge-app --rule-file rules.ron
-
-# Windows Command Prompt
-set RUST_LOG=debug
-wave-forge-app --rule-file rules.ron
-
-# Linux/macOS
-RUST_LOG=debug wave-forge-app --rule-file rules.ron
-```
-
-### Feature Flags
-
-- `winapi`: Enables platform-specific code, primarily for attempting to measure memory usage during benchmarks on Windows using the `winapi` crate. This feature is optional and the application will build and run without it, although memory usage reporting might be less accurate or unavailable on Windows.
+[MIT](LICENSE)
