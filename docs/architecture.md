@@ -60,7 +60,7 @@ Authors describe tiles (with weights and allowed symmetries) and adjacency by na
 
 **Why compile:** propagation needs "which neighbour tiles does *any* of my remaining tiles allow in this direction?" This becomes a union of precomputed bitsets, which is branch-free and SIMD/GPU friendly. Named, symmetric rules exist only for authors; the hot path never sees them.
 
-> **Misaligned today (A-3):** tile weights are loaded but never used by the solver; transformations exist in `wfc-rules` but the RON loader only creates identity variants.
+> **Misaligned today (A-3):** tile weights bias collapse on the GPU (`GpuAccelerator::with_tile_weights`) but not entropy, which still counts tiles (A-7). Rotated variants can be generated from connector-based module sets in Rust (`wfc_rules::modules`), but the RON loader still only creates identity variants.
 
 ### 3.3 Possibility storage
 
@@ -70,7 +70,7 @@ Each cell holds a bitset of still-possible tiles. All cells' bitsets are stored 
 
 > **Misaligned today (A-4):** `PossibilityGrid` stores a `Vec<BitVec>` (one allocation per cell) and is repacked into `u32` words on every GPU upload and unpacked on every download.
 
-> **Misaligned today (A-5):** the GPU propagation shader only reads the first 32-bit word per cell, so rule sets with more than 32 tiles (after symmetry expansion) propagate incorrectly. Realistic tile sets, such as city blocks with rotations, exceed that quickly.
+> **Resolved (A-5):** propagation now handles every 32-bit word of a cell. WGSL needs constant-size function-local arrays, so masks hold up at most 8 words (256 tile variants) and the host rejects larger rule sets. Realistic tile sets exceed 32 quickly: the city E2E set has 56 variants.
 
 ### 3.4 Seeds and randomness
 
