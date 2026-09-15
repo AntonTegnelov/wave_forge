@@ -10,4 +10,9 @@ Read in this order:
 6. **[Testing and inspection](testing.md):** test layers, end-to-end tests, artifacts and rendering tools.
 7. **[Debugging and observability](debugging.md):** reproducing failures, invariants, tracing and timelines, async and GPU debugging.
 
+Reference:
+
+- **[Constraints](constraints.md):** what adjacency rules can and cannot express, designing module sets for properties like connectivity, and global constraints.
+- **[Performance](performance.md):** priorities, how we measure, where work should run (GPU, threads, SIMD), and the baseline.
+
 The dev container is documented separately in [`.devcontainer/README.md`](../.devcontainer/README.md).
