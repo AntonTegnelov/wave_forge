@@ -391,3 +391,52 @@ fn verify_adjacency_rules(grid: &PossibilityGrid, rules: &AdjacencyRules) -> usi
     }
     violations
 }
+
+/// Tile weights must bias collapse (docs/status.md A-3): with every adjacency allowed, a tile a
+/// thousand times heavier than the other should fill nearly every cell.
+#[tokio::test]
+async fn tile_weights_bias_collapse() -> anyhow::Result<()> {
+    let num_tiles = 2;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).flat_map(move |a| (0..num_tiles).map(move |b| (axis, a, b))))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, tuples);
+    let grid = PossibilityGrid::new(4, 4, 4, num_tiles);
+
+    let mut accelerator =
+        GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, EntropyHeuristicType::Count, None).await?;
+    accelerator.with_tile_weights(&[1.0, 1000.0])?;
+    let result = accelerator
+        .run_with_callback(&grid, &rules, 1000, |_| Ok(true), None)
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+
+    let mut heavy = 0;
+    for z in 0..result.depth {
+        for y in 0..result.height {
+            for x in 0..result.width {
+                let tiles: Vec<usize> = result.get(x, y, z).expect("cell in bounds").iter_ones().collect();
+                assert_eq!(tiles.len(), 1, "cell ({x}, {y}, {z}) not collapsed");
+                heavy += usize::from(tiles[0] == 1);
+            }
+        }
+    }
+    // Expected light cells: 64 / 1001 ≈ 0.06; more than 8 is astronomically unlikely unless
+    // weights are ignored (then about 32).
+    assert!(heavy >= 56, "only {heavy}/64 cells chose the heavy tile");
+    Ok(())
+}
+
+/// Weights that do not match the tile set are rejected instead of panicking mid-run.
+#[tokio::test]
+async fn invalid_tile_weights_are_rejected() -> anyhow::Result<()> {
+    let rules = AdjacencyRules::from_allowed_tuples(2, 6, Vec::<(usize, usize, usize)>::new());
+    let grid = PossibilityGrid::new(1, 1, 1, 2);
+    let mut accelerator =
+        GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, EntropyHeuristicType::Count, None).await?;
+    assert!(accelerator.with_tile_weights(&[1.0]).is_err(), "wrong length");
+    assert!(accelerator.with_tile_weights(&[1.0, 0.0]).is_err(), "zero weight");
+    assert!(accelerator.with_tile_weights(&[1.0, f32::NAN]).is_err(), "NaN weight");
+    assert!(accelerator.with_tile_weights(&[1.0, 2.0]).is_ok());
+    Ok(())
+}

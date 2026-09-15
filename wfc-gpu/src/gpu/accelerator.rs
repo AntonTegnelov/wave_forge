@@ -120,6 +120,8 @@ impl std::fmt::Debug for AcceleratorInstance {
 #[derive(Clone)]
 pub struct GpuAccelerator {
     instance: Arc<RwLock<AcceleratorInstance>>,
+    /// Relative weight of each tile when collapsing a cell; uniform when `None`.
+    tile_weights: Option<Arc<[f32]>>,
 }
 
 impl GpuAccelerator {
@@ -285,6 +287,7 @@ impl GpuAccelerator {
 
         let accelerator = Self {
             instance: Arc::new(RwLock::new(instance)),
+            tile_weights: None,
         };
 
         Ok(accelerator)
@@ -530,8 +533,17 @@ impl GpuAccelerator {
                 ));
             }
 
-            // Choose a random state from possible states
-            let chosen_state = possible_states[rand::random_range(0..possible_states.len())];
+            // Choose a remaining state, in proportion to its weight when weights are set
+            let chosen_state = match &self.tile_weights {
+                Some(weights) => {
+                    use rand::distr::{Distribution, weighted::WeightedIndex};
+                    let distribution =
+                        WeightedIndex::new(possible_states.iter().map(|&tile| weights[tile]))
+                            .map_err(|e| WfcError::other(format!("invalid tile weights: {e}")))?;
+                    possible_states[distribution.sample(&mut rand::rng())]
+                }
+                None => possible_states[rand::random_range(0..possible_states.len())],
+            };
             // Use the grid's collapse method directly
             current_grid.collapse(x, y, z, chosen_state).map_err(|e| {
                 WfcError::other(format!(
@@ -625,6 +637,34 @@ impl GpuAccelerator {
     }
 
     /// Configure the accelerator with a specific entropy heuristic
+    /// Sets the relative weight of each tile used when collapsing a cell, typically
+    /// `TileSet::weights`. Without weights every remaining tile is equally likely.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WfcError::Configuration`] if there is not exactly one weight per tile or a weight
+    /// is not a positive finite number.
+    pub fn with_tile_weights(&mut self, weights: &[f32]) -> Result<&mut Self, WfcError> {
+        let num_tiles = self.num_tiles();
+        if weights.len() != num_tiles {
+            return Err(WfcError::Configuration(format!(
+                "expected {num_tiles} tile weights, got {}",
+                weights.len()
+            )));
+        }
+        if let Some((tile, weight)) = weights
+            .iter()
+            .enumerate()
+            .find(|(_, w)| !(w.is_finite() && **w > 0.0))
+        {
+            return Err(WfcError::Configuration(format!(
+                "tile {tile} has weight {weight}; weights must be positive and finite"
+            )));
+        }
+        self.tile_weights = Some(weights.into());
+        Ok(self)
+    }
+
     pub fn with_entropy_heuristic(&mut self, heuristic: CoreEntropyHeuristicType) -> &mut Self {
         let _instance = self.instance.read().unwrap();
 
