@@ -8,25 +8,16 @@ edition = "2021"
 [dependencies]
 wfc-rules = { path = "../wfc-rules" } # Added for rule/tileset types
 bitvec = { version = "1.0.1", features = ["serde"] } # Enable serde feature for bitvec
-rayon = "1.10.0" # Added for parallel entropy calculation
-float-ord = "0.3" # Corrected name (was float_ord)
 log = "0.4.21"
 rand = "0.8.5" # Added for random tile selection during collapse
 thiserror = "1.0.58"
 serde = { version = "1.0.197", features = ["derive"], optional = true } # Added serde dependency
 serde_json = { version = "1.0.115", optional = true } # Added serde_json dependency
-bincode = { version = "1.3", optional = true }    # Added optional = true
 clap = { version = "4.5.4", features = ["derive"], optional = true }
-nalgebra = "0.32"
-num-traits = "0.2"
 async-trait = "0.1.79"
 
 [dev-dependencies]
-tempfile = "3"
-mockall = "0.12" # Add mockall
-proptest = "1.4" # Add proptest
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-env_logger = "0.11.3"
 pollster = "0.3.0" # Added pollster for blocking async calls in tests
 
 [features]
