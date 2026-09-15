@@ -72,7 +72,6 @@ impl RuleBuffers {
         rules: &AdjacencyRules,
         _config: &DynamicBufferConfig,
     ) -> Result<Self, GpuError> {
-        let num_tiles = rules.num_tiles();
 
         // Pack basic adjacency rules into a bit array
         let adjacency_bits = Self::pack_adjacency_rules(rules);
@@ -107,3 +106,29 @@ impl RuleBuffers {
 }
 
 // TODO: Add tests specific to RuleBuffers if needed
+
+#[cfg(test)]
+mod tests {
+    use super::RuleBuffers;
+    use wfc_rules::AdjacencyRules;
+
+    #[test]
+    fn packs_each_allowed_rule_at_its_axis_tile_tile_bit() {
+        // propagate.wgsl reads bit `axis * n * n + tile1 * n + tile2`; host and shader must agree.
+        let n = 3;
+        let rules = AdjacencyRules::from_allowed_tuples(n, 6, vec![(0, 0, 0), (1, 2, 1), (5, 2, 2)]);
+        let words = RuleBuffers::pack_adjacency_rules(&rules);
+        assert_eq!(words.len(), (6 * n * n).div_ceil(32));
+        let set_bits: Vec<usize> = (0..words.len() * 32)
+            .filter(|bit| words[bit / 32] & (1 << (bit % 32)) != 0)
+            .collect();
+        assert_eq!(set_bits, vec![0, n * n + 2 * n + 1, 5 * n * n + 2 * n + 2]);
+    }
+
+    #[test]
+    fn default_weights_pack_to_a_single_dummy_entry() {
+        // The weights buffer must never be empty because zero-sized storage bindings are invalid.
+        let rules = AdjacencyRules::from_allowed_tuples(2, 6, vec![(0, 0, 1)]);
+        assert_eq!(RuleBuffers::pack_rule_weights(&rules), vec![0, 1.0f32.to_bits()]);
+    }
+}

@@ -665,3 +665,46 @@ mod proptests {
         }
     }
 }
+
+#[cfg(test)]
+mod transformation_tests {
+    use super::Transformation;
+
+    const ALL: [Transformation; 7] = [
+        Transformation::Identity,
+        Transformation::Rot90,
+        Transformation::Rot180,
+        Transformation::Rot270,
+        Transformation::FlipX,
+        Transformation::FlipY,
+        Transformation::FlipZ,
+    ];
+
+    #[test]
+    fn four_quarter_turns_return_every_axis_to_itself() {
+        for axis in 0..6 {
+            let turned = (0..4).fold(axis, |a, _| Transformation::Rot90.transform_axis(a));
+            assert_eq!(turned, axis);
+        }
+    }
+
+    #[test]
+    fn inverse_undoes_every_transformation() {
+        for t in ALL {
+            for axis in 0..6 {
+                assert_eq!(t.inverse().transform_axis(t.transform_axis(axis)), axis, "{t:?} on axis {axis}");
+            }
+        }
+    }
+
+    #[test]
+    fn opposite_axes_stay_opposite() {
+        // Axes come in pairs (+x, -x), (+y, -y), (+z, -z). If a transformation broke a pair, the
+        // transformed copy of a symmetric rule would no longer be symmetric.
+        for t in ALL {
+            for axis in 0..6 {
+                assert_eq!(t.transform_axis(axis ^ 1), t.transform_axis(axis) ^ 1, "{t:?} on axis {axis}");
+            }
+        }
+    }
+}

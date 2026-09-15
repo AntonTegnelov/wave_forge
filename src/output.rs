@@ -72,3 +72,40 @@ pub fn save_grid_to_file(grid: &PossibilityGrid, output_path: &Path) -> Result<(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::save_grid_to_file;
+    use wfc_core::grid::PossibilityGrid;
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("wave_forge-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn writes_one_line_per_row_and_a_blank_line_between_layers() {
+        // Downstream tools (wfc-render, E2E tests) parse exactly this layout.
+        let mut grid = PossibilityGrid::new(2, 2, 2, 3);
+        for z in 0..2 {
+            for y in 0..2 {
+                for x in 0..2 {
+                    grid.collapse(x, y, z, (x + y + z) % 3).unwrap();
+                }
+            }
+        }
+        let path = temp_path("layers.txt");
+        save_grid_to_file(&grid, &path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(text, "0 1\n1 2\n\n1 2\n2 0\n");
+    }
+
+    #[test]
+    fn refuses_to_save_uncollapsed_grids() {
+        let grid = PossibilityGrid::new(1, 1, 1, 2);
+        let path = temp_path("uncollapsed.txt");
+        let result = save_grid_to_file(&grid, &path);
+        std::fs::remove_file(&path).ok();
+        assert!(result.is_err());
+    }
+}

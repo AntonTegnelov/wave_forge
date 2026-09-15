@@ -882,3 +882,72 @@ impl GpuDownloadResults {
 }
 
 // Test module remains in the respective files (grid_buffers.rs, worklist_buffers.rs)
+
+#[cfg(test)]
+mod layout_tests {
+    //! The WGSL `Params` structs are written by hand to mirror these Rust structs. A mismatch does
+    //! not fail to compile anywhere: the shader silently reads the wrong fields (this happened,
+    //! with `boundary_mode` being read from `heuristic_type`). These tests pin the layouts.
+
+    use super::{GpuEntropyShaderParams, GpuParamsUniform};
+    use std::mem::{offset_of, size_of};
+
+    const PARAMS_FIELDS: [&str; 16] = [
+        "grid_width",
+        "grid_height",
+        "grid_depth",
+        "num_tiles",
+        "num_axes",
+        "boundary_mode",
+        "heuristic_type",
+        "tie_breaking",
+        "max_propagation_steps",
+        "contradiction_check_frequency",
+        "worklist_size",
+        "grid_element_count",
+        "_padding0",
+        "_padding1",
+        "_padding2",
+        "_padding3",
+    ];
+
+    /// Field names of `struct <name> { ... }` in WGSL source, in declaration order.
+    fn wgsl_struct_fields(source: &str, name: &str) -> Vec<String> {
+        let start = source
+            .find(&format!("struct {name} {{"))
+            .unwrap_or_else(|| panic!("struct {name} not found"));
+        let rest = &source[start..];
+        let body = &rest[rest.find('{').expect("open brace") + 1..rest.find('}').expect("close brace")];
+        body.lines()
+            .map(|line| line.split("//").next().unwrap_or_default().trim())
+            .filter(|line| !line.is_empty())
+            .map(|line| line.split(':').next().unwrap_or_default().trim().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn params_uniform_is_sixteen_u32_fields() {
+        assert_eq!(size_of::<GpuParamsUniform>(), 16 * 4);
+        assert_eq!(offset_of!(GpuParamsUniform, boundary_mode), 5 * 4);
+        assert_eq!(offset_of!(GpuParamsUniform, worklist_size), 10 * 4);
+    }
+
+    #[test]
+    fn shader_params_structs_mirror_gpu_params_uniform() {
+        for (file, source) in [
+            ("propagate.wgsl", include_str!("../shader/shaders/propagate.wgsl")),
+            ("collapse_cell.wgsl", include_str!("../shader/shaders/collapse_cell.wgsl")),
+        ] {
+            assert_eq!(wgsl_struct_fields(source, "Params"), PARAMS_FIELDS, "{file}");
+        }
+    }
+
+    #[test]
+    fn entropy_shader_params_mirror_gpu_entropy_shader_params() {
+        let fields = wgsl_struct_fields(include_str!("../shader/shaders/entropy.wgsl"), "Params");
+        assert_eq!(fields, ["grid_dims", "heuristic_type", "num_tiles", "u32s_per_cell"]);
+        // `grid_dims: vec3<u32>` occupies the first 12 bytes in WGSL, like `[u32; 3]`.
+        assert_eq!(offset_of!(GpuEntropyShaderParams, heuristic_type), 3 * 4);
+        assert_eq!(offset_of!(GpuEntropyShaderParams, u32s_per_cell), 5 * 4);
+    }
+}
