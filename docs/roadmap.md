@@ -13,7 +13,7 @@ Make the abandoned code base build and actually produce valid output again, and 
 Suggested order, and why:
 
 1. **Tooling and tests first** ([#6](https://github.com/AntonTegnelov/wave_forge/issues/6); A-16, A-15 instrumentation). The later steps rewrite core data structures and move work between CPU and GPU; without end-to-end tests, image-based inspection and timelines, regressions in a parallel GPU program are nearly impossible to find.
-2. **Profile, then optimise** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7); A-10, A-11, A-12, A-4). Measure where time goes on realistic rule sets before choosing what runs on GPU, CPU threads or SIMD. **Prerequisite:** a real GPU in the development environment; software Vulkan timings are meaningless for this.
+2. **Profile, then optimise** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7); A-10, A-11, A-12, A-4). Measure where time goes on realistic rule sets before choosing what runs on GPU, CPU threads or SIMD. The dev container now has the host RTX 3070 (through Mesa's dozen translation layer), so profiling can happen there; conclusions that depend on transfer or dispatch overhead should be confirmed on native hardware.
 3. **Model and correctness gaps** (A-2, A-3, A-5, A-6, A-7, A-8, A-9). Some of these (storage layout, RNG) are best done together with step 2 because they touch the same code.
 4. **Public API and workspace structure** (A-1, A-14). Settle the crate layout and the library facade once the internals have stabilised, so the API reflects what the implementation can do efficiently.
 5. **Regions and streaming** (A-13).

@@ -113,7 +113,7 @@ mod tests {
     use wgpu::Instance;
 
     async fn setup_device() -> wgpu::Device {
-        let instance = Instance::default();
+        let instance = Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
             .await

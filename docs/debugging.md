@@ -70,7 +70,10 @@ If a run hangs rather than fails, the question is which task is waiting on what.
 - **Validation errors are fatal by design.** wgpu panics with the failing call and resource label, so keep every buffer, bind group, pipeline and pass labelled.
 - **Read state back and render it.** `GpuAccelerator::get_intermediate_result` downloads the current possibilities; render one layer to see how far propagation got.
 - **Suspect races when results are nearly right.** A pass that updates shared buffers from many invocations must either be race-free or be followed by a check pass. The direct propagation strategy currently does the latter (A-11).
-- **Real hardware for performance.** Software Vulkan (llvmpipe) is fine for correctness, but its timings say nothing about GPU performance.
+- **Check which adapter you got.** The CLI logs `Using GPU adapter: ...` at startup. In the dev container it should be `Microsoft Direct3D12 (NVIDIA GeForce RTX 3070)`; if it is `llvmpipe`, the instance was not built from the environment, so wgpu hid the non-conformant dozen adapter (`RUST_LOG=wgpu_hal=warn` shows "hiding adapter").
+- **A `SIGSEGV` after all tests passed is the dozen unload bug, not our code.** A backtrace ends in `__nptl_deallocate_tsd` calling an unmapped address. See the known issue in [development.md](development.md#toolchain-and-environment) for the preload workaround.
+- **Compare adapters when a result looks wrong.** dozen is a non-conformant translation layer. Rerun with `WGPU_ADAPTER_NAME=llvmpipe`: if the software device behaves correctly, suspect the driver stack before the shader.
+- **Real hardware for performance.** Software Vulkan (llvmpipe) timings say nothing about GPU performance, and dozen timings include translation overhead.
 
 ### 7. CPU-side concurrency
 
