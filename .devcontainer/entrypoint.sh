@@ -31,8 +31,14 @@ else
     echo "         Populate %USERPROFILE%\\.ssh\\authorized_keys and restart the container." >&2
 fi
 
+# The WSL GPU user-space libraries (/usr/lib/wsl/lib, listed in
+# /etc/ld.so.conf.d/wsl.conf) only exist at runtime via the compose mount,
+# so the linker cache is refreshed here, not at image build time. Without
+# this the dozen Vulkan driver cannot find libd3d12.so and reports no GPU.
+ldconfig
+
 # Self-heal ownership of named volumes (root-owned when Docker creates them).
-for d in /home/dev/.claude /home/dev/.cargo "${WORKSPACE_DIR}/target"; do
+for d in /home/dev/.claude /home/dev/.cargo /home/dev/.cache "${WORKSPACE_DIR}/target"; do
     if [ -d "$d" ]; then
         chown dev:dev "$d"
         chmod 0755 "$d"

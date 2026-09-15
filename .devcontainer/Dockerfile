@@ -1,4 +1,53 @@
 # syntax=docker/dockerfile:1.6
+
+# ---- Stage 1: Mesa "dozen" (Vulkan on Direct3D 12) -------------------------
+# Inside WSL2 the NVIDIA Windows driver exposes D3D12 and CUDA, not Vulkan.
+# Mesa's dozen driver translates Vulkan to D3D12, which is how wgpu reaches
+# the host GPU from the container. Neither Debian nor Ubuntu packages it, so
+# it is built from source here (only the dzn ICD; no GL, no gallium, no LLVM)
+# and copied into the final image. Runtime needs /usr/lib/wsl/{lib,drivers}
+# mounted by docker-compose and `gpus: all`.
+# Same pinned base as the final stage: reproducible, and the layers are shared.
+FROM rust:1.98.1-bookworm AS dzn-build
+
+ARG MESA_VERSION=26.2.2
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates curl xz-utils git \
+        build-essential pkg-config bison flex \
+        python3 python3-pip python3-venv \
+        zlib1g-dev libzstd-dev libexpat1-dev libdrm-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Debian bookworm's meson (1.0) is too old for current Mesa; use a venv.
+RUN python3 -m venv /opt/mesa-venv \
+ && /opt/mesa-venv/bin/pip install --no-cache-dir meson ninja mako pyyaml packaging
+
+RUN curl -fsSL "https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz" -o /tmp/mesa.tar.xz \
+ && mkdir -p /src/mesa \
+ && tar -xJf /tmp/mesa.tar.xz -C /src/mesa --strip-components=1 \
+ && rm /tmp/mesa.tar.xz
+
+WORKDIR /src/mesa
+# DirectX-Headers is fetched by meson's wrap (Debian's 1.606 is too old).
+RUN PATH="/opt/mesa-venv/bin:${PATH}" meson setup build \
+        --prefix=/opt/dzn \
+        --buildtype=release \
+        -Dplatforms= \
+        -Dglx=disabled -Degl=disabled -Dgbm=disabled \
+        -Dgles1=disabled -Dgles2=disabled -Dopengl=false \
+        -Dgallium-drivers= \
+        -Dvulkan-drivers=microsoft-experimental \
+        -Dvulkan-layers= \
+        -Dllvm=disabled \
+        -Dtools= \
+        -Dvideo-codecs= \
+        -Dlibunwind=disabled -Dvalgrind=disabled \
+ && PATH="/opt/mesa-venv/bin:${PATH}" ninja -C build install
+
+# ---- Stage 2: the dev container ----------------------------------------------
 # Official Rust image, pinned to the same toolchain as rust-toolchain.toml:
 # rustup at /usr/local/rustup with proxies in /usr/local/cargo/bin (kept on
 # PATH); CARGO_HOME is re-pointed to /home/dev/.cargo (a named volume) so
@@ -20,8 +69,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   libxrandr-dev / libxi-dev  -> minifb (X11 + Wayland backends, C++ sources)
 #   clang / libclang-dev       -> bindgen users
 #   libvulkan1 / mesa-vulkan-drivers / vulkan-tools -> wgpu at runtime: Mesa's
-#     lavapipe gives a CPU Vulkan device, so GPU-path tests can run headless
-#     (slowly). No real GPU is reachable from the container.
+#     lavapipe gives a CPU Vulkan device as a fallback; the host GPU is
+#     reached through the dozen driver installed below.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg xz-utils unzip \
@@ -37,6 +86,32 @@ RUN apt-get update \
 
 # fd is installed as `fdfind` on Debian; provide the conventional `fd` alias.
 RUN ln -s /usr/bin/fdfind /usr/local/bin/fd
+
+# ---- GitHub CLI ---------------------------------------------------------------
+# Used for PRs/issues with the repo-scoped PAT (`gh auth login --with-token`).
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends gh \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---- Vulkan on the host GPU: Mesa dozen ICD ---------------------------------
+# The driver library stays under /opt/dzn; only its ICD manifest goes into the
+# Vulkan loader's search path (with the library path rewritten to match).
+# /usr/lib/wsl/lib holds libd3d12.so etc. at runtime (compose bind mount);
+# the entrypoint runs ldconfig so the dynamic linker finds them. lavapipe's
+# ICD stays installed, so `vulkaninfo --summary` lists both the RTX and
+# llvmpipe; wgpu's default (high performance) adapter request picks the GPU.
+COPY --from=dzn-build /opt/dzn /opt/dzn
+RUN mkdir -p /usr/share/vulkan/icd.d \
+ && src="$(find /opt/dzn -name 'dzn_icd.*.json' | head -1)" \
+ && lib="$(find /opt/dzn -name 'libvulkan_dzn.so' | head -1)" \
+ && sed "s#\"library_path\": *\"[^\"]*\"#\"library_path\": \"${lib}\"#" "$src" \
+        > /usr/share/vulkan/icd.d/dzn_icd.x86_64.json \
+ && echo /usr/lib/wsl/lib > /etc/ld.so.conf.d/wsl.conf
 
 # ---- Rust components --------------------------------------------------------
 # Baked into the image (rustup home is on the image layer, not a volume).
@@ -66,16 +141,31 @@ RUN groupadd --gid "${DEV_GID}" "${DEV_USER}" \
 # Docker ENV does not propagate into ssh sessions; PAM reads /etc/environment.
 # PATH must keep the system dirs or ssh logins lose cargo/node/git/etc.
 # ~/.cargo/bin first (cargo-installed tools), then the rustup proxies.
+# WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER: Mesa marks dozen non-conformant
+# (conformanceVersion 0.0.0.0) and wgpu hides such adapters unless this flag
+# is set. It only takes effect for instances built with
+# `wgpu::InstanceDescriptor::new_without_display_handle_from_env()` in wgpu 30
+# (Instance::default() does not read the environment).
+# CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: binaries run by `cargo test` /
+# `cargo run` get libd3d12core.so preloaded. Without it, dropping a wgpu
+# instance on dozen unloads that library while other threads still have its
+# thread-local destructors registered, and multi-threaded binaries (every test
+# runner) segfault at exit. A Cargo runner scopes the preload to those
+# binaries instead of every process in the container.
 RUN printf '%s\n' \
         'PATH="/home/dev/.cargo/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' \
         'CARGO_HOME="/home/dev/.cargo"' \
         'RUSTUP_HOME="/usr/local/rustup"' \
         'LANG="en_US.UTF-8"' \
+        'WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER="1"' \
+        'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="env LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so"' \
         >> /etc/environment
 
 # Non-login shells (VS Code terminals, docker exec) get the same via Docker ENV.
 ENV CARGO_HOME="/home/${DEV_USER}/.cargo" \
-    PATH="/home/${DEV_USER}/.cargo/bin:${PATH}"
+    PATH="/home/${DEV_USER}/.cargo/bin:${PATH}" \
+    WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER=1 \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="env LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so"
 
 # ---- SSH server -------------------------------------------------------------
 # Hardened sshd config (pubkey-only, no root, dev user only).
