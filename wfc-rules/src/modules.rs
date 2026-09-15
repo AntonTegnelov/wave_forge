@@ -332,7 +332,15 @@ fn variant_face(prototypes: &[ModulePrototype], variant: ModuleVariant, axis: us
     }
 }
 
-fn faces_fit(a: Face, b: Face) -> bool {
+fn faces_fit(a: Face, b: Face, compatible: &BTreeSet<(u32, u32)>) -> bool {
+    let declared_pair = match (a, b) {
+        (Face::Horizontal(a), Face::Horizontal(b)) => (a.connector, b.connector),
+        (Face::Vertical(a), Face::Vertical(b)) => (a.connector, b.connector),
+        _ => return false,
+    };
+    if compatible.contains(&declared_pair) {
+        return true;
+    }
     match (a, b) {
         (Face::Horizontal(a), Face::Horizontal(b)) => a.fits(b),
         (Face::Vertical(a), Face::Vertical(b)) => {
@@ -351,6 +359,8 @@ fn faces_fit(a: Face, b: Face) -> bool {
 #[derive(Debug, Clone, Default)]
 pub struct ModuleSet {
     prototypes: Vec<ModulePrototype>,
+    /// Pairs of different connectors that may face each other, stored in both orders.
+    compatible: BTreeSet<(u32, u32)>,
 }
 
 impl ModuleSet {
@@ -358,6 +368,25 @@ impl ModuleSet {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Lets faces with two different connectors touch, whatever their symmetry or rotation.
+    ///
+    /// Modules here are centred on grid cells, so a face is shared by two cells that can hold
+    /// different materials: a building's facade borders open air or ground. marian42's modules
+    /// sit on grid corners instead and describe such boundaries with one connector; with
+    /// cell-centred modules, declaring which connectors may meet keeps the set small instead of
+    /// needing a "ground next to a building" variant of every ground module.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a == b`; equal connectors already fit according to their symmetry.
+    #[must_use]
+    pub fn connect(mut self, a: u32, b: u32) -> Self {
+        assert_ne!(a, b, "connector {a} already fits itself; connect() pairs different connectors");
+        self.compatible.insert((a, b));
+        self.compatible.insert((b, a));
+        self
     }
 
     /// Adds a prototype.
@@ -487,8 +516,7 @@ impl ModuleSet {
     ) -> bool {
         if !faces_fit(
             variant_face(&self.prototypes, a, axis),
-            variant_face(&self.prototypes, b, opposite(axis)),
-        ) {
+            variant_face(&self.prototypes, b, opposite(axis)), &self.compatible) {
             return false;
         }
         let excludes = |from: ModuleVariant, to: ModuleVariant, direction: usize| {
@@ -711,6 +739,21 @@ mod tests {
         );
         let compiled = ModuleSet::new().with(ground).compile().unwrap();
         assert_eq!(compiled.unmatched_faces, vec![(0, UP), (0, DOWN)]);
+    }
+
+    #[test]
+    fn connected_connectors_fit_each_other_but_not_third_parties() {
+        let facade = uniform("facade", WALL);
+        let air = uniform("air", OPEN);
+        let ramp = uniform("ramp", RAMP);
+        let compiled = ModuleSet::new().connect(WALL, OPEN).with(facade).with(air).with(ramp).compile().unwrap();
+        let [facade, air, ramp] = ["facade", "air", "ramp"].map(|name| compiled.variants_of(name)[0]);
+        for axis in 0..NUM_AXES {
+            assert!(compiled.rules.check(facade, air, axis));
+            assert!(compiled.rules.check(air, facade, axis));
+            assert!(compiled.rules.check(facade, facade, axis), "equal connectors still fit");
+            assert!(!compiled.rules.check(facade, ramp, axis));
+        }
     }
 
     #[test]
