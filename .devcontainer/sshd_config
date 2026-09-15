@@ -1,0 +1,33 @@
+# Hardened sshd config for the dev container.
+# Loaded via /etc/ssh/sshd_config.d/00-dev.conf (overrides defaults).
+
+Port 22
+AddressFamily any
+
+PermitRootLogin no
+AllowUsers dev
+
+PubkeyAuthentication yes
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+
+UsePAM yes
+X11Forwarding no
+PrintMotd no
+PrintLastLog yes
+TCPKeepAlive yes
+ClientAliveInterval 60
+ClientAliveCountMax 3
+
+AcceptEnv LANG LC_*
+
+# Note: Subsystem sftp is already defined by Debian's /etc/ssh/sshd_config —
+# don't redeclare here, sshd treats duplicates as a fatal error.
+
+# Host keys live on a persistent named volume so the fingerprint is stable
+# across container rebuilds. The entrypoint generates any missing keys.
+HostKey /etc/ssh/keys/ssh_host_rsa_key
+HostKey /etc/ssh/keys/ssh_host_ecdsa_key
+HostKey /etc/ssh/keys/ssh_host_ed25519_key

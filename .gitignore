@@ -3,3 +3,8 @@
 # Aider configuration file (potentially contains secrets)
 .aider.conf.yml
 CONVENTIONS.MD
+
+# AI-assistant / editor-agent configs (local only)
+.cursor/
+.claude/
+.aider*
