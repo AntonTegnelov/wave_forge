@@ -69,3 +69,4 @@ pub use gpu::{BackendError, GpuBackend, WgpuBackend};
 
 // Re-export propagator
 pub use propagator::GpuConstraintPropagator;
+

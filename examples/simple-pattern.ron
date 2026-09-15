@@ -1,46 +1,33 @@
+// Two-tile example: empty space and solid blocks, any tile may neighbour any other.
 (
-    tiles: {
-        0: (
-            // Empty space
-            weight: 2,
-            symmetry: 1,
-        ),
-        1: (
-            // Solid block
-            weight: 1,
-            symmetry: 1,
-        ),
-    },
-    adjacency_rules: [
-        // Axis 0 (X+)
-        (from: 0, to: 0, axis: 0, allowed: true),
-        (from: 0, to: 1, axis: 0, allowed: true),
-        (from: 1, to: 0, axis: 0, allowed: true),
-        (from: 1, to: 1, axis: 0, allowed: true),
-        // Axis 1 (X-)
-        (from: 0, to: 0, axis: 1, allowed: true),
-        (from: 0, to: 1, axis: 1, allowed: true),
-        (from: 1, to: 0, axis: 1, allowed: true),
-        (from: 1, to: 1, axis: 1, allowed: true),
-        // Axis 2 (Y+)
-        (from: 0, to: 0, axis: 2, allowed: true),
-        (from: 0, to: 1, axis: 2, allowed: true),
-        (from: 1, to: 0, axis: 2, allowed: true),
-        (from: 1, to: 1, axis: 2, allowed: true),
-        // Axis 3 (Y-)
-        (from: 0, to: 0, axis: 3, allowed: true),
-        (from: 0, to: 1, axis: 3, allowed: true),
-        (from: 1, to: 0, axis: 3, allowed: true),
-        (from: 1, to: 1, axis: 3, allowed: true),
-        // Axis 4 (Z+)
-        (from: 0, to: 0, axis: 4, allowed: true),
-        (from: 0, to: 1, axis: 4, allowed: true),
-        (from: 1, to: 0, axis: 4, allowed: true),
-        (from: 1, to: 1, axis: 4, allowed: true),
-        // Axis 5 (Z-)
-        (from: 0, to: 0, axis: 5, allowed: true),
-        (from: 0, to: 1, axis: 5, allowed: true),
-        (from: 1, to: 0, axis: 5, allowed: true),
-        (from: 1, to: 1, axis: 5, allowed: true),
+    tiles: [
+        ( name: "Empty", weight: 2.0 ),
+        ( name: "Block", weight: 1.0 ),
     ],
-) 
+    adjacency: [
+        ("Empty", "Empty", "+x"),
+        ("Empty", "Block", "+x"),
+        ("Block", "Empty", "+x"),
+        ("Block", "Block", "+x"),
+        ("Empty", "Empty", "-x"),
+        ("Empty", "Block", "-x"),
+        ("Block", "Empty", "-x"),
+        ("Block", "Block", "-x"),
+        ("Empty", "Empty", "+y"),
+        ("Empty", "Block", "+y"),
+        ("Block", "Empty", "+y"),
+        ("Block", "Block", "+y"),
+        ("Empty", "Empty", "-y"),
+        ("Empty", "Block", "-y"),
+        ("Block", "Empty", "-y"),
+        ("Block", "Block", "-y"),
+        ("Empty", "Empty", "+z"),
+        ("Empty", "Block", "+z"),
+        ("Block", "Empty", "+z"),
+        ("Block", "Block", "+z"),
+        ("Empty", "Empty", "-z"),
+        ("Empty", "Block", "-z"),
+        ("Block", "Empty", "-z"),
+        ("Block", "Block", "-z"),
+    ],
+)

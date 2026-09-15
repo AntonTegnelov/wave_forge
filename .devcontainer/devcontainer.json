@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
+  "name": "wave_forge",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspaces/wave_forge",
+  "remoteUser": "dev",
+
+  // Keep the sshd entrypoint running so SSH access works while VS Code is
+  // attached via the Dev Containers extension.
+  "overrideCommand": false,
+
+  // NOTE: no "forwardPorts" here. Zed's dev container support translates it
+  // into an extra docker-published host port, which collides with the compose
+  // file's 2239:22 mapping and makes the container fail to start.
+
+  // Warm the registry cache (on the cargo-home volume); the full build is
+  // heavy (wgpu), so it is left to the user.
+  "postCreateCommand": "cargo fetch",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "anthropic.claude-code"
+      ]
+    }
+  }
+}

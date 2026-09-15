@@ -13,17 +13,19 @@
 //! Manages runtime loading and access to pre-compiled WGSL shader variants.
 #![allow(unused_variables, dead_code)] // Allow unused items during development
 
+use env_logger;
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use thiserror::Error; // Added for registry
 
-/// Represents the main types of compute shaders used in the WFC algorithm.
+/// Enum representing the different types of core shaders used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShaderType {
     Entropy,
     Propagation,
-    // Add other types like Initialization, Collapse if needed
+    Collapse, // Added collapse shader type
 }
 
 #[derive(Error, Debug)]
@@ -69,18 +71,20 @@ impl ShaderManager {
     /// Creates a new ShaderManager.
     /// Loads component metadata and prepares to load shader variants from OUT_DIR.
     pub fn new() -> Result<Self, ShaderError> {
-        // Get the output directory set by the build script
-        let out_dir = std::env::var("OUT_DIR").map_err(|_| ShaderError::OutDirNotSet)?;
+        // OUT_DIR is only set by Cargo while compiling, so capture it at compile time;
+        // reading it at runtime works under `cargo test` but not for a built binary.
+        let out_dir = env!("OUT_DIR");
         if out_dir.is_empty() {
             return Err(ShaderError::OutDirNotSet);
         }
-        let variants_dir = Path::new(&out_dir).join("shaders").join("variants");
+        let variants_dir = Path::new(out_dir).join("shaders").join("variants");
 
-        // Load registry from JSON file
-        let registry_path = PathBuf::from("src/shader/shaders/components/registry.json");
+        // Load registry from JSON file (anchored to the crate, not the current directory)
+        let registry_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/shader/shaders/components/registry.json");
         let component_registry = Self::load_component_registry(&registry_path)?;
 
-        println!(
+        info!(
             "[ShaderManager] Initialized. Found {} shader components. Expecting variants in: {:?}",
             component_registry.len(),
             variants_dir
@@ -256,53 +260,51 @@ impl ShaderManager {
         registry
     }
 
-    /// Loads the source code for a specific pre-compiled shader variant.
-    ///
-    /// # Arguments
-    /// * `shader_type` - The type of shader pipeline (e.g., Entropy, Propagation).
-    /// * `features` - A slice of feature strings (e.g., ["atomics"]) that the variant was compiled with.
-    ///              An empty slice indicates the fallback/base variant.
-    ///
-    /// # Returns
-    /// The WGSL source code as a String, or a ShaderError.
+    /// Attempts to load a shader variant, trying pre-compiled, dynamic, and fallback methods.
     pub fn load_shader_variant(
         &mut self,
         shader_type: ShaderType,
         features: &[&str],
     ) -> Result<String, ShaderError> {
-        // Sort features for consistency
-        let mut sorted_features: Vec<String> = features.iter().map(|&s| s.to_string()).collect();
-        sorted_features.sort();
-
-        // Check cache first
-        let cache_key = (shader_type, sorted_features.clone());
+        let cache_key = (
+            shader_type,
+            features.iter().map(|s| s.to_string()).collect(),
+        );
         if let Some(cached_shader) = self.loaded_shaders.get(&cache_key) {
+            debug!(
+                "[ShaderManager] Cache hit for {:?} with features {:?}",
+                shader_type, features
+            );
             return Ok(cached_shader.clone());
         }
 
+        debug!(
+            "[ShaderManager] Cache miss for {:?} with features {:?}",
+            shader_type, features
+        );
+
+        // 1. Try loading pre-compiled variant
         let variant_filename = Self::get_variant_filename(shader_type, features);
         let variant_path = self.variants_dir.join(&variant_filename);
-
-        println!(
+        info!(
             "[ShaderManager] Attempting to load shader variant: {:?}",
             variant_path
         );
 
-        // First try to load from OUT_DIR (build-generated variants)
         match std::fs::read_to_string(&variant_path) {
-            Ok(source) => {
-                println!("[ShaderManager] Successfully loaded: {}", variant_filename);
-                // Add to cache
-                self.loaded_shaders.insert(cache_key, source.clone());
-                return Ok(source);
+            Ok(content) => {
+                info!(
+                    "[ShaderManager] Successfully loaded pre-compiled variant: {:?}",
+                    variant_path
+                );
+                self.loaded_shaders.insert(cache_key, content.clone());
+                return Ok(content);
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                println!("[ShaderManager] Variant not found in build dir, trying fallback...");
-                // Continue to fallback mechanism
+                info!("[ShaderManager] Pre-compiled variant not found, attempting dynamic compilation...");
+                // Proceed to dynamic compilation
             }
             Err(e) => {
-                println!("[ShaderManager] Error reading variant: {}", e);
-                // Only return error if it's not a not-found error
                 return Err(ShaderError::IoError {
                     path: variant_path.display().to_string(),
                     source: e,
@@ -310,35 +312,59 @@ impl ShaderManager {
             }
         }
 
-        // Fallback to monolithic shader files in source directory
+        // 2. Try dynamic compilation (Placeholder - requires ShaderCompiler implementation)
+        warn!(
+            "[ShaderManager] Dynamic compilation not yet implemented for {:?}. Falling back...",
+            shader_type
+        );
+        // let dynamic_result = self.compile_dynamically(shader_type, features);
+        // match dynamic_result {
+        //     Ok(content) => {
+        //         info!("[ShaderManager] Successfully compiled dynamically.");
+        //         self.loaded_shaders.insert(cache_key, content.clone());
+        //         return Ok(content);
+        //     }
+        //     Err(e) => {
+        //         warn!("[ShaderManager] Dynamic compilation failed: {}, falling back...", e);
+        //         // Proceed to fallback
+        //     }
+        // }
+
+        // 3. Fallback to monolithic shader
+        warn!(
+            "[ShaderManager] Using fallback monolithic shader for {:?}",
+            shader_type
+        );
         let fallback_filename = match shader_type {
             ShaderType::Entropy => "entropy.wgsl",
             ShaderType::Propagation => "propagate.wgsl",
+            ShaderType::Collapse => "collapse_cell.wgsl",
+            // Add other types if necessary
         };
+        let fallback_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/shader/shaders")
+            .join(fallback_filename);
 
-        // Construct path relative to crate root
-        let fallback_path = PathBuf::from("src/shader/shaders").join(fallback_filename);
-        println!(
-            "[ShaderManager] Trying fallback shader: {:?}",
-            fallback_path
-        );
-
-        // For include_str! we need constant paths, so use hardcoded fallbacks
-        let shader_source = match shader_type {
-            ShaderType::Entropy => {
-                println!("[ShaderManager] Using hardcoded entropy shader");
-                include_str!("shaders/entropy.wgsl").to_string()
+        match std::fs::read_to_string(&fallback_path) {
+            Ok(content) => {
+                info!(
+                    "[ShaderManager] Successfully loaded fallback shader: {:?}",
+                    fallback_path
+                );
+                self.loaded_shaders.insert(cache_key, content.clone());
+                Ok(content)
             }
-            ShaderType::Propagation => {
-                println!("[ShaderManager] Using hardcoded propagation shader");
-                include_str!("shaders/propagate.wgsl").to_string()
+            Err(e) => {
+                error!(
+                    "[ShaderManager] Failed to load fallback shader {:?}: {}",
+                    fallback_path, e
+                );
+                Err(ShaderError::IoError {
+                    path: fallback_path.display().to_string(),
+                    source: e,
+                })
             }
-        };
-
-        println!("[ShaderManager] Successfully loaded fallback shader");
-        // Add to cache
-        self.loaded_shaders.insert(cache_key, shader_source.clone());
-        Ok(shader_source)
+        }
     }
 
     /// Constructs the expected filename for a shader variant.
@@ -347,6 +373,7 @@ impl ShaderManager {
         let base_name = match shader_type {
             ShaderType::Entropy => "Entropy",
             ShaderType::Propagation => "Propagation",
+            ShaderType::Collapse => "collapse_cell", // Added case for collapse
         };
         if features.is_empty() {
             format!("{}.wgsl", base_name)

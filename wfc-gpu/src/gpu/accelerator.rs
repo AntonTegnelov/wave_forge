@@ -11,14 +11,15 @@ use super::{
 
 use crate::coordination::strategy;
 use crate::{
-    buffers::{GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
+    buffers::{CollapseInfoUniform, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
     coordination::{strategy::CoordinationStrategyFactory, DefaultCoordinator, WfcCoordinator},
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
     propagator::{GpuConstraintPropagator, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
     utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer},
     utils::error::{
-        gpu_error::GpuError as NewGpuError, RecoveryAction, RecoveryHookRegistry, WfcError,
+        gpu_error::GpuError as NewGpuError, gpu_error::GpuErrorContext, RecoveryAction,
+        RecoveryHookRegistry, WfcError,
     },
     utils::error_recovery::{GpuError, GridCoord},
     utils::subgrid::SubgridConfig,
@@ -27,6 +28,7 @@ use crate::{
 
 use anyhow::Error as AnyhowError;
 use log::{info, trace};
+use tracing::{Instrument, info_span};
 use rand;
 use std::time::Instant;
 use wfc_core::{
@@ -208,10 +210,13 @@ impl GpuAccelerator {
             },
             tie_breaking: 0,
             max_propagation_steps: 1000,
-            contradiction_check_frequency: 100,
+            contradiction_check_frequency: 10,
             worklist_size: 0,
-            grid_element_count: total_cells as u32,
-            _padding: 0,
+            grid_element_count: (total_cells * 4) as u32,
+            _padding0: 0,
+            _padding1: 0,
+            _padding2: 0,
+            _padding3: 0,
         };
 
         synchronizer.update_propagation_params(&params)?;
@@ -226,36 +231,10 @@ impl GpuAccelerator {
             params,
         );
 
-        // Choose an appropriate propagation strategy based on grid size and subgrid configuration
-        if let Some(ref config) = subgrid_config {
-            if initial_grid.width * initial_grid.height * initial_grid.depth > 4096 {
-                // For large grids with subgrid config, use subgrid propagation
-                propagator_concrete = propagator_concrete.with_subgrid_propagation(
-                    1000, // Default max iterations
-                    config.max_subgrid_size as u32,
-                );
-                info!(
-                    "Using subgrid propagation strategy with subgrid size {}",
-                    config.max_subgrid_size
-                );
-            } else {
-                // For smaller grids, even with subgrid config, use direct propagation
-                propagator_concrete = propagator_concrete.with_direct_propagation(1000);
-                info!("Using direct propagation strategy (grid too small for subgrid)");
-            }
-        } else if initial_grid.width * initial_grid.height * initial_grid.depth > 4096 {
-            // For large grids without explicit subgrid config, use adaptive strategy
-            propagator_concrete = propagator_concrete.with_adaptive_propagation(
-                1000, // Default max iterations
-                16,   // Default subgrid size
-                4096, // Default threshold
-            );
-            info!("Using adaptive propagation strategy");
-        } else {
-            // For smaller grids, use direct propagation
-            propagator_concrete = propagator_concrete.with_direct_propagation(1000);
-            info!("Using direct propagation strategy");
-        }
+        // Direct propagation is the only strategy that works purely on the GPU buffers;
+        // the subgrid and adaptive strategies still rely on a CPU-side grid.
+        propagator_concrete = propagator_concrete.with_direct_propagation(1000);
+        info!("Using direct propagation strategy");
 
         let propagator = Arc::new(GpuRwLock::new(propagator_concrete));
 
@@ -305,18 +284,44 @@ impl GpuAccelerator {
         Ok(accelerator)
     }
 
+    /// Returns a reference to the underlying GPU backend.
     pub fn backend(&self) -> Arc<dyn GpuBackend> {
-        self.instance.read().unwrap().backend.clone()
+        // Acquire read lock, handle potential poisoning
+        let instance = self.instance.read().unwrap_or_else(|poisoned| {
+            log::error!("RwLock for AcceleratorInstance poisoned in backend()");
+            poisoned.into_inner()
+        });
+        instance.backend.clone()
     }
 
+    /// Returns a reference to the compute pipelines.
     pub fn pipelines(&self) -> Arc<ComputePipelines> {
-        self.instance.read().unwrap().pipelines.clone()
+        let instance = self.instance.read().unwrap_or_else(|poisoned| {
+            log::error!("RwLock for AcceleratorInstance poisoned in pipelines()");
+            poisoned.into_inner()
+        });
+        instance.pipelines.clone()
     }
 
+    /// Returns a reference to the GPU buffers.
     pub fn buffers(&self) -> Arc<GpuBuffers> {
-        self.instance.read().unwrap().buffers.clone()
+        let instance = self.instance.read().unwrap_or_else(|poisoned| {
+            log::error!("RwLock for AcceleratorInstance poisoned in buffers()");
+            poisoned.into_inner()
+        });
+        instance.buffers.clone()
     }
 
+    /// Returns a reference to the GPU synchronizer.
+    pub fn synchronizer(&self) -> Arc<GpuSynchronizer> {
+        let instance = self.instance.read().unwrap_or_else(|poisoned| {
+            log::error!("RwLock for AcceleratorInstance poisoned in synchronizer()");
+            poisoned.into_inner()
+        });
+        instance.sync.clone()
+    }
+
+    /// Returns the grid definition (dimensions, tile count).
     pub fn grid_definition(&self) -> GridDefinition {
         self.instance.read().unwrap().grid_definition.clone()
     }
@@ -371,7 +376,7 @@ impl GpuAccelerator {
     pub async fn run_with_callback<F>(
         &mut self,
         initial_grid: &PossibilityGrid,
-        rules: &AdjacencyRules,
+        _rules: &AdjacencyRules,
         max_iterations: u64,
         mut progress_callback: F,
         _shutdown_signal: Option<tokio::sync::watch::Receiver<bool>>,
@@ -414,10 +419,20 @@ impl GpuAccelerator {
             );
         }
 
+        // Spans for the timeline (see docs/debugging.md). Stages that await are instrumented
+        // rather than entered, because an entered span guard must not be held across `.await`.
+        let run_span = info_span!(
+            "wfc_run",
+            width = grid_definition.dims.0,
+            height = grid_definition.dims.1,
+            depth = grid_definition.dims.2,
+            tiles = grid_definition.num_tiles
+        );
+
         // Upload initial grid state
         trace!("Uploading initial grid state to GPU...");
-        synchronizer
-            .upload_grid(initial_grid)
+        info_span!(parent: &run_span, "upload_grid")
+            .in_scope(|| synchronizer.upload_grid(initial_grid))
             .map_err(|e| WfcError::other(e.to_string()))?;
 
         synchronizer
@@ -432,13 +447,55 @@ impl GpuAccelerator {
 
         // Create a working copy of the grid
         let mut current_grid = initial_grid.clone();
+
+        // Cells the caller constrained before the run must be propagated before the first
+        // observation. A cell pinned to a single tile has zero entropy, so it is never selected
+        // and its neighbours would otherwise never learn about it.
+        let constrained_cells: Vec<GridCoord> = (0..initial_grid.depth)
+            .flat_map(|z| {
+                (0..initial_grid.height)
+                    .flat_map(move |y| (0..initial_grid.width).map(move |x| (x, y, z)))
+            })
+            .filter(|&(x, y, z)| {
+                initial_grid
+                    .get(x, y, z)
+                    .is_some_and(|cell| cell.count_ones() < grid_definition.num_tiles)
+            })
+            .map(|(x, y, z)| GridCoord { x, y, z })
+            .collect();
+        if !constrained_cells.is_empty() {
+            trace!(
+                "Propagating {} pre-constrained cells before the first observation",
+                constrained_cells.len()
+            );
+            let cells = constrained_cells.len();
+            coordinator
+                .coordinate_propagation(&propagator, &buffers, &device, &queue, constrained_cells)
+                .instrument(info_span!(parent: &run_span, "initial_propagation", cells))
+                .await
+                .map_err(|e| WfcError::other(e.to_string()))?;
+            current_grid = synchronizer
+                .download_grid(&current_grid)
+                .instrument(info_span!(parent: &run_span, "download_grid"))
+                .await
+                .map_err(|e| WfcError::other(e.to_string()))?;
+        }
         let total_cells = grid_definition.total_cells();
         let mut collapsed_cells = 0;
         let mut iterations = 0;
 
         // Main WFC loop
         while iterations < max_iterations {
-            // Calculate entropy and select cell
+            let iteration_span = info_span!(parent: &run_span, "iteration", iteration = iterations);
+
+            // Compute entropy on the GPU so the min-entropy buffer is current before selecting
+            entropy_calculator
+                .dispatch_entropy_calculation_pass()
+                .instrument(info_span!(parent: &iteration_span, "entropy_pass"))
+                .await
+                .map_err(|e| WfcError::other(e.to_string()))?;
+
+            // Select the lowest-entropy cell
             let selected_cell = coordinator
                 .coordinate_entropy_and_selection(
                     &entropy_calculator,
@@ -447,6 +504,7 @@ impl GpuAccelerator {
                     &queue,
                     &synchronizer,
                 )
+                .instrument(info_span!(parent: &iteration_span, "select_cell"))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
 
@@ -467,14 +525,19 @@ impl GpuAccelerator {
             }
 
             // Choose a random state from possible states
-            let chosen_state = possible_states[rand::random::<usize>() % possible_states.len()];
-            cell.clear();
-            cell.set(chosen_state, true);
+            let chosen_state = possible_states[rand::random_range(0..possible_states.len())];
+            // Use the grid's collapse method directly
+            current_grid.collapse(x, y, z, chosen_state).map_err(|e| {
+                WfcError::other(format!(
+                    "Failed to collapse cell ({},{},{}): {}",
+                    x, y, z, e
+                ))
+            })?;
             collapsed_cells += 1;
 
             // Upload the updated cell state
-            synchronizer
-                .upload_grid(&current_grid)
+            info_span!(parent: &iteration_span, "upload_grid")
+                .in_scope(|| synchronizer.upload_grid(&current_grid))
                 .map_err(|e| WfcError::other(e.to_string()))?;
 
             // Propagate constraints
@@ -486,12 +549,14 @@ impl GpuAccelerator {
                     &queue,
                     vec![GridCoord { x, y, z }],
                 )
+                .instrument(info_span!(parent: &iteration_span, "propagate", x, y, z))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
 
             // Download the updated grid state
             current_grid = synchronizer
                 .download_grid(&current_grid)
+                .instrument(info_span!(parent: &iteration_span, "download_grid"))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
 
@@ -1058,6 +1123,97 @@ impl GpuAccelerator {
 
         // Delegate to the method that handles local errors
         self.try_handle_local_error(&local_error)
+    }
+
+    /// Collapses a specific cell on the GPU to a chosen tile ID.
+    ///
+    /// This function dispatches a compute shader (`collapse_cell.wgsl`)
+    /// to update the `grid_possibilities_buf` directly on the GPU.
+    ///
+    /// # Arguments
+    ///
+    /// * `coords` - The (x, y, z) coordinates of the cell to collapse.
+    /// * `chosen_tile_id` - The ID of the tile to collapse the cell to.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the collapse command was successfully submitted.
+    /// * `Err(NewGpuError)` if an error occurred during GPU operations.
+    pub fn collapse_cell_gpu(
+        &self,
+        coords: (usize, usize, usize),
+        chosen_tile_id: u32,
+    ) -> Result<(), NewGpuError> {
+        let instance = self.instance.read().map_err(|_| {
+            NewGpuError::other(
+                "Failed to acquire read lock on AcceleratorInstance",
+                GpuErrorContext::default(),
+            )
+        })?;
+
+        let device = instance.backend.device();
+        let queue = instance.backend.queue();
+        let buffers = &instance.buffers;
+        let pipelines = &instance.pipelines;
+
+        // 1. Prepare uniform data
+        let collapse_info = CollapseInfoUniform {
+            coord_x: coords.0 as u32,
+            coord_y: coords.1 as u32,
+            coord_z: coords.2 as u32,
+            chosen_tile_id,
+        };
+
+        // 2. Write uniform data to buffer
+        // Note: Using write_buffer might have sync issues if not careful.
+        // Consider using an encoder copy if problems arise.
+        queue.write_buffer(
+            &buffers.collapse_info_buf,
+            0,
+            bytemuck::cast_slice(&[collapse_info]),
+        );
+
+        // 3. Create encoder and dispatch compute pass
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Collapse Cell Encoder"),
+        });
+
+        let collapse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Collapse Bind Group"),
+            layout: &pipelines.collapse_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffers
+                        .grid_buffers
+                        .grid_possibilities_buf
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffers.params_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buffers.collapse_info_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Collapse Cell Pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&pipelines.collapse_pipeline);
+            compute_pass.set_bind_group(0, &collapse_bind_group, &[]);
+            compute_pass.dispatch_workgroups(1, 1, 1); // Dispatch single invocation
+        } // compute_pass dropped here
+
+        // 4. Submit commands
+        queue.submit(std::iter::once(encoder.finish()));
+
+        Ok(())
     }
 }
 

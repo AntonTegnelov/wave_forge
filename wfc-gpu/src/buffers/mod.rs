@@ -5,8 +5,7 @@
 // Imports
 use crate::utils::error::gpu_error::{GpuError, GpuErrorContext};
 use bytemuck::{Pod, Zeroable};
-use futures::future::FusedFuture;
-use log::{debug, error, info, trace, warn};
+use log::{debug, info, trace, warn};
 use std::mem;
 use std::sync::Arc;
 use std::time::Instant;
@@ -45,7 +44,10 @@ pub struct GpuParamsUniform {
     pub contradiction_check_frequency: u32,
     pub worklist_size: u32,
     pub grid_element_count: u32,
-    pub _padding: u32,
+    pub _padding0: u32,
+    pub _padding1: u32,
+    pub _padding2: u32,
+    pub _padding3: u32,
 }
 
 /// Uniform buffer structure for entropy shader parameters.
@@ -58,6 +60,16 @@ pub struct GpuEntropyShaderParams {
     pub u32s_per_cell: u32,
     pub _padding1: u32,
     pub _padding2: u32,
+}
+
+/// Uniform data specifically for the cell collapse shader.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CollapseInfoUniform {
+    pub coord_x: u32,
+    pub coord_y: u32,
+    pub coord_z: u32,
+    pub chosen_tile_id: u32,
 }
 
 /// DynamicBufferConfig contains settings for how buffers are resized
@@ -101,6 +113,7 @@ pub struct GpuBuffers {
     pub num_axes: usize,
     pub boundary_mode: wfc_core::BoundaryCondition,
     pub entropy_params_buffer: Arc<wgpu::Buffer>,
+    pub collapse_info_buf: Arc<wgpu::Buffer>,
     pub dynamic_buffer_config: Option<DynamicBufferConfig>,
 }
 
@@ -151,6 +164,21 @@ impl GpuBuffers {
             "Creating GPU buffers with boundary mode: {:?}...",
             boundary_mode
         );
+        log::debug!("GpuBuffers::new called.");
+        log::debug!(
+            "Initial grid: {}x{}x{} ({} tiles)",
+            initial_grid.width,
+            initial_grid.height,
+            initial_grid.depth,
+            initial_grid.num_tiles()
+        );
+        log::debug!(
+            "Rules: num_tiles={}, num_axes={}",
+            rules.num_tiles(),
+            rules.num_axes()
+        );
+        log::debug!("Boundary mode: {:?}", boundary_mode);
+
         let width = initial_grid.width;
         let height = initial_grid.height;
         let depth = initial_grid.depth;
@@ -160,9 +188,16 @@ impl GpuBuffers {
 
         let default_dynamic_config = DynamicBufferConfig::default();
         let grid_buffers = GridBuffers::new(device, initial_grid, &default_dynamic_config)?;
+        log::debug!("GridBuffers created successfully.");
         let worklist_buffers = WorklistBuffers::new(device, num_cells, &default_dynamic_config)?;
+        log::debug!("WorklistBuffers created successfully.");
         let entropy_buffers = EntropyBuffers::new(device, num_cells, &default_dynamic_config)?;
+        log::debug!(
+            "EntropyBuffers created successfully: {:?}",
+            entropy_buffers.min_entropy_info_buf.usage()
+        ); // Print usage of a key buffer
         let rule_buffers = RuleBuffers::new(device, rules, &default_dynamic_config)?;
+        log::debug!("RuleBuffers created successfully.");
 
         let params = GpuParamsUniform {
             grid_width: width as u32,
@@ -180,7 +215,10 @@ impl GpuBuffers {
             contradiction_check_frequency: 10,
             worklist_size: 0,
             grid_element_count: (num_cells * grid_buffers.u32s_per_cell) as u32,
-            _padding: 0,
+            _padding0: 0,
+            _padding1: 0,
+            _padding2: 0,
+            _padding3: 0,
         };
 
         let contradiction_buffer_size = std::mem::size_of::<u32>() as u64;
@@ -243,8 +281,15 @@ impl GpuBuffers {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
+        let collapse_info_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Collapse Info Uniform"),
+            size: std::mem::size_of::<CollapseInfoUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
 
-        info!("GPU buffers created successfully.");
+        log::debug!("All primary GpuBuffers created (contradiction, params, stats, etc.).");
+
         Ok(Self {
             grid_buffers,
             rule_buffers,
@@ -264,6 +309,7 @@ impl GpuBuffers {
             num_axes,
             boundary_mode,
             entropy_params_buffer,
+            collapse_info_buf,
             dynamic_buffer_config: Some(default_dynamic_config),
         })
     }
@@ -323,7 +369,8 @@ impl GpuBuffers {
             .ensure_grid_possibilities_buffer(device, width, height, depth, num_tiles, config)?;
         let num_cells = (width * height * depth) as usize;
         self.entropy_buffers
-            .ensure_buffers(device, num_cells, config)?;
+            .ensure_buffers(device, num_cells, config)
+            .map_err(|e| e.to_string())?;
         self.worklist_buffers
             .ensure_worklist_buffers(device, width, height, depth, config)?;
         self.num_cells = num_cells;
@@ -353,13 +400,13 @@ impl GpuBuffers {
             // We'll refactor this to use a different approach that doesn't require different async block types
             let download_size = num_cells * mem::size_of::<f32>();
             let buffer = &*self.entropy_buffers.entropy_buf;
-            let staging_buffer = &*self.entropy_buffers.staging_entropy_buf;
+            let _staging_buffer = &*self.entropy_buffers.staging_entropy_buf;
 
             let data = download_buffer_data::<f32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Entropy Data".to_string()),
             )
@@ -377,13 +424,13 @@ impl GpuBuffers {
 
             let download_size = 5 * mem::size_of::<u32>();
             let buffer = &*self.entropy_buffers.min_entropy_info_buf;
-            let staging_buffer = &*self.entropy_buffers.staging_min_entropy_info_buf;
+            let _staging_buffer = &*self.entropy_buffers.staging_min_entropy_info_buf;
 
             let data = download_buffer_data::<u32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Min Entropy Info".to_string()),
             )
@@ -408,13 +455,13 @@ impl GpuBuffers {
             let u32s_per_cell = (self.num_tiles + 31) / 32; // Ceiling division by 32
             let download_size = num_cells * u32s_per_cell * mem::size_of::<u32>();
             let buffer = &*self.grid_buffers.grid_possibilities_buf;
-            let staging_buffer = &*self.grid_buffers.staging_grid_possibilities_buf;
+            let _staging_buffer = &*self.grid_buffers.staging_grid_possibilities_buf;
 
             let data = download_buffer_data::<u32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Grid Data".to_string()),
             )
@@ -432,13 +479,13 @@ impl GpuBuffers {
 
             let download_size = mem::size_of::<u32>();
             let buffer = &*self.contradiction_flag_buf;
-            let staging_buffer = &*self.staging_contradiction_flag_buf;
+            let _staging_buffer = &*self.staging_contradiction_flag_buf;
 
             let data = download_buffer_data::<u32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Contradiction Flag".to_string()),
             )
@@ -457,13 +504,13 @@ impl GpuBuffers {
 
             let download_size = 3 * mem::size_of::<u32>();
             let buffer = &*self.contradiction_location_buf;
-            let staging_buffer = &*self.staging_contradiction_location_buf;
+            let _staging_buffer = &*self.staging_contradiction_location_buf;
 
             let data = download_buffer_data::<u32>(
                 device,
                 queue,
-                buffer,
-                staging_buffer,
+                Some(buffer),
+                None,
                 download_size as u64,
                 Some("Contradiction Location".to_string()),
             )
@@ -555,140 +602,210 @@ impl GpuBuffers {
 
         Ok(grid)
     }
+
+    pub async fn download_buffer<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        buffer_size: u64,
+        label: &str,
+    ) -> Result<Vec<T>, GpuError> {
+        // These are placeholders - for now, use None
+        let device = None;
+        let queue = None;
+
+        download_buffer_data::<T>(
+            device,
+            queue,
+            Some(buffer),
+            None,
+            buffer_size,
+            Some(label.to_string()),
+        )
+        .await
+    }
+
+    pub async fn download_staging_buffer<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        staging_buffer: &wgpu::Buffer,
+        buffer_size: u64,
+        label: &str,
+    ) -> Result<Vec<T>, GpuError> {
+        // These are placeholders - for now, use None
+        let device = None;
+        let queue = None;
+
+        download_buffer_data::<T>(
+            device,
+            queue,
+            Some(buffer),
+            Some(staging_buffer),
+            buffer_size,
+            Some(label.to_string()),
+        )
+        .await
+    }
 }
 
-/// Downloads data from a GPU buffer to CPU memory using a staging buffer.
-///
-/// # Arguments
-///
-/// * `device` - Arc-wrapped WGPU device
-/// * `queue` - Arc-wrapped WGPU queue
-/// * `source_buffer` - The source buffer to download from
-/// * `staging_buffer` - The staging buffer to use for the download
-/// * `buffer_size` - Size of the data to download in bytes
-/// * `label` - Optional label for debugging
-///
-/// # Returns
-///
-/// * `Ok(Vec<T>)` - The downloaded data as a vector
-/// * `Err(GpuError)` - If an error occurred during download
-pub async fn download_buffer_data<T: bytemuck::Pod + bytemuck::Zeroable>(
-    device: Option<Arc<wgpu::Device>>,
-    queue: Option<Arc<wgpu::Queue>>,
-    source_buffer: &wgpu::Buffer,
-    staging_buffer: &wgpu::Buffer,
+fn calculate_timeout_ms(size_bytes: u64) -> u64 {
+    // Base timeout of 1 second for most operations
+    const BASE_TIMEOUT_MS: u64 = 1000;
+    const MIN_TIMEOUT_MS: u64 = 50;
+    const MAX_TIMEOUT_MS: u64 = 10000; // Cap at 10 seconds
+
+    let timeout = if size_bytes < 1024 {
+        // For very small buffers (< 1KB), use a shorter timeout
+        MIN_TIMEOUT_MS + (size_bytes / 16) // 50ms base + 1ms per 16 bytes
+    } else if size_bytes < 1024 * 1024 {
+        // For small-medium buffers (< 1MB), scale linearly but more gradually
+        BASE_TIMEOUT_MS + (size_bytes / 2048) // Add 1ms per 2KB
+    } else {
+        // For larger buffers, add 1ms per 8KB with a slower growth rate
+        BASE_TIMEOUT_MS + (size_bytes / (8 * 1024))
+    };
+
+    timeout.clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
+}
+
+pub async fn download_buffer_data<T: bytemuck::Pod>(
+    device: Option<&Arc<wgpu::Device>>,
+    _queue: Option<&Arc<wgpu::Queue>>,
+    buffer: Option<&wgpu::Buffer>,
+    staging_buffer: Option<&wgpu::Buffer>,
     buffer_size: u64,
     label: Option<String>,
 ) -> Result<Vec<T>, GpuError> {
-    // Create buffer slice
-    let label_str = label.as_deref().unwrap_or("unnamed buffer");
-    debug!(
-        "Starting download of '{}' ({} bytes)",
-        label_str, buffer_size
-    );
+    let timeout_ms = calculate_timeout_ms(buffer_size);
 
-    // Ensure buffers are large enough
-    if source_buffer.size() < buffer_size {
-        return Err(GpuError::BufferSizeMismatch {
-            msg: format!(
-                "Source buffer for '{}' is smaller than required size ({} < {})",
-                label_str,
-                source_buffer.size(),
-                buffer_size
-            ),
-            context: Box::new(GpuErrorContext::default()),
-        });
-    }
-
-    if staging_buffer.size() < buffer_size {
-        return Err(GpuError::BufferSizeMismatch {
-            msg: format!(
-                "Staging buffer for '{}' is smaller than required size ({} < {})",
-                label_str,
-                staging_buffer.size(),
-                buffer_size
-            ),
-            context: Box::new(GpuErrorContext::default()),
-        });
-    }
-
-    // Create command encoder
-    let mut encoder =
-        device
-            .as_ref()
-            .unwrap()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some(&format!("Download encoder for '{}'", label_str)),
+    // Determine which buffer to map
+    let buffer_to_map = match (buffer, staging_buffer) {
+        (Some(buf), None) => buf, // Map original buffer if no staging buffer provided
+        (None, Some(staging_buf)) => staging_buf, // Map staging buffer if original is None
+        (Some(_), Some(staging_buf)) => staging_buf, // Prefer staging buffer if both provided (typical download flow)
+        (None, None) => {
+            return Err(GpuError::BufferOperationError {
+                msg: format!(
+                    "Download failed: Both buffer and staging_buffer are None for label: {:?}",
+                    label
+                ),
+                context: Box::new(GpuErrorContext::default()),
             });
+        }
+    };
 
-    // Copy source buffer to staging buffer
-    encoder.copy_buffer_to_buffer(source_buffer, 0, staging_buffer, 0, buffer_size);
-
-    queue.as_ref().unwrap().submit(Some(encoder.finish()));
-    debug!("Copy command submitted for '{}'", label_str);
-
-    // Map the staging buffer
-    let buffer_slice = staging_buffer.slice(..);
+    let slice = buffer_to_map.slice(..); // Map the selected buffer
     let (sender, mut receiver) = futures::channel::oneshot::channel();
-    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-        sender.send(result).unwrap();
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = sender.send(result);
     });
 
-    // Wait for the mapping operation to complete
-    let _ = device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
-    debug!("Device polled for '{}'", label_str);
+    let start = std::time::Instant::now();
+    let mut sleep_duration = std::time::Duration::from_micros(100); // Start with 100 microseconds
+    let mut retries = 0;
+    let mut consecutive_no_progress = 0;
 
-    // Handle the mapping result
-    let map_start = std::time::Instant::now();
-    let map_timeout = std::time::Duration::from_secs(2);
+    let current_device = device.ok_or_else(|| GpuError::DeviceLost {
+        msg: "Device reference missing during buffer download".to_string(),
+        context: Box::new(GpuErrorContext::default()),
+    })?;
 
-    // Wait for the mapping to complete with a timeout
-    let mut retry_count = 0;
-    while !receiver.is_terminated() {
-        let _ = device.as_ref().unwrap().poll(wgpu::MaintainBase::Wait);
+    loop {
+        let _ = current_device.poll(wgpu::PollType::wait_indefinitely());
 
-        if Instant::now() > map_start + map_timeout {
-            error!("Buffer {:?} mapping timed out after 2 seconds", label_str);
-            return Err(GpuError::buffer_map_timeout(
-                label_str.to_string(),
-                GpuErrorContext::default(),
-            ));
+        match receiver.try_recv() {
+            Ok(Some(Ok(()))) => {
+                let mapped_range = match slice.get_mapped_range() {
+                    Ok(range) => range,
+                    Err(e) => {
+                        buffer_to_map.unmap();
+                        return Err(GpuError::BufferMapFailed {
+                            msg: format!(
+                                "Failed to access mapped range for {:?}: {}",
+                                label.as_deref().unwrap_or("Unnamed Buffer"),
+                                e
+                            ),
+                            context: Box::new(GpuErrorContext::default()),
+                        });
+                    }
+                };
+                let data = bytemuck::cast_slice(&mapped_range).to_vec();
+                // Drop guard to unmap buffer
+                drop(mapped_range);
+                buffer_to_map.unmap(); // Unmap the correct buffer
+                return Ok(data);
+            }
+            Ok(Some(Err(e))) => {
+                buffer_to_map.unmap(); // Ensure unmap on error
+                return Err(GpuError::BufferMapFailed {
+                    msg: format!(
+                        "Buffer mapping failed for {:?}: {:?}. Retries: {}",
+                        label.as_deref().unwrap_or("Unnamed Buffer"),
+                        e,
+                        retries
+                    ),
+                    context: Box::new(GpuErrorContext::default()),
+                });
+            }
+            Ok(None) => {
+                // Channel closed, possibly sender dropped prematurely? Should not happen with oneshot.
+                buffer_to_map.unmap(); // Ensure unmap
+                return Err(GpuError::BufferMapFailed {
+                    msg: format!(
+                        "Buffer mapping channel closed unexpectedly for {:?}. Retries: {}",
+                        label.as_deref().unwrap_or("Unnamed Buffer"),
+                        retries
+                    ),
+                    context: Box::new(GpuErrorContext::default()),
+                });
+            }
+            Err(futures::channel::oneshot::Canceled) => {
+                // Still pending, continue loop
+            }
         }
 
-        // Yield periodically to avoid blocking the executor
-        if (retry_count + 1) % 128 == 0 {
-            std::thread::yield_now();
+        if start.elapsed().as_millis() as u64 > timeout_ms {
+            buffer_to_map.unmap(); // Ensure unmap on timeout
+            return Err(GpuError::BufferMapFailed {
+                msg: format!(
+                    "Buffer mapping timeout after {} retries for {:?}. Buffer size: {} bytes. Timeout: {}ms",
+                    retries,
+                    label.as_deref().unwrap_or("Unnamed Buffer"),
+                    buffer_size,
+                    timeout_ms
+                ),
+                context: Box::new(GpuErrorContext::default()),
+            });
         }
-        retry_count += 1;
+
+        retries += 1;
+        consecutive_no_progress += 1;
+
+        // Yield less frequently for small buffers, more frequently for larger ones
+        let yield_threshold = if buffer_size < 1024 {
+            64 // Small buffers
+        } else if buffer_size < 1024 * 1024 {
+            32 // Medium buffers
+        } else {
+            16 // Large buffers
+        };
+
+        if consecutive_no_progress >= yield_threshold {
+            tokio::task::yield_now().await;
+            consecutive_no_progress = 0;
+        }
+
+        // Exponential backoff with dynamic cap based on buffer size
+        let max_sleep = if buffer_size < 1024 {
+            std::time::Duration::from_millis(10) // Cap at 10ms for small buffers
+        } else if buffer_size < 1024 * 1024 {
+            std::time::Duration::from_millis(50) // Cap at 50ms for medium buffers
+        } else {
+            std::time::Duration::from_millis(100) // Cap at 100ms for large buffers
+        };
+
+        sleep_duration = std::cmp::min(sleep_duration * 2, max_sleep);
+        tokio::time::sleep(sleep_duration).await;
     }
-
-    // Get the result from our receiver
-    let result = match receiver.try_recv() {
-        Ok(Some(res)) => res,
-        Ok(None) => Err(wgpu::BufferAsyncError),
-        Err(_) => Err(wgpu::BufferAsyncError),
-    };
-    if let Err(e) = result {
-        return Err(GpuError::BufferOperationError {
-            msg: format!("Failed to map buffer '{}': {:?}", label_str, e),
-            context: Box::new(GpuErrorContext::default()),
-        });
-    }
-
-    // Read data from the mapped buffer
-    let data = {
-        let mapped_range = buffer_slice.get_mapped_range();
-        let result: Vec<T> = bytemuck::cast_slice(&mapped_range).to_vec();
-        result
-    };
-
-    debug!(
-        "Download for '{}' completed in {:?}",
-        label_str,
-        map_start.elapsed()
-    );
-
-    Ok(data)
 }
 
 impl GpuDownloadResults {
@@ -765,3 +882,72 @@ impl GpuDownloadResults {
 }
 
 // Test module remains in the respective files (grid_buffers.rs, worklist_buffers.rs)
+
+#[cfg(test)]
+mod layout_tests {
+    //! The WGSL `Params` structs are written by hand to mirror these Rust structs. A mismatch does
+    //! not fail to compile anywhere: the shader silently reads the wrong fields (this happened,
+    //! with `boundary_mode` being read from `heuristic_type`). These tests pin the layouts.
+
+    use super::{GpuEntropyShaderParams, GpuParamsUniform};
+    use std::mem::{offset_of, size_of};
+
+    const PARAMS_FIELDS: [&str; 16] = [
+        "grid_width",
+        "grid_height",
+        "grid_depth",
+        "num_tiles",
+        "num_axes",
+        "boundary_mode",
+        "heuristic_type",
+        "tie_breaking",
+        "max_propagation_steps",
+        "contradiction_check_frequency",
+        "worklist_size",
+        "grid_element_count",
+        "_padding0",
+        "_padding1",
+        "_padding2",
+        "_padding3",
+    ];
+
+    /// Field names of `struct <name> { ... }` in WGSL source, in declaration order.
+    fn wgsl_struct_fields(source: &str, name: &str) -> Vec<String> {
+        let start = source
+            .find(&format!("struct {name} {{"))
+            .unwrap_or_else(|| panic!("struct {name} not found"));
+        let rest = &source[start..];
+        let body = &rest[rest.find('{').expect("open brace") + 1..rest.find('}').expect("close brace")];
+        body.lines()
+            .map(|line| line.split("//").next().unwrap_or_default().trim())
+            .filter(|line| !line.is_empty())
+            .map(|line| line.split(':').next().unwrap_or_default().trim().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn params_uniform_is_sixteen_u32_fields() {
+        assert_eq!(size_of::<GpuParamsUniform>(), 16 * 4);
+        assert_eq!(offset_of!(GpuParamsUniform, boundary_mode), 5 * 4);
+        assert_eq!(offset_of!(GpuParamsUniform, worklist_size), 10 * 4);
+    }
+
+    #[test]
+    fn shader_params_structs_mirror_gpu_params_uniform() {
+        for (file, source) in [
+            ("propagate.wgsl", include_str!("../shader/shaders/propagate.wgsl")),
+            ("collapse_cell.wgsl", include_str!("../shader/shaders/collapse_cell.wgsl")),
+        ] {
+            assert_eq!(wgsl_struct_fields(source, "Params"), PARAMS_FIELDS, "{file}");
+        }
+    }
+
+    #[test]
+    fn entropy_shader_params_mirror_gpu_entropy_shader_params() {
+        let fields = wgsl_struct_fields(include_str!("../shader/shaders/entropy.wgsl"), "Params");
+        assert_eq!(fields, ["grid_dims", "heuristic_type", "num_tiles", "u32s_per_cell"]);
+        // `grid_dims: vec3<u32>` occupies the first 12 bytes in WGSL, like `[u32; 3]`.
+        assert_eq!(offset_of!(GpuEntropyShaderParams, heuristic_type), 3 * 4);
+        assert_eq!(offset_of!(GpuEntropyShaderParams, u32s_per_cell), 5 * 4);
+    }
+}

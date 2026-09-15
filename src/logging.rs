@@ -55,3 +55,25 @@ pub fn init_logger(config: &AppConfig) {
         config.progress_log_level
     );
 }
+
+/// Records every `tracing` span to a Chrome trace file for timeline viewers such as Perfetto.
+///
+/// Spans are recorded from creation to close (async style) rather than per enter/exit, so stages
+/// that span `.await` points and parent spans that are never entered (the run and each
+/// iteration) still appear with their real durations.
+pub fn init_chrome_trace(path: &std::path::Path) -> tracing_chrome::FlushGuard {
+    use tracing_subscriber::prelude::*;
+
+    let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+        .file(path)
+        .include_args(true)
+        .trace_style(tracing_chrome::TraceStyle::Async)
+        .build();
+    // `set_global_default` instead of `.init()`: `.init()` also installs a `log` bridge, which
+    // fails because env_logger already owns the global logger.
+    match tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer)) {
+        Ok(()) => log::info!("Writing trace timeline to {}", path.display()),
+        Err(error) => log::warn!("Trace timeline disabled, a tracing subscriber is already set: {error}"),
+    }
+    guard
+}

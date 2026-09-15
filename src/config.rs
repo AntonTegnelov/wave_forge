@@ -151,6 +151,12 @@ pub struct AppConfig {
     /// Key to toggle visualization on/off during runtime (single character).
     #[arg(long, default_value = "T")]
     pub visualization_toggle_key: char,
+
+    /// Write a timeline of the run's tracing spans to this file (Chrome trace format; open it in
+    /// https://ui.perfetto.dev).
+    #[arg(long, value_name = "FILE")]
+    #[serde(default)]
+    pub trace_chrome: Option<PathBuf>,
 }
 
 impl From<CliExecutionMode> for wfc_core::ExecutionMode {

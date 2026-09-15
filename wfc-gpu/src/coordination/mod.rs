@@ -399,11 +399,18 @@ impl WfcCoordinator for DefaultCoordinator {
                 .await;
         }
 
-        // Otherwise, use the default implementation
-        let _propagator_guard = propagator_lock.write().await;
-
-        // For now just return Ok since actual propagation implementation is missing
-        Ok(())
+        // Otherwise run the propagator's configured strategy directly against the GPU buffers
+        let propagator = propagator_lock.write().await;
+        let mut placeholder_grid = PossibilityGrid::new(1, 1, 1, 1);
+        propagator
+            .strategy()
+            .propagate(
+                &mut placeholder_grid,
+                &updated_coords,
+                buffers,
+                propagator.synchronizer(),
+            )
+            .await
     }
 
     fn clone_box(&self) -> Box<dyn WfcCoordinator + Send + Sync> {

@@ -82,6 +82,22 @@ pub enum WfcError {
     #[error("Configuration error: {0}")]
     Configuration(String),
 
+    /// Contradiction detected by WFC algorithm
+    #[error("Contradiction found at ({x}, {y}, {z})")]
+    Contradiction { x: usize, y: usize, z: usize },
+
+    /// WFC finished, but grid is not fully collapsed, and no specific CPU-side contradiction was found.
+    #[error("WFC process finished, but the grid is not fully collapsed and no specific CPU-side contradiction was found.")]
+    IncompleteCollapse,
+
+    /// Error during CPU-side grid state check after WFC completion.
+    #[error("Error during CPU-side grid state check: {0}")]
+    GridStateCheckError(String),
+
+    /// GPU reported a contradiction, but its specific location could not be determined.
+    #[error("GPU reported a contradiction, but its specific location could not be determined.")]
+    GpuContradictionUnknownLocation,
+
     /// Other errors
     #[error("Error: {0}")]
     Other(String),
@@ -110,7 +126,7 @@ impl WfcError {
 
     /// Create a new contradiction detected error
     pub fn contradiction_detected<S: Into<String>>(msg: S) -> Self {
-        Self::Algorithm(msg.into())
+        Self::Algorithm(format!("Contradiction detected: {}", msg.into()))
     }
 
     /// Format diagnostic information as JSON for easier parsing
@@ -127,6 +143,10 @@ impl WfcError {
             WfcError::Algorithm(_) => "algorithm",
             WfcError::Validation(_) => "validation",
             WfcError::Configuration(_) => "configuration",
+            WfcError::Contradiction { .. } => "algorithm",
+            WfcError::IncompleteCollapse => "algorithm",
+            WfcError::GridStateCheckError(_) => "validation",
+            WfcError::GpuContradictionUnknownLocation => "gpu",
             WfcError::Other(_) => "other",
         };
 
@@ -180,6 +200,10 @@ impl WfcError {
             WfcError::Algorithm(_) => RecoveryAction::UseAlternative,
             WfcError::Validation(_) => RecoveryAction::RetryWithModifiedParams,
             WfcError::Configuration(_) => RecoveryAction::RetryWithModifiedParams,
+            WfcError::Contradiction { .. } => RecoveryAction::UseAlternative,
+            WfcError::IncompleteCollapse => RecoveryAction::RetryWithModifiedParams,
+            WfcError::GridStateCheckError(_) => RecoveryAction::ReportError,
+            WfcError::GpuContradictionUnknownLocation => RecoveryAction::ReportError,
             WfcError::Other(_) => RecoveryAction::ReportError,
         }
     }
@@ -193,6 +217,10 @@ impl WfcError {
             WfcError::Gpu(err) => {
                 matches!(err, GpuError::ContradictionDetected { .. })
             }
+            WfcError::Contradiction { .. } => true,
+            WfcError::IncompleteCollapse => false,
+            WfcError::GridStateCheckError(_) => false,
+            WfcError::GpuContradictionUnknownLocation => false,
             _ => false,
         }
     }
@@ -273,6 +301,31 @@ impl WfcError {
                              - Ensure all required fields are populated",
                         );
                     }
+                    WfcError::Contradiction { .. } => {
+                        instructions.push_str(
+                            "- Simplify adjacency rules or tile constraints.\n\
+                             - Increase the variety of tiles or allow more connections.\n\
+                             - If using tile weights, ensure they are not too restrictive.\n\
+                             - Consider using a different seed or initial condition if the problem is stochastic."
+                        );
+                    }
+                    WfcError::IncompleteCollapse => {
+                        instructions.push_str(
+                            "- Maximum iterations were reached before full collapse (increase max_iterations).\n\
+                             - Review rules for ambiguity.\n\
+                             - Check for issues in the entropy heuristic or selection process."
+                        );
+                    }
+                    WfcError::GridStateCheckError(msg) => {
+                        instructions.push_str(
+                            &format!("Error during final grid state validation: {}. This might indicate an internal issue with grid integrity. Check logs and report if persistent.", msg)
+                        );
+                    }
+                    WfcError::GpuContradictionUnknownLocation => {
+                        instructions.push_str(
+                            "GPU detected a contradiction, but its exact location could not be determined. This may indicate an issue with the GPU-side contradiction reporting. Check GPU logs and driver status."
+                        );
+                    }
                     _ => {
                         instructions.push_str(
                             "- Review operation parameters\n\
@@ -309,17 +362,17 @@ impl WfcError {
     /// Converts a wfc_core::WfcError into our local WfcError
     pub fn from_core_error(error: &wfc_core::WfcError) -> Self {
         match error {
-            wfc_core::WfcError::Contradiction(x, y, z) => {
-                Self::Algorithm(format!("Contradiction found at ({}, {}, {})", x, y, z))
-            }
-            wfc_core::WfcError::GridError(msg) => Self::Validation(msg.clone()),
+            wfc_core::WfcError::Contradiction(x, y, z) => Self::Contradiction {
+                x: *x,
+                y: *y,
+                z: *z,
+            },
+            wfc_core::WfcError::GridError(msg) => Self::GridStateCheckError(msg.clone()),
             wfc_core::WfcError::ConfigurationError(msg) => Self::Configuration(msg.clone()),
             wfc_core::WfcError::InternalError(msg) => Self::Other(msg.clone()),
-            wfc_core::WfcError::IncompleteCollapse => {
-                Self::Algorithm("WFC finished with incomplete collapse".to_string())
-            }
+            wfc_core::WfcError::IncompleteCollapse => Self::IncompleteCollapse,
             wfc_core::WfcError::TimeoutOrInfiniteLoop => {
-                Self::Algorithm("Potential infinite loop detected".to_string())
+                Self::Algorithm("Potential infinite loop detected or timeout reached".to_string())
             }
             wfc_core::WfcError::TileSetError(err) => Self::Configuration(err.to_string()),
             wfc_core::WfcError::Interrupted => Self::Other("WFC run interrupted".to_string()),
@@ -356,6 +409,14 @@ impl ErrorWithContext for WfcError {
             WfcError::Algorithm(msg) => format!("Algorithm error: {}", msg),
             WfcError::Validation(msg) => format!("Validation error: {}", msg),
             WfcError::Configuration(msg) => format!("Configuration error: {}", msg),
+            WfcError::Contradiction { x, y, z } => {
+                format!("Contradiction at ({}, {}, {})", x, y, z)
+            }
+            WfcError::IncompleteCollapse => "Grid incompletely collapsed".to_string(),
+            WfcError::GridStateCheckError(msg) => format!("Grid state check error: {}", msg),
+            WfcError::GpuContradictionUnknownLocation => {
+                "GPU contradiction, location unknown".to_string()
+            }
             WfcError::Other(msg) => format!("Other error: {}", msg),
         }
     }
@@ -397,6 +458,27 @@ impl ErrorWithContext for WfcError {
                 ),
                 msg
             )),
+            WfcError::Contradiction { .. } => Some(concat!(
+                "A contradiction was found. This means the algorithm reached a state where no valid tile could be placed in a cell according to the rules. Try the following:\n",
+                "1. Simplify adjacency rules or tile constraints.\n",
+                "2. Increase the variety of tiles or allow more connections.\n",
+                "3. If using tile weights, ensure they are not too restrictive.\n",
+                "4. Consider using a different seed or initial condition if the problem is stochastic."
+            ).to_string()),
+            WfcError::IncompleteCollapse => Some(concat!(
+                "The grid did not fully collapse. This can happen if: \n",
+                "1. Maximum iterations were reached before full collapse (increase max_iterations).\n",
+                "2. The rules are too loose, allowing multiple valid states for some cells indefinitely (review rules for ambiguity).\n",
+                "3. An issue in the entropy heuristic or selection process."
+            ).to_string()),
+            WfcError::GridStateCheckError(msg) => Some(format!(
+                "Error during final grid state validation: {}. This might indicate an internal issue with grid integrity. Check logs and report if persistent.",
+                msg
+            )),
+            WfcError::GpuContradictionUnknownLocation => Some(
+                "GPU detected a contradiction, but its exact location could not be determined. This may indicate an issue with the GPU-side contradiction reporting. Check GPU logs and driver status."
+                .to_string()
+            ),
             WfcError::Other(msg) => Some(format!(
                 concat!(
                     "Error: {}. Try the following:\n",
@@ -418,6 +500,10 @@ impl ErrorWithContext for WfcError {
             WfcError::Algorithm(_) => ErrorSeverity::Fatal,
             WfcError::Validation(_) => ErrorSeverity::Fatal,
             WfcError::Configuration(_) => ErrorSeverity::Fatal,
+            WfcError::Contradiction { .. } => ErrorSeverity::Recoverable,
+            WfcError::IncompleteCollapse => ErrorSeverity::Recoverable,
+            WfcError::GridStateCheckError(_) => ErrorSeverity::Fatal,
+            WfcError::GpuContradictionUnknownLocation => ErrorSeverity::Fatal,
             WfcError::Other(_) => ErrorSeverity::Fatal,
         }
     }

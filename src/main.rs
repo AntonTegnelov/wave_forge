@@ -78,6 +78,8 @@ pub async fn run_app() -> Result<()> {
 
     // Initialize logging with the configured log level
     logging::init_logger(&config);
+    // Keep the guard alive for the whole run: dropping it flushes and closes the trace file.
+    let _trace_guard = config.trace_chrome.as_deref().map(logging::init_chrome_trace);
 
     log::info!("Wave Forge App Starting");
     log::debug!("Loaded Config: {:?}", config);

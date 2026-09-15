@@ -1,22 +1,19 @@
 [package]
 name = "wfc-rules"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
 
 [dependencies]
-bitvec = { version = "1.0.1", features = ["serde"] }
-nalgebra = "0.32.5"
-num-traits = "0.2.18"
-log = "0.4.21"
-thiserror = "1.0.58"
-serde = { version = "1.0.197", features = ["derive"], optional = true }
-serde_json = { version = "1.0.115", optional = true }
-ron = "0.8"        # Example, could use JSON instead
-rayon = "1.8" # For potential parallel parsing
+log = "0.4.34"
+thiserror = "2.0.20"
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.151", optional = true }
+ron = "0.12.2"        # Example, could use JSON instead
 
 [dev-dependencies]
-tempfile = "3.8"
-proptest = "1.4"
+proptest = "1.11.0"
 
 [features]
 default = ["serde"]

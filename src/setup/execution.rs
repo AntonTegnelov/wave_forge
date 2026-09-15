@@ -108,7 +108,8 @@ pub async fn run_benchmark_mode(
     }
 
     // 1. Get GPU Adapter Info
-    let instance = Instance::default();
+    // Same environment-derived instance as the accelerator, so both see the same adapters.
+    let instance = Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter_info = match instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
         .await
@@ -218,7 +219,7 @@ pub async fn run_benchmark_mode(
             let accelerator = match accelerator_res {
                 Ok(mut acc) => {
                     // Configure propagation with 5000 iterations
-                    acc.with_subgrid_propagation(5000, 8);
+                    acc.with_direct_propagation(5000);
                     acc
                 }
                 Err(e) => {
@@ -528,7 +529,7 @@ pub async fn run_standard_mode(
     let mut gpu_accelerator = match accelerator_res {
         Ok(mut acc) => {
             // Configure propagation with 5000 iterations
-            acc.with_subgrid_propagation(5000, 8);
+            acc.with_direct_propagation(5000);
             acc
         }
         Err(e) => {

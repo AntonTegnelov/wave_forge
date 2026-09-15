@@ -234,7 +234,7 @@ impl GpuConstraintPropagator {
     }
 
     /// Gets a reference to the current propagation strategy.
-    pub fn strategy(&self) -> &dyn AsyncPropagationStrategy {
+    pub fn strategy(&self) -> &(dyn AsyncPropagationStrategy + Send + Sync) {
         self.strategy.as_ref()
     }
 

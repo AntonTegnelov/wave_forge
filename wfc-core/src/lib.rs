@@ -3,7 +3,7 @@
 
 use propagator::PropagationError;
 // REMOVED: use bitvec::prelude::{BitVec, Lsb0};
-use rand::distributions::WeightedError;
+use rand::distr::weighted::Error as WeightedError;
 #[cfg(feature = "serde")] // Guard serde imports
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

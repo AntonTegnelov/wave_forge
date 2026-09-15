@@ -205,15 +205,20 @@ impl WgpuBackend {
     /// # Returns
     /// A new WgpuBackend instance
     pub fn new() -> Self {
-        let instance = Arc::new(wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        }));
+        // Build the instance from the environment so `WGPU_*` variables apply. In particular the
+        // dev container reaches the host GPU through Mesa's dozen driver (Vulkan on D3D12), which
+        // is not Vulkan-conformant; wgpu hides such adapters unless
+        // `WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER` is set, and only reads that variable here.
+        // Without environment overrides this still enables every backend.
+        let instance = Arc::new(wgpu::Instance::new(
+            wgpu::InstanceDescriptor::new_without_display_handle_from_env(),
+        ));
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .expect("Failed to find GPU adapter");
 
@@ -231,6 +236,7 @@ impl WgpuBackend {
             required_limits: limits,
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::default(),
+            ..Default::default()
         }))
         .expect("Failed to create device");
 

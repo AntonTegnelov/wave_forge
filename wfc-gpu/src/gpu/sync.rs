@@ -7,11 +7,12 @@ use crate::{
     utils::error::gpu_error::{GpuError as NewGpuError, GpuErrorContext, GpuResourceType},
     utils::error_recovery::{GpuError as OldGpuError, ParseGridCoord},
 };
-use log::{debug, error, trace};
+use log::{debug, error, trace, warn};
 use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::AdjacencyRules;
 use wgpu;
+use wgpu::util::DeviceExt;
 use wgpu::BindGroup;
 
 // Type alias for backward compatibility
@@ -249,7 +250,7 @@ impl GpuSynchronizer {
         });
 
         // Poll the device while waiting for the map operation to complete
-        let _ = self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         // Create target_grid outside the match scope
         let mut target_grid = target.clone();
@@ -259,7 +260,9 @@ impl GpuSynchronizer {
             Ok(Ok(())) => {
                 // Buffer mapped successfully
                 trace!("Staging buffer mapped successfully.");
-                let mapped_range = staging_buffer_slice.get_mapped_range();
+                let mapped_range = staging_buffer_slice
+                    .get_mapped_range()
+                    .map_err(|e| GpuError::BufferMapping(e.to_string()))?;
 
                 // Copy data from mapped buffer to target grid
                 let mapped_data = bytemuck::cast_slice::<u8, u32>(&mapped_range);
@@ -330,15 +333,15 @@ impl GpuSynchronizer {
     /// * `has_contradiction` - Boolean indicating if a contradiction was detected
     /// * `contradiction_location` - Optional index of the cell where a contradiction occurred
     pub async fn download_contradiction_status(&self) -> Result<(bool, Option<u32>), GpuError> {
-        let flag_buffer_gpu = &self.buffers.contradiction_flag_buf;
-        let flag_buffer_staging = &self.buffers.staging_contradiction_flag_buf;
+        let flag_buffer_gpu = &*self.buffers.contradiction_flag_buf;
+        let flag_buffer_staging = &*self.buffers.staging_contradiction_flag_buf;
         let mut contradiction_location = None;
 
         let flag_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            flag_buffer_gpu,
-            flag_buffer_staging,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(flag_buffer_gpu),
+            Some(flag_buffer_staging),
             std::mem::size_of::<u32>() as u64,
             Some("Check Contradiction Flag".to_string()),
         )
@@ -350,15 +353,15 @@ impl GpuSynchronizer {
         let has_contradiction = flag_data.first().is_some_and(|&flag| flag != 0);
 
         if has_contradiction {
-            let loc_buffer_gpu = &self.buffers.contradiction_location_buf;
-            let loc_buffer_staging = &self.buffers.staging_contradiction_location_buf;
+            let loc_buffer_gpu = &*self.buffers.contradiction_location_buf;
+            let loc_buffer_staging = &*self.buffers.staging_contradiction_location_buf;
 
             let loc_data = crate::buffers::download_buffer_data::<u32>(
-                Some(self.device.clone()),
-                Some(self.queue.clone()),
-                loc_buffer_gpu,
-                loc_buffer_staging,
-                3 * std::mem::size_of::<u32>() as u64,
+                Some(&self.device),
+                Some(&self.queue),
+                Some(loc_buffer_gpu),
+                Some(loc_buffer_staging),
+                std::mem::size_of::<u32>() as u64,
                 Some("Download Contradiction Location".to_string()),
             )
             .await
@@ -374,14 +377,14 @@ impl GpuSynchronizer {
 
     /// Downloads the current worklist size from the GPU.
     pub async fn download_worklist_size(&self) -> Result<u32, GpuError> {
-        let count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf;
-        let staging_count_buffer = &self.buffers.worklist_buffers.staging_worklist_count_buf;
+        let count_buffer_gpu = &*self.buffers.worklist_buffers.worklist_count_buf;
+        let staging_count_buffer = &*self.buffers.worklist_buffers.staging_worklist_count_buf;
 
         let count_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            count_buffer_gpu,
-            staging_count_buffer,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(count_buffer_gpu),
+            Some(staging_count_buffer),
             std::mem::size_of::<u32>() as u64,
             Some("Download Worklist Count".to_string()),
         )
@@ -492,21 +495,30 @@ impl GpuSynchronizer {
         Ok(results.min_entropy_info)
     }
 
-    /// Resets the minimum entropy buffer on the GPU.
-    pub fn reset_min_entropy_buffer(&self) -> Result<(), GpuError> {
-        // let mut encoder = self // Encoder not needed, write_buffer used directly
-        //     .device
-        //     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        //         label: Some("Reset Min Entropy"),
-        //     });
-        // Reset to [f32::MAX.to_bits(), u32::MAX]
+    // Add a helper method to create the initial data buffer once
+    fn get_or_create_min_entropy_init_buffer(&self) -> wgpu::Buffer {
         let reset_data = [f32::MAX.to_bits(), u32::MAX];
-        self.queue.write_buffer(
-            &self.buffers.entropy_buffers.min_entropy_info_buf, // Use entropy_buffers
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Min Entropy Reset Init Buffer"),
+                contents: bytemuck::cast_slice(&reset_data),
+                usage: wgpu::BufferUsages::COPY_SRC,
+            })
+    }
+
+    /// Resets the minimum entropy buffer on the GPU using a command encoder.
+    pub fn reset_min_entropy_buffer_in_encoder(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<(), GpuError> {
+        let init_buffer = self.get_or_create_min_entropy_init_buffer();
+        encoder.copy_buffer_to_buffer(
+            &init_buffer,
             0,
-            bytemuck::cast_slice(&reset_data),
+            &self.buffers.entropy_buffers.min_entropy_info_buf,
+            0,
+            self.buffers.entropy_buffers.min_entropy_info_buf.size(),
         );
-        // No need to submit here, can be batched
         Ok(())
     }
 
@@ -564,16 +576,11 @@ impl GpuSynchronizer {
 
     /// Updates the worklist size parameter in the propagation params uniform buffer.
     pub fn update_params_worklist_size(&self, worklist_size: u32) -> Result<(), GpuError> {
-        let current_params = GpuParamsUniform {
-            worklist_size,
-            ..GpuParamsUniform::default()
-        };
-
-        // Create a new buffer with the updated params and upload to GPU
+        // Only overwrite the worklist_size field so the rest of the params stay intact
         self.queue.write_buffer(
             &self.buffers.params_uniform_buf,
-            0,
-            bytemuck::cast_slice(&[current_params]),
+            std::mem::offset_of!(GpuParamsUniform, worklist_size) as u64,
+            bytemuck::bytes_of(&worklist_size),
         );
 
         Ok(())
@@ -631,14 +638,14 @@ impl GpuSynchronizer {
 
     /// Checks if a contradiction has occurred by downloading the contradiction flag.
     pub async fn check_for_contradiction(&self) -> Result<bool, GpuError> {
-        let flag_buffer_gpu = &self.buffers.contradiction_flag_buf;
-        let flag_buffer_staging = &self.buffers.staging_contradiction_flag_buf;
+        let flag_buffer_gpu = &*self.buffers.contradiction_flag_buf;
+        let flag_buffer_staging = &*self.buffers.staging_contradiction_flag_buf;
 
         let flag_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            flag_buffer_gpu,
-            flag_buffer_staging,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(flag_buffer_gpu),
+            Some(flag_buffer_staging),
             std::mem::size_of::<u32>() as u64,
             Some("Check Contradiction Flag".to_string()),
         )
@@ -652,8 +659,8 @@ impl GpuSynchronizer {
 
     /// Downloads the location of the first contradiction, if one occurred.
     pub async fn download_contradiction_location(&self) -> Result<Option<u32>, GpuError> {
-        let loc_buffer_gpu = &self.buffers.contradiction_location_buf;
-        let loc_buffer_staging = &self.buffers.staging_contradiction_location_buf;
+        let loc_buffer_gpu = &*self.buffers.contradiction_location_buf;
+        let loc_buffer_staging = &*self.buffers.staging_contradiction_location_buf;
 
         // First, check the flag
         if !self.check_for_contradiction().await? {
@@ -662,11 +669,11 @@ impl GpuSynchronizer {
 
         // If flag is set, download the location
         let loc_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            loc_buffer_gpu,
-            loc_buffer_staging,
-            3 * std::mem::size_of::<u32>() as u64,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(loc_buffer_gpu),
+            Some(loc_buffer_staging),
+            std::mem::size_of::<u32>() as u64,
             Some("Download Contradiction Location".to_string()),
         )
         .await
@@ -679,14 +686,14 @@ impl GpuSynchronizer {
 
     /// Downloads the current worklist count.
     pub async fn download_worklist_count(&self) -> Result<u32, GpuError> {
-        let count_buffer_gpu = &self.buffers.worklist_buffers.worklist_count_buf;
-        let staging_count_buffer = &self.buffers.worklist_buffers.staging_worklist_count_buf;
+        let count_buffer_gpu = &*self.buffers.worklist_buffers.worklist_count_buf;
+        let staging_count_buffer = &*self.buffers.worklist_buffers.staging_worklist_count_buf;
 
         let count_data = crate::buffers::download_buffer_data::<u32>(
-            Some(self.device.clone()),
-            Some(self.queue.clone()),
-            count_buffer_gpu,
-            staging_count_buffer,
+            Some(&self.device),
+            Some(&self.queue),
+            Some(count_buffer_gpu),
+            Some(staging_count_buffer),
             std::mem::size_of::<u32>() as u64,
             Some("Download Worklist Count".to_string()),
         )
@@ -804,13 +811,15 @@ impl GpuSynchronizer {
         });
 
         // Wait for the mapping to complete
-        let _ = self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         // Check the mapping status
         match pollster::block_on(receiver) {
             Ok(Ok(())) => {
                 // Successfully mapped, copy data
-                let mapped_range = buffer_slice.get_mapped_range();
+                let mapped_range = buffer_slice
+                    .get_mapped_range()
+                    .map_err(|e| GpuError::BufferMapping(e.to_string()))?;
                 let data = bytemuck::cast_slice(&mapped_range).to_vec();
                 drop(mapped_range);
                 staging_buffer.unmap();
@@ -861,7 +870,7 @@ impl GpuSynchronizer {
         self.queue.write_buffer(buffer, offset, data_bytes);
 
         // Ensure the write is processed
-        let _ = self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         Ok(())
     }
@@ -870,32 +879,35 @@ impl GpuSynchronizer {
     pub fn upload_rules(&self, rules: &AdjacencyRules) -> Result<(), GpuError> {
         trace!("Uploading adjacency rules to GPU");
 
-        let num_tiles = rules.num_tiles();
-        let _num_axes = rules.num_axes();
-
-        // Prepare weighted rules data for the buffer
-        let mut weighted_rules_data = Vec::new();
-        for ((axis, tile1, tile2), weight) in rules.get_weighted_rules_map() {
-            // Only include rules with non-default weights
-            if *weight != 1.0 {
-                let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
-                weighted_rules_data.push(rule_idx as u32);
-                weighted_rules_data.push(weight.to_bits()); // Store f32 weight as u32 bits
-            }
+        // The rule buffers are sized for the rule set they were created with.
+        if rules.num_tiles() != self.buffers.num_tiles || rules.num_axes() != self.buffers.num_axes {
+            warn!(
+                "Skipping rule upload: rules have {} tiles / {} axes but GPU buffers expect {} / {}",
+                rules.num_tiles(),
+                rules.num_axes(),
+                self.buffers.num_tiles,
+                self.buffers.num_axes
+            );
+            return Ok(());
         }
 
-        // If no specific weights are found, add a dummy entry
-        if weighted_rules_data.is_empty() {
-            weighted_rules_data.push(0); // Dummy index
-            weighted_rules_data.push(1.0f32.to_bits()); // Dummy weight (1.0)
-        }
-
-        // Upload the data to the GPU buffer
+        let adjacency_bits = RuleBuffers::pack_adjacency_rules(rules);
         self.queue.write_buffer(
             &self.buffers.rule_buffers.rules_buf,
             0,
-            bytemuck::cast_slice(&weighted_rules_data),
+            bytemuck::cast_slice(&adjacency_bits),
         );
+
+        let weighted_rules_data = RuleBuffers::pack_rule_weights(rules);
+        if weighted_rules_data.len() as u64 * std::mem::size_of::<u32>() as u64
+            <= self.buffers.rule_buffers.rule_weights_buf.size()
+        {
+            self.queue.write_buffer(
+                &self.buffers.rule_buffers.rule_weights_buf,
+                0,
+                bytemuck::cast_slice(&weighted_rules_data),
+            );
+        }
 
         Ok(())
     }

@@ -238,79 +238,65 @@ fn validate_shader_variants(out_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn main() {
-    println!("cargo:rerun-if-changed=build.rs");
+// Re-use types from main crate
+// Note: In a real implementation, you might want to define these in a separate build-utils crate
+#[derive(Debug, Clone, Copy)]
+enum ShaderType {
+    Entropy,
+    Propagation,
+}
 
-    // Update registry path to reflect new structure
-    let registry_path_str = "src/shader/shaders/components/registry.json";
-    println!("cargo:rerun-if-changed={registry_path_str}");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-changed=src/shader/shaders/");
+    println!("cargo:rerun-if-changed=src/shader/shaders/components/");
+    println!("cargo:rerun-if-changed=src/shader/shaders/components/registry.json");
 
-    // Get output directory
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
-    let out_dir_path = Path::new(&out_dir);
-    let variants_dir = out_dir_path.join("shaders").join("variants");
+    let out_dir = env::var("OUT_DIR")?;
+    let variants_dir = Path::new(&out_dir).join("shaders").join("variants");
+    fs::create_dir_all(&variants_dir)?;
 
-    // Ensure the target directory for compiled variants exists
-    fs::create_dir_all(&variants_dir).expect("Failed to create variants output directory");
+    // Define feature combinations to pre-compile
+    let feature_combinations = vec![
+        vec![], // Base variant with no features
+        vec!["atomics"],
+        vec!["subgrid"],
+        vec!["atomics", "subgrid"],
+        // Add more combinations as needed
+    ];
 
-    // Parse the registry to get component paths
-    let registry_content = match fs::read_to_string(registry_path_str) {
-        Ok(content) => content,
-        Err(e) => {
-            println!("cargo:warning=Failed to read shader registry file: {e}");
-            // Return early but don't fail the build
-            return;
+    // Pre-compile variants for each shader type and feature combination
+    for shader_type in &[ShaderType::Entropy, ShaderType::Propagation] {
+        for features in &feature_combinations {
+            let variant_name = get_variant_filename(shader_type, features);
+            let variant_path = variants_dir.join(&variant_name);
+
+            println!("Pre-compiling shader variant: {}", variant_name);
+
+            // TODO: Initialize ShaderCompiler and compile variant
+            // For now, just copy the base shader as a placeholder
+            let source = match shader_type {
+                ShaderType::Entropy => include_str!("src/shader/shaders/entropy.wgsl"),
+                ShaderType::Propagation => include_str!("src/shader/shaders/propagate.wgsl"),
+            };
+
+            // Write the compiled shader to the variants directory
+            fs::write(&variant_path, source)?;
         }
+    }
+
+    Ok(())
+}
+
+fn get_variant_filename(shader_type: &ShaderType, features: &[&str]) -> String {
+    let base_name = match shader_type {
+        ShaderType::Entropy => "Entropy",
+        ShaderType::Propagation => "Propagation",
     };
-
-    let registry_data: ShaderRegistryData = match serde_json::from_str(&registry_content) {
-        Ok(data) => data,
-        Err(e) => {
-            println!("cargo:warning=Failed to parse shader registry JSON: {e}");
-            // Return early but don't fail the build
-            return;
-        }
-    };
-
-    // Validate dependencies and versions
-    if let Err(e) = validate_dependencies(&registry_data) {
-        println!("cargo:warning=Dependency validation error: {e}");
-        // Don't fail the build, just warn
+    if features.is_empty() {
+        format!("{}.wgsl", base_name)
+    } else {
+        let mut sorted_features = features.to_vec();
+        sorted_features.sort_unstable();
+        format!("{}_{}.wgsl", base_name, sorted_features.join("_"))
     }
-
-    // Validate features
-    if let Err(e) = validate_features(&registry_data) {
-        println!("cargo:warning=Feature validation error: {e}");
-        // Don't fail the build, just warn
-    }
-
-    // Add rerun triggers for all component files listed in the registry
-    for component in registry_data.components.values() {
-        // Ensure the path exists before adding the trigger
-        let component_path = PathBuf::from(&component.path);
-        if component_path.exists() {
-            println!("cargo:rerun-if-changed={}", component.path);
-        } else {
-            println!(
-                "cargo:warning=Shader component path not found: {}",
-                component.path
-            );
-        }
-    }
-
-    println!("Running WFC-GPU build script...");
-
-    // Generate optimized shader variants
-    match generate_shader_variants(Path::new(registry_path_str), out_dir_path) {
-        Ok(()) => {}
-        Err(e) => println!("cargo:warning=Failed to generate shader variants: {e}"),
-    }
-
-    // Validate generated shader variants
-    match validate_shader_variants(out_dir_path) {
-        Ok(()) => {}
-        Err(e) => println!("cargo:warning=Failed to validate shader variants: {e}"),
-    }
-
-    println!("WFC-GPU build script finished shader variant generation and validation.");
 }

@@ -1,0 +1,42 @@
+name: wave_forge
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    image: wave-forge-dev:latest
+    container_name: wave_forge
+    hostname: wave-forge
+    ports:
+      # Host 2239 -> container sshd :22. Port allocation lives in
+      # E:\Programmering\Code\DEVCONTAINER_TEMPLATE.md — claim there first.
+      - "2239:22"
+    volumes:
+      # Repo root (includes any gitignored .env via the mount, never the image).
+      - ..:/workspaces/wave_forge:cached
+      # Host pubkeys installed by the entrypoint at startup — edit
+      # %USERPROFILE%\.ssh\authorized_keys and restart, no rebuild needed.
+      - ${USERPROFILE}/.ssh/authorized_keys:/tmp/host_authorized_keys:ro
+      # Persist Claude Code OAuth credentials across rebuilds.
+      - claude-config:/home/dev/.claude
+      # Stable sshd host-key fingerprint across down/up cycles.
+      - ssh-host-keys:/etc/ssh/keys
+      # PAT credential store (and any other ~/.ssh state) survives recreates.
+      - ssh-config:/home/dev/.ssh
+      # CARGO_HOME (registry + git caches, cargo-installed binaries) survives
+      # recreates (Zed's dev container flow recreates on first attach).
+      - cargo-home:/home/dev/.cargo
+      # Linux build output on a named volume: masks the (huge, Windows) target/
+      # from the bind mount — wrong-platform artifacts and a slow bind mount —
+      # and survives recreates.
+      - target:/workspaces/wave_forge/target
+    restart: unless-stopped
+    init: true
+
+volumes:
+  claude-config:
+  ssh-host-keys:
+  ssh-config:
+  cargo-home:
+  target:

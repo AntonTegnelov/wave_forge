@@ -1,79 +1,109 @@
-// Integration tests for wfc-gpu crate
+// Integration tests for wfc-gpu. They run on any Vulkan, Metal or DX12 adapter, including
+// Mesa's software llvmpipe, so they also work in containers without a GPU.
 
-// Main integration test modules organized as inline modules
-
-#[test]
-fn integration_test_example() {
-    // This is a placeholder for integration tests
-    // Integration tests test the library from the outside, like a user would
-    assert!(true);
-}
-
-// Test modules organized by component
-
-#[cfg(test)]
-mod algorithm_tests {
-    #[test]
-    fn test_full_wfc_execution() {
-        // Test full algorithm execution with various configurations
-        assert!(true);
-    }
-}
-
-#[cfg(test)]
-mod buffer_tests {
-    #[test]
-    fn test_buffer_lifecycle() {
-        // Test buffer creation, usage, and cleanup
-        assert!(true);
-    }
-}
-
-#[cfg(test)]
-mod shader_tests {
-    #[test]
-    fn test_shader_compilation() {
-        // Test shader compilation and validation
-        assert!(true);
-    }
-}
-
-#[cfg(test)]
-mod propagation_tests {
-    #[test]
-    fn test_constraint_propagation() {
-        // Test constraint propagation strategies
-        assert!(true);
-    }
-}
-
-#[cfg(test)]
-mod error_recovery_tests {
-    #[test]
-    fn test_error_recovery_mechanisms() {
-        // Test error recovery mechanisms
-        assert!(true);
-    }
-}
-
-// You can define more test functions here, or use submodules
-// mod submodule_tests;
-
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wfc_core::entropy::EntropyHeuristicType;
 use wfc_core::grid::PossibilityGrid;
-use wfc_core::{BoundaryCondition, ProgressInfo};
+use wfc_core::BoundaryCondition;
 use wfc_gpu::gpu::accelerator::GpuAccelerator;
 use wfc_rules::{AdjacencyRules, TileId, TileSet, Transformation};
-use wgpu::util::DeviceExt;
+
+/// Constraints set before the run must shape the result even though constrained cells are
+/// never selected for collapse. Regression test for docs/status.md A-8: a cell pinned to one
+/// tile has zero entropy, so it used to be skipped and its neighbours ignored it.
+#[tokio::test]
+async fn pre_constrained_cells_propagate_before_first_collapse() -> anyhow::Result<()> {
+    // Three tiles that may only touch themselves: pinning a single cell forces the whole grid,
+    // so a correct solver finishes without collapsing anything itself.
+    let num_tiles = 3;
+    let tileset = TileSet::new(
+        vec![1.0; num_tiles],
+        vec![vec![Transformation::Identity]; num_tiles],
+    )?;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).map(move |tile| (axis, tile, tile)))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(tileset.num_transformed_tiles(), 6, tuples);
+
+    let mut grid = PossibilityGrid::new(4, 4, 4, num_tiles);
+    grid.collapse(1, 2, 3, 2).map_err(anyhow::Error::msg)?;
+
+    let mut accelerator = GpuAccelerator::new(
+        &grid,
+        &rules,
+        BoundaryCondition::Finite,
+        EntropyHeuristicType::Count,
+        None,
+    )
+    .await?;
+
+    // The callback runs once per collapse; counting calls tells us whether the solver had to
+    // pick tiles itself, independent of which tiles it would have picked.
+    let collapses = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&collapses);
+    let result = accelerator
+        .run_with_callback(
+            &grid,
+            &rules,
+            1000,
+            move |_| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(true)
+            },
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+
+    assert_eq!(collapses.load(Ordering::SeqCst), 0, "solver collapsed cells that were already forced");
+    for z in 0..result.depth {
+        for y in 0..result.height {
+            for x in 0..result.width {
+                let tiles: Vec<usize> = result.get(x, y, z).expect("cell in bounds").iter_ones().collect();
+                assert_eq!(tiles, vec![2], "cell ({x}, {y}, {z})");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The entropy pass must evaluate every cell, not just those in the first workgroup of each
+/// dispatch. Regression test: the host once dispatched with a larger workgroup size than the
+/// shader declares, so cells beyond the first 8 columns and rows were never selected.
+#[tokio::test]
+async fn grids_larger_than_one_workgroup_fully_collapse() -> anyhow::Result<()> {
+    let num_tiles = 2;
+    let tileset = TileSet::new(
+        vec![1.0; num_tiles],
+        vec![vec![Transformation::Identity]; num_tiles],
+    )?;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).flat_map(move |a| (0..num_tiles).map(move |b| (axis, a, b))))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(tileset.num_transformed_tiles(), 6, tuples);
+    let grid = PossibilityGrid::new(20, 18, 2, num_tiles);
+
+    let mut accelerator = GpuAccelerator::new(
+        &grid,
+        &rules,
+        BoundaryCondition::Finite,
+        EntropyHeuristicType::Count,
+        None,
+    )
+    .await?;
+    let result = accelerator
+        .run_with_callback(&grid, &rules, 20 * 18 * 2 * 2, |_| Ok(true), None)
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+    assert_eq!(result.is_fully_collapsed(), Ok(true));
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_basic_3d_generation() -> anyhow::Result<()> {
     // Test configuration
-    let grid_size = (16, 16, 16); // Small enough for quick testing, large enough to be meaningful
+    let grid_size = (8, 8, 8); // Small enough for quick testing on software adapters
     let num_tiles = 2; // Simple binary tiles (e.g., "filled" and "empty")
 
     println!("Starting test_basic_3d_generation");
@@ -169,81 +199,80 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
         .run_with_callback(
             &mut grid,
             &rules,
-            1000,                 // max iterations
+            (grid_size.0 * grid_size.1 * grid_size.2 * 2) as u64, // enough iterations to collapse every cell
             |_progress| Ok(true), // Continue running
             None,                 // No shutdown signal
         )
         .await;
     println!("WFC algorithm completed with result: {:?}", result);
 
-    if let Ok(final_grid) = result {
-        println!("\nGrid state after collapse:");
-        println!(
-            "Number of superpositions remaining: {}",
-            final_grid
-                .data()
-                .iter()
-                .filter(|bits| bits.count_ones() > 1)
-                .count()
-        );
-        println!("Is fully collapsed: {:?}", final_grid.is_fully_collapsed());
+    let final_grid = result.map_err(|e| anyhow::anyhow!("WFC algorithm failed: {e}"))?;
+    println!("\nGrid state after collapse:");
+    println!(
+        "Number of superpositions remaining: {}",
+        final_grid
+            .data()
+            .iter()
+            .filter(|bits| bits.count_ones() > 1)
+            .count()
+    );
+    println!("Is fully collapsed: {:?}", final_grid.is_fully_collapsed());
 
-        // Print a sample of the grid state
-        let sample_x = std::cmp::min(3, final_grid.width);
-        let sample_y = std::cmp::min(3, final_grid.height);
-        let sample_z = std::cmp::min(3, final_grid.depth);
+    // Print a sample of the grid state
+    let sample_x = std::cmp::min(3, final_grid.width);
+    let sample_y = std::cmp::min(3, final_grid.height);
+    let sample_z = std::cmp::min(3, final_grid.depth);
 
-        println!(
-            "\nSample of grid state ({}x{}x{}):",
-            sample_x, sample_y, sample_z
-        );
-        for x in 0..sample_x {
-            for y in 0..sample_y {
-                for z in 0..sample_z {
-                    if let Some(cell_bits) = final_grid.get(x, y, z) {
-                        println!("Cell ({}, {}, {}): {:?}", x, y, z, cell_bits);
-                    }
+    println!(
+        "\nSample of grid state ({}x{}x{}):",
+        sample_x, sample_y, sample_z
+    );
+    for x in 0..sample_x {
+        for y in 0..sample_y {
+            for z in 0..sample_z {
+                if let Some(cell_bits) = final_grid.get(x, y, z) {
+                    println!("Cell ({}, {}, {}): {:?}", x, y, z, cell_bits);
                 }
             }
         }
-
-        // Verify the result
-        let violations = verify_adjacency_rules(&final_grid, &rules);
-        println!("Found {} adjacency rule violations", violations);
-
-        let total_cells = final_grid.width * final_grid.height * final_grid.depth;
-        let mut collapsed_count = 0;
-        for z in 0..final_grid.depth {
-            for y in 0..final_grid.height {
-                for x in 0..final_grid.width {
-                    if let Some(cell) = final_grid.get(x, y, z) {
-                        if cell.count_ones() == 1 {
-                            collapsed_count += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        println!(
-            "Collapsed {} out of {} cells ({:.1}%)",
-            collapsed_count,
-            total_cells,
-            (collapsed_count as f64 / total_cells as f64) * 100.0
-        );
-
-        assert!(
-            violations == 0,
-            "Found {} adjacency rule violations",
-            violations
-        );
-        assert!(
-            collapsed_count == total_cells,
-            "Not all cells collapsed: {} out of {} cells collapsed",
-            collapsed_count,
-            total_cells
-        );
     }
+
+    // Verify the result
+    let violations = verify_adjacency_rules(&final_grid, &rules);
+    println!("Found {} adjacency rule violations", violations);
+
+    let total_cells = final_grid.width * final_grid.height * final_grid.depth;
+    let mut collapsed_count = 0;
+    for z in 0..final_grid.depth {
+        for y in 0..final_grid.height {
+            for x in 0..final_grid.width {
+                if let Some(cell) = final_grid.get(x, y, z) {
+                    if cell.count_ones() == 1 {
+                        collapsed_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "Collapsed {} out of {} cells ({:.1}%)",
+        collapsed_count,
+        total_cells,
+        (collapsed_count as f64 / total_cells as f64) * 100.0
+    );
+
+    assert!(
+        violations == 0,
+        "Found {} adjacency rule violations",
+        violations
+    );
+    assert!(
+        collapsed_count == total_cells,
+        "Not all cells collapsed: {} out of {} cells collapsed",
+        collapsed_count,
+        total_cells
+    );
 
     Ok(())
 }
