@@ -71,6 +71,11 @@ pub struct HorizontalFace {
     pub connector: u32,
     /// Mirror symmetry of the profile.
     pub symmetry: Symmetry,
+    /// Whether someone can walk across this face (marian42's `Walkable`).
+    pub walkable: bool,
+    /// Whether the face across must be walkable too (marian42's `EnforceWalkableNeighbor`), so a
+    /// path through this face can never end at a wall or in mid-air.
+    pub enforce_walkable_neighbor: bool,
 }
 
 impl HorizontalFace {
@@ -80,6 +85,8 @@ impl HorizontalFace {
         Self {
             connector,
             symmetry: Symmetry::Symmetric,
+            walkable: false,
+            enforce_walkable_neighbor: false,
         }
     }
 
@@ -89,6 +96,8 @@ impl HorizontalFace {
         Self {
             connector,
             symmetry: Symmetry::Plain,
+            walkable: false,
+            enforce_walkable_neighbor: false,
         }
     }
 
@@ -98,7 +107,24 @@ impl HorizontalFace {
         Self {
             connector,
             symmetry: Symmetry::Flipped,
+            walkable: false,
+            enforce_walkable_neighbor: false,
         }
+    }
+
+    /// Marks the face walkable.
+    #[must_use]
+    pub const fn walkable(mut self) -> Self {
+        self.walkable = true;
+        self
+    }
+
+    /// Marks the face walkable and requires the face across to be walkable as well.
+    #[must_use]
+    pub const fn path(mut self) -> Self {
+        self.walkable = true;
+        self.enforce_walkable_neighbor = true;
+        self
     }
 
     fn fits(self, other: Self) -> bool {
@@ -383,7 +409,10 @@ impl ModuleSet {
     /// Panics if `a == b`; equal connectors already fit according to their symmetry.
     #[must_use]
     pub fn connect(mut self, a: u32, b: u32) -> Self {
-        assert_ne!(a, b, "connector {a} already fits itself; connect() pairs different connectors");
+        assert_ne!(
+            a, b,
+            "connector {a} already fits itself; connect() pairs different connectors"
+        );
         self.compatible.insert((a, b));
         self.compatible.insert((b, a));
         self
@@ -516,8 +545,22 @@ impl ModuleSet {
     ) -> bool {
         if !faces_fit(
             variant_face(&self.prototypes, a, axis),
-            variant_face(&self.prototypes, b, opposite(axis)), &self.compatible) {
+            variant_face(&self.prototypes, b, opposite(axis)),
+            &self.compatible,
+        ) {
             return false;
+        }
+        if let (Face::Horizontal(here), Face::Horizontal(there)) = (
+            variant_face(&self.prototypes, a, axis),
+            variant_face(&self.prototypes, b, opposite(axis)),
+        ) {
+            // Walkability is part of the rules, not a later check: a path may not run into a face
+            // nobody can walk through.
+            if (here.enforce_walkable_neighbor && !there.walkable)
+                || (there.enforce_walkable_neighbor && !here.walkable)
+            {
+                return false;
+            }
         }
         let excludes = |from: ModuleVariant, to: ModuleVariant, direction: usize| {
             let local_axis = rotate_axis(direction, (4 - from.rotation) % 4);
@@ -746,14 +789,66 @@ mod tests {
         let facade = uniform("facade", WALL);
         let air = uniform("air", OPEN);
         let ramp = uniform("ramp", RAMP);
-        let compiled = ModuleSet::new().connect(WALL, OPEN).with(facade).with(air).with(ramp).compile().unwrap();
-        let [facade, air, ramp] = ["facade", "air", "ramp"].map(|name| compiled.variants_of(name)[0]);
+        let compiled = ModuleSet::new()
+            .connect(WALL, OPEN)
+            .with(facade)
+            .with(air)
+            .with(ramp)
+            .compile()
+            .unwrap();
+        let [facade, air, ramp] =
+            ["facade", "air", "ramp"].map(|name| compiled.variants_of(name)[0]);
         for axis in 0..NUM_AXES {
             assert!(compiled.rules.check(facade, air, axis));
             assert!(compiled.rules.check(air, facade, axis));
-            assert!(compiled.rules.check(facade, facade, axis), "equal connectors still fit");
+            assert!(
+                compiled.rules.check(facade, facade, axis),
+                "equal connectors still fit"
+            );
             assert!(!compiled.rules.check(facade, ramp, axis));
         }
+    }
+
+    #[test]
+    fn paths_only_meet_walkable_faces() {
+        let path = ModulePrototype::new(
+            "path",
+            [HorizontalFace::symmetric(OPEN).path(); 4],
+            VerticalFace::invariant(OPEN),
+            VerticalFace::invariant(OPEN),
+        );
+        let floor = ModulePrototype::new(
+            "floor",
+            [HorizontalFace::symmetric(OPEN).walkable(); 4],
+            VerticalFace::invariant(OPEN),
+            VerticalFace::invariant(OPEN),
+        );
+        let ledge = uniform("ledge", OPEN);
+        let compiled = ModuleSet::new()
+            .with(path)
+            .with(floor)
+            .with(ledge)
+            .compile()
+            .unwrap();
+        let [path, floor, ledge] =
+            ["path", "floor", "ledge"].map(|name| compiled.variants_of(name)[0]);
+        assert!(compiled.rules.check(path, path, POS_X));
+        assert!(
+            compiled.rules.check(path, floor, POS_X),
+            "walkable faces accept paths"
+        );
+        assert!(
+            !compiled.rules.check(path, ledge, POS_X),
+            "a path cannot run into a non-walkable face"
+        );
+        assert!(
+            !compiled.rules.check(ledge, path, NEG_X),
+            "in either direction"
+        );
+        assert!(
+            compiled.rules.check(floor, ledge, POS_X),
+            "walkable faces without enforcement are unconstrained"
+        );
     }
 
     #[test]
