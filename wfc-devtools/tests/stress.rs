@@ -47,6 +47,7 @@ async fn city_run(name: &str, width: usize, height: usize, depth: usize) {
     let grid = TileGrid::from_possibilities(&solved.grid).expect("every cell collapsed to one tile");
     let violations = adjacency_violations(&grid, &m.rules, BoundaryCondition::Finite);
     assert!(violations.is_empty(), "{} adjacency violations, first: {:?}", violations.len(), violations.first());
+    eprintln!("stress: {name} unreachable_walkable_cells={}", city::unreachable_walkable_cells(&grid, &city).len());
     let path = common::artifact_dir().join(format!("stress_{name}.png"));
     render::render_voxel_isometric(&grid, &city.voxels, 2).save(&path).expect("write PNG");
     eprintln!("rendered {}", path.display());

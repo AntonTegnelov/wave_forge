@@ -1,7 +1,7 @@
 //! End to end: a small marian42-style city generated on the GPU, checked for structural
 //! invariants and rendered as voxel models plus a street-level map.
 //!
-//! This is the realistic workload next to the toy fixtures: 56 rotated module variants from
+//! This is the realistic workload next to the toy fixtures: 52 rotated module variants from
 //! connectors (several possibility words per cell), weights, and structure spanning many cells.
 
 mod common;
@@ -32,7 +32,8 @@ async fn small_city_is_structurally_sound_and_renders() {
     let grid = TileGrid::from_possibilities(&solved.grid).expect("every cell collapsed to one tile");
 
     let artifacts = common::artifact_dir();
-    let street_style = Style { palette: &[], empty_tiles: &[city.air], cell_px: 12 };
+    let map_palette = city.map_palette();
+    let street_style = Style { palette: &map_palette, empty_tiles: &[city.air], cell_px: 12 };
     for (name, image) in [
         ("city_isometric.png", render::render_voxel_isometric(&grid, &city.voxels, 3)),
         ("city_street_level.png", render::render_layer(&grid, 0, &street_style)),
@@ -75,6 +76,12 @@ async fn small_city_is_structurally_sound_and_renders() {
             }
         }
     }
+
+    // Local rules guarantee no path ends at a wall or in mid-air, but not that the whole network
+    // connects to the street (a global constraint is planned for #7), so this is reported, not
+    // asserted.
+    let unreachable = city::unreachable_walkable_cells(&grid, &city);
+    eprintln!("walkable cells unreachable from the street: {} {unreachable:?}", unreachable.len());
 
     let mut histogram: BTreeMap<&str, usize> = BTreeMap::new();
     for z in 0..depth {
