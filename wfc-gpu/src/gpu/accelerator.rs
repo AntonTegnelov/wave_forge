@@ -122,6 +122,9 @@ pub struct GpuAccelerator {
     instance: Arc<RwLock<AcceleratorInstance>>,
     /// Relative weight of each tile when collapsing a cell; uniform when `None`.
     tile_weights: Option<Arc<[f32]>>,
+    /// Whole-grid constraint enforced on the CPU before every observation; see
+    /// [`GpuAccelerator::with_global_constraint`].
+    global_constraint: Option<Arc<dyn wfc_core::constraint::GlobalConstraint>>,
 }
 
 impl GpuAccelerator {
@@ -288,6 +291,7 @@ impl GpuAccelerator {
         let accelerator = Self {
             instance: Arc::new(RwLock::new(instance)),
             tile_weights: None,
+            global_constraint: None,
         };
 
         Ok(accelerator)
@@ -490,12 +494,145 @@ impl GpuAccelerator {
                 .map_err(|e| WfcError::other(e.to_string()))?;
         }
         let total_cells = grid_definition.total_cells();
-        let mut collapsed_cells = 0;
+        let mut collapsed_cells = 0usize;
         let mut iterations = 0;
+
+        // Backtracking (docs/status.md A-9). A contradiction means an earlier choice was wrong, not
+        // that the grid is unsolvable, so the run keeps the grid state before every collapse and
+        // undoes choices instead of giving up. As in marian42's generator, each consecutive failure
+        // undoes twice as many steps; unlike his, the choice that led into the failure is then
+        // forbidden, so the search cannot repeat it and always makes progress.
+        const MAX_HISTORY: usize = 2048;
+        const MAX_UNDO_STEPS: usize = 64;
+        const MAX_BACKTRACKS: usize = 50_000;
+        struct Choice {
+            grid: PossibilityGrid,
+            cell: (usize, usize, usize),
+            tile: usize,
+        }
+        let mut history: std::collections::VecDeque<Choice> = std::collections::VecDeque::new();
+        let mut undo_steps = 1usize;
+        let mut backtracks = 0usize;
+        let mut failure: Option<String> = None;
 
         // Main WFC loop
         while iterations < max_iterations {
             let iteration_span = info_span!(parent: &run_span, "iteration", iteration = iterations);
+
+            if let Some(reason) = failure.take() {
+                backtracks += 1;
+                if backtracks > MAX_BACKTRACKS {
+                    return Err(WfcError::other(format!(
+                        "Contradiction: gave up after {backtracks} backtracks; last failure: {reason}"
+                    )));
+                }
+                let backtrack_span =
+                    info_span!(parent: &iteration_span, "backtrack", undo_steps, backtracks);
+                let mut restored = None;
+                for _ in 0..undo_steps {
+                    match history.pop_back() {
+                        Some(choice) => restored = Some(choice),
+                        None => break,
+                    }
+                }
+                let Some(choice) = restored else {
+                    return Err(WfcError::other(format!(
+                        "Contradiction: no choices left to undo after {backtracks} backtracks; {reason}"
+                    )));
+                };
+                trace!("Backtracking {undo_steps} step(s) after: {reason}");
+                undo_steps = (undo_steps * 2).min(MAX_UNDO_STEPS);
+                collapsed_cells = collapsed_cells.saturating_sub(1);
+                current_grid = choice.grid;
+                let (bx, by, bz) = choice.cell;
+                let cell = current_grid.get_mut(bx, by, bz).expect("cell from history is in bounds");
+                cell.set(choice.tile, false);
+                if cell.count_ones() == 0 {
+                    // Every tile here has now been ruled out, so the mistake lies further back.
+                    failure = Some(format!("no tiles left at ({bx}, {by}, {bz})"));
+                    continue;
+                }
+
+                // The GPU still holds the contradiction from the failed attempt; clear it before
+                // propagating the restored state.
+                for reset in [
+                    synchronizer.reset_contradiction_flag(),
+                    synchronizer.reset_contradiction_location(),
+                    synchronizer.reset_worklist_count(),
+                ] {
+                    reset.map_err(|e| WfcError::other(e.to_string()))?;
+                }
+                backtrack_span
+                    .in_scope(|| synchronizer.upload_grid(&current_grid))
+                    .map_err(|e| WfcError::other(e.to_string()))?;
+                if let Err(e) = coordinator
+                    .coordinate_propagation(
+                        &propagator,
+                        &buffers,
+                        &device,
+                        &queue,
+                        vec![GridCoord { x: bx, y: by, z: bz }],
+                    )
+                    .instrument(backtrack_span.clone())
+                    .await
+                {
+                    failure = Some(e.to_string());
+                    continue;
+                }
+                current_grid = synchronizer
+                    .download_grid(&current_grid)
+                    .instrument(info_span!(parent: &backtrack_span, "download_grid"))
+                    .await
+                    .map_err(|e| WfcError::other(e.to_string()))?;
+                continue;
+            }
+
+            if let Some(constraint) = &self.global_constraint {
+                let mut constraint_failure = None;
+                loop {
+                    let changed = match info_span!(parent: &iteration_span, "global_constraint")
+                        .in_scope(|| constraint.apply(&mut current_grid))
+                    {
+                        Ok(changed) => changed,
+                        Err((x, y, z)) => {
+                            constraint_failure = Some(format!(
+                                "global constraint cannot be satisfied at ({x}, {y}, {z})"
+                            ));
+                            break;
+                        }
+                    };
+                    if changed.is_empty() {
+                        break;
+                    }
+                    info_span!(parent: &iteration_span, "upload_grid")
+                        .in_scope(|| synchronizer.upload_grid(&current_grid))
+                        .map_err(|e| WfcError::other(e.to_string()))?;
+                    let cells = changed.len();
+                    if let Err(e) = coordinator
+                        .coordinate_propagation(
+                            &propagator,
+                            &buffers,
+                            &device,
+                            &queue,
+                            changed.into_iter().map(|(x, y, z)| GridCoord { x, y, z }).collect(),
+                        )
+                        .instrument(info_span!(parent: &iteration_span, "constraint_propagation", cells))
+                        .await
+                    {
+                        constraint_failure = Some(e.to_string());
+                        break;
+                    }
+                    current_grid = synchronizer
+                        .download_grid(&current_grid)
+                        .instrument(info_span!(parent: &iteration_span, "download_grid"))
+                        .await
+                        .map_err(|e| WfcError::other(e.to_string()))?;
+                }
+                if let Some(reason) = constraint_failure {
+                    failure = Some(reason);
+                    continue;
+                }
+            }
 
             // Compute entropy on the GPU so the min-entropy buffer is current before selecting
             entropy_calculator
@@ -528,9 +665,9 @@ impl GpuAccelerator {
             let cell = current_grid.get_mut(x, y, z).unwrap();
             let possible_states = cell.iter_ones().collect::<Vec<_>>();
             if possible_states.is_empty() {
-                return Err(WfcError::other(
-                    "No possible states for selected cell".to_string(),
-                ));
+                // An earlier choice emptied this cell; undo instead of failing the run.
+                failure = Some(format!("no tiles left at ({x}, {y}, {z})"));
+                continue;
             }
 
             // Choose a remaining state, in proportion to its weight when weights are set
@@ -544,6 +681,17 @@ impl GpuAccelerator {
                 }
                 None => possible_states[rand::random_range(0..possible_states.len())],
             };
+
+            // Remember the state before the collapse so this choice can be undone.
+            if history.len() == MAX_HISTORY {
+                history.pop_front();
+            }
+            history.push_back(Choice {
+                grid: current_grid.clone(),
+                cell: (x, y, z),
+                tile: chosen_state,
+            });
+
             // Use the grid's collapse method directly
             current_grid.collapse(x, y, z, chosen_state).map_err(|e| {
                 WfcError::other(format!(
@@ -559,7 +707,7 @@ impl GpuAccelerator {
                 .map_err(|e| WfcError::other(e.to_string()))?;
 
             // Propagate constraints
-            coordinator
+            if let Err(e) = coordinator
                 .coordinate_propagation(
                     &propagator,
                     &buffers,
@@ -569,7 +717,10 @@ impl GpuAccelerator {
                 )
                 .instrument(info_span!(parent: &iteration_span, "propagate", x, y, z))
                 .await
-                .map_err(|e| WfcError::other(e.to_string()))?;
+            {
+                failure = Some(e.to_string());
+                continue;
+            }
 
             // Download the updated grid state
             current_grid = synchronizer
@@ -577,6 +728,9 @@ impl GpuAccelerator {
                 .instrument(info_span!(parent: &iteration_span, "download_grid"))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
+
+            // The collapse held, so the next failure starts undoing from one step again.
+            undo_steps = 1;
 
             // Call progress callback
             let progress = ProgressInfo {
@@ -599,7 +753,10 @@ impl GpuAccelerator {
             .is_fully_collapsed()
             .map_err(|e| WfcError::other(e.to_string()))?
         {
-            return Err(WfcError::other("Failed to fully collapse grid".to_string()));
+            return Err(WfcError::other(format!(
+                "Failed to fully collapse grid: {collapsed_cells} of {total_cells} cells after \
+                 {iterations} iterations (limit {max_iterations}) and {backtracks} backtracks"
+            )));
         }
 
         Ok(current_grid)
@@ -637,6 +794,21 @@ impl GpuAccelerator {
     }
 
     /// Configure the accelerator with a specific entropy heuristic
+    /// Enforces a constraint on the whole grid that adjacency rules cannot express, such as
+    /// connectivity. It runs on the CPU before every observation, on the grid as downloaded after
+    /// propagation; the cells it changes are uploaded and propagated until it changes nothing. If
+    /// it reports a violation, the run fails with a contradiction.
+    ///
+    /// This is a stopgap in the current run loop, which already moves the whole grid to the CPU
+    /// every iteration; the solver redesign (#7) has to keep the capability.
+    pub fn with_global_constraint(
+        &mut self,
+        constraint: Arc<dyn wfc_core::constraint::GlobalConstraint>,
+    ) -> &mut Self {
+        self.global_constraint = Some(constraint);
+        self
+    }
+
     /// Sets the relative weight of each tile used when collapsing a cell, typically
     /// `TileSet::weights`. Without weights every remaining tile is equally likely.
     ///
