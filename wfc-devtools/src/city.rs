@@ -103,15 +103,19 @@ pub fn module_set() -> ModuleSet {
     };
     let wall = H::symmetric(BUILDING);
 
+    // Weights apply to each rotated variant, so a prototype with four distinct rotations weighs four
+    // times its number in total. Air has one variant but fills most open cells, hence its large
+    // weight: with small weights, the ten walkway variants together outweighed air and tangled
+    // walkways filled the sky.
     ModuleSet::new()
         .connect(BUILDING, AIR)
         .connect(BUILDING, GROUND)
         .connect(DOOR, GROUND)
         .connect(BALCONY, AIR)
         // Open space.
-        .with(ModulePrototype::new("air", sides(AIR, AIR, AIR, AIR), V::invariant(OPEN), V::invariant(OPEN)).weight(2.0))
-        .with(street("grass", sides(GROUND, GROUND, GROUND, GROUND), OPEN).weight(1.0))
-        .with(street("plaza", sides(GROUND, GROUND, GROUND, GROUND), OPEN).weight(0.4))
+        .with(ModulePrototype::new("air", sides(AIR, AIR, AIR, AIR), V::invariant(OPEN), V::invariant(OPEN)).weight(24.0))
+        .with(street("grass", sides(GROUND, GROUND, GROUND, GROUND), OPEN).weight(3.0))
+        .with(street("plaza", sides(GROUND, GROUND, GROUND, GROUND), OPEN).weight(1.0))
         // Roads: ROAD faces must continue into another road, road sides are open ground.
         .with(street("road_straight", sides(ROAD, ROAD, GROUND, GROUND), OPEN).weight(2.0).tag("road"))
         .with(street("road_corner", sides(ROAD, GROUND, ROAD, GROUND), OPEN).weight(0.6).tag("road"))
@@ -120,17 +124,17 @@ pub fn module_set() -> ModuleSet {
         .with(street("road_end", sides(ROAD, GROUND, GROUND, GROUND), OPEN).weight(0.1).tag("road"))
         // Buildings: a street-level base, floors on top, and a roof above the last floor.
         .with(street("building_base", [wall; 4], SOLID).weight(1.5).tag("building"))
-        .with(street("building_door", [H::plain(DOOR), wall, wall, wall], SOLID).weight(0.5).tag("building"))
+        .with(street("building_door", [H::plain(DOOR), wall, wall, wall], SOLID).weight(0.25).tag("building"))
         .with(building("building_floor", [wall; 4]).weight(1.0))
-        .with(building("building_balcony", [H::plain(BALCONY), wall, wall, wall]).weight(0.3))
-        .with(building("building_walkway_door", [H::symmetric(WALKWAY), wall, wall, wall]).weight(0.15))
+        .with(building("building_balcony", [H::plain(BALCONY), wall, wall, wall]).weight(0.2))
+        .with(building("building_walkway_door", [H::symmetric(WALKWAY), wall, wall, wall]).weight(0.05))
         .with(above_building("roof_pyramid", sides(AIR, AIR, AIR, AIR)).weight(1.0))
         .with(above_building("roof_flat", sides(AIR, AIR, AIR, AIR)).weight(0.5))
-        .with(above_building("roof_terrace", sides(WALKWAY, AIR, AIR, AIR)).weight(0.15).tag("walkway"))
+        .with(above_building("roof_terrace", sides(WALKWAY, AIR, AIR, AIR)).weight(0.05).tag("walkway"))
         // Walkways float above anything open and end at doors, terraces, landings or dead ends.
-        .with(floating("walkway_straight", sides(WALKWAY, WALKWAY, AIR, AIR)).weight(0.3))
-        .with(floating("walkway_corner", sides(WALKWAY, AIR, WALKWAY, AIR)).weight(0.1))
-        .with(floating("walkway_end", sides(WALKWAY, AIR, AIR, AIR)).weight(0.05))
+        .with(floating("walkway_straight", sides(WALKWAY, WALKWAY, AIR, AIR)).weight(0.4))
+        .with(floating("walkway_corner", sides(WALKWAY, AIR, WALKWAY, AIR)).weight(0.05))
+        .with(floating("walkway_end", sides(WALKWAY, AIR, AIR, AIR)).weight(0.02))
         // A stair climbs towards +x; the landing above it continues as a walkway the same way.
         .with(
             ModulePrototype::new("stair", sides(GROUND, GROUND, GROUND, GROUND), V::oriented(STAIR, 0), V::invariant(BEDROCK))
