@@ -95,8 +95,6 @@ Wave function collapse repeats three steps until every cell has one tile or a co
 
 > **Misaligned today (A-7):** ties are broken by lowest cell index (scanline order), collapse ignores weights, and the "weighted count" heuristic silently falls back to plain count.
 
-> **Misaligned today (A-8):** cells that are pre-constrained before the run are not propagated before the first observation, so external constraints (a Phase 2 requirement) do not take effect until a neighbour happens to be collapsed.
-
 ### 4.2 Contradictions
 
 A contradiction (a cell with no possible tiles) is normal for WFC, not an exceptional error. Within a bounded region the solver recovers by **bounded backtracking** or, failing that, **restarting the region with a derived seed**. Only when a budget is exhausted is failure reported to the caller.
@@ -158,18 +156,18 @@ Nothing of this exists yet, and it should not be built before Phase 1 is solid. 
 ## 9. Errors and observability
 
 - Each crate exposes a small typed error enum (`thiserror`) describing what the *caller* can act on. **Why:** callers need "retry / give up / configuration is wrong", not a generic framework.
-- Instrumentation uses structured spans (the `tracing` ecosystem) around every stage and region, so the same data can feed logs, a timeline profiler and dev tools. **Why:** a multi-threaded, GPU-async generator cannot be understood by stepping through a debugger; you need timelines of what ran where and when ([#6](https://github.com/AntonTegnelov/wave_forge/issues/6)).
+- Instrumentation uses structured spans (the `tracing` ecosystem) around every stage and region, so the same data can feed logs, a timeline profiler and dev tools. **Why:** a multi-threaded, GPU-async generator cannot be understood by stepping through a debugger; you need timelines of what ran where and when. Practices and tools are described in [debugging.md](debugging.md).
 - GPU work is timed with timestamp queries where supported.
 
-> **Misaligned today (A-15):** there are two parallel `GpuError` hierarchies (`utils::error` and `utils::error_recovery`), string-based conversions between them, a `DebugVisualizer` that is never enabled, and plain `log` calls instead of spans.
+> **Misaligned today (A-15):** there are two parallel `GpuError` hierarchies (`utils::error` and `utils::error_recovery`) with string-based conversions between them, and a `DebugVisualizer` that is never enabled. Spans cover the GPU run loop and propagation passes, but most of the code still uses plain `log` calls, and there are no GPU timestamp queries.
 
 ## 10. Testing and developer tooling
 
-Covered in depth by the testing plan ([#6](https://github.com/AntonTegnelov/wave_forge/issues/6)). The architectural requirements are:
+Covered in depth by [testing.md](testing.md). The architectural requirements are:
 
-- The model and solver are testable without a GPU (CPU backend) and without an engine.
+- The model and solver are testable without an engine. A GPU is required, since there is deliberately no CPU fallback ([vision.md](vision.md#non-goals)); logic that does not touch the GPU (rule compilation, packing, invariants) is unit-tested without one.
 - End-to-end tests exist for 2D (with PNG rendering of a simple tile set) and 3D (a small city in the style of the reference implementation).
 - Dev-only tools render results as images (2D tiles, four orthographic views for 3D) so humans *and* LLM-assisted development can inspect output quickly. These tools live outside the shipped library.
 - Invariants (every adjacency satisfied, determinism for a fixed seed) are checked automatically, not by eye.
 
-> **Misaligned today (A-16):** there are only a handful of unit tests and one GPU integration test; several "tests" in `wfc-gpu/tests/mod.rs` are placeholders that assert `true`. There is no CPU backend to test the solver without a GPU, and no image output.
+> **Misaligned today (A-16):** end-to-end tests, invariant checks and image tools exist for the reference rule sets, but unit coverage of the solver internals (entropy selection, propagation strategy, synchronisation) is thin, and without determinism (A-6) there are no golden-image tests.

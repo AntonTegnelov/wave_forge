@@ -69,6 +69,7 @@ The Bevy plugin and Godot GDExtension wrap the library once its API has settled.
 
 ## Non-goals
 
+- **No CPU fallback.** A GPU (Vulkan, Metal or DirectX 12) is a hard requirement. The games this is built for always have one, and maintaining a second, CPU-only solver would double the work while hiding GPU performance problems behind a slower path that still "works". CPU threads and SIMD remain *performance tiers* for work that is faster on the CPU, not substitutes for a missing GPU.
 - **Not a game engine or renderer.** Wave Forge produces data (which tile goes where); engines turn it into meshes, scenes and gameplay. Any rendering in this repository (PNG exports, orthographic views) is **developer tooling** to inspect results, not a shipped feature.
 - **Not an editor.** Authoring tools may come later, but the product is the runtime generator.
 - **No unbounded generation.** We design for bounded regions around a focus, not whole universes.

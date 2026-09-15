@@ -6,7 +6,7 @@ How to build, test and contribute. For *what* we are building and *why*, read [v
 
 - **Rust 1.98.1**, edition 2024, pinned in [`rust-toolchain.toml`](../rust-toolchain.toml). The dev container's base image (`.devcontainer/Dockerfile`) pins the same version; bump both together so the container and every other checkout build identically.
 - **Dev container:** see [`.devcontainer/README.md`](../.devcontainer/README.md). It provides the native libraries for windowing and Mesa's software Vulkan driver.
-- **No GPU required:** wgpu falls back to Mesa llvmpipe (a CPU Vulkan implementation) inside the container, so GPU code and tests run anywhere, slowly. `XDG_RUNTIME_DIR` warnings in test output come from the windowing libraries and are harmless.
+- **A GPU is required.** There is no CPU fallback by design ([vision.md](vision.md#non-goals)). The dev container currently has no access to the host GPU, so wgpu uses Mesa llvmpipe, a software Vulkan device: good enough for correctness tests, useless for performance measurements. Getting the host GPU into the container is tracked in [roadmap.md](roadmap.md). `XDG_RUNTIME_DIR` warnings in test output come from the windowing libraries and are harmless.
 
 ## Building and testing
 
@@ -15,6 +15,8 @@ cargo build --workspace
 cargo test --workspace
 cargo run --release -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8
 ```
+
+See [testing.md](testing.md) for the test layers, artifacts and rendering tools, and [debugging.md](debugging.md) for tracing and debugging practices.
 
 **Build output location matters.** The repository is bind-mounted from the host. The dev container redirects only the main checkout's `target/` to a named volume; git worktrees (for example under `.claude/worktrees/`) are not covered, and their build output would land on the host drive (several GB per worktree). When building from a worktree, point Cargo elsewhere:
 
