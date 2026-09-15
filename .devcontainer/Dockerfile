@@ -146,18 +146,26 @@ RUN groupadd --gid "${DEV_GID}" "${DEV_USER}" \
 # is set. It only takes effect for instances built with
 # `wgpu::InstanceDescriptor::new_without_display_handle_from_env()` in wgpu 30
 # (Instance::default() does not read the environment).
+# CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: binaries run by `cargo test` /
+# `cargo run` get libd3d12core.so preloaded. Without it, dropping a wgpu
+# instance on dozen unloads that library while other threads still have its
+# thread-local destructors registered, and multi-threaded binaries (every test
+# runner) segfault at exit. A Cargo runner scopes the preload to those
+# binaries instead of every process in the container.
 RUN printf '%s\n' \
         'PATH="/home/dev/.cargo/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' \
         'CARGO_HOME="/home/dev/.cargo"' \
         'RUSTUP_HOME="/usr/local/rustup"' \
         'LANG="en_US.UTF-8"' \
         'WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER="1"' \
+        'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="env LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so"' \
         >> /etc/environment
 
 # Non-login shells (VS Code terminals, docker exec) get the same via Docker ENV.
 ENV CARGO_HOME="/home/${DEV_USER}/.cargo" \
     PATH="/home/${DEV_USER}/.cargo/bin:${PATH}" \
-    WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER=1
+    WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER=1 \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="env LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so"
 
 # ---- SSH server -------------------------------------------------------------
 # Hardened sshd config (pubkey-only, no root, dev user only).

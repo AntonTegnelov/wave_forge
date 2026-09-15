@@ -87,11 +87,11 @@ dropped, WSL's `libd3d12core.so` is unloaded while other threads still have
 its thread-local destructors registered, so multi-threaded binaries such as
 test runners die with `SIGSEGV` after their work is done (a backtrace ends
 in `__nptl_deallocate_tsd`). Preloading the library keeps it mapped:
-`LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so`. In the container this is set
-as a Cargo runner in `~/.cargo/config.toml`, so it applies to binaries run
-by `cargo test` / `cargo run` only, not to every process (a global preload
-adds roughly 13 ms to each process start). Set it by hand when running a
-test binary directly.
+`LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so`. The image sets it as a Cargo
+runner (`CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER`), so it applies to
+binaries run by `cargo test` / `cargo run` only, not to every process (a
+global preload adds roughly 13 ms to each process start). Set it by hand
+when running a test binary directly.
 
 ## One-time setup
 
