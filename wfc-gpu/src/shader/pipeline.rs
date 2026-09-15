@@ -1,48 +1,15 @@
 use log;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use wgpu;
-// Added imports for caching
-use once_cell::sync::Lazy;
-use seahash::SeaHasher;
-use std::hash::{Hash, Hasher};
 // Import ShaderManager and related types
 use super::shaders::{ShaderManager, ShaderType};
 use crate::buffers::{CollapseInfoUniform, GpuEntropyShaderParams, GpuParamsUniform};
-use crate::utils::error::{GpuError, GpuErrorContext, GpuResourceType};
-use lazy_static::lazy_static;
+use crate::utils::error::{GpuError, GpuErrorContext};
 
-// --- Cache Definitions ---
-
-// Key for shader module cache: based on shader source code
-#[derive(PartialEq, Eq, Hash, Clone)]
-struct ShaderCacheKey {
-    source_hash: u64,
-}
-
-// Key for pipeline cache: includes shader details and configuration
-#[derive(PartialEq, Eq, Hash, Clone)]
-struct PipelineCacheKey {
-    source_hash: u64,
-    entry_point: String,
-}
-
-// Static caches using Lazy and Mutex for thread-safe initialization and access
-static SHADER_MODULE_CACHE: Lazy<Mutex<HashMap<ShaderCacheKey, Arc<wgpu::ShaderModule>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-// Use lazy_static macro correctly
-lazy_static! {
-    static ref COMPUTE_PIPELINE_CACHE: Mutex<HashMap<PipelineCacheKey, Arc<wgpu::ComputePipeline>>> =
-        Mutex::new(HashMap::new());
-}
-
-// --- Helper Function to Hash Strings ---
-fn hash_string(s: &str) -> u64 {
-    let mut hasher = SeaHasher::new();
-    s.hash(&mut hasher);
-    hasher.finish()
-}
+// Shader modules and pipelines are created per `ComputePipelines`, i.e. per wgpu device. They
+// used to be memoised in process-wide statics keyed only by shader source, which handed one
+// device's resources to another device (for example a second accelerator in the same process)
+// and made wgpu panic with "Cannot get non-existent resource".
 
 // --- TODO: Shader Source Loading and Compilation (Future Responsibility of ShaderCompiler) ---
 
@@ -88,7 +55,7 @@ fn compile_shader(
     features: &[&str],
     shader_manager: &mut ShaderManager, // Pass ShaderManager instance as mutable
     _num_tiles_u32: u32,                // May be needed for specialization in future compiler
-) -> Result<(Arc<wgpu::ShaderModule>, u64), GpuError> {
+) -> Result<Arc<wgpu::ShaderModule>, GpuError> {
     // 1. Load/Assemble source using ShaderManager
     let source_code = shader_manager
         .load_shader_variant(shader_type, features)
@@ -97,33 +64,20 @@ fn compile_shader(
     // TODO: Apply specialization constants (like NUM_TILES_U32_VALUE) using the compiler
     // let processed_source = future_shader_compiler.specialize(&source_code, num_tiles_u32);
 
-    // 2. Check cache
-    let source_hash = hash_string(&source_code);
-    let shader_key = ShaderCacheKey {
-        source_hash, // Use calculated hash
-    };
-    let mut cache = SHADER_MODULE_CACHE
-        .lock()
-        .map_err(|e| GpuError::mutex_error(e.to_string(), GpuErrorContext::default()))?;
-
-    if let Some(module) = cache.get(&shader_key) {
-        log::debug!("Shader cache hit for {:?}", shader_type);
-        return Ok((module.clone(), source_hash)); // Return cached module and hash
-    }
-
-    // 3. Create module if not in cache
-    log::debug!(
-        "Shader cache miss for {:?}. Creating new module.",
-        shader_type
-    );
+    // 2. Create the module on this device
+    log::debug!("Creating shader module for {:?}", shader_type);
     let shader_module = Arc::new(device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("{:?}_Shader", shader_type)),
         source: wgpu::ShaderSource::Wgsl(source_code.into()),
     }));
 
-    cache.insert(shader_key, shader_module.clone());
-    Ok((shader_module, source_hash)) // Return new module and hash
+    Ok(shader_module)
 }
+
+/// Workgroup edge length declared in `entropy.wgsl` (`@workgroup_size(8, 8, 1)`).
+pub const ENTROPY_WORKGROUP_SIZE: u32 = 8;
+/// Workgroup length declared in `propagate.wgsl` (`@workgroup_size(64)`).
+pub const PROPAGATION_WORKGROUP_SIZE: u32 = 64;
 
 /// Manages the WGPU compute pipelines required for WFC acceleration.
 ///
@@ -223,35 +177,28 @@ impl ComputePipelines {
             max_invocations
         );
 
-        // Determine optimal workgroup size
-        // Example: Aim for 64-256 invocations, typically square root for 2D
-        let workgroup_size: u32 = if max_invocations >= 256 {
-            16 // 16x16 = 256
-        } else if max_invocations >= 64 {
-            8 // 8x8 = 64
-        } else {
-            // Fallback for very low limits, adjust as needed
-            (max_invocations as f64).sqrt() as u32
-        };
-        let entropy_workgroup_size = workgroup_size;
-        let propagation_workgroup_size = workgroup_size; // Use same for now
+        // Dispatch counts must be computed with the workgroup sizes the shaders declare. Choosing
+        // a larger size here from device limits made the entropy pass skip every cell beyond the
+        // first 8 columns/rows of each dispatched workgroup, so larger grids never finished.
+        let entropy_workgroup_size = ENTROPY_WORKGROUP_SIZE;
+        let propagation_workgroup_size = PROPAGATION_WORKGROUP_SIZE;
 
         // --- Compile Shaders (using compile_shader helper) ---
-        let (entropy_shader_module, entropy_hash) = compile_shader(
+        let entropy_shader_module = compile_shader(
             device,
             ShaderType::Entropy,
             features,
             &mut shader_manager,
             num_tiles_u32,
         )?;
-        let (propagation_shader_module, propagation_hash) = compile_shader(
+        let propagation_shader_module = compile_shader(
             device,
             ShaderType::Propagation,
             features,
             &mut shader_manager,
             num_tiles_u32,
         )?;
-        let (collapse_shader_module, collapse_hash) = compile_shader(
+        let collapse_shader_module = compile_shader(
             device,
             ShaderType::Collapse,
             features,
@@ -522,29 +469,26 @@ impl ComputePipelines {
                 immediate_size: 0,
             });
 
-        // --- Create Compute Pipelines (using cache helper) ---
-        let entropy_pipeline = Self::get_or_create_compute_pipeline(
+        // --- Create Compute Pipelines ---
+        let entropy_pipeline = Self::create_compute_pipeline(
             device,
             &entropy_pipeline_layout,
             &entropy_shader_module,
             ShaderType::Entropy, // Pass ShaderType
-            entropy_hash,
         )?;
 
-        let propagation_pipeline = Self::get_or_create_compute_pipeline(
+        let propagation_pipeline = Self::create_compute_pipeline(
             device,
             &propagation_pipeline_layout,
             &propagation_shader_module,
             ShaderType::Propagation, // Pass ShaderType
-            propagation_hash,
         )?;
 
-        let collapse_pipeline = Self::get_or_create_compute_pipeline(
+        let collapse_pipeline = Self::create_compute_pipeline(
             device,
             &collapse_pipeline_layout,
             &collapse_shader_module,
             ShaderType::Collapse, // Pass ShaderType
-            collapse_hash,
         )?;
 
         Ok(Self {
@@ -560,55 +504,27 @@ impl ComputePipelines {
         })
     }
 
-    /// Helper function to get or create a compute pipeline, utilizing the cache.
-    fn get_or_create_compute_pipeline(
+    /// Creates a compute pipeline for `shader_type` on `device`.
+    fn create_compute_pipeline(
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
         module: &Arc<wgpu::ShaderModule>,
-        shader_type: ShaderType, // Added ShaderType parameter
-        source_hash: u64,
+        shader_type: ShaderType,
     ) -> Result<Arc<wgpu::ComputePipeline>, GpuError> {
-        // Determine entry point based on ShaderType
         let entry_point = match shader_type {
             ShaderType::Entropy => "main",
             ShaderType::Propagation => "propagate_constraints",
             ShaderType::Collapse => "main",
         };
-
-        let pipeline_key = PipelineCacheKey {
-            source_hash,
-            entry_point: entry_point.to_string(),
-        };
-
-        let mut cache = COMPUTE_PIPELINE_CACHE.lock().map_err(|e| {
-            GpuError::mutex_error(
-                e.to_string(),
-                GpuErrorContext::new(GpuResourceType::Pipeline).with_details("cache lock"),
-            )
-        })?;
-
-        if let Some(pipeline) = cache.get(&pipeline_key) {
-            log::debug!("Compute pipeline cache hit for {}", entry_point);
-            return Ok(pipeline.clone());
-        }
-
-        log::debug!(
-            "Compute pipeline cache miss for {}. Creating new pipeline.",
-            entry_point
-        );
-        let pipeline = Arc::new(
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(&format!("{}_Pipeline", entry_point)),
-                layout: Some(layout),
-                module,
-                entry_point: Some(entry_point), // Use determined entry point, wrapped in Some()
-                compilation_options: wgpu::PipelineCompilationOptions::default(), // Add default options
-                cache: None, // Add default cache
-            }),
-        );
-
-        cache.insert(pipeline_key, pipeline.clone());
-        Ok(pipeline)
+        log::debug!("Creating compute pipeline for {}", entry_point);
+        Ok(Arc::new(device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(&format!("{}_Pipeline", entry_point)),
+            layout: Some(layout),
+            module,
+            entry_point: Some(entry_point),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        })))
     }
 
     pub fn create_propagation_bind_groups(
@@ -725,5 +641,19 @@ impl ComputePipelines {
     ) -> Result<&wgpu::ComputePipeline, GpuError> {
         // No longer selecting pipeline based on features here, selection happens at creation
         Ok(&self.propagation_pipeline)
+    }
+}
+
+#[cfg(test)]
+mod workgroup_tests {
+    use super::{ENTROPY_WORKGROUP_SIZE, PROPAGATION_WORKGROUP_SIZE};
+
+    #[test]
+    fn host_workgroup_sizes_match_the_shaders() {
+        let entropy = include_str!("shaders/entropy.wgsl");
+        assert!(entropy.contains(&format!("const WORKGROUP_SIZE = {ENTROPY_WORKGROUP_SIZE}u;")));
+        assert!(entropy.contains("@workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1u)"));
+        let propagate = include_str!("shaders/propagate.wgsl");
+        assert!(propagate.contains(&format!("@workgroup_size({PROPAGATION_WORKGROUP_SIZE})")));
     }
 }
