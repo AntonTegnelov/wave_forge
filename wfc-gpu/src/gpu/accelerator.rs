@@ -468,7 +468,13 @@ impl GpuAccelerator {
 
         // Main WFC loop
         while iterations < max_iterations {
-            // Calculate entropy and select cell
+            // Compute entropy on the GPU so the min-entropy buffer is current before selecting
+            entropy_calculator
+                .dispatch_entropy_calculation_pass()
+                .await
+                .map_err(|e| WfcError::other(e.to_string()))?;
+
+            // Select the lowest-entropy cell
             let selected_cell = coordinator
                 .coordinate_entropy_and_selection(
                     &entropy_calculator,
