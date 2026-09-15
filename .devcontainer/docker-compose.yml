@@ -12,6 +12,13 @@ services:
       # Host 2239 -> container sshd :22. Port allocation lives in
       # E:\Programmering\Code\DEVCONTAINER_TEMPLATE.md — claim there first.
       - "2239:22"
+    # GPU access through Docker's standard GPU support (Docker Desktop on WSL2,
+    # NVIDIA). Adds the WSL virtual GPU device /dev/dxg plus the CUDA/dxcore
+    # user-space libraries. No privileged mode, no extra capabilities, no
+    # Docker socket, no host drives: the container boundary is unchanged, the
+    # only new ability is running work on the GPU. wgpu reaches the card via
+    # Vulkan -> Mesa dozen -> D3D12 (built into the image; see Dockerfile).
+    gpus: all
     volumes:
       # Repo root (includes any gitignored .env via the mount, never the image).
       - ..:/workspaces/wave_forge:cached
@@ -31,6 +38,16 @@ services:
       # from the bind mount — wrong-platform artifacts and a slow bind mount —
       # and survives recreates.
       - target:/workspaces/wave_forge/target
+      # Out-of-repo build caches (e.g. CARGO_TARGET_DIR for worktrees) survive
+      # recreates instead of living on the writable layer.
+      - cache:/home/dev/.cache
+      # WSL's user-space GPU libraries, read-only, from the Docker Desktop VM
+      # (not the Windows host): libd3d12.so / libd3d12core.so / libdxcore.so
+      # in lib/, and the NVIDIA D3D12 user-mode driver (libnvwgf2umx.so) that
+      # D3D12 loads from the driver store. `gpus: all` alone mounts only the
+      # CUDA pieces, which is not enough for Vulkan-on-D3D12.
+      - /usr/lib/wsl/lib:/usr/lib/wsl/lib:ro
+      - /usr/lib/wsl/drivers:/usr/lib/wsl/drivers:ro
     restart: unless-stopped
     init: true
 
@@ -40,3 +57,4 @@ volumes:
   ssh-config:
   cargo-home:
   target:
+  cache:
