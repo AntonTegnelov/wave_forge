@@ -47,7 +47,7 @@ async fn city_run(name: &str, width: usize, height: usize, depth: usize) {
     let grid = TileGrid::from_possibilities(&solved.grid).expect("every cell collapsed to one tile");
     let violations = adjacency_violations(&grid, &m.rules, BoundaryCondition::Finite);
     assert!(violations.is_empty(), "{} adjacency violations, first: {:?}", violations.len(), violations.first());
-    eprintln!("stress: {name} unreachable_walkable_cells={}", city::unreachable_walkable_cells(&grid, &city).len());
+    eprintln!("stress: {name} disconnected_walkable_cells={}", city::disconnected_walkable_cells(&grid, &city).len());
     let path = common::artifact_dir().join(format!("stress_{name}.png"));
     render::render_voxel_isometric(&grid, &city.voxels, 2).save(&path).expect("write PNG");
     eprintln!("rendered {}", path.display());
@@ -62,7 +62,7 @@ async fn permissive_run(name: &str, size: usize) {
         .collect();
     let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, tuples);
     let initial = PossibilityGrid::new(size, size, size, num_tiles);
-    let solved = common::solve_rules(&initial, &rules, None, BoundaryCondition::Finite, 1).await;
+    let solved = common::solve_rules(&initial, &rules, None, None, BoundaryCondition::Finite, 1).await;
     report(name, &initial, num_tiles, &solved);
     assert_eq!(solved.grid.is_fully_collapsed(), Ok(true));
 }

@@ -41,6 +41,8 @@ pub mod connector {
     pub const BALCONY: u32 = 5;
     /// A walkway deck continuing across the face.
     pub const WALKWAY: u32 = 6;
+    /// The side of a wall stair, fixed to a building facade.
+    pub const WALL_SIDE: u32 = 7;
     /// Vertical: open space continues (ground or roof below, air above).
     pub const OPEN: u32 = 10;
     /// Vertical: the building continues.
@@ -48,12 +50,17 @@ pub mod connector {
     /// Vertical: the underside of street level. Nothing fits it, so street-level modules can only
     /// exist on the bottom layer.
     pub const BEDROCK: u32 = 12;
-    /// Vertical, oriented: the top of a stair, which must meet a landing facing the same way.
+    /// Vertical, oriented: the top of a stair, which must meet the headroom above it facing the same way.
     pub const STAIR: u32 = 13;
+    /// Vertical: a pillar continues, ending under a walkway.
+    pub const PILLAR: u32 = 14;
 }
 
 /// Voxels along each edge of a module's model.
 pub const RESOLUTION: usize = 4;
+
+/// Cell coordinates `(x, y, z)`.
+pub type Cell = (usize, usize, usize);
 
 /// Tag of modules that belong on the bottom layer.
 pub const STREET_LEVEL: &str = "street_level";
@@ -82,15 +89,22 @@ mod palette {
     pub const FLAT_ROOF: Color = [120, 120, 125];
     pub const DECK: Color = [160, 120, 80];
     pub const STEP: Color = [176, 176, 176];
+    pub const STONE: Color = [196, 190, 176];
+    pub const WATER: Color = [80, 140, 210];
+    pub const POST: Color = [60, 60, 64];
+    pub const LAMP: Color = [240, 220, 120];
 }
 
 /// The city's module prototypes and connector pairs.
 ///
-/// Walkability follows marian42: street-level faces are walkable, and walkway, door and landing
-/// faces are *paths* that must meet another walkable face. A path can therefore never end at a
-/// wall or in mid-air, and every walkway runs between walkway doors, roof terraces and stair
-/// landings. Rules are local, so they cannot rule out an island such as a bridge between two
-/// buildings that have no street door; [`unreachable_walkable_cells`] measures that.
+/// Walkability follows marian42: street-level faces are walkable, and walkway, door, flat-roof and
+/// stair faces are *paths* that must meet another walkable face, so a path never ends at a wall or
+/// in mid-air. Buildings are solid; only arcades lead through them. Flat roofs are walkable and join
+/// neighbouring roofs and walkways at the same height, and an edge with nothing to join gets a
+/// railing instead. Height is climbed by stairs: from the street, from a roof, or along a building
+/// facade as wall stairs whose flights chain storey by storey, as in his set. Walkways rest on
+/// pillars or span between roofs and stairs. Rules are local, so they cannot forbid a
+/// network cut off as a whole; [`disconnected_walkable_cells`] measures that.
 pub fn module_set() -> ModuleSet {
     use connector::*;
     let street = |name: &str, faces: [H; 4], up: u32| {
@@ -110,9 +124,17 @@ pub fn module_set() -> ModuleSet {
     let wall = H::symmetric(BUILDING);
     let ground = H::symmetric(GROUND).walkable();
     let road = H::symmetric(ROAD).walkable();
-    let door = H::plain(DOOR).path();
+    // A street door needs open ground in front of it but leads into a solid building, so it is not
+    // part of the walkable network itself.
+    let door = H { enforce_walkable_neighbor: true, ..H::plain(DOOR) };
     let balcony = H::plain(BALCONY);
+    // Walkway decks, flat roofs, walkway doors and stair tops all sit at floor level of their cell,
+    // so they share one connector and join each other.
     let walkway = H::symmetric(WALKWAY).path();
+    // A roof edge with a railing: it borders open air (or a taller building) and nobody crosses it.
+    let railing = air;
+    // A street-level face nobody walks through, such as the side of a stair.
+    let blocked = H::symmetric(GROUND);
 
     // Weights apply to each rotated variant, so a prototype with four distinct rotations weighs four
     // times its number in total.
@@ -121,37 +143,90 @@ pub fn module_set() -> ModuleSet {
         .connect(BUILDING, GROUND)
         .connect(DOOR, GROUND)
         .connect(BALCONY, AIR)
-        // Open space.
+        .connect(WALL_SIDE, BUILDING)
+        // Open space and squares.
         .with(ModulePrototype::new("air", [air; 4], V::invariant(OPEN), V::invariant(OPEN)).weight(4.0))
         .with(street("grass", [ground; 4], OPEN).weight(1.0))
         .with(street("plaza", [ground; 4], OPEN).weight(0.4))
+        .with(street("plaza_fountain", [ground; 4], OPEN).weight(0.05))
+        .with(street("plaza_lamp", [ground; 4], OPEN).weight(0.1))
         // Roads: ROAD faces must continue into another road, road sides are open ground.
         .with(street("road_straight", [road, road, ground, ground], OPEN).weight(4.0).tag("road"))
         .with(street("road_corner", [road, ground, road, ground], OPEN).weight(1.0).tag("road"))
         .with(street("road_t", [road, road, road, ground], OPEN).weight(0.8).tag("road"))
         .with(street("road_cross", [road; 4], OPEN).weight(0.6).tag("road"))
         .with(street("road_end", [road, ground, ground, ground], OPEN).weight(0.05).tag("road"))
-        // Buildings: a street-level base, floors on top, and a roof above the last floor.
+        // Buildings: a street-level base, floors on top, and a roof above the last floor. Arcades
+        // let the street pass through a building.
         .with(street("building_base", [wall; 4], SOLID).weight(1.0).tag("building"))
         .with(street("building_door", [door, wall, wall, wall], SOLID).weight(0.3).tag("building"))
+        .with(street("building_arcade", [ground.path(), ground.path(), wall, wall], SOLID).weight(0.4).tag("building"))
         .with(building("building_floor", [wall; 4]).weight(1.0))
         .with(building("building_balcony", [balcony, wall, wall, wall]).weight(0.3))
-        .with(building("building_walkway_door", [walkway, wall, wall, wall]).weight(0.1))
-        .with(above_building("roof_pyramid", [air; 4]).weight(1.0))
-        .with(above_building("roof_flat", [air; 4]).weight(0.5))
-        .with(above_building("roof_terrace", [walkway, air, air, air]).weight(0.15).tag("walkway"))
-        // Walkways bridge between walkway doors, terraces and landings; there are no dead ends.
-        .with(floating("walkway_straight", [walkway, walkway, air, air]).weight(0.3))
+        // A tunnel through an upper storey, joining walkways and flat roofs on either side.
+        .with(building("building_passage", [walkway, walkway, wall, wall]).weight(0.3))
+        // Roofs: pitched roofs close a building; flat roofs are walkable.
+        .with(above_building("roof_pyramid", [air; 4]).weight(0.6))
+        .with(above_building("roof_tower", [air; 4]).weight(0.1))
+        .with(above_building("roof_flat", [walkway; 4]).weight(0.3))
+        .with(above_building("roof_flat_edge", [railing, walkway, walkway, walkway]).weight(0.3))
+        .with(above_building("roof_flat_corner", [railing, walkway, railing, walkway]).weight(0.3))
+        .with(above_building("roof_flat_strip", [walkway, walkway, railing, railing]).weight(0.15))
+        .with(above_building("roof_flat_end", [walkway, railing, railing, railing]).weight(0.15))
+        // Walkways bridge between walkway doors, flat roofs and stair tops, on pillars or spanning
+        // between buildings; there are no dead ends.
+        .with(floating("walkway_straight", [walkway, walkway, air, air]).weight(0.15))
         .with(floating("walkway_corner", [walkway, air, walkway, air]).weight(0.05))
-        // A stair climbs towards +x from the street; the landing above it continues as a walkway.
         .with(
-            ModulePrototype::new("stair", [ground; 4], V::oriented(STAIR, 0), V::invariant(BEDROCK))
-                .weight(0.05)
+            ModulePrototype::new("walkway_on_pillar", [walkway, walkway, air, air], V::invariant(OPEN), V::invariant(PILLAR))
+                .weight(0.15)
+                .tag("walkway"),
+        )
+        .with(street("pillar_base", [ground; 4], PILLAR).weight(0.1))
+        .with(ModulePrototype::new("pillar", [air; 4], V::invariant(PILLAR), V::invariant(PILLAR)).weight(1.0).tag("pillar"))
+        // A stair climbs one storey towards +x, from the street or from a roof. Its top step is level
+        // with the floor of the next storey. The cell above the stair is headroom, and its +x face is
+        // the path the stair leads to (a walkway, flat roof or walkway door beside the top step, never
+        // on top of the steps). Only the entrance at -x is walkable where the stair stands.
+        .with(
+            ModulePrototype::new("stair", [blocked, ground.path(), blocked, blocked], V::oriented(STAIR, 0), V::invariant(BEDROCK))
+                .weight(0.6)
                 .tag(STREET_LEVEL)
                 .tag("stair"),
         )
         .with(
-            ModulePrototype::new("stair_landing", [walkway, air, air, air], V::invariant(OPEN), V::oriented(STAIR, 0))
+            ModulePrototype::new("stair_roof", [railing, walkway, railing, railing], V::oriented(STAIR, 0), V::invariant(SOLID))
+                .weight(0.3)
+                .tag("roof")
+                .tag("stair"),
+        )
+        // A wall stair starting at the street, so flights along a facade can be reached from the
+        // pavement: the only way upper networks join the street besides free-standing stairs.
+        .with(
+            ModulePrototype::new(
+                "stair_wall_street",
+                [blocked, ground.path(), H::plain(WALL_SIDE), blocked],
+                V::oriented(STAIR, 0),
+                V::invariant(BEDROCK),
+            )
+            .weight(0.3)
+            .tag(STREET_LEVEL)
+            .tag("stair"),
+        )
+        // A wall stair hangs on a building facade (its +y side) in open air. Its head opens onto the
+        // next flight's entrance, so flights climb a tall facade storey by storey.
+        .with(
+            ModulePrototype::new(
+                "stair_wall",
+                [air, walkway, H::plain(WALL_SIDE), railing],
+                V::oriented(STAIR, 0),
+                V::invariant(OPEN),
+            )
+            .weight(0.3)
+            .tag("stair"),
+        )
+        .with(
+            ModulePrototype::new("stair_head", [walkway, air, air, air], V::invariant(OPEN), V::oriented(STAIR, 0))
                 .tag("walkway"),
         )
 }
@@ -246,66 +321,101 @@ pub fn constrain_city(grid: &mut PossibilityGrid, city: &City) {
     }
 }
 
-/// Cells with a walkable face that cannot be reached on foot from the street.
+/// Pairs of tiles someone can walk between, as `(axis, from, to)`: `to` in the neighbour along
+/// `axis` of a cell holding `from`. Only pairs the adjacency rules allow are listed.
 ///
-/// Walking moves between horizontal neighbours whose touching faces are both walkable, climbs a
-/// stair to its landing, and passes through buildings: building cells connect to each other in
-/// every direction and to a roof directly above. The street network (street-level cells with a
-/// walkable face) is the start. Local rules already prevent dead ends; this finds what they
-/// cannot: whole networks cut off from the street.
-pub fn unreachable_walkable_cells(grid: &TileGrid, city: &City) -> Vec<(usize, usize, usize)> {
-    let m = &city.modules;
-    let buildings = m.variants_tagged("building");
-    let roofs = m.variants_tagged("roof");
-    let street_level = m.variants_tagged(STREET_LEVEL);
-    let is_building = |tile: usize| buildings.contains(&tile);
+/// Walking crosses horizontal faces that are both walkable and climbs from a stair to the headroom
+/// above it, whose path continues beside the top step. Buildings are solid: only arcades, whose
+/// passage faces are walkable, lead through them, and a door is just a walkable spot on the street.
+pub fn walk_links(m: &CompiledModules) -> Vec<(usize, usize, usize)> {
+    let stairs = m.variants_tagged("stair");
+    let name = |tile: usize| m.prototype_of(tile).name.as_str();
     let walkable_face = |tile: usize, axis: usize| matches!(m.face(tile, axis), Face::Horizontal(f) if f.walkable);
-    let has_walkable_face = |tile: usize| [POS_X, NEG_X, POS_Y, NEG_Y].into_iter().any(|axis| walkable_face(tile, axis));
-    let index = |(x, y, z): (usize, usize, usize)| (z * grid.height + y) * grid.width + x;
-
-    let mut reached = vec![false; grid.width * grid.height * grid.depth];
-    let mut queue = VecDeque::new();
-    for y in 0..grid.height {
-        for x in 0..grid.width {
-            let tile = grid.get(x, y, 0);
-            if street_level.contains(&tile) && !is_building(tile) && has_walkable_face(tile) {
-                reached[index((x, y, 0))] = true;
-                queue.push_back((x, y, 0));
+    let n = m.variants.len();
+    let mut links = Vec::new();
+    for from in 0..n {
+        for to in 0..n {
+            for axis in [POS_X, NEG_X, POS_Y, NEG_Y] {
+                let walk = walkable_face(from, axis) && walkable_face(to, opposite(axis));
+                if walk && m.rules.check(from, to, axis) {
+                    links.push((axis, from, to));
+                }
+            }
+            let climb = stairs.contains(&from) && name(to) == "stair_head";
+            if climb && m.rules.check(from, to, UP) {
+                links.push((UP, from, to));
+                links.push((DOWN, to, from));
             }
         }
     }
-    while let Some(cell) = queue.pop_front() {
-        let tile = grid.get(cell.0, cell.1, cell.2);
-        for axis in 0..NUM_AXES {
-            let Some(next) = grid.neighbor(cell, axis, BoundaryCondition::Finite) else {
-                continue;
-            };
-            let other = grid.get(next.0, next.1, next.2);
-            let linked = if axis == UP || axis == DOWN {
-                let (lower, upper) = if axis == UP { (tile, other) } else { (other, tile) };
-                (is_building(lower) && (is_building(upper) || roofs.contains(&upper)))
-                    || (m.prototype_of(lower).name == "stair" && m.prototype_of(upper).name == "stair_landing")
-            } else {
-                (walkable_face(tile, axis) && walkable_face(other, opposite(axis))) || (is_building(tile) && is_building(other))
-            };
-            if linked && !reached[index(next)] {
-                reached[index(next)] = true;
-                queue.push_back(next);
-            }
-        }
-    }
+    links
+}
 
-    let mut unreachable = Vec::new();
+/// Tiles with a walkable face: everything that must belong to the one walkable network.
+pub fn walkable_tiles(m: &CompiledModules) -> Vec<usize> {
+    (0..m.variants.len())
+        .filter(|&tile| {
+            [POS_X, NEG_X, POS_Y, NEG_Y].into_iter().any(|axis| matches!(m.face(tile, axis), Face::Horizontal(f) if f.walkable))
+        })
+        .collect()
+}
+
+/// Walkable cells outside the largest walkable network, found by flood fill over [`walk_links`].
+/// Empty means every walkable cell can reach every other.
+pub fn disconnected_walkable_cells(grid: &TileGrid, city: &City) -> Vec<Cell> {
+    let m = &city.modules;
+    let n = m.variants.len();
+    let mut linked = vec![false; NUM_AXES * n * n];
+    for (axis, from, to) in walk_links(m) {
+        linked[(axis * n + from) * n + to] = true;
+    }
+    let walkable = walkable_tiles(m);
+    let traversable = |tile: usize| walkable.contains(&tile);
+    let index = |(x, y, z): Cell| (z * grid.height + y) * grid.width + x;
+
+    let mut component = vec![usize::MAX; grid.width * grid.height * grid.depth];
+    let mut walkable_per_component = Vec::new();
     for z in 0..grid.depth {
         for y in 0..grid.height {
             for x in 0..grid.width {
-                if has_walkable_face(grid.get(x, y, z)) && !reached[index((x, y, z))] {
-                    unreachable.push((x, y, z));
+                if !traversable(grid.get(x, y, z)) || component[index((x, y, z))] != usize::MAX {
+                    continue;
+                }
+                let id = walkable_per_component.len();
+                let mut count = 0;
+                component[index((x, y, z))] = id;
+                let mut queue = VecDeque::from([(x, y, z)]);
+                while let Some(cell) = queue.pop_front() {
+                    let tile = grid.get(cell.0, cell.1, cell.2);
+                    count += usize::from(walkable.contains(&tile));
+                    for axis in 0..NUM_AXES {
+                        let Some(next) = grid.neighbor(cell, axis, BoundaryCondition::Finite) else {
+                            continue;
+                        };
+                        let other = grid.get(next.0, next.1, next.2);
+                        if linked[(axis * n + tile) * n + other] && component[index(next)] == usize::MAX {
+                            component[index(next)] = id;
+                            queue.push_back(next);
+                        }
+                    }
+                }
+                walkable_per_component.push(count);
+            }
+        }
+    }
+    let largest = walkable_per_component.iter().enumerate().max_by_key(|&(_, &count)| count).map(|(id, _)| id);
+
+    let mut disconnected = Vec::new();
+    for z in 0..grid.depth {
+        for y in 0..grid.height {
+            for x in 0..grid.width {
+                if walkable.contains(&grid.get(x, y, z)) && Some(component[index((x, y, z))]) != largest {
+                    disconnected.push((x, y, z));
                 }
             }
         }
     }
-    unreachable
+    disconnected
 }
 
 /// The voxel model of an unrotated prototype. Geometry is deliberately crude: it only has to make
@@ -350,12 +460,33 @@ fn prototype_model(prototype: &ModulePrototype) -> VoxelModel {
     match name {
         "air" => {}
         "grass" => fill(&mut m, 0..r, 0..r, 0..1, GRASS),
-        "plaza" => {
+        "plaza" | "plaza_fountain" | "plaza_lamp" | "pillar_base" => {
             for y in 0..r {
                 for x in 0..r {
                     m.set(x, y, 0, Some(if (x + y) % 2 == 0 { PLAZA } else { PLAZA_JOINT }));
                 }
             }
+            match name {
+                "plaza_fountain" => fill(&mut m, 1..3, 1..3, 1..2, WATER),
+                "plaza_lamp" => {
+                    fill(&mut m, 1..2, 1..2, 1..3, POST);
+                    m.set(1, 1, 3, Some(LAMP));
+                }
+                "pillar_base" => fill(&mut m, 1..3, 1..3, 1..r, STONE),
+                _ => {}
+            }
+        }
+        "pillar" => fill(&mut m, 1..3, 1..3, 0..r, STONE),
+        "building_arcade" => {
+            fill(&mut m, 0..r, 0..1, 0..r, WALL);
+            fill(&mut m, 0..r, r - 1..r, 0..r, WALL);
+            fill(&mut m, 0..r, 1..r - 1, r - 1..r, WALL);
+            fill(&mut m, 0..r, 1..r - 1, 0..1, PLAZA);
+        }
+        "roof_tower" => {
+            fill(&mut m, 0..r, 0..r, 0..1, ROOF);
+            fill(&mut m, 1..3, 1..3, 1..3, WALL);
+            fill(&mut m, 1..3, 1..3, 3..4, ROOF);
         }
         _ if name.starts_with("road") => {
             fill(&mut m, 0..r, 0..r, 0..1, SIDEWALK);
@@ -372,40 +503,54 @@ fn prototype_model(prototype: &ModulePrototype) -> VoxelModel {
             windows(&mut m);
         }
         "building_balcony" => {
-            fill(&mut m, 0..r - 1, 0..r, 0..r, WALL);
+            fill(&mut m, 0..r, 0..r, 0..r, WALL);
             windows(&mut m);
+            // Carve the balcony out of the outer voxel column only after placing windows, or a window
+            // would float in it.
+            for z in 0..r {
+                for y in 0..r {
+                    m.set(r - 1, y, z, None);
+                }
+            }
             fill(&mut m, r - 2..r - 1, 1..3, 1..3, DOOR);
             // Balcony floor and railing in the outer voxel column.
             fill(&mut m, r - 1..r, 0..r, 0..1, FLAT_ROOF);
             fill(&mut m, r - 1..r, 0..r, 1..2, WALL);
         }
-        "building_walkway_door" => {
+        "building_passage" => {
             fill(&mut m, 0..r, 0..r, 0..r, WALL);
             windows(&mut m);
-            fill(&mut m, r - 1..r, 1..3, 0..3, DOOR);
+            // Carve the tunnel after placing windows, so none float in it.
+            for z in 0..r - 1 {
+                for y in 1..r - 1 {
+                    for x in 0..r {
+                        m.set(x, y, z, None);
+                    }
+                }
+            }
+            fill(&mut m, 0..r, 1..r - 1, 0..1, FLAT_ROOF);
         }
         "roof_pyramid" => {
             fill(&mut m, 0..r, 0..r, 0..1, ROOF);
             fill(&mut m, 1..3, 1..3, 1..2, ROOF);
         }
-        "roof_flat" | "roof_terrace" => {
+        _ if name.starts_with("roof_flat") => {
             fill(&mut m, 0..r, 0..r, 0..1, FLAT_ROOF);
-            for i in 0..r {
-                for (x, y) in [(0, i), (r - 1, i), (i, 0), (i, r - 1)] {
-                    m.set(x, y, 1, Some(FLAT_ROOF));
-                }
-            }
-            if name == "roof_terrace" {
-                strips(&mut m, connector::WALKWAY, DECK);
-                fill(&mut m, r - 1..r, 1..3, 1..2, DECK);
-                for y in 1..3 {
-                    m.set(r - 1, y, 1, None);
+            // A railing along every edge that is not a walkable connection.
+            for (axis, xs, ys) in [(POS_X, r - 1..r, 0..r), (NEG_X, 0..1, 0..r), (POS_Y, 0..r, r - 1..r), (NEG_Y, 0..r, 0..1)] {
+                if matches!(prototype.face(axis), Face::Horizontal(f) if !f.walkable) {
+                    fill(&mut m, xs, ys, 1..2, STONE);
                 }
             }
         }
-        _ if name.starts_with("walkway") || name == "stair_landing" => strips(&mut m, connector::WALKWAY, DECK),
-        "stair" => {
-            fill(&mut m, 0..r, 0..r, 0..1, GRASS);
+        _ if name.starts_with("walkway") => strips(&mut m, connector::WALKWAY, DECK),
+        // Headroom above a stair: nothing to draw.
+        "stair_head" => {}
+        "stair" | "stair_roof" | "stair_wall" | "stair_wall_street" => {
+            if name != "stair_wall" {
+                let floor = if name == "stair_roof" { FLAT_ROOF } else { GRASS };
+                fill(&mut m, 0..r, 0..r, 0..1, floor);
+            }
             for x in 0..r {
                 fill(&mut m, x..x + 1, 1..3, 0..x + 1, STEP);
             }
@@ -451,13 +596,13 @@ mod tests {
     }
 
     #[test]
-    fn stairs_lead_to_a_landing_facing_the_same_way() {
+    fn stairs_lead_up_to_headroom_facing_the_same_way() {
         let city = city();
         let m = &city.modules;
-        for stair in m.variants_of("stair") {
+        for stair in m.variants_tagged("stair") {
             let above: Vec<usize> = (0..m.variants.len()).filter(|&t| m.rules.check(stair, t, UP)).collect();
             assert_eq!(above.len(), 1, "{} has {:?} above", m.names[stair], above);
-            assert_eq!(m.prototype_of(above[0]).name, "stair_landing");
+            assert_eq!(m.prototype_of(above[0]).name, "stair_head");
             assert_eq!(m.variants[above[0]].rotation, m.variants[stair].rotation);
         }
     }
@@ -553,22 +698,51 @@ mod tests {
     }
 
     #[test]
-    fn walkways_are_reachable_only_through_a_street_door() {
+    fn buildings_are_solid_so_only_stairs_reach_a_roof() {
         let city = city();
         let m = &city.modules;
         let grass = m.variants_of("grass")[0];
         let base = m.variants_of("building_base")[0];
         let air = city.air;
         let door = facing(m, "building_door", NEG_X, connector::DOOR);
-        let upstairs = facing(m, "building_walkway_door", POS_X, connector::WALKWAY);
-        let bridge = facing(m, "walkway_straight", NEG_X, connector::WALKWAY);
+        let stair = m.variants_of("stair")[0]; // rotation 0: entrance at -x, climbing towards +x
+        let head = facing(m, "stair_head", POS_X, connector::WALKWAY);
+        let roof = facing(m, "roof_flat_end", NEG_X, connector::WALKWAY);
 
-        // x: grass | building | building, with a walkway door and a bridge one floor up.
-        let with_door = TileGrid::new(3, 1, 2, vec![grass, door, base, air, upstairs, bridge]).unwrap();
-        assert_eq!(unreachable_walkable_cells(&with_door, &city), vec![]);
+        // x: grass, grass, stair or door, building, building; one storey up, the roof sits on x = 3.
+        let with_stair = vec![grass, grass, stair, base, base, air, air, head, roof, air];
+        assert_eq!(disconnected_walkable_cells(&TileGrid::new(5, 1, 2, with_stair).unwrap(), &city), vec![]);
 
-        let without_door = TileGrid::new(3, 1, 2, vec![grass, base, base, air, upstairs, bridge]).unwrap();
-        assert_eq!(unreachable_walkable_cells(&without_door, &city), vec![(1, 0, 1), (2, 0, 1)]);
+        let with_door = vec![grass, grass, door, base, base, air, air, air, roof, air];
+        assert_eq!(
+            disconnected_walkable_cells(&TileGrid::new(5, 1, 2, with_door).unwrap(), &city),
+            vec![(3, 0, 1)],
+            "a door does not lead up through a solid building"
+        );
+    }
+
+    #[test]
+    fn windows_sit_in_walls() {
+        let city = city();
+        for (tile, model) in city.voxels.iter().enumerate() {
+            let r = model.resolution;
+            for z in 0..r {
+                for y in 0..r {
+                    for x in 0..r {
+                        if model.get(x, y, z) != Some(palette::WINDOW) {
+                            continue;
+                        }
+                        let on_surface = x == 0 || y == 0 || x == r - 1 || y == r - 1;
+                        let framed = |z: usize| matches!(model.get(x, y, z), Some(palette::WALL | palette::WINDOW));
+                        assert!(
+                            on_surface && z > 0 && z + 1 < r && framed(z - 1) && framed(z + 1),
+                            "floating window in {} at ({x}, {y}, {z})",
+                            city.modules.names[tile]
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -576,7 +750,8 @@ mod tests {
         let city = city();
         for (tile, model) in city.voxels.iter().enumerate() {
             let filled = model.voxels.iter().flatten().count();
-            assert_eq!(filled == 0, tile == city.air, "{}", city.modules.names[tile]);
+            let headroom = city.modules.prototype_of(tile).name == "stair_head";
+            assert_eq!(filled == 0, tile == city.air || headroom, "{}", city.modules.names[tile]);
         }
     }
 }

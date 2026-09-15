@@ -35,7 +35,7 @@ async fn small_city_is_structurally_sound_and_renders() {
     let map_palette = city.map_palette();
     let street_style = Style { palette: &map_palette, empty_tiles: &[city.air], cell_px: 12 };
     for (name, image) in [
-        ("city_isometric.png", render::render_voxel_isometric(&grid, &city.voxels, 3)),
+        ("city_isometric.png", render::render_voxel_isometric(&grid, &city.voxels, 6)),
         ("city_street_level.png", render::render_layer(&grid, 0, &street_style)),
     ] {
         let path = artifacts.join(name);
@@ -71,17 +71,34 @@ async fn small_city_is_structurally_sound_and_renders() {
             } else {
                 assert!(column.iter().all(|t| !buildings.contains(t) && !roofs.contains(t)), "floating building at ({x}, {y}): {names:?}");
             }
-            if name(column[0]) == "stair" {
-                assert_eq!(name(column[1]), "stair_landing", "({x}, {y}): {names:?}");
+            for z in 0..depth - 1 {
+                if matches!(name(column[z]), "stair" | "stair_roof" | "stair_wall" | "stair_wall_street") {
+                    assert_eq!(name(column[z + 1]), "stair_head", "({x}, {y}, {z}): {names:?}");
+                }
             }
         }
     }
 
-    // Local rules guarantee no path ends at a wall or in mid-air, but not that the whole network
-    // connects to the street (a global constraint is planned for #7), so this is reported, not
-    // asserted.
-    let unreachable = city::unreachable_walkable_cells(&grid, &city);
-    eprintln!("walkable cells unreachable from the street: {} {unreachable:?}", unreachable.len());
+    // Local rules keep paths from ending at walls or in mid-air but cannot forbid a network cut off
+    // as a whole, so what is cut off is reported rather than asserted.
+    let walkable = city::walkable_tiles(m);
+    let walkable_cells = (0..depth)
+        .flat_map(|z| (0..height).flat_map(move |y| (0..width).map(move |x| (x, y, z))))
+        .filter(|&(x, y, z)| walkable.contains(&grid.get(x, y, z)))
+        .count();
+    let disconnected = city::disconnected_walkable_cells(&grid, &city);
+    let share = 1.0 - disconnected.len() as f64 / walkable_cells.max(1) as f64;
+    let mut cut_off_by_layer = vec![0usize; depth];
+    let mut cut_off_by_module: BTreeMap<&str, usize> = BTreeMap::new();
+    for &(x, y, z) in &disconnected {
+        cut_off_by_layer[z] += 1;
+        *cut_off_by_module.entry(name(grid.get(x, y, z))).or_default() += 1;
+    }
+    eprintln!("cut off by layer: {cut_off_by_layer:?}; by module: {cut_off_by_module:?}");
+    eprintln!(
+        "walkable cells: {walkable_cells}, in the largest network: {share:.2}, cut off: {} {disconnected:?}",
+        disconnected.len()
+    );
 
     let mut histogram: BTreeMap<&str, usize> = BTreeMap::new();
     for z in 0..depth {
