@@ -26,7 +26,7 @@ After the project was revived ([#3](https://github.com/AntonTegnelov/wave_forge/
 - **At most 256 tile variants** after rotation expansion, the size of the propagation shader's fixed per-cell mask (A-5).
 - **Not reproducible:** `--seed` is ignored (A-6).
 - **Slow for larger grids:** the whole grid crosses the CPU/GPU boundary twice per collapsed cell (A-10).
-- **No contradiction recovery:** a contradiction ends the run (A-9).
+- **Contradictions backtrack** (A-9): the run undoes an exponentially growing number of choices and forbids the one it returns to. There is still no seeded restart, and the history is capped.
 - **No library API:** the only entry points are the CLI binary and the internal `GpuAccelerator` type (A-1).
 - The CLI's benchmark, progress and visualization options have not been re-verified since the revive.
 
@@ -44,7 +44,7 @@ Each task is referenced from the matching callout in [architecture.md](architect
 | A-6 | Seeded, counter-based RNG for every random decision; deterministic tie-breaking. | [§3.4](architecture.md#34-seeds-and-randomness) |
 | A-7 | Weighted Shannon entropy with deterministic noise; stop scanline-order tie-breaking. | [§4.1](architecture.md#41-the-algorithm) |
 | A-8 | ~~Propagate pre-constrained cells before the first observation.~~ **Done** ([#6](https://github.com/AntonTegnelov/wave_forge/issues/6)). | [§4.1](architecture.md#41-the-algorithm) |
-| A-9 | Bounded backtracking / seeded restart per region; delete the unused generic recovery framework. | [§4.2](architecture.md#42-contradictions) |
+| A-9 | ~~Bounded backtracking~~ **Done** ([#13](https://github.com/AntonTegnelov/wave_forge/issues/13)): choices are undone with a doubling step count and the reverted choice is forbidden. Still to do: seeded restart per region, and delete the unused generic recovery framework. | [§4.2](architecture.md#42-contradictions) |
 | A-10 | Keep solver state on the device; batch collapses of non-interacting cells; read back only results. **Profile first** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)). | [§4.3](architecture.md#43-where-each-step-should-run) |
 | A-11 | Make the propagation kernel race-free and drop the per-collapse full-grid verification pass. | [§4.3](architecture.md#43-where-each-step-should-run) |
 | A-12 | Replace `Box<dyn …>`/`async_trait` strategies with static dispatch; remove the Tokio dependency from library crates; expose runtime-agnostic non-blocking APIs. | [§5](architecture.md#5-dispatch-async-and-threading-model) |

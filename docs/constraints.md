@@ -102,12 +102,20 @@ Because the graph only loses edges as possibilities shrink, a fully collapsed gr
 step is connected. The solver applies it after every propagation, uploads what it changed and
 propagates again until it changes nothing (`GpuAccelerator::with_global_constraint`).
 
-**What it costs.** It is CPU work proportional to the grid on every observation, it needs the grid on
-the CPU (which today's run loop already does, but a future device-resident solver would not), and it
-makes runs fail more often: a constraint that prunes hard turns "unlikely" layouts into
-contradictions, and without backtracking (status.md A-9) each contradiction restarts the whole grid.
-On the city it works on small grids and is the heaviest rule set we run; it is deliberately **not**
-used by the default city test, which relies on module design instead.
+**Why it needs backtracking.** A constraint that prunes hard turns unlikely layouts into
+contradictions. With restart-on-failure, the fully constrained city never finished: 20 of 20 attempts
+on an 8x8x5 grid ended in a contradiction, because every island the module set would have produced
+becomes a failure. The fix is not to weaken the requirement but to recover from the failure: the
+solver keeps the grid state before every collapse and, on any contradiction, undoes an exponentially
+growing number of choices and forbids the choice it came back to (A-9, modelled on marian42's
+history). With that, the same test solves on the first attempt in about 18 seconds, and every
+walkable cell is connected. The lesson generalises: **a global constraint is only as usable as the
+solver's ability to take a choice back.**
+
+**What it costs.** CPU work proportional to the grid on every observation; the grid on the CPU (which
+today's run loop already needs, but a device-resident solver would not); and search, since each
+violation costs the collapses that are undone. It is the heaviest workload we run. The default city
+test deliberately runs without it, so the module set is still measured on its own.
 
 **When to reach for one:** a property that must hold every time (a guaranteed path from spawn to
 exit), or one that design alone cannot approximate. For "usually connected", designing the module set

@@ -17,6 +17,7 @@ Wave Forge is a parallel program whose main work happens on the GPU. Its bugs ra
 | Unit | `#[cfg(test)]` modules in each crate | Rule compilation and transformations, bit packing, host/shader struct layouts, output format, invariant checker, renderers, fixtures | No |
 | GPU integration | `wfc-gpu/tests/` | Solver behaviour on a real device, for example that pre-constrained cells propagate before the first collapse | Yes |
 | End to end | `wfc-devtools/tests/` | Whole runs on reference rule sets: a 2D coastline and a small 3D city, with invariants checked and images written | Yes |
+| Global constraint | `e2e_3d_city::the_connectivity_constraint_leaves_one_walkable_network` | The path constraint plus backtracking: every walkable cell of the city is connected | Yes |
 | Stress (opt-in) | `wfc-devtools/tests/stress.rs` | Large cities and grids, timed; `#[ignore]`d so `cargo test` stays fast | Yes |
 
 "Needs a GPU" means a Vulkan, Metal or DirectX 12 device. Wave Forge has no CPU fallback ([vision.md](vision.md#non-goals)). In the dev container tests run on the host RTX 3070 through Mesa's dozen driver ([development.md](development.md#toolchain-and-environment)). Where no GPU is available, a software Vulkan device (Mesa llvmpipe, or `WGPU_ADAPTER_NAME=llvmpipe`) is good enough to check correctness, but never for performance.
