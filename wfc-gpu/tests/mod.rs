@@ -1,69 +1,72 @@
-// Integration tests for wfc-gpu crate
+// Integration tests for wfc-gpu. They run on any Vulkan, Metal or DX12 adapter, including
+// Mesa's software llvmpipe, so they also work in containers without a GPU.
 
-// Main integration test modules organized as inline modules
-
-#[test]
-fn integration_test_example() {
-    // This is a placeholder for integration tests
-    // Integration tests test the library from the outside, like a user would
-    assert!(true);
-}
-
-// Test modules organized by component
-
-#[cfg(test)]
-mod algorithm_tests {
-    #[test]
-    fn test_full_wfc_execution() {
-        // Test full algorithm execution with various configurations
-        assert!(true);
-    }
-}
-
-#[cfg(test)]
-mod buffer_tests {
-    #[test]
-    fn test_buffer_lifecycle() {
-        // Test buffer creation, usage, and cleanup
-        assert!(true);
-    }
-}
-
-#[cfg(test)]
-mod shader_tests {
-    #[test]
-    fn test_shader_compilation() {
-        // Test shader compilation and validation
-        assert!(true);
-    }
-}
-
-#[cfg(test)]
-mod propagation_tests {
-    #[test]
-    fn test_constraint_propagation() {
-        // Test constraint propagation strategies
-        assert!(true);
-    }
-}
-
-#[cfg(test)]
-mod error_recovery_tests {
-    #[test]
-    fn test_error_recovery_mechanisms() {
-        // Test error recovery mechanisms
-        assert!(true);
-    }
-}
-
-// You can define more test functions here, or use submodules
-// mod submodule_tests;
-
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wfc_core::entropy::EntropyHeuristicType;
 use wfc_core::grid::PossibilityGrid;
 use wfc_core::BoundaryCondition;
 use wfc_gpu::gpu::accelerator::GpuAccelerator;
 use wfc_rules::{AdjacencyRules, TileId, TileSet, Transformation};
+
+/// Constraints set before the run must shape the result even though constrained cells are
+/// never selected for collapse. Regression test for docs/status.md A-8: a cell pinned to one
+/// tile has zero entropy, so it used to be skipped and its neighbours ignored it.
+#[tokio::test]
+async fn pre_constrained_cells_propagate_before_first_collapse() -> anyhow::Result<()> {
+    // Three tiles that may only touch themselves: pinning a single cell forces the whole grid,
+    // so a correct solver finishes without collapsing anything itself.
+    let num_tiles = 3;
+    let tileset = TileSet::new(
+        vec![1.0; num_tiles],
+        vec![vec![Transformation::Identity]; num_tiles],
+    )?;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).map(move |tile| (axis, tile, tile)))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(tileset.num_transformed_tiles(), 6, tuples);
+
+    let mut grid = PossibilityGrid::new(4, 4, 4, num_tiles);
+    grid.collapse(1, 2, 3, 2).map_err(anyhow::Error::msg)?;
+
+    let mut accelerator = GpuAccelerator::new(
+        &grid,
+        &rules,
+        BoundaryCondition::Finite,
+        EntropyHeuristicType::Count,
+        None,
+    )
+    .await?;
+
+    // The callback runs once per collapse; counting calls tells us whether the solver had to
+    // pick tiles itself, independent of which tiles it would have picked.
+    let collapses = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&collapses);
+    let result = accelerator
+        .run_with_callback(
+            &grid,
+            &rules,
+            1000,
+            move |_| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(true)
+            },
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+
+    assert_eq!(collapses.load(Ordering::SeqCst), 0, "solver collapsed cells that were already forced");
+    for z in 0..result.depth {
+        for y in 0..result.height {
+            for x in 0..result.width {
+                let tiles: Vec<usize> = result.get(x, y, z).expect("cell in bounds").iter_ones().collect();
+                assert_eq!(tiles, vec![2], "cell ({x}, {y}, {z})");
+            }
+        }
+    }
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_basic_3d_generation() -> anyhow::Result<()> {

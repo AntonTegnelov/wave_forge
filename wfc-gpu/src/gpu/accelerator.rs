@@ -436,6 +436,36 @@ impl GpuAccelerator {
 
         // Create a working copy of the grid
         let mut current_grid = initial_grid.clone();
+
+        // Cells the caller constrained before the run must be propagated before the first
+        // observation. A cell pinned to a single tile has zero entropy, so it is never selected
+        // and its neighbours would otherwise never learn about it.
+        let constrained_cells: Vec<GridCoord> = (0..initial_grid.depth)
+            .flat_map(|z| {
+                (0..initial_grid.height)
+                    .flat_map(move |y| (0..initial_grid.width).map(move |x| (x, y, z)))
+            })
+            .filter(|&(x, y, z)| {
+                initial_grid
+                    .get(x, y, z)
+                    .is_some_and(|cell| cell.count_ones() < grid_definition.num_tiles)
+            })
+            .map(|(x, y, z)| GridCoord { x, y, z })
+            .collect();
+        if !constrained_cells.is_empty() {
+            trace!(
+                "Propagating {} pre-constrained cells before the first observation",
+                constrained_cells.len()
+            );
+            coordinator
+                .coordinate_propagation(&propagator, &buffers, &device, &queue, constrained_cells)
+                .await
+                .map_err(|e| WfcError::other(e.to_string()))?;
+            current_grid = synchronizer
+                .download_grid(&current_grid)
+                .await
+                .map_err(|e| WfcError::other(e.to_string()))?;
+        }
         let total_cells = grid_definition.total_cells();
         let mut collapsed_cells = 0;
         let mut iterations = 0;
