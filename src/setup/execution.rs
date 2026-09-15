@@ -108,7 +108,8 @@ pub async fn run_benchmark_mode(
     }
 
     // 1. Get GPU Adapter Info
-    let instance = Instance::default();
+    // Same environment-derived instance as the accelerator, so both see the same adapters.
+    let instance = Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter_info = match instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
         .await
