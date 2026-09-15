@@ -2795,6 +2795,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wfc-devtools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "image",
+ "tokio",
+ "wfc-core",
+ "wfc-gpu",
+ "wfc-rules",
+]
+
+[[package]]
 name = "wfc-gpu"
 version = "0.1.0"
 dependencies = [

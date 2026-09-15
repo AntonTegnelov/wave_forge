@@ -33,6 +33,7 @@ members = [
     "wfc-core",
     "wfc-rules",
     "wfc-gpu",
+    "wfc-devtools",
 ]
 
 [workspace.dependencies]

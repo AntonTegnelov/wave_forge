@@ -1,0 +1,12 @@
+//! Developer-only tooling for Wave Forge: invariant checks, reference rule sets and PNG
+//! renderers used by end-to-end tests and for inspecting generated worlds.
+//!
+//! Nothing here is part of the shipped library (see docs/architecture.md §10). The crate exists
+//! so that both humans and LLM-assisted development can *see* and *mechanically verify* what the
+//! generator produced, which is the only practical way to debug a parallel, GPU-driven solver.
+
+pub mod fixtures;
+pub mod invariants;
+pub mod render;
+
+pub use invariants::{TileGrid, Violation, adjacency_violations};
