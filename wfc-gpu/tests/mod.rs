@@ -68,7 +68,7 @@ use wfc_rules::{AdjacencyRules, TileId, TileSet, Transformation};
 #[tokio::test]
 async fn test_basic_3d_generation() -> anyhow::Result<()> {
     // Test configuration
-    let grid_size = (16, 16, 16); // Small enough for quick testing, large enough to be meaningful
+    let grid_size = (8, 8, 8); // Small enough for quick testing on software adapters
     let num_tiles = 2; // Simple binary tiles (e.g., "filled" and "empty")
 
     println!("Starting test_basic_3d_generation");
@@ -164,81 +164,80 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
         .run_with_callback(
             &mut grid,
             &rules,
-            1000,                 // max iterations
+            (grid_size.0 * grid_size.1 * grid_size.2 * 2) as u64, // enough iterations to collapse every cell
             |_progress| Ok(true), // Continue running
             None,                 // No shutdown signal
         )
         .await;
     println!("WFC algorithm completed with result: {:?}", result);
 
-    if let Ok(final_grid) = result {
-        println!("\nGrid state after collapse:");
-        println!(
-            "Number of superpositions remaining: {}",
-            final_grid
-                .data()
-                .iter()
-                .filter(|bits| bits.count_ones() > 1)
-                .count()
-        );
-        println!("Is fully collapsed: {:?}", final_grid.is_fully_collapsed());
+    let final_grid = result.map_err(|e| anyhow::anyhow!("WFC algorithm failed: {e}"))?;
+    println!("\nGrid state after collapse:");
+    println!(
+        "Number of superpositions remaining: {}",
+        final_grid
+            .data()
+            .iter()
+            .filter(|bits| bits.count_ones() > 1)
+            .count()
+    );
+    println!("Is fully collapsed: {:?}", final_grid.is_fully_collapsed());
 
-        // Print a sample of the grid state
-        let sample_x = std::cmp::min(3, final_grid.width);
-        let sample_y = std::cmp::min(3, final_grid.height);
-        let sample_z = std::cmp::min(3, final_grid.depth);
+    // Print a sample of the grid state
+    let sample_x = std::cmp::min(3, final_grid.width);
+    let sample_y = std::cmp::min(3, final_grid.height);
+    let sample_z = std::cmp::min(3, final_grid.depth);
 
-        println!(
-            "\nSample of grid state ({}x{}x{}):",
-            sample_x, sample_y, sample_z
-        );
-        for x in 0..sample_x {
-            for y in 0..sample_y {
-                for z in 0..sample_z {
-                    if let Some(cell_bits) = final_grid.get(x, y, z) {
-                        println!("Cell ({}, {}, {}): {:?}", x, y, z, cell_bits);
-                    }
+    println!(
+        "\nSample of grid state ({}x{}x{}):",
+        sample_x, sample_y, sample_z
+    );
+    for x in 0..sample_x {
+        for y in 0..sample_y {
+            for z in 0..sample_z {
+                if let Some(cell_bits) = final_grid.get(x, y, z) {
+                    println!("Cell ({}, {}, {}): {:?}", x, y, z, cell_bits);
                 }
             }
         }
-
-        // Verify the result
-        let violations = verify_adjacency_rules(&final_grid, &rules);
-        println!("Found {} adjacency rule violations", violations);
-
-        let total_cells = final_grid.width * final_grid.height * final_grid.depth;
-        let mut collapsed_count = 0;
-        for z in 0..final_grid.depth {
-            for y in 0..final_grid.height {
-                for x in 0..final_grid.width {
-                    if let Some(cell) = final_grid.get(x, y, z) {
-                        if cell.count_ones() == 1 {
-                            collapsed_count += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        println!(
-            "Collapsed {} out of {} cells ({:.1}%)",
-            collapsed_count,
-            total_cells,
-            (collapsed_count as f64 / total_cells as f64) * 100.0
-        );
-
-        assert!(
-            violations == 0,
-            "Found {} adjacency rule violations",
-            violations
-        );
-        assert!(
-            collapsed_count == total_cells,
-            "Not all cells collapsed: {} out of {} cells collapsed",
-            collapsed_count,
-            total_cells
-        );
     }
+
+    // Verify the result
+    let violations = verify_adjacency_rules(&final_grid, &rules);
+    println!("Found {} adjacency rule violations", violations);
+
+    let total_cells = final_grid.width * final_grid.height * final_grid.depth;
+    let mut collapsed_count = 0;
+    for z in 0..final_grid.depth {
+        for y in 0..final_grid.height {
+            for x in 0..final_grid.width {
+                if let Some(cell) = final_grid.get(x, y, z) {
+                    if cell.count_ones() == 1 {
+                        collapsed_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "Collapsed {} out of {} cells ({:.1}%)",
+        collapsed_count,
+        total_cells,
+        (collapsed_count as f64 / total_cells as f64) * 100.0
+    );
+
+    assert!(
+        violations == 0,
+        "Found {} adjacency rule violations",
+        violations
+    );
+    assert!(
+        collapsed_count == total_cells,
+        "Not all cells collapsed: {} out of {} cells collapsed",
+        collapsed_count,
+        total_cells
+    );
 
     Ok(())
 }
