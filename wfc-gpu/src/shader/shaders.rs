@@ -71,21 +71,17 @@ impl ShaderManager {
     /// Creates a new ShaderManager.
     /// Loads component metadata and prepares to load shader variants from OUT_DIR.
     pub fn new() -> Result<Self, ShaderError> {
-        // Initialize logger if not already done
-        if std::env::var("RUST_LOG").is_err() {
-            std::env::set_var("RUST_LOG", "debug");
-        }
-        let _ = env_logger::try_init();
-
-        // Get the output directory set by the build script
-        let out_dir = std::env::var("OUT_DIR").map_err(|_| ShaderError::OutDirNotSet)?;
+        // OUT_DIR is only set by Cargo while compiling, so capture it at compile time;
+        // reading it at runtime works under `cargo test` but not for a built binary.
+        let out_dir = env!("OUT_DIR");
         if out_dir.is_empty() {
             return Err(ShaderError::OutDirNotSet);
         }
-        let variants_dir = Path::new(&out_dir).join("shaders").join("variants");
+        let variants_dir = Path::new(out_dir).join("shaders").join("variants");
 
-        // Load registry from JSON file
-        let registry_path = PathBuf::from("src/shader/shaders/components/registry.json");
+        // Load registry from JSON file (anchored to the crate, not the current directory)
+        let registry_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/shader/shaders/components/registry.json");
         let component_registry = Self::load_component_registry(&registry_path)?;
 
         info!(
@@ -345,7 +341,9 @@ impl ShaderManager {
             ShaderType::Collapse => "collapse_cell.wgsl",
             // Add other types if necessary
         };
-        let fallback_path = PathBuf::from("src/shader/shaders").join(fallback_filename);
+        let fallback_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/shader/shaders")
+            .join(fallback_filename);
 
         match std::fs::read_to_string(&fallback_path) {
             Ok(content) => {
