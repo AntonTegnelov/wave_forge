@@ -164,20 +164,20 @@ impl GpuBuffers {
             "Creating GPU buffers with boundary mode: {:?}...",
             boundary_mode
         );
-        println!("[WFC-GPU DEBUG] GpuBuffers::new called.");
-        println!(
-            "[WFC-GPU DEBUG]   Initial grid: {}x{}x{} ({} tiles)",
+        log::debug!("GpuBuffers::new called.");
+        log::debug!(
+            "Initial grid: {}x{}x{} ({} tiles)",
             initial_grid.width,
             initial_grid.height,
             initial_grid.depth,
             initial_grid.num_tiles()
         );
-        println!(
-            "[WFC-GPU DEBUG]   Rules: num_tiles={}, num_axes={}",
+        log::debug!(
+            "Rules: num_tiles={}, num_axes={}",
             rules.num_tiles(),
             rules.num_axes()
         );
-        println!("[WFC-GPU DEBUG]   Boundary mode: {:?}", boundary_mode);
+        log::debug!("Boundary mode: {:?}", boundary_mode);
 
         let width = initial_grid.width;
         let height = initial_grid.height;
@@ -188,16 +188,16 @@ impl GpuBuffers {
 
         let default_dynamic_config = DynamicBufferConfig::default();
         let grid_buffers = GridBuffers::new(device, initial_grid, &default_dynamic_config)?;
-        println!("[WFC-GPU DEBUG]   GridBuffers created successfully.");
+        log::debug!("GridBuffers created successfully.");
         let worklist_buffers = WorklistBuffers::new(device, num_cells, &default_dynamic_config)?;
-        println!("[WFC-GPU DEBUG]   WorklistBuffers created successfully.");
+        log::debug!("WorklistBuffers created successfully.");
         let entropy_buffers = EntropyBuffers::new(device, num_cells, &default_dynamic_config)?;
-        println!(
-            "[WFC-GPU DEBUG]   EntropyBuffers created successfully: {:?}",
+        log::debug!(
+            "EntropyBuffers created successfully: {:?}",
             entropy_buffers.min_entropy_info_buf.usage()
         ); // Print usage of a key buffer
         let rule_buffers = RuleBuffers::new(device, rules, &default_dynamic_config)?;
-        println!("[WFC-GPU DEBUG]   RuleBuffers created successfully.");
+        log::debug!("RuleBuffers created successfully.");
 
         let params = GpuParamsUniform {
             grid_width: width as u32,
@@ -288,7 +288,7 @@ impl GpuBuffers {
             mapped_at_creation: false,
         }));
 
-        println!("[WFC-GPU DEBUG]   All primary GpuBuffers created (contradiction, params, stats, etc.).");
+        log::debug!("All primary GpuBuffers created (contradiction, params, stats, etc.).");
 
         Ok(Self {
             grid_buffers,
@@ -320,24 +320,14 @@ impl GpuBuffers {
         usage: wgpu::BufferUsages,
         label: Option<&str>,
     ) -> Arc<wgpu::Buffer> {
-        let label_str = label.unwrap_or("Unnamed Buffer");
-        println!(
-            "[WFC-GPU DEBUG] GpuBuffers::create_buffer called: Label=\"{}\", Size={}, Usage={:?}",
-            label_str, size, usage
-        );
-        let buffer_descriptor = wgpu::BufferDescriptor {
+        let padded_size = size.max(4); // Ensure minimum size of 4 bytes for alignment
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label,
-            size,
+            size: padded_size,
             usage,
             mapped_at_creation: false,
-        };
-        let buffer = Arc::new(device.create_buffer(&buffer_descriptor));
-        println!(
-            "[WFC-GPU DEBUG]   Buffer \"{}\" created with ID: {:?}",
-            label_str,
-            buffer.global_id()
-        );
-        buffer
+        });
+        Arc::new(buffer)
     }
 
     pub fn resize_buffer(
@@ -720,11 +710,24 @@ pub async fn download_buffer_data<T: bytemuck::Pod>(
     })?;
 
     loop {
-        current_device.poll(wgpu::MaintainBase::Wait); // Use the validated device reference
+        let _ = current_device.poll(wgpu::PollType::wait_indefinitely());
 
         match receiver.try_recv() {
             Ok(Some(Ok(()))) => {
-                let mapped_range = slice.get_mapped_range();
+                let mapped_range = match slice.get_mapped_range() {
+                    Ok(range) => range,
+                    Err(e) => {
+                        buffer_to_map.unmap();
+                        return Err(GpuError::BufferMapFailed {
+                            msg: format!(
+                                "Failed to access mapped range for {:?}: {}",
+                                label.as_deref().unwrap_or("Unnamed Buffer"),
+                                e
+                            ),
+                            context: Box::new(GpuErrorContext::default()),
+                        });
+                    }
+                };
                 let data = bytemuck::cast_slice(&mapped_range).to_vec();
                 // Drop guard to unmap buffer
                 drop(mapped_range);

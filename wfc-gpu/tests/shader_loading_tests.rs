@@ -1,13 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use std::env;
     use wfc_gpu::shader::shaders::{ShaderManager, ShaderType};
 
     #[test]
     fn test_shader_loading_behavior() {
         // Set up logging
-        env::set_var("RUST_LOG", "debug");
         env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
             .format_timestamp(None)
             .format_target(false)
             .init();

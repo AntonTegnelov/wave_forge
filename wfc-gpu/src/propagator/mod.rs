@@ -151,12 +151,9 @@ impl PropagationStrategyFactory {
         grid: &PossibilityGrid,
         pipelines: Arc<ComputePipelines>,
     ) -> Box<dyn AsyncPropagationStrategy + Send + Sync> {
-        let total_cells = grid.width * grid.height * grid.depth;
-        if total_cells > 4096 {
-            Self::create_subgrid_async(1000, 16, pipelines.clone())
-        } else {
-            Self::create_direct_async(1000, pipelines)
-        }
+        // Only direct propagation operates purely on GPU buffers for now
+        let _ = grid;
+        Self::create_direct_async(1000, pipelines)
     }
 }
 

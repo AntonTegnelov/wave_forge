@@ -232,9 +232,9 @@ impl GpuEntropyCalculator {
         self.synchronizer
             .reset_min_entropy_buffer_in_encoder(&mut encoder)?;
 
-        // Create main bind group (group 0)
+        // Group 0 matches entropy.wgsl: grid possibilities + entropy params
         let grid_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Grid Possibilities Bind Group (Entropy Pass)"), // Clarify label
+            label: Some("Grid Possibilities Bind Group (Entropy Pass)"),
             layout: &self.pipelines.entropy_bind_group_layout_0,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -247,14 +247,22 @@ impl GpuEntropyCalculator {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
+                    resource: self.buffers.entropy_params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Group 1 matches entropy.wgsl: entropy output + global minimum info
+        let entropy_params_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Entropy Parameters Bind Group (Entropy Pass)"),
+            layout: &self.pipelines.entropy_bind_group_layout_1,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
                     resource: self.buffers.entropy_buffers.entropy_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.buffers.params_uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
+                    binding: 1,
                     resource: self
                         .buffers
                         .entropy_buffers
@@ -262,16 +270,6 @@ impl GpuEntropyCalculator {
                         .as_entire_binding(),
                 },
             ],
-        });
-
-        // Create entropy parameters bind group (group 1)
-        let entropy_params_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Entropy Parameters Bind Group (Entropy Pass)"), // Clarify label
-            layout: &self.pipelines.entropy_bind_group_layout_1,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.buffers.entropy_params_buffer.as_entire_binding(),
-            }],
         });
 
         {
@@ -403,13 +401,12 @@ impl GpuEntropyCalculator {
         self.synchronizer
             .reset_min_entropy_buffer_in_encoder(&mut encoder)?;
 
-        // Create main bind group (group 0)
+        // Group 0 matches entropy.wgsl: grid possibilities + entropy params
         let grid_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Grid Possibilities Bind Group"),
             layout: &self.pipelines.entropy_bind_group_layout_0,
             entries: &[
                 wgpu::BindGroupEntry {
-                    // Grid Possibilities
                     binding: 0,
                     resource: self
                         .buffers
@@ -418,18 +415,23 @@ impl GpuEntropyCalculator {
                         .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    // Entropy Output
                     binding: 1,
+                    resource: self.buffers.entropy_params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Group 1 matches entropy.wgsl: entropy output + global minimum info
+        let entropy_params_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Entropy Parameters Bind Group"),
+            layout: &self.pipelines.entropy_bind_group_layout_1,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
                     resource: self.buffers.entropy_buffers.entropy_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    // Params (General)
-                    binding: 2,
-                    resource: self.buffers.params_uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    // Min Entropy Output
-                    binding: 3,
+                    binding: 1,
                     resource: self
                         .buffers
                         .entropy_buffers
@@ -437,16 +439,6 @@ impl GpuEntropyCalculator {
                         .as_entire_binding(),
                 },
             ],
-        });
-
-        // Create entropy parameters bind group (group 1)
-        let entropy_params_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Entropy Parameters Bind Group"),
-            layout: &self.pipelines.entropy_bind_group_layout_1,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.buffers.entropy_params_buffer.as_entire_binding(),
-            }],
         });
 
         {

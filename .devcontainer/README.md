@@ -8,7 +8,7 @@ port 2239** (see the template's port table for the full allocation).
 
 | Tool | Version / notes |
 |---|---|
-| Rust | stable via rustup (`rust:1-bookworm` base) + clippy, rustfmt, rust-analyzer |
+| Rust | 1.98.1 via rustup (`rust:1.98.1-bookworm` base, matches `rust-toolchain.toml`) + clippy, rustfmt, rust-analyzer |
 | Native deps | X11/Wayland/xkbcommon headers (minifb), clang/libclang (bindgen), cmake, pkg-config |
 | Vulkan | Mesa lavapipe (CPU Vulkan) so wgpu can find a device headless — slow, no real GPU in the container |
 | Node.js | 22 (NodeSource) — only for Claude Code |
@@ -26,8 +26,8 @@ keep their own build output.
 `target/`, `~/.cargo` (`CARGO_HOME`: registry/git caches, `cargo install`ed
 binaries), `~/.claude`, `~/.ssh` (incl. the PAT store), and the sshd host
 keys. The toolchain itself (`/usr/local/rustup`) is on the image layer and
-owned by `dev`, so `rustup update` works but is undone by a rebuild — pin
-toolchain changes in the Dockerfile.
+owned by `dev`, so `rustup update` works but is undone by a rebuild — bump
+the toolchain in both the Dockerfile and `rust-toolchain.toml`.
 
 ## One-time setup
 

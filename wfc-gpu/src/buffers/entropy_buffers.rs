@@ -29,31 +29,14 @@ impl EntropyBuffers {
         num_cells: usize,
         _config: &DynamicBufferConfig,
     ) -> Result<Self, GpuError> {
-        println!(
-            "[WFC-GPU DEBUG] EntropyBuffers::new called. num_cells: {}, config: {:?}",
-            num_cells, _config
-        );
-
         let entropy_buffer_size = (num_cells * std::mem::size_of::<f32>()) as u64;
         let min_entropy_info_buffer_size = (2 * std::mem::size_of::<u32>()) as u64; // [f32_bits, u32_index]
 
-        println!(
-            "[WFC-GPU DEBUG]   Creating 'Entropy Buffer': Size={}, Usage={:?}",
-            entropy_buffer_size,
-            BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST
-        );
         let entropy_buf = GpuBuffers::create_buffer(
             device,
             entropy_buffer_size,
             BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
             Some("Entropy Buffer"),
-        );
-        println!("[WFC-GPU DEBUG]     'Entropy Buffer' created.");
-
-        println!(
-            "[WFC-GPU DEBUG]   Creating 'Staging Entropy Buffer': Size={}, Usage={:?}",
-            entropy_buffer_size,
-            BufferUsages::MAP_READ | BufferUsages::COPY_DST
         );
         let staging_entropy_buf = GpuBuffers::create_buffer(
             device,
@@ -61,34 +44,18 @@ impl EntropyBuffers {
             BufferUsages::MAP_READ | BufferUsages::COPY_DST,
             Some("Staging Entropy Buffer"),
         );
-        println!("[WFC-GPU DEBUG]     'Staging Entropy Buffer' created.");
-
-        println!(
-            "[WFC-GPU DEBUG]   Creating 'Min Entropy Info Buffer': Size={}, Usage={:?}",
-            min_entropy_info_buffer_size,
-            BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC
-        );
         let min_entropy_info_buf = GpuBuffers::create_buffer(
             device,
             min_entropy_info_buffer_size,
             BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             Some("Min Entropy Info Buffer"),
         );
-        println!("[WFC-GPU DEBUG]     'Min Entropy Info Buffer' created.");
-
-        let staging_min_entropy_info_buf_usages =
-            BufferUsages::MAP_READ | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
-        println!(
-            "[WFC-GPU DEBUG]   Creating 'Staging Min Entropy Info': Size={}, Usage={:?}",
-            min_entropy_info_buffer_size, staging_min_entropy_info_buf_usages
-        );
         let staging_min_entropy_info_buf = GpuBuffers::create_buffer(
             device,
             min_entropy_info_buffer_size,
-            staging_min_entropy_info_buf_usages,
+            BufferUsages::MAP_READ | BufferUsages::COPY_DST,
             Some("Staging Min Entropy Info"),
         );
-        println!("[WFC-GPU DEBUG]     'Staging Min Entropy Info' created.");
 
         Ok(Self {
             entropy_buf,

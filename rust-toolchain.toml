@@ -1,0 +1,5 @@
+[toolchain]
+# Keep in sync with the base image in .devcontainer/Dockerfile.
+channel = "1.98.1"
+components = ["clippy", "rustfmt", "rust-analyzer"]
+profile = "minimal"

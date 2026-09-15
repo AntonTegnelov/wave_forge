@@ -205,15 +205,16 @@ impl WgpuBackend {
     /// # Returns
     /// A new WgpuBackend instance
     pub fn new() -> Self {
-        let instance = Arc::new(wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         }));
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .expect("Failed to find GPU adapter");
 
@@ -231,6 +232,7 @@ impl WgpuBackend {
             required_limits: limits,
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::default(),
+            ..Default::default()
         }))
         .expect("Failed to create device");
 

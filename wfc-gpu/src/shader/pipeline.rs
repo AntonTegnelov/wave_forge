@@ -8,7 +8,7 @@ use seahash::SeaHasher;
 use std::hash::{Hash, Hasher};
 // Import ShaderManager and related types
 use super::shaders::{ShaderManager, ShaderType};
-use crate::buffers::{CollapseInfoUniform, GpuParamsUniform};
+use crate::buffers::{CollapseInfoUniform, GpuEntropyShaderParams, GpuParamsUniform};
 use crate::utils::error::{GpuError, GpuErrorContext, GpuResourceType};
 use lazy_static::lazy_static;
 
@@ -276,13 +276,13 @@ impl ComputePipelines {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1, // Params
+                        binding: 1, // Entropy params
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
                             min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
-                                GpuParamsUniform,
+                                GpuEntropyShaderParams,
                             >()
                                 as u64),
                         },
@@ -403,7 +403,7 @@ impl ComputePipelines {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
                             min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<u64>() as u64
+                                std::mem::size_of::<u32>() as u64
                             ), // Two atomic<u32>
                         },
                         count: None,
@@ -502,24 +502,24 @@ impl ComputePipelines {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Entropy Pipeline Layout"),
                 bind_group_layouts: &[
-                    &entropy_bind_group_layout_0, // Group 0
-                    &entropy_bind_group_layout_1, // Group 1
+                    Some(entropy_bind_group_layout_0.as_ref()), // Group 0
+                    Some(entropy_bind_group_layout_1.as_ref()), // Group 1
                 ],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             });
 
         let propagation_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Propagation Pipeline Layout"),
-                bind_group_layouts: &[&propagation_bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(propagation_bind_group_layout.as_ref())],
+                immediate_size: 0,
             });
 
         let collapse_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Collapse Pipeline Layout"),
-                bind_group_layouts: &[&collapse_bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(collapse_bind_group_layout.as_ref())],
+                immediate_size: 0,
             });
 
         // --- Create Compute Pipelines (using cache helper) ---

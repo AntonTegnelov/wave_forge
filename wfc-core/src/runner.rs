@@ -6,7 +6,7 @@ use crate::{
 };
 use log::{debug, error, info, warn};
 use rand::{
-    distributions::{Distribution, WeightedIndex},
+    distr::{weighted::WeightedIndex, Distribution},
     rngs::StdRng,
     SeedableRng,
 };
