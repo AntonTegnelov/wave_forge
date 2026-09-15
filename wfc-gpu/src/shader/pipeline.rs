@@ -74,6 +74,11 @@ fn compile_shader(
     Ok(shader_module)
 }
 
+/// Workgroup edge length declared in `entropy.wgsl` (`@workgroup_size(8, 8, 1)`).
+pub const ENTROPY_WORKGROUP_SIZE: u32 = 8;
+/// Workgroup length declared in `propagate.wgsl` (`@workgroup_size(64)`).
+pub const PROPAGATION_WORKGROUP_SIZE: u32 = 64;
+
 /// Manages the WGPU compute pipelines required for WFC acceleration.
 ///
 /// This struct holds the compiled compute pipeline objects and their corresponding
@@ -172,18 +177,11 @@ impl ComputePipelines {
             max_invocations
         );
 
-        // Determine optimal workgroup size
-        // Example: Aim for 64-256 invocations, typically square root for 2D
-        let workgroup_size: u32 = if max_invocations >= 256 {
-            16 // 16x16 = 256
-        } else if max_invocations >= 64 {
-            8 // 8x8 = 64
-        } else {
-            // Fallback for very low limits, adjust as needed
-            (max_invocations as f64).sqrt() as u32
-        };
-        let entropy_workgroup_size = workgroup_size;
-        let propagation_workgroup_size = workgroup_size; // Use same for now
+        // Dispatch counts must be computed with the workgroup sizes the shaders declare. Choosing
+        // a larger size here from device limits made the entropy pass skip every cell beyond the
+        // first 8 columns/rows of each dispatched workgroup, so larger grids never finished.
+        let entropy_workgroup_size = ENTROPY_WORKGROUP_SIZE;
+        let propagation_workgroup_size = PROPAGATION_WORKGROUP_SIZE;
 
         // --- Compile Shaders (using compile_shader helper) ---
         let entropy_shader_module = compile_shader(
@@ -643,5 +641,19 @@ impl ComputePipelines {
     ) -> Result<&wgpu::ComputePipeline, GpuError> {
         // No longer selecting pipeline based on features here, selection happens at creation
         Ok(&self.propagation_pipeline)
+    }
+}
+
+#[cfg(test)]
+mod workgroup_tests {
+    use super::{ENTROPY_WORKGROUP_SIZE, PROPAGATION_WORKGROUP_SIZE};
+
+    #[test]
+    fn host_workgroup_sizes_match_the_shaders() {
+        let entropy = include_str!("shaders/entropy.wgsl");
+        assert!(entropy.contains(&format!("const WORKGROUP_SIZE = {ENTROPY_WORKGROUP_SIZE}u;")));
+        assert!(entropy.contains("@workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1u)"));
+        let propagate = include_str!("shaders/propagate.wgsl");
+        assert!(propagate.contains(&format!("@workgroup_size({PROPAGATION_WORKGROUP_SIZE})")));
     }
 }

@@ -68,6 +68,38 @@ async fn pre_constrained_cells_propagate_before_first_collapse() -> anyhow::Resu
     Ok(())
 }
 
+/// The entropy pass must evaluate every cell, not just those in the first workgroup of each
+/// dispatch. Regression test: the host once dispatched with a larger workgroup size than the
+/// shader declares, so cells beyond the first 8 columns and rows were never selected.
+#[tokio::test]
+async fn grids_larger_than_one_workgroup_fully_collapse() -> anyhow::Result<()> {
+    let num_tiles = 2;
+    let tileset = TileSet::new(
+        vec![1.0; num_tiles],
+        vec![vec![Transformation::Identity]; num_tiles],
+    )?;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).flat_map(move |a| (0..num_tiles).map(move |b| (axis, a, b))))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(tileset.num_transformed_tiles(), 6, tuples);
+    let grid = PossibilityGrid::new(20, 18, 2, num_tiles);
+
+    let mut accelerator = GpuAccelerator::new(
+        &grid,
+        &rules,
+        BoundaryCondition::Finite,
+        EntropyHeuristicType::Count,
+        None,
+    )
+    .await?;
+    let result = accelerator
+        .run_with_callback(&grid, &rules, 20 * 18 * 2 * 2, |_| Ok(true), None)
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+    assert_eq!(result.is_fully_collapsed(), Ok(true));
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_basic_3d_generation() -> anyhow::Result<()> {
     // Test configuration
