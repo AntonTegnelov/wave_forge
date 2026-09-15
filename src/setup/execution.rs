@@ -218,7 +218,7 @@ pub async fn run_benchmark_mode(
             let accelerator = match accelerator_res {
                 Ok(mut acc) => {
                     // Configure propagation with 5000 iterations
-                    acc.with_subgrid_propagation(5000, 8);
+                    acc.with_direct_propagation(5000);
                     acc
                 }
                 Err(e) => {
@@ -528,7 +528,7 @@ pub async fn run_standard_mode(
     let mut gpu_accelerator = match accelerator_res {
         Ok(mut acc) => {
             // Configure propagation with 5000 iterations
-            acc.with_subgrid_propagation(5000, 8);
+            acc.with_direct_propagation(5000);
             acc
         }
         Err(e) => {

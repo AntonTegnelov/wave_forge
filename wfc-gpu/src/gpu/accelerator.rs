@@ -230,36 +230,10 @@ impl GpuAccelerator {
             params,
         );
 
-        // Choose an appropriate propagation strategy based on grid size and subgrid configuration
-        if let Some(ref config) = subgrid_config {
-            if initial_grid.width * initial_grid.height * initial_grid.depth > 4096 {
-                // For large grids with subgrid config, use subgrid propagation
-                propagator_concrete = propagator_concrete.with_subgrid_propagation(
-                    1000, // Default max iterations
-                    config.max_subgrid_size as u32,
-                );
-                info!(
-                    "Using subgrid propagation strategy with subgrid size {}",
-                    config.max_subgrid_size
-                );
-            } else {
-                // For smaller grids, even with subgrid config, use direct propagation
-                propagator_concrete = propagator_concrete.with_direct_propagation(1000);
-                info!("Using direct propagation strategy (grid too small for subgrid)");
-            }
-        } else if initial_grid.width * initial_grid.height * initial_grid.depth > 4096 {
-            // For large grids without explicit subgrid config, use adaptive strategy
-            propagator_concrete = propagator_concrete.with_adaptive_propagation(
-                1000, // Default max iterations
-                16,   // Default subgrid size
-                4096, // Default threshold
-            );
-            info!("Using adaptive propagation strategy");
-        } else {
-            // For smaller grids, use direct propagation
-            propagator_concrete = propagator_concrete.with_direct_propagation(1000);
-            info!("Using direct propagation strategy");
-        }
+        // Direct propagation is the only strategy that works purely on the GPU buffers;
+        // the subgrid and adaptive strategies still rely on a CPU-side grid.
+        propagator_concrete = propagator_concrete.with_direct_propagation(1000);
+        info!("Using direct propagation strategy");
 
         let propagator = Arc::new(GpuRwLock::new(propagator_concrete));
 
