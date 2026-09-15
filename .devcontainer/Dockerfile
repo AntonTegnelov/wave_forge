@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1.6
-# Official Rust image: stable toolchain via rustup at /usr/local/rustup with
-# proxies in /usr/local/cargo/bin (kept on PATH); CARGO_HOME is re-pointed to
-# /home/dev/.cargo (a named volume) so registry caches survive recreates.
-FROM rust:1-bookworm
+# Official Rust image, pinned to the same toolchain as rust-toolchain.toml:
+# rustup at /usr/local/rustup with proxies in /usr/local/cargo/bin (kept on
+# PATH); CARGO_HOME is re-pointed to /home/dev/.cargo (a named volume) so
+# registry caches survive recreates. Bump both files together.
+FROM rust:1.98.1-bookworm
 
 ARG NODE_MAJOR=22
 ARG DEV_USER=dev

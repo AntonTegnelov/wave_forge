@@ -2,6 +2,7 @@
 name = "wfc-rules"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.98"
 
 [dependencies]
 log = "0.4.34"
