@@ -477,7 +477,7 @@ impl GpuAccelerator {
             }
 
             // Choose a random state from possible states
-            let chosen_state = possible_states[rand::random::<usize>() % possible_states.len()];
+            let chosen_state = possible_states[rand::random_range(0..possible_states.len())];
             // Use the grid's collapse method directly
             current_grid.collapse(x, y, z, chosen_state).map_err(|e| {
                 WfcError::other(format!(

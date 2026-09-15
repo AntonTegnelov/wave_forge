@@ -9,7 +9,7 @@ edition = "2021"
 wfc-rules = { path = "../wfc-rules" } # Added for rule/tileset types
 bitvec = { version = "1.1.1", features = ["serde"] } # Enable serde feature for bitvec
 log = "0.4.34"
-rand = "0.8.5" # Added for random tile selection during collapse
+rand = "0.10.2" # Added for random tile selection during collapse
 thiserror = "2.0.20"
 serde = { version = "1.0.229", features = ["derive"], optional = true } # Added serde dependency
 serde_json = { version = "1.0.151", optional = true } # Added serde_json dependency
