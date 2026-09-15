@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-log = "0.4.21"
+log = "0.4.34"
 thiserror = "1.0.58"
-serde = { version = "1.0.197", features = ["derive"], optional = true }
-serde_json = { version = "1.0.115", optional = true }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.151", optional = true }
 ron = "0.8"        # Example, could use JSON instead
 
 [dev-dependencies]
-proptest = "1.4"
+proptest = "1.11.0"
 
 [features]
 default = ["serde"]

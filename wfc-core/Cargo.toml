@@ -7,17 +7,17 @@ edition = "2021"
 
 [dependencies]
 wfc-rules = { path = "../wfc-rules" } # Added for rule/tileset types
-bitvec = { version = "1.0.1", features = ["serde"] } # Enable serde feature for bitvec
-log = "0.4.21"
+bitvec = { version = "1.1.1", features = ["serde"] } # Enable serde feature for bitvec
+log = "0.4.34"
 rand = "0.8.5" # Added for random tile selection during collapse
 thiserror = "1.0.58"
-serde = { version = "1.0.197", features = ["derive"], optional = true } # Added serde dependency
-serde_json = { version = "1.0.115", optional = true } # Added serde_json dependency
-clap = { version = "4.5.4", features = ["derive"], optional = true }
-async-trait = "0.1.79"
+serde = { version = "1.0.229", features = ["derive"], optional = true } # Added serde dependency
+serde_json = { version = "1.0.151", optional = true } # Added serde_json dependency
+clap = { version = "4.6.7", features = ["derive"], optional = true }
+async-trait = "0.1.92"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 pollster = "0.3.0" # Added pollster for blocking async calls in tests
 
 [features]
