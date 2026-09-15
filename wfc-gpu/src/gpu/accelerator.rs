@@ -28,6 +28,7 @@ use crate::{
 
 use anyhow::Error as AnyhowError;
 use log::{info, trace};
+use tracing::{Instrument, info_span};
 use rand;
 use std::time::Instant;
 use wfc_core::{
@@ -418,10 +419,20 @@ impl GpuAccelerator {
             );
         }
 
+        // Spans for the timeline (see docs/debugging.md). Stages that await are instrumented
+        // rather than entered, because an entered span guard must not be held across `.await`.
+        let run_span = info_span!(
+            "wfc_run",
+            width = grid_definition.dims.0,
+            height = grid_definition.dims.1,
+            depth = grid_definition.dims.2,
+            tiles = grid_definition.num_tiles
+        );
+
         // Upload initial grid state
         trace!("Uploading initial grid state to GPU...");
-        synchronizer
-            .upload_grid(initial_grid)
+        info_span!(parent: &run_span, "upload_grid")
+            .in_scope(|| synchronizer.upload_grid(initial_grid))
             .map_err(|e| WfcError::other(e.to_string()))?;
 
         synchronizer
@@ -457,12 +468,15 @@ impl GpuAccelerator {
                 "Propagating {} pre-constrained cells before the first observation",
                 constrained_cells.len()
             );
+            let cells = constrained_cells.len();
             coordinator
                 .coordinate_propagation(&propagator, &buffers, &device, &queue, constrained_cells)
+                .instrument(info_span!(parent: &run_span, "initial_propagation", cells))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
             current_grid = synchronizer
                 .download_grid(&current_grid)
+                .instrument(info_span!(parent: &run_span, "download_grid"))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
         }
@@ -472,9 +486,12 @@ impl GpuAccelerator {
 
         // Main WFC loop
         while iterations < max_iterations {
+            let iteration_span = info_span!(parent: &run_span, "iteration", iteration = iterations);
+
             // Compute entropy on the GPU so the min-entropy buffer is current before selecting
             entropy_calculator
                 .dispatch_entropy_calculation_pass()
+                .instrument(info_span!(parent: &iteration_span, "entropy_pass"))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
 
@@ -487,6 +504,7 @@ impl GpuAccelerator {
                     &queue,
                     &synchronizer,
                 )
+                .instrument(info_span!(parent: &iteration_span, "select_cell"))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
 
@@ -518,8 +536,8 @@ impl GpuAccelerator {
             collapsed_cells += 1;
 
             // Upload the updated cell state
-            synchronizer
-                .upload_grid(&current_grid)
+            info_span!(parent: &iteration_span, "upload_grid")
+                .in_scope(|| synchronizer.upload_grid(&current_grid))
                 .map_err(|e| WfcError::other(e.to_string()))?;
 
             // Propagate constraints
@@ -531,12 +549,14 @@ impl GpuAccelerator {
                     &queue,
                     vec![GridCoord { x, y, z }],
                 )
+                .instrument(info_span!(parent: &iteration_span, "propagate", x, y, z))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
 
             // Download the updated grid state
             current_grid = synchronizer
                 .download_grid(&current_grid)
+                .instrument(info_span!(parent: &iteration_span, "download_grid"))
                 .await
                 .map_err(|e| WfcError::other(e.to_string()))?;
 

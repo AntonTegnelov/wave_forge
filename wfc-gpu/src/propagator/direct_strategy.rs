@@ -120,6 +120,7 @@ impl DirectPropagationStrategy {
         worklist_idx: usize,
         input_count: u32,
     ) -> Result<u32, PropagationError> {
+        let _span = tracing::info_span!("propagation_pass", input_count).entered();
         let device = synchronizer.device();
         let queue = synchronizer.queue();
 
