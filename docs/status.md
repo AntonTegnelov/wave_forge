@@ -16,7 +16,7 @@ After the project was revived ([#3](https://github.com/AntonTegnelov/wave_forge/
 - Constraint propagation on the GPU is enforced and verified: generated grids satisfy the adjacency rules, and unsatisfiable rule sets report the contradiction location.
 - Periodic and clamped borders both work (for full 3D grids).
 - Cells constrained before a run (for example pinned layers) propagate before the first collapse.
-- End-to-end tests generate a 2D coastline and a small marian42-style 3D city (52 connector-based module variants, walkable paths), check them against their rules and render them to PNG; `wfc-render` renders any CLI output ([testing.md](testing.md)).
+- End-to-end tests generate a 2D coastline and a small marian42-style 3D city (81 connector-based module variants, walkable paths, stairs and passages), check them against their rules and render them to PNG; `wfc-render` renders any CLI output ([testing.md](testing.md)).
 - `--trace-chrome` writes a timeline of the GPU run loop for Perfetto ([debugging.md](debugging.md)).
 - In the dev container it runs on the host's NVIDIA RTX 3070 through Mesa's dozen driver (Vulkan on Direct3D 12); timings carry translation overhead. Without a GPU, a software Vulkan device (Mesa llvmpipe) is enough for correctness tests but not for performance work.
 
