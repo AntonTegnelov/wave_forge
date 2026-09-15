@@ -9,6 +9,8 @@ use wfc_core::entropy::EntropyHeuristicType;
 use wfc_core::grid::PossibilityGrid;
 use wfc_devtools::fixtures::Fixture;
 use wfc_gpu::gpu::accelerator::GpuAccelerator;
+use std::sync::Arc;
+use wfc_core::constraint::GlobalConstraint;
 use wfc_rules::AdjacencyRules;
 
 /// Directory for images produced by E2E tests, so a failing (or passing) run can be inspected.
@@ -39,7 +41,7 @@ pub async fn solve(
     boundary: BoundaryCondition,
     attempts: usize,
 ) -> PossibilityGrid {
-    solve_rules(initial, &fixture.rules, None, boundary, attempts).await.grid
+    solve_rules(initial, &fixture.rules, None, None, boundary, attempts).await.grid
 }
 
 /// Solves `initial` on the GPU, starting over from scratch after a contradiction.
@@ -51,10 +53,14 @@ pub async fn solve_rules(
     initial: &PossibilityGrid,
     rules: &AdjacencyRules,
     weights: Option<&[f32]>,
+    constraint: Option<Arc<dyn GlobalConstraint>>,
     boundary: BoundaryCondition,
     attempts: usize,
 ) -> Solved {
-    let max_iterations = (initial.width * initial.height * initial.depth * 2) as u64;
+    // Backtracking redoes collapses it undid, so a constrained run needs a far larger budget than
+    // one iteration per cell.
+    let cells = initial.width * initial.height * initial.depth;
+    let max_iterations = (cells * if constraint.is_some() { 50 } else { 2 }) as u64;
     let started = Instant::now();
     let mut last_error = String::new();
     for attempt in 1..=attempts {
@@ -64,6 +70,9 @@ pub async fn solve_rules(
                 .expect("GPU accelerator initialises");
         if let Some(weights) = weights {
             accelerator.with_tile_weights(weights).expect("valid tile weights");
+        }
+        if let Some(constraint) = &constraint {
+            accelerator.with_global_constraint(Arc::clone(constraint));
         }
         let run_started = Instant::now();
         match accelerator

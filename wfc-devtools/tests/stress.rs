@@ -41,7 +41,8 @@ async fn city_run(name: &str, width: usize, height: usize, depth: usize) {
     let m = &city.modules;
     let mut initial = PossibilityGrid::new(width, height, depth, m.variants.len());
     city::constrain_city(&mut initial, &city);
-    let solved = common::solve_rules(&initial, &m.rules, Some(&m.tileset.weights), BoundaryCondition::Finite, ATTEMPTS).await;
+    let solved = common::solve_rules(&initial, &m.rules, Some(&m.tileset.weights), None, BoundaryCondition::Finite, ATTEMPTS)
+        .await;
     report(name, &initial, m.variants.len(), &solved);
 
     let grid = TileGrid::from_possibilities(&solved.grid).expect("every cell collapsed to one tile");

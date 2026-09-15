@@ -18,6 +18,7 @@
 use crate::invariants::TileGrid;
 use crate::render::{Color, VoxelModel};
 use std::collections::VecDeque;
+use wfc_core::constraint::ConnectivityConstraint;
 use wfc_core::BoundaryCondition;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::modules::{
@@ -358,6 +359,17 @@ pub fn walkable_tiles(m: &CompiledModules) -> Vec<usize> {
             [POS_X, NEG_X, POS_Y, NEG_Y].into_iter().any(|axis| matches!(m.face(tile, axis), Face::Horizontal(f) if f.walkable))
         })
         .collect()
+}
+
+/// A constraint that forces the city into a single walkable network: every cell that can only hold
+/// walkable tiles must stay connected to every other over [`walk_links`].
+///
+/// The module set alone gets close (see docs/constraints.md); this guarantees it, at the cost of
+/// work between propagation steps and more restarts. It is not used by the default city test.
+pub fn connectivity_constraint(city: &City) -> ConnectivityConstraint {
+    let m = &city.modules;
+    let walkable = walkable_tiles(m);
+    ConnectivityConstraint::new(m.variants.len(), walkable.clone(), walkable, walk_links(m))
 }
 
 /// Walkable cells outside the largest walkable network, found by flood fill over [`walk_links`].
