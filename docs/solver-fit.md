@@ -69,6 +69,8 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Zoo range exclusion, 8 seeds | **6 of 8 never finish**; the two that do: 80 and 494 backtracks | same |
 | Zoo counting, 8 seeds | 1–48 backtracks, worse than control on 6 of 8 | same |
 | Zoo surrounding, 8 seeds | **7 of 8 finish**, 3–40 backtracks, 2.7–5.9 s | same |
+| Zoo statistical, 8 seeds | 7 at 0 backtracks, one at 7; total 15 → 7 vs control | weak — control peaks at 8, all runs easy |
+| Harness delegation, control seed 8 | unchanged: 595 collapses, 624 iterations, 8 backtracks | `solve_rules` → `solve_rules_with` |
 | Same, backtracks vs failures | 40/40, 3/3, 6/6, 7/7, 6/6, 5/4, 11/6 — near-identity | out-of-sample check |
 | Same, prunes vs cost | prunes 9–301, no relationship (145→3 backtracks, 9→6) | same |
 | Backtracks vs constraint failures | range exclusion: **exactly equal** (80/80, 494/494) | same |

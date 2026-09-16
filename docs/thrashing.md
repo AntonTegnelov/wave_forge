@@ -663,6 +663,35 @@ was drawn from a single rule kind, and generalised one measurement too early.
 One seed per kind is an anecdote, so this is written as a hypothesis with a named discriminator
 (failure count, not reach) that a multi-seed sweep can falsify.
 
+### A fifth kind: statistical, acting on choice rather than legality
+
+The last kind, and the only one that is not a constraint. A road becomes likelier the more roads are
+already nearby, nearer ones counting for more. It removes no possibilities, so it cannot prune and
+cannot fail — `prunes` and `constraint_failures` are meaningless for it, and the only things it can
+move are search cost and the output.
+
+| Seed | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| Control | 2 | 0 | 0 | 2 | 0 | 2 | 1 | 8 |
+| Statistical | 0 | 0 | **7** | 0 | 0 | 0 | 0 | **0** |
+
+Five seeds improve, two tie, one worsens; the total falls from 15 backtracks to 7, with run times
+unchanged at 2.7–3.3 s. Taken at face value that says biasing *choice* alone, with the legal set
+untouched, reduces thrashing — which would be new, since every other lever in this study acted on
+legality.
+
+**It should not be taken at face value.** The control totals 15 backtracks across eight seeds and peaks
+at 8: these are all easy runs. Halving a small number over eight easy seeds is what *any* perturbation
+of the weights would plausibly do by reshuffling trajectories, and nothing here isolates road-clustering
+as the cause. The honest claim is that choice bias **did not hurt** and may help; establishing that it
+helps needs a harder instrument, where the control has room to fail.
+
+**One check that looked done and was not.** The e2e city test was run to confirm the module weights
+survive, and it passes — but the e2e does not use cell weighting at all, so it exercises the
+*unweighted* path. It verifies that the harness delegation is safe, which matters, and says nothing
+about whether the composed weighting preserves the module weights under the statistical arm. That needs
+a direct test of the composition, not an end-to-end run that never calls it.
+
 ### A fourth kind: surrounding neighbourhoods
 
 The last constraint kind the zoo was missing. No walkway or stair within one cell of a road, diagonals
