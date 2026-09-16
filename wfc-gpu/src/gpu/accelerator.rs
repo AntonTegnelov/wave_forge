@@ -620,7 +620,9 @@ impl GpuAccelerator {
                 if let Some(cell) = culprit {
                     *failures_by_cell.entry(cell).or_default() += 1;
                 }
-                let source = if reason.starts_with("global constraint") {
+                let source = if reason.starts_with("recovery:") {
+                    "recovery_propagation"
+                } else if reason.starts_with("global constraint") {
                     "global_constraint"
                 } else if reason.starts_with("no tiles left") {
                     "empty_domain"
@@ -668,7 +670,13 @@ impl GpuAccelerator {
                     .instrument(backtrack_span.clone())
                     .await
                 {
-                    failure = Some((e.to_string(), None));
+                    // Recovery fails too: the restored state re-propagates straight into another
+                    // contradiction. Counted apart from a fresh collapse failing, because on a
+                    // thrashing seed roughly half the backtracks are this (docs/thrashing.md).
+                    if let wfc_core::propagator::PropagationError::Contradiction(cx, cy, cz) = &e {
+                        *conflicts_by_cell.entry((*cx, *cy, *cz)).or_default() += 1;
+                    }
+                    failure = Some((format!("recovery: {e}"), None));
                     continue;
                 }
                 current_grid = synchronizer
