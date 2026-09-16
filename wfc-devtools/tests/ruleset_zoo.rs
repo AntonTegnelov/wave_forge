@@ -178,6 +178,47 @@ async fn run_zoo_inner(
     );
 }
 
+/// The composition must leave the module weights alone wherever the positional rule has nothing to
+/// say, and scale them where it does.
+///
+/// This is the check the e2e city cannot make. The e2e never calls a cell weighting, so it exercises
+/// the unweighted path: it confirms the harness delegation is safe and says nothing about [`Weighted`].
+/// A composition that silently flattened the module weights would still produce plausible backtrack
+/// counts — it would just be generating a different city.
+///
+/// Not `#[ignore]`d: it is a pure function check that needs no GPU, so it should run by default.
+#[test]
+fn composed_weighting_preserves_flat_weights_where_nothing_attracts() {
+    const PLAIN: usize = 0;
+    const ROAD: usize = 1;
+    let weighting = Weighted {
+        flat: vec![2.0, 3.0],
+        inner: DistanceWeighting::new([ROAD], [ROAD], 1, 1.0, 4.0),
+    };
+
+    // Nothing decided nearby, so both tiles keep exactly their flat weight. `PossibilityGrid::new`
+    // starts every cell fully open, so the neighbour is undecided and cannot attract.
+    let open = PossibilityGrid::new(2, 1, 1, 2);
+    assert_eq!(weighting.weight(&open, (0, 0, 0), PLAIN), 2.0);
+    assert_eq!(weighting.weight(&open, (0, 0, 0), ROAD), 3.0);
+
+    // An adjacent decided road scales the road's weight and leaves the other alone.
+    let mut attracted = PossibilityGrid::new(2, 1, 1, 2);
+    let neighbour = attracted.get_mut(1, 0, 0).unwrap();
+    neighbour.fill(false);
+    neighbour.set(ROAD, true);
+    assert_eq!(
+        weighting.weight(&attracted, (0, 0, 0), ROAD),
+        15.0,
+        "3.0 flat * (1.0 base + 4.0 strength / 1 cell)"
+    );
+    assert_eq!(
+        weighting.weight(&attracted, (0, 0, 0), PLAIN),
+        2.0,
+        "a tile outside the subject set keeps its module weight"
+    );
+}
+
 /// Adjacency only. The baseline every other test in this file is measured against.
 #[tokio::test]
 #[ignore = "rule-set zoo; run with --ignored in release mode, one at a time, with WFC_SWEEP=1"]
