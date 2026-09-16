@@ -60,9 +60,28 @@ rest. To learn what structure drives thrashing we need rule sets that differ in 
 | Exclusion at range | "no Z within 2 cells directly above" | directional, bounded, cheap to check |
 | Statistical | likelihood rises with nearby X, weighted by distance | affects *choice* rather than legality; may change failure rates without changing the solution set |
 
-The last three do not exist yet. Counting and range-exclusion fit the existing `GlobalConstraint` trait.
-The statistical one is different in kind: it biases the weighted choice rather than pruning domains, so
-it belongs beside tile weights rather than in the constraint pipeline.
+The last three do not exist yet. Surveying the code settled where each one has to live:
+
+**Surrounding, counting and range-exclusion fit `GlobalConstraint` unchanged.** The trait hands `apply`
+the whole `PossibilityGrid` mutably and asks for the cells it narrowed, so any neighbourhood predicate
+is expressible. Soundness, not expressiveness, is the constraint: a bit may only be cleared when *no*
+completion of the current possibility sets could make that tile legal. `ConnectivityConstraint` shows
+the conservative pattern — reason over what could still be true, and return `Ok(vec![])` when the grid
+is not yet decided enough to rule anything out.
+
+**The statistical rule does not fit, and it is worth being exact about why.** `apply` can only remove
+possibilities. A likelihood bias removes none, so the only faithful implementation of it as a
+constraint is a no-op; making it prune instead would change the solution set, which is precisely what a
+rule that shifts *probability* must not do. It also cannot reach the place it would need to: the
+collapse choice indexes `tile_weights[tile]` by tile alone, even though the grid and the cell
+coordinates are in scope a few lines above. So it needs a choice-time hook — a weight function that
+sees the cell and its neighbourhood — rather than a slot in the constraint pipeline.
+
+One hazard applies to every constraint we add. The solver re-runs `apply` until it reports no changes,
+and that inner loop has no iteration cap of its own; it does not tick the outer `iterations` counter
+either. A constraint that returns a cell it did not actually narrow therefore spins forever, and
+`max_iterations` will not rescue the run. Only ever clear bits, and only report a cell when a bit
+really was cleared.
 
 Not every rule set needs to be fast enough for live generation. The point of the zoo is to find which
 *properties* predict thrashing, so that the city rule set — which does need to be fast — can be designed
@@ -140,9 +159,34 @@ Two environment switches keep experiments honest:
 cells contradictions surfaced at, how many of those failed more than once, and the deepest and mean
 undo. The repeated-failure count is the direct test of H3.
 
+## Reproducibility: achieved, and it was not only the RNG
+
+Seeding the collapse choice turned out to be necessary but not sufficient. Cell *selection* was
+nondeterministic too, below the level the RNG could reach: the entropy shader compare-exchanged the
+minimum entropy into one word and then stored the winning index into another as a separate operation,
+so the pair could tear, and the tie-break afterwards compared against a stale local copy of the global
+minimum. Which cell got selected depended on which workgroup reached the atomic first.
+
+This is a useful reminder of how the earlier measurements went wrong. Seeding alone would have produced
+runs that still varied, and the natural conclusion would have been that some deeper nondeterminism was
+inherent to GPU solving — when in fact one shader reduction was written incorrectly.
+
+Reducing over a single packed key instead — quantised entropy in the high bits, cell index in the low
+bits, one `atomicMin` — makes the winner independent of workgroup order, and orders ties by lowest
+index so they break identically every time. Verified on the 864-cell city: seed 12345 gives
+`collapses=638 iterations=638 backtracks=1` on three consecutive runs, and seed 999 diverges. That is
+one grid and one rule set, so it is evidence rather than proof that the solver is now a pure function
+of its seed; the zoo will test it more widely.
+
+**Every batch measurement taken before this point is void**, including the table above. All of it was
+gathered through torn selection *and* through a backjump that never escalated, so the numbers describe
+two bugs interacting, not batch sizes. They are kept only as a record of what prompted the
+investigation.
+
 ## Status
 
-- Reproducibility: **not yet** — seeding is the current work.
+- Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the
+  864-cell city.
 - Diagnostics: partial (collapses, iterations, backtracks reported under `WFC_REPORT_SEARCH`).
 - Rule-set zoo: adjacency and connectivity only.
 - Findings: recorded in [solver-fit.md](solver-fit.md) as they are established, with the same
