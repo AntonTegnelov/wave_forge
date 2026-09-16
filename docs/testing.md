@@ -28,6 +28,14 @@ cargo test --workspace --lib           # unit tests only, no GPU needed
 cargo test -p wfc-devtools --test e2e_3d_city -- --nocapture   # one E2E test, showing artifact paths
 ```
 
+**The workspace build does not test each crate's own feature set.** Cargo unifies features across a workspace build, and `wfc-gpu` enables `wfc-core/serde`, so `cargo test --workspace` compiles `wfc-core` with `serde` even though its default feature set is empty. An unguarded `use serde` in `wfc-core` therefore passes the workspace build and breaks anyone who depends on `wfc-core` alone. There is no CI to catch this, so when a change touches optional dependencies or `#[cfg(feature = ...)]` code, also build the affected crates on their own:
+
+```bash
+cargo test -p wfc-core                          # default features (none)
+cargo test -p wfc-core --all-features
+cargo test -p wfc-rules --no-default-features   # RON parsing disabled
+```
+
 ## End-to-end tests
 
 | Test | Rule set | Asserts |

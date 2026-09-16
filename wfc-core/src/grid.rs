@@ -328,7 +328,6 @@ pub type EntropyGrid = Grid<f32>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bitvec::prelude::{bitvec, Lsb0};
 
     // --- Tests for generic Grid<T> ---
 
@@ -471,6 +470,8 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")] // Guard test with feature flag
     fn test_possibility_grid_serialize_deserialize() {
+        use bitvec::prelude::{Lsb0, bitvec};
+
         let mut grid = PossibilityGrid::new(2, 1, 1, 3);
         *grid.get_mut(0, 0, 0).unwrap() = bitvec![usize, Lsb0; 1, 0, 1];
         *grid.get_mut(1, 0, 0).unwrap() = bitvec![usize, Lsb0; 0, 1, 0];
