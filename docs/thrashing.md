@@ -315,6 +315,84 @@ bans recorded after it, and those bans are discarded with it. At `max_undo` of 1
 but it means the monotone-progress argument does not hold in general, and a genuine cycle is possible
 rather than merely slow. This needs a test, not a reassurance.
 
+**Tested, and the bans do not survive.** `WFC_CHECK_TERMINATION` keeps a ledger of every `(cell, tile)`
+the machinery has forbidden and counts those possible again:
+
+| Run | Backtracks reviving a ban | Revivals | Distinct bans |
+|---|---|---|---|
+| Control, seed 8 | 7 of 8 | 26 | 8 |
+| Range exclusion, seed 5 | 4955 of 4962 | **226 314** | **417** |
+
+Roughly a tenth of every ban ever recorded is un-applied at any given moment, and the same small set is
+discarded and re-derived thousands of times. **The monotone-progress argument for termination does not
+hold for this solver.** It also supplies the missing mechanism behind 3160 failures at one cell: the
+ban that should stop the search re-choosing that tile keeps being thrown away, so the search is free to
+walk back into it.
+
+Two limits, because this is easy to overstate. It is **not unsoundness** — a ban records "this tile led
+to a contradiction *given these assignments*", so undoing those assignments can make it legitimately
+viable again. And it is **not proof of a cycle**, which would require the same full state to recur;
+what it removes is the *guarantee* of termination, not the possibility of it.
+
+### What perfect ban persistence would be worth
+
+`WFC_PERSIST_BANS` re-applies every recorded ban after each restore. It is an **upper-bound probe, not
+a candidate fix**, and it is deliberately unsound: a ban records "this tile contradicted *given these
+assignments*", so undoing those assignments can make it viable again, and applying bans unconditionally
+can exclude real solutions. The question it answers is whether proper nogood recording — which carries
+the condition alongside the ban — would be worth building.
+
+| Run | Backtracks | Constraint failures | Run time |
+|---|---|---|---|
+| Range exclusion, seed 5 | 4962 → **15** | 4927 → **15** | 96.9 s → **3.79 s** |
+| Control, seed 8 | 8 → 7 | — | 2.86 s → 3.14 s |
+
+The fall in *constraint failures* is the more telling half of that row: the search stops re-entering the
+doomed states rather than merely recovering from them more cheaply. On the easy adjacency run the probe
+changes nothing measurable, which is coherent — a run with eight backtracks has almost no bans to lose,
+and the small slowdown is the ledger's own cost.
+
+**Then the sweep put that 331× in its place.** Eight seeds under the probe, at the same budget as the
+sweep where six of eight never finished:
+
+| Seed | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| Backtracks | 194 | 108 | 49 | 437 | **15** | 217 | 200 | 97 |
+| Run time (s) | 11.8 | 6.9 | 4.7 | 23.2 | 4.0 | 10.6 | 10.4 | 5.6 |
+
+**Every seed finishes**, where six of eight previously did not. That is the result, and it is a large
+one: the probe converts unfinishable runs into finishable ones.
+
+It is *not* the result I wrote one paragraph earlier. Seed 5's 15 backtracks is the best case of eight,
+not the typical one; the spread is 15 to 437. And on the two seeds that finished under both regimes the
+comparison is mixed — seed 7 improves 494 → 200, while **seed 8 gets worse, 80 → 97**. So ban
+persistence is not a uniform win even as an upper bound; it rescues runs that were hopeless and can
+mildly penalise runs that were already fine.
+
+Writing "331× and it lands at control speed" from one seed, in the same document that twice records
+being misled by one seed, is worth leaving visible rather than quietly editing away.
+
+The e2e city stays valid under the probe on seeds 1, 3 and 5 — three seeds that did not expose the
+unsoundness, which is not the same as soundness.
+
+So ban loss is not a tidy theoretical defect. **It is the dominant cost wherever this solver thrashes**,
+and it makes conditional nogood recording the best-supported next investment: the thing that would
+prevent a conflict being re-derived, which is the only route the literature offers to *preventing*
+thrashing rather than bounding it — question 5 of this document.
+
+Two limits held firmly. The e2e city passes under the probe with no adjacency violations and its
+column-structure assertions intact, which does **not** make the probe sound — it means that seed did
+not expose the unsoundness. And this is an upper bound: a correct implementation, applying each ban
+only while its condition holds, will recover some fraction of this, not all of it.
+
+A note on how nearly this was missed. The first version of the check compared possibility counts before
+and after each restore, and fired on almost every backtrack — which looked like a dramatic finding and
+was actually measuring undo itself, since restoring an older snapshot necessarily returns whatever
+propagation had removed since. The control is what exposed it: a detector that fires 7 times in 8 on
+the *easy* run is describing backtracking, not a pathology. The corrected check survives that same test
+for a different reason — reviving a *named* forbidden tile happens only when an undo crosses that
+specific ban, which at `mean_undo` 4.5 with failures concentrated on one cell is exactly what occurs.
+
 ### What the evidence favours, in order
 
 1. **Restart with a cutoff.** Our distribution is the textbook case: 47 of 48 seeds finish in 0-4
@@ -659,7 +737,12 @@ comparing anything against the control. Regression to the mean does the rest.
 - Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the
   864-cell city, and confirmed on the pathological seed as well as healthy ones. Re-verified after the
   escalation change: seed 12345 identical three times, a different seed diverges.
-- Diagnostics: partial (collapses, iterations, backtracks reported under `WFC_REPORT_SEARCH`).
-- Rule-set zoo: adjacency and connectivity only.
+- Diagnostics: **good enough to have caught four wrong claims of our own.** `WFC_REPORT_SEARCH` reports
+  collapses, iterations, backtracks, undo depths, where contradictions surface, *which stage raised
+  each failure*, the true conflict cell the shader records, and a sampled progress series;
+  `WFC_CHECK_TERMINATION` reports whether forbidden tiles survive.
+- Rule-set zoo: adjacency (control), range exclusion, counting, and connectivity. Surrounding and
+  statistical rules are still missing — the statistical kind needs a choice-time hook rather than a
+  constraint, since it changes likelihood and not legality.
 - Findings: recorded in [solver-fit.md](solver-fit.md) as they are established, with the same
   facts/guesses/unknowns discipline.

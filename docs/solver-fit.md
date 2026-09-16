@@ -74,6 +74,12 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Same, seed 1 | still fails at 43 200 iterations, 11 145 backtracks | same |
 | Worst single cell, seed 5 | **3160 failures**, of 37 distinct cells | same |
 | Deepest undo observed | **99**, above `MAX_UNDO_STEPS` (64) | same |
+| Bans revived, control seed 8 | 7 of 8 backtracks; 26 revivals over 8 bans | `WFC_CHECK_TERMINATION` |
+| Bans revived, range exclusion seed 5 | 4955 of 4962 backtracks; **226 314 revivals over 417 bans** | same |
+| Ceiling probe, range exclusion seed 5 | 4962 → **15** backtracks, 96.9 → **3.79 s**, failures 4927 → 15 | `WFC_PERSIST_BANS` (unsound probe) |
+| Same, control seed 8 | 8 → 7 backtracks, 2.86 → 3.14 s (no effect) | same |
+| Same, 8-seed sweep | **8 of 8 finish** (was 2 of 8); backtracks 15–437, 4.0–23.2 s | same |
+| Same, seeds that finished under both | seed 7: 494 → 200; seed 8: **80 → 97 (worse)** | same |
 
 **Two corrections to the rows above.** Every row measured before the packed-key fix was taken while
 cell *selection* was nondeterministic: the entropy shader stored the winning entropy and its index as
@@ -280,11 +286,14 @@ Honest gaps. Several of these are where the next big win probably hides.
   last-writer-wins: *a* contradicting cell, not a canonical one. Whether it reproduces across runs of a
   fixed seed is being measured now, and it matters because a backjump target that jitters is not a
   target.
-- **Whether our undo can genuinely cycle rather than merely stall.** Backtracking WFC is usually argued
-  to terminate because every backtrack removes a tile from some domain. Our history snapshots the grid
-  *before* each collapse, so undoing several steps restores a snapshot predating later bans and discards
-  them. At `max_undo` ≤ 2 this rarely bites, but the monotone-progress argument does not hold in
-  general. Needs a test, not a reassurance.
+- ~~**Whether our undo can genuinely cycle rather than merely stall.**~~ **Partly answered, and the
+  answer is bad.** Measured with `WFC_CHECK_TERMINATION`: bans do not survive. The control revives a
+  forbidden tile on 7 of 8 backtracks; a constrained run revives 226 314 times over only 417 distinct
+  bans, so the same small set is discarded and re-derived thousands of times. The monotone-progress
+  argument for termination therefore **does not hold**. What remains genuinely unknown is whether an
+  actual cycle occurs, which needs the same full state to recur and has not been demonstrated — so this
+  removes the termination guarantee without proving non-termination. Not unsoundness either: a ban is
+  valid only in the context that produced it.
 - **Whether the connectivity constraint can be decomposed** — e.g. per-block connectivity plus boundary
   contracts that compose into global connectivity. No source addresses it; it may be possible for a
   restricted tileset.
@@ -308,11 +317,21 @@ In rough order of expected value, with the basis for each:
    not finish at all on another, even at 12.5× the iteration budget. That is the distribution Luby and
    Gomes et al. describe, and a short cutoff with retained nogoods is the recognised remedy. Correct
    for what it was measured on, wrong as a general conclusion.
-5. **Recovery for global-constraint failures, which currently has none that works.** Range exclusion
+5. **Conditional nogood recording — keep each ban with the assignments that justify it.** This is now
+   the best-evidenced item on the list. Bans do not survive our undo: a constrained run revives them
+   226 314 times over 417 distinct bans, so the same small set is discarded and re-derived thousands of
+   times, and the usual monotone-progress argument for termination does not hold. An unsound upper-bound
+   probe that re-applies every ban (`WFC_PERSIST_BANS`) takes range exclusion from **2 of 8 seeds
+   finishing to 8 of 8**. A correct implementation applies a ban only while its condition holds, so it
+   will recover some fraction of that, not all of it — but the ceiling is high enough to justify
+   building. It is also the only mechanism the literature offers for *preventing* a conflict being
+   re-derived rather than bounding the cost of re-deriving it.
+6. **Recovery for global-constraint failures, which currently has none that works.** Range exclusion
    fails 4927 times in one run, 3160 of them at a single cell, on the one path where undo escalation is
    deliberately disabled — enabling it there was measured and made things strictly worse (a 6.07 s run
-   stopped finishing). So this is a confirmed failure mode with no working recovery rather than an
-   untuned one, which makes it the clearest open problem the thrashing study has produced.
+   stopped finishing). Item 5 is the most promising route to this, since the probe's gain comes from the
+   search ceasing to re-enter those states at all: constraint failures fall from 4927 to 15 on the seed
+   measured in isolation.
 5. Coarse pass pre-filtering domains, i.e. driven WFC *(guess 5)*.
 6. Block-local solve as the unit of work, for both streaming and latency *(guesses 3 and 4)*.
 7. dom/wdeg failure weighting to attack the redo factor and the run-to-run variance *(facts about
