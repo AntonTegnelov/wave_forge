@@ -580,8 +580,19 @@ impl GpuAccelerator {
         /// Every `(cell, tile)` the backtracking machinery has explicitly forbidden. The termination
         /// argument rests on these surviving, so this is what has to be checked — not whether domains
         /// widen, which they always do, because widening is what undoing means.
-        type BanLedger = std::collections::HashSet<((usize, usize, usize), usize)>;
-        let mut banned_ledger: BanLedger = std::collections::HashSet::new();
+        type BanLedger = std::collections::HashMap<((usize, usize, usize), usize), usize>;
+        // Each ban, mapped to the history depth at which it was made — the number of choices then in
+        // force, which is what justified it. `WFC_CONDITIONAL_BANS` re-applies a ban only while the
+        // search has not gone deeper than that, which is the sound core of what `WFC_PERSIST_BANS`
+        // does unconditionally.
+        let mut banned_ledger: BanLedger = std::collections::HashMap::new();
+        // The sound counterpart to the persistence probe: a ban records "this tile contradicted given
+        // these assignments", so it may be re-applied while those assignments still hold and not
+        // otherwise. Depth is a cheap, conservative stand-in for the assignment set: if the search is
+        // no deeper than it was when the ban was made, it has not yet built a new context beneath it.
+        // Weaker than real nogoods, which carry the antecedents themselves, and chosen because it is
+        // the least work that tests whether the ceiling is reachable (docs/solver-fit.md).
+        let conditional_bans = std::env::var("WFC_CONDITIONAL_BANS").is_ok();
         let mut lost_ban_events = 0usize;
         let mut lost_ban_cells = 0usize;
         // A failure carries where it happened, so the search can jump back to the choice that caused
@@ -691,7 +702,7 @@ impl GpuAccelerator {
                     failure = Some((format!("no tiles left at ({bx}, {by}, {bz})"), None));
                     continue;
                 }
-                if check_lost_bans || persist_bans {
+                if check_lost_bans || persist_bans || conditional_bans {
                     if check_lost_bans {
                         // Count tiles this machinery previously forbade that are possible again, which
                         // is what the termination argument forbids. An earlier version compared
@@ -701,7 +712,7 @@ impl GpuAccelerator {
                         // since. A detector that answers "yes" to the definition of backtracking is not
                         // a detector.
                         let revived = banned_ledger
-                            .iter()
+                            .keys()
                             .filter(|((bx, by, bz), tile)| {
                                 current_grid.get(*bx, *by, *bz).is_some_and(|cell| cell[*tile])
                             })
@@ -711,15 +722,47 @@ impl GpuAccelerator {
                             lost_ban_cells += revived;
                         }
                     }
-                    banned_ledger.insert(((bx, by, bz), choice.tile));
+                    // The depth now standing is what justifies this ban: these choices led here.
+                    banned_ledger.insert(((bx, by, bz), choice.tile), history.len());
+                    if conditional_bans {
+                        // Intended as the sound core of WFC_PERSIST_BANS: re-apply a ban only while the
+                        // context that justified it still stands.
+                        //
+                        // **Unvalidated. Do not treat this as working.** Measured over eight seeds of
+                        // the range-exclusion rule it produced results byte-identical to the
+                        // unconditional probe — 194, 108, 49, 437, 15, 217, 200, 97 — so the condition
+                        // excluded nothing that changed any trajectory. Whether it excludes anything at
+                        // all is not measured: there is no counter for skipped bans, and adding one is
+                        // the first thing to do before trusting this.
+                        //
+                        // The suspicion is that depth is too coarse a proxy for the assignment set. Two
+                        // paths can reach the same depth with entirely different choices in force, so
+                        // the test can pass where the justification is gone (risking the same
+                        // unsoundness as the probe) and fail where it still holds. A real
+                        // implementation records the antecedents themselves; see docs/solver-fit.md,
+                        // which keeps that as the held-in-reserve option.
+                        let depth = history.len();
+                        for (&((lx, ly, lz), tile), &made_at) in &banned_ledger {
+                            // Deeper than the ban's own depth means the search has built a different
+                            // context beneath it, and the ban no longer follows from what is in force.
+                            if depth > made_at {
+                                continue;
+                            }
+                            if let Some(cell) = current_grid.get_mut(lx, ly, lz) {
+                                if cell[tile] && cell.count_ones() > 1 {
+                                    cell.set(tile, false);
+                                }
+                            }
+                        }
+                    }
                     if persist_bans {
                         // Re-apply the whole ledger, skipping any ban that would empty a cell: an
                         // emptied cell would cascade into another failure immediately and measure the
                         // probe's own damage rather than the ceiling it is meant to estimate.
-                        for ((lx, ly, lz), tile) in &banned_ledger {
-                            if let Some(cell) = current_grid.get_mut(*lx, *ly, *lz) {
-                                if cell[*tile] && cell.count_ones() > 1 {
-                                    cell.set(*tile, false);
+                        for &((lx, ly, lz), tile) in banned_ledger.keys() {
+                            if let Some(cell) = current_grid.get_mut(lx, ly, lz) {
+                                if cell[tile] && cell.count_ones() > 1 {
+                                    cell.set(tile, false);
                                 }
                             }
                         }
