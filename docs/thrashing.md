@@ -183,10 +183,96 @@ gathered through torn selection *and* through a backjump that never escalated, s
 two bugs interacting, not batch sizes. They are kept only as a record of what prompted the
 investigation.
 
+## Second data: the shape of the tail, measured on 48 seeds
+
+48 seeds on the 864-cell city (12x12x6), batch 1, one attempt each, with the deterministic selection
+and the seeded choice in place.
+
+| Seeds | Backtracks | Wall time |
+|---|---|---|
+| 47 of 48 | 0-4 | 4.4-5.7 s |
+| seed 8 | **197** | 7.5 s |
+
+Four things this establishes, and one it does not.
+
+1. **The pathology is exactly reproducible.** Seed 8 replayed three times gives an identical line every
+   time: `collapses=591 iterations=785 backtracks=197`, with 98 of the contradictions at the single
+   cell (9, 5, 4). Determinism therefore covers the failing path and not merely the healthy one, which
+   is what makes the rest of this investigation possible at all.
+2. **The distribution is extremely skewed rather than merely noisy.** One seed in 48 is roughly fifty
+   times worse than the next worst. This is the shape that makes averages useless here: a mean over
+   these 48 runs describes no run that actually happened.
+3. **It is one cell, not one region.** 98 of seed 8's 197 backtracks surface at the same coordinate.
+   The search is not wandering through a hard neighbourhood; it keeps rebuilding one doomed state.
+4. **The escalation never engages.** `max_undo` is at most 2 across all 48 seeds, including the one
+   that backtracks 197 times. Two independent causes, both confirmed by reading the code rather than
+   inferred from the numbers:
+   - the doubling counter is reset unconditionally after every successful propagation, so it cannot
+     accumulate across repeated failures separated by a little progress;
+   - widening the culprit radius is **backwards**. The search takes the *most recent* choice within the
+     radius, so a larger radius can only return an equally recent or more recent choice. Widening makes
+     the undo shallower, never deeper, and so cannot reach a cause that lies further back. This was our
+     own change, and the measurement is what exposed it.
+
+What it does not establish: **why (9, 5, 4) is unsatisfiable in the first place.** Knowing the search
+fails to escape does not tell us what it is failing to escape from. That is the next question.
+
+A weak observation, recorded so it can be tested rather than trusted: of the failure cells reported
+across these seeds, the layer `z = 4` appears most often and `z = 5` never. `z = 5` is forced to air and
+`z = 0` to street level by `constrain_city`, which would make `z = 4` the layer squeezed between forced
+air above and whatever the buildings did below. This is a biased sample — only the top five cells per
+seed are reported, and only for seeds that failed at all — so it is a hypothesis about where the rule
+set is tightest, not a finding.
+
+## Third data: thrashing is a plateau, not slow progress
+
+Totals cannot separate a slow run from a stuck one, so the solver now reports the series of
+`(iteration, collapsed cells, backtracks)` at each backtrack. Seed 8, sampled every fifth backtrack:
+
+| Backtrack | Iteration | Collapsed |
+|---|---|---|
+| 1 | 533 | 534 |
+| 51 | 581 | 533 |
+| 101 | 630 | 532 |
+| 151 | 680 | 532 |
+| 191 | 717 | 529 |
+| 196 | 774 | **581** |
+
+**For 190 backtracks and 184 iterations the collapsed count never leaves the band 529-534.** Net
+progress over that stretch is zero — very slightly negative, in fact. Then the search escapes and
+finishes 591 cells' worth of work within about 57 further iterations.
+
+So "thrashing" is not a slowdown. It is a plateau: the search performs work at a normal rate while
+accomplishing nothing, and essentially all the wall-clock cost of a bad run is spent there. Question 2
+of this document — is it one deep dead end or many shallow ones — has a clear answer for this seed:
+**many shallow ones, all the same one.**
+
+The mechanism follows from the code, and every step of it is confirmed rather than inferred:
+
+1. A contradiction surfaces at (9, 5, 4).
+2. Recovery undoes one choice — `max_undo` is 2 at most, mean 1.5 — restoring a state that still
+   contains whatever actually causes the contradiction.
+3. The restored choice's tile is banned, a cell is re-collapsed, propagation runs, and the identical
+   contradiction surfaces again.
+4. Repeat, 98 times at that one cell.
+
+The escape appears to be accidental rather than directed. Each backtrack bans one tile at one cell, so
+after enough failures the neighbouring domains are drained far enough that a structurally different
+completion is finally forced. That is brute-force enumeration at depth one wearing the costume of
+backjumping — which is why the escape, when it comes, is abrupt.
+
+Seed 28 is the same trap, survived: three backtracks, all at iteration 532, with collapsed pinned at
+533 throughout. It enters the plateau and leaves almost immediately.
+
+One observation held deliberately loose: both seeds stall at roughly 530-534 collapsed cells of 864,
+around 62% of the grid. Two samples is not a distribution, and the healthy seeds never contradict at
+all, so this is a thread to pull — is there a characteristic density at which this rule set becomes
+hard? — rather than a result.
+
 ## Status
 
 - Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the
-  864-cell city.
+  864-cell city, and confirmed on the pathological seed as well as healthy ones.
 - Diagnostics: partial (collapses, iterations, backtracks reported under `WFC_REPORT_SEARCH`).
 - Rule-set zoo: adjacency and connectivity only.
 - Findings: recorded in [solver-fit.md](solver-fit.md) as they are established, with the same
