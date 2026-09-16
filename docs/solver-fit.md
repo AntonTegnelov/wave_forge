@@ -48,6 +48,24 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Same, with restart-only recovery | 0 of 20 attempts succeeded | E2E test |
 | Same, with conflict-directed backjumping | 3 of 3 runs succeeded | E2E test |
 | City run-to-run variance (unchanged code) | 45.3 s and 48.7 s | stress suite |
+| Same seed three times, 864-cell city | identical: 638 collapses, 1 backtrack | `WFC_SEED`, after the packed-key fix |
+| A different seed (999) | 621 collapses — genuinely diverges | `WFC_SEED` |
+| 48-seed corpus, 864-cell city, batch 1 | 47 seeds at 0–4 backtracks, 4.4–5.7 s | `WFC_SWEEP`, `WFC_REPORT_SEARCH` |
+| Worst seed of the 48 (seed 8) | **197 backtracks**, 7.5 s, 98 failures at one cell | same |
+| Seed 8 replayed three times | identical line every time | same |
+| Deepest undo, across all 48 seeds | **≤ 2**, including the 197-backtrack seed | same |
+| Seed 8 plateau | collapsed pinned to 529–534 for 190 backtracks / 184 iterations | progress series |
+
+**Two corrections to the rows above.** Every row measured before the packed-key fix was taken while
+cell *selection* was nondeterministic: the entropy shader stored the winning entropy and its index as
+two separate operations and the pair could tear, so which cell got selected depended on which workgroup
+reached the atomic first. That affects the connectivity-constrained rows in particular — the 5–136 s
+spread, the 0-of-20 restart result and the 3-of-3 backjumping result all predate it. They are kept
+because the *qualitative* comparisons still stand, but the spreads are not repeatable measurements and
+should not be quoted as such. Separately, the **1.53× redo figure is approximate**: it derives from a
+counter updated by `collapsed_cells.saturating_sub(undone)`, and undoing N choices restores more than N
+cells because propagation had collapsed others for free. The counter therefore drifts upward after
+backtracking, so the true redo factor is somewhat higher than reported.
 
 Two derived facts worth stating separately because they are load-bearing:
 
@@ -101,6 +119,49 @@ Two derived facts worth stating separately because they are load-bearing:
   finishes in under 1.4 s.
 - **The domino problem is undecidable** (Berger 1966), so no method with bounded lookahead can decide in
   general whether a partial tiling extends to an infinite one.
+- **Thrashing is the literature's own term for our symptom.** Mackworth (1977) defines it by cause, one
+  of which is a failure rediscovered repeatedly, and warns it "cannot be removed by such minor
+  palliatives as reordering the nodes." Dechter & Frost: "rediscovering the same inconsistencies and
+  same partial successes during search."
+- **The correct backjump target is the most recent member of the conflict set.** Dechter & Frost,
+  Proposition 4: "the latest variable in its jumpback set is the earliest variable to which it is safe
+  to jump." Jumping later re-fails; jumping earlier can skip solutions. Prosser, Ginsberg and CDCL's
+  assertive level all choose the same target.
+- **CBJ gets its depth from accumulation, not from one wide jump.** Prosser merges sets on each jump
+  (`conf-set[h] ← conf-set[h] ∪ conf-set[i] − {h}`), and contrasts this with Gaschnig's BJ, which jumps
+  once then steps chronologically. Taking the most recent member of a *larger* set gives a *shallower*
+  jump in real CBJ too; it is harmless only because the sets accumulate.
+- **Resetting the accumulated set on progress destroys completeness.** Prosser, verbatim: "if `P` was
+  dispensed with, or was reset whenever a successful forward move was made, we would again have an
+  incomplete algorithm."
+- **Under-jumping re-fails; over-jumping loses solutions.** The two error directions are not symmetric
+  (Dechter & Frost, Propositions 2 and 4). Ours is the benign direction.
+- **Backjumping pays *least* in exactly our regime.** Chen & van Beek (JAIR 2001): "as the level of
+  local consistency that is maintained in the backtracking search is increased, the less that
+  backjumping will be an improvement." WFC maintains arc consistency to fixpoint with a fail-first
+  heuristic. They do refute the stronger claim that CBJ becomes useless.
+- **Dynamic backtracking combines badly with dynamic variable ordering.** Baker (AAAI 1994): "worse by a
+  factor exponential in the size of the problem", and explicitly not an overhead effect — "the effective
+  search space itself becomes larger". min-entropy is a dynamic variable ordering, so this rules the
+  technique out for us.
+- **Restarts eliminate the right tail and exploit the left one.** Gomes, Selman & Kautz: randomised
+  rapid restarts "provably eliminate heavy-tails to the right of the median" and exploit "a
+  non-negligible chance of very short runs". Luby, Sinclair & Zuckerman give the optimal fixed cutoff
+  when the distribution is known. Naive fixed-cutoff restart is incomplete; the fixes are an increasing
+  cutoff or retaining nogoods across restarts (Lecoutre et al., IJCAI 2007).
+- **Failure-weighted variable ordering is the literature's anti-thrashing heuristic.** Boussemart et al.
+  (ECAI 2004) weight constraints by dead-ends caused and prefer variables involved in them; dom/wdeg is
+  the default in solvers such as Choco.
+- **Escalation must accumulate with failure count.** POMS raises erosion probability with the number of
+  failed attempts, because "without the erosion, block level solvers could perpetually attempt
+  resolution on blocks with identical initial state."
+- **Our exact failure mode is named in the WFC world.** Boris the Brave calls it stalling: the algorithm
+  "doesn't know to backtrack out of it, instead repeatedly exploring variations of the partial
+  solution" — "rabbit holes". Tessera ships a step limit that "will allow some backtracking to occur,
+  but after a fixed amount of computation it will automatically retry with a fresh generation."
+- **marian42's failure is the opposite of ours.** He reports "errors are recognized very late which
+  leads to many steps being backtracked" — undos too deep, where ours are too shallow.
+- **Gumin's original WFC does not backtrack at all**, restarting globally instead (Karth & Smith).
 
 ## Educated guesses (with the reasoning)
 
@@ -134,7 +195,24 @@ Each of these is an inference. The reasoning is given so a future pass can check
 7. **Our connectivity constraint cannot be enforced across streamed blocks.**
    *Reasoning:* it is a whole-grid property, and block schemes forbid supra-block constraints. Follows
    from the block-scheme fact above, but we have not tried and failed — we have not tried.
-8. **The dozen translation layer inflates our dispatch and submission costs.**
+8. **The escape from a thrashing plateau is accidental rather than directed.**
+   *Reasoning:* each backtrack bans one tile at one cell, so after enough failures the neighbouring
+   domains are drained far enough that a structurally different completion is forced. That predicts the
+   abrupt escape we see — seed 8 sits at 529–534 collapsed for 190 backtracks and then finishes within
+   ~57 iterations. Mechanism read from the code; the abruptness is measured; the causal link between
+   them is the inference.
+9. **Restart with a cutoff is the highest-value fix available for our measured distribution.**
+   *Reasoning:* 47 of 48 seeds finish in 0–4 backtracks, so a short cutoff has a very high success
+   probability per attempt and expected cost near a trivial run, while the bad seed pays 197 backtracks.
+   Luby's analysis favours a fixed cutoff when the distribution is this well characterised, and Chen &
+   van Beek argue the alternative (perfecting the backjump) pays least in our regime. Not yet measured
+   *here*: we have not implemented it, and the cutoff value is unchosen.
+10. **The `z = 4` layer is where our city rule set is tightest.**
+   *Reasoning:* failure cells reported across the corpus fall most often on `z = 4` and never on
+   `z = 5`; `constrain_city` forces air at the top layer and street level at the bottom, which would
+   squeeze `z = 4` between forced air and whatever the buildings did below. The sample is biased (top
+   five cells per seed, failing seeds only), so this is a hypothesis about the rule set, not a finding.
+11. **The dozen translation layer inflates our dispatch and submission costs.**
    *Reasoning:* published kernel-launch overheads are microseconds; we measure 0.099 ms warm for a
    trivial dispatch, and batching dispatches into one submit made things *worse*, which is atypical.
    Not verified against native Vulkan.
@@ -166,6 +244,24 @@ Honest gaps. Several of these are where the next big win probably hides.
 - **What the quality cost of cheaper cell-selection is.** Merrell reports scanline order beating
   min-entropy at scale for *failure rate*; Boris says cell choice "is not usually an important
   decision" but "can have interesting effects on quality". We have not looked at either for our city.
+- **Whether our runtime distribution is genuinely heavy-tailed.** The shape is suggestive — one seed in
+  48 roughly fifty times worse than the next — but **one outlier is not a measurement of a tail**. The
+  recognised diagnostic is a log-log plot of the survival function showing linear decay plus a tail
+  index below 1, over many more seeds and ideally many runs on the same hard instance. Gomes et al. were
+  careful about this distinction and found domains with no heavy tails at all.
+- **Why (9, 5, 4) is unsatisfiable in the first place.** We know the search cannot escape it and we know
+  two reasons why. We do not know what it is failing to escape *from*. Fixing the recovery machinery
+  could well turn seed 8 into a faster 197 backtracks without touching the cause.
+- **Whether the cell the GPU reports as the contradiction site is stable.** `propagate.wgsl` records it
+  with a plain `atomicStore`, not a min or a CAS, so with several workgroups failing in one pass it is
+  last-writer-wins: *a* contradicting cell, not a canonical one. Whether it reproduces across runs of a
+  fixed seed is being measured now, and it matters because a backjump target that jitters is not a
+  target.
+- **Whether our undo can genuinely cycle rather than merely stall.** Backtracking WFC is usually argued
+  to terminate because every backtrack removes a tile from some domain. Our history snapshots the grid
+  *before* each collapse, so undoing several steps restores a snapshot predating later bans and discards
+  them. At `max_undo` ≤ 2 this rarely bites, but the monotone-progress argument does not hold in
+  general. Needs a test, not a reassurance.
 - **Whether the connectivity constraint can be decomposed** — e.g. per-block connectivity plus boundary
   contracts that compose into global connectivity. No source addresses it; it may be possible for a
   restricted tileset.
@@ -177,10 +273,16 @@ In rough order of expected value, with the basis for each:
 1. ~~Remove the full-grid confirmation sweeps via atomic restriction~~ **done, 1.43x**.
 2. Stop moving the whole grid per collapse *(fact: 6.7 s of 48.7 s in transfers, plus CPU packing that
    the GPU spans do not show: `upload_grid` tests every tile bit of every cell and allocates per cell)*.
-3. Coarse pass pre-filtering domains, i.e. driven WFC *(guess 5)*.
-4. Block-local solve as the unit of work, for both streaming and latency *(guesses 3 and 4)*.
-5. dom/wdeg failure weighting to attack the 1.53× redo and the 5–136 s variance *(fact about others'
-   measurements; unknown for us)*.
+3. Aim the backjump at the cell that actually failed rather than the cell we chose to collapse *(fact:
+   the shader records it, the error carries it, and the search discards it)*. Cheap, and a prerequisite
+   for any real conflict set.
+4. Restart with a cutoff, with an increasing cutoff or retained nogoods for completeness *(guess 9;
+   facts from Luby and Gomes et al., and from Chen & van Beek on why the alternative pays less)*.
+5. Coarse pass pre-filtering domains, i.e. driven WFC *(guess 5)*.
+6. Block-local solve as the unit of work, for both streaming and latency *(guesses 3 and 4)*.
+7. dom/wdeg failure weighting to attack the redo factor and the run-to-run variance *(facts about
+   others' measurements, and Boussemart et al.'s anti-thrashing rationale; unknown for us)*. We already
+   record `failures_by_cell`, so the input exists.
 
 Do not spend effort on: SAT/CDCL encodings of pairwise adjacency, AC-4 counters at our variant count,
 clause-sharing portfolios, or Morton/space-filling layouts — each is covered above with the evidence.
