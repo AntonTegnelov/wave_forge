@@ -5,6 +5,7 @@
 //! so that both humans and LLM-assisted development can *see* and *mechanically verify* what the
 //! generator produced, which is the only practical way to debug a parallel, GPU-driven solver.
 
+pub mod city;
 pub mod fixtures;
 pub mod invariants;
 pub mod render;

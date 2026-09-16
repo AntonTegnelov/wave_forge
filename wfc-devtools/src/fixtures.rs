@@ -1,4 +1,5 @@
-//! Small hand-written rule sets for end-to-end tests and demos.
+//! Small hand-written rule sets for end-to-end tests and demos. The realistic 3D city lives in
+//! [`crate::city`].
 //!
 //! They are defined in Rust rather than rule files because the tests assert properties that
 //! follow from the rules (for example "ground only on the bottom layer"); keeping rules and
@@ -6,7 +7,6 @@
 
 use crate::render::Color;
 use std::collections::BTreeSet;
-use wfc_core::grid::PossibilityGrid;
 use wfc_rules::{AdjacencyRules, TileSet, Transformation};
 
 /// Axis indices used by [`AdjacencyRules`].
@@ -103,84 +103,6 @@ pub fn coast_2d() -> Fixture {
     }
 }
 
-/// Tiles of [`city_3d`].
-pub mod city {
-    pub const AIR: usize = 0;
-    pub const GROUND: usize = 1;
-    pub const ROAD_X: usize = 2;
-    pub const ROAD_Y: usize = 3;
-    pub const CROSSING: usize = 4;
-    pub const WALL: usize = 5;
-    pub const ROOF: usize = 6;
-    pub const ROADS: [usize; 3] = [ROAD_X, ROAD_Y, CROSSING];
-}
-
-/// A tiny 3D city with `+z` up, in the spirit of marian42's WFC city: ground and roads on the
-/// bottom layer, buildings made of wall blocks capped by roofs, air above.
-///
-/// Structure comes from the rules alone. Nothing may sit on top of ground or roads except air,
-/// walls may only stand on walls, and only walls may support roofs. That also means nothing can
-/// be *below* ground, so ground can only exist on the bottom layer. Roads connect along their
-/// direction, have ground on both sides, and meet at crossings.
-///
-/// Use with [`constrain_city_grid`], which pins what rules alone cannot express at the grid's
-/// edges: nothing lies below the bottom layer, so the rules would allow air or a roof there.
-pub fn city_3d() -> Fixture {
-    use axis::*;
-    use city::*;
-    let mut rules = RuleBuilder::default();
-    rules
-        .allow_each(GROUND, &[GROUND, WALL], &HORIZONTAL)
-        .allow_each(ROAD_X, &[ROAD_X, CROSSING], &[POS_X, NEG_X])
-        .allow_each(ROAD_X, &[GROUND], &[POS_Y, NEG_Y])
-        .allow_each(ROAD_Y, &[ROAD_Y, CROSSING], &[POS_Y, NEG_Y])
-        .allow_each(ROAD_Y, &[GROUND], &[POS_X, NEG_X])
-        .allow_each(CROSSING, &[CROSSING], &HORIZONTAL)
-        .allow_each(WALL, &[WALL, AIR, ROOF], &HORIZONTAL)
-        .allow_each(ROOF, &[ROOF, AIR], &HORIZONTAL)
-        .allow_each(AIR, &[AIR], &HORIZONTAL);
-    for tile in [GROUND, ROAD_X, ROAD_Y, CROSSING, ROOF, AIR] {
-        rules.allow(tile, AIR, POS_Z);
-    }
-    rules.allow(WALL, WALL, POS_Z).allow(WALL, ROOF, POS_Z);
-
-    Fixture {
-        names: &["air", "ground", "road_x", "road_y", "crossing", "wall", "roof"],
-        palette: &[
-            [0, 0, 0],
-            [96, 160, 72],
-            [70, 70, 76],
-            [70, 70, 76],
-            [96, 96, 102],
-            [214, 196, 158],
-            [180, 70, 50],
-        ],
-        empty_tiles: &[AIR],
-        tileset: uniform_tileset(7),
-        rules: rules.build(7),
-    }
-}
-
-/// Pins the city's boundary layers: the bottom layer is ground, road or the base of a building
-/// (never air or a roof floating on nothing), and the top layer is air, so every building ends in
-/// a roof inside the grid.
-pub fn constrain_city_grid(grid: &mut PossibilityGrid) {
-    assert!(grid.depth >= 3, "a city needs at least a floor, a roof and air above it");
-    let top = grid.depth - 1;
-    for y in 0..grid.height {
-        for x in 0..grid.width {
-            if let Some(cell) = grid.get_mut(x, y, 0) {
-                cell.set(city::AIR, false);
-                cell.set(city::ROOF, false);
-            }
-            if let Some(cell) = grid.get_mut(x, y, top) {
-                cell.fill(false);
-                cell.set(city::AIR, true);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,7 +127,6 @@ mod tests {
     #[test]
     fn fixture_rules_are_symmetric() {
         assert_symmetric(&coast_2d());
-        assert_symmetric(&city_3d());
     }
 
     #[test]
@@ -214,30 +135,5 @@ mod tests {
         for along in axis::ALL {
             assert!(!coast.rules.check(coast::WATER, coast::GRASS, along));
         }
-    }
-
-    #[test]
-    fn nothing_can_be_below_ground_so_ground_stays_on_the_bottom_layer() {
-        let city = city_3d();
-        for below in 0..city.names.len() {
-            assert!(!city.rules.check(below, city::GROUND, axis::POS_Z), "{} supports ground", city.names[below]);
-        }
-    }
-
-    #[test]
-    fn only_walls_support_roofs() {
-        let city = city_3d();
-        let supports: Vec<usize> = (0..city.names.len()).filter(|&t| city.rules.check(t, city::ROOF, axis::POS_Z)).collect();
-        assert_eq!(supports, vec![city::WALL]);
-    }
-
-    #[test]
-    fn city_constraints_pin_bottom_and_top_layers() {
-        let mut grid = PossibilityGrid::new(2, 2, 3, 7);
-        constrain_city_grid(&mut grid);
-        let bottom = grid.get(0, 0, 0).unwrap();
-        assert!(!bottom[city::AIR] && !bottom[city::ROOF]);
-        assert_eq!(grid.get(1, 1, 2).unwrap().iter_ones().collect::<Vec<_>>(), vec![city::AIR]);
-        assert_eq!(grid.get(0, 1, 1).unwrap().count_ones(), 7);
     }
 }
