@@ -29,7 +29,8 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Measurement | Value | How |
 |---|---|---|
 | City 24×24×8 baseline | 45.3 s, 102 cells/s | stress suite |
-| Same, after unioning rule rows | **37.0 s, 124 cells/s** | stress suite |
+| Same, after unioning rule rows | 37.0 s, 124 cells/s | stress suite |
+| Same, after atomic restriction (no confirmation sweep) | **25.9 s, 178 cells/s** | stress suite |
 | City 48×48×10 | 403.8 s, 57 cells/s | stress suite |
 | Permissive 2-tile 24³ | 96.0 s, 144 cells/s | stress suite |
 | Propagation share of a city run | 76% (36.9 s of 48.7 s) | Chrome trace |
@@ -105,11 +106,11 @@ Two derived facts worth stating separately because they are load-bearing:
 
 Each of these is an inference. The reasoning is given so a future pass can check whether it still holds.
 
-1. **The full-grid confirmation sweeps are the largest remaining propagation cost.**
-   *Reasoning:* the trace shows 7048 of 15284 passes are full-grid, one per collapse; a full-grid pass
-   is the most expensive kind; they exist only because the shader's neighbour update is a non-atomic
-   read-modify-write. Replacing it with `atomicAnd` should make them unnecessary. **Being tested now** —
-   if the measurement disagrees, this entry is wrong.
+1. ~~**The full-grid confirmation sweeps are the largest remaining propagation cost.**~~ **Confirmed
+   and now a fact:** replacing the non-atomic read-modify-write with `atomicAnd` made the sweeps
+   unnecessary and took the city from 37.0 s to 25.9 s (124 to 178 cells/s), with the E2E still
+   reporting zero adjacency violations. Recorded here as a worked example of the method: the guess named
+   the mechanism, the prediction was falsifiable, and the measurement settled it.
 2. **Per-cell propagation cost is roughly proportional to (remaining possibilities × words per cell).**
    *Reasoning:* the collapsed-grid pass is 5× cheaper than the fresh-grid one, and the kernel's inner
    loop iterates over set bits. Not directly measured as a curve, only at the two endpoints.
@@ -173,9 +174,9 @@ Honest gaps. Several of these are where the next big win probably hides.
 
 In rough order of expected value, with the basis for each:
 
-1. Remove the full-grid confirmation sweeps via atomic restriction *(guess 1, being measured)*.
-2. Stop moving the whole grid per collapse; download only what the host decides with *(fact: 6.7 s of
-   48.7 s in transfers)*.
+1. ~~Remove the full-grid confirmation sweeps via atomic restriction~~ **done, 1.43x**.
+2. Stop moving the whole grid per collapse *(fact: 6.7 s of 48.7 s in transfers, plus CPU packing that
+   the GPU spans do not show: `upload_grid` tests every tile bit of every cell and allocates per cell)*.
 3. Coarse pass pre-filtering domains, i.e. driven WFC *(guess 5)*.
 4. Block-local solve as the unit of work, for both streaming and latency *(guesses 3 and 4)*.
 5. dom/wdeg failure weighting to attack the 1.53× redo and the 5–136 s variance *(fact about others'
