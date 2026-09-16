@@ -14,6 +14,8 @@ use wfc_rules::TileSetError;
 // Module declarations (keep public if they contain public items)
 /// Entropy calculation logic and traits.
 pub mod constraint;
+/// Rules that change how likely a tile is rather than whether it is legal.
+pub mod weighting;
 pub mod entropy;
 /// Generic 3D grid structures and specialized WFC grids.
 pub mod grid;

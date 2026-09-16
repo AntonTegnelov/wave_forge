@@ -126,6 +126,9 @@ pub struct GpuAccelerator {
     instance: Arc<RwLock<AcceleratorInstance>>,
     /// Relative weight of each tile when collapsing a cell; uniform when `None`.
     tile_weights: Option<Arc<[f32]>>,
+    /// Weighting that sees the cell and the grid around it, not just the tile; see
+    /// [`GpuAccelerator::with_cell_weighting`]. Takes precedence over `tile_weights`.
+    cell_weighting: Option<Arc<dyn wfc_core::weighting::TileWeighting>>,
     /// Whole-grid constraint enforced on the CPU before every observation; see
     /// [`GpuAccelerator::with_global_constraint`].
     global_constraint: Option<Arc<dyn wfc_core::constraint::GlobalConstraint>>,
@@ -299,6 +302,7 @@ impl GpuAccelerator {
         let accelerator = Self {
             instance: Arc::new(RwLock::new(instance)),
             tile_weights: None,
+            cell_weighting: None,
             global_constraint: None,
             collapse_batch: DEFAULT_COLLAPSE_BATCH,
             seed: None,
@@ -897,13 +901,30 @@ impl GpuAccelerator {
                 continue;
             }
 
-            // Choose a remaining state, in proportion to its weight when weights are set
-            let chosen_state = match &self.tile_weights {
+            // Choose a remaining state, in proportion to its weight when weights are set.
+            //
+            // This is the only place a *statistical* rule can act. It shifts probability inside the
+            // set of tiles already legal here, so it cannot be a GlobalConstraint: `apply` may only
+            // clear bits, and a likelihood rule clears none (docs/thrashing.md).
+            use rand::distr::{Distribution, weighted::WeightedIndex};
+            let weights: Option<Vec<f32>> = match (&self.cell_weighting, &self.tile_weights) {
+                // A cell-aware weighting wins: it can express everything a flat table can.
+                (Some(weighting), _) => Some(
+                    possible_states
+                        .iter()
+                        .map(|&tile| weighting.weight(&current_grid, (x, y, z), tile))
+                        .collect(),
+                ),
+                (None, Some(flat)) => Some(possible_states.iter().map(|&tile| flat[tile]).collect()),
+                (None, None) => None,
+            };
+            let chosen_state = match weights {
                 Some(weights) => {
-                    use rand::distr::{Distribution, weighted::WeightedIndex};
-                    let distribution =
-                        WeightedIndex::new(possible_states.iter().map(|&tile| weights[tile]))
-                            .map_err(|e| WfcError::other(format!("invalid tile weights: {e}")))?;
+                    // Per-cell weights cannot be validated up front the way `with_tile_weights` checks
+                    // a flat table, so a bad set surfaces here as a failed run rather than a panic or
+                    // a silently skewed choice.
+                    let distribution = WeightedIndex::new(weights)
+                        .map_err(|e| WfcError::other(format!("invalid tile weights: {e}")))?;
                     possible_states[distribution.sample(&mut rng)]
                 }
                 None => possible_states[rng.random_range(0..possible_states.len())],
@@ -1166,6 +1187,26 @@ impl GpuAccelerator {
         }
         self.tile_weights = Some(weights.into());
         Ok(self)
+    }
+
+    /// Weights the collapse choice by a function of the cell and the grid around it, rather than by a
+    /// flat table indexed by tile.
+    ///
+    /// This is what a *statistical* rule needs — "a shop becomes likelier the more shops are nearby,
+    /// and nearer ones count for more". Such a rule removes no possibilities, so it cannot be a
+    /// [`wfc_core::constraint::GlobalConstraint`]: `apply` may only clear bits, and a likelihood rule
+    /// clears none, so it could only ever return `Ok(vec![])`. Making it prune instead would change
+    /// the set of valid outputs, which is precisely what a rule about likelihood must not do.
+    ///
+    /// Takes precedence over [`GpuAccelerator::with_tile_weights`], which stays because it validates a
+    /// flat table up front — right length, finite, positive — and a weight computed per cell cannot be
+    /// checked before the run. A bad dynamic weight surfaces as a failed run instead.
+    pub fn with_cell_weighting(
+        &mut self,
+        weighting: Arc<dyn wfc_core::weighting::TileWeighting>,
+    ) -> &mut Self {
+        self.cell_weighting = Some(weighting);
+        self
     }
 
     pub fn with_entropy_heuristic(&mut self, heuristic: CoreEntropyHeuristicType) -> &mut Self {
