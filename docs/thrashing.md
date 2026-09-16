@@ -447,10 +447,40 @@ substantially; it does not prevent it, and per the literature only nogood record
 prevent a conflict from being re-derived. Question 5 — can it be prevented entirely — is still open,
 and the honest answer remains "not by this change."
 
+## Sixth data: the fix holds at 4608 cells
+
+The 864-cell city is the instrument; the 24x24x8 stress city is where thrashing was originally found,
+and where batch 1 timed out on two of five samples. Eight seeds, batch 1, one attempt each:
+
+| | Before the fix | After |
+|---|---|---|
+| Runs that finished | 3 of 5 | **8 of 8** |
+| Backtracks | 22, 361, 514 (+2 timeouts) | **5–79** |
+| Deepest undo | not escalating | 2–12 |
+| Run time | 23.1–30.2 s | 20.2–23.5 s |
+
+**No timeouts.** That was the criterion: a fix validated only on the small instrument is not a fix that
+generalises, and the timeouts were the failure that started this investigation.
+
+Two predictions we made in advance did not come true, which is worth recording as plainly as the ones
+that did. `MAX_UNDO_STEPS` (64) was the suspected next binding constraint at larger sizes — the deepest
+undo observed is 12, so it is nowhere near binding. And deeper undos were expected to cost wall time,
+since each one discards more work and every history entry clones the whole grid; no such cost appears.
+
+**A finding that corrects our own generalisation.** At 4608 cells the failures spread across 3 to 20
+distinct cells with at most 18 repeats on any one. At 864 cells, seed 8 put 195 of 197 contradictions
+on a single cell. The extreme concentration was a property of *that instance and seed*, not a general
+law of the rule set — and it was tempting to treat it as one.
+
+On throughput: 196–229 cells/s here against 178 cells/s recorded earlier. The earlier figure was taken
+under a different harness configuration (multiple attempts, unseeded), so treat that comparison as
+indicative rather than as a measured speed-up.
+
 ## Status
 
 - Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the
-  864-cell city, and confirmed on the pathological seed as well as healthy ones.
+  864-cell city, and confirmed on the pathological seed as well as healthy ones. Re-verified after the
+  escalation change: seed 12345 identical three times, a different seed diverges.
 - Diagnostics: partial (collapses, iterations, backtracks reported under `WFC_REPORT_SEARCH`).
 - Rule-set zoo: adjacency and connectivity only.
 - Findings: recorded in [solver-fit.md](solver-fit.md) as they are established, with the same

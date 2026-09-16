@@ -60,6 +60,11 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Seed 8 after the escalation fix | **197 → 8 backtracks**, deepest undo 2 → 8 | 48-seed corpus |
 | Worst of 48 seeds after the fix | **197 → 11 backtracks** | same |
 | Corpus wall time after the fix | 4.4–5.7 s → 4.2–5.4 s, no regression | same |
+| 24×24×8 stress city after the fix | **8 of 8 finished**, was 3 of 5 | 8 seeds, batch 1 |
+| Same, backtracks | 5–79, was 22/361/514 plus 2 timeouts | same |
+| Same, deepest undo | 2–12, against a cap of 64 | same |
+| Same, run time | 20.2–23.5 s, 196–229 cells/s | same |
+| Failure spread at 4608 cells | 3–20 distinct cells, ≤18 repeats each | same |
 
 **Two corrections to the rows above.** Every row measured before the packed-key fix was taken while
 cell *selection* was nondeterministic: the entropy shader stored the winning entropy and its index as
