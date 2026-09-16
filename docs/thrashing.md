@@ -413,6 +413,40 @@ Note also that the concentration is a property of the *run*, not of the cell's c
 contradicts at three different cells, once each, and escapes immediately. What distinguishes the
 pathological seed is not where it fails but that it cannot stop failing in the same place.
 
+## Fifth data: the fix, and what it cost
+
+The diagnosis said the escalation could not accumulate, so the fix makes it accumulate: undo at least
+as many steps as the *true conflict cell* has failed, keep that count across successful propagations,
+and drop the radius widening that could only ever make undos shallower.
+
+| | Before | After |
+|---|---|---|
+| Seed 8, backtracks | 197 | **8** |
+| Seed 8, deepest undo | 2 | **8** |
+| Worst of 48 seeds, backtracks | 197 | **11** |
+| Corpus wall time | 4.4-5.7 s | 4.2-5.4 s |
+
+**The bimodality is gone.** There is no longer a seed fifty times worse than the rest; the worst of 48
+backtracks eleven times. The deepest undo exceeding 2 is the direct confirmation that the reset was the
+operative mechanism and not merely a plausible one — that was the falsifiable prediction, and it held.
+
+The 47 healthy seeds pay nothing measurable. The corpus is marginally faster, which is noise rather
+than an improvement. A few seeds trade a few more backtracks for escalation that now engages (seed 41:
+3 to 11 backtracks, deepest undo 5) with no wall-time cost, and that is a real change worth recording
+rather than smoothing over.
+
+**A measurement artifact, recorded because it nearly became a finding.** The first timed seed-8 run in
+this batch reported 189 s. That figure is the release compile of `wfc-devtools` included in the timing,
+since the preceding steps had only built `wfc-gpu`; the same seed on the same binary takes 4.4 s once
+compiled. This is the same shape of error as the cold-clock "2.5 ms dispatch" in
+[solver-fit.md](solver-fit.md): a first-run cost mistaken for a property of the system. Time the second
+run, not the first.
+
+**What this does not establish.** One rule set, one grid size, 48 seeds, batch 1. It reduces thrashing
+substantially; it does not prevent it, and per the literature only nogood recording would structurally
+prevent a conflict from being re-derived. Question 5 — can it be prevented entirely — is still open,
+and the honest answer remains "not by this change."
+
 ## Status
 
 - Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the
