@@ -535,8 +535,6 @@ impl GpuAccelerator {
         const MAX_BACKTRACKS: usize = 50_000;
         /// Manhattan distance kept between cells collapsed in the same batch.
         const BATCH_SPACING: usize = 4;
-        /// How far the search of recent choices may widen when one cell keeps failing.
-        const MAX_CULPRIT_RADIUS: usize = 8;
         struct Choice {
             grid: PossibilityGrid,
             cell: (usize, usize, usize),
@@ -560,6 +558,9 @@ impl GpuAccelerator {
         // already empty by the time we came to collapse it. These may behave nothing alike.
         let mut failures_by_source: std::collections::HashMap<&'static str, usize> =
             std::collections::HashMap::new();
+        // The conflict cell belonging to the failure currently being recovered from, carried from
+        // wherever propagation raised it to the backtrack block that has to act on it.
+        let mut pending_conflict: Option<(usize, usize, usize)> = None;
         // A failure carries where it happened, so the search can jump back to the choice that caused
         // it instead of undoing whatever happened to be most recent.
         let mut failure: Option<(String, Option<(usize, usize, usize)>)> = None;
@@ -585,19 +586,32 @@ impl GpuAccelerator {
                 // rather than undoing the same single choice again: the previous version matched the
                 // choice it had just restored, so recovery undid exactly one step forever and the run
                 // thrashed (docs/thrashing.md).
-                let repeats = culprit.map_or(0, |cell| *failures_by_cell.get(&cell).unwrap_or(&0));
-                let radius = 1 + repeats.min(MAX_CULPRIT_RADIUS);
+                // Escalate by how many times *this conflict cell* has already failed, and keep that
+                // count across successful propagations. Prosser: an accumulated set that "was reset
+                // whenever a successful forward move was made" yields an incomplete algorithm, and our
+                // doubling counter was reset exactly so, which is why every run reported a deepest undo
+                // of 2 no matter how many times it failed. POMS escalates by failed-attempt count for
+                // the same reason: without it a solver "could perpetually attempt resolution on blocks
+                // with identical initial state". `conflicts_by_cell` is never cleared, so it supplies
+                // the memory that must survive progress.
+                let escalation = pending_conflict
+                    .take()
+                    .map_or(0, |cell| *conflicts_by_cell.get(&cell).unwrap_or(&0))
+                    .min(MAX_UNDO_STEPS);
+                // Fixed radius. Widening it with the failure count was backwards: `rposition` takes the
+                // most recent choice within the radius, so a larger radius can only return an equally
+                // recent or more recent one, making the undo shallower rather than deeper.
                 let near_culprit = culprit.and_then(|(cx, cy, cz)| {
                     history.iter().rposition(|choice| {
                         let (hx, hy, hz) = choice.cell;
-                        hx.abs_diff(cx) <= radius && hy.abs_diff(cy) <= radius && hz.abs_diff(cz) <= radius
+                        hx.abs_diff(cx) <= 1 && hy.abs_diff(cy) <= 1 && hz.abs_diff(cz) <= 1
                     })
                 });
                 let steps = match near_culprit {
-                    // Undo at least as many steps as this cell has failed, so a repeated failure keeps
-                    // reaching further back instead of retrying the same choice.
-                    Some(index) => (history.len() - index).max(undo_steps),
-                    None => undo_steps,
+                    // Reach back at least as far as this conflict cell has failed, so a cell that keeps
+                    // failing is eventually recovered from past whatever actually caused it.
+                    Some(index) => (history.len() - index).max(undo_steps).max(escalation),
+                    None => undo_steps.max(escalation),
                 };
                 let mut restored = None;
                 let mut undone = 0usize;
@@ -631,7 +645,7 @@ impl GpuAccelerator {
                 };
                 *failures_by_source.entry(source).or_default() += 1;
                 progress_log.push((iterations as usize, collapsed_cells, backtracks));
-                undo_steps = if near_culprit.is_some() && repeats == 0 {
+                undo_steps = if near_culprit.is_some() && escalation <= 1 {
                     1
                 } else {
                     (undo_steps * 2).min(MAX_UNDO_STEPS)
@@ -675,6 +689,7 @@ impl GpuAccelerator {
                     // thrashing seed roughly half the backtracks are this (docs/thrashing.md).
                     if let wfc_core::propagator::PropagationError::Contradiction(cx, cy, cz) = &e {
                         *conflicts_by_cell.entry((*cx, *cy, *cz)).or_default() += 1;
+                        pending_conflict = Some((*cx, *cy, *cz));
                     }
                     failure = Some((format!("recovery: {e}"), None));
                     continue;
@@ -868,6 +883,7 @@ impl GpuAccelerator {
                 // it: the cell we chose to collapse and the cell that failed are different cells.
                 if let wfc_core::propagator::PropagationError::Contradiction(cx, cy, cz) = &e {
                     *conflicts_by_cell.entry((*cx, *cy, *cz)).or_default() += 1;
+                    pending_conflict = Some((*cx, *cy, *cz));
                 }
                 failure = Some((e.to_string(), Some((first.x, first.y, first.z))));
                 continue;
