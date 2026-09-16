@@ -710,6 +710,18 @@ impl GpuAccelerator {
                     {
                         Ok(changed) => changed,
                         Err((x, y, z)) => {
+                            // Recorded for diagnostics only. Feeding this cell into the undo
+                            // escalation, the way a propagation conflict is fed, was tried and made
+                            // things *worse*: a range-exclusion run that finished in 6.07 s with 80
+                            // backtracks stopped finishing at all, exhausting its iteration budget.
+                            //
+                            // The asymmetry is the point. A propagation conflict names the one cell
+                            // whose domain emptied, so repeated failures there really do mean the
+                            // cause lies further back. A global constraint names wherever it first
+                            // tripped — here, one of 180 composed sub-rules — so the same cell recurs
+                            // for unrelated reasons, and escalating on its count throws away good
+                            // collapses faster than the search can replace them (docs/thrashing.md).
+                            *conflicts_by_cell.entry((x, y, z)).or_default() += 1;
                             constraint_failure = Some((
                                 format!("global constraint cannot be satisfied at ({x}, {y}, {z})"),
                                 Some((x, y, z)),
