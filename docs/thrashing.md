@@ -386,6 +386,33 @@ almost the same neighbourhood, and **should not be expected to fix thrashing on 
 literature's diagnosis stands: what is missing is accumulation across failures, not a better-placed
 radius.
 
+### Completing the accounting: one cell, 195 of 197
+
+Instrumenting the recovery path closes the gap, and the arithmetic now balances on both axes:
+
+```
+by_source       = [("propagation", 100), ("recovery_propagation", 97)]   -> 197
+worst_conflicts = [(195, (10, 6, 4)), (1, (1, 11, 1)), (1, (1, 11, 0))]  -> 197
+```
+
+**195 of 197 contradictions occur at a single cell.** Not a hard region, not a neighbourhood — one
+cell, (10, 6, 4).
+
+The decisive detail is which failures those are. The 97 recovery failures land on the *same* cell as
+the 98 collapse failures. So the sequence is: contradiction at (10, 6, 4), restore the snapshot, ban
+the tile, re-propagate — and land immediately back in the identical contradiction at (10, 6, 4).
+**Undoing one choice does not remove the cause.** The restored state still contains it.
+
+This turns question 1 — what exactly causes a thrashing run — from inference into observation. Dechter
+and Frost predict exactly this when the backjump target is later than the true culprit: "the same
+dead-end will recur". It also explains how `max_undo` of 2 and 195 failures at one cell can coexist:
+the cause lies further back in the history than one or two undo steps reach, and nothing in the current
+scheme lets the search reach further, because the escalation resets after each successful propagation.
+
+Note also that the concentration is a property of the *run*, not of the cell's coordinates: seed 28
+contradicts at three different cells, once each, and escapes immediately. What distinguishes the
+pathological seed is not where it fails but that it cannot stop failing in the same place.
+
 ## Status
 
 - Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the
