@@ -476,6 +476,107 @@ On throughput: 196–229 cells/s here against 178 cells/s recorded earlier. The 
 under a different harness configuration (multiple attempts, unseeded), so treat that comparison as
 indicative rather than as a measured speed-up.
 
+## Seventh data: rule *kind* matters, and measuring it exposed a gap in our own fix
+
+The zoo holds the grid, rules, weights and seed fixed and varies only the kind of rule applied, so a
+difference is attributable to the rule rather than to the problem. The control is verified to
+reproduce the e2e `small_city` search line exactly, which is what makes the comparison a comparison.
+Seed 8:
+
+| Kind | Backtracks | Run time | Notes |
+|---|---|---|---|
+| Adjacency only (control) | 8 | 2.88 s | identical to the e2e baseline |
+| Range exclusion | **80** | 6.07 s | 10 distinct failure cells |
+| Counting (first attempt) | 8 | 3.07 s | **never fired** — see below |
+
+**A cheap rule can be an expensive search.** Range exclusion is the least expensive kind of non-local
+rule we have: one cell and a fixed offset decide it, no graph, no whole-grid analysis. It still costs
+ten times the backtracks. Checking cost and search cost are different things, and this separates them:
+what makes a rule hard to search is *non-locality*, not the price of evaluating it.
+
+**All 80 of its failures arrived through the constraint path — with no conflict cell recorded.** The
+diagnostics reported `by_source=[("global_constraint", 80)]` and `distinct_conflict_cells=0`. That is
+our own escalation defect, still live on a second path: `pending_conflict` was only set where
+*propagation* raised a contradiction, so for a constraint-sourced failure it stayed `None`, escalation
+computed 0, and recovery fell back to the blind doubling counter — even though the constraint returns
+the exact offending cell in its `Err`. The same bug we fixed this morning, one branch over.
+
+**Applying the same fix there made it worse, and the failure is instructive.** Feeding the
+constraint's cell into the escalation looked like the obvious correction. Measured against the
+80-backtrack baseline, the range-exclusion run stopped finishing at all, leaving through the harness's
+non-contradiction path after exhausting an iteration budget it had been using a quarter of. Reverting
+restores it *exactly* — 80 backtracks, 808 iterations, the same five worst cells — which is what makes
+the change and not something else the cause. (The failure path was later quoted verbatim from a
+different run: `Failed to fully collapse grid: 174 of 864 cells after 3456 iterations (limit 3456)`.
+That confirms the shape of this exit; range exclusion's own message was never captured.)
+
+The asymmetry explains it. A propagation conflict names the *one* cell whose domain emptied, so
+repeated failures there genuinely indicate a cause further back, and reaching deeper finds it. A global
+constraint names wherever it first tripped — here one of 180 composed sub-rules — so the same cell
+recurs for unrelated reasons, and escalating on its count discards good collapses faster than the
+search replaces them. **Escalating on conflict-cell failure count is right for propagation and wrong
+for global constraints.** The behaviour is reverted and the diagnostic kept.
+
+This is worth stating as a general caution rather than a local detail: a recovery policy that is
+correct for one failure source can be actively harmful for another, and "the same bug, one branch over"
+was a confident diagnosis that the measurement refuted.
+
+**The counting rule measured nothing, twice, and looked like a result both times.** A road within two
+cells of a *door*, then a road within three cells of a *building*, each produced a search line
+byte-identical to the control with `prunes=0`. The cause is structural, not a poor choice of numbers:
+`CountingConstraint` prunes only when the candidates in a ball *exactly equal* the required count,
+since that is when every candidate becomes load-bearing. A radius-3 ball almost always holds more
+possible roads than the count demands, so slack never reaches zero and the rule is sound but silent.
+
+Read carelessly, an identical search line says "counting rules are harmless"; it actually says "this
+rule never ran". The prune counter added to the zoo is what turned that from a suspicion about
+too-perfect numbers into a fact.
+
+**The third configuration then overshot, and not by a little.** Three roads within one cell of every
+*building* was not a tight rule but an impossible one: roads exist only at street level, while
+`variants_tagged("building")` spans every height, so a building at z = 3 could never satisfy it under
+any completion. The run ground through 1911 backtracks, collapsed 174 of 864 cells and hit its
+iteration cap. It also supplied the message that confirms this exit path:
+`Failed to fully collapse grid: 174 of 864 cells after 3456 iterations (limit 3456)`.
+
+That is the useful shape of this whole exercise. `CountingConstraint` is silent above the
+satisfiability boundary and fatal below it, so its operating band is narrow, and picking a
+configuration inside it needs a fact about the rule set — here, that roads are street level only —
+rather than a plausible-sounding radius. The fourth configuration uses doors as the subject: they are
+street level by construction, and optional, so the search can decline to place one where the rule
+cannot be met.
+
+A general caution earned three times over now: a constraint that is *silent* and a constraint that is
+*satisfied* produce identical numbers, and only an explicit count of what the constraint did tells them
+apart.
+
+**The fourth configuration fires, and points the opposite way from range exclusion.** Three roads
+within one cell of a door, at seed 8:
+
+| Kind | Prunes | Constraint failures | Backtracks | Run time |
+|---|---|---|---|---|
+| Adjacency only (control) | — | — | 8 | 2.92 s |
+| Range exclusion | 29 | **80** | **80** | 5.39 s |
+| Counting | 13 | **0** | **1** | 2.72 s |
+
+Counting made the search *easier* — one backtrack against the control's eight, and marginally faster.
+Both rules are bounded and non-local, so non-locality by itself cannot be what costs. The variable that
+tracks the outcome is the constraint-failure count: range exclusion declares the grid unsatisfiable 80
+times, counting never does.
+
+**Hypothesis, on one seed per kind:** what a rule costs the search is governed by how often it *fails*,
+not by how far it reaches. A rule that only narrows domains removes doomed branches before the search
+explores them and can pay for itself, which is the same mechanism as pre-filtering domains
+([solver-fit.md](solver-fit.md), guess 5). A rule that repeatedly declares failure instead forces the
+recovery machinery to work, and recovery is where this whole investigation has found the cost to be.
+
+This also corrects a claim made two sections above, that "what makes a rule hard to search is
+non-locality, not the price of evaluating it". The first half does not survive the counting result. It
+was drawn from a single rule kind, and generalised one measurement too early.
+
+One seed per kind is an anecdote, so this is written as a hypothesis with a named discriminator
+(failure count, not reach) that a multi-seed sweep can falsify.
+
 ## Status
 
 - Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the
