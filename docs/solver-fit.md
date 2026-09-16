@@ -55,6 +55,11 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Seed 8 replayed three times | identical line every time | same |
 | Deepest undo, across all 48 seeds | **≤ 2**, including the 197-backtrack seed | same |
 | Seed 8 plateau | collapsed pinned to 529–534 for 190 backtracks / 184 iterations | progress series |
+| Seed 8 contradictions, by cell | **195 of 197 at one cell**, (10, 6, 4) | conflict diagnostics |
+| Of those, raised while *recovering* | 97 of 197 | `by_source` |
+| Seed 8 after the escalation fix | **197 → 8 backtracks**, deepest undo 2 → 8 | 48-seed corpus |
+| Worst of 48 seeds after the fix | **197 → 11 backtracks** | same |
+| Corpus wall time after the fix | 4.4–5.7 s → 4.2–5.4 s, no regression | same |
 
 **Two corrections to the rows above.** Every row measured before the packed-key fix was taken while
 cell *selection* was nondeterministic: the entropy shader stored the winning entropy and its index as
@@ -195,18 +200,22 @@ Each of these is an inference. The reasoning is given so a future pass can check
 7. **Our connectivity constraint cannot be enforced across streamed blocks.**
    *Reasoning:* it is a whole-grid property, and block schemes forbid supra-block constraints. Follows
    from the block-scheme fact above, but we have not tried and failed — we have not tried.
-8. **The escape from a thrashing plateau is accidental rather than directed.**
-   *Reasoning:* each backtrack bans one tile at one cell, so after enough failures the neighbouring
-   domains are drained far enough that a structurally different completion is forced. That predicts the
-   abrupt escape we see — seed 8 sits at 529–534 collapsed for 190 backtracks and then finishes within
-   ~57 iterations. Mechanism read from the code; the abruptness is measured; the causal link between
-   them is the inference.
+8. ~~**The escape from a thrashing plateau is accidental rather than directed.**~~ **Confirmed as a
+   description of the old recovery, and now obsolete.** It predicted the abrupt escape correctly, and
+   the escalation fix removed the plateau it described (seed 8: 197 backtracks to 8). Kept as a worked
+   example: this guess is what identified that recovery was enumerating tile bans at depth one, which
+   is what pointed at the reset-on-progress as the mechanism worth attacking.
 9. **Restart with a cutoff is the highest-value fix available for our measured distribution.**
    *Reasoning:* 47 of 48 seeds finish in 0–4 backtracks, so a short cutoff has a very high success
    probability per attempt and expected cost near a trivial run, while the bad seed pays 197 backtracks.
    Luby's analysis favours a fixed cutoff when the distribution is this well characterised, and Chen &
    van Beek argue the alternative (perfecting the backjump) pays least in our regime. Not yet measured
    *here*: we have not implemented it, and the cutoff value is unchosen.
+   **Update, after the escalation fix:** the tail this argument rests on has largely collapsed — the
+   worst of 48 seeds is now 11 backtracks rather than 197 — so the urgency is much lower, and note that
+   Chen & van Beek's prediction (backjumping pays least in our regime) is the one thing here the
+   measurement went *against*: fixing the backjump was worth 24× on the bad seed. The reasoning still
+   holds for whatever tail remains at larger grid sizes, which is unmeasured.
 10. **The `z = 4` layer is where our city rule set is tightest.**
    *Reasoning:* failure cells reported across the corpus fall most often on `z = 4` and never on
    `z = 5`; `constrain_city` forces air at the top layer and street level at the bottom, which would
@@ -273,11 +282,15 @@ In rough order of expected value, with the basis for each:
 1. ~~Remove the full-grid confirmation sweeps via atomic restriction~~ **done, 1.43x**.
 2. Stop moving the whole grid per collapse *(fact: 6.7 s of 48.7 s in transfers, plus CPU packing that
    the GPU spans do not show: `upload_grid` tests every tile bit of every cell and allocates per cell)*.
-3. Aim the backjump at the cell that actually failed rather than the cell we chose to collapse *(fact:
-   the shader records it, the error carries it, and the search discards it)*. Cheap, and a prerequisite
-   for any real conflict set.
-4. Restart with a cutoff, with an increasing cutoff or retained nogoods for completeness *(guess 9;
-   facts from Luby and Gomes et al., and from Chen & van Beek on why the alternative pays less)*.
+3. ~~Aim the backjump at the cell that actually failed rather than the cell we chose to collapse~~
+   **done, 24× on the pathological seed**: the true conflict cell now drives an escalation that
+   accumulates across progress, and the radius widening — which could only ever make undos shallower —
+   is gone. Seed 8 fell from 197 backtracks to 8, the worst of 48 from 197 to 11, at no cost to the
+   healthy seeds. Verified on the 864-cell city only; the 24×24×8 stress city is next.
+4. Restart with a cutoff, with an increasing cutoff or retained nogoods for completeness *(guess 9)* —
+   **demoted**: the tail that motivated it has largely collapsed. Revisit if one reappears at larger
+   grid sizes, and note it remains the only route the literature offers to *preventing* re-derivation
+   rather than bounding it.
 5. Coarse pass pre-filtering domains, i.e. driven WFC *(guess 5)*.
 6. Block-local solve as the unit of work, for both streaming and latency *(guesses 3 and 4)*.
 7. dom/wdeg failure weighting to attack the redo factor and the run-to-run variance *(facts about
