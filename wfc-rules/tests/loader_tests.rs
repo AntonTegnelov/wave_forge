@@ -1,8 +1,10 @@
 // use wfc_core::TileId; // This line should already be removed or commented out
 // Removed unused: use std::fs;
 // Removed unused: use tempfile::tempdir;
+use wfc_rules::LoadError;
 use wfc_rules::loader::load_from_file;
-use wfc_rules::{LoadError, TileId, Transformation}; // Removed unused: AdjacencyRules, TileSet, TileSetError
+#[cfg(feature = "serde")]
+use wfc_rules::{TileId, Transformation};
 
 // Helper function to create the full path to test data
 fn test_data_path(filename: &str) -> std::path::PathBuf {
@@ -14,6 +16,7 @@ fn test_data_path(filename: &str) -> std::path::PathBuf {
 }
 
 #[test]
+#[cfg(feature = "serde")] // RON parsing needs serde
 fn test_load_valid_simple() {
     let path = test_data_path("valid_simple.ron");
     let result = load_from_file(&path);
@@ -60,6 +63,7 @@ fn test_load_valid_simple() {
 }
 
 #[test]
+#[cfg(feature = "serde")] // RON parsing needs serde
 fn test_load_invalid_dup_name() {
     let path = test_data_path("invalid_dup_name.ron");
     let result = load_from_file(&path);
@@ -71,6 +75,7 @@ fn test_load_invalid_dup_name() {
 }
 
 #[test]
+#[cfg(feature = "serde")] // RON parsing needs serde
 fn test_load_invalid_neg_weight() {
     let path = test_data_path("invalid_neg_weight.ron");
     let result = load_from_file(&path);
@@ -89,6 +94,7 @@ fn test_load_invalid_neg_weight() {
 }
 
 #[test]
+#[cfg(feature = "serde")] // RON parsing needs serde
 fn test_load_invalid_bad_axis() {
     let path = test_data_path("invalid_bad_axis.ron");
     let result = load_from_file(&path);
@@ -100,6 +106,7 @@ fn test_load_invalid_bad_axis() {
 }
 
 #[test]
+#[cfg(feature = "serde")] // RON parsing needs serde
 fn test_load_invalid_unknown_tile() {
     let path = test_data_path("invalid_unknown_tile.ron");
     let result = load_from_file(&path);
@@ -113,6 +120,7 @@ fn test_load_invalid_unknown_tile() {
 }
 
 #[test]
+#[cfg(feature = "serde")] // RON parsing needs serde
 fn test_load_invalid_format() {
     let path = test_data_path("invalid_format.ron");
     let result = load_from_file(&path);
