@@ -15,6 +15,7 @@ Reference:
 
 - **[Constraints](constraints.md):** what adjacency rules can and cannot express, designing module sets for properties like connectivity, and global constraints.
 - **[Performance](performance.md):** priorities, how we measure, where work should run (GPU, threads, SIMD), and the baseline.
+- **[What fits](solver-fit.md):** whether to adopt CDCL/SAT, ghost cells and block decomposition, what changes the parallelism story, and the resulting recommendation.
 - **[Solver redesign](solver-redesign.md):** what the profile and micro-benchmarks show, what the literature says, and the ranked plan for [#7](https://github.com/AntonTegnelov/wave_forge/issues/7).
 
 The dev container is documented separately in [`.devcontainer/README.md`](../.devcontainer/README.md).
