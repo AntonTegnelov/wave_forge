@@ -577,6 +577,47 @@ was drawn from a single rule kind, and generalised one measurement too early.
 One seed per kind is an anecdote, so this is written as a hypothesis with a named discriminator
 (failure count, not reach) that a multi-seed sweep can falsify.
 
+### The sweep falsified half of it
+
+Eight seeds, all three kinds, same grid and budget. Backtracks, with constraint failures in brackets:
+
+| Seed | Control | Range exclusion | Counting |
+|---|---|---|---|
+| 1 | 2 | **did not finish** (300/864 cells) | 16 (9) |
+| 2 | 0 | **did not finish** (94/864) | 5 (3) |
+| 3 | 0 | **did not finish** (377/864) | 1 (1) |
+| 4 | 2 | **did not finish** (158/864) | 1 (1) |
+| 5 | 0 | **did not finish** (490/864) | 48 (12) |
+| 6 | 2 | **did not finish** (318/864) | 6 (2) |
+| 7 | 1 | 494 (494), 19.3 s | 2 (2) |
+| 8 | 8 | 80 (80), 5.3 s | 1 (0) |
+
+**"Counting makes the search easier" is dead.** It is worse than the control on six of eight seeds. The
+single-seed result that suggested otherwise came from the one seed where the control is at its worst
+(8 backtracks) and counting at its best (1) — the two extremes coinciding. The corollary dies with it:
+counting prunes 5 to 51 cells per run and still costs more than doing nothing, so **pruning did not pay
+for itself here**, and the pre-filtering analogy was drawn too eagerly.
+
+**"Range exclusion costs 10x" was also an artifact of seed 8.** It is not a rule that makes the search
+ten times harder; it is a rule that usually makes the problem *unfinishable* within budget — six of
+eight runs never complete, some collapsing under a fifth of the grid. Seed 8 was the lucky case, and it
+was the case we measured first and generalised from.
+
+**The discriminator survives, and gets sharper.** For range exclusion, backtracks equal constraint
+failures exactly: 494 and 494, 80 and 80. For counting, backtracks rise monotonically with failures
+(0→1, 1→1, 2→2, 3→5, 9→16, 12→48), running two to four times the failure count because propagation
+contributes the rest. Both rules are bounded and non-local, so reach is still not the variable that
+tracks cost. **How often a rule declares failure is.**
+
+What stays unanswered is whether range exclusion is *unsatisfiable* on this rule set or merely starved
+of budget. Those demand different conclusions — one says the rule is a bad rule, the other says the
+search is weak — and the sweep cannot tell them apart, because both exit through the same
+iteration-cap path.
+
+A note on method, since this is the second time today seed 8 has misled us: it was chosen as the
+pathological seed *for the control*, which makes it the worst possible choice of single seed for
+comparing anything against the control. Regression to the mean does the rest.
+
 ## Status
 
 - Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the

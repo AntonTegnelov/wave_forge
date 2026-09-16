@@ -65,6 +65,11 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Same, deepest undo | 2–12, against a cap of 64 | same |
 | Same, run time | 20.2–23.5 s, 196–229 cells/s | same |
 | Failure spread at 4608 cells | 3–20 distinct cells, ≤18 repeats each | same |
+| Zoo control (adjacency only), 8 seeds | 0–8 backtracks, 2.56–3.04 s | rule-set zoo, 864 cells |
+| Zoo range exclusion, 8 seeds | **6 of 8 never finish**; the two that do: 80 and 494 backtracks | same |
+| Zoo counting, 8 seeds | 1–48 backtracks, worse than control on 6 of 8 | same |
+| Backtracks vs constraint failures | range exclusion: **exactly equal** (80/80, 494/494) | same |
+| Same, counting | monotone, 2–4× the failure count | same |
 
 **Two corrections to the rows above.** Every row measured before the packed-key fix was taken while
 cell *selection* was nondeterministic: the entropy shader stored the winning entropy and its index as
