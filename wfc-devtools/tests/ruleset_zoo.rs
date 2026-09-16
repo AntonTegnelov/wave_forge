@@ -28,7 +28,9 @@ mod common;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wfc_core::BoundaryCondition;
-use wfc_core::constraint::{Cell, CountingConstraint, GlobalConstraint, RangeExclusionConstraint};
+use wfc_core::constraint::{
+    Cell, CountingConstraint, GlobalConstraint, RangeExclusionConstraint, SurroundingConstraint,
+};
 use wfc_core::grid::PossibilityGrid;
 use wfc_devtools::city;
 
@@ -184,6 +186,53 @@ async fn zoo_range_exclusion() {
         .collect();
     eprintln!("zoo: range-exclusion over {} tile pairs", parts.len());
     run_zoo("range_exclusion", Some(counted(Box::new(All(parts))))).await;
+}
+
+/// Constrains a whole neighbourhood rather than pairs of faces: no walkway or stair within one cell of
+/// a road, diagonals included.
+///
+/// This is the kind adjacency cannot express at all, rather than a convenience over it.
+/// `AdjacencyRules` relates a cell to its six axis neighbours pairwise, so of the 26 cells in a
+/// radius-1 ball it can reach six; the 20 diagonals are beyond it entirely.
+///
+/// Deliberately shaped to *forbid a small category* rather than to *demand* one. Every counting
+/// configuration that demanded something inside a ball was either silent or impossible — four attempts
+/// — because a ball large enough to be satisfiable is large enough that the requirement never binds.
+/// Forbidding walkways near roads is satisfiable by construction, since the search can always place
+/// them elsewhere, while still having something to do.
+#[tokio::test]
+#[ignore = "rule-set zoo; run with --ignored in release mode, one at a time, with WFC_SWEEP=1"]
+async fn zoo_surrounding() {
+    let city = city::city();
+    let m = &city.modules;
+    let roads = m.variants_tagged("road");
+    let walkways = m.variants_tagged("walkway");
+    let stairs = m.variants_tagged("stair");
+    assert!(
+        !roads.is_empty() && !walkways.is_empty(),
+        "the rule needs roads and walkways to exist, or it constrains nothing"
+    );
+
+    let forbidden: std::collections::HashSet<usize> =
+        walkways.iter().chain(stairs.iter()).copied().collect();
+    let allowed: Vec<usize> = (0..m.variants.len())
+        .filter(|tile| !forbidden.contains(tile))
+        .collect();
+    eprintln!(
+        "zoo: surrounding over {} roads, forbidding {} of {} tiles in each radius-1 ball",
+        roads.len(),
+        forbidden.len(),
+        m.variants.len()
+    );
+
+    let parts: Vec<Box<dyn GlobalConstraint>> = roads
+        .iter()
+        .map(|&road| {
+            Box::new(SurroundingConstraint::new(road, allowed.clone(), 1))
+                as Box<dyn GlobalConstraint>
+        })
+        .collect();
+    run_zoo("surrounding", Some(counted(Box::new(All(parts))))).await;
 }
 
 /// Bounded but non-local in every direction: every building needs a road within three cells.
