@@ -32,7 +32,26 @@ use wfc_core::constraint::{
     Cell, CountingConstraint, GlobalConstraint, RangeExclusionConstraint, SurroundingConstraint,
 };
 use wfc_core::grid::PossibilityGrid;
+use wfc_core::weighting::{DistanceWeighting, TileWeighting};
 use wfc_devtools::city;
+
+/// Multiplies the city's flat per-tile weight by a positional factor.
+///
+/// Composing rather than replacing is essential, not tidiness. The module weights are load-bearing —
+/// `road_straight` at 4.0 against `road_end` at 0.05 — and a cell weighting *replaces* them, since it
+/// takes precedence over `with_tile_weights`. A statistical arm that ignored them would be measuring
+/// "module weights deleted" rather than "proximity bias added", and would produce a visibly different
+/// city for the wrong reason.
+struct Weighted {
+    flat: Vec<f32>,
+    inner: DistanceWeighting,
+}
+
+impl TileWeighting for Weighted {
+    fn weight(&self, grid: &PossibilityGrid, cell: Cell, tile: usize) -> f32 {
+        self.flat.get(tile).copied().unwrap_or(1.0) * self.inner.weight(grid, cell, tile)
+    }
+}
 
 /// Applies several constraints as one, since the solver takes a single global constraint.
 ///
@@ -109,6 +128,19 @@ struct Tally {
 /// accelerator itself under `WFC_REPORT_SEARCH`; this adds the wall-clock outcome and, when there is a
 /// constraint, proof of whether it did anything.
 async fn run_zoo(kind: &str, constraint: Option<(Arc<dyn GlobalConstraint>, Tally)>) {
+    run_zoo_inner(kind, constraint, None).await
+}
+
+/// As [`run_zoo`], for a rule that biases the collapse *choice* rather than pruning domains.
+async fn run_zoo_weighted(kind: &str, weighting: Arc<dyn TileWeighting>) {
+    run_zoo_inner(kind, None, Some(weighting)).await
+}
+
+async fn run_zoo_inner(
+    kind: &str,
+    constraint: Option<(Arc<dyn GlobalConstraint>, Tally)>,
+    weighting: Option<Arc<dyn TileWeighting>>,
+) {
     let city = city::city();
     let m = &city.modules;
     let (width, height, depth) = (12, 12, 6);
@@ -119,11 +151,12 @@ async fn run_zoo(kind: &str, constraint: Option<(Arc<dyn GlobalConstraint>, Tall
         Some((constraint, tally)) => (Some(constraint), Some(tally)),
         None => (None, None),
     };
-    let solved = common::solve_rules(
+    let solved = common::solve_rules_with(
         &initial,
         &m.rules,
         Some(&m.tileset.weights),
         constraint,
+        weighting,
         BoundaryCondition::Finite,
         1,
     )
@@ -186,6 +219,41 @@ async fn zoo_range_exclusion() {
         .collect();
     eprintln!("zoo: range-exclusion over {} tile pairs", parts.len());
     run_zoo("range_exclusion", Some(counted(Box::new(All(parts))))).await;
+}
+
+/// Changes likelihood rather than legality: a road becomes likelier the more roads are already nearby,
+/// and nearer ones count for more.
+///
+/// The one kind in this zoo that is not a constraint at all, and could not be. It removes no
+/// possibilities, so `GlobalConstraint::apply` could only ever return `Ok(vec![])` for it. It acts on
+/// the collapse choice instead.
+///
+/// That makes it measured differently from every other arm here. It cannot prune and cannot fail, so
+/// `prunes` and `constraint_failures` say nothing about it; what it can change is the search cost and
+/// the output itself. The interesting question is whether biasing *choice* alone — with the legal set
+/// untouched — moves thrashing at all, since every other lever in this study has been about legality.
+///
+/// The flat module weights are multiplied in rather than replaced; see [`Weighted`].
+#[tokio::test]
+#[ignore = "rule-set zoo; run with --ignored in release mode, one at a time, with WFC_SWEEP=1"]
+async fn zoo_statistical() {
+    let city = city::city();
+    let m = &city.modules;
+    let roads = m.variants_tagged("road");
+    assert!(
+        !roads.is_empty(),
+        "the rule needs roads to exist, or it biases nothing"
+    );
+    eprintln!("zoo: statistical over {} road variants", roads.len());
+
+    // Roads attract roads, out to two cells. Base 1.0 so a tile with no attractors nearby keeps its
+    // module weight untouched; strength 4.0 so an adjacent road multiplies it fivefold.
+    let inner = DistanceWeighting::new(roads.clone(), roads, 2, 1.0, 4.0);
+    let weighting = Weighted {
+        flat: m.tileset.weights.clone(),
+        inner,
+    };
+    run_zoo_weighted("statistical", Arc::new(weighting)).await;
 }
 
 /// Constrains a whole neighbourhood rather than pairs of faces: no walkway or stair within one cell of

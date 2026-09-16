@@ -11,6 +11,7 @@ use wfc_devtools::fixtures::Fixture;
 use wfc_gpu::gpu::accelerator::GpuAccelerator;
 use std::sync::Arc;
 use wfc_core::constraint::GlobalConstraint;
+use wfc_core::weighting::TileWeighting;
 use wfc_rules::AdjacencyRules;
 
 /// Directory for images produced by E2E tests, so a failing (or passing) run can be inspected.
@@ -75,6 +76,25 @@ pub async fn solve_rules(
     boundary: BoundaryCondition,
     attempts: usize,
 ) -> Solved {
+    solve_rules_with(initial, rules, weights, constraint, None, boundary, attempts).await
+}
+
+/// As [`solve_rules`], but also accepts a cell-aware weighting.
+///
+/// Statistical rules cannot travel through `constraint`: they remove no possibilities, so a
+/// `GlobalConstraint` implementing one could only ever return `Ok(vec![])`. They act on the collapse
+/// *choice* instead, which is why they need a separate way in.
+///
+/// `solve_rules` delegates here so the six existing call sites stay unchanged.
+pub async fn solve_rules_with(
+    initial: &PossibilityGrid,
+    rules: &AdjacencyRules,
+    weights: Option<&[f32]>,
+    constraint: Option<Arc<dyn GlobalConstraint>>,
+    cell_weighting: Option<Arc<dyn TileWeighting>>,
+    boundary: BoundaryCondition,
+    attempts: usize,
+) -> Solved {
     // Backtracking redoes collapses it undid, so a constrained run needs a far larger budget than
     // one iteration per cell.
     let cells = initial.width * initial.height * initial.depth;
@@ -97,6 +117,9 @@ pub async fn solve_rules(
         }
         if let Some(constraint) = &constraint {
             accelerator.with_global_constraint(Arc::clone(constraint));
+        }
+        if let Some(weighting) = &cell_weighting {
+            accelerator.with_cell_weighting(Arc::clone(weighting));
         }
         // Collapse several cells per propagation round when asked; see
         // GpuAccelerator::with_collapse_batch and docs/solver-fit.md.
