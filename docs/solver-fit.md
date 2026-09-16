@@ -318,7 +318,18 @@ In rough order of expected value, with the basis for each:
    Gomes et al. describe, and a short cutoff with retained nogoods is the recognised remedy. Correct
    for what it was measured on, wrong as a general conclusion.
 5. **Conditional nogood recording — keep each ban with the assignments that justify it.** This is now
-   the best-evidenced item on the list. Bans do not survive our undo: a constrained run revives them
+   the best-evidenced item on the list.
+   **Decided approach:** start with the *cheap* version — record the history depth at which each ban
+   was made, and apply it only while the choices below that depth are unchanged. It is sound, fits
+   inside `accelerator.rs`, and can be measured against the ceiling in one sitting. Its weakness is
+   known in advance: it forgets a ban whenever the search diverges below that depth, so it will recover
+   some fraction of the 8-of-8 ceiling rather than all of it.
+   **Held in reserve:** the full version, carrying real propagation antecedents so a ban survives as
+   long as its actual cause does. Much closer to CDCL and to the ceiling, but it needs
+   `direct_strategy` to report which cells caused each wipeout — a GPU-side change plus plumbing.
+   Return to it if the cheap version measures short.
+   The criterion for choosing between them is the least work that reaches **live city generation**,
+   not the most complete algorithm; if that judgement turns out wrong, adjust rather than persist. Bans do not survive our undo: a constrained run revives them
    226 314 times over 417 distinct bans, so the same small set is discarded and re-derived thousands of
    times, and the usual monotone-progress argument for termination does not hold. An unsound upper-bound
    probe that re-applies every ban (`WFC_PERSIST_BANS`) takes range exclusion from **2 of 8 seeds
