@@ -551,6 +551,15 @@ impl GpuAccelerator {
             std::collections::HashMap::new();
         let mut undo_depths: Vec<usize> = Vec::new();
         let mut progress_log: Vec<(usize, usize, usize)> = Vec::new();
+        // Where propagation actually found an empty domain, which is a different cell from the one we
+        // chose to collapse. Only the former is the real conflict site; backjumping currently aims at
+        // the latter (docs/thrashing.md).
+        let mut conflicts_by_cell: std::collections::HashMap<(usize, usize, usize), usize> =
+            std::collections::HashMap::new();
+        // Which stage produced each failure: propagation, the global constraint, or a cell that was
+        // already empty by the time we came to collapse it. These may behave nothing alike.
+        let mut failures_by_source: std::collections::HashMap<&'static str, usize> =
+            std::collections::HashMap::new();
         // A failure carries where it happened, so the search can jump back to the choice that caused
         // it instead of undoing whatever happened to be most recent.
         let mut failure: Option<(String, Option<(usize, usize, usize)>)> = None;
@@ -611,6 +620,14 @@ impl GpuAccelerator {
                 if let Some(cell) = culprit {
                     *failures_by_cell.entry(cell).or_default() += 1;
                 }
+                let source = if reason.starts_with("global constraint") {
+                    "global_constraint"
+                } else if reason.starts_with("no tiles left") {
+                    "empty_domain"
+                } else {
+                    "propagation"
+                };
+                *failures_by_source.entry(source).or_default() += 1;
                 progress_log.push((iterations as usize, collapsed_cells, backtracks));
                 undo_steps = if near_culprit.is_some() && repeats == 0 {
                     1
@@ -838,6 +855,12 @@ impl GpuAccelerator {
                 .instrument(info_span!(parent: &iteration_span, "propagate", batched))
                 .await
             {
+                // The shader records which cell's domain emptied and direct propagation decodes it, so
+                // the true conflict site is already in hand here. Record it for now without acting on
+                // it: the cell we chose to collapse and the cell that failed are different cells.
+                if let wfc_core::propagator::PropagationError::Contradiction(cx, cy, cz) = &e {
+                    *conflicts_by_cell.entry((*cx, *cy, *cz)).or_default() += 1;
+                }
                 failure = Some((e.to_string(), Some((first.x, first.y, first.z))));
                 continue;
             }
@@ -899,6 +922,17 @@ impl GpuAccelerator {
                  max_undo={deepest} mean_undo={mean_depth:.1} worst_cells={:?}",
                 failures_by_cell.len(),
                 worst.iter().take(5).collect::<Vec<_>>()
+            );
+            // The cells above are where we chose to collapse; these are where propagation actually
+            // failed. If they differ, the backjump target is aimed at the wrong place.
+            let mut conflicts: Vec<_> = conflicts_by_cell.iter().map(|(c, n)| (*n, *c)).collect();
+            conflicts.sort_unstable_by(|a, b| b.cmp(a));
+            let mut sources: Vec<_> = failures_by_source.iter().collect();
+            sources.sort_unstable();
+            eprintln!(
+                "conflicts: by_source={sources:?} distinct_conflict_cells={} worst_conflicts={:?}",
+                conflicts_by_cell.len(),
+                conflicts.iter().take(5).collect::<Vec<_>>()
             );
             // Totals cannot tell a slow run from a stuck one: a search that collapses and undoes the
             // same cells forever still reports plausible counts. The series shows whether collapsed
