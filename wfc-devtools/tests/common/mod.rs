@@ -23,6 +23,23 @@ pub fn artifact_dir() -> PathBuf {
     dir
 }
 
+/// Writes a Chrome/Perfetto trace of the solver's spans when `WFC_TRACE_CHROME` names a file, so a
+/// stress run can be profiled without a separate binary (see docs/performance.md).
+///
+/// Keep the returned guard alive for the whole test: dropping it flushes the trace.
+#[must_use]
+pub fn trace_to_chrome() -> Option<tracing_chrome::FlushGuard> {
+    use tracing_subscriber::layer::SubscriberExt;
+    let path = std::env::var_os("WFC_TRACE_CHROME")?;
+    let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+        .file(path)
+        .include_args(true)
+        .build();
+    // `.init()` panics when a logger is already installed, so set the default explicitly.
+    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer)).ok()?;
+    Some(guard)
+}
+
 /// A successful run and what it took.
 pub struct Solved {
     pub grid: PossibilityGrid,

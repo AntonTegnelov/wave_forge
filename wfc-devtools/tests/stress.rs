@@ -37,6 +37,7 @@ fn report(name: &str, grid: &PossibilityGrid, tiles: usize, solved: &common::Sol
 }
 
 async fn city_run(name: &str, width: usize, height: usize, depth: usize) {
+    let _trace = common::trace_to_chrome();
     let city = city::city();
     let m = &city.modules;
     let mut initial = PossibilityGrid::new(width, height, depth, m.variants.len());
@@ -57,6 +58,7 @@ async fn city_run(name: &str, width: usize, height: usize, depth: usize) {
 /// Two tiles that may touch anything: no contradictions, so this measures raw per-collapse
 /// overhead (entropy, selection, readback) with the cheapest possible propagation.
 async fn permissive_run(name: &str, size: usize) {
+    let _trace = common::trace_to_chrome();
     let num_tiles = 2;
     let tuples: Vec<(usize, usize, usize)> = (0..6)
         .flat_map(|axis| (0..num_tiles).flat_map(move |a| (0..num_tiles).map(move |b| (axis, a, b))))
