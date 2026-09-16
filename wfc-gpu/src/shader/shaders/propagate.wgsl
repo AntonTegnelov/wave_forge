@@ -275,10 +275,12 @@ fn update_neighbor(neighbor_idx: u32, allowed_neighbor_mask: PossibilityMask) ->
         if (index >= arrayLength(&grid_possibilities)) {
             break;
         }
-        let old_bits = atomicLoad(&grid_possibilities[index]);
+        // atomicAnd applies the restriction in one operation. A load/modify/store pair has a window
+        // in which another thread's restriction can be read, overwritten and lost, which is why the
+        // host used to confirm the fixpoint with a sweep over every cell after every collapse.
+        let old_bits = atomicAnd(&grid_possibilities[index], allowed_neighbor_mask[w]);
         let new_bits = old_bits & allowed_neighbor_mask[w];
         if (new_bits != old_bits) {
-            atomicStore(&grid_possibilities[index], new_bits);
             changed = true;
         }
         if (new_bits != 0u) {

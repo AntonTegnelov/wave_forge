@@ -309,7 +309,6 @@ impl crate::propagator::AsyncPropagationStrategy for DirectPropagationStrategy {
             bytemuck::cast_slice(&initial),
         );
         let mut input_count = initial.len() as u32;
-        let mut sweeping_all_cells = false;
 
         if let Some(passes) = self.blind_passes {
             if self.blind_single_submit {
@@ -330,22 +329,12 @@ impl crate::propagator::AsyncPropagationStrategy for DirectPropagationStrategy {
             let queued = self.run_pass(buffers, synchronizer, worklist_idx, input_count)?;
 
             if queued == 0 {
-                if sweeping_all_cells {
-                    return Ok(());
-                }
-                // Neighbour updates in the shader are not atomic, so concurrent writes can lose a
-                // restriction. Confirm the fixpoint with a pass over every cell before finishing.
-                sweeping_all_cells = true;
-                queue.write_buffer(
-                    Self::worklist_buffer(buffers, worklist_idx),
-                    0,
-                    bytemuck::cast_slice(&all_cells),
-                );
-                input_count = num_cells;
-                continue;
+                // The shader restricts neighbours with atomicAnd, so no update can be lost and an
+                // empty worklist is a real fixpoint. This used to need a confirming sweep over every
+                // cell, which was half of all propagation passes (docs/solver-fit.md).
+                return Ok(());
             }
 
-            sweeping_all_cells = false;
             worklist_idx = 1 - worklist_idx;
             if queued > capacity {
                 // The output worklist overflowed and dropped entries, so re-check every cell.
