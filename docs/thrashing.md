@@ -269,6 +269,86 @@ around 62% of the grid. Two samples is not a distribution, and the healthy seeds
 all, so this is a thread to pull — is there a characteristic density at which this rule set becomes
 hard? — rather than a result.
 
+## What the literature says, and what it says about our implementation
+
+Thrashing is the CSP literature's own word for this, and it is old. Mackworth (1977) defines it by
+cause, and one of his causes is our symptom exactly: a failure rediscovered over and over, which he
+says "cannot be removed by such minor palliatives as reordering the nodes." Dechter and Frost put it
+as "rediscovering the same inconsistencies and same partial successes during search."
+
+**Our backjump target rule is right in principle.** Dechter and Frost's Proposition 4: "the latest
+variable in its jumpback set is the earliest variable to which it is safe to jump." Jumping *later*
+than that re-fails; jumping *earlier* can skip solutions. Prosser and Ginsberg pick the same target,
+and CDCL's assertive level is the same idea.
+
+**Our conflict set is not a conflict set.** We approximate it by spatial radius. For a grid whose
+constraints are local adjacency that is a defensible proxy for the constraint graph — it is essentially
+graph-based backjumping — but propagation destroys the bound. Arc consistency runs to fixpoint, so a
+domain wipeout at C can be caused by a collapse arbitrarily far away, transmitted through a chain of
+prunings. Distance says where the damage is; it says nothing about when the responsible choice was
+made. A real conflict set is accumulated from *which constraint eliminated which value*, not from
+proximity.
+
+**The mechanism we are missing is accumulation.** CBJ merges conflict sets as it jumps
+(`conf-set[h] <- conf-set[h] union conf-set[i] - {h}`), so depth comes from repeated merged jumps, not
+from one wide jump. This resolves what looked like a paradox in our own measurement: taking the most
+recent member of a *larger* set can only give a *shallower* jump, and that is true of real CBJ too. It
+is harmless there because the sets accumulate. Ours are recomputed from scratch each failure, so the
+search cannot climb.
+
+**Prosser describes our bug in a sentence.** Writing about the accumulated set in graph-based
+backjumping: *"if `P` was dispensed with, or was reset whenever a successful forward move was made, we
+would again have an incomplete algorithm."* Our doubling counter is reset unconditionally after every
+successful propagation. Same reset, same consequence.
+
+**Our failure is under-jumping, which is the benign direction.** Under-jumping does not lose solutions;
+it re-derives the same dead end. Over-jumping is the one that silently skips solutions. So the 98
+repeats are the predicted signature of a target that is too shallow, and not a soundness problem.
+
+### A termination hazard we should check rather than assume
+
+Backtracking WFC is usually argued to terminate because every backtrack removes at least one tile from
+some domain, so the search cannot cycle. That argument needs the removals to survive. In our undo path
+each history entry snapshots the grid *before* its collapse, and recovery restores a snapshot and then
+bans the tile of the restored choice. Undoing several steps therefore restores a snapshot that predates
+bans recorded after it, and those bans are discarded with it. At `max_undo` of 1-2 this rarely bites,
+but it means the monotone-progress argument does not hold in general, and a genuine cycle is possible
+rather than merely slow. This needs a test, not a reassurance.
+
+### What the evidence favours, in order
+
+1. **Restart with a cutoff.** Our distribution is the textbook case: 47 of 48 seeds finish in 0-4
+   backtracks. With a per-attempt success probability that high, a short cutoff plus retry has an
+   expected cost close to a trivial run, while the bad seed currently pays 197 backtracks. Luby,
+   Sinclair and Zuckerman give the theory; Gomes, Selman and Kautz show randomised restarts eliminate
+   the heavy right tail and exploit a heavy left tail. Boris the Brave's Tessera ships exactly this as
+   a step limit that "will allow some backtracking to occur, but after a fixed amount of computation it
+   will automatically retry with a fresh generation." Naive fixed-cutoff restart is incomplete; the
+   established fixes are an increasing cutoff or retaining nogoods across restarts (Lecoutre et al.).
+2. **Failure-weighted cell selection (dom/wdeg).** Boussemart et al. weight constraints by how often
+   they caused a dead end and prefer variables involved in them, explicitly to avoid thrashing. Applied
+   here: a cell that has failed repeatedly should be collapsed *earlier*, not left until the frontier
+   reaches it. We already record `failures_by_cell`, so the input exists.
+3. **Escalation that accumulates with failure count.** Punch Out Model Synthesis raises its erosion
+   probability with the number of failed attempts, and states the reason plainly: "Without the erosion,
+   block level solvers could perpetually attempt resolution on blocks with identical initial state."
+   That is our 98 failures at one cell, and it is the same correction as Prosser's non-reset.
+4. **True conflict cells instead of the collapse site.** The shader already records which cell's domain
+   emptied and the error already carries it; the search discards it. This is cheap to fix and is a
+   prerequisite for any real conflict set.
+
+Two cautions from the same reading. **Chen and van Beek** prove backjumping's value shrinks as
+maintained local consistency and fail-first ordering strengthen — WFC maintains arc consistency to
+fixpoint with a min-entropy heuristic, the regime where CBJ pays least, so perfecting our backjump has
+a lower expected return than its prominence here suggests. And **Baker's "Hazards of Fancy
+Backtracking"** finds dynamic backtracking performs badly when combined with dynamic variable ordering,
+which min-entropy is; that rules out one of the obvious upgrades.
+
+For context on what others do: Gumin's original WFC does not backtrack at all and restarts globally.
+marian42 reports the *opposite* failure to ours — "errors are recognized very late which leads to many
+steps being backtracked" — deep undos where ours are too shallow. DeBroglie documents backtracking as
+complete but slow and memory-hungry, "generally only appropriate for generating small arrays."
+
 ## Status
 
 - Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the
