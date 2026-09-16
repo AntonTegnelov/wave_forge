@@ -1,5 +1,6 @@
 use crate::grid::{EntropyGrid, PossibilityGrid};
 use bitvec::prelude::*;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -14,7 +15,8 @@ pub enum SelectionStrategy {
 }
 
 /// Specifies the heuristic used to calculate the entropy of a cell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum EntropyHeuristicType {
     /// Standard Shannon entropy (log2 of possibilities count)
     #[default]
