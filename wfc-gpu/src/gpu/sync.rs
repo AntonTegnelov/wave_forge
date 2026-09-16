@@ -512,7 +512,9 @@ impl GpuSynchronizer {
 
     // Add a helper method to create the initial data buffer once
     fn get_or_create_min_entropy_init_buffer(&self) -> wgpu::Buffer {
-        let reset_data = [f32::MAX.to_bits(), u32::MAX];
+        // Word 0 holds a packed (entropy, index) key reduced with atomicMin, so it must start at the
+        // maximum for any real key to win; word 1 is unused by the shader and kept for layout.
+        let reset_data = [u32::MAX, u32::MAX];
         self.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Min Entropy Reset Init Buffer"),

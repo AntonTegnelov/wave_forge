@@ -81,6 +81,20 @@ pub const PROPAGATION_WORKGROUP_SIZE: u32 = 64;
 /// Most possibility words per cell the propagation shader supports (`MAX_WORDS` in
 /// `propagate.wgsl`), i.e. 32 tiles per word. WGSL function-local arrays need a constant size.
 pub const MAX_WORDS_PER_CELL: u32 = 8;
+/// Bits of the packed min-entropy key holding the cell index; the rest hold quantised entropy.
+/// Must match `INDEX_KEY_BITS` in `entropy.wgsl`.
+pub const MIN_ENTROPY_INDEX_BITS: u32 = 20;
+
+/// Recovers the winning cell index from the key the entropy shader reduces with `atomicMin`.
+///
+/// The shader packs quantised entropy into the high bits and the cell index into the low bits so one
+/// atomic picks the same winner whatever order the workgroups finish in. It used to compare-exchange
+/// the entropy and store the index separately, which could tear and made selection depend on
+/// scheduling, so the same seed produced different runs (docs/thrashing.md).
+pub fn unpack_min_entropy_index(key: u32) -> u32 {
+    key & ((1u32 << MIN_ENTROPY_INDEX_BITS) - 1)
+}
+
 /// Largest number of tile variants a rule set may have on the GPU.
 pub const MAX_TILES: usize = MAX_WORDS_PER_CELL as usize * 32;
 

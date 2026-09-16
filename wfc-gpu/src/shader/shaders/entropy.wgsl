@@ -109,62 +109,43 @@ fn main(
         workgroupBarrier();
     }
 
-    // --- Atomic Update to Global Minimum --- 
-    // Only the first thread in the workgroup performs the atomic update
+    // --- Atomic Update to Global Minimum ---
+    // One atomicMin over a single packed key, so the winner does not depend on which workgroup gets
+    // there first. The previous version CAS'd the entropy and then stored the index separately, and
+    // its own comment admitted the pair could tear; the tie-break then compared against a stale local
+    // copy of the global minimum. That made cell selection depend on scheduling, so the same seed
+    // produced different runs (docs/thrashing.md).
+    //
+    // The key packs a quantised entropy into the high bits and the cell index into the low bits, so
+    // ordering by the key orders by entropy first and by lowest index second: ties break the same way
+    // every time.
     if (local_index == 0u) {
         let local_best = local_min_info[0];
-        
-        // Only attempt atomic update if the workgroup found a valid minimum
         if (local_best.entropy_bits < MAX_FLOAT_BITS) {
-            // Loop to ensure atomic update succeeds (CAS-like approach)
-            // Read current global minimum
-            var current_global_min_bits = atomicLoad(&min_entropy_info[0]);
-
-            while (local_best.entropy_bits < current_global_min_bits) {
-                // Attempt to atomically swap if our local minimum is still better
-                let old_val = atomicCompareExchangeWeak(
-                    &min_entropy_info[0], 
-                    current_global_min_bits, // Expected current value
-                    local_best.entropy_bits // New value if swap occurs
-                );
-
-                // Check if the swap succeeded (old_val.exchanged == true)
-                // If swap succeeded, update the index atomically as well
-                if (old_val.exchanged) {
-                     // Atomically store the index corresponding to the new minimum entropy
-                     // Note: This isn't strictly race-free if another workgroup updates
-                     // min_entropy_info[0] between our CAS and this store, but it's usually good enough.
-                     // A true atomic 64-bit CAS for both values would be better if available/needed.
-                     atomicStore(&min_entropy_info[1], local_best.flat_index);
-                    break; // Exit loop after successful update
-                }
-                 else {
-                    // Swap failed, means another thread updated the global minimum.
-                    // Reload the global minimum and retry the comparison.
-                    current_global_min_bits = old_val.old_value;
-                }
-            }
-             // Tie-breaking at the global level (optional, but good practice)
-             // If entropies are equal, prefer the lower index
-             if (local_best.entropy_bits == current_global_min_bits) {
-                 // Atomically update the index only if our index is lower
-                 var current_global_index = atomicLoad(&min_entropy_info[1]);
-                 while (local_best.flat_index < current_global_index) {
-                      let old_idx_val = atomicCompareExchangeWeak(
-                          &min_entropy_info[1],
-                          current_global_index,
-                          local_best.flat_index
-                      );
-                      if (old_idx_val.exchanged) {
-                          break;
-                      }
-                      else {
-                           current_global_index = old_idx_val.old_value;
-                      }
-                 }
-             }
+            let key = pack_entropy_key(local_best.entropy_bits, local_best.flat_index);
+            atomicMin(&min_entropy_info[0], key);
         }
     }
+}
+
+/// Packs entropy and cell index into one sortable key.
+///
+/// `entropy_bits` is the IEEE-754 bit pattern of a non-negative float, which is monotonic in the value,
+/// so the top bits order by entropy. Keeping ENTROPY_KEY_BITS of it leaves room for the cell index,
+/// which orders ties by position. Grids larger than the index field fall back to a coarser entropy
+/// quantisation rather than aliasing cells together.
+const ENTROPY_KEY_BITS: u32 = 12u;
+const INDEX_KEY_BITS: u32 = 32u - ENTROPY_KEY_BITS;
+
+fn pack_entropy_key(entropy_bits: u32, flat_index: u32) -> u32 {
+    let quantised = entropy_bits >> (32u - ENTROPY_KEY_BITS);
+    let index = min(flat_index, (1u << INDEX_KEY_BITS) - 1u);
+    return (quantised << INDEX_KEY_BITS) | index;
+}
+
+/// Recovers the winning cell index from a packed key.
+fn unpack_entropy_index(key: u32) -> u32 {
+    return key & ((1u << INDEX_KEY_BITS) - 1u);
 }
 
 // Count number of 1 bits in a u32
