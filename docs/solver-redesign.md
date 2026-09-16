@@ -138,38 +138,42 @@ Reverted. The lesson is kept: **the fixed cost per dispatch is real, but it must
 Note also that the city baseline itself varies (45.3 s and 48.7 s on two runs) because backtracking
 counts differ, so any future change on this workload needs repeated runs, not one sample.
 
-## The way out: more work per dispatch, not more cells per pass
+## Correction: it is the shader's per-cell work, not the dispatch
 
-Wall-clock tracks the *dispatch count* almost exactly. The traced city run issues 22332 dispatches
-(7048 entropy + 15284 propagation) for 4608 cells; at ~2.5 ms each that predicts ~56 s against 48.7 s
-measured. Backtracking redoes 1.53x the minimum number of collapses, and there are ~5.7 GPU
-round-trips per collapse.
+The section above (and an earlier commit) claimed the cost was a fixed ~2.5 ms per dispatch. **That was
+a measurement artifact.** The GPU boosts its clocks under load, and the first measurement in each
+benchmark ran cold. Re-measured with a warm-up, interleaved variants and medians:
 
-Enlarging a pass failed (above) because a swept cell is not free. The other way to amortise a
-dispatch is to put *more steps* inside it. WGSL has no grid-wide barrier, but it does have workgroup
-barriers, so a single workgroup can run a sequential loop — which is exactly the shape of
-select → collapse → propagate. Measured (`wfc-gpu/tests/dispatch_cost_bench.rs`), same total work,
-with a workgroup barrier between steps:
+| Measurement (warm) | Cost |
+|---|---|
+| Trivial dispatch (one workgroup, no real work) | 0.099 ms |
+| 256 trivial steps as 256 dispatches vs one looping dispatch | 18x cheaper in one dispatch |
+| Same, with storage reads per step | 13x cheaper in one dispatch |
+| Propagation pass, **1-cell** worklist | 2.271 ms |
+| Propagation pass, **4608-cell** worklist (fresh grid) | 3.094 ms |
+| Propagation pass, **4608-cell** worklist, every cell collapsed | **0.605 ms** |
 
-| Same 256 steps of work | Time | Per step |
-|---|---|---|
-| As 256 dispatches of one step | 456 ms | 1.783 ms |
-| As one dispatch looping 256 times | 2.0 ms | **0.008 ms** |
+Read together these say something quite different from "dispatches are expensive":
 
-**225x cheaper inside one dispatch.** That is the entire budget the current design spends on
-overhead, recovered by restructuring rather than by tuning.
+1. **A dispatch costs 0.099 ms**, so the 22332 dispatches of a city solve are ~2 s of the ~48 s run,
+   not all of it.
+2. **A pass costs what its cells cost.** The same full-grid pass is 5x cheaper when every cell is
+   collapsed (0.605 ms vs 3.094 ms). The work, not the launch, is the price.
+3. **One cell can cost as much as the whole grid** (2.271 ms vs 3.094 ms) because the grid's cells run
+   in parallel while a single cell is one thread. So tiny worklists are slow not because the dispatch
+   is expensive but because they leave the GPU idle while one thread grinds.
 
-It implies a block-local solver: one workgroup owns a block of cells, holds their possibilities in
-workgroup memory, and runs many collapses and propagation steps internally before the host sees
-anything. The sizes work out: an 8³ block at 81 variants is 512 cells x 3 words = 6 KB, inside the
-16 KB workgroup-memory limit; 4³ blocks leave room for 256 variants. Blocks are then also the unit of
-parallelism (many workgroups at once) and of streaming, which is what the overlapping-block
-literature (N-WFC, model synthesis in blocks) already recommends for other reasons.
+The grinding is `compute_allowed_neighbor_mask`: for every tile still possible in a cell it loops over
+*every* tile testing `check_rule`, i.e. about `num_tiles^2` bit tests per axis — 81 x 81 x 6 ~ 39000
+for one uncollapsed cell of the city set, each with a division and a modulo. The adjacency table is
+already a bitset; it is simply not stored so that a row can be read as words.
 
-What this does not settle, and what the research in flight is for: how blocks overlap and what must be
-frozen at their boundaries for correctness, whether blocks may be solved concurrently or must be
-pipelined, what happens to a global connectivity constraint that spans blocks, and whether the inner
-propagation should keep recomputing masks or maintain AC-4 support counters.
+**The fix is algorithmic and small:** store the table row-aligned, one `ceil(num_tiles/32)`-word mask
+per `(axis, tile)`, and union those masks for the tiles still possible. That replaces `num_tiles` bit
+tests per possible tile with 3 word-ORs — roughly 27x less inner-loop work at 81 variants, more at 256.
+
+Block-local solving (one workgroup looping over a block in workgroup memory) remains interesting for
+*streaming*, and the 13-18x result shows it is viable, but it is no longer the performance fix.
 
 ## How we will know it worked
 

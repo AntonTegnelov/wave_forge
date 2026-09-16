@@ -51,6 +51,17 @@ async fn propagation_pass_cost_readback_vs_gpu() {
     let (buffers, sync, pipelines, mut grid) = city_setup(width, height, depth).await;
     let passes = 200u32;
 
+    // Warm up first: a cold GPU runs at low clocks, which made an earlier cold measurement look
+    // several times worse than the identical pattern measured warm.
+    {
+        let warm = DirectPropagationStrategy::benchmark_blind_passes(1000, pipelines.clone(), passes);
+        for _ in 0..3 {
+            warm.propagate(&mut grid, &[GridCoord { x: 0, y: 0, z: 0 }], &buffers, &sync)
+                .await
+                .expect("warm-up passes");
+        }
+    }
+
     // Same dispatches, no readbacks: what the GPU work alone costs.
     let blind = DirectPropagationStrategy::benchmark_blind_passes(1000, pipelines.clone(), passes);
     let cells = vec![GridCoord { x: 0, y: 0, z: 0 }];
@@ -74,6 +85,27 @@ async fn propagation_pass_cost_readback_vs_gpu() {
     sweep.propagate(&mut grid, &every_cell, &buffers, &sync).await.expect("sweep passes");
     let sweep_time = started.elapsed();
 
+    // Is a pass's cost the dispatch, or the per-cell work? The shader unions allowed-neighbour masks
+    // by testing every tile pair, so an uncollapsed cell costs ~num_tiles^2 checks while a collapsed
+    // one costs ~num_tiles. Time the same full-grid pass on a grid where every cell is collapsed.
+    let mut collapsed_grid = grid.clone();
+    for z in 0..collapsed_grid.depth {
+        for y in 0..collapsed_grid.height {
+            for x in 0..collapsed_grid.width {
+                let cell = collapsed_grid.get_mut(x, y, z).expect("cell in bounds");
+                let first = cell.iter_ones().next().expect("cell has a possibility");
+                cell.fill(false);
+                cell.set(first, true);
+            }
+        }
+    }
+    sync.upload_grid(&collapsed_grid).expect("upload collapsed grid");
+    let collapsed = DirectPropagationStrategy::benchmark_blind_passes(1000, pipelines.clone(), passes);
+    let started = Instant::now();
+    collapsed.propagate(&mut collapsed_grid, &every_cell, &buffers, &sync).await.expect("collapsed passes");
+    let collapsed_time = started.elapsed();
+    sync.upload_grid(&grid).expect("restore grid");
+
     // The normal path: every pass reads the contradiction flag and the worklist count.
     let normal = DirectPropagationStrategy::new(1000, pipelines);
     let started = Instant::now();
@@ -85,6 +117,7 @@ async fn propagation_pass_cost_readback_vs_gpu() {
          one submit per pass, no readbacks: {:?} ({:.3} ms/pass)\n  \
          one submit for all passes:        {:?} ({:.3} ms/pass)\n  \
          full-grid worklist per pass:      {:?} ({:.3} ms/pass, {} cells)\n  \
+         full grid, every cell collapsed:  {:?} ({:.3} ms/pass)\n  \
          one full propagate with readbacks: {:?} ({})",
         blind_time,
         blind_time.as_secs_f64() * 1000.0 / f64::from(passes),
@@ -93,6 +126,8 @@ async fn propagation_pass_cost_readback_vs_gpu() {
         sweep_time,
         sweep_time.as_secs_f64() * 1000.0 / f64::from(passes),
         every_cell.len(),
+        collapsed_time,
+        collapsed_time.as_secs_f64() * 1000.0 / f64::from(passes),
         normal_time,
         result.map(|()| "ok").unwrap_or("contradiction"),
     );
