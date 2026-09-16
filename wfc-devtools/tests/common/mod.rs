@@ -61,11 +61,12 @@ pub async fn solve(
     solve_rules(initial, &fixture.rules, None, None, boundary, attempts).await.grid
 }
 
-/// Solves `initial` on the GPU, starting over from scratch after a contradiction.
+/// Solves `initial` on the GPU, starting over from scratch when a run exhausts its recovery.
 ///
-/// Retrying is a stopgap: the solver has neither backtracking nor seeded restarts yet
-/// (docs/status.md A-9) and ignores seeds (A-6), so an unlucky run can only be repeated.
-/// Any other error fails the test immediately.
+/// Retrying is no longer the only line of defence: the solver backtracks, escalates its undo depth by
+/// how often a conflict cell has failed, and honours `WFC_SEED` below, so a run is reproducible rather
+/// than a matter of luck. Attempts remain because recovery can still run out of budget. Any error that
+/// is not a contradiction fails the test immediately.
 pub async fn solve_rules(
     initial: &PossibilityGrid,
     rules: &AdjacencyRules,
