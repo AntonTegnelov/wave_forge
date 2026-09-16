@@ -70,6 +70,10 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Zoo counting, 8 seeds | 1–48 backtracks, worse than control on 6 of 8 | same |
 | Backtracks vs constraint failures | range exclusion: **exactly equal** (80/80, 494/494) | same |
 | Same, counting | monotone, 2–4× the failure count | same |
+| Range exclusion at 12.5× budget, seed 5 | **finishes**: 98.8 s, 4962 backtracks, 4927 constraint failures | no `WFC_SWEEP` |
+| Same, seed 1 | still fails at 43 200 iterations, 11 145 backtracks | same |
+| Worst single cell, seed 5 | **3160 failures**, of 37 distinct cells | same |
+| Deepest undo observed | **99**, above `MAX_UNDO_STEPS` (64) | same |
 
 **Two corrections to the rows above.** Every row measured before the packed-key fix was taken while
 cell *selection* was nondeterministic: the entropy shader stored the winning entropy and its index as
@@ -298,9 +302,17 @@ In rough order of expected value, with the basis for each:
    is gone. Seed 8 fell from 197 backtracks to 8, the worst of 48 from 197 to 11, at no cost to the
    healthy seeds. Verified on the 864-cell city only; the 24×24×8 stress city is next.
 4. Restart with a cutoff, with an increasing cutoff or retained nogoods for completeness *(guess 9)* —
-   **demoted**: the tail that motivated it has largely collapsed. Revisit if one reappears at larger
-   grid sizes, and note it remains the only route the literature offers to *preventing* re-derivation
-   rather than bounding it.
+   ~~demoted~~ **re-promoted, and now the top open item.** The demotion was measured on adjacency rules
+   only, where the tail had collapsed to 11 backtracks across 48 seeds. On a constraint-heavy rule set
+   the tail is alive and severe: range exclusion takes 4962 backtracks and 98.8 s on one seed and does
+   not finish at all on another, even at 12.5× the iteration budget. That is the distribution Luby and
+   Gomes et al. describe, and a short cutoff with retained nogoods is the recognised remedy. Correct
+   for what it was measured on, wrong as a general conclusion.
+5. **Recovery for global-constraint failures, which currently has none that works.** Range exclusion
+   fails 4927 times in one run, 3160 of them at a single cell, on the one path where undo escalation is
+   deliberately disabled — enabling it there was measured and made things strictly worse (a 6.07 s run
+   stopped finishing). So this is a confirmed failure mode with no working recovery rather than an
+   untuned one, which makes it the clearest open problem the thrashing study has produced.
 5. Coarse pass pre-filtering domains, i.e. driven WFC *(guess 5)*.
 6. Block-local solve as the unit of work, for both streaming and latency *(guesses 3 and 4)*.
 7. dom/wdeg failure weighting to attack the redo factor and the run-to-run variance *(facts about

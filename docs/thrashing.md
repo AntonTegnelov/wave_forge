@@ -467,6 +467,14 @@ that did. `MAX_UNDO_STEPS` (64) was the suspected next binding constraint at lar
 undo observed is 12, so it is nowhere near binding. And deeper undos were expected to cost wall time,
 since each one discards more work and every history entry clones the whole grid; no such cost appears.
 
+**Corrected later, and the correction matters more than the prediction.** The first of those was wrong
+about the constant itself, not merely about when it would bind: `MAX_UNDO_STEPS` caps `undo_steps` and
+the escalation term but *not* the conflict-directed jump, which undoes `history.len() - index` steps to
+reach the most recent choice near the culprit. Undo depth is unbounded, and a constrained run has since
+been observed at `max_undo = 99` (see "A constant we have been misreading", below). So this passage
+recorded a refuted prediction for the wrong reason — the adjacency-only workload simply never undid
+deeply enough to expose it, and reading 64 as a limit on undo depth was a misreading of our own code.
+
 **A finding that corrects our own generalisation.** At 4608 cells the failures spread across 3 to 20
 distinct cells with at most 18 repeats on any one. At 864 cells, seed 8 put 195 of 197 contradictions
 on a single cell. The extreme concentration was a property of *that instance and seed*, not a general
@@ -609,10 +617,38 @@ failures exactly: 494 and 494, 80 and 80. For counting, backtracks rise monotoni
 contributes the rest. Both rules are bounded and non-local, so reach is still not the variable that
 tracks cost. **How often a rule declares failure is.**
 
-What stays unanswered is whether range exclusion is *unsatisfiable* on this rule set or merely starved
-of budget. Those demand different conclusions — one says the rule is a bad rule, the other says the
-search is weak — and the sweep cannot tell them apart, because both exit through the same
-iteration-cap path.
+### Satisfiable, but our recovery cannot cope with it
+
+Re-running without `WFC_SWEEP` raises the budget from `cells * 4` (3456) to `cells * 50` (43 200), and
+the two seeds split:
+
+- **Seed 5 finishes**: 98.8 s, 9512 iterations, 4962 backtracks, 4927 constraint failures, 77 prunes.
+- **Seed 1 still fails**, at 43 200 iterations and 11 145 backtracks, with 289 of 864 cells collapsed.
+
+So the rule is **satisfiable** — a solution exists and the search can reach it — and range exclusion's
+sweep failures were starvation, not impossibility. The conclusion points at us rather than at the rule:
+*the rule is fine; our recovery is not.* Where the control needs 0 to 8 backtracks, this needs nearly
+five thousand for the same 864 cells.
+
+**The thrashing signature returns at fifty times the scale, on the path with no escalation.** Seed 5
+reports 37 distinct failure cells, 4945 of 4962 backtracks being repeats, and **one cell failing 3160
+times**. That is the same shape as seed 8's 195-of-197, an order of magnitude worse — and it is on the
+constraint path, where escalation is deliberately switched off because enabling it measurably made
+things worse. We therefore have a confirmed failure mode with *no working recovery*, which is a
+stronger statement than an untuned one, and it is the clearest open problem this study has produced.
+
+**A constant we have been misreading.** Seed 5 reports `max_undo=99`, above `MAX_UNDO_STEPS` (64). The
+cap bounds `undo_steps` and the escalation term, but not the conflict-directed jump, which undoes
+`history.len() - index` steps to reach the most recent choice near the culprit. Undo depth is
+effectively unbounded, and earlier notes here treating 64 as the limit — including the prediction that
+it would be "the next binding constraint at larger sizes" — were wrong about what that constant does.
+
+**This re-promotes restart with a cutoff.** It was demoted a few sections ago because the heavy tail
+had collapsed: worst of 48 seeds, 11 backtracks. That measurement was on *adjacency* rules only. On a
+constraint-heavy rule set the tail is alive and severe — one seed at 98.8 s, another unfinishable at
+12.5× budget — which is exactly the distribution Luby and Gomes et al. describe, and exactly where a
+short cutoff with retained nogoods is the recognised remedy. The demotion was correct for what it was
+measured on and wrong as a general conclusion.
 
 A note on method, since this is the second time today seed 8 has misled us: it was chosen as the
 pathological seed *for the control*, which makes it the worst possible choice of single seed for
