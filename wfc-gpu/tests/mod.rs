@@ -68,6 +68,77 @@ async fn pre_constrained_cells_propagate_before_first_collapse() -> anyhow::Resu
     Ok(())
 }
 
+/// Rule sets with more than 32 tile variants need several possibility words per cell.
+/// Regression test: the propagation shader used to read and write only the first word, so tiles
+/// 32 and above were silently ignored.
+#[tokio::test]
+async fn tile_sets_larger_than_32_tiles_propagate_across_words() -> anyhow::Result<()> {
+    // 70 tiles (three words) that may only touch themselves; pinning one cell to tile 69, which
+    // lives in the third word, forces the whole grid.
+    let num_tiles = 70;
+    let tileset = TileSet::new(
+        vec![1.0; num_tiles],
+        vec![vec![Transformation::Identity]; num_tiles],
+    )?;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).map(move |tile| (axis, tile, tile)))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(tileset.num_transformed_tiles(), 6, tuples);
+
+    let mut grid = PossibilityGrid::new(4, 3, 2, num_tiles);
+    grid.collapse(2, 1, 1, 69).map_err(anyhow::Error::msg)?;
+
+    let mut accelerator = GpuAccelerator::new(
+        &grid,
+        &rules,
+        BoundaryCondition::Finite,
+        EntropyHeuristicType::Count,
+        None,
+    )
+    .await?;
+    let collapses = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&collapses);
+    let result = accelerator
+        .run_with_callback(
+            &grid,
+            &rules,
+            1000,
+            move |_| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(true)
+            },
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+
+    assert_eq!(collapses.load(Ordering::SeqCst), 0, "solver collapsed cells that were already forced");
+    for z in 0..result.depth {
+        for y in 0..result.height {
+            for x in 0..result.width {
+                let tiles: Vec<usize> = result.get(x, y, z).expect("cell in bounds").iter_ones().collect();
+                assert_eq!(tiles, vec![69], "cell ({x}, {y}, {z})");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rule sets larger than the shader supports are rejected up front with a clear error instead of
+/// producing silently wrong propagation.
+#[tokio::test]
+async fn tile_sets_beyond_the_shader_limit_are_rejected() {
+    let num_tiles = wfc_gpu::shader::pipeline::MAX_TILES + 1;
+    let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, Vec::<(usize, usize, usize)>::new());
+    let grid = PossibilityGrid::new(1, 1, 1, num_tiles);
+    let Err(error) =
+        GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, EntropyHeuristicType::Count, None).await
+    else {
+        panic!("accelerator must refuse the rule set");
+    };
+    assert!(error.to_string().contains("at most"), "unexpected error: {error}");
+}
+
 /// The entropy pass must evaluate every cell, not just those in the first workgroup of each
 /// dispatch. Regression test: the host once dispatched with a larger workgroup size than the
 /// shader declares, so cells beyond the first 8 columns and rows were never selected.
@@ -319,4 +390,174 @@ fn verify_adjacency_rules(grid: &PossibilityGrid, rules: &AdjacencyRules) -> usi
         }
     }
     violations
+}
+
+/// Tile weights must bias collapse (docs/status.md A-3): with every adjacency allowed, a tile a
+/// thousand times heavier than the other should fill nearly every cell.
+#[tokio::test]
+async fn tile_weights_bias_collapse() -> anyhow::Result<()> {
+    let num_tiles = 2;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).flat_map(move |a| (0..num_tiles).map(move |b| (axis, a, b))))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, tuples);
+    let grid = PossibilityGrid::new(4, 4, 4, num_tiles);
+
+    let mut accelerator =
+        GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, EntropyHeuristicType::Count, None).await?;
+    accelerator.with_tile_weights(&[1.0, 1000.0])?;
+    let result = accelerator
+        .run_with_callback(&grid, &rules, 1000, |_| Ok(true), None)
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+
+    let mut heavy = 0;
+    for z in 0..result.depth {
+        for y in 0..result.height {
+            for x in 0..result.width {
+                let tiles: Vec<usize> = result.get(x, y, z).expect("cell in bounds").iter_ones().collect();
+                assert_eq!(tiles.len(), 1, "cell ({x}, {y}, {z}) not collapsed");
+                heavy += usize::from(tiles[0] == 1);
+            }
+        }
+    }
+    // Expected light cells: 64 / 1001 ≈ 0.06; more than 8 is astronomically unlikely unless
+    // weights are ignored (then about 32).
+    assert!(heavy >= 56, "only {heavy}/64 cells chose the heavy tile");
+    Ok(())
+}
+
+/// Weights that do not match the tile set are rejected instead of panicking mid-run.
+#[tokio::test]
+async fn invalid_tile_weights_are_rejected() -> anyhow::Result<()> {
+    let rules = AdjacencyRules::from_allowed_tuples(2, 6, Vec::<(usize, usize, usize)>::new());
+    let grid = PossibilityGrid::new(1, 1, 1, 2);
+    let mut accelerator =
+        GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, EntropyHeuristicType::Count, None).await?;
+    assert!(accelerator.with_tile_weights(&[1.0]).is_err(), "wrong length");
+    assert!(accelerator.with_tile_weights(&[1.0, 0.0]).is_err(), "zero weight");
+    assert!(accelerator.with_tile_weights(&[1.0, f32::NAN]).is_err(), "NaN weight");
+    assert!(accelerator.with_tile_weights(&[1.0, 2.0]).is_ok());
+    Ok(())
+}
+
+/// Bans one tile everywhere, one cell at a time, as a global constraint would.
+struct BanTile(usize);
+
+impl wfc_core::constraint::GlobalConstraint for BanTile {
+    fn apply(&self, grid: &mut PossibilityGrid) -> Result<Vec<(usize, usize, usize)>, (usize, usize, usize)> {
+        let mut changed = Vec::new();
+        for z in 0..grid.depth {
+            for y in 0..grid.height {
+                for x in 0..grid.width {
+                    let cell = grid.get_mut(x, y, z).expect("cell in bounds");
+                    if cell[self.0] && cell.count_ones() > 1 {
+                        cell.set(self.0, false);
+                        changed.push((x, y, z));
+                    }
+                }
+            }
+        }
+        Ok(changed)
+    }
+}
+
+/// A global constraint's bans must hold in the result: the solver may only choose among what the
+/// constraint left, and the cells it changed are propagated.
+#[tokio::test]
+async fn global_constraint_bans_apply_before_collapsing() -> anyhow::Result<()> {
+    let num_tiles = 2;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).flat_map(move |a| (0..num_tiles).map(move |b| (axis, a, b))))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, tuples);
+    let grid = PossibilityGrid::new(4, 4, 2, num_tiles);
+    let mut accelerator =
+        GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, EntropyHeuristicType::Count, None).await?;
+    accelerator.with_global_constraint(Arc::new(BanTile(1)));
+    let result = accelerator
+        .run_with_callback(&grid, &rules, 1000, |_| Ok(true), None)
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+    for z in 0..result.depth {
+        for y in 0..result.height {
+            for x in 0..result.width {
+                assert_eq!(result.get(x, y, z).unwrap().iter_ones().collect::<Vec<_>>(), vec![0], "({x}, {y}, {z})");
+            }
+        }
+    }
+    Ok(())
+}
+
+struct Unsatisfiable;
+
+impl wfc_core::constraint::GlobalConstraint for Unsatisfiable {
+    fn apply(&self, _: &mut PossibilityGrid) -> Result<Vec<(usize, usize, usize)>, (usize, usize, usize)> {
+        Err((1, 2, 3))
+    }
+}
+
+/// A violated global constraint ends the run as a contradiction, so callers can restart.
+#[tokio::test]
+async fn unsatisfiable_global_constraint_is_a_contradiction() -> anyhow::Result<()> {
+    let rules = AdjacencyRules::from_allowed_tuples(2, 6, (0..6).flat_map(|axis| [(axis, 0, 0), (axis, 1, 1)]));
+    let grid = PossibilityGrid::new(2, 2, 2, 2);
+    let mut accelerator =
+        GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, EntropyHeuristicType::Count, None).await?;
+    accelerator.with_global_constraint(Arc::new(Unsatisfiable));
+    let Err(error) = accelerator.run_with_callback(&grid, &rules, 100, |_| Ok(true), None).await else {
+        panic!("run must fail");
+    };
+    assert!(error.to_string().contains("Contradiction") && error.to_string().contains("(1, 2, 3)"), "{error}");
+    Ok(())
+}
+
+/// Rejects any grid where a cell has already collapsed to the forbidden tile. Nothing stops the
+/// solver from choosing it, so the run can only finish by undoing that choice.
+struct ForbidsCollapsedTile(usize);
+
+impl wfc_core::constraint::GlobalConstraint for ForbidsCollapsedTile {
+    fn apply(&self, grid: &mut PossibilityGrid) -> Result<Vec<(usize, usize, usize)>, (usize, usize, usize)> {
+        for z in 0..grid.depth {
+            for y in 0..grid.height {
+                for x in 0..grid.width {
+                    let cell = grid.get(x, y, z).expect("cell in bounds");
+                    if cell.count_ones() == 1 && cell[self.0] {
+                        return Err((x, y, z));
+                    }
+                }
+            }
+        }
+        Ok(Vec::new())
+    }
+}
+
+/// A contradiction must undo earlier choices rather than end the run (docs/status.md A-9).
+/// Both tiles are always allowed by the rules, so only backtracking can produce a grid without
+/// the forbidden tile.
+#[tokio::test]
+async fn contradictions_backtrack_instead_of_failing_the_run() -> anyhow::Result<()> {
+    let num_tiles = 2;
+    let tuples: Vec<(usize, usize, usize)> = (0..6)
+        .flat_map(|axis| (0..num_tiles).flat_map(move |a| (0..num_tiles).map(move |b| (axis, a, b))))
+        .collect();
+    let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, tuples);
+    let grid = PossibilityGrid::new(3, 3, 2, num_tiles);
+
+    let mut accelerator =
+        GpuAccelerator::new(&grid, &rules, BoundaryCondition::Finite, EntropyHeuristicType::Count, None).await?;
+    accelerator.with_global_constraint(Arc::new(ForbidsCollapsedTile(1)));
+    let result = accelerator
+        .run_with_callback(&grid, &rules, 1000, |_| Ok(true), None)
+        .await
+        .map_err(|e| anyhow::anyhow!("WFC run failed: {e}"))?;
+
+    for z in 0..result.depth {
+        for y in 0..result.height {
+            for x in 0..result.width {
+                assert_eq!(result.get(x, y, z).unwrap().iter_ones().collect::<Vec<_>>(), vec![0], "({x}, {y}, {z})");
+            }
+        }
+    }
+    Ok(())
 }

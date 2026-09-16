@@ -11,4 +11,9 @@ Read in this order:
 7. **[Debugging and observability](debugging.md):** reproducing failures, invariants, tracing and timelines, async and GPU debugging.
 8. **[Build profiles](build-profiles.md):** which Cargo profile to use for development, shipping and profiling, and why each setting is chosen.
 
+Reference:
+
+- **[Constraints](constraints.md):** what adjacency rules can and cannot express, designing module sets for properties like connectivity, and global constraints.
+- **[Performance](performance.md):** priorities, how we measure, where work should run (GPU, threads, SIMD), and the baseline.
+
 The dev container is documented separately in [`.devcontainer/README.md`](../.devcontainer/README.md).

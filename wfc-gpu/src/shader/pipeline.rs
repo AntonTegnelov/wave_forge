@@ -78,6 +78,11 @@ fn compile_shader(
 pub const ENTROPY_WORKGROUP_SIZE: u32 = 8;
 /// Workgroup length declared in `propagate.wgsl` (`@workgroup_size(64)`).
 pub const PROPAGATION_WORKGROUP_SIZE: u32 = 64;
+/// Most possibility words per cell the propagation shader supports (`MAX_WORDS` in
+/// `propagate.wgsl`), i.e. 32 tiles per word. WGSL function-local arrays need a constant size.
+pub const MAX_WORDS_PER_CELL: u32 = 8;
+/// Largest number of tile variants a rule set may have on the GPU.
+pub const MAX_TILES: usize = MAX_WORDS_PER_CELL as usize * 32;
 
 /// Manages the WGPU compute pipelines required for WFC acceleration.
 ///
@@ -646,7 +651,7 @@ impl ComputePipelines {
 
 #[cfg(test)]
 mod workgroup_tests {
-    use super::{ENTROPY_WORKGROUP_SIZE, PROPAGATION_WORKGROUP_SIZE};
+    use super::{ENTROPY_WORKGROUP_SIZE, MAX_WORDS_PER_CELL, PROPAGATION_WORKGROUP_SIZE};
 
     #[test]
     fn host_workgroup_sizes_match_the_shaders() {
@@ -655,5 +660,7 @@ mod workgroup_tests {
         assert!(entropy.contains("@workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1u)"));
         let propagate = include_str!("shaders/propagate.wgsl");
         assert!(propagate.contains(&format!("@workgroup_size({PROPAGATION_WORKGROUP_SIZE})")));
+        assert!(propagate.contains(&format!("const MAX_WORDS: u32 = {MAX_WORDS_PER_CELL}u;")));
+        assert!(propagate.contains(&format!("alias PossibilityMask = array<u32, {MAX_WORDS_PER_CELL}>;")));
     }
 }

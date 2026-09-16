@@ -62,17 +62,17 @@ const AXIS_NEG_Z: u32 = 5u;
 @group(0) @binding(8) var<storage, read_write> contradiction_location: atomic<u32>;
 @group(0) @binding(9) var<storage, read_write> pass_statistics: array<atomic<u32>>;
 
-// Preprocessor-like constant for number of u32s per cell for possibilities
-const NUM_TILES_U32_VALUE: u32 = 1u; // Placeholder, will be dynamically set in source
+// Possibilities are stored as `words_per_cell()` u32 words per cell, 32 tiles per word, in cell
+// order (`cell * words + word`), the same layout the host uploads and the entropy shader reads.
+// Function-local arrays in WGSL need a constant size, so masks are sized for MAX_WORDS and every
+// loop only runs over the words the current rule set uses. Keep MAX_WORDS in sync with
+// MAX_WORDS_PER_CELL in shader/pipeline.rs; the host rejects rule sets that do not fit.
+const MAX_WORDS: u32 = 8u;
+alias PossibilityMask = array<u32, 8>;
 
-// Hardcoded value for the number of u32s per cell, will be replaced at compilation time
-const NUM_TILES_U32: u32 = NUM_TILES_U32_VALUE;
-
-// Specialization constant for workgroup size (X dimension)
-const WORKGROUP_SIZE_X: u32 = 64u; // Hardcoded size
-
-// Numeric constants
-const ONE: u32 = 1u; // Placeholder, will be dynamically set in source
+fn words_per_cell() -> u32 {
+    return (params.num_tiles + 31u) / 32u;
+}
 
 // Entry point
 @compute @workgroup_size(64)
@@ -166,36 +166,6 @@ fn wrap_coord(coord: i32, max_dim: u32) -> u32 {
     }
 }
 
-// Possibility mask array type using the NUM_TILES_U32 constant
-alias PossibilityMask = array<u32, NUM_TILES_U32_VALUE>;
-
-// Helper function to check if a specific bit in the u32 mask array is set
-fn is_tile_possible(tile_index: u32, mask: ptr<function, PossibilityMask>) -> bool {
-    let u32_index = tile_index / 32u;
-    let bit_index = tile_index % 32u;
-    
-    // For simplicity, only handle the first u32 chunk (index 0)
-    // This works fine for tests with small NUM_TILES_U32 values
-    if (u32_index == 0u) {
-        return ((*mask)[0] & (1u << bit_index)) != 0u;
-    }
-    
-    return false;
-}
-
-// Helper function to set a specific bit in a u32 array mask
-fn set_tile_possible(tile_index: u32, mask: ptr<function, PossibilityMask>) {
-    let u32_index = tile_index / 32u;
-    let bit_index = tile_index % 32u;
-    
-    // For simplicity, only handle the first u32 chunk (index 0)
-    // This works fine for tests with small NUM_TILES_U32 values
-    if (u32_index == 0u) {
-        (*mask)[0] = (*mask)[0] | (1u << bit_index);
-    }
-    // For other indices, we simply don't set the bit (acceptable for testing)
-}
-
 // Pre-compute rule check cache key
 fn get_rule_cache_key(tile1: u32, tile2: u32, axis: u32) -> u32 {
     return axis * params.num_tiles * params.num_tiles + tile1 * params.num_tiles + tile2;
@@ -256,85 +226,78 @@ fn get_rule_weight(tile1: u32, tile2: u32, axis: u32) -> f32 {
     return 1.0;
 }
 
-// Compute allowed neighbor mask for a given cell and axis
-fn compute_allowed_neighbor_mask(current_possibilities: ptr<function, PossibilityMask>, 
+// Union, over every tile still possible in the current cell, of the tiles that tile allows in
+// the neighbour along `axis_idx`. Only set bits of the current cell are visited.
+fn compute_allowed_neighbor_mask(current_possibilities: ptr<function, PossibilityMask>,
                                  axis_idx: u32) -> PossibilityMask {
-    // This mask represents the set of tiles allowed in the *neighbor*
     var allowed_neighbor_mask: PossibilityMask;
-    
-    // Initialize to 0 - use only index 0 for simplicity
-    allowed_neighbor_mask[0] = 0u;
-    
-    // For each possible tile in the current cell
-    for (var current_tile: u32 = 0u; current_tile < params.num_tiles; current_tile = current_tile + 1u) {
-        // Skip if this tile isn't possible in the current cell
-        if (!is_tile_possible(current_tile, current_possibilities)) {
-            continue;
-        }
-        
-        // For each potential tile in the neighbor cell
-        for (var neighbor_tile: u32 = 0u; neighbor_tile < params.num_tiles; neighbor_tile = neighbor_tile + 1u) {
-            // Check if this neighbor tile is allowed according to the rule
-            if (check_rule(current_tile, neighbor_tile, axis_idx)) {
-                // If allowed, mark this tile as possible in the allowed_neighbor_mask
-                set_tile_possible(neighbor_tile, &allowed_neighbor_mask);
+    let words = words_per_cell();
+    for (var w = 0u; w < words; w = w + 1u) {
+        allowed_neighbor_mask[w] = 0u;
+    }
+
+    for (var w = 0u; w < words; w = w + 1u) {
+        var bits = (*current_possibilities)[w];
+        while (bits != 0u) {
+            let current_tile = w * 32u + countTrailingZeros(bits);
+            bits = bits & (bits - 1u);
+            if (current_tile >= params.num_tiles) {
+                break;
+            }
+            for (var neighbor_tile = 0u; neighbor_tile < params.num_tiles; neighbor_tile = neighbor_tile + 1u) {
+                if (check_rule(current_tile, neighbor_tile, axis_idx)) {
+                    allowed_neighbor_mask[neighbor_tile / 32u] =
+                        allowed_neighbor_mask[neighbor_tile / 32u] | (1u << (neighbor_tile % 32u));
+                }
             }
         }
     }
-    
+
     return allowed_neighbor_mask;
 }
 
-// Efficiently loads a cell's possibilities (reduces atomic operations)
+// Loads every possibility word of a cell.
 fn load_cell_possibilities(cell_idx: u32) -> PossibilityMask {
     var possibilities: PossibilityMask;
-    
-    // Initialize to 0
-    possibilities[0] = 0u;
-    
-    // Calculate number of cells for SoA indexing
-    let num_cells = params.grid_width * params.grid_height * params.grid_depth;
-    
-    // Load possibilities - load only the first chunk
-    let soa_idx_0 = 0u * num_cells + cell_idx;
-    if (soa_idx_0 < NUM_TILES_U32 * num_cells) {
-        possibilities[0] = atomicLoad(&grid_possibilities[soa_idx_0]);
+    let words = words_per_cell();
+    for (var w = 0u; w < words; w = w + 1u) {
+        let index = cell_idx * words + w;
+        if (index < arrayLength(&grid_possibilities)) {
+            possibilities[w] = atomicLoad(&grid_possibilities[index]);
+        } else {
+            possibilities[w] = 0u;
+        }
     }
-    
     return possibilities;
 }
 
-// Update neighbor possibilities and handle contradiction detection
+// Intersects a neighbour's possibilities with `allowed_neighbor_mask`, storing only words that
+// change, and records a contradiction if nothing is left. Returns whether anything changed.
 fn update_neighbor(neighbor_idx: u32, allowed_neighbor_mask: PossibilityMask) -> bool {
-    // Calculate number of cells for SoA indexing
-    let num_cells = params.grid_width * params.grid_height * params.grid_depth;
-    
-    // Load neighbor's current possibilities (one atomic load)
-    var neighbor_possibilities = load_cell_possibilities(neighbor_idx);
-    
-    // Calculate new possibilities using bitwise AND (non-atomic operation)
-    let new_bits_0 = neighbor_possibilities[0] & allowed_neighbor_mask[0];
-    
-    // Check if the update would change the neighbor's possibilities
-    let changed = new_bits_0 != neighbor_possibilities[0];
-    
-    // Check if the update would result in a contradiction (no possibilities left)
-    let any_tiles_possible = new_bits_0 != 0u;
-    
-    // Only perform the atomic store if there's a change
-    if (changed) {
-        let soa_idx_0 = 0u * num_cells + neighbor_idx;
-        
-        // Store the new possibilities (atomic operation)
-        atomicStore(&grid_possibilities[soa_idx_0], new_bits_0);
-        
-        // Check for contradiction
-        if (!any_tiles_possible) {
-            // Set contradiction flag and location
-            atomicStore(&contradiction_flag, 1u);
-            atomicStore(&contradiction_location, neighbor_idx);
+    let words = words_per_cell();
+    var changed = false;
+    var any_tiles_possible = false;
+
+    for (var w = 0u; w < words; w = w + 1u) {
+        let index = neighbor_idx * words + w;
+        if (index >= arrayLength(&grid_possibilities)) {
+            break;
+        }
+        let old_bits = atomicLoad(&grid_possibilities[index]);
+        let new_bits = old_bits & allowed_neighbor_mask[w];
+        if (new_bits != old_bits) {
+            atomicStore(&grid_possibilities[index], new_bits);
+            changed = true;
+        }
+        if (new_bits != 0u) {
+            any_tiles_possible = true;
         }
     }
-    
+
+    if (changed && !any_tiles_possible) {
+        atomicStore(&contradiction_flag, 1u);
+        atomicStore(&contradiction_location, neighbor_idx);
+    }
+
     return changed;
-} 
+}

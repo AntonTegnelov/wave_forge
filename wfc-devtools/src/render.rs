@@ -209,6 +209,118 @@ fn isometric_view(grid: &TileGrid, style: &Style) -> RgbImage {
     image
 }
 
+/// A tile drawn as `resolution³` coloured voxels with `+z` up, so structured tile sets (stairs,
+/// roofs, walkways) are recognisable instead of flat colour blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoxelModel {
+    /// Voxels along each edge of the cell.
+    pub resolution: usize,
+    /// `resolution³` voxels indexed by [`VoxelModel::index`]; `None` is empty.
+    pub voxels: Vec<Option<Color>>,
+}
+
+impl VoxelModel {
+    /// A model with no voxels.
+    pub fn empty(resolution: usize) -> Self {
+        assert!(resolution > 0, "voxel resolution must be positive");
+        Self { resolution, voxels: vec![None; resolution.pow(3)] }
+    }
+
+    /// Index of voxel `(x, y, z)` in [`VoxelModel::voxels`].
+    pub fn index(&self, x: usize, y: usize, z: usize) -> usize {
+        let r = self.resolution;
+        assert!(x < r && y < r && z < r, "voxel ({x}, {y}, {z}) outside resolution {r}");
+        (z * r + y) * r + x
+    }
+
+    /// The voxel at `(x, y, z)`.
+    pub fn get(&self, x: usize, y: usize, z: usize) -> Option<Color> {
+        self.voxels[self.index(x, y, z)]
+    }
+
+    /// Sets or clears the voxel at `(x, y, z)`.
+    pub fn set(&mut self, x: usize, y: usize, z: usize, color: Option<Color>) {
+        let index = self.index(x, y, z);
+        self.voxels[index] = color;
+    }
+
+    /// This model rotated by `quarter_turns` counter-clockwise around `+z` (seen from above), the
+    /// rotation `wfc_rules::modules` applies to module variants.
+    pub fn rotated(&self, quarter_turns: u8) -> Self {
+        let r = self.resolution;
+        let mut out = Self::empty(r);
+        for z in 0..r {
+            for y in 0..r {
+                for x in 0..r {
+                    // Undo the rotation to find where this voxel came from.
+                    let (mut sx, mut sy) = (x, y);
+                    for _ in 0..quarter_turns % 4 {
+                        (sx, sy) = (sy, r - 1 - sx);
+                    }
+                    out.set(x, y, z, self.get(sx, sy, z));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Isometric view (from `+x`, `+y`, `+z`) of a grid whose cells are drawn as their tile's
+/// [`VoxelModel`]. `models[tile]` must exist for every tile in the grid and all models must share
+/// one resolution. Voxels hidden behind filled neighbours are skipped, so cost follows the visible
+/// surface rather than the grid volume.
+pub fn render_voxel_isometric(grid: &TileGrid, models: &[VoxelModel], voxel_px: u32) -> RgbImage {
+    let r = models.first().map_or(1, |m| m.resolution);
+    assert!(models.iter().all(|m| m.resolution == r), "voxel models must share one resolution");
+    let (w, h, d) = (grid.width * r, grid.height * r, grid.depth * r);
+    let voxel_at = |x: usize, y: usize, z: usize| -> Option<Color> {
+        if x >= w || y >= h || z >= d {
+            return None;
+        }
+        let tile = grid.get(x / r, y / r, z / r);
+        models.get(tile).unwrap_or_else(|| panic!("no voxel model for tile {tile}")).get(x % r, y % r, z % r)
+    };
+
+    let a = voxel_px.max(1) as f32;
+    let width = ((w + h) as f32 * a).ceil() as u32 + 1;
+    let height = ((w + h) as f32 * a / 2.0 + d as f32 * a).ceil() as u32 + 1;
+    let mut image = RgbImage::from_pixel(width, height, Rgb(BACKGROUND));
+    let project = |x: f32, y: f32, z: f32| ((x - y + h as f32) * a, (x + y) * a / 2.0 + (d as f32 - z) * a);
+
+    let mut visible = Vec::new();
+    for z in 0..d {
+        for y in 0..h {
+            for x in 0..w {
+                if let Some(color) = voxel_at(x, y, z) {
+                    let open = [voxel_at(x + 1, y, z).is_none(), voxel_at(x, y + 1, z).is_none(), voxel_at(x, y, z + 1).is_none()];
+                    if open.iter().any(|&o| o) {
+                        visible.push((x, y, z, color, open));
+                    }
+                }
+            }
+        }
+    }
+    // Same painter's order as `isometric_view`: far to near along the view diagonal.
+    visible.sort_by_key(|&(x, y, z, _, _)| (x + y + z, z));
+
+    for (x, y, z, color, [open_x, open_y, open_z]) in visible {
+        let (x, y, z) = (x as f32, y as f32, z as f32);
+        if open_z {
+            let top = [project(x, y, z + 1.0), project(x + 1.0, y, z + 1.0), project(x + 1.0, y + 1.0, z + 1.0), project(x, y + 1.0, z + 1.0)];
+            fill_convex_quad(&mut image, top, color);
+        }
+        if open_x {
+            let pos_x = [project(x + 1.0, y, z), project(x + 1.0, y + 1.0, z), project(x + 1.0, y + 1.0, z + 1.0), project(x + 1.0, y, z + 1.0)];
+            fill_convex_quad(&mut image, pos_x, shade(color, 0.78));
+        }
+        if open_y {
+            let pos_y = [project(x, y + 1.0, z), project(x + 1.0, y + 1.0, z), project(x + 1.0, y + 1.0, z + 1.0), project(x, y + 1.0, z + 1.0)];
+            fill_convex_quad(&mut image, pos_y, shade(color, 0.6));
+        }
+    }
+    image
+}
+
 /// Fills a convex quadrilateral by testing pixel centres against its edges.
 fn fill_convex_quad(image: &mut RgbImage, points: [(f32, f32); 4], color: Color) {
     let signed_area: f32 = (0..4)
@@ -298,6 +410,27 @@ mod tests {
                 pad * 3 + top.height().max(iso.height()) + front.height().max(side.height())
             )
         );
+    }
+
+    #[test]
+    fn voxel_rotation_moves_the_positive_x_edge_to_positive_y() {
+        let mut model = VoxelModel::empty(4);
+        model.set(3, 1, 2, Some(RED));
+        let rotated = model.rotated(1);
+        assert_eq!(rotated.get(2, 3, 2), Some(RED));
+        assert_eq!(rotated.voxels.iter().flatten().count(), 1);
+        assert_eq!(model.rotated(4), model);
+    }
+
+    #[test]
+    fn voxel_isometric_draws_each_voxel_top_face() {
+        // One cell at resolution 2 holding a single voxel at its origin.
+        let mut model = VoxelModel::empty(2);
+        model.set(0, 0, 0, Some(BLUE));
+        let grid = TileGrid::new(1, 1, 1, vec![0]).unwrap();
+        let image = render_voxel_isometric(&grid, &[model], 8);
+        // Top face centre (0.5, 0.5, 1) -> ((0.5 - 0.5 + 2) * 8, (0.5 + 0.5) * 4 + (2 - 1) * 8).
+        assert_eq!(image.get_pixel(16, 12).0, BLUE);
     }
 
     #[test]
