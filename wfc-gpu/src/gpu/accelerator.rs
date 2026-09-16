@@ -113,6 +113,10 @@ impl std::fmt::Debug for AcceleratorInstance {
 ///
 /// # Usage
 ///
+/// Cells collapsed per propagation round by default. One is the classic algorithm; larger batches
+/// trade a slightly higher contradiction rate for far fewer GPU round-trips.
+const DEFAULT_COLLAPSE_BATCH: usize = 1;
+
 /// Once initialized, the `GpuAccelerator` instance can be passed to the main WFC `run` function
 /// (or used directly) to perform entropy calculation and constraint propagation steps on the GPU.
 /// Data synchronization between CPU (`PossibilityGrid`) and GPU (`GpuBuffers`) is handled
@@ -125,6 +129,10 @@ pub struct GpuAccelerator {
     /// Whole-grid constraint enforced on the CPU before every observation; see
     /// [`GpuAccelerator::with_global_constraint`].
     global_constraint: Option<Arc<dyn wfc_core::constraint::GlobalConstraint>>,
+    /// How many cells to collapse before propagating; see [`GpuAccelerator::with_collapse_batch`].
+    collapse_batch: usize,
+    /// Seed for the collapse choice; see [`GpuAccelerator::with_seed`].
+    seed: Option<u64>,
 }
 
 impl GpuAccelerator {
@@ -292,6 +300,8 @@ impl GpuAccelerator {
             instance: Arc::new(RwLock::new(instance)),
             tile_weights: None,
             global_constraint: None,
+            collapse_batch: DEFAULT_COLLAPSE_BATCH,
+            seed: None,
         };
 
         Ok(accelerator)
@@ -399,6 +409,14 @@ impl GpuAccelerator {
     {
         let start_time = Instant::now();
 
+        use rand::RngExt as _;
+
+        // Draw a seed when none was given, and report it: a thrashing run is only useful if it can be
+        // replayed (docs/thrashing.md).
+        let seed = self.seed.unwrap_or_else(rand::random);
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+        info!("WFC run seed: {seed}");
+
         // Get the required data while holding the lock briefly
         let grid_definition;
         let synchronizer;
@@ -505,6 +523,10 @@ impl GpuAccelerator {
         const MAX_HISTORY: usize = 2048;
         const MAX_UNDO_STEPS: usize = 64;
         const MAX_BACKTRACKS: usize = 50_000;
+        /// Manhattan distance kept between cells collapsed in the same batch.
+        const BATCH_SPACING: usize = 4;
+        /// How far the search of recent choices may widen when one cell keeps failing.
+        const MAX_CULPRIT_RADIUS: usize = 8;
         struct Choice {
             grid: PossibilityGrid,
             cell: (usize, usize, usize),
@@ -513,6 +535,12 @@ impl GpuAccelerator {
         let mut history: std::collections::VecDeque<Choice> = std::collections::VecDeque::new();
         let mut undo_steps = 1usize;
         let mut backtracks = 0usize;
+        // Where contradictions surface, and how far the search has to unwind, distinguish a run that is
+        // merely slow from one that keeps failing in the same place (docs/thrashing.md, H3).
+        let mut failures_by_cell: std::collections::HashMap<(usize, usize, usize), usize> =
+            std::collections::HashMap::new();
+        let mut undo_depths: Vec<usize> = Vec::new();
+        let mut progress_log: Vec<(usize, usize, usize)> = Vec::new();
         // A failure carries where it happened, so the search can jump back to the choice that caused
         // it instead of undoing whatever happened to be most recent.
         let mut failure: Option<(String, Option<(usize, usize, usize)>)> = None;
@@ -533,14 +561,23 @@ impl GpuAccelerator {
                 // Conflict-directed: undo back to the most recent choice made next to where the
                 // failure surfaced, because that is what most likely caused it. A contradiction far
                 // from any recent choice falls back to undoing a doubling number of steps.
+                // How many times this cell has already failed. A cell that keeps failing means the
+                // real cause lies further back than its immediate neighbourhood, so widen the search
+                // rather than undoing the same single choice again: the previous version matched the
+                // choice it had just restored, so recovery undid exactly one step forever and the run
+                // thrashed (docs/thrashing.md).
+                let repeats = culprit.map_or(0, |cell| *failures_by_cell.get(&cell).unwrap_or(&0));
+                let radius = 1 + repeats.min(MAX_CULPRIT_RADIUS);
                 let near_culprit = culprit.and_then(|(cx, cy, cz)| {
                     history.iter().rposition(|choice| {
                         let (hx, hy, hz) = choice.cell;
-                        hx.abs_diff(cx) <= 1 && hy.abs_diff(cy) <= 1 && hz.abs_diff(cz) <= 1
+                        hx.abs_diff(cx) <= radius && hy.abs_diff(cy) <= radius && hz.abs_diff(cz) <= radius
                     })
                 });
                 let steps = match near_culprit {
-                    Some(index) => history.len() - index,
+                    // Undo at least as many steps as this cell has failed, so a repeated failure keeps
+                    // reaching further back instead of retrying the same choice.
+                    Some(index) => (history.len() - index).max(undo_steps),
                     None => undo_steps,
                 };
                 let mut restored = None;
@@ -560,7 +597,12 @@ impl GpuAccelerator {
                     )));
                 };
                 trace!("Backtracking {undone} step(s) after: {reason}");
-                undo_steps = if near_culprit.is_some() {
+                undo_depths.push(undone);
+                if let Some(cell) = culprit {
+                    *failures_by_cell.entry(cell).or_default() += 1;
+                }
+                progress_log.push((iterations as usize, collapsed_cells, backtracks));
+                undo_steps = if near_culprit.is_some() && repeats == 0 {
                     1
                 } else {
                     (undo_steps * 2).min(MAX_UNDO_STEPS)
@@ -686,13 +728,49 @@ impl GpuAccelerator {
             }
 
             let (x, y, z) = selected_cell.unwrap();
+            // The GPU picked the lowest-entropy cell. Fill the rest of the batch from the grid already
+            // downloaded, taking fewest-possibility cells that are far enough from those chosen that
+            // they are unlikely to constrain each other before propagation runs.
+            let mut batch = vec![(x, y, z)];
+            if self.collapse_batch > 1 {
+                let mut candidates: Vec<(usize, (usize, usize, usize))> = Vec::new();
+                for cz in 0..current_grid.depth {
+                    for cy in 0..current_grid.height {
+                        for cx in 0..current_grid.width {
+                            let count = current_grid.get(cx, cy, cz).map_or(0, |cell| cell.count_ones());
+                            if count > 1 {
+                                candidates.push((count, (cx, cy, cz)));
+                            }
+                        }
+                    }
+                }
+                candidates.sort_unstable();
+                for (_, coord) in candidates {
+                    if batch.len() >= self.collapse_batch {
+                        break;
+                    }
+                    let far_enough = batch.iter().all(|&(bx, by, bz)| {
+                        bx.abs_diff(coord.0) + by.abs_diff(coord.1) + bz.abs_diff(coord.2) >= BATCH_SPACING
+                    });
+                    if far_enough {
+                        batch.push(coord);
+                    }
+                }
+            }
 
-            // Collapse the selected cell
+            // Collapse every cell in the batch, then propagate from all of them at once.
+            let mut collapsed_this_round: Vec<GridCoord> = Vec::with_capacity(batch.len());
+            let mut batch_failure = None;
+            for &(x, y, z) in &batch {
             let cell = current_grid.get_mut(x, y, z).unwrap();
             let possible_states = cell.iter_ones().collect::<Vec<_>>();
             if possible_states.is_empty() {
                 // An earlier choice emptied this cell; undo instead of failing the run.
-                failure = Some((format!("no tiles left at ({x}, {y}, {z})"), Some((x, y, z))));
+                batch_failure = Some((format!("no tiles left at ({x}, {y}, {z})"), Some((x, y, z))));
+                break;
+            }
+            if possible_states.len() == 1 {
+                // An earlier collapse in this batch already decided it.
                 continue;
             }
 
@@ -703,9 +781,9 @@ impl GpuAccelerator {
                     let distribution =
                         WeightedIndex::new(possible_states.iter().map(|&tile| weights[tile]))
                             .map_err(|e| WfcError::other(format!("invalid tile weights: {e}")))?;
-                    possible_states[distribution.sample(&mut rand::rng())]
+                    possible_states[distribution.sample(&mut rng)]
                 }
-                None => possible_states[rand::random_range(0..possible_states.len())],
+                None => possible_states[rng.random_range(0..possible_states.len())],
             };
 
             // Remember the state before the collapse so this choice can be undone.
@@ -726,25 +804,31 @@ impl GpuAccelerator {
                 ))
             })?;
             collapsed_cells += 1;
+            collapsed_this_round.push(GridCoord { x, y, z });
 
-            // The collapse changed exactly one cell; uploading the whole grid would repack and
-            // rewrite every cell for it.
+            // Only this cell changed; a full upload would repack and rewrite the whole grid.
             info_span!(parent: &iteration_span, "upload_cell", x, y, z)
                 .in_scope(|| synchronizer.upload_cell(&current_grid, x, y, z));
+            }
 
-            // Propagate constraints
+            if let Some(reason) = batch_failure {
+                failure = Some(reason);
+                continue;
+            }
+            if collapsed_this_round.is_empty() {
+                continue;
+            }
+
+            // Propagate from every cell collapsed this round: propagation is confluent, so one round
+            // over all of them reaches the same fixpoint as a round per cell.
+            let batched = collapsed_this_round.len();
+            let first = collapsed_this_round[0];
             if let Err(e) = coordinator
-                .coordinate_propagation(
-                    &propagator,
-                    &buffers,
-                    &device,
-                    &queue,
-                    vec![GridCoord { x, y, z }],
-                )
-                .instrument(info_span!(parent: &iteration_span, "propagate", x, y, z))
+                .coordinate_propagation(&propagator, &buffers, &device, &queue, collapsed_this_round)
+                .instrument(info_span!(parent: &iteration_span, "propagate", batched))
                 .await
             {
-                failure = Some((e.to_string(), Some((x, y, z))));
+                failure = Some((e.to_string(), Some((first.x, first.y, first.z))));
                 continue;
             }
 
@@ -785,6 +869,29 @@ impl GpuAccelerator {
             )));
         }
 
+        // Search cost is as much a performance number as wall time: a batched run that is fast on
+        // average can be thrashing on a bad seed (docs/solver-fit.md).
+        info!(
+            "WFC run finished: {collapsed_cells} collapses for {total_cells} cells, \
+             {iterations} iterations, {backtracks} backtracks"
+        );
+        if std::env::var("WFC_REPORT_SEARCH").is_ok() {
+            let mut worst: Vec<_> = failures_by_cell.iter().map(|(c, n)| (*n, *c)).collect();
+            worst.sort_unstable_by(|a, b| b.cmp(a));
+            let repeated: usize = worst.iter().filter(|(n, _)| *n > 1).map(|(n, _)| n).sum();
+            let deepest = undo_depths.iter().copied().max().unwrap_or(0);
+            let mean_depth =
+                undo_depths.iter().sum::<usize>() as f64 / undo_depths.len().max(1) as f64;
+            eprintln!(
+                "search: seed={seed} collapses={collapsed_cells} cells={total_cells} \
+                 iterations={iterations} backtracks={backtracks} \
+                 distinct_failure_cells={} repeated_failures={repeated} \
+                 max_undo={deepest} mean_undo={mean_depth:.1} worst_cells={:?}",
+                failures_by_cell.len(),
+                worst.iter().take(5).collect::<Vec<_>>()
+            );
+        }
+
         Ok(current_grid)
     }
 
@@ -820,6 +927,36 @@ impl GpuAccelerator {
     }
 
     /// Configure the accelerator with a specific entropy heuristic
+    /// Makes the run reproducible: the same seed, grid, rules and settings produce the same result.
+    ///
+    /// Propagation is already deterministic (a monotone fixpoint, so the order restrictions are applied
+    /// in cannot change it), and cell selection is a deterministic minimum, so the choice of tile was
+    /// the only source of run-to-run variation. Without a seed, a run that thrashes cannot be replayed,
+    /// bisected, or compared against another configuration: the only difference measured is luck
+    /// (docs/thrashing.md, status.md A-6).
+    pub fn with_seed(&mut self, seed: u64) -> &mut Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Collapses up to `cells` cells before each propagation round, instead of one.
+    ///
+    /// Propagation is a monotone fixpoint, so its result does not depend on the order restrictions are
+    /// applied: collapsing several cells and then propagating reaches the same fixpoint as propagating
+    /// between them. What changes is the *search* — a later choice in the batch is made without seeing
+    /// what an earlier one implied, so contradictions become more likely and backtracking absorbs
+    /// them. The payoff is that the entropy pass, the selection readback, the grid download and the
+    /// propagation round are each paid once per batch rather than once per cell: a traced city run
+    /// spent 16 s of 26.7 s propagating, across 23916 passes of which 23156 carried eight cells or
+    /// fewer (docs/solver-fit.md).
+    ///
+    /// Cells in a batch are kept a few cells apart, so they rarely constrain each other before
+    /// propagation runs.
+    pub fn with_collapse_batch(&mut self, cells: usize) -> &mut Self {
+        self.collapse_batch = cells.max(1);
+        self
+    }
+
     /// Enforces a constraint on the whole grid that adjacency rules cannot express, such as
     /// connectivity. It runs on the CPU before every observation, on the grid as downloaded after
     /// propagation; the cells it changes are uploaded and propagated until it changes nothing. If

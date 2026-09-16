@@ -77,7 +77,13 @@ pub async fn solve_rules(
     // Backtracking redoes collapses it undid, so a constrained run needs a far larger budget than
     // one iteration per cell.
     let cells = initial.width * initial.height * initial.depth;
-    let max_iterations = (cells * if constraint.is_some() { 50 } else { 2 }) as u64;
+    let mut max_iterations = (cells * if constraint.is_some() { 50 } else { 2 }) as u64;
+    // WFC_SWEEP=1 makes a configuration that thrashes report quickly instead of retrying for hours.
+    let sweeping = std::env::var("WFC_SWEEP").is_ok();
+    let attempts = if sweeping { 1 } else { attempts };
+    if sweeping {
+        max_iterations = (cells * 4) as u64;
+    }
     let started = Instant::now();
     let mut last_error = String::new();
     for attempt in 1..=attempts {
@@ -90,6 +96,15 @@ pub async fn solve_rules(
         }
         if let Some(constraint) = &constraint {
             accelerator.with_global_constraint(Arc::clone(constraint));
+        }
+        // Collapse several cells per propagation round when asked; see
+        // GpuAccelerator::with_collapse_batch and docs/solver-fit.md.
+        if let Some(batch) = std::env::var("WFC_COLLAPSE_BATCH").ok().and_then(|v| v.parse().ok()) {
+            accelerator.with_collapse_batch(batch);
+        }
+        // A fixed seed makes a difference between configurations a real difference rather than luck.
+        if let Some(seed) = std::env::var("WFC_SEED").ok().and_then(|v| v.parse().ok()) {
+            accelerator.with_seed(seed);
         }
         let run_started = Instant::now();
         match accelerator
