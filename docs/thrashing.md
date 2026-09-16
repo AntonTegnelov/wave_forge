@@ -671,8 +671,13 @@ propagation radius nothing else here does.
 
 | Seed | Control | Surrounding | Prunes | Constraint failures |
 |---|---|---|---|---|
-| 1 | 2 | 11 (3.11 s) | 142 | 6 |
-| 5 | 0 | 6 (2.76 s) | 9 | 6 |
+| 1 | 2 | 11 (3.31 s) | 142 | 6 |
+| 2 | 0 | 40 (5.93 s) | 301 | 40 |
+| 3 | 0 | 5 (2.86 s) | 83 | 4 |
+| 4 | 2 | 3 (3.01 s) | 145 | 3 |
+| 5 | 0 | 6 (2.86 s) | 9 | 6 |
+| 6 | 2 | 7 (2.87 s) | 53 | 7 |
+| 7 | 1 | 6 (2.74 s) | 75 | 6 |
 | 8 | 8 | **did not finish** (547/864) | — | — |
 
 **It fired on its first configuration**, which no counting configuration managed in four attempts. The
@@ -685,11 +690,17 @@ forbidden thing elsewhere.
 walkways elsewhere *in principle* does not mean being able to from every partial state the search
 actually reaches.
 
-**The discriminator makes a successful out-of-sample prediction here.** The two finishing seeds have
-identical constraint failures — 6 and 6 — and similar cheap outcomes, while their prune counts differ
-sixteenfold (142 against 9). Pruning volume tracks nothing; failure count tracks cost. That rule was
-formed on range exclusion and counting, and it holds on a kind it was not fitted to, which is worth
-more than the seeds it came from.
+**The discriminator makes its strongest out-of-sample showing here.** Across the seven finishing seeds,
+backtracks track constraint failures almost exactly — 40/40, 3/3, 6/6, 7/7, 6/6, 5/4, 11/6 — while
+prune counts range from 9 to 301 with no relationship to cost whatever: 145 prunes yields 3 backtracks,
+9 prunes yields 6. Pruning volume tracks nothing; failure count tracks cost. The rule was formed on
+range exclusion and counting and holds on a kind it was never fitted to, which is worth more than the
+seeds it came from.
+
+It also explains the pair that otherwise looks contradictory. Range exclusion and surrounding are both
+*prohibitions over a neighbourhood*, and their outcomes are opposite: range exclusion fails 80 to 4927
+times and finishes 2 of 8 seeds, surrounding fails 3 to 40 times and finishes 7 of 8. Same shape of
+rule, and the failure count predicts which one wrecks the search.
 
 ### The sweep falsified half of it
 
