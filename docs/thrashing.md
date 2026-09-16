@@ -89,6 +89,37 @@ Stated so they can be falsified, with the reasoning that suggests them:
   2-tile permissive grid, but the permissive grid has trivially satisfiable rules; the two differ in both
   respects, so the experiment must separate them.
 
+## First data: thrashing is not caused by batching
+
+Five samples per batch size, 24x24x8 city, one attempt each, 180 s cap. Times are the successful runs;
+"timed out" means the sample never finished inside the cap.
+
+| Batch | Times (s) | Backtracks | Timed out |
+|---|---|---|---|
+| 1 | 23.1, 26.7, 30.2 | 22, 361, 514 | 2 of 5 |
+| 2 | 13.6, 25.8 | 0, 751 | 3 of 5 |
+| 4 | 8.1, 9.1, 9.3, 9.7, 69.3 | 15, 16, 26, 75, **4801** | 0 of 5 |
+| 8 | 5.8, 6.0, 6.4, 27.1 | 33, 38, 52, **1322** | 1 of 5 |
+
+Three things follow, and the first one overturned our working assumption:
+
+1. **Batch 1 — the plain algorithm — thrashes too**, on two of five samples. Batching is not the cause.
+   It changes the frequency and the cost, but the phenomenon is in the base solver.
+2. **The failure is bimodal in search effort, not just in time.** Healthy runs finish with 15-75
+   backtracks; thrashing runs show 1322 and 4801, and the timeouts are presumably worse. Wall time is a
+   symptom; backtrack count is much closer to the disease.
+3. **Batching makes healthy runs much faster** (batch 8 reaching 5.8-6.4 s against 23-30 s at batch 1,
+   with *fewer* iterations: ~400 against ~3600 for the same ~3300 collapses). The question is not
+   whether batching helps but whether thrashing can be removed, after which batching is nearly free.
+
+Incidental but useful: every run collapses about 3300 of 4608 cells, so roughly 1300 cells are decided
+by propagation rather than by choice — consistent with the published finding that propagation, not the
+entropy heuristic, does WFC's real work.
+
+This is evidence for **H3** (thrashing is a recovery failure) over a simple contradiction-rate story: if
+contradictions alone drove it, the distribution would be smooth rather than split into 15-75 and
+1322-4801.
+
 ## Status
 
 - Reproducibility: **not yet** — seeding is the current work.
