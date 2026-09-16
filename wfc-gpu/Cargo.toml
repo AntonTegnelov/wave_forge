@@ -38,6 +38,7 @@ anyhow = "1.0.104"
 regex = "1.13.1"  # For parsing grid coordinates from error strings
 
 [dev-dependencies]
+wgpu = { version = "30.0.1", features = ["dx12", "metal", "vulkan", "wgsl"] }
 wfc-devtools = { path = "../wfc-devtools" }
 env_logger = "0.11.11"
 rand = "0.10.2"

@@ -138,6 +138,39 @@ Reverted. The lesson is kept: **the fixed cost per dispatch is real, but it must
 Note also that the city baseline itself varies (45.3 s and 48.7 s on two runs) because backtracking
 counts differ, so any future change on this workload needs repeated runs, not one sample.
 
+## The way out: more work per dispatch, not more cells per pass
+
+Wall-clock tracks the *dispatch count* almost exactly. The traced city run issues 22332 dispatches
+(7048 entropy + 15284 propagation) for 4608 cells; at ~2.5 ms each that predicts ~56 s against 48.7 s
+measured. Backtracking redoes 1.53x the minimum number of collapses, and there are ~5.7 GPU
+round-trips per collapse.
+
+Enlarging a pass failed (above) because a swept cell is not free. The other way to amortise a
+dispatch is to put *more steps* inside it. WGSL has no grid-wide barrier, but it does have workgroup
+barriers, so a single workgroup can run a sequential loop — which is exactly the shape of
+select → collapse → propagate. Measured (`wfc-gpu/tests/dispatch_cost_bench.rs`), same total work,
+with a workgroup barrier between steps:
+
+| Same 256 steps of work | Time | Per step |
+|---|---|---|
+| As 256 dispatches of one step | 456 ms | 1.783 ms |
+| As one dispatch looping 256 times | 2.0 ms | **0.008 ms** |
+
+**225x cheaper inside one dispatch.** That is the entire budget the current design spends on
+overhead, recovered by restructuring rather than by tuning.
+
+It implies a block-local solver: one workgroup owns a block of cells, holds their possibilities in
+workgroup memory, and runs many collapses and propagation steps internally before the host sees
+anything. The sizes work out: an 8³ block at 81 variants is 512 cells x 3 words = 6 KB, inside the
+16 KB workgroup-memory limit; 4³ blocks leave room for 256 variants. Blocks are then also the unit of
+parallelism (many workgroups at once) and of streaming, which is what the overlapping-block
+literature (N-WFC, model synthesis in blocks) already recommends for other reasons.
+
+What this does not settle, and what the research in flight is for: how blocks overlap and what must be
+frozen at their boundaries for correctness, whether blocks may be solved concurrently or must be
+pipelined, what happens to a global connectivity constraint that spans blocks, and whether the inner
+propagation should keep recomputing masks or maintain AC-4 support counters.
+
 ## How we will know it worked
 
 The stress suite is the yardstick, run in release with the same three workloads. A change is kept when
