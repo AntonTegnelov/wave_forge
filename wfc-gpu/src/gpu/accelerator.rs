@@ -564,6 +564,15 @@ impl GpuAccelerator {
         // Whether to check that backtracking only ever shrinks domains; see the check itself below.
         // Opt-in because it walks the grid twice per backtrack.
         let check_lost_bans = std::env::var("WFC_CHECK_TERMINATION").is_ok();
+        // An upper-bound probe, not a candidate fix: re-apply every recorded ban after each restore, to
+        // measure what perfect ban persistence would be worth before paying for it properly.
+        //
+        // **Deliberately unsound.** A ban records "this tile led to a contradiction *given these
+        // assignments*"; undoing those assignments can make it legitimately viable again, so applying
+        // bans unconditionally can exclude real solutions. Proper nogood recording keeps the condition
+        // alongside the ban (Lecoutre et al.). This exists to answer whether that complexity is worth
+        // it: if the ceiling is low, it is not.
+        let persist_bans = std::env::var("WFC_PERSIST_BANS").is_ok();
         /// Every `(cell, tile)` the backtracking machinery has explicitly forbidden. The termination
         /// argument rests on these surviving, so this is what has to be checked — not whether domains
         /// widen, which they always do, because widening is what undoing means.
@@ -678,25 +687,39 @@ impl GpuAccelerator {
                     failure = Some((format!("no tiles left at ({bx}, {by}, {bz})"), None));
                     continue;
                 }
-                if check_lost_bans {
-                    // Count tiles this machinery previously forbade that are possible again, which is
-                    // the thing the termination argument forbids. An earlier version of this check
-                    // compared possibility counts before and after the restore and fired on nearly
-                    // every backtrack — measuring undo itself rather than the hazard, since restoring
-                    // an older snapshot necessarily returns the possibilities that propagation had
-                    // removed since. A detector that answers "yes" to the definition of backtracking
-                    // is not a detector.
-                    let revived = banned_ledger
-                        .iter()
-                        .filter(|((bx, by, bz), tile)| {
-                            current_grid.get(*bx, *by, *bz).is_some_and(|cell| cell[*tile])
-                        })
-                        .count();
-                    if revived > 0 {
-                        lost_ban_events += 1;
-                        lost_ban_cells += revived;
+                if check_lost_bans || persist_bans {
+                    if check_lost_bans {
+                        // Count tiles this machinery previously forbade that are possible again, which
+                        // is what the termination argument forbids. An earlier version compared
+                        // possibility counts before and after the restore and fired on nearly every
+                        // backtrack — measuring undo itself rather than the hazard, since restoring an
+                        // older snapshot necessarily returns the possibilities propagation had removed
+                        // since. A detector that answers "yes" to the definition of backtracking is not
+                        // a detector.
+                        let revived = banned_ledger
+                            .iter()
+                            .filter(|((bx, by, bz), tile)| {
+                                current_grid.get(*bx, *by, *bz).is_some_and(|cell| cell[*tile])
+                            })
+                            .count();
+                        if revived > 0 {
+                            lost_ban_events += 1;
+                            lost_ban_cells += revived;
+                        }
                     }
                     banned_ledger.insert(((bx, by, bz), choice.tile));
+                    if persist_bans {
+                        // Re-apply the whole ledger, skipping any ban that would empty a cell: an
+                        // emptied cell would cascade into another failure immediately and measure the
+                        // probe's own damage rather than the ceiling it is meant to estimate.
+                        for ((lx, ly, lz), tile) in &banned_ledger {
+                            if let Some(cell) = current_grid.get_mut(*lx, *ly, *lz) {
+                                if cell[*tile] && cell.count_ones() > 1 {
+                                    cell.set(*tile, false);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // The GPU still holds the contradiction from the failed attempt; clear it before
