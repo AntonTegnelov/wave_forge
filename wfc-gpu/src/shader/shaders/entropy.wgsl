@@ -132,8 +132,13 @@ fn main(
 ///
 /// `entropy_bits` is the IEEE-754 bit pattern of a non-negative float, which is monotonic in the value,
 /// so the top bits order by entropy. Keeping ENTROPY_KEY_BITS of it leaves room for the cell index,
-/// which orders ties by position. Grids larger than the index field fall back to a coarser entropy
-/// quantisation rather than aliasing cells together.
+/// which orders ties by position.
+///
+/// The index field is INDEX_KEY_BITS wide, so it cannot address a grid with more cells than that. The
+/// min() below is a defensive clamp, not a graceful fallback: past the limit every cell would alias
+/// onto one index and selection would hand back a cell that is already collapsed, which the solver
+/// would skip, making no progress and never terminating. Grids that large are therefore rejected on
+/// the CPU before a run starts (MAX_INDEXABLE_CELLS in shader::pipeline).
 const ENTROPY_KEY_BITS: u32 = 12u;
 const INDEX_KEY_BITS: u32 = 32u - ENTROPY_KEY_BITS;
 

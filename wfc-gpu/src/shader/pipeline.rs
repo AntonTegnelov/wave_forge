@@ -85,6 +85,14 @@ pub const MAX_WORDS_PER_CELL: u32 = 8;
 /// Must match `INDEX_KEY_BITS` in `entropy.wgsl`.
 pub const MIN_ENTROPY_INDEX_BITS: u32 = 20;
 
+/// Largest grid the packed min-entropy key can address.
+///
+/// Cell indices are carried in the low `MIN_ENTROPY_INDEX_BITS` of the key, so a larger grid would
+/// alias cells onto one index. That does not degrade gracefully: selection would return an
+/// already-collapsed cell, the solver would skip it, and the run would spin without progressing. A run
+/// on a grid this large is rejected rather than allowed to hang.
+pub const MAX_INDEXABLE_CELLS: usize = 1 << MIN_ENTROPY_INDEX_BITS;
+
 /// Recovers the winning cell index from the key the entropy shader reduces with `atomicMin`.
 ///
 /// The shader packs quantised entropy into the high bits and the cell index into the low bits so one

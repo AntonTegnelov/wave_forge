@@ -512,6 +512,16 @@ impl GpuAccelerator {
                 .map_err(|e| WfcError::other(e.to_string()))?;
         }
         let total_cells = grid_definition.total_cells();
+        if total_cells > crate::shader::pipeline::MAX_INDEXABLE_CELLS {
+            // The entropy shader carries the winning cell index in the low bits of a packed key, so a
+            // larger grid aliases cells onto one index. Selection would then hand back a cell that is
+            // already collapsed, the solver would skip it, and the loop would spin without ever
+            // progressing. Fail loudly instead of hanging.
+            return Err(WfcError::other(format!(
+                "grid has {total_cells} cells, more than the {} addressable by the min-entropy key",
+                crate::shader::pipeline::MAX_INDEXABLE_CELLS
+            )));
+        }
         let mut collapsed_cells = 0usize;
         let mut iterations = 0;
 
@@ -890,6 +900,23 @@ impl GpuAccelerator {
                 failures_by_cell.len(),
                 worst.iter().take(5).collect::<Vec<_>>()
             );
+            // Totals cannot tell a slow run from a stuck one: a search that collapses and undoes the
+            // same cells forever still reports plausible counts. The series shows whether collapsed
+            // cells actually climb. Sampled, because a pathological run records thousands of points.
+            if !progress_log.is_empty() {
+                let stride = progress_log.len().div_ceil(40).max(1);
+                let series: Vec<String> = progress_log
+                    .iter()
+                    .step_by(stride)
+                    .map(|(iteration, collapsed, backtracks)| {
+                        format!("{iteration}:{collapsed}/{backtracks}")
+                    })
+                    .collect();
+                eprintln!(
+                    "progress (iteration:collapsed/backtracks, every {stride} backtrack(s)): {}",
+                    series.join(" ")
+                );
+            }
         }
 
         Ok(current_grid)
