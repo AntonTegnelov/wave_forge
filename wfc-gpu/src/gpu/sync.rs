@@ -154,28 +154,21 @@ impl GpuSynchronizer {
         let num_cells = width * height * depth;
         let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
 
-        // Convert grid possibilities to u32 arrays
-        let mut packed_data = Vec::with_capacity(num_cells * u32s_per_cell);
-
-        // For each cell, get its bitvector and pack it into u32s
+        // One allocation for the whole grid, and one step per *remaining possibility* rather than
+        // per tile: walking every bit costs num_tiles steps per cell even when the cell is collapsed
+        // to one tile, which is most cells for most of a run (docs/solver-fit.md).
+        let mut packed_data = vec![0u32; num_cells * u32s_per_cell];
         for z in 0..depth {
             for y in 0..height {
                 for x in 0..width {
                     if let Some(cell) = grid.get(x, y, z) {
-                        let mut cell_data = vec![0u32; u32s_per_cell];
-                        for (i, bit) in cell.iter().enumerate() {
-                            if *bit {
-                                let u32_idx = i / 32;
-                                let bit_idx = i % 32;
-                                if u32_idx < cell_data.len() {
-                                    cell_data[u32_idx] |= 1 << bit_idx;
-                                }
+                        let start = grid.get_index(x, y, z) * u32s_per_cell;
+                        for tile in cell.iter_ones() {
+                            let word = tile / 32;
+                            if word < u32s_per_cell {
+                                packed_data[start + word] |= 1 << (tile % 32);
                             }
                         }
-                        packed_data.extend_from_slice(&cell_data);
-                    } else {
-                        // If cell doesn't exist, add empty data
-                        packed_data.extend(std::iter::repeat(0).take(u32s_per_cell));
                     }
                 }
             }
@@ -189,6 +182,28 @@ impl GpuSynchronizer {
         );
 
         Ok(())
+    }
+
+    /// Uploads one cell's possibilities, leaving the rest of the buffer untouched.
+    ///
+    /// A collapse changes exactly one cell, and the global constraint changes a known list of them, so
+    /// re-packing and re-writing the whole grid for each is pure overhead.
+    pub fn upload_cell(&self, grid: &PossibilityGrid, x: usize, y: usize, z: usize) {
+        let u32s_per_cell = self.buffers.grid_buffers.u32s_per_cell;
+        let cell = grid.get(x, y, z).expect("cell to upload is in bounds");
+        let mut words = vec![0u32; u32s_per_cell];
+        for tile in cell.iter_ones() {
+            let word = tile / 32;
+            if word < u32s_per_cell {
+                words[word] |= 1 << (tile % 32);
+            }
+        }
+        let offset = (grid.get_index(x, y, z) * u32s_per_cell * std::mem::size_of::<u32>()) as u64;
+        self.queue.write_buffer(
+            &self.buffers.grid_buffers.grid_possibilities_buf,
+            offset,
+            bytemuck::cast_slice(&words),
+        );
     }
 
     /// Downloads the complete possibility grid state from GPU to a CPU-side grid.
@@ -497,7 +512,9 @@ impl GpuSynchronizer {
 
     // Add a helper method to create the initial data buffer once
     fn get_or_create_min_entropy_init_buffer(&self) -> wgpu::Buffer {
-        let reset_data = [f32::MAX.to_bits(), u32::MAX];
+        // Word 0 holds a packed (entropy, index) key reduced with atomicMin, so it must start at the
+        // maximum for any real key to win; word 1 is unused by the shader and kept for layout.
+        let reset_data = [u32::MAX, u32::MAX];
         self.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Min Entropy Reset Init Buffer"),

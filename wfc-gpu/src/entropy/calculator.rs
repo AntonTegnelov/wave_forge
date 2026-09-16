@@ -9,6 +9,8 @@ use crate::{
     utils::error::gpu_error::{GpuError, GpuErrorContext},
 };
 use log::{debug, error, trace, warn};
+
+use crate::shader::pipeline::{MIN_ENTROPY_INDEX_BITS, unpack_min_entropy_index};
 use pollster;
 use std::{fmt::Debug, sync::Arc};
 use wfc_core::{
@@ -556,11 +558,12 @@ impl GpuEntropyCalculator {
                     );
                     return None;
                 }
-                let _min_entropy_bits = data[0];
-                let min_index = data[1];
+                // Word 0 is the packed (entropy, index) key; word 1 is unused.
+                let key = data[0];
+                let min_index = unpack_min_entropy_index(key);
 
-                // Check if a valid minimum was found (index != u32::MAX)
-                if min_index != u32::MAX {
+                // u32::MAX is the reset value, i.e. no cell was a candidate.
+                if key != u32::MAX {
                     let (width, height, _depth) = self.grid_dims;
                     let idx = min_index as usize;
                     let z = idx / (width * height);
@@ -624,12 +627,13 @@ impl GpuEntropyCalculator {
                     return Ok(None);
                 }
 
-                let entropy_bits = data[0];
-                let index = data[1];
-                let entropy = f32::from_bits(entropy_bits);
+                let key = data[0];
+                let index = unpack_min_entropy_index(key);
+                // The key keeps only the high bits of the entropy, so this is the quantised value:
+                // enough to order cells, not the exact entropy.
+                let entropy = f32::from_bits(key & !((1u32 << MIN_ENTROPY_INDEX_BITS) - 1));
 
-                // Check if a valid minimum was found (index != u32::MAX and entropy is positive finite)
-                if index != u32::MAX && entropy.is_finite() && entropy > 0.0 {
+                if key != u32::MAX && entropy.is_finite() {
                     let (width, height, _depth) = self.grid_dims;
                     if width == 0 || height == 0 {
                         error!("Grid dimensions are zero when converting lowest entropy index");
@@ -644,12 +648,12 @@ impl GpuEntropyCalculator {
                     let y = (idx % (width * height)) / width;
                     let x = idx % width;
                     debug!(
-                        "Selected cell: ({}, {}, {}) with entropy {:.4e} (bits: {:08x}, index: {})",
-                        x, y, z, entropy, entropy_bits, index
+                        "Selected cell: ({}, {}, {}) with entropy {:.4e} (key: {:08x}, index: {})",
+                        x, y, z, entropy, key, index
                     );
                     Ok(Some((x, y, z, entropy)))
                 } else {
-                    debug!("No valid positive entropy cell found (index=MAX or entropy<=0 or invalid: bits={:08x}, index={})", entropy_bits, index);
+                    debug!("No candidate cell (reset key or non-finite entropy: key={key:08x}, index={index})");
                     Ok(None) // Grid might be fully collapsed, contradiction, or no positive entropy found
                 }
             }

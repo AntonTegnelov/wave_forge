@@ -11,6 +11,7 @@ use wfc_devtools::fixtures::Fixture;
 use wfc_gpu::gpu::accelerator::GpuAccelerator;
 use std::sync::Arc;
 use wfc_core::constraint::GlobalConstraint;
+use wfc_core::weighting::TileWeighting;
 use wfc_rules::AdjacencyRules;
 
 /// Directory for images produced by E2E tests, so a failing (or passing) run can be inspected.
@@ -21,6 +22,23 @@ pub fn artifact_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("e2e-artifacts"));
     std::fs::create_dir_all(&dir).expect("create artifact directory");
     dir
+}
+
+/// Writes a Chrome/Perfetto trace of the solver's spans when `WFC_TRACE_CHROME` names a file, so a
+/// stress run can be profiled without a separate binary (see docs/performance.md).
+///
+/// Keep the returned guard alive for the whole test: dropping it flushes the trace.
+#[must_use]
+pub fn trace_to_chrome() -> Option<tracing_chrome::FlushGuard> {
+    use tracing_subscriber::layer::SubscriberExt;
+    let path = std::env::var_os("WFC_TRACE_CHROME")?;
+    let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+        .file(path)
+        .include_args(true)
+        .build();
+    // `.init()` panics when a logger is already installed, so set the default explicitly.
+    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer)).ok()?;
+    Some(guard)
 }
 
 /// A successful run and what it took.
@@ -44,11 +62,12 @@ pub async fn solve(
     solve_rules(initial, &fixture.rules, None, None, boundary, attempts).await.grid
 }
 
-/// Solves `initial` on the GPU, starting over from scratch after a contradiction.
+/// Solves `initial` on the GPU, starting over from scratch when a run exhausts its recovery.
 ///
-/// Retrying is a stopgap: the solver has neither backtracking nor seeded restarts yet
-/// (docs/status.md A-9) and ignores seeds (A-6), so an unlucky run can only be repeated.
-/// Any other error fails the test immediately.
+/// Retrying is no longer the only line of defence: the solver backtracks, escalates its undo depth by
+/// how often a conflict cell has failed, and honours `WFC_SEED` below, so a run is reproducible rather
+/// than a matter of luck. Attempts remain because recovery can still run out of budget. Any error that
+/// is not a contradiction fails the test immediately.
 pub async fn solve_rules(
     initial: &PossibilityGrid,
     rules: &AdjacencyRules,
@@ -57,10 +76,35 @@ pub async fn solve_rules(
     boundary: BoundaryCondition,
     attempts: usize,
 ) -> Solved {
+    solve_rules_with(initial, rules, weights, constraint, None, boundary, attempts).await
+}
+
+/// As [`solve_rules`], but also accepts a cell-aware weighting.
+///
+/// Statistical rules cannot travel through `constraint`: they remove no possibilities, so a
+/// `GlobalConstraint` implementing one could only ever return `Ok(vec![])`. They act on the collapse
+/// *choice* instead, which is why they need a separate way in.
+///
+/// `solve_rules` delegates here so the six existing call sites stay unchanged.
+pub async fn solve_rules_with(
+    initial: &PossibilityGrid,
+    rules: &AdjacencyRules,
+    weights: Option<&[f32]>,
+    constraint: Option<Arc<dyn GlobalConstraint>>,
+    cell_weighting: Option<Arc<dyn TileWeighting>>,
+    boundary: BoundaryCondition,
+    attempts: usize,
+) -> Solved {
     // Backtracking redoes collapses it undid, so a constrained run needs a far larger budget than
     // one iteration per cell.
     let cells = initial.width * initial.height * initial.depth;
-    let max_iterations = (cells * if constraint.is_some() { 50 } else { 2 }) as u64;
+    let mut max_iterations = (cells * if constraint.is_some() { 50 } else { 2 }) as u64;
+    // WFC_SWEEP=1 makes a configuration that thrashes report quickly instead of retrying for hours.
+    let sweeping = std::env::var("WFC_SWEEP").is_ok();
+    let attempts = if sweeping { 1 } else { attempts };
+    if sweeping {
+        max_iterations = (cells * 4) as u64;
+    }
     let started = Instant::now();
     let mut last_error = String::new();
     for attempt in 1..=attempts {
@@ -73,6 +117,18 @@ pub async fn solve_rules(
         }
         if let Some(constraint) = &constraint {
             accelerator.with_global_constraint(Arc::clone(constraint));
+        }
+        if let Some(weighting) = &cell_weighting {
+            accelerator.with_cell_weighting(Arc::clone(weighting));
+        }
+        // Collapse several cells per propagation round when asked; see
+        // GpuAccelerator::with_collapse_batch and docs/solver-fit.md.
+        if let Some(batch) = std::env::var("WFC_COLLAPSE_BATCH").ok().and_then(|v| v.parse().ok()) {
+            accelerator.with_collapse_batch(batch);
+        }
+        // A fixed seed makes a difference between configurations a real difference rather than luck.
+        if let Some(seed) = std::env::var("WFC_SEED").ok().and_then(|v| v.parse().ok()) {
+            accelerator.with_seed(seed);
         }
         let run_started = Instant::now();
         match accelerator

@@ -1,0 +1,391 @@
+//! The rule-set zoo: the same grid and the same seeds under rules of different *kind*, so thrashing
+//! can be attributed to what a rule is rather than to how big the problem is.
+//!
+//! Every fixture we had varied rule set *size* and tightness; all of them were adjacency rules. That
+//! answers "does a bigger problem thrash more" and nothing about "does this kind of rule thrash more".
+//! Each test here changes exactly one thing against [`zoo_control_adjacency_only`]: same 12x12x6 city,
+//! same module set, same weights, same seed, differing only in the global constraint applied. See
+//! docs/thrashing.md for the questions this is instrumenting.
+//!
+//! Run one at a time, in release mode, with a seed, and **with `WFC_SWEEP=1`**:
+//!
+//! ```text
+//! WFC_SWEEP=1 WFC_SEED=8 WFC_REPORT_SEARCH=1 \
+//!   cargo test -p wfc-devtools --release --test ruleset_zoo -- --ignored --nocapture zoo_counting
+//! ```
+//!
+//! `WFC_SWEEP` is not optional for comparisons. Without it `common::solve_rules` gives a constrained
+//! run an iteration budget 25 times larger than an unconstrained one (`cells * 50` against
+//! `cells * 2`), so a control and a treatment would differ in budget as well as in rule kind, and any
+//! difference measured would be uninterpretable. Under sweep both get `cells * 4`.
+//!
+//! The 12x12x6 city is deliberate: it is the instrument the thrashing study is calibrated on, with a
+//! 48-seed baseline recorded in docs/solver-fit.md, so a number here can be compared against
+//! something. The control is verified to reproduce the e2e `small_city` search line exactly.
+
+mod common;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use wfc_core::BoundaryCondition;
+use wfc_core::constraint::{
+    Cell, CountingConstraint, GlobalConstraint, RangeExclusionConstraint, SurroundingConstraint,
+};
+use wfc_core::grid::PossibilityGrid;
+use wfc_core::weighting::{DistanceWeighting, TileWeighting};
+use wfc_devtools::city;
+
+/// Multiplies the city's flat per-tile weight by a positional factor.
+///
+/// Composing rather than replacing is essential, not tidiness. The module weights are load-bearing —
+/// `road_straight` at 4.0 against `road_end` at 0.05 — and a cell weighting *replaces* them, since it
+/// takes precedence over `with_tile_weights`. A statistical arm that ignored them would be measuring
+/// "module weights deleted" rather than "proximity bias added", and would produce a visibly different
+/// city for the wrong reason.
+struct Weighted {
+    flat: Vec<f32>,
+    inner: DistanceWeighting,
+}
+
+impl TileWeighting for Weighted {
+    fn weight(&self, grid: &PossibilityGrid, cell: Cell, tile: usize) -> f32 {
+        self.flat.get(tile).copied().unwrap_or(1.0) * self.inner.weight(grid, cell, tile)
+    }
+}
+
+/// Applies several constraints as one, since the solver takes a single global constraint.
+///
+/// Our constraint types name one tile each, but the city has 81 rotated variants, so a rule about
+/// "roads" is a rule about every road variant. Composing here keeps that out of the core API until a
+/// measurement shows what shape it actually wants.
+///
+/// Concatenating the changed cells preserves the property the solver depends on: each part reports a
+/// cell only when it truly cleared a bit, so the combination does too. A constraint that reported an
+/// untouched cell would spin the solver's uncapped fixpoint loop without advancing its iteration
+/// counter.
+struct All(Vec<Box<dyn GlobalConstraint>>);
+
+impl GlobalConstraint for All {
+    fn apply(&self, grid: &mut PossibilityGrid) -> Result<Vec<Cell>, Cell> {
+        let mut changed = Vec::new();
+        for constraint in &self.0 {
+            changed.extend(constraint.apply(grid)?);
+        }
+        Ok(changed)
+    }
+}
+
+/// Tallies how much a constraint actually did, so "no effect" can be told from "never fired".
+///
+/// This is not a nicety. A counting rule that never triggers produces a search line byte-identical to
+/// the control, which reads exactly like "this kind of rule is harmless" while in fact measuring
+/// nothing at all. One configuration of the counting rule did precisely that (docs/thrashing.md), and
+/// without a prune count the only way to notice was to be suspicious of a too-perfect match.
+struct Counted {
+    inner: Box<dyn GlobalConstraint>,
+    prunes: Arc<AtomicUsize>,
+    failures: Arc<AtomicUsize>,
+}
+
+impl GlobalConstraint for Counted {
+    fn apply(&self, grid: &mut PossibilityGrid) -> Result<Vec<Cell>, Cell> {
+        match self.inner.apply(grid) {
+            Ok(changed) => {
+                self.prunes.fetch_add(changed.len(), Ordering::Relaxed);
+                Ok(changed)
+            }
+            Err(cell) => {
+                self.failures.fetch_add(1, Ordering::Relaxed);
+                Err(cell)
+            }
+        }
+    }
+}
+
+/// Wraps a constraint in its tally counters.
+fn counted(inner: Box<dyn GlobalConstraint>) -> (Arc<dyn GlobalConstraint>, Tally) {
+    let tally = Tally {
+        prunes: Arc::new(AtomicUsize::new(0)),
+        failures: Arc::new(AtomicUsize::new(0)),
+    };
+    let constraint = Arc::new(Counted {
+        inner,
+        prunes: Arc::clone(&tally.prunes),
+        failures: Arc::clone(&tally.failures),
+    });
+    (constraint, tally)
+}
+
+/// What a constraint did over a run: cells narrowed, and times it declared the grid unsatisfiable.
+struct Tally {
+    prunes: Arc<AtomicUsize>,
+    failures: Arc<AtomicUsize>,
+}
+
+/// Solves the standard zoo city, optionally under a global constraint, and reports what it took.
+///
+/// Search statistics (seed, backtracks, where contradictions landed, undo depths) are printed by the
+/// accelerator itself under `WFC_REPORT_SEARCH`; this adds the wall-clock outcome and, when there is a
+/// constraint, proof of whether it did anything.
+async fn run_zoo(kind: &str, constraint: Option<(Arc<dyn GlobalConstraint>, Tally)>) {
+    run_zoo_inner(kind, constraint, None).await
+}
+
+/// As [`run_zoo`], for a rule that biases the collapse *choice* rather than pruning domains.
+async fn run_zoo_weighted(kind: &str, weighting: Arc<dyn TileWeighting>) {
+    run_zoo_inner(kind, None, Some(weighting)).await
+}
+
+async fn run_zoo_inner(
+    kind: &str,
+    constraint: Option<(Arc<dyn GlobalConstraint>, Tally)>,
+    weighting: Option<Arc<dyn TileWeighting>>,
+) {
+    let city = city::city();
+    let m = &city.modules;
+    let (width, height, depth) = (12, 12, 6);
+    let mut initial = PossibilityGrid::new(width, height, depth, m.variants.len());
+    city::constrain_city(&mut initial, &city);
+
+    let (constraint, tally) = match constraint {
+        Some((constraint, tally)) => (Some(constraint), Some(tally)),
+        None => (None, None),
+    };
+    let solved = common::solve_rules_with(
+        &initial,
+        &m.rules,
+        Some(&m.tileset.weights),
+        constraint,
+        weighting,
+        BoundaryCondition::Finite,
+        1,
+    )
+    .await;
+    let effect = match &tally {
+        Some(tally) => format!(
+            " prunes={} constraint_failures={}",
+            tally.prunes.load(Ordering::Relaxed),
+            tally.failures.load(Ordering::Relaxed)
+        ),
+        None => String::new(),
+    };
+    eprintln!(
+        "zoo: kind={kind} cells={} attempt={} run_s={:.3} total_s={:.3}{effect}",
+        width * height * depth,
+        solved.attempts,
+        solved.solve_time.as_secs_f64(),
+        solved.total_time.as_secs_f64(),
+    );
+}
+
+/// The composition must leave the module weights alone wherever the positional rule has nothing to
+/// say, and scale them where it does.
+///
+/// This is the check the e2e city cannot make. The e2e never calls a cell weighting, so it exercises
+/// the unweighted path: it confirms the harness delegation is safe and says nothing about [`Weighted`].
+/// A composition that silently flattened the module weights would still produce plausible backtrack
+/// counts — it would just be generating a different city.
+///
+/// Not `#[ignore]`d: it is a pure function check that needs no GPU, so it should run by default.
+#[test]
+fn composed_weighting_preserves_flat_weights_where_nothing_attracts() {
+    const PLAIN: usize = 0;
+    const ROAD: usize = 1;
+    let weighting = Weighted {
+        flat: vec![2.0, 3.0],
+        inner: DistanceWeighting::new([ROAD], [ROAD], 1, 1.0, 4.0),
+    };
+
+    // Nothing decided nearby, so both tiles keep exactly their flat weight. `PossibilityGrid::new`
+    // starts every cell fully open, so the neighbour is undecided and cannot attract.
+    let open = PossibilityGrid::new(2, 1, 1, 2);
+    assert_eq!(weighting.weight(&open, (0, 0, 0), PLAIN), 2.0);
+    assert_eq!(weighting.weight(&open, (0, 0, 0), ROAD), 3.0);
+
+    // An adjacent decided road scales the road's weight and leaves the other alone.
+    let mut attracted = PossibilityGrid::new(2, 1, 1, 2);
+    let neighbour = attracted.get_mut(1, 0, 0).unwrap();
+    neighbour.fill(false);
+    neighbour.set(ROAD, true);
+    assert_eq!(
+        weighting.weight(&attracted, (0, 0, 0), ROAD),
+        15.0,
+        "3.0 flat * (1.0 base + 4.0 strength / 1 cell)"
+    );
+    assert_eq!(
+        weighting.weight(&attracted, (0, 0, 0), PLAIN),
+        2.0,
+        "a tile outside the subject set keeps its module weight"
+    );
+}
+
+/// Adjacency only. The baseline every other test in this file is measured against.
+#[tokio::test]
+#[ignore = "rule-set zoo; run with --ignored in release mode, one at a time, with WFC_SWEEP=1"]
+async fn zoo_control_adjacency_only() {
+    run_zoo("control", None).await;
+}
+
+/// Bounded, directional, non-adjacent: no elevated walkway within two cells directly above a road.
+///
+/// The cheapest kind of non-local rule — one cell and a fixed offset decide it, with no graph and no
+/// whole-grid analysis. Measured at seed 8 it costs 80 backtracks against the control's 8, so
+/// non-locality alone makes the search much harder even when checking the rule is trivial.
+///
+/// Walkways over roads is a pairing that can genuinely occur here, unlike (say) roofs over roads,
+/// which the module set already makes impossible: a vacuous constraint would measure nothing.
+#[tokio::test]
+#[ignore = "rule-set zoo; run with --ignored in release mode, one at a time, with WFC_SWEEP=1"]
+async fn zoo_range_exclusion() {
+    let city = city::city();
+    let m = &city.modules;
+    let roads = m.variants_tagged("road");
+    let walkways = m.variants_tagged("walkway");
+    assert!(
+        !roads.is_empty() && !walkways.is_empty(),
+        "the rule needs both tags to exist, or it constrains nothing"
+    );
+
+    let parts: Vec<Box<dyn GlobalConstraint>> = roads
+        .iter()
+        .flat_map(|&road| {
+            walkways.iter().map(move |&walkway| {
+                Box::new(RangeExclusionConstraint::new(
+                    road,
+                    walkway,
+                    [(0, 0, 1), (0, 0, 2)],
+                )) as Box<dyn GlobalConstraint>
+            })
+        })
+        .collect();
+    eprintln!("zoo: range-exclusion over {} tile pairs", parts.len());
+    run_zoo("range_exclusion", Some(counted(Box::new(All(parts))))).await;
+}
+
+/// Changes likelihood rather than legality: a road becomes likelier the more roads are already nearby,
+/// and nearer ones count for more.
+///
+/// The one kind in this zoo that is not a constraint at all, and could not be. It removes no
+/// possibilities, so `GlobalConstraint::apply` could only ever return `Ok(vec![])` for it. It acts on
+/// the collapse choice instead.
+///
+/// That makes it measured differently from every other arm here. It cannot prune and cannot fail, so
+/// `prunes` and `constraint_failures` say nothing about it; what it can change is the search cost and
+/// the output itself. The interesting question is whether biasing *choice* alone — with the legal set
+/// untouched — moves thrashing at all, since every other lever in this study has been about legality.
+///
+/// The flat module weights are multiplied in rather than replaced; see [`Weighted`].
+#[tokio::test]
+#[ignore = "rule-set zoo; run with --ignored in release mode, one at a time, with WFC_SWEEP=1"]
+async fn zoo_statistical() {
+    let city = city::city();
+    let m = &city.modules;
+    let roads = m.variants_tagged("road");
+    assert!(
+        !roads.is_empty(),
+        "the rule needs roads to exist, or it biases nothing"
+    );
+    eprintln!("zoo: statistical over {} road variants", roads.len());
+
+    // Roads attract roads, out to two cells. Base 1.0 so a tile with no attractors nearby keeps its
+    // module weight untouched; strength 4.0 so an adjacent road multiplies it fivefold.
+    let inner = DistanceWeighting::new(roads.clone(), roads, 2, 1.0, 4.0);
+    let weighting = Weighted {
+        flat: m.tileset.weights.clone(),
+        inner,
+    };
+    run_zoo_weighted("statistical", Arc::new(weighting)).await;
+}
+
+/// Constrains a whole neighbourhood rather than pairs of faces: no walkway or stair within one cell of
+/// a road, diagonals included.
+///
+/// This is the kind adjacency cannot express at all, rather than a convenience over it.
+/// `AdjacencyRules` relates a cell to its six axis neighbours pairwise, so of the 26 cells in a
+/// radius-1 ball it can reach six; the 20 diagonals are beyond it entirely.
+///
+/// Deliberately shaped to *forbid a small category* rather than to *demand* one. Every counting
+/// configuration that demanded something inside a ball was either silent or impossible — four attempts
+/// — because a ball large enough to be satisfiable is large enough that the requirement never binds.
+/// Forbidding walkways near roads is satisfiable by construction, since the search can always place
+/// them elsewhere, while still having something to do.
+#[tokio::test]
+#[ignore = "rule-set zoo; run with --ignored in release mode, one at a time, with WFC_SWEEP=1"]
+async fn zoo_surrounding() {
+    let city = city::city();
+    let m = &city.modules;
+    let roads = m.variants_tagged("road");
+    let walkways = m.variants_tagged("walkway");
+    let stairs = m.variants_tagged("stair");
+    assert!(
+        !roads.is_empty() && !walkways.is_empty(),
+        "the rule needs roads and walkways to exist, or it constrains nothing"
+    );
+
+    let forbidden: std::collections::HashSet<usize> =
+        walkways.iter().chain(stairs.iter()).copied().collect();
+    let allowed: Vec<usize> = (0..m.variants.len())
+        .filter(|tile| !forbidden.contains(tile))
+        .collect();
+    eprintln!(
+        "zoo: surrounding over {} roads, forbidding {} of {} tiles in each radius-1 ball",
+        roads.len(),
+        forbidden.len(),
+        m.variants.len()
+    );
+
+    let parts: Vec<Box<dyn GlobalConstraint>> = roads
+        .iter()
+        .map(|&road| {
+            Box::new(SurroundingConstraint::new(road, allowed.clone(), 1))
+                as Box<dyn GlobalConstraint>
+        })
+        .collect();
+    run_zoo("surrounding", Some(counted(Box::new(All(parts))))).await;
+}
+
+/// Bounded but non-local in every direction: every building needs a road within three cells.
+///
+/// Counting sits between adjacency and connectivity. Like connectivity its failures can surface away
+/// from their cause; unlike connectivity its radius is bounded, so no whole-grid analysis is needed.
+/// That makes it the test of whether *unbounded* reach is what makes connectivity expensive, or
+/// merely non-locality.
+///
+/// Choosing parameters for this rule took four attempts, and the failures are worth recording because
+/// each was a different way to measure nothing.
+///
+/// `CountingConstraint` prunes only when the candidates in a ball *exactly equal* the required count,
+/// since that is when every candidate becomes load-bearing. Above that it is sound but silent; below
+/// it, the grid is already unsatisfiable. The operating band is narrow, and both edges were hit:
+///
+/// - a road within *two* cells of a door, and a road within *three* cells of a building, each produced
+///   a search line byte-identical to the control with `prunes=0` — a ball that size almost always
+///   holds more possible roads than the count demands, so slack never reached zero;
+/// - three roads within one cell of every *building* was not tight but impossible. Roads exist only at
+///   street level while `variants_tagged("building")` spans every height, so a building at z=3 could
+///   never satisfy it. The run ground through 1911 backtracks, collapsed 174 of 864 cells, and hit its
+///   iteration cap.
+///
+/// The subject is therefore doors, which are street-level by construction and, being optional, let the
+/// search avoid them where the rule cannot be met — so the constraint binds without being impossible.
+/// A count of three within one cell asks a door to face reasonably open street: at street level only
+/// about eight cells are in reach, so three is near enough the boundary for a zero-slack propagator to
+/// do visible work.
+#[tokio::test]
+#[ignore = "rule-set zoo; run with --ignored in release mode, one at a time, with WFC_SWEEP=1"]
+async fn zoo_counting() {
+    let city = city::city();
+    let m = &city.modules;
+    let roads = m.variants_tagged("road");
+    let doors: Vec<usize> = (0..m.variants.len())
+        .filter(|&tile| m.prototype_of(tile).name == "building_door")
+        .collect();
+    assert!(
+        !roads.is_empty() && !doors.is_empty(),
+        "the rule needs both doors and roads to exist, or it constrains nothing"
+    );
+    eprintln!("zoo: counting over {} doors, {} roads", doors.len(), roads.len());
+
+    let constraint = CountingConstraint::new(roads, doors, 1, 3);
+    run_zoo("counting", Some(counted(Box::new(constraint)))).await;
+}

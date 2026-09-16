@@ -18,29 +18,31 @@ pub struct RuleBuffers {
 }
 
 impl RuleBuffers {
-    /// Helper function to pack adjacency rules into a bit array
+    /// Packs the adjacency table as one bitmask per `(axis, tile)`: the set of tiles allowed on the
+    /// other side of that face.
+    ///
+    /// Each mask starts on a word boundary, `ceil(num_tiles / 32)` words long, so the propagation
+    /// shader can union the allowed neighbours of a tile with a few word ORs. Packing the table as
+    /// one flat bit array instead (bit `axis*T*T + t1*T + t2`) saves a little memory but forces the
+    /// shader to test tiles one bit at a time: about `num_tiles` tests per possible tile per axis,
+    /// which measured as the dominant cost of a propagation pass (docs/solver-redesign.md).
     pub(crate) fn pack_adjacency_rules(rules: &AdjacencyRules) -> Vec<u32> {
         let num_tiles = rules.num_tiles();
         let num_axes = rules.num_axes();
+        let words_per_row = num_tiles.div_ceil(32).max(1);
 
-        // Calculate total number of rules and required u32s
-        let total_rules = num_axes * num_tiles * num_tiles;
-        let num_u32s = (total_rules + 31) / 32; // Round up division
-
-        // Initialize bit array
-        let mut bit_array = vec![0u32; num_u32s];
-
-        // Pack each allowed rule into the bit array
+        let mut bit_array = vec![0u32; num_axes * num_tiles * words_per_row];
         for (axis, tile1, tile2) in rules.get_allowed_rules_map().keys() {
-            let rule_idx = axis * num_tiles * num_tiles + tile1 * num_tiles + tile2;
-            let u32_idx = rule_idx / 32;
-            let bit_idx = rule_idx % 32;
-
-            // Set the bit for this rule
-            bit_array[u32_idx] |= 1u32 << bit_idx;
+            let row = (axis * num_tiles + tile1) * words_per_row;
+            bit_array[row + tile2 / 32] |= 1u32 << (tile2 % 32);
         }
-
         bit_array
+    }
+
+    /// Words per `(axis, tile)` mask in [`Self::pack_adjacency_rules`]; matches the shader's
+    /// `words_per_cell()`, since both are `ceil(num_tiles / 32)`.
+    pub(crate) fn rule_words_per_row(num_tiles: usize) -> usize {
+        num_tiles.div_ceil(32).max(1)
     }
 
     /// Creates new rule-related GPU buffers.
@@ -114,15 +116,20 @@ mod tests {
 
     #[test]
     fn packs_each_allowed_rule_at_its_axis_tile_tile_bit() {
-        // propagate.wgsl reads bit `axis * n * n + tile1 * n + tile2`; host and shader must agree.
+        // propagate.wgsl reads the mask for (axis, tile1) at word `(axis * n + tile1) * words_per_row`
+        // and tests bit `tile2` within it; host and shader must agree.
         let n = 3;
         let rules = AdjacencyRules::from_allowed_tuples(n, 6, vec![(0, 0, 0), (1, 2, 1), (5, 2, 2)]);
         let words = RuleBuffers::pack_adjacency_rules(&rules);
-        assert_eq!(words.len(), (6 * n * n).div_ceil(32));
+        let per_row = RuleBuffers::rule_words_per_row(n);
+        assert_eq!(words.len(), 6 * n * per_row);
         let set_bits: Vec<usize> = (0..words.len() * 32)
             .filter(|bit| words[bit / 32] & (1 << (bit % 32)) != 0)
             .collect();
-        assert_eq!(set_bits, vec![0, n * n + 2 * n + 1, 5 * n * n + 2 * n + 2]);
+        let bit_of = |axis: usize, tile1: usize, tile2: usize| {
+            ((axis * n + tile1) * per_row + tile2 / 32) * 32 + tile2 % 32
+        };
+        assert_eq!(set_bits, vec![bit_of(0, 0, 0), bit_of(1, 2, 1), bit_of(5, 2, 2)]);
     }
 
     #[test]

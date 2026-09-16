@@ -89,6 +89,26 @@ so each one costs more on a larger grid (A-10). A trace of a smaller run splits 
 propagation and the rest between downloading the grid, selecting a cell, entropy and upload, with
 about six synchronisation points per collapse.
 
+When reading a Chrome trace from the stress suite, note that it contains no `wfc_run` span (the suite
+drives the accelerator directly), so percentages must be taken against the measured wall time rather
+than against a parent span.
+
+Where that time goes on the realistic workload, from a Chrome trace of the 24x24x8 city
+(`WFC_TRACE_CHROME=<file> cargo test -p wfc-devtools --release --test stress -- --ignored --exact stress_city_medium_24x24x8`):
+
+| Span | Count | Total | Mean |
+|---|---|---|---|
+| propagate | 7073 | 36.9 s | 5.21 ms |
+| propagation_pass | 15284 | 36.1 s | 2.36 ms |
+| download_grid | 7048 | 4.4 s | 0.63 ms |
+| upload_grid | 3524 | 2.3 s | 0.64 ms |
+| entropy_pass | 7048 | 1.6 s | 0.23 ms |
+| select_cell | 7048 | 1.5 s | 0.21 ms |
+
+**Propagation dominates at 76% of the run**, not the grid transfers that dominate the toy two-tile
+benchmark: with 81 variants each pass does far more work, and there are about two passes per collapse.
+Note also 7073 propagations for 4608 cells, so backtracking redoes roughly half as much work again.
+
 Two more numbers are worth keeping in view: backtracking-heavy runs are far slower than the median
 (one 48×48×10 run exhausted its iteration budget after ~11000 undos), and the connectivity-constrained
 8×8×5 city ranges from 5 to 136 seconds. Search cost, not just throughput, is part of the problem.

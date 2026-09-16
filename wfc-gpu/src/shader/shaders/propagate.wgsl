@@ -166,33 +166,22 @@ fn wrap_coord(coord: i32, max_dim: u32) -> u32 {
     }
 }
 
-// Pre-compute rule check cache key
-fn get_rule_cache_key(tile1: u32, tile2: u32, axis: u32) -> u32 {
-    return axis * params.num_tiles * params.num_tiles + tile1 * params.num_tiles + tile2;
+// First word of the mask of tiles allowed next to `tile` across `axis`. The table holds one
+// `words_per_cell()`-word mask per (axis, tile), word-aligned, so a mask can be read directly.
+fn rule_row(tile: u32, axis: u32) -> u32 {
+    return (axis * params.num_tiles + tile) * words_per_cell();
 }
 
-// Helper function to check adjacency rule with caching optimization
-// Assumes rules are packed tightly: rule[axis][tile1][tile2]
+// Helper function to check adjacency rule
 fn check_rule(tile1: u32, tile2: u32, axis: u32) -> bool {
-    // Bounds check for tile indices
     if (tile1 >= params.num_tiles || tile2 >= params.num_tiles || axis >= params.num_axes) {
-        return false; // Out of bounds - rule doesn't exist
+        return false;
     }
-
-    // Calculate rule index once
-    let rule_idx = get_rule_cache_key(tile1, tile2, axis);
-
-    // Determine the index within the u32 array and the bit position
-    let u32_idx = rule_idx / 32u;
-    let bit_idx = rule_idx % 32u;
-
-    // Bounds check for adjacency_rules array 
-    if (u32_idx >= (params.num_axes * params.num_tiles * params.num_tiles + 31u) / 32u) {
-        return false; // Out of bounds access
+    let index = rule_row(tile1, axis) + tile2 / 32u;
+    if (index >= arrayLength(&adjacency_rules)) {
+        return false;
     }
-
-    // Check the specific bit
-    return (adjacency_rules[u32_idx] & (1u << bit_idx)) != 0u;
+    return (adjacency_rules[index] & (1u << (tile2 % 32u))) != 0u;
 }
 
 // Helper function to get rule weight
@@ -203,9 +192,9 @@ fn get_rule_weight(tile1: u32, tile2: u32, axis: u32) -> f32 {
     if (!check_rule(tile1, tile2, axis)) {
         return 0.0;
     }
-    
-    // Calculate rule index once
-    let rule_idx = get_rule_cache_key(tile1, tile2, axis);
+
+    // Weights are keyed by the flat rule index, which is independent of how the table is packed.
+    let rule_idx = axis * params.num_tiles * params.num_tiles + tile1 * params.num_tiles + tile2;
     
     // Check if this rule has an entry in the weights buffer
     // For now, we'll use a simple linear search approach
@@ -244,10 +233,13 @@ fn compute_allowed_neighbor_mask(current_possibilities: ptr<function, Possibilit
             if (current_tile >= params.num_tiles) {
                 break;
             }
-            for (var neighbor_tile = 0u; neighbor_tile < params.num_tiles; neighbor_tile = neighbor_tile + 1u) {
-                if (check_rule(current_tile, neighbor_tile, axis_idx)) {
-                    allowed_neighbor_mask[neighbor_tile / 32u] =
-                        allowed_neighbor_mask[neighbor_tile / 32u] | (1u << (neighbor_tile % 32u));
+            // Union this tile's allowed neighbours a word at a time, rather than testing every
+            // tile pair: at 81 variants that is 3 ORs instead of 81 bit tests.
+            let row = rule_row(current_tile, axis_idx);
+            for (var w2 = 0u; w2 < words; w2 = w2 + 1u) {
+                let index = row + w2;
+                if (index < arrayLength(&adjacency_rules)) {
+                    allowed_neighbor_mask[w2] = allowed_neighbor_mask[w2] | adjacency_rules[index];
                 }
             }
         }
@@ -283,10 +275,12 @@ fn update_neighbor(neighbor_idx: u32, allowed_neighbor_mask: PossibilityMask) ->
         if (index >= arrayLength(&grid_possibilities)) {
             break;
         }
-        let old_bits = atomicLoad(&grid_possibilities[index]);
+        // atomicAnd applies the restriction in one operation. A load/modify/store pair has a window
+        // in which another thread's restriction can be read, overwritten and lost, which is why the
+        // host used to confirm the fixpoint with a sweep over every cell after every collapse.
+        let old_bits = atomicAnd(&grid_possibilities[index], allowed_neighbor_mask[w]);
         let new_bits = old_bits & allowed_neighbor_mask[w];
         if (new_bits != old_bits) {
-            atomicStore(&grid_possibilities[index], new_bits);
             changed = true;
         }
         if (new_bits != 0u) {

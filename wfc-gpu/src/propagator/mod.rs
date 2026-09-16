@@ -8,7 +8,7 @@ pub use gpu_constraint_propagator::GpuConstraintPropagator;
 
 // Strategy modules
 mod adaptive_strategy;
-mod direct_strategy;
+pub mod direct_strategy;
 mod subgrid_strategy;
 
 // Re-export strategy types

@@ -113,6 +113,10 @@ impl std::fmt::Debug for AcceleratorInstance {
 ///
 /// # Usage
 ///
+/// Cells collapsed per propagation round by default. One is the classic algorithm; larger batches
+/// trade a slightly higher contradiction rate for far fewer GPU round-trips.
+const DEFAULT_COLLAPSE_BATCH: usize = 1;
+
 /// Once initialized, the `GpuAccelerator` instance can be passed to the main WFC `run` function
 /// (or used directly) to perform entropy calculation and constraint propagation steps on the GPU.
 /// Data synchronization between CPU (`PossibilityGrid`) and GPU (`GpuBuffers`) is handled
@@ -122,9 +126,16 @@ pub struct GpuAccelerator {
     instance: Arc<RwLock<AcceleratorInstance>>,
     /// Relative weight of each tile when collapsing a cell; uniform when `None`.
     tile_weights: Option<Arc<[f32]>>,
+    /// Weighting that sees the cell and the grid around it, not just the tile; see
+    /// [`GpuAccelerator::with_cell_weighting`]. Takes precedence over `tile_weights`.
+    cell_weighting: Option<Arc<dyn wfc_core::weighting::TileWeighting>>,
     /// Whole-grid constraint enforced on the CPU before every observation; see
     /// [`GpuAccelerator::with_global_constraint`].
     global_constraint: Option<Arc<dyn wfc_core::constraint::GlobalConstraint>>,
+    /// How many cells to collapse before propagating; see [`GpuAccelerator::with_collapse_batch`].
+    collapse_batch: usize,
+    /// Seed for the collapse choice; see [`GpuAccelerator::with_seed`].
+    seed: Option<u64>,
 }
 
 impl GpuAccelerator {
@@ -291,7 +302,10 @@ impl GpuAccelerator {
         let accelerator = Self {
             instance: Arc::new(RwLock::new(instance)),
             tile_weights: None,
+            cell_weighting: None,
             global_constraint: None,
+            collapse_batch: DEFAULT_COLLAPSE_BATCH,
+            seed: None,
         };
 
         Ok(accelerator)
@@ -399,6 +413,14 @@ impl GpuAccelerator {
     {
         let start_time = Instant::now();
 
+        use rand::RngExt as _;
+
+        // Draw a seed when none was given, and report it: a thrashing run is only useful if it can be
+        // replayed (docs/thrashing.md).
+        let seed = self.seed.unwrap_or_else(rand::random);
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+        info!("WFC run seed: {seed}");
+
         // Get the required data while holding the lock briefly
         let grid_definition;
         let synchronizer;
@@ -494,6 +516,16 @@ impl GpuAccelerator {
                 .map_err(|e| WfcError::other(e.to_string()))?;
         }
         let total_cells = grid_definition.total_cells();
+        if total_cells > crate::shader::pipeline::MAX_INDEXABLE_CELLS {
+            // The entropy shader carries the winning cell index in the low bits of a packed key, so a
+            // larger grid aliases cells onto one index. Selection would then hand back a cell that is
+            // already collapsed, the solver would skip it, and the loop would spin without ever
+            // progressing. Fail loudly instead of hanging.
+            return Err(WfcError::other(format!(
+                "grid has {total_cells} cells, more than the {} addressable by the min-entropy key",
+                crate::shader::pipeline::MAX_INDEXABLE_CELLS
+            )));
+        }
         let mut collapsed_cells = 0usize;
         let mut iterations = 0;
 
@@ -505,6 +537,8 @@ impl GpuAccelerator {
         const MAX_HISTORY: usize = 2048;
         const MAX_UNDO_STEPS: usize = 64;
         const MAX_BACKTRACKS: usize = 50_000;
+        /// Manhattan distance kept between cells collapsed in the same batch.
+        const BATCH_SPACING: usize = 4;
         struct Choice {
             grid: PossibilityGrid,
             cell: (usize, usize, usize),
@@ -513,6 +547,54 @@ impl GpuAccelerator {
         let mut history: std::collections::VecDeque<Choice> = std::collections::VecDeque::new();
         let mut undo_steps = 1usize;
         let mut backtracks = 0usize;
+        // Where contradictions surface, and how far the search has to unwind, distinguish a run that is
+        // merely slow from one that keeps failing in the same place (docs/thrashing.md, H3).
+        let mut failures_by_cell: std::collections::HashMap<(usize, usize, usize), usize> =
+            std::collections::HashMap::new();
+        let mut undo_depths: Vec<usize> = Vec::new();
+        let mut progress_log: Vec<(usize, usize, usize)> = Vec::new();
+        // Where propagation actually found an empty domain, which is a different cell from the one we
+        // chose to collapse. Only the former is the real conflict site; backjumping currently aims at
+        // the latter (docs/thrashing.md).
+        let mut conflicts_by_cell: std::collections::HashMap<(usize, usize, usize), usize> =
+            std::collections::HashMap::new();
+        // Which stage produced each failure: propagation, the global constraint, or a cell that was
+        // already empty by the time we came to collapse it. These may behave nothing alike.
+        let mut failures_by_source: std::collections::HashMap<&'static str, usize> =
+            std::collections::HashMap::new();
+        // The conflict cell belonging to the failure currently being recovered from, carried from
+        // wherever propagation raised it to the backtrack block that has to act on it.
+        let mut pending_conflict: Option<(usize, usize, usize)> = None;
+        // Whether to check that backtracking only ever shrinks domains; see the check itself below.
+        // Opt-in because it walks the grid twice per backtrack.
+        let check_lost_bans = std::env::var("WFC_CHECK_TERMINATION").is_ok();
+        // An upper-bound probe, not a candidate fix: re-apply every recorded ban after each restore, to
+        // measure what perfect ban persistence would be worth before paying for it properly.
+        //
+        // **Deliberately unsound.** A ban records "this tile led to a contradiction *given these
+        // assignments*"; undoing those assignments can make it legitimately viable again, so applying
+        // bans unconditionally can exclude real solutions. Proper nogood recording keeps the condition
+        // alongside the ban (Lecoutre et al.). This exists to answer whether that complexity is worth
+        // it: if the ceiling is low, it is not.
+        let persist_bans = std::env::var("WFC_PERSIST_BANS").is_ok();
+        /// Every `(cell, tile)` the backtracking machinery has explicitly forbidden. The termination
+        /// argument rests on these surviving, so this is what has to be checked — not whether domains
+        /// widen, which they always do, because widening is what undoing means.
+        type BanLedger = std::collections::HashMap<((usize, usize, usize), usize), usize>;
+        // Each ban, mapped to the history depth at which it was made — the number of choices then in
+        // force, which is what justified it. `WFC_CONDITIONAL_BANS` re-applies a ban only while the
+        // search has not gone deeper than that, which is the sound core of what `WFC_PERSIST_BANS`
+        // does unconditionally.
+        let mut banned_ledger: BanLedger = std::collections::HashMap::new();
+        // The sound counterpart to the persistence probe: a ban records "this tile contradicted given
+        // these assignments", so it may be re-applied while those assignments still hold and not
+        // otherwise. Depth is a cheap, conservative stand-in for the assignment set: if the search is
+        // no deeper than it was when the ban was made, it has not yet built a new context beneath it.
+        // Weaker than real nogoods, which carry the antecedents themselves, and chosen because it is
+        // the least work that tests whether the ceiling is reachable (docs/solver-fit.md).
+        let conditional_bans = std::env::var("WFC_CONDITIONAL_BANS").is_ok();
+        let mut lost_ban_events = 0usize;
+        let mut lost_ban_cells = 0usize;
         // A failure carries where it happened, so the search can jump back to the choice that caused
         // it instead of undoing whatever happened to be most recent.
         let mut failure: Option<(String, Option<(usize, usize, usize)>)> = None;
@@ -533,6 +615,26 @@ impl GpuAccelerator {
                 // Conflict-directed: undo back to the most recent choice made next to where the
                 // failure surfaced, because that is what most likely caused it. A contradiction far
                 // from any recent choice falls back to undoing a doubling number of steps.
+                // How many times this cell has already failed. A cell that keeps failing means the
+                // real cause lies further back than its immediate neighbourhood, so widen the search
+                // rather than undoing the same single choice again: the previous version matched the
+                // choice it had just restored, so recovery undid exactly one step forever and the run
+                // thrashed (docs/thrashing.md).
+                // Escalate by how many times *this conflict cell* has already failed, and keep that
+                // count across successful propagations. Prosser: an accumulated set that "was reset
+                // whenever a successful forward move was made" yields an incomplete algorithm, and our
+                // doubling counter was reset exactly so, which is why every run reported a deepest undo
+                // of 2 no matter how many times it failed. POMS escalates by failed-attempt count for
+                // the same reason: without it a solver "could perpetually attempt resolution on blocks
+                // with identical initial state". `conflicts_by_cell` is never cleared, so it supplies
+                // the memory that must survive progress.
+                let escalation = pending_conflict
+                    .take()
+                    .map_or(0, |cell| *conflicts_by_cell.get(&cell).unwrap_or(&0))
+                    .min(MAX_UNDO_STEPS);
+                // Fixed radius. Widening it with the failure count was backwards: `rposition` takes the
+                // most recent choice within the radius, so a larger radius can only return an equally
+                // recent or more recent one, making the undo shallower rather than deeper.
                 let near_culprit = culprit.and_then(|(cx, cy, cz)| {
                     history.iter().rposition(|choice| {
                         let (hx, hy, hz) = choice.cell;
@@ -540,8 +642,10 @@ impl GpuAccelerator {
                     })
                 });
                 let steps = match near_culprit {
-                    Some(index) => history.len() - index,
-                    None => undo_steps,
+                    // Reach back at least as far as this conflict cell has failed, so a cell that keeps
+                    // failing is eventually recovered from past whatever actually caused it.
+                    Some(index) => (history.len() - index).max(undo_steps).max(escalation),
+                    None => undo_steps.max(escalation),
                 };
                 let mut restored = None;
                 let mut undone = 0usize;
@@ -559,8 +663,31 @@ impl GpuAccelerator {
                         "Contradiction: no choices left to undo after {backtracks} backtracks; {reason}"
                     )));
                 };
+                // Backtracking WFC is usually argued to terminate because every backtrack removes a
+                // tile from some domain, so the search cannot cycle. That argument needs the removals
+                // to survive, and ours may not: each history entry snapshots the grid *before* its
+                // collapse, so undoing several steps restores a snapshot predating any tile banned
+                // after it, discarding those bans. Whether that actually happens is a question about
+                // termination rather than speed, so it is measured rather than assumed
+                // (docs/thrashing.md). Off unless asked for: this is O(cells * tiles) per backtrack.
+                // The check itself is below, after the restore and the ban that follows it.
                 trace!("Backtracking {undone} step(s) after: {reason}");
-                undo_steps = if near_culprit.is_some() {
+                undo_depths.push(undone);
+                if let Some(cell) = culprit {
+                    *failures_by_cell.entry(cell).or_default() += 1;
+                }
+                let source = if reason.starts_with("recovery:") {
+                    "recovery_propagation"
+                } else if reason.starts_with("global constraint") {
+                    "global_constraint"
+                } else if reason.starts_with("no tiles left") {
+                    "empty_domain"
+                } else {
+                    "propagation"
+                };
+                *failures_by_source.entry(source).or_default() += 1;
+                progress_log.push((iterations as usize, collapsed_cells, backtracks));
+                undo_steps = if near_culprit.is_some() && escalation <= 1 {
                     1
                 } else {
                     (undo_steps * 2).min(MAX_UNDO_STEPS)
@@ -574,6 +701,72 @@ impl GpuAccelerator {
                     // Every tile here has now been ruled out, so the mistake lies further back.
                     failure = Some((format!("no tiles left at ({bx}, {by}, {bz})"), None));
                     continue;
+                }
+                if check_lost_bans || persist_bans || conditional_bans {
+                    if check_lost_bans {
+                        // Count tiles this machinery previously forbade that are possible again, which
+                        // is what the termination argument forbids. An earlier version compared
+                        // possibility counts before and after the restore and fired on nearly every
+                        // backtrack — measuring undo itself rather than the hazard, since restoring an
+                        // older snapshot necessarily returns the possibilities propagation had removed
+                        // since. A detector that answers "yes" to the definition of backtracking is not
+                        // a detector.
+                        let revived = banned_ledger
+                            .keys()
+                            .filter(|((bx, by, bz), tile)| {
+                                current_grid.get(*bx, *by, *bz).is_some_and(|cell| cell[*tile])
+                            })
+                            .count();
+                        if revived > 0 {
+                            lost_ban_events += 1;
+                            lost_ban_cells += revived;
+                        }
+                    }
+                    // The depth now standing is what justifies this ban: these choices led here.
+                    banned_ledger.insert(((bx, by, bz), choice.tile), history.len());
+                    if conditional_bans {
+                        // Intended as the sound core of WFC_PERSIST_BANS: re-apply a ban only while the
+                        // context that justified it still stands.
+                        //
+                        // **Unvalidated. Do not treat this as working.** Measured over eight seeds of
+                        // the range-exclusion rule it produced results byte-identical to the
+                        // unconditional probe — 194, 108, 49, 437, 15, 217, 200, 97 — so the condition
+                        // excluded nothing that changed any trajectory. Whether it excludes anything at
+                        // all is not measured: there is no counter for skipped bans, and adding one is
+                        // the first thing to do before trusting this.
+                        //
+                        // The suspicion is that depth is too coarse a proxy for the assignment set. Two
+                        // paths can reach the same depth with entirely different choices in force, so
+                        // the test can pass where the justification is gone (risking the same
+                        // unsoundness as the probe) and fail where it still holds. A real
+                        // implementation records the antecedents themselves; see docs/solver-fit.md,
+                        // which keeps that as the held-in-reserve option.
+                        let depth = history.len();
+                        for (&((lx, ly, lz), tile), &made_at) in &banned_ledger {
+                            // Deeper than the ban's own depth means the search has built a different
+                            // context beneath it, and the ban no longer follows from what is in force.
+                            if depth > made_at {
+                                continue;
+                            }
+                            if let Some(cell) = current_grid.get_mut(lx, ly, lz) {
+                                if cell[tile] && cell.count_ones() > 1 {
+                                    cell.set(tile, false);
+                                }
+                            }
+                        }
+                    }
+                    if persist_bans {
+                        // Re-apply the whole ledger, skipping any ban that would empty a cell: an
+                        // emptied cell would cascade into another failure immediately and measure the
+                        // probe's own damage rather than the ceiling it is meant to estimate.
+                        for &((lx, ly, lz), tile) in banned_ledger.keys() {
+                            if let Some(cell) = current_grid.get_mut(lx, ly, lz) {
+                                if cell[tile] && cell.count_ones() > 1 {
+                                    cell.set(tile, false);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // The GPU still holds the contradiction from the failed attempt; clear it before
@@ -599,7 +792,14 @@ impl GpuAccelerator {
                     .instrument(backtrack_span.clone())
                     .await
                 {
-                    failure = Some((e.to_string(), None));
+                    // Recovery fails too: the restored state re-propagates straight into another
+                    // contradiction. Counted apart from a fresh collapse failing, because on a
+                    // thrashing seed roughly half the backtracks are this (docs/thrashing.md).
+                    if let wfc_core::propagator::PropagationError::Contradiction(cx, cy, cz) = &e {
+                        *conflicts_by_cell.entry((*cx, *cy, *cz)).or_default() += 1;
+                        pending_conflict = Some((*cx, *cy, *cz));
+                    }
+                    failure = Some((format!("recovery: {e}"), None));
                     continue;
                 }
                 current_grid = synchronizer
@@ -618,6 +818,18 @@ impl GpuAccelerator {
                     {
                         Ok(changed) => changed,
                         Err((x, y, z)) => {
+                            // Recorded for diagnostics only. Feeding this cell into the undo
+                            // escalation, the way a propagation conflict is fed, was tried and made
+                            // things *worse*: a range-exclusion run that finished in 6.07 s with 80
+                            // backtracks stopped finishing at all, exhausting its iteration budget.
+                            //
+                            // The asymmetry is the point. A propagation conflict names the one cell
+                            // whose domain emptied, so repeated failures there really do mean the
+                            // cause lies further back. A global constraint names wherever it first
+                            // tripped — here, one of 180 composed sub-rules — so the same cell recurs
+                            // for unrelated reasons, and escalating on its count throws away good
+                            // collapses faster than the search can replace them (docs/thrashing.md).
+                            *conflicts_by_cell.entry((x, y, z)).or_default() += 1;
                             constraint_failure = Some((
                                 format!("global constraint cannot be satisfied at ({x}, {y}, {z})"),
                                 Some((x, y, z)),
@@ -628,10 +840,12 @@ impl GpuAccelerator {
                     if changed.is_empty() {
                         break;
                     }
-                    info_span!(parent: &iteration_span, "upload_grid")
-                        .in_scope(|| synchronizer.upload_grid(&current_grid))
-                        .map_err(|e| WfcError::other(e.to_string()))?;
                     let cells = changed.len();
+                    info_span!(parent: &iteration_span, "upload_cells", cells).in_scope(|| {
+                        for &(x, y, z) in &changed {
+                            synchronizer.upload_cell(&current_grid, x, y, z);
+                        }
+                    });
                     if let Err(e) = coordinator
                         .coordinate_propagation(
                             &propagator,
@@ -684,26 +898,79 @@ impl GpuAccelerator {
             }
 
             let (x, y, z) = selected_cell.unwrap();
+            // The GPU picked the lowest-entropy cell. Fill the rest of the batch from the grid already
+            // downloaded, taking fewest-possibility cells that are far enough from those chosen that
+            // they are unlikely to constrain each other before propagation runs.
+            let mut batch = vec![(x, y, z)];
+            if self.collapse_batch > 1 {
+                let mut candidates: Vec<(usize, (usize, usize, usize))> = Vec::new();
+                for cz in 0..current_grid.depth {
+                    for cy in 0..current_grid.height {
+                        for cx in 0..current_grid.width {
+                            let count = current_grid.get(cx, cy, cz).map_or(0, |cell| cell.count_ones());
+                            if count > 1 {
+                                candidates.push((count, (cx, cy, cz)));
+                            }
+                        }
+                    }
+                }
+                candidates.sort_unstable();
+                for (_, coord) in candidates {
+                    if batch.len() >= self.collapse_batch {
+                        break;
+                    }
+                    let far_enough = batch.iter().all(|&(bx, by, bz)| {
+                        bx.abs_diff(coord.0) + by.abs_diff(coord.1) + bz.abs_diff(coord.2) >= BATCH_SPACING
+                    });
+                    if far_enough {
+                        batch.push(coord);
+                    }
+                }
+            }
 
-            // Collapse the selected cell
+            // Collapse every cell in the batch, then propagate from all of them at once.
+            let mut collapsed_this_round: Vec<GridCoord> = Vec::with_capacity(batch.len());
+            let mut batch_failure = None;
+            for &(x, y, z) in &batch {
             let cell = current_grid.get_mut(x, y, z).unwrap();
             let possible_states = cell.iter_ones().collect::<Vec<_>>();
             if possible_states.is_empty() {
                 // An earlier choice emptied this cell; undo instead of failing the run.
-                failure = Some((format!("no tiles left at ({x}, {y}, {z})"), Some((x, y, z))));
+                batch_failure = Some((format!("no tiles left at ({x}, {y}, {z})"), Some((x, y, z))));
+                break;
+            }
+            if possible_states.len() == 1 {
+                // An earlier collapse in this batch already decided it.
                 continue;
             }
 
-            // Choose a remaining state, in proportion to its weight when weights are set
-            let chosen_state = match &self.tile_weights {
+            // Choose a remaining state, in proportion to its weight when weights are set.
+            //
+            // This is the only place a *statistical* rule can act. It shifts probability inside the
+            // set of tiles already legal here, so it cannot be a GlobalConstraint: `apply` may only
+            // clear bits, and a likelihood rule clears none (docs/thrashing.md).
+            use rand::distr::{Distribution, weighted::WeightedIndex};
+            let weights: Option<Vec<f32>> = match (&self.cell_weighting, &self.tile_weights) {
+                // A cell-aware weighting wins: it can express everything a flat table can.
+                (Some(weighting), _) => Some(
+                    possible_states
+                        .iter()
+                        .map(|&tile| weighting.weight(&current_grid, (x, y, z), tile))
+                        .collect(),
+                ),
+                (None, Some(flat)) => Some(possible_states.iter().map(|&tile| flat[tile]).collect()),
+                (None, None) => None,
+            };
+            let chosen_state = match weights {
                 Some(weights) => {
-                    use rand::distr::{Distribution, weighted::WeightedIndex};
-                    let distribution =
-                        WeightedIndex::new(possible_states.iter().map(|&tile| weights[tile]))
-                            .map_err(|e| WfcError::other(format!("invalid tile weights: {e}")))?;
-                    possible_states[distribution.sample(&mut rand::rng())]
+                    // Per-cell weights cannot be validated up front the way `with_tile_weights` checks
+                    // a flat table, so a bad set surfaces here as a failed run rather than a panic or
+                    // a silently skewed choice.
+                    let distribution = WeightedIndex::new(weights)
+                        .map_err(|e| WfcError::other(format!("invalid tile weights: {e}")))?;
+                    possible_states[distribution.sample(&mut rng)]
                 }
-                None => possible_states[rand::random_range(0..possible_states.len())],
+                None => possible_states[rng.random_range(0..possible_states.len())],
             };
 
             // Remember the state before the collapse so this choice can be undone.
@@ -724,25 +991,38 @@ impl GpuAccelerator {
                 ))
             })?;
             collapsed_cells += 1;
+            collapsed_this_round.push(GridCoord { x, y, z });
 
-            // Upload the updated cell state
-            info_span!(parent: &iteration_span, "upload_grid")
-                .in_scope(|| synchronizer.upload_grid(&current_grid))
-                .map_err(|e| WfcError::other(e.to_string()))?;
+            // Only this cell changed; a full upload would repack and rewrite the whole grid.
+            info_span!(parent: &iteration_span, "upload_cell", x, y, z)
+                .in_scope(|| synchronizer.upload_cell(&current_grid, x, y, z));
+            }
 
-            // Propagate constraints
+            if let Some(reason) = batch_failure {
+                failure = Some(reason);
+                continue;
+            }
+            if collapsed_this_round.is_empty() {
+                continue;
+            }
+
+            // Propagate from every cell collapsed this round: propagation is confluent, so one round
+            // over all of them reaches the same fixpoint as a round per cell.
+            let batched = collapsed_this_round.len();
+            let first = collapsed_this_round[0];
             if let Err(e) = coordinator
-                .coordinate_propagation(
-                    &propagator,
-                    &buffers,
-                    &device,
-                    &queue,
-                    vec![GridCoord { x, y, z }],
-                )
-                .instrument(info_span!(parent: &iteration_span, "propagate", x, y, z))
+                .coordinate_propagation(&propagator, &buffers, &device, &queue, collapsed_this_round)
+                .instrument(info_span!(parent: &iteration_span, "propagate", batched))
                 .await
             {
-                failure = Some((e.to_string(), Some((x, y, z))));
+                // The shader records which cell's domain emptied and direct propagation decodes it, so
+                // the true conflict site is already in hand here. Record it for now without acting on
+                // it: the cell we chose to collapse and the cell that failed are different cells.
+                if let wfc_core::propagator::PropagationError::Contradiction(cx, cy, cz) = &e {
+                    *conflicts_by_cell.entry((*cx, *cy, *cz)).or_default() += 1;
+                    pending_conflict = Some((*cx, *cy, *cz));
+                }
+                failure = Some((e.to_string(), Some((first.x, first.y, first.z))));
                 continue;
             }
 
@@ -783,6 +1063,67 @@ impl GpuAccelerator {
             )));
         }
 
+        // Search cost is as much a performance number as wall time: a batched run that is fast on
+        // average can be thrashing on a bad seed (docs/solver-fit.md).
+        info!(
+            "WFC run finished: {collapsed_cells} collapses for {total_cells} cells, \
+             {iterations} iterations, {backtracks} backtracks"
+        );
+        if std::env::var("WFC_REPORT_SEARCH").is_ok() {
+            let mut worst: Vec<_> = failures_by_cell.iter().map(|(c, n)| (*n, *c)).collect();
+            worst.sort_unstable_by(|a, b| b.cmp(a));
+            let repeated: usize = worst.iter().filter(|(n, _)| *n > 1).map(|(n, _)| n).sum();
+            let deepest = undo_depths.iter().copied().max().unwrap_or(0);
+            let mean_depth =
+                undo_depths.iter().sum::<usize>() as f64 / undo_depths.len().max(1) as f64;
+            eprintln!(
+                "search: seed={seed} collapses={collapsed_cells} cells={total_cells} \
+                 iterations={iterations} backtracks={backtracks} \
+                 distinct_failure_cells={} repeated_failures={repeated} \
+                 max_undo={deepest} mean_undo={mean_depth:.1} worst_cells={:?}",
+                failures_by_cell.len(),
+                worst.iter().take(5).collect::<Vec<_>>()
+            );
+            // The cells above are where we chose to collapse; these are where propagation actually
+            // failed. If they differ, the backjump target is aimed at the wrong place.
+            let mut conflicts: Vec<_> = conflicts_by_cell.iter().map(|(c, n)| (*n, *c)).collect();
+            conflicts.sort_unstable_by(|a, b| b.cmp(a));
+            let mut sources: Vec<_> = failures_by_source.iter().collect();
+            sources.sort_unstable();
+            eprintln!(
+                "conflicts: by_source={sources:?} distinct_conflict_cells={} worst_conflicts={:?}",
+                conflicts_by_cell.len(),
+                conflicts.iter().take(5).collect::<Vec<_>>()
+            );
+            if check_lost_bans {
+                // Non-zero means the usual argument for why backtracking WFC terminates - every
+                // backtrack removes a tile from some domain - does not hold for this run, so the
+                // search can cycle rather than merely stall.
+                eprintln!(
+                    "termination: backtracks_reviving_a_banned_tile={lost_ban_events} \
+                     bans_revived_total={lost_ban_cells} bans_recorded={}",
+                    banned_ledger.len()
+                );
+            }
+            // Totals cannot tell a slow run from a stuck one: a search that collapses and undoes the
+            // same cells forever still reports plausible counts. The series shows whether collapsed
+            // cells actually climb. Sampled, because a pathological run records thousands of points.
+            if !progress_log.is_empty() {
+                let stride = progress_log.len().div_ceil(40).max(1);
+                let series: Vec<String> = progress_log
+                    .iter()
+                    .step_by(stride)
+                    .map(|(iteration, collapsed, backtracks)| {
+                        format!("{iteration}:{collapsed}/{backtracks}")
+                    })
+                    .collect();
+                eprintln!(
+                    "progress (iteration:collapsed/backtracks, every {stride} backtrack(s)): {}",
+                    series.join(" ")
+                );
+            }
+        }
+
         Ok(current_grid)
     }
 
@@ -818,6 +1159,36 @@ impl GpuAccelerator {
     }
 
     /// Configure the accelerator with a specific entropy heuristic
+    /// Makes the run reproducible: the same seed, grid, rules and settings produce the same result.
+    ///
+    /// Propagation is already deterministic (a monotone fixpoint, so the order restrictions are applied
+    /// in cannot change it), and cell selection is a deterministic minimum, so the choice of tile was
+    /// the only source of run-to-run variation. Without a seed, a run that thrashes cannot be replayed,
+    /// bisected, or compared against another configuration: the only difference measured is luck
+    /// (docs/thrashing.md, status.md A-6).
+    pub fn with_seed(&mut self, seed: u64) -> &mut Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Collapses up to `cells` cells before each propagation round, instead of one.
+    ///
+    /// Propagation is a monotone fixpoint, so its result does not depend on the order restrictions are
+    /// applied: collapsing several cells and then propagating reaches the same fixpoint as propagating
+    /// between them. What changes is the *search* — a later choice in the batch is made without seeing
+    /// what an earlier one implied, so contradictions become more likely and backtracking absorbs
+    /// them. The payoff is that the entropy pass, the selection readback, the grid download and the
+    /// propagation round are each paid once per batch rather than once per cell: a traced city run
+    /// spent 16 s of 26.7 s propagating, across 23916 passes of which 23156 carried eight cells or
+    /// fewer (docs/solver-fit.md).
+    ///
+    /// Cells in a batch are kept a few cells apart, so they rarely constrain each other before
+    /// propagation runs.
+    pub fn with_collapse_batch(&mut self, cells: usize) -> &mut Self {
+        self.collapse_batch = cells.max(1);
+        self
+    }
+
     /// Enforces a constraint on the whole grid that adjacency rules cannot express, such as
     /// connectivity. It runs on the CPU before every observation, on the grid as downloaded after
     /// propagation; the cells it changes are uploaded and propagated until it changes nothing. If
@@ -859,6 +1230,26 @@ impl GpuAccelerator {
         }
         self.tile_weights = Some(weights.into());
         Ok(self)
+    }
+
+    /// Weights the collapse choice by a function of the cell and the grid around it, rather than by a
+    /// flat table indexed by tile.
+    ///
+    /// This is what a *statistical* rule needs — "a shop becomes likelier the more shops are nearby,
+    /// and nearer ones count for more". Such a rule removes no possibilities, so it cannot be a
+    /// [`wfc_core::constraint::GlobalConstraint`]: `apply` may only clear bits, and a likelihood rule
+    /// clears none, so it could only ever return `Ok(vec![])`. Making it prune instead would change
+    /// the set of valid outputs, which is precisely what a rule about likelihood must not do.
+    ///
+    /// Takes precedence over [`GpuAccelerator::with_tile_weights`], which stays because it validates a
+    /// flat table up front — right length, finite, positive — and a weight computed per cell cannot be
+    /// checked before the run. A bad dynamic weight surfaces as a failed run instead.
+    pub fn with_cell_weighting(
+        &mut self,
+        weighting: Arc<dyn wfc_core::weighting::TileWeighting>,
+    ) -> &mut Self {
+        self.cell_weighting = Some(weighting);
+        self
     }
 
     pub fn with_entropy_heuristic(&mut self, heuristic: CoreEntropyHeuristicType) -> &mut Self {

@@ -16,6 +16,13 @@ pub struct DirectPropagationStrategy {
     name: String,
     max_iterations: u32,
     pipelines: Arc<ComputePipelines>,
+    /// Dispatches the given number of passes without reading anything back, for measuring how much
+    /// of a pass is GPU work and how much is waiting for the two round-trips it normally performs.
+    /// Only a benchmark sets this; it produces no useful grid.
+    blind_passes: Option<u32>,
+    /// With `blind_passes`, records every dispatch into one encoder and submits once, to separate
+    /// per-submit cost from per-dispatch encoding cost.
+    blind_single_submit: bool,
 }
 
 impl DirectPropagationStrategy {
@@ -24,7 +31,85 @@ impl DirectPropagationStrategy {
             name: "Direct Propagation".to_string(),
             max_iterations,
             pipelines,
+            blind_passes: None,
+            blind_single_submit: false,
         }
+    }
+
+    /// Runs `passes` dispatches over the whole grid without the per-pass readbacks. Benchmark only:
+    /// the result is not a fixpoint and contradictions go unnoticed. See docs/performance.md.
+    #[doc(hidden)]
+    pub fn benchmark_blind_passes(max_iterations: u32, pipelines: Arc<ComputePipelines>, passes: u32) -> Self {
+        Self {
+            blind_passes: Some(passes),
+            ..Self::new(max_iterations, pipelines)
+        }
+    }
+
+    /// Like [`Self::benchmark_blind_passes`], but all dispatches go into one command buffer.
+    #[doc(hidden)]
+    pub fn benchmark_blind_batched(max_iterations: u32, pipelines: Arc<ComputePipelines>, passes: u32) -> Self {
+        Self {
+            blind_passes: Some(passes),
+            blind_single_submit: true,
+            ..Self::new(max_iterations, pipelines)
+        }
+    }
+
+    /// Records `passes` dispatches into one encoder and submits them together.
+    fn run_passes_batched(&self, buffers: &GpuBuffers, synchronizer: &GpuSynchronizer, input_count: u32, passes: u32) {
+        let _span = tracing::info_span!("propagation_passes_batched", passes).entered();
+        let device = synchronizer.device();
+        let queue = synchronizer.queue();
+        queue.write_buffer(
+            &buffers.params_uniform_buf,
+            std::mem::offset_of!(GpuParamsUniform, worklist_size) as u64,
+            bytemuck::bytes_of(&input_count),
+        );
+        let bind_groups = [
+            self.create_propagation_bind_group_for_pass(device, buffers, 0),
+            self.create_propagation_bind_group_for_pass(device, buffers, 1),
+        ];
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Propagation Passes Encoder (batched)"),
+        });
+        for pass in 0..passes {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Propagation Pass (batched)"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
+            compute_pass.set_bind_group(0, &bind_groups[(pass % 2) as usize], &[]);
+            compute_pass.dispatch_workgroups(input_count.div_ceil(PROPAGATION_WORKGROUP_SIZE), 1, 1);
+        }
+        queue.submit(Some(encoder.finish()));
+    }
+
+    /// Submits one pass without reading the contradiction flag or the worklist count.
+    fn run_pass_blind(&self, buffers: &GpuBuffers, synchronizer: &GpuSynchronizer, worklist_idx: usize, input_count: u32) {
+        let _span = tracing::info_span!("propagation_pass_blind", input_count).entered();
+        let device = synchronizer.device();
+        let queue = synchronizer.queue();
+        queue.write_buffer(
+            &buffers.params_uniform_buf,
+            std::mem::offset_of!(GpuParamsUniform, worklist_size) as u64,
+            bytemuck::bytes_of(&input_count),
+        );
+        queue.write_buffer(&buffers.worklist_buffers.worklist_count_buf, 0, bytemuck::bytes_of(&0u32));
+        let bind_group = self.create_propagation_bind_group_for_pass(device, buffers, worklist_idx);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Propagation Pass Encoder (blind)"),
+        });
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Propagation Pass (blind)"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            compute_pass.dispatch_workgroups(input_count.div_ceil(PROPAGATION_WORKGROUP_SIZE), 1, 1);
+        }
+        queue.submit(Some(encoder.finish()));
     }
 
     fn worklist_buffer(buffers: &GpuBuffers, worklist_idx: usize) -> &wgpu::Buffer {
@@ -224,28 +309,32 @@ impl crate::propagator::AsyncPropagationStrategy for DirectPropagationStrategy {
             bytemuck::cast_slice(&initial),
         );
         let mut input_count = initial.len() as u32;
-        let mut sweeping_all_cells = false;
+
+        if let Some(passes) = self.blind_passes {
+            if self.blind_single_submit {
+                self.run_passes_batched(buffers, synchronizer, input_count, passes);
+                let _ = synchronizer.device().poll(wgpu::PollType::wait_indefinitely());
+                return Ok(());
+            }
+            for _ in 0..passes {
+                self.run_pass_blind(buffers, synchronizer, worklist_idx, input_count);
+                worklist_idx = 1 - worklist_idx;
+            }
+            // One wait at the end, so the timing covers work the GPU actually finished.
+            let _ = synchronizer.device().poll(wgpu::PollType::wait_indefinitely());
+            return Ok(());
+        }
 
         for _ in 0..self.max_iterations {
             let queued = self.run_pass(buffers, synchronizer, worklist_idx, input_count)?;
 
             if queued == 0 {
-                if sweeping_all_cells {
-                    return Ok(());
-                }
-                // Neighbour updates in the shader are not atomic, so concurrent writes can lose a
-                // restriction. Confirm the fixpoint with a pass over every cell before finishing.
-                sweeping_all_cells = true;
-                queue.write_buffer(
-                    Self::worklist_buffer(buffers, worklist_idx),
-                    0,
-                    bytemuck::cast_slice(&all_cells),
-                );
-                input_count = num_cells;
-                continue;
+                // The shader restricts neighbours with atomicAnd, so no update can be lost and an
+                // empty worklist is a real fixpoint. This used to need a confirming sweep over every
+                // cell, which was half of all propagation passes (docs/solver-fit.md).
+                return Ok(());
             }
 
-            sweeping_all_cells = false;
             worklist_idx = 1 - worklist_idx;
             if queued > capacity {
                 // The output worklist overflowed and dropped entries, so re-check every cell.

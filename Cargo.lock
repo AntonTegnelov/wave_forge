@@ -2906,6 +2906,9 @@ dependencies = [
  "clap",
  "image",
  "tokio",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber",
  "wfc-core",
  "wfc-gpu",
  "wfc-rules",
@@ -2934,6 +2937,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wfc-core",
+ "wfc-devtools",
  "wfc-rules",
  "wgpu",
 ]

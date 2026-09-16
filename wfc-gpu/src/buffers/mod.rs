@@ -437,9 +437,9 @@ impl GpuBuffers {
             .await?;
 
             if data.len() >= 2 {
-                // First value is min value, second is index
+                // Word 0 is the packed (entropy, index) key written by entropy.wgsl.
                 let min_value = f32::from_bits(data[0]);
-                let min_index = data[1];
+                let min_index = crate::shader::pipeline::unpack_min_entropy_index(data[0]);
                 final_results.min_entropy_info = Some((min_value, min_index));
             }
         }
