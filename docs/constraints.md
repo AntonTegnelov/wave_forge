@@ -108,13 +108,24 @@ on an 8x8x5 grid ended in a contradiction, because every island the module set w
 becomes a failure. The fix is not to weaken the requirement but to recover from the failure: the
 solver keeps the grid state before every collapse and, on any contradiction, undoes an exponentially
 growing number of choices and forbids the choice it came back to (A-9, modelled on marian42's
-history). With that, the same test solves on the first attempt in about 18 seconds, and every
-walkable cell is connected. The lesson generalises: **a global constraint is only as usable as the
-solver's ability to take a choice back.**
+history). The lesson generalises: **a global constraint is only as usable as the solver's ability to
+take a choice back.**
+
+**Undo the cause, not the most recent choice.** Plain chronological backtracking was not enough: it
+solved one of three runs, and the other two burned 16000 iterations and ~11000 undos without
+converging. A connectivity violation surfaces long after the choice that caused it, when some earlier
+decision has already sealed a region off, so undoing the last 1-64 collapses usually retries the same
+dead end. Failures therefore carry the cell where they surfaced, and the solver jumps back to the most
+recent choice adjacent to it, falling back to the doubling step count when no such choice exists. That
+change alone took the same test from one of three runs to three of three, in 5 to 136 seconds on an
+8x8x5 grid.
 
 **What it costs.** CPU work proportional to the grid on every observation; the grid on the CPU (which
 today's run loop already needs, but a device-resident solver would not); and search, since each
-violation costs the collapses that are undone. It is the heaviest workload we run. The default city
+violation costs the collapses that are undone. Run times vary by more than an order of magnitude (5
+to 136 seconds for the same 8x8x5 city) because a run either walks into few conflicts or into many.
+It is by far the heaviest workload we run, which also makes it a useful benchmark for the solver
+redesign. The default city
 test deliberately runs without it, so the module set is still measured on its own.
 
 **When to reach for one:** a property that must hold every time (a guaranteed path from spawn to

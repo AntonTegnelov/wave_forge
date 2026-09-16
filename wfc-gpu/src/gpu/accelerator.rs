@@ -513,13 +513,15 @@ impl GpuAccelerator {
         let mut history: std::collections::VecDeque<Choice> = std::collections::VecDeque::new();
         let mut undo_steps = 1usize;
         let mut backtracks = 0usize;
-        let mut failure: Option<String> = None;
+        // A failure carries where it happened, so the search can jump back to the choice that caused
+        // it instead of undoing whatever happened to be most recent.
+        let mut failure: Option<(String, Option<(usize, usize, usize)>)> = None;
 
         // Main WFC loop
         while iterations < max_iterations {
             let iteration_span = info_span!(parent: &run_span, "iteration", iteration = iterations);
 
-            if let Some(reason) = failure.take() {
+            if let Some((reason, culprit)) = failure.take() {
                 backtracks += 1;
                 if backtracks > MAX_BACKTRACKS {
                     return Err(WfcError::other(format!(
@@ -528,10 +530,27 @@ impl GpuAccelerator {
                 }
                 let backtrack_span =
                     info_span!(parent: &iteration_span, "backtrack", undo_steps, backtracks);
+                // Conflict-directed: undo back to the most recent choice made next to where the
+                // failure surfaced, because that is what most likely caused it. A contradiction far
+                // from any recent choice falls back to undoing a doubling number of steps.
+                let near_culprit = culprit.and_then(|(cx, cy, cz)| {
+                    history.iter().rposition(|choice| {
+                        let (hx, hy, hz) = choice.cell;
+                        hx.abs_diff(cx) <= 1 && hy.abs_diff(cy) <= 1 && hz.abs_diff(cz) <= 1
+                    })
+                });
+                let steps = match near_culprit {
+                    Some(index) => history.len() - index,
+                    None => undo_steps,
+                };
                 let mut restored = None;
-                for _ in 0..undo_steps {
+                let mut undone = 0usize;
+                for _ in 0..steps {
                     match history.pop_back() {
-                        Some(choice) => restored = Some(choice),
+                        Some(choice) => {
+                            restored = Some(choice);
+                            undone += 1;
+                        }
                         None => break,
                     }
                 }
@@ -540,16 +559,20 @@ impl GpuAccelerator {
                         "Contradiction: no choices left to undo after {backtracks} backtracks; {reason}"
                     )));
                 };
-                trace!("Backtracking {undo_steps} step(s) after: {reason}");
-                undo_steps = (undo_steps * 2).min(MAX_UNDO_STEPS);
-                collapsed_cells = collapsed_cells.saturating_sub(1);
+                trace!("Backtracking {undone} step(s) after: {reason}");
+                undo_steps = if near_culprit.is_some() {
+                    1
+                } else {
+                    (undo_steps * 2).min(MAX_UNDO_STEPS)
+                };
+                collapsed_cells = collapsed_cells.saturating_sub(undone);
                 current_grid = choice.grid;
                 let (bx, by, bz) = choice.cell;
                 let cell = current_grid.get_mut(bx, by, bz).expect("cell from history is in bounds");
                 cell.set(choice.tile, false);
                 if cell.count_ones() == 0 {
                     // Every tile here has now been ruled out, so the mistake lies further back.
-                    failure = Some(format!("no tiles left at ({bx}, {by}, {bz})"));
+                    failure = Some((format!("no tiles left at ({bx}, {by}, {bz})"), None));
                     continue;
                 }
 
@@ -576,7 +599,7 @@ impl GpuAccelerator {
                     .instrument(backtrack_span.clone())
                     .await
                 {
-                    failure = Some(e.to_string());
+                    failure = Some((e.to_string(), None));
                     continue;
                 }
                 current_grid = synchronizer
@@ -595,8 +618,9 @@ impl GpuAccelerator {
                     {
                         Ok(changed) => changed,
                         Err((x, y, z)) => {
-                            constraint_failure = Some(format!(
-                                "global constraint cannot be satisfied at ({x}, {y}, {z})"
+                            constraint_failure = Some((
+                                format!("global constraint cannot be satisfied at ({x}, {y}, {z})"),
+                                Some((x, y, z)),
                             ));
                             break;
                         }
@@ -619,7 +643,7 @@ impl GpuAccelerator {
                         .instrument(info_span!(parent: &iteration_span, "constraint_propagation", cells))
                         .await
                     {
-                        constraint_failure = Some(e.to_string());
+                        constraint_failure = Some((e.to_string(), None));
                         break;
                     }
                     current_grid = synchronizer
@@ -628,8 +652,8 @@ impl GpuAccelerator {
                         .await
                         .map_err(|e| WfcError::other(e.to_string()))?;
                 }
-                if let Some(reason) = constraint_failure {
-                    failure = Some(reason);
+                if let Some(constraint_failure) = constraint_failure {
+                    failure = Some(constraint_failure);
                     continue;
                 }
             }
@@ -666,7 +690,7 @@ impl GpuAccelerator {
             let possible_states = cell.iter_ones().collect::<Vec<_>>();
             if possible_states.is_empty() {
                 // An earlier choice emptied this cell; undo instead of failing the run.
-                failure = Some(format!("no tiles left at ({x}, {y}, {z})"));
+                failure = Some((format!("no tiles left at ({x}, {y}, {z})"), Some((x, y, z))));
                 continue;
             }
 
@@ -718,7 +742,7 @@ impl GpuAccelerator {
                 .instrument(info_span!(parent: &iteration_span, "propagate", x, y, z))
                 .await
             {
-                failure = Some(e.to_string());
+                failure = Some((e.to_string(), Some((x, y, z))));
                 continue;
             }
 
