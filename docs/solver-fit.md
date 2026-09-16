@@ -68,6 +68,8 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Zoo control (adjacency only), 8 seeds | 0–8 backtracks, 2.56–3.04 s | rule-set zoo, 864 cells |
 | Zoo range exclusion, 8 seeds | **6 of 8 never finish**; the two that do: 80 and 494 backtracks | same |
 | Zoo counting, 8 seeds | 1–48 backtracks, worse than control on 6 of 8 | same |
+| Zoo surrounding, seeds 1/5/8 | 11, 6, **did not finish**; prunes 142 and 9 | same |
+| Same, failure count vs cost | failures 6 and 6 on both finishing seeds, prunes differ 16× | out-of-sample check |
 | Backtracks vs constraint failures | range exclusion: **exactly equal** (80/80, 494/494) | same |
 | Same, counting | monotone, 2–4× the failure count | same |
 | Range exclusion at 12.5× budget, seed 5 | **finishes**: 98.8 s, 4962 backtracks, 4927 constraint failures | no `WFC_SWEEP` |

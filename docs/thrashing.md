@@ -663,6 +663,34 @@ was drawn from a single rule kind, and generalised one measurement too early.
 One seed per kind is an anecdote, so this is written as a hypothesis with a named discriminator
 (failure count, not reach) that a multi-seed sweep can falsify.
 
+### A fourth kind: surrounding neighbourhoods
+
+The last constraint kind the zoo was missing. No walkway or stair within one cell of a road, diagonals
+included — of the 26 cells in a radius-1 ball, adjacency rules can reach six, so this exercises a
+propagation radius nothing else here does.
+
+| Seed | Control | Surrounding | Prunes | Constraint failures |
+|---|---|---|---|---|
+| 1 | 2 | 11 (3.11 s) | 142 | 6 |
+| 5 | 0 | 6 (2.76 s) | 9 | 6 |
+| 8 | 8 | **did not finish** (547/864) | — | — |
+
+**It fired on its first configuration**, which no counting configuration managed in four attempts. The
+design rule that produced it is worth keeping: *forbid a small category rather than demand one*. A ball
+large enough to be satisfiable is large enough that a requirement inside it never binds, whereas a
+prohibition inside the same ball binds immediately and stays satisfiable — the search can put the
+forbidden thing elsewhere.
+
+"Satisfiable by construction" was still too strong, though. Seed 8 does not finish. Being able to place
+walkways elsewhere *in principle* does not mean being able to from every partial state the search
+actually reaches.
+
+**The discriminator makes a successful out-of-sample prediction here.** The two finishing seeds have
+identical constraint failures — 6 and 6 — and similar cheap outcomes, while their prune counts differ
+sixteenfold (142 against 9). Pruning volume tracks nothing; failure count tracks cost. That rule was
+formed on range exclusion and counting, and it holds on a kind it was not fitted to, which is worth
+more than the seeds it came from.
+
 ### The sweep falsified half of it
 
 Eight seeds, all three kinds, same grid and budget. Backtracks, with constraint failures in brackets:
