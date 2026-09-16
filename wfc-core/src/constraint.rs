@@ -354,6 +354,95 @@ impl GlobalConstraint for RangeExclusionConstraint {
     }
 }
 
+/// Constrains a cell's whole neighbourhood rather than its faces: every cell within `radius` of one
+/// holding `subject` must hold one of `allowed`.
+///
+/// This is the kind adjacency rules cannot express, and not merely a convenience over them.
+/// `AdjacencyRules` relates a cell to its six axis neighbours one pair at a time, so a radius-1 ball —
+/// 26 neighbours — leaves 20 diagonals that no adjacency rule can reach at all.
+///
+/// Like the others it waits until the subject cell is *decided*. While a cell might still hold
+/// something else it implies nothing about its surroundings, and banning early would remove solutions.
+pub struct SurroundingConstraint {
+    subject: usize,
+    allowed: Vec<usize>,
+    radius: usize,
+}
+
+impl SurroundingConstraint {
+    /// Requires every cell within Chebyshev `radius` of a `subject` cell to hold one of `allowed`.
+    pub fn new(subject: usize, allowed: impl IntoIterator<Item = usize>, radius: usize) -> Self {
+        Self {
+            subject,
+            allowed: allowed.into_iter().collect(),
+            radius,
+        }
+    }
+}
+
+impl GlobalConstraint for SurroundingConstraint {
+    fn apply(&self, grid: &mut PossibilityGrid) -> Result<Vec<Cell>, Cell> {
+        let (width, height, depth) = (grid.width, grid.height, grid.depth);
+        let mut subjects = Vec::new();
+        for z in 0..depth {
+            for y in 0..height {
+                for x in 0..width {
+                    let decided_subject = grid
+                        .get(x, y, z)
+                        .is_some_and(|cell| cell.count_ones() == 1 && cell[self.subject]);
+                    if decided_subject {
+                        subjects.push((x, y, z));
+                    }
+                }
+            }
+        }
+
+        let r = self.radius as isize;
+        let mut changed = Vec::new();
+        for (x, y, z) in subjects {
+            for dz in -r..=r {
+                for dy in -r..=r {
+                    for dx in -r..=r {
+                        if dx == 0 && dy == 0 && dz == 0 {
+                            continue;
+                        }
+                        let moved = |v: usize, d: isize, size: usize| {
+                            v.checked_add_signed(d).filter(|&v| v < size)
+                        };
+                        let (Some(nx), Some(ny), Some(nz)) = (
+                            moved(x, dx, width),
+                            moved(y, dy, height),
+                            moved(z, dz, depth),
+                        ) else {
+                            continue;
+                        };
+                        let Some(cell) = grid.get_mut(nx, ny, nz) else {
+                            continue;
+                        };
+                        // Report a cell only when a bit was actually cleared: the solver re-applies
+                        // until nothing changes, with no iteration cap of its own.
+                        let mut cleared = false;
+                        for tile in 0..cell.len() {
+                            if cell[tile] && !self.allowed.contains(&tile) {
+                                cell.set(tile, false);
+                                cleared = true;
+                            }
+                        }
+                        if !cleared {
+                            continue;
+                        }
+                        if cell.not_any() {
+                            return Err((nx, ny, nz));
+                        }
+                        changed.push((nx, ny, nz));
+                    }
+                }
+            }
+        }
+        Ok(changed)
+    }
+}
+
 /// Requires at least `count` cells holding one of `wanted` within a radius of every cell that must
 /// satisfy it, for example "at least three of either shop or office within three cells".
 ///
@@ -632,6 +721,34 @@ mod tests {
             2,
             "three above the source is past the listed offsets"
         );
+    }
+
+    /// Everything around a WALL must be FLOOR.
+    fn wall_surrounded_by_floor() -> SurroundingConstraint {
+        SurroundingConstraint::new(WALL, [FLOOR], 1)
+    }
+
+    #[test]
+    fn surrounding_bans_everything_not_allowed_in_the_ball() {
+        let mut grid = row(&[&[WALL], &[WALL, FLOOR]]);
+        assert_eq!(
+            wall_surrounded_by_floor().apply(&mut grid),
+            Ok(vec![(1, 0, 0)])
+        );
+        assert_eq!(tiles(&grid, 1), vec![FLOOR]);
+    }
+
+    #[test]
+    fn surrounding_stays_silent_while_the_subject_is_undecided() {
+        let mut grid = row(&[&[WALL, FLOOR], &[WALL, FLOOR]]);
+        assert_eq!(wall_surrounded_by_floor().apply(&mut grid), Ok(vec![]));
+        assert_eq!(grid.get(1, 0, 0).unwrap().count_ones(), 2);
+    }
+
+    #[test]
+    fn surrounding_reports_the_cell_it_empties() {
+        let mut grid = row(&[&[WALL], &[WALL]]);
+        assert_eq!(wall_surrounded_by_floor().apply(&mut grid), Err((1, 0, 0)));
     }
 
     #[test]
