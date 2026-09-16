@@ -175,6 +175,27 @@ tests per possible tile with 3 word-ORs — roughly 27x less inner-loop work at 
 Block-local solving (one workgroup looping over a block in workgroup memory) remains interesting for
 *streaming*, and the 13-18x result shows it is viable, but it is no longer the performance fix.
 
+Two consequences worth stating, because they reverse earlier conclusions:
+
+- **There is no meaningful "dispatch floor".** At 0.099 ms, the three dispatches per collapse across
+  4608 cells cost about 1.4 s of a ~48 s run. Restructuring the loop to fit more collapses per
+  dispatch is a streaming feature, not a performance fix.
+- **The atomics on the possibility array turned out to be load-bearing, and this passage was wrong.**
+  It argued that because propagation only clears bits, racing threads converge and the atomics could be
+  dropped. That is true of an atomic AND, but the shader was doing a *load, modify, store*: between the
+  load and the store another thread's restriction can be read, overwritten and lost. That is precisely
+  why the host re-ran propagation over every cell after each collapse. Replacing the sequence with
+  `atomicAnd` made those sweeps unnecessary and took the city run from 37.0 s to 25.9 s. Kept here as a
+  correction rather than deleted, because the faulty step was "monotone writes converge" — true for the
+  values, false for a read-modify-write.
+
+It is also worth recording the architecture that the literature actually proves out, as a named
+alternative rather than an assumption: the one system in this survey that beat a competition-winning
+parallel SAT baseline (GPUShareSat) keeps **every dependent decision on the CPU** and uses the GPU as
+an asynchronous bulk service the CPU never blocks on. Our solver instead blocks on the device at every
+dependent step. Given that every published GPU WFC lost to its CPU baseline, "CPU owns the search, GPU
+does batched off-critical-path work" deserves to be costed rather than dismissed.
+
 ## How we will know it worked
 
 The stress suite is the yardstick, run in release with the same three workloads. A change is kept when
