@@ -89,6 +89,10 @@ so each one costs more on a larger grid (A-10). A trace of a smaller run splits 
 propagation and the rest between downloading the grid, selecting a cell, entropy and upload, with
 about six synchronisation points per collapse.
 
+When reading a Chrome trace from the stress suite, note that it contains no `wfc_run` span (the suite
+drives the accelerator directly), so percentages must be taken against the measured wall time rather
+than against a parent span.
+
 Where that time goes on the realistic workload, from a Chrome trace of the 24x24x8 city
 (`WFC_TRACE_CHROME=<file> cargo test -p wfc-devtools --release --test stress -- --ignored --exact stress_city_medium_24x24x8`):
 
