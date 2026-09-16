@@ -74,15 +74,21 @@ region and its neighbours, not the world.
 
 ## Baseline
 
-Measured on an RTX 3070 through the container's translation layer, release build, before the #7 work:
+Measured on an RTX 3070 through the container's translation layer, release build, before the #7 work.
+From the stress suite ([testing.md](testing.md)):
 
-| Workload | Time |
-|---|---|
-| Permissive 2-tile 16³ | 20.6 s (4096 collapses, ~5 ms each) |
-| Permissive 2-tile 8³ | 1.67 s |
-| Structured rules 16³ | 155 ms |
+| Workload | Cells | Tiles | Run | Cells/s |
+|---|---|---|---|---|
+| Permissive 2-tile 24³ | 13824 | 2 | 96.0 s | 144 |
+| City 24×24×8 | 4608 | 81 | 45.3 s | 102 |
+| City 48×48×10 | 23040 | 81 | 403.8 s | 57 |
 
-Roughly half the time is propagation, with the rest split between downloading the grid, selecting a
-cell, entropy and upload. The dominant structural cost is about six synchronisation points per
-collapse and moving the whole grid both ways every iteration. The city and stress suite provide the
-realistic numbers to improve on.
+Throughput falls as the grid grows even though the rules do not change, which points at per-collapse
+overhead rather than propagation cost: the whole grid crosses the CPU/GPU boundary on every collapse,
+so each one costs more on a larger grid (A-10). A trace of a smaller run splits roughly half into
+propagation and the rest between downloading the grid, selecting a cell, entropy and upload, with
+about six synchronisation points per collapse.
+
+Two more numbers are worth keeping in view: backtracking-heavy runs are far slower than the median
+(one 48×48×10 run exhausted its iteration budget after ~11000 undos), and the connectivity-constrained
+8×8×5 city ranges from 5 to 136 seconds. Search cost, not just throughput, is part of the problem.
