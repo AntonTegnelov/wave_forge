@@ -120,6 +120,26 @@ This is evidence for **H3** (thrashing is a recovery failure) over a simple cont
 contradictions alone drove it, the distribution would be smooth rather than split into 15-75 and
 1322-4801.
 
+## Experimental setup
+
+The 24x24x8 stress city takes 6-30 s per sample and thrashing samples hit their cap, which makes it a
+poor instrument for a study that needs hundreds of runs. The **12x12x6 E2E city (864 cells)** asks the
+same question at roughly a twentieth of the cost, exhibits the same bimodality, and already reports the
+search statistics. It is the primary instrument; the stress city confirms findings rather than
+discovering them.
+
+Two environment switches keep experiments honest:
+
+- `WFC_SEED` fixes the collapse choice, so a comparison between configurations is a real comparison and
+  a failure can be replayed.
+- `WFC_SWEEP` drops the harness to one attempt with a tight iteration budget, so a configuration that
+  thrashes reports quickly instead of retrying twenty times. (The first sweep without it spent forty
+  minutes in silence before reporting a single number.)
+
+`WFC_REPORT_SEARCH` prints, per run: seed, collapses, cells, iterations, backtracks, how many distinct
+cells contradictions surfaced at, how many of those failed more than once, and the deepest and mean
+undo. The repeated-failure count is the direct test of H3.
+
 ## Status
 
 - Reproducibility: **not yet** — seeding is the current work.
