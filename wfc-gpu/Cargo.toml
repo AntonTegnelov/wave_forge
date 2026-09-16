@@ -38,6 +38,7 @@ anyhow = "1.0.104"
 regex = "1.13.1"  # For parsing grid coordinates from error strings
 
 [dev-dependencies]
+wfc-devtools = { path = "../wfc-devtools" }
 env_logger = "0.11.11"
 rand = "0.10.2"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
