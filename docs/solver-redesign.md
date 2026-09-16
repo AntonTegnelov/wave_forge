@@ -85,11 +85,9 @@ The sources agree with the measurement and warn about the obvious fixes:
 Ranked by expected win per unit of risk. Each step is measured against the stress suite before the
 next is started; nothing here is committed to on theory alone.
 
-1. **Stop paying the fixed cost per tiny pass.** Make propagation dispatch the whole grid (AC-1 style)
-   or a large batch, and let a device-side worklist counter drive `dispatch_workgroups_indirect` so the
-   host does not decide how big the next pass is. Expected: most of the 36.9 s, since a full-grid pass
-   costs 16% more than a one-cell pass today. Risk: low; the kernel already handles a full sweep, and
-   propagation is a monotone fixpoint, so extra work per pass cannot change the result.
+1. ~~**Stop paying the fixed cost per tiny pass** by sweeping the whole grid instead.~~ **Tried, and it
+   made the realistic workload slower** — see "What sweeping actually did" below. The dispatch cost is
+   real, but enlarging each pass is the wrong way to amortise it.
 2. **Keep the loop on the device between collapses.** Record K iterations of
    (entropy → select → collapse → propagate) into one command buffer, with an early-out flag so
    finished dispatches become no-ops, and read back only every K iterations or on a contradiction. This
@@ -115,6 +113,30 @@ next is started; nothing here is committed to on theory alone.
 **Explicitly not doing yet:** persistent kernels (not expressible in WGSL), Morton/space-filling
 layouts (the one study that searched the space found no win on stencils), and SIMD micro-optimisation
 (layout and dispatch dominate; the CPU-side bitset scan already captures most of the available win).
+
+## What sweeping actually did
+
+The first change followed straight from the micro-benchmark: if a pass costs the same for 1 cell as
+for 4608, then dispatch the whole grid whenever the worklist is small. Measured on the stress suite:
+
+| Sweep rule | City 24×24×8 | Permissive 24³ |
+|---|---|---|
+| None (baseline) | 45.3 s (102 cells/s) | 96.0 s (144 cells/s) |
+| Worklist < ¼ of the grid | 53.0 s (87) | 81.3 s (170) |
+| Tile-visit budget (sweep under ~400 cells at 81 variants) | 57.6 s (80) | 76.9 s (180) |
+
+**It helps the two-tile grid by 15–20% and costs the 81-variant city 17–27%.** Correctness was
+unaffected throughout. The reason the micro-benchmark misled us: it measured a freshly constrained
+grid, where most cells hold few possibilities. A swept cell is not free once tile count is high,
+because the shader unions the allowed neighbours of *every tile still possible* in that cell — a
+4608-cell sweep is about 373000 tile-visits at 81 variants against 9000 at two. Lowering the threshold
+did not rescue it, because the city's cheap passes (70% carry ≤8 cells) are exactly the ones that then
+trigger a sweep.
+
+Reverted. The lesson is kept: **the fixed cost per dispatch is real, but it must be amortised over more
+*collapses*, not over more cells per pass.** That is step 2, and it is now the first thing to build.
+Note also that the city baseline itself varies (45.3 s and 48.7 s on two runs) because backtracking
+counts differ, so any future change on this workload needs repeated runs, not one sample.
 
 ## How we will know it worked
 
