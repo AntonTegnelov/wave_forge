@@ -628,10 +628,12 @@ impl GpuAccelerator {
                     if changed.is_empty() {
                         break;
                     }
-                    info_span!(parent: &iteration_span, "upload_grid")
-                        .in_scope(|| synchronizer.upload_grid(&current_grid))
-                        .map_err(|e| WfcError::other(e.to_string()))?;
                     let cells = changed.len();
+                    info_span!(parent: &iteration_span, "upload_cells", cells).in_scope(|| {
+                        for &(x, y, z) in &changed {
+                            synchronizer.upload_cell(&current_grid, x, y, z);
+                        }
+                    });
                     if let Err(e) = coordinator
                         .coordinate_propagation(
                             &propagator,
@@ -725,10 +727,10 @@ impl GpuAccelerator {
             })?;
             collapsed_cells += 1;
 
-            // Upload the updated cell state
-            info_span!(parent: &iteration_span, "upload_grid")
-                .in_scope(|| synchronizer.upload_grid(&current_grid))
-                .map_err(|e| WfcError::other(e.to_string()))?;
+            // The collapse changed exactly one cell; uploading the whole grid would repack and
+            // rewrite every cell for it.
+            info_span!(parent: &iteration_span, "upload_cell", x, y, z)
+                .in_scope(|| synchronizer.upload_cell(&current_grid, x, y, z));
 
             // Propagate constraints
             if let Err(e) = coordinator
