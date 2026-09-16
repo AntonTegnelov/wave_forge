@@ -561,6 +561,16 @@ impl GpuAccelerator {
         // The conflict cell belonging to the failure currently being recovered from, carried from
         // wherever propagation raised it to the backtrack block that has to act on it.
         let mut pending_conflict: Option<(usize, usize, usize)> = None;
+        // Whether to check that backtracking only ever shrinks domains; see the check itself below.
+        // Opt-in because it walks the grid twice per backtrack.
+        let check_lost_bans = std::env::var("WFC_CHECK_TERMINATION").is_ok();
+        /// Every `(cell, tile)` the backtracking machinery has explicitly forbidden. The termination
+        /// argument rests on these surviving, so this is what has to be checked — not whether domains
+        /// widen, which they always do, because widening is what undoing means.
+        type BanLedger = std::collections::HashSet<((usize, usize, usize), usize)>;
+        let mut banned_ledger: BanLedger = std::collections::HashSet::new();
+        let mut lost_ban_events = 0usize;
+        let mut lost_ban_cells = 0usize;
         // A failure carries where it happened, so the search can jump back to the choice that caused
         // it instead of undoing whatever happened to be most recent.
         let mut failure: Option<(String, Option<(usize, usize, usize)>)> = None;
@@ -629,6 +639,14 @@ impl GpuAccelerator {
                         "Contradiction: no choices left to undo after {backtracks} backtracks; {reason}"
                     )));
                 };
+                // Backtracking WFC is usually argued to terminate because every backtrack removes a
+                // tile from some domain, so the search cannot cycle. That argument needs the removals
+                // to survive, and ours may not: each history entry snapshots the grid *before* its
+                // collapse, so undoing several steps restores a snapshot predating any tile banned
+                // after it, discarding those bans. Whether that actually happens is a question about
+                // termination rather than speed, so it is measured rather than assumed
+                // (docs/thrashing.md). Off unless asked for: this is O(cells * tiles) per backtrack.
+                // The check itself is below, after the restore and the ban that follows it.
                 trace!("Backtracking {undone} step(s) after: {reason}");
                 undo_depths.push(undone);
                 if let Some(cell) = culprit {
@@ -659,6 +677,26 @@ impl GpuAccelerator {
                     // Every tile here has now been ruled out, so the mistake lies further back.
                     failure = Some((format!("no tiles left at ({bx}, {by}, {bz})"), None));
                     continue;
+                }
+                if check_lost_bans {
+                    // Count tiles this machinery previously forbade that are possible again, which is
+                    // the thing the termination argument forbids. An earlier version of this check
+                    // compared possibility counts before and after the restore and fired on nearly
+                    // every backtrack — measuring undo itself rather than the hazard, since restoring
+                    // an older snapshot necessarily returns the possibilities that propagation had
+                    // removed since. A detector that answers "yes" to the definition of backtracking
+                    // is not a detector.
+                    let revived = banned_ledger
+                        .iter()
+                        .filter(|((bx, by, bz), tile)| {
+                            current_grid.get(*bx, *by, *bz).is_some_and(|cell| cell[*tile])
+                        })
+                        .count();
+                    if revived > 0 {
+                        lost_ban_events += 1;
+                        lost_ban_cells += revived;
+                    }
+                    banned_ledger.insert(((bx, by, bz), choice.tile));
                 }
 
                 // The GPU still holds the contradiction from the failed attempt; clear it before
@@ -970,6 +1008,16 @@ impl GpuAccelerator {
                 conflicts_by_cell.len(),
                 conflicts.iter().take(5).collect::<Vec<_>>()
             );
+            if check_lost_bans {
+                // Non-zero means the usual argument for why backtracking WFC terminates - every
+                // backtrack removes a tile from some domain - does not hold for this run, so the
+                // search can cycle rather than merely stall.
+                eprintln!(
+                    "termination: backtracks_reviving_a_banned_tile={lost_ban_events} \
+                     bans_revived_total={lost_ban_cells} bans_recorded={}",
+                    banned_ledger.len()
+                );
+            }
             // Totals cannot tell a slow run from a stuck one: a search that collapses and undoes the
             // same cells forever still reports plausible counts. The series shows whether collapsed
             // cells actually climb. Sampled, because a pathological run records thousands of points.
