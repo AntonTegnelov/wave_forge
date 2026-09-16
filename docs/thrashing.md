@@ -349,6 +349,43 @@ marian42 reports the *opposite* failure to ours — "errors are recognized very 
 steps being backtracked" — deep undos where ours are too shallow. DeBroglie documents backtracking as
 complete but slow and memory-hungry, "generally only appropriate for generating small arrays."
 
+## Fourth data: half the backtracks are the recovery failing
+
+The shader records which cell's domain actually emptied, and the solver now reports it alongside the
+stage that raised each failure. Seed 8:
+
+```
+conflicts: by_source=[("propagation", 197)] distinct_conflict_cells=3
+           worst_conflicts=[(98, (10, 6, 4)), (1, (1, 11, 1)), (1, (1, 11, 0))]
+```
+
+**One source, not several.** All 197 failures come from propagation. The global constraint never fails
+on this seed, and no cell is ever found already empty at collapse time. Question 3 of this document —
+are there several distinct causes — has a negative answer *for this seed*: the connectivity constraint
+is not implicated, so H4 is simply not exercised here and remains untested.
+
+**The counters disagree, and that is the finding.** `by_source` counts 197, but the conflict cells
+total 100 (98 + 1 + 1). `failures_by_cell` independently also totals 100. The missing 97 failures are
+raised by the *re-propagation inside the backtrack path*, which reports no culprit and was not
+instrumented. So **roughly half of this seed's backtracks are the recovery itself failing**: the search
+restores a snapshot, bans a tile, re-propagates, and lands directly in another contradiction. The
+plateau is not simply "collapse, fail, repeat" — it is closer to "collapse, fail, recover, fail again
+while recovering".
+
+**The reported conflict site is stable.** (10, 6, 4) with 98 hits, identical across three replays. This
+was worth checking rather than assuming: `propagate.wgsl` writes it with a plain `atomicStore`, not a
+min or a compare-exchange, so with several workgroups failing in one pass it is last-writer-wins. It
+could have jittered between runs, which would have made it useless as a backjump target. At this grid
+size it does not.
+
+**A correction to our own lead.** The conflict cell (10, 6, 4) and the collapse site (9, 5, 4) are
+different cells, which is what we predicted — but they are only Chebyshev distance 1 apart. Seed 28
+shows the same pattern: conflicts at (11, 9, 1) and (11, 8, 4) against collapse sites (10, 9, 1) and
+(11, 9, 4). Aiming the backjump at the true conflict cell is therefore *more correct* but touches
+almost the same neighbourhood, and **should not be expected to fix thrashing on its own**. The
+literature's diagnosis stands: what is missing is accumulation across failures, not a better-placed
+radius.
+
 ## Status
 
 - Reproducibility: **yes** — seeded choice plus a deterministic selection reduction, verified on the
