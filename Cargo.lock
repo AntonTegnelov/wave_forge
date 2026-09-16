@@ -2937,6 +2937,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wfc-core",
+ "wfc-devtools",
  "wfc-rules",
  "wgpu",
 ]
