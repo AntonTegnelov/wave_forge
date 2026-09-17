@@ -260,6 +260,12 @@ Ranked by how directly each makes the work GPU-shaped, and by the least work to 
    propagate every candidate tile of the chosen cell in parallel and discard those that contradict.
    Probably low value on adjacency-only rules, where the city backtracks rarely, so it gets a cheap
    CPU-side count of avoidable backtracks before any shader work.
+   **First measurement** (one build, RTX 3070 through dozen, see [solver-fit.md](solver-fit.md)):
+   none of the falsifiers hit, but the shape differs from the prediction. One chunk alone takes
+   29.7 ms, ten times one CPU thread, at about 13 µs per workgroup step. 64 chunks cost 3.7 times one
+   chunk rather than 1 to 2 times, and 256 chunks reach 0.91 ms per chunk, three times one CPU thread
+   but below a 12-core CPU. Per-step cost, not the work in a step, sets the price: a sweep does little
+   (a collapse dirties a handful of cells) while every step pays a barrier across 256 invocations.
 5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
 
 ## How we will know it worked

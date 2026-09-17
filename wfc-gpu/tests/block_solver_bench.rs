@@ -678,3 +678,100 @@ fn one_chunk_solves_validly_and_reproducibly() {
     assert!(first == again, "the same seed reproduces the chunk");
     assert!(first != other, "another seed gives another chunk");
 }
+
+/// Median of `samples`, which must not be empty.
+fn median(mut samples: Vec<f64>) -> f64 {
+    samples.sort_by(f64::total_cmp);
+    samples[samples.len() / 2]
+}
+
+/// How chunk throughput scales with the number of chunks in one dispatch, next to one CPU thread
+/// running the reference solver on the same chunk in the same build.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn chunk_throughput_against_the_cpu_reference() {
+    let city = city::city();
+    let m = &city.modules;
+    let (w, h, d) = (CX as usize, CY as usize, CZ as usize);
+    let initial = reference::city_initial_cells(&city, w, h, d);
+
+    // The CPU yardstick: sixteen seeds of the same chunk, one thread, after one warm-up solve.
+    let solver = ReferenceSolver::new(&m.rules, &m.tileset.weights, w, h, d);
+    solver.solve(initial.clone(), 0);
+    let cpu_ms = median(
+        (1..=16)
+            .map(|seed| solver.solve(initial.clone(), seed).seconds * 1000.0)
+            .collect(),
+    );
+    eprintln!(
+        "block_solver: cpu reference {cpu_ms:.3} ms per {w}x{h}x{d} chunk (median of 16 seeds, one thread)"
+    );
+
+    let gpu = bench_device();
+    let params = Params {
+        mode: 1,
+        max_steps: 50_000,
+        seed: 7,
+        max_attempts: 64,
+    };
+    for chunks in [1u32, 16, 64, 256] {
+        let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, chunks);
+        let words: Vec<u32> = (0..chunks).flat_map(|_| to_words(&initial)).collect();
+        gpu.queue
+            .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&words));
+        // Pipeline creation and the first dispatches run cold; the GPU also raises its clocks under
+        // load, so only warm samples are compared.
+        for _ in 0..3 {
+            kernel.run(&gpu, params);
+        }
+        let mut samples = Vec::new();
+        for _ in 0..5 {
+            let started = std::time::Instant::now();
+            kernel.run(&gpu, params);
+            samples.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        let wall_ms = median(samples);
+
+        let stats = read_u32s(&gpu, &kernel.stats);
+        let records: Vec<&[u32]> = stats.chunks(STATS as usize).collect();
+        let domains = from_words(&read_u32s(&gpu, &kernel.out));
+        let mut failed = 0;
+        for (chunk, record) in records.iter().enumerate() {
+            if record[0] != 0 {
+                failed += 1;
+                continue;
+            }
+            let cells = &domains[chunk * CELLS as usize..(chunk + 1) * CELLS as usize];
+            let grid = wfc_devtools::TileGrid::new(w, h, d, decided_tiles(cells, &initial))
+                .expect("dimensions match");
+            let violations = wfc_devtools::adjacency_violations(
+                &grid,
+                &m.rules,
+                wfc_core::BoundaryCondition::Finite,
+            );
+            assert!(
+                violations.is_empty(),
+                "chunk {chunk}: {} violations",
+                violations.len()
+            );
+        }
+        let collapses: u32 = records.iter().map(|r| r[2]).sum();
+        let sweeps: u32 = records.iter().map(|r| r[1]).sum();
+        let mut restarts: Vec<u32> = records.iter().map(|r| r[3]).collect();
+        restarts.sort_unstable();
+        let cells = f64::from(chunks * CELLS);
+        eprintln!(
+            "block_solver: chunks={chunks} wall_ms={wall_ms:.2} ms_per_chunk={:.3} cells_per_s={:.0} \
+             vs_cpu_thread={:.2}x failed={failed} collapses={collapses} sweeps_per_collapse={:.2} \
+             us_per_collapse={:.1} restarts[min,median,max]=[{},{},{}]",
+            wall_ms / f64::from(chunks),
+            cells / (wall_ms / 1000.0),
+            cpu_ms * f64::from(chunks) / wall_ms,
+            f64::from(sweeps) / f64::from(collapses.max(1)),
+            wall_ms * 1000.0 / f64::from(collapses.max(1)),
+            restarts[0],
+            restarts[restarts.len() / 2],
+            restarts[restarts.len() - 1],
+        );
+    }
+}
