@@ -438,14 +438,13 @@ impl ShaderOptimizer {
         }
 
         // Remove extra whitespace
-        let result = result
+
+        result
             .lines()
             .map(|line| line.trim())
             .filter(|line| !line.is_empty())
             .collect::<Vec<&str>>()
-            .join("\n");
-
-        result
+            .join("\n")
     }
 }
 
@@ -499,14 +498,4 @@ fn main() -> io::Result<()> {
 
     println!("Shader optimization complete.");
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_shader_optimizer() {
-        // Add actual tests for shader optimizer functionality
-        // For now, just verify the module compiles
-        assert!(true);
-    }
 }

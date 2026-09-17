@@ -547,13 +547,3 @@ fn main() -> io::Result<()> {
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_shader_validator() {
-        // Add actual tests for shader validator functionality
-        // For now, just verify the module compiles
-        assert!(true);
-    }
-}
