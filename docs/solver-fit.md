@@ -102,6 +102,8 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Same, slowest against mean steps, r=1 | 1915 against 456 (restart-only r=0: 9917 against 2620) | same |
 | Same, noise | single rows at 2 to 9 times the typical µs per step (112 µs, 39 µs against 12 to 15) despite medians of 5 | same; treat one row as indicative, not settled |
 | Checkpoint ring bug, found by the 64-chunk validity test | a chunk reported success with 2 empty cells: undo restored slot k after an earlier, deeper stretch of the attempt had overwritten it at round k + 32, possibly mid-contradiction | fixed by undoing only to rounds with k + 32 above the deepest round reached; a restored empty cell now fails the chunk loudly, and removing the guard trips that check on the same chunk |
+| CPU reference on all 24 threads (Ryzen 9 5900X), 256 chunks | 150 ms, **0.59 ms per chunk**, 3 of 256 seeds thrash to the 20 000-backtrack cap (time included) | `block_solver_bench`, median of 3; against the block kernel's 45 ms for the same 256 chunks at radius 1 with undo in the same run |
+| Block kernel, 1 to 4 chunks per dispatch | µs per step bimodal across runs: radius 2 without undo 9.4 ms then 29.7 ms for the same 625 steps; radius 1 with undo 100 µs per step twice against 12 µs at 16 chunks | same; small dispatches are not a stable measurement on this stack |
 | CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
 | CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
 | CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |
@@ -301,6 +303,13 @@ Each of these is an inference. The reasoning is given so a future pass can check
    attempt for each: at radius 1 the median chunk restarts 35 times. The CPU literature says the same
    about batching (thrashing.md H2). An undo that restores the checkpoint before the failing round
    costs a few steps instead, which would let the per-round saving through. Untested.
+
+14. **The block kernel's lead over the CPU is smaller than the reference suggests.**
+   *Reasoning:* the CPU reference is deliberately naive: selection scans the whole chunk per collapse,
+   every collapse clones the grid, and its undo is marian42's doubling, which thrashes on 3 of 256
+   seeds. The kernel has checkpoint undo and parallel selection. Giving the CPU the same undo and an
+   incremental selection would plausibly cut its time several fold, so the measured 3.3× over 24
+   threads is an upper bound on the GPU's advantage, not an estimate of it.
 
 ## Unknowns
 

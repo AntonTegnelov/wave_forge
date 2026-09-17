@@ -918,6 +918,40 @@ fn chunk_throughput_against_the_cpu_reference() {
     eprintln!(
         "block_solver: cpu reference {cpu_ms:.3} ms per {w}x{h}x{d} chunk (median of 16 seeds, one thread)"
     );
+    // The same 256 chunks spread over every hardware thread, which is what a GPU dispatch of 256
+    // chunks actually competes with. The reference's naive undo occasionally thrashes to its
+    // backtrack cap; those runs are counted and their time is included, as a GPU chunk's would be.
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    let mut thrashed = 0;
+    let all_cores_ms = median(
+        (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                thrashed = std::thread::scope(|scope| {
+                    let workers: Vec<_> = (0..threads)
+                        .map(|thread| {
+                            let (solver, initial) = (&solver, &initial);
+                            scope.spawn(move || {
+                                (0..256u64)
+                                    .filter(|seed| *seed as usize % threads == thread)
+                                    .filter(|&seed| solver.solve(initial.clone(), seed).thrashed)
+                                    .count()
+                            })
+                        })
+                        .collect();
+                    workers
+                        .into_iter()
+                        .map(|worker| worker.join().expect("a solver thread"))
+                        .sum::<usize>()
+                });
+                started.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect(),
+    );
+    eprintln!(
+        "block_solver: cpu reference on {threads} threads: 256 chunks in {all_cores_ms:.1} ms, {:.3} ms per chunk, {thrashed} thrashed (median of 3)",
+        all_cores_ms / 256.0
+    );
 
     let gpu = bench_device();
     // Invocations per workgroup trade parallelism inside a sweep against the cost of synchronising
