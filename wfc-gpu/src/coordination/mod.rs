@@ -13,7 +13,7 @@ use crate::{
     utils::error_recovery::{GpuError, GridCoord},
 };
 use async_trait::async_trait;
-use log::{error, trace};
+use log::trace;
 use std::fmt::Debug;
 use std::sync::Arc;
 use wfc_core::{

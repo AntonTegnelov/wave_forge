@@ -771,14 +771,14 @@ fn parse_coords_from_context(context: &GpuErrorContext) -> Option<(usize, usize,
     // Fallback to parsing from details if available
     if let Some(details) = &context.details {
         let parts: Vec<&str> = details.split(&['(', ',', ')'][..]).collect();
-        if parts.len() >= 4 {
-            if let (Ok(x), Ok(y), Ok(z)) = (
+        if parts.len() >= 4
+            && let (Ok(x), Ok(y), Ok(z)) = (
                 parts[1].trim().parse::<usize>(),
                 parts[2].trim().parse::<usize>(),
                 parts[3].trim().parse::<usize>(),
-            ) {
-                return Some((x, y, z));
-            }
+            )
+        {
+            return Some((x, y, z));
         }
     }
     None

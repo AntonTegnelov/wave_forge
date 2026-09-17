@@ -452,7 +452,7 @@ impl GpuBuffers {
             let queue = None;
 
             let num_cells = self.grid_dims.0 * self.grid_dims.1 * self.grid_dims.2;
-            let u32s_per_cell = (self.num_tiles + 31) / 32; // Ceiling division by 32
+            let u32s_per_cell = self.num_tiles.div_ceil(32); // Ceiling division by 32
             let download_size = num_cells * u32s_per_cell * mem::size_of::<u32>();
             let buffer = &*self.grid_buffers.grid_possibilities_buf;
             let _staging_buffer = &*self.grid_buffers.staging_grid_possibilities_buf;
@@ -548,7 +548,7 @@ impl GpuBuffers {
     ) -> Result<PossibilityGrid, GpuError> {
         let (width, height, depth) = grid_dims;
         let num_cells = width * height * depth;
-        let u32s_per_cell = (num_tiles + 31) / 32;
+        let u32s_per_cell = num_tiles.div_ceil(32);
         let expected_data_size = num_cells * u32s_per_cell;
 
         if data.len() < expected_data_size {
@@ -826,7 +826,7 @@ impl GpuDownloadResults {
     ) -> Result<PossibilityGrid, GpuError> {
         let (width, height, depth) = grid_dims;
         let num_cells = width * height * depth;
-        let u32s_per_cell = (num_tiles + 31) / 32;
+        let u32s_per_cell = num_tiles.div_ceil(32);
 
         let grid_possibilities =
             self.grid_possibilities

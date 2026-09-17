@@ -31,7 +31,7 @@ impl GridBuffers {
         let depth = initial_grid.depth;
         let _num_cells = width * height * depth; // Prefix with _ as it might be unused depending on config usage
         let num_tiles = initial_grid.num_tiles();
-        let u32s_per_cell = (num_tiles + 31) / 32;
+        let u32s_per_cell = num_tiles.div_ceil(32);
 
         let packed_possibilities = Self::pack_initial_grid(initial_grid)?;
         let grid_buffer_size = (packed_possibilities.len() * std::mem::size_of::<u32>()) as u64;
@@ -69,7 +69,7 @@ impl GridBuffers {
         let depth = initial_grid.depth;
         let _num_cells = width * height * depth; // Prefix with _ as it might be unused depending on config usage
         let num_tiles = initial_grid.num_tiles();
-        let u32s_per_cell = (num_tiles + 31) / 32;
+        let u32s_per_cell = num_tiles.div_ceil(32);
         let mut packed_possibilities = Vec::with_capacity(_num_cells * u32s_per_cell);
 
         for z in 0..depth {
@@ -146,7 +146,7 @@ impl GridBuffers {
         config: &DynamicBufferConfig,
     ) -> Result<(), String> {
         let _num_cells = (width * height * depth) as usize;
-        let u32s_per_cell = ((num_tiles + 31) / 32) as usize;
+        let u32s_per_cell = num_tiles.div_ceil(32) as usize;
         let required_size = (u32s_per_cell * std::mem::size_of::<u32>()) as u64;
 
         // Resize main buffer if needed

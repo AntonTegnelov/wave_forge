@@ -63,6 +63,9 @@ pub struct GridStats {
     pub collapsed_cells: usize,
 }
 
+/// A search failure: why it happened and, when known, the cell where it surfaced.
+type SearchFailure = (String, Option<(usize, usize, usize)>);
+
 /// Type alias for the progress callback function
 type ProgressCallbackFn = Box<dyn FnMut(ProgressInfo) -> Result<bool, AnyhowError> + Send + Sync>;
 
@@ -158,6 +161,9 @@ impl GpuAccelerator {
     /// # Constraints
     ///
     /// * Dynamically supports arbitrary numbers of unique tile types, limited only by available GPU memory.
+    // Construction and whole runs happen once, so the size of the error does not matter here; boxing
+    // `WfcError::Io` would change the public error type, which A-15 reworks.
+    #[allow(clippy::result_large_err)]
     pub async fn new(
         initial_grid: &PossibilityGrid,
         rules: &AdjacencyRules,
@@ -191,7 +197,7 @@ impl GpuAccelerator {
                 crate::shader::pipeline::MAX_TILES
             )));
         }
-        let num_tiles_u32 = (num_tiles + 31) / 32;
+        let num_tiles_u32 = num_tiles.div_ceil(32);
 
         let features_ref: Vec<&str> = features.iter().map(|s| s.as_str()).collect();
 
@@ -400,6 +406,9 @@ impl GpuAccelerator {
         }
     }
 
+    // Construction and whole runs happen once, so the size of the error does not matter here; boxing
+    // `WfcError::Io` would change the public error type, which A-15 reworks.
+    #[allow(clippy::result_large_err)]
     pub async fn run_with_callback<F>(
         &mut self,
         initial_grid: &PossibilityGrid,
@@ -597,7 +606,7 @@ impl GpuAccelerator {
         let mut lost_ban_cells = 0usize;
         // A failure carries where it happened, so the search can jump back to the choice that caused
         // it instead of undoing whatever happened to be most recent.
-        let mut failure: Option<(String, Option<(usize, usize, usize)>)> = None;
+        let mut failure: Option<SearchFailure> = None;
 
         // Main WFC loop
         while iterations < max_iterations {
@@ -752,10 +761,11 @@ impl GpuAccelerator {
                             if depth > made_at {
                                 continue;
                             }
-                            if let Some(cell) = current_grid.get_mut(lx, ly, lz) {
-                                if cell[tile] && cell.count_ones() > 1 {
-                                    cell.set(tile, false);
-                                }
+                            if let Some(cell) = current_grid.get_mut(lx, ly, lz)
+                                && cell[tile]
+                                && cell.count_ones() > 1
+                            {
+                                cell.set(tile, false);
                             }
                         }
                     }
@@ -764,10 +774,11 @@ impl GpuAccelerator {
                         // emptied cell would cascade into another failure immediately and measure the
                         // probe's own damage rather than the ceiling it is meant to estimate.
                         for &((lx, ly, lz), tile) in banned_ledger.keys() {
-                            if let Some(cell) = current_grid.get_mut(lx, ly, lz) {
-                                if cell[tile] && cell.count_ones() > 1 {
-                                    cell.set(tile, false);
-                                }
+                            if let Some(cell) = current_grid.get_mut(lx, ly, lz)
+                                && cell[tile]
+                                && cell.count_ones() > 1
+                            {
+                                cell.set(tile, false);
                             }
                         }
                     }
@@ -1236,6 +1247,9 @@ impl GpuAccelerator {
     ///
     /// Returns [`WfcError::Configuration`] if there is not exactly one weight per tile or a weight
     /// is not a positive finite number.
+    // Construction and whole runs happen once, so the size of the error does not matter here; boxing
+    // `WfcError::Io` would change the public error type, which A-15 reworks.
+    #[allow(clippy::result_large_err)]
     pub fn with_tile_weights(&mut self, weights: &[f32]) -> Result<&mut Self, WfcError> {
         let num_tiles = self.num_tiles();
         if weights.len() != num_tiles {
@@ -1905,10 +1919,10 @@ impl PossibilityGridExt for PossibilityGrid {
         for z in 0..self.depth {
             for y in 0..self.height {
                 for x in 0..self.width {
-                    if let Some(cell) = self.get(x, y, z) {
-                        if cell.count_ones() == 1 {
-                            count += 1;
-                        }
+                    if let Some(cell) = self.get(x, y, z)
+                        && cell.count_ones() == 1
+                    {
+                        count += 1;
                     }
                 }
             }

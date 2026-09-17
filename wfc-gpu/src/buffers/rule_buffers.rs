@@ -29,7 +29,7 @@ impl RuleBuffers {
     pub(crate) fn pack_adjacency_rules(rules: &AdjacencyRules) -> Vec<u32> {
         let num_tiles = rules.num_tiles();
         let num_axes = rules.num_axes();
-        let words_per_row = num_tiles.div_ceil(32).max(1);
+        let words_per_row = Self::rule_words_per_row(num_tiles);
 
         let mut bit_array = vec![0u32; num_axes * num_tiles * words_per_row];
         for (axis, tile1, tile2) in rules.get_allowed_rules_map().keys() {

@@ -49,7 +49,7 @@ impl From<crate::utils::error::gpu_error::GpuError> for OldGpuError {
             crate::utils::error::gpu_error::GpuError::BufferSizeMismatch { msg, .. } => {
                 OldGpuError::BufferCopy(msg)
             }
-            crate::utils::error::gpu_error::GpuError::Timeout { msg: _, .. } => {
+            crate::utils::error::gpu_error::GpuError::Timeout { .. } => {
                 OldGpuError::ComputationTimeout {
                     grid_size: (0, 0),                           // We don't have grid size info here
                     duration: std::time::Duration::from_secs(0), // We don't have duration info here
@@ -212,7 +212,7 @@ impl GpuSynchronizer {
     /// # Arguments
     ///
     /// * `target_grid` - A mutable reference to the `PossibilityGrid` to download into.
-    ///                   This grid MUST have the same dimensions and tile count as the GPU grid.
+    ///   This grid MUST have the same dimensions and tile count as the GPU grid.
     ///
     /// # Returns
     ///

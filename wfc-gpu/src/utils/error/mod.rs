@@ -735,10 +735,10 @@ impl RecoveryHookRegistry {
     /// Try to handle an error with registered hooks
     pub fn try_handle(&self, error: &WfcError) -> Option<RecoveryAction> {
         for (predicate, hook) in &self.hooks {
-            if predicate(error) {
-                if let Some(action) = hook(error) {
-                    return Some(action);
-                }
+            if predicate(error)
+                && let Some(action) = hook(error)
+            {
+                return Some(action);
             }
         }
         None

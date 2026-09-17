@@ -23,7 +23,6 @@ pub struct EntropyBuffers {
 
 impl EntropyBuffers {
     /// Creates new entropy-related GPU buffers.
-    #[must_use]
     pub fn new(
         device: &wgpu::Device,
         num_cells: usize,
@@ -66,7 +65,6 @@ impl EntropyBuffers {
     }
 
     /// Ensures the entropy buffers are large enough for the given grid dimensions.
-    #[must_use]
     pub fn ensure_buffers(
         &mut self,
         device: &wgpu::Device,
