@@ -85,6 +85,12 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Same, control seed 8 | 8 → 7 backtracks, 2.86 → 3.14 s (no effect) | same |
 | Same, 8-seed sweep | **8 of 8 finish** (was 2 of 8); backtracks 15–437, 4.0–23.2 s | same |
 | Same, seeds that finished under both | seed 7: 494 → 200; seed 8: **80 → 97 (worse)** | same |
+| GPU loop, 24×24×8, seed 1, at e28ab9d | 25.8 s: propagate 16.2 s, download 4.3 s, entropy + select 3.0 s | one traced run, cold |
+| Blocking drains per collapse, GPU loop | 2 + 2·P (P ≈ 1.8), plus 3 full grid clones | read from the code at e28ab9d |
+| CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
+| CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
+| CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |
+| CPU reference, 48×48×10 | 1.65–1.79 s on 4 seeds; 4 thrash | same; full-scan selection is quadratic in cells |
 
 **Two corrections to the rows above.** Every row measured before the packed-key fix was taken while
 cell *selection* was nondeterministic: the entropy shader stored the winning entropy and its index as
@@ -192,6 +198,16 @@ Two derived facts worth stating separately because they are load-bearing:
 - **marian42's failure is the opposite of ours.** He reports "errors are recognized very late which
   leads to many steps being backtracked" — undos too deep, where ours are too shallow.
 - **Gumin's original WFC does not backtrack at all**, restarting globally instead (Karth & Smith).
+
+- **GPU table propagation pays only when the work unit is large.** GPU-accelerated Compact-Table
+  (Santi, Tardivo, Dovier, Formisano, arXiv 2507.18413) reports average speedups of 2.88 and 4.35 on
+  its two large-table benchmark families, with the RTX 4090 "roughly 45%" utilised because "the amount
+  of work offloaded to the GPU is often not enough", host-to-device copies up to 50% and device-to-host
+  copies up to 80% of kernel time, and a finer division of work "often results in performance
+  degradation". Their units of work are far larger than one WFC collapse.
+- **Parallel restarts beat one run when there is no nogood learning.** Parallel Luby Restarts pairs
+  each restart index with a deterministic seed and reports 88% efficiency on 32 cores on Magic Square
+  and super-linear speedups on heavy-tailed Quasigroup Completion instances.
 
 ## Educated guesses (with the reasoning)
 
