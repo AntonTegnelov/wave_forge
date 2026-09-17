@@ -196,10 +196,106 @@ an asynchronous bulk service the CPU never blocks on. Our solver instead blocks 
 dependent step. Given that every published GPU WFC lost to its CPU baseline, "CPU owns the search, GPU
 does batched off-critical-path work" deserves to be costed rather than dismissed.
 
+## Where the round-trips go, and the leads for a GPU-shaped solver
+
+### The round-trip audit
+
+Read from the code at commit e28ab9d (the run loop in `wfc-gpu/src/gpu/accelerator.rs`, with the
+default coordinator and `DirectPropagationStrategy`). Every blocking point is a
+`device.poll(wait_indefinitely)`, which drains the whole queue rather than waiting for one submission.
+
+| Site | Blocking drains | Read back | Needed on every collapse? |
+|---|---|---|---|
+| Entropy pass (`entropy/calculator.rs`) | 0 (submit only) | nothing | no: it could be fused with the last propagation sweep |
+| Cell selection (`calculator.rs`, `buffers/mod.rs`) | 1 | 8 bytes (packed min key) | no: the choice can be made on the device |
+| Each propagation pass (`propagator/direct_strategy.rs`) | 2, plus 2 new staging buffers | contradiction flag and worklist count, 4 bytes each | no: `worklist_count_buf` already has `INDIRECT` usage but nothing dispatches from it |
+| Grid download (`gpu/sync.rs`) | 1 | the whole grid, unpacked one bit at a time | no: only needed at the end or on a contradiction |
+| History, progress and download copies of `PossibilityGrid` | CPU | one heap allocation per cell, three times | no: a decision log with periodic checkpoints carries the same information |
+
+That is **2 + 2·P drains per collapse**, where P is the number of propagation passes (about 1.8 on the
+city, so about 5.7 drains), and three full grid clones. None of them is required by the algorithm: the
+CPU only needs to hear "finished" or "contradiction at cell c". A 24x24x8 city trace at the same
+commit (seed 1, release, RTX 3070 through dozen, one run, cold device, so indicative rather than a
+median) spent 16.2 s propagating, 4.3 s downloading and 3.0 s in entropy and selection out of 25.8 s,
+about 7.4 ms per collapse.
+
+### The CPU reference
+
+`wfc_devtools::reference` (timed by `wfc-devtools/tests/cpu_reference.rs`) is a deliberately plain single-threaded solver on the same rules:
+two `u64` words per cell, a stack for propagation, a full scan for selection, marian42's undo-doubling.
+It is a yardstick, not a product: a GPU design that cannot beat one CPU thread at chunk latency is not
+worth shipping. At e28ab9d on a Ryzen 9 5900X (release, eight seeds, one run each, no warm-up beyond
+the previous seed) it solves an 8x8x8 chunk in 2.8 to 4.6 ms and a 24x24x8 grid in 0.14 to 0.16 s on
+the six seeds that finish; see [solver-fit.md](solver-fit.md) for the table. Its naive undo thrashes on
+two of eight 24x24x8 seeds and four of eight 48x48x10 seeds, which is a statement about that undo
+policy, not about CPUs.
+
+So on this build the GPU loop is roughly 150 times slower than one CPU thread on the same grid. The
+audit says why: the GPU spends its time waiting on per-collapse synchronisation, not computing.
+
+### The leads
+
+Ranked by how directly each makes the work GPU-shaped, and by the least work to live chunk generation.
+
+1. **Block-local chunk solver (chosen first).** One workgroup solves one whole chunk in workgroup
+   memory within one dispatch: min-count reduction, hash-RNG weighted choice, sweep propagation to a
+   fixpoint, restart on contradiction. The parallelism is spent across chunks (and seeds), where WFC
+   is embarrassingly parallel, instead of inside one propagation, where it is not (arc consistency is
+   P-complete). An 8x8x8 chunk at 81 tiles is 6 KiB of domains plus a 5.8 KiB copy of the rule table,
+   inside the 16 KiB WebGPU default; dozen offers 32 KiB. The support for it is our own measurement
+   that 256 dependent steps are 13 to 18 times cheaper inside one dispatch than as separate
+   dispatches. Falsified if one 512-cell chunk takes more than about 150 ms, if 64 chunks in one
+   dispatch take more than about 8 times one chunk, or if restarts explode.
+2. **Device-resident loop for the monolithic grid (fallback).** Keep one big grid but record K
+   collapses per submit: on-device selection and choice, propagation as a chain of indirect dispatches
+   with an early-out flag, a decision log instead of grid clones, readback every K collapses or on a
+   contradiction. It removes every drain listed above but stays sequential in collapses.
+3. **Sweep propagation with change epochs.** Each cell intersects the unions of its six neighbours'
+   rows, skipping neighbours unchanged since the previous sweep; a shared changed flag ends the loop.
+   No worklist append, no per-pass readback, and the fixpoint does not depend on thread order because
+   propagation is confluent. It is the propagation inside lead 1 and applies to lead 2.
+4. **Speculation.** (a) Portfolio restarts: the same chunk under several seeds in several workgroups,
+   keeping the first to finish; parallel Luby restarts report super-linear speedups on heavy-tailed
+   instances for solvers without nogood learning, which describes ours. (b) Lookahead probing:
+   propagate every candidate tile of the chosen cell in parallel and discard those that contradict.
+   Probably low value on adjacency-only rules, where the city backtracks rarely, so it gets a cheap
+   CPU-side count of avoidable backtracks before any shader work.
+   **First measurement** (one build, RTX 3070 through dozen, see [solver-fit.md](solver-fit.md)):
+   none of the falsifiers hit, but the shape differs from the prediction. One chunk alone takes
+   29.7 ms, ten times one CPU thread, at about 13 µs per workgroup step. 64 chunks cost 3.7 times one
+   chunk rather than 1 to 2 times, and 256 chunks reach 0.91 ms per chunk, three times one CPU thread
+   but below a 12-core CPU. Varying the invocations per workgroup then refuted the first explanation
+   (that every step pays a barrier across 256 invocations): one invocation is 30 times *slower*, so
+   the sweep's per-cell work dominates. Chunks do run in parallel, and a dispatch lasts as long as
+   its slowest chunk, which the restart tail makes 3.8 times the mean. The next levers are fewer steps
+   per chunk and less work per step (guess 12 in [solver-fit.md](solver-fit.md)).
+   Two changes then paid off together. Collapsing every local minimum within a radius per round
+   (the selection rule of Luby's parallel maximal independent set, applied to (count, index) keys)
+   cuts sweeps per collapse by up to five times but multiplies contradictions; restoring a
+   checkpoint from before the failing round, instead of restarting the chunk, makes each
+   contradiction cost a few rounds. Combined at radius 1, 256 chunks take 0.17 ms each, about 15
+   times one CPU thread in the same run, with no chunk failing.
+   Stitching those chunks into a world is where the approach meets its known weakness, the one every
+   block-based source warns about. With faces fixed to already solved neighbours, 28 of 63 chunks
+   under N-WFC's diagonal order have unsatisfiable borders (29 of 32 under a checkerboard).
+   Solving each chunk with a one-cell halo that is discarded afterwards brings the diagonal order down
+   to 3 of 63, and never produced a seam violation. The rest need a repair that may change committed
+   cells, which is what modifying in blocks and marian42's clearing both do: re-solving a failed chunk
+   alone with its halo released completed the world under both orders. The checkerboard then needs
+   only two dispatches of 32 chunks plus about ten single-chunk repairs.
+   Put together, that is live generation on this build: walking a player across a 192×64×8 world at
+   1.4 m/s with a four-chunk view radius costs a median of 43 ms of dispatch time per half-second
+   tick, and the world comes out complete and seamless. Only the first tick, which fills the whole
+   view at once, exceeds the budget. What that measures is a benchmark kernel, not the solver: the
+   shipped `GpuAccelerator` still runs the per-collapse loop this document opened with.
+5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
+
 ## How we will know it worked
 
 The stress suite is the yardstick, run in release with the same three workloads. A change is kept when
 it moves `cells_per_s` on the 81-variant city, not on the toy two-tile grid, and when the E2E and
 constrained-city tests still pass. Every number in this document came from
-`wfc-devtools/tests/stress.rs`, `WFC_TRACE_CHROME`, or `wfc-gpu/tests/propagation_bench.rs`, so each
-claim can be re-measured after any change.
+`wfc-devtools/tests/stress.rs`, `WFC_TRACE_CHROME`, `wfc-gpu/tests/propagation_bench.rs` or
+`wfc-devtools/tests/cpu_reference.rs`, so each claim can be re-measured after any change. A number is
+evidence about one build on one machine and stack; it is quoted with that context, and it becomes a
+design conclusion only after it has been reproduced with a warm-up and medians over interleaved samples.

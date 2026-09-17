@@ -85,6 +85,35 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Same, control seed 8 | 8 → 7 backtracks, 2.86 → 3.14 s (no effect) | same |
 | Same, 8-seed sweep | **8 of 8 finish** (was 2 of 8); backtracks 15–437, 4.0–23.2 s | same |
 | Same, seeds that finished under both | seed 7: 494 → 200; seed 8: **80 → 97 (worse)** | same |
+| GPU loop, 24×24×8, seed 1, at e28ab9d | 25.8 s: propagate 16.2 s, download 4.3 s, entropy + select 3.0 s | one traced run, cold |
+| Blocking drains per collapse, GPU loop | 2 + 2·P (P ≈ 1.8), plus 3 full grid clones | read from the code at e28ab9d |
+| Block kernel, propagation only, one 8×8×8 city chunk | **identical** to the CPU reference fixpoint (412 of 512 cells narrowed), 8 sweeps, 0 readbacks | `block_solver_bench`, dozen, 32 KiB workgroup storage granted |
+| Block kernel, full solve, one 8×8×8 city chunk | valid (0 violations), same seed bit-identical; seed 1: 1127 collapses, 2 restarts, 3555 sweeps; seed 2: 372 collapses, 0 restarts | `block_solver_bench`, restart-on-contradiction, pcg3d choice |
+| Block kernel throughput, 1 chunk per dispatch | 29.7 ms, 41 µs per collapse, 3.2 sweeps per collapse; one CPU thread does the chunk in 2.7 ms | `block_solver_bench` at a22601b + bench, seed 7, 3 warm-ups, median of 5; CPU median of 16 seeds in the same run |
+| Same, 16 / 64 / 256 chunks per dispatch | 108 / 109 / 232 ms: **1.7 ms** per chunk at 64, **0.91 ms** at 256 (564k cells/s, 3.0× one CPU thread) | same; every chunk valid, restarts median 1, max 8, none failed |
+| Block kernel, 1 chunk, 1 / 4 / 16 / 64 / 256 invocations per workgroup | 875 / 294 / 106 / 49 / 29 ms: **445 / 146 / 52 / 24 / 12.7 µs per step** | `block_solver_bench` after e035586, seed 7, 3 warm-ups, median of 5 |
+| Same, µs per step of the slowest chunk, 1 → 64 chunks | flat: 51.7→51.5 (16 inv.), 23.8→23.4 (64), 12.6→11.9 (256); doubles to 23.6 at 256 chunks × 256 invocations | same |
+| Same, slowest chunk against the mean, 256 chunks | 9902 against 2619 steps; restarts max 8, median 1 | same |
+| A dispatch of 256 chunks at 1 invocation | device removed by the Windows timeout (about 2 s) | same; the bench now grows chunk counts only while 4× the last dispatch stays under 600 ms |
+| Block kernel, every local minimum within radius r collapses per round, 256 chunks | r=0: 0.93 ms per chunk, restarts median 1; **r=1: 0.50 ms but 73 of 256 chunks fail** (median 35 restarts); r=2: 0.79 ms, median 10 restarts, 2 fail; r=3 (64 chunks): 2.4 ms, median 16 | `block_solver_bench`, restart-only recovery, seed 7, cap 64 attempts |
+| Same, sweeps per collapse | 3.25 (r=0) → 0.63 / 1.21 / 1.73 (r=1/2/3) | same |
+| Block kernel sweep counts across builds | vary by one or two for the same seed (3555 against 3554), collapses and restarts identical | epochs are read while other lanes write them, so how many sweeps a change takes to be noticed depends on scheduling; the fixpoint does not |
+| Block kernel with undo (restore the checkpoint before the failing round, doubling), 256 chunks | r=0: **0.27 ms** per chunk (restart-only 0.92); **r=1: 0.17 ms**, 15.5× one CPU thread, 0 of 256 failed; r=2: 0.21 ms; r=3: 0.26 ms | `block_solver_bench`, 32 checkpoints per chunk in a storage buffer, seed 7, 3 warm-ups, median of 5; CPU 2.64 ms in the same run |
+| Same, slowest against mean steps, r=1 | 1915 against 456 (restart-only r=0: 9917 against 2620) | same |
+| Same, noise | single rows at 2 to 9 times the typical µs per step (112 µs, 39 µs against 12 to 15) despite medians of 5 | same; treat one row as indicative, not settled |
+| Checkpoint ring bug, found by the 64-chunk validity test | a chunk reported success with 2 empty cells: undo restored slot k after an earlier, deeper stretch of the attempt had overwritten it at round k + 32, possibly mid-contradiction | fixed by undoing only to rounds with k + 32 above the deepest round reached; a restored empty cell now fails the chunk loudly, and removing the guard trips that check on the same chunk |
+| CPU reference on all 24 threads (Ryzen 9 5900X), 256 chunks | 150 ms, **0.59 ms per chunk**, 3 of 256 seeds thrash to the 20 000-backtrack cap (time included) | `block_solver_bench`, median of 3; against the block kernel's 45 ms for the same 256 chunks at radius 1 with undo in the same run |
+| Block kernel, 1 to 4 chunks per dispatch | µs per step bimodal across runs: radius 2 without undo 9.4 ms then 29.7 ms for the same 625 steps; radius 1 with undo 100 µs per step twice against 12 µs at 16 chunks | same; small dispatches are not a stable measurement on this stack |
+| Stitching an 8×8-chunk world (64×64×8), chunks with a border contradiction or exhausted, halo 0 | checkerboard: **29 of 32** second-pass chunks; diagonal waves (N-WFC order): **28 of 63** | `block_solver_bench`, radius 1 with undo; every kernel border contradiction re-checked by the CPU reference propagating the same domains, which empties a cell too |
+| Where they empty | at street level (z 0 or 1) on the chunk face, across from a fixed road, door or building tile | first contradiction per pass printed with its fixed neighbours |
+| Same with a halo solved and discarded, 1 cell / 2 cells | checkerboard: 10 / 11 of 32; diagonal: **3 / 3 of 63** | same; halo cells inside solved chunks pinned to their tiles |
+| Seam violations between decided cells | 0 in every schedule | same |
+| Same, repairing each failed chunk alone with its halo released (rewriting the neighbours' cells it covers), halo 1 then wider | **complete world, 0 seam violations** under both orders: checkerboard 10 of 10 repaired (one needed halo 2), diagonal 4 of 4 at halo 1 | `block_solver_bench` `*_with_repair_completes_the_world`; the isometric render shows no chunk grid |
+| **Live streaming across a 24×8-chunk world** (192×64×8 cells), view radius 4 chunks, walking 1.4 m/s at 2 m cells, 0.5 s ticks | 192 chunks (98 304 cells) in **1.78 s of dispatches**: median tick **43 ms**, p90 141 ms, busiest 854 ms (the initial 40-chunk view fill), 10 chunks repaired, 0 seam violations, world complete | `block_solver_bench::live_streaming_keeps_ahead_of_a_walking_player`, halo 1, radius 1 with undo, kernels compiled before timing |
+| CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
+| CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
+| CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |
+| CPU reference, 48×48×10 | 1.65–1.79 s on 4 seeds; 4 thrash | same; full-scan selection is quadratic in cells |
 
 **Two corrections to the rows above.** Every row measured before the packed-key fix was taken while
 cell *selection* was nondeterministic: the entropy shader stored the winning entropy and its index as
@@ -193,6 +222,16 @@ Two derived facts worth stating separately because they are load-bearing:
   leads to many steps being backtracked" — undos too deep, where ours are too shallow.
 - **Gumin's original WFC does not backtrack at all**, restarting globally instead (Karth & Smith).
 
+- **GPU table propagation pays only when the work unit is large.** GPU-accelerated Compact-Table
+  (Santi, Tardivo, Dovier, Formisano, arXiv 2507.18413) reports average speedups of 2.88 and 4.35 on
+  its two large-table benchmark families, with the RTX 4090 "roughly 45%" utilised because "the amount
+  of work offloaded to the GPU is often not enough", host-to-device copies up to 50% and device-to-host
+  copies up to 80% of kernel time, and a finer division of work "often results in performance
+  degradation". Their units of work are far larger than one WFC collapse.
+- **Parallel restarts beat one run when there is no nogood learning.** Parallel Luby Restarts pairs
+  each restart index with a deterministic seed and reports 88% efficiency on 32 cores on Magic Square
+  and super-linear speedups on heavy-tailed Quasigroup Completion instances.
+
 ## Educated guesses (with the reasoning)
 
 Each of these is an inference. The reasoning is given so a future pass can check whether it still holds.
@@ -250,6 +289,42 @@ Each of these is an inference. The reasoning is given so a future pass can check
    *Reasoning:* published kernel-launch overheads are microseconds; we measure 0.099 ms warm for a
    trivial dispatch, and batching dispatches into one submit made things *worse*, which is atypical.
    Not verified against native Vulkan.
+
+12. **A block-kernel dispatch costs (slowest chunk's steps) × (cost per step), and the cost per step
+   is mostly per-cell sweep work plus a floor near 11 µs.**
+   *Reasoning:* at one chunk, µs per step falls almost in proportion to cells per invocation (445 µs at
+   512 cells per invocation, 52 µs at 32, 12.7 µs at 2), fitting roughly 11 µs + 0.85 µs per cell; and
+   µs per step of the slowest chunk stays flat from 1 to 64 chunks, so chunks do run in parallel. This
+   rules out barrier synchronisation as the main cost, which was the prediction before measuring. It
+   implies two levers: fewer steps per chunk (several collapses per step, or undo instead of restart
+   to cut the tail) and less work per step (visit only changed cells). The 11 µs floor is a fit to
+   five points on one stack, not a measurement of what the floor consists of.
+
+13. ~~**Parallel collapse only pays once a contradiction is cheap to recover from.**~~ **Confirmed on
+   one build:** with undo, radius 1 goes from 73 of 256 chunks failing to none, and from 0.51 ms to
+   0.17 ms per chunk; undo alone also takes one-cell rounds from 0.92 to 0.27 ms. Kept with its
+   original reasoning:
+   *Reasoning:* collapsing every local minimum per round cuts sweeps per collapse by 2.7 to 5 times,
+   but blind simultaneous choices multiply contradictions, and restart-only recovery pays a whole
+   attempt for each: at radius 1 the median chunk restarts 35 times. The CPU literature says the same
+   about batching (thrashing.md H2). An undo that restores the checkpoint before the failing round
+   costs a few steps instead, which would let the per-round saving through. Untested.
+
+14. **The block kernel's lead over the CPU is smaller than the reference suggests.**
+   *Reasoning:* the CPU reference is deliberately naive: selection scans the whole chunk per collapse,
+   every collapse clones the grid, and its undo is marian42's doubling, which thrashes on 3 of 256
+   seeds. The kernel has checkpoint undo and parallel selection. Giving the CPU the same undo and an
+   incremental selection would plausibly cut its time several fold, so the measured 3.3× over 24
+   threads is an upper bound on the GPU's advantage, not an estimate of it.
+
+15. **A chunk solved with free faces leaves border tiles that no row of neighbours can complete.**
+   *Reasoning:* each tile on a free face only needs *some* neighbour to exist, one at a time, while a
+   neighbouring chunk must supply a whole consistent row. Every first contradiction sits on the face
+   at street level next to roads and doors, where tiles demand specific continuations, and solving a
+   one-cell halo that is then discarded removes 25 of 28 failures under diagonal order. The halo
+   proves one completion exists without committing to it. A second cell of halo does not help
+   further; releasing the halo so the repair may rewrite committed neighbours (modifying in blocks)
+   then fixed every remaining chunk. One world, one seed per pass: indicative.
 
 ## Unknowns
 
