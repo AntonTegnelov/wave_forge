@@ -26,6 +26,8 @@ const CELLS: u32 = CX * CY * CZ;
 const WORDS: u32 = 3;
 /// Entries of the per-chunk statistics record the kernel writes.
 const STATS: u32 = 8;
+/// Checkpoints kept per chunk for undo.
+const RING: u32 = 32;
 /// Invocations per workgroup in the correctness tests. Each lane owns every `INVOCATIONS`-th cell.
 const INVOCATIONS: u32 = 256;
 
@@ -61,11 +63,15 @@ const PROPAGATE: u32 = 1u;
 const WRITE: u32 = 2u;
 const DONE: u32 = 3u;
 const SELECT: u32 = 4u;
+const RESTORE: u32 = 5u;
+const RING: u32 = {RING}u;
 
 const STATUS_OK: u32 = 0u;
 const STATUS_FAILED: u32 = 1u;
 const STATUS_CAP: u32 = 2u;
 const STATUS_BOUNDARY: u32 = 3u;
+// A checkpoint held an empty cell: a bug in the checkpoint ring, never a property of the rules.
+const STATUS_BAD_CHECKPOINT: u32 = 4u;
 
 struct Params {
     mode: u32,
@@ -75,9 +81,10 @@ struct Params {
     // 0 collapses the single global minimum per round; r > 0 collapses every local minimum within
     // Chebyshev radius r at once.
     radius: u32,
+    // 0 restarts the chunk on a contradiction; 1 restores the checkpoint before the failing round.
+    undo: u32,
     pad0: u32,
     pad1: u32,
-    pad2: u32,
 };
 
 struct Ctrl {
@@ -89,8 +96,18 @@ struct Ctrl {
     sweeps: u32,
     collapses: u32,
     restarts: u32,
-    // Collapses in the current attempt; zero means a contradiction came from the chunk's own borders.
+    // Rounds completed in the current attempt; zero means a contradiction came from the borders.
     step: u32,
+    // Contradictions so far. It salts the choice hash, so a retried round chooses differently.
+    tries: u32,
+    // Rounds undone by the last backtrack, and the round count at that failure: failing again at
+    // or before that round doubles the undo.
+    undo: u32,
+    fail_step: u32,
+    backtracks: u32,
+    // The most rounds this attempt has reached. Slot k is rewritten by round k + RING, so it is only
+    // trustworthy while k + RING exceeds this.
+    max_step: u32,
 };
 
 @group(0) @binding(0) var<storage, read> rules: array<u32>;
@@ -99,6 +116,8 @@ struct Ctrl {
 @group(0) @binding(3) var<storage, read_write> stats: array<u32>;
 @group(0) @binding(4) var<uniform> params: Params;
 @group(0) @binding(5) var<storage, read> weights: array<f32>;
+// A ring of RING checkpoints per chunk: slot k holds the fixpoint reached before round k.
+@group(0) @binding(6) var<storage, read_write> snaps: array<u32>;
 
 var<workgroup> dom: array<atomic<u32>, {DOM_WORDS}>;
 var<workgroup> rules_s: array<u32, {RULE_WORDS}>;
@@ -107,6 +126,7 @@ var<workgroup> keys: array<u32, {WG}>;
 // Each cell's (count << 16 | index) key from the latest sweep, NONE once decided.
 var<workgroup> cell_keys: array<u32, {CELLS}>;
 var<workgroup> chosen: atomic<u32>;
+var<workgroup> restored_empty: atomic<u32>;
 var<workgroup> changed: atomic<u32>;
 // CELLS - c for the lowest emptied cell c, so zero means none and atomicMax keeps the lowest.
 var<workgroup> contra: atomic<u32>;
@@ -196,8 +216,23 @@ fn weighted_tile(d: vec3<u32>, u: f32) -> u32 {
     return chosen;
 }
 
-// One gather sweep over this lane's cells; also leaves each lane's best selection key.
-fn sweep_lane(lane: u32, sweep: u32) {
+fn snap_index(chunk: u32, slot: u32, c: u32) -> u32 {
+    return ((chunk * RING + slot) * CELLS + c) * 3u;
+}
+
+fn cell_key(c: u32, d: vec3<u32>) -> u32 {
+    let n = tile_count(d);
+    if (n > 1u) {
+        return (n << 16u) | c;
+    }
+    return NONE;
+}
+
+// One gather sweep over this lane's cells; also leaves each lane's best selection key and, when
+// undo is on, this lane's part of the checkpoint for the coming round. Only the last sweep before a
+// round changes nothing, so the copy that survives is the fixpoint.
+fn sweep_lane(lane: u32, chunk: u32, st: Ctrl) {
+    let sweep = st.sweep;
     var best = NONE;
     for (var c = lane; c < CELLS; c += WG) {
         let d = load_dom(c);
@@ -218,15 +253,55 @@ fn sweep_lane(lane: u32, sweep: u32) {
                 atomicMax(&contra, CELLS - c);
             }
         }
-        let n = tile_count(nd);
-        var key = NONE;
-        if (n > 1u) {
-            key = (n << 16u) | c;
-            best = min(best, key);
+        let key = cell_key(c, nd);
+        best = min(best, key);
+        cell_keys[c] = key;
+        if (params.undo != 0u) {
+            let i = snap_index(chunk, st.step % RING, c);
+            snaps[i] = nd.x;
+            snaps[i + 1u] = nd.y;
+            snaps[i + 2u] = nd.z;
         }
+    }
+    keys[lane] = best;
+}
+
+// Puts back this lane's cells from the checkpoint before round `st.step`. It is a fixpoint, so no
+// cell needs another sweep.
+fn restore_lane(lane: u32, chunk: u32, st: Ctrl) {
+    var best = NONE;
+    for (var c = lane; c < CELLS; c += WG) {
+        let i = snap_index(chunk, st.step % RING, c);
+        let d = vec3<u32>(snaps[i], snaps[i + 1u], snaps[i + 2u]);
+        store_dom(c, d);
+        atomicStore(&epoch[c], 0u);
+        if (all(d == vec3<u32>(0u))) {
+            atomicStore(&restored_empty, 1u);
+        }
+        let key = cell_key(c, d);
+        best = min(best, key);
         cell_keys[c] = key;
     }
     keys[lane] = best;
+}
+
+// Lane 0 only: collapses the fewest-possibilities cell. False when every cell is decided.
+fn collapse_global_minimum(chunk: u32, st: Ctrl) -> bool {
+    var best = NONE;
+    for (var i = 0u; i < WG; i++) {
+        best = min(best, keys[i]);
+    }
+    if (best == NONE) {
+        return false;
+    }
+    let cell = best & 0xFFFFu;
+    let h = pcg3d(vec3<u32>(params.seed ^ (chunk * 0x9E3779B9u), st.tries, st.step)).x;
+    let tile = weighted_tile(load_dom(cell), f32(h >> 8u) / 16777216.0);
+    var one = vec3<u32>(0u);
+    one[tile / 32u] = 1u << (tile % 32u);
+    store_dom(cell, one);
+    atomicStore(&epoch[cell], st.sweep);
+    return true;
 }
 
 // Whether no undecided cell within Chebyshev `radius` of `c` has a smaller key. Two such local
@@ -255,7 +330,7 @@ fn select_lane(lane: u32, chunk: u32, st: Ctrl) {
         if (cell_keys[c] == NONE || !is_local_minimum(c, i32(params.radius))) {
             continue;
         }
-        let h = pcg3d(vec3<u32>(params.seed ^ (chunk * 0x9E3779B9u), st.restarts, st.step * CELLS + c)).x;
+        let h = pcg3d(vec3<u32>(params.seed ^ (chunk * 0x9E3779B9u), st.tries, st.step * CELLS + c)).x;
         let tile = weighted_tile(load_dom(c), f32(h >> 8u) / 16777216.0);
         var one = vec3<u32>(0u);
         one[tile / 32u] = 1u << (tile % 32u);
@@ -269,7 +344,7 @@ fn select_lane(lane: u32, chunk: u32, st: Ctrl) {
 fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: vec3<u32>) {
     let chunk = wid.x;
     let base = chunk * CELLS * 3u;
-    var st = Ctrl(LOAD, 1u, STATUS_OK, 0u, NONE, 0u, 0u, 0u, 0u);
+    var st = Ctrl(LOAD, 1u, STATUS_OK, 0u, NONE, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
     loop {
         // Per-lane work for the current state. No barriers in here.
         if (st.phase == LOAD) {
@@ -284,9 +359,11 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                 atomicStore(&epoch[c], st.sweep);
             }
         } else if (st.phase == PROPAGATE) {
-            sweep_lane(lane, st.sweep);
+            sweep_lane(lane, chunk, st);
         } else if (st.phase == SELECT) {
             select_lane(lane, chunk, st);
+        } else if (st.phase == RESTORE) {
+            restore_lane(lane, chunk, st);
         } else if (st.phase == WRITE) {
             for (var c = lane; c < CELLS; c += WG) {
                 for (var w = 0u; w < 3u; w++) {
@@ -311,16 +388,35 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                 atomicStore(&changed, 0u);
                 if (emptied != 0u) {
                     next.contra_cell = CELLS - emptied;
+                    next.tries = st.tries + 1u;
+                    // Failing again without getting past the last failure means the cause lies
+                    // further back, so undo twice as far; getting past it starts again from one.
+                    let again = st.step <= st.fail_step;
+                    var undo = 1u;
+                    if (again) {
+                        undo = min(st.undo * 2u, RING - 1u);
+                    }
                     if (st.step == 0u) {
                         // No choice has been made, so another attempt would fail the same way.
                         next.status = STATUS_BOUNDARY;
                         next.phase = WRITE;
+                    } else if (params.undo != 0u && undo <= st.step && st.step - undo + RING > st.max_step
+                        && !(again && st.undo >= RING - 1u)) {
+                        next.backtracks += 1u;
+                        next.undo = undo;
+                        next.fail_step = st.step;
+                        next.step = st.step - undo;
+                        next.phase = RESTORE;
+                        next.sweep = st.sweep + 1u;
                     } else if (st.restarts + 1u >= params.max_attempts) {
                         next.status = STATUS_FAILED;
                         next.phase = WRITE;
                     } else {
                         next.restarts += 1u;
                         next.step = 0u;
+                        next.max_step = 0u;
+                        next.undo = 0u;
+                        next.fail_step = 0u;
                         next.phase = LOAD;
                         next.sweep = st.sweep + 1u;
                     }
@@ -330,26 +426,29 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                     next.phase = WRITE;
                 } else if (params.radius > 0u) {
                     next.phase = SELECT;
-                } else {
+                } else if (collapse_global_minimum(chunk, st)) {
                     // At a fixpoint the keys from this last sweep describe the current domains.
-                    var best = NONE;
-                    for (var i = 0u; i < WG; i++) {
-                        best = min(best, keys[i]);
-                    }
-                    if (best == NONE) {
-                        next.phase = WRITE;
-                    } else {
-                        let cell = best & 0xFFFFu;
-                        let h = pcg3d(vec3<u32>(params.seed ^ (chunk * 0x9E3779B9u), st.restarts, st.step)).x;
-                        let tile = weighted_tile(load_dom(cell), f32(h >> 8u) / 16777216.0);
-                        var one = vec3<u32>(0u);
-                        one[tile / 32u] = 1u << (tile % 32u);
-                        store_dom(cell, one);
-                        atomicStore(&epoch[cell], st.sweep);
-                        next.sweep = st.sweep + 1u;
-                        next.step = st.step + 1u;
-                        next.collapses += 1u;
-                    }
+                    next.sweep = st.sweep + 1u;
+                    next.step = st.step + 1u;
+                    next.max_step = max(st.max_step, st.step + 1u);
+                    next.collapses += 1u;
+                } else {
+                    next.phase = WRITE;
+                }
+            } else if (st.phase == RESTORE) {
+                if (atomicLoad(&restored_empty) != 0u) {
+                    next.status = STATUS_BAD_CHECKPOINT;
+                    next.phase = WRITE;
+                } else if (params.radius > 0u) {
+                    next.phase = SELECT;
+                } else if (collapse_global_minimum(chunk, st)) {
+                    next.phase = PROPAGATE;
+                    next.sweep = st.sweep + 1u;
+                    next.step = st.step + 1u;
+                    next.max_step = max(st.max_step, st.step + 1u);
+                    next.collapses += 1u;
+                } else {
+                    next.phase = WRITE;
                 }
             } else if (st.phase == SELECT) {
                 let n = atomicLoad(&chosen);
@@ -361,6 +460,7 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                     next.phase = PROPAGATE;
                     next.sweep = st.sweep + 1u;
                     next.step = st.step + 1u;
+                    next.max_step = max(st.max_step, st.step + 1u);
                     next.collapses += n;
                 }
             } else if (st.phase == WRITE) {
@@ -371,6 +471,8 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                 stats[chunk * STATS + 3u] = next.restarts;
                 stats[chunk * STATS + 4u] = next.contra_cell;
                 stats[chunk * STATS + 5u] = next.steps;
+                stats[chunk * STATS + 6u] = next.backtracks;
+                stats[chunk * STATS + 7u] = next.tries;
             }
             // A hung shader resets the host's graphics driver, so every run has a hard step budget.
             if (next.steps >= params.max_steps && next.phase < WRITE) {
@@ -438,6 +540,7 @@ fn kernel_source(num_tiles: usize, invocations: u32) -> String {
         .replace("{RULE_WORDS}", &rule_words.to_string())
         .replace("{STATS}", &STATS.to_string())
         .replace("{WG}", &invocations.to_string())
+        .replace("{RING}", &RING.to_string())
 }
 
 /// The rule table in the layout the solver's own shaders use: one `WORDS`-word mask per
@@ -498,7 +601,9 @@ struct Params {
     max_attempts: u32,
     /// 0 collapses one cell per round; `r` collapses every local minimum within radius `r`.
     radius: u32,
-    padding: [u32; 3],
+    /// 0 restarts a chunk on a contradiction; 1 restores the checkpoint before the failing round.
+    undo: u32,
+    padding: [u32; 2],
 }
 
 impl Kernel {
@@ -548,6 +653,11 @@ impl Kernel {
         let domain_bytes = u64::from(chunks * CELLS * WORDS * 4);
         let init = storage("init", domain_bytes, wgpu::BufferUsages::empty());
         let out = storage("out", domain_bytes, wgpu::BufferUsages::COPY_SRC);
+        let snaps = storage(
+            "snaps",
+            u64::from(chunks * RING * CELLS * WORDS * 4),
+            wgpu::BufferUsages::empty(),
+        );
         let stats = storage(
             "stats",
             u64::from(chunks * STATS * 4),
@@ -586,6 +696,10 @@ impl Kernel {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: weights_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: snaps.as_entire_binding(),
                 },
             ],
         });
@@ -680,7 +794,8 @@ fn one_chunk_propagates_to_the_reference_fixpoint() {
             seed: 1,
             max_attempts: 1,
             radius: 0,
-            padding: [0; 3],
+            undo: 0,
+            padding: [0; 2],
         },
     );
 
@@ -724,7 +839,7 @@ fn one_chunk_solves_validly_and_reproducibly() {
     let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS);
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
-    let solve = |seed: u32, radius: u32| {
+    let solve = |seed: u32, radius: u32, undo: u32| {
         kernel.run(
             &gpu,
             Params {
@@ -733,23 +848,24 @@ fn one_chunk_solves_validly_and_reproducibly() {
                 seed,
                 max_attempts: 64,
                 radius,
-                padding: [0; 3],
+                undo,
+                padding: [0; 2],
             },
         );
         let stats = read_u32s(&gpu, &kernel.stats);
         eprintln!(
-            "block_solver: radius={radius} seed={seed} status={} sweeps={} collapses={} restarts={} last_contradiction={} steps={}",
-            stats[0], stats[1], stats[2], stats[3], stats[4] as i32, stats[5]
+            "block_solver: radius={radius} undo={undo} seed={seed} status={} sweeps={} collapses={} restarts={} last_contradiction={} steps={} backtracks={} tries={}",
+            stats[0], stats[1], stats[2], stats[3], stats[4] as i32, stats[5], stats[6], stats[7]
         );
         assert_eq!(stats[0], 0, "status OK");
         from_words(&read_u32s(&gpu, &kernel.out))
     };
 
-    // One cell per round, then every local minimum within radius 2 per round.
-    for radius in [0, 2] {
-        let first = solve(1, radius);
-        let again = solve(1, radius);
-        let other = solve(2, radius);
+    // One cell per round or every local minimum within radius 2, recovering by restart or by undo.
+    for (radius, undo) in [(0, 0), (2, 0), (0, 1), (2, 1)] {
+        let first = solve(1, radius, undo);
+        let again = solve(1, radius, undo);
+        let other = solve(2, radius, undo);
 
         let tiles = decided_tiles(&first, &initial);
         let grid = wfc_devtools::TileGrid::new(w, h, d, tiles).expect("dimensions match");
@@ -760,17 +876,17 @@ fn one_chunk_solves_validly_and_reproducibly() {
         );
         assert!(
             violations.is_empty(),
-            "radius {radius}: {} adjacency violations, first {:?}",
+            "radius {radius}, undo {undo}: {} adjacency violations, first {:?}",
             violations.len(),
             violations.first()
         );
         assert!(
             first == again,
-            "radius {radius}: the same seed reproduces the chunk"
+            "radius {radius}, undo {undo}: the same seed reproduces the chunk"
         );
         assert!(
             first != other,
-            "radius {radius}: another seed gives another chunk"
+            "radius {radius}, undo {undo}: another seed gives another chunk"
         );
     }
 }
@@ -806,15 +922,19 @@ fn chunk_throughput_against_the_cpu_reference() {
     let gpu = bench_device();
     // Invocations per workgroup trade parallelism inside a sweep against the cost of synchronising
     // every step; the radius trades collapses per round against choices made blind to each other.
-    for (invocations, radius) in [
-        (1u32, 0u32),
-        (4, 0),
-        (16, 0),
-        (64, 0),
-        (256, 0),
-        (256, 1),
-        (256, 2),
-        (256, 3),
+    for (invocations, radius, undo) in [
+        (1u32, 0u32, 0u32),
+        (4, 0, 0),
+        (16, 0, 0),
+        (64, 0, 0),
+        (256, 0, 0),
+        (256, 1, 0),
+        (256, 2, 0),
+        (256, 3, 0),
+        (256, 0, 1),
+        (256, 1, 1),
+        (256, 2, 1),
+        (256, 3, 1),
     ] {
         let params = Params {
             mode: 1,
@@ -822,7 +942,8 @@ fn chunk_throughput_against_the_cpu_reference() {
             seed: 7,
             max_attempts: 64,
             radius,
-            padding: [0; 3],
+            undo,
+            padding: [0; 2],
         };
         // Windows resets the device when one dispatch runs for about two seconds, and a reset here
         // takes the host's display driver with it. Chunk counts grow by 4, so a dispatch is only
@@ -831,7 +952,7 @@ fn chunk_throughput_against_the_cpu_reference() {
         for chunks in [1u32, 4, 16, 64, 256] {
             if previous_ms * 4.0 > 600.0 {
                 eprintln!(
-                    "block_solver: invocations={invocations} radius={radius} chunks={chunks} skipped: {previous_ms:.0} ms at a quarter of the chunks risks the device timeout"
+                    "block_solver: invocations={invocations} radius={radius} undo={undo} chunks={chunks} skipped: {previous_ms:.0} ms at a quarter of the chunks risks the device timeout"
                 );
                 break;
             }
@@ -880,6 +1001,8 @@ fn chunk_throughput_against_the_cpu_reference() {
             let sweeps: u32 = records.iter().map(|r| r[1]).sum();
             let mut restarts: Vec<u32> = records.iter().map(|r| r[3]).collect();
             restarts.sort_unstable();
+            let mut backtracks: Vec<u32> = records.iter().map(|r| r[6]).collect();
+            backtracks.sort_unstable();
             // A dispatch finishes when its slowest workgroup does, so if chunks really run in
             // parallel the slowest chunk's step count, not the total, predicts wall time.
             let max_steps = records.iter().map(|r| r[5]).max().expect("a chunk");
@@ -887,10 +1010,10 @@ fn chunk_throughput_against_the_cpu_reference() {
                 records.iter().map(|r| f64::from(r[5])).sum::<f64>() / records.len() as f64;
             let cells = f64::from(chunks * CELLS);
             eprintln!(
-                "block_solver: invocations={invocations} radius={radius} chunks={chunks} wall_ms={wall_ms:.2} ms_per_chunk={:.3} cells_per_s={:.0} \
+                "block_solver: invocations={invocations} radius={radius} undo={undo} chunks={chunks} wall_ms={wall_ms:.2} ms_per_chunk={:.3} cells_per_s={:.0} \
              vs_cpu_thread={:.2}x failed={failed} collapses={collapses} sweeps_per_collapse={:.2} \
              us_per_collapse={:.1} restarts[min,median,max]=[{},{},{}] \
-             max_steps={max_steps} mean_steps={mean_steps:.0} us_per_step_of_slowest={:.1}",
+             backtracks[median,max]=[{},{}] max_steps={max_steps} mean_steps={mean_steps:.0} us_per_step_of_slowest={:.1}",
                 wall_ms / f64::from(chunks),
                 cells / (wall_ms / 1000.0),
                 cpu_ms * f64::from(chunks) / wall_ms,
@@ -899,8 +1022,76 @@ fn chunk_throughput_against_the_cpu_reference() {
                 restarts[0],
                 restarts[restarts.len() / 2],
                 restarts[restarts.len() - 1],
+                backtracks[backtracks.len() / 2],
+                backtracks[backtracks.len() - 1],
                 wall_ms * 1000.0 / f64::from(max_steps),
             );
         }
+    }
+}
+
+/// Every chunk of a many-chunk dispatch that reports success is valid, in every selection and
+/// recovery mode. One chunk can hide a rare failure; 64 different random streams rarely do.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn every_reported_success_is_a_valid_chunk() {
+    let city = city::city();
+    let m = &city.modules;
+    let (w, h, d) = (CX as usize, CY as usize, CZ as usize);
+    let initial = reference::city_initial_cells(&city, w, h, d);
+    let chunks = 64u32;
+    let gpu = bench_device();
+    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, chunks, INVOCATIONS);
+    let words: Vec<u32> = (0..chunks).flat_map(|_| to_words(&initial)).collect();
+    gpu.queue
+        .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&words));
+
+    for (seed, radius, undo) in [7, 11, 13]
+        .into_iter()
+        .flat_map(|seed| [(0, 0), (2, 0), (0, 1), (2, 1)].map(|(r, u)| (seed, r, u)))
+    {
+        kernel.run(
+            &gpu,
+            Params {
+                mode: 1,
+                max_steps: 50_000,
+                seed,
+                max_attempts: 64,
+                radius,
+                undo,
+                padding: [0; 2],
+            },
+        );
+
+        let stats = read_u32s(&gpu, &kernel.stats);
+        let domains = from_words(&read_u32s(&gpu, &kernel.out));
+        let mut invalid = Vec::new();
+        for chunk in 0..chunks as usize {
+            let record = &stats[chunk * STATS as usize..(chunk + 1) * STATS as usize];
+            assert_ne!(
+                record[0], 4,
+                "chunk {chunk} restored an empty checkpoint: {record:?}"
+            );
+            if record[0] != 0 {
+                continue;
+            }
+            let cells = &domains[chunk * CELLS as usize..(chunk + 1) * CELLS as usize];
+            let empty = cells.iter().filter(|&&c| reference::count(c) == 0).count();
+            let open = cells.iter().filter(|&&c| reference::count(c) > 1).count();
+            if empty + open > 0 {
+                invalid.push((chunk, empty, open, record.to_vec()));
+            }
+        }
+        eprintln!(
+            "block_solver: seed={seed} radius={radius} undo={undo} chunks reporting success but invalid: {} \
+             (chunk, empty cells, undecided cells, [status, sweeps, collapses, restarts, \
+             contradiction, steps, backtracks, tries]) first: {:?}",
+            invalid.len(),
+            invalid.first()
+        );
+        assert!(
+            invalid.is_empty(),
+            "seed {seed}, radius {radius}, undo {undo}"
+        );
     }
 }

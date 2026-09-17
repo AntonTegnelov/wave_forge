@@ -269,6 +269,12 @@ Ranked by how directly each makes the work GPU-shaped, and by the least work to 
    the sweep's per-cell work dominates. Chunks do run in parallel, and a dispatch lasts as long as
    its slowest chunk, which the restart tail makes 3.8 times the mean. The next levers are fewer steps
    per chunk and less work per step (guess 12 in [solver-fit.md](solver-fit.md)).
+   Two changes then paid off together. Collapsing every local minimum within a radius per round
+   (the selection rule of Luby's parallel maximal independent set, applied to (count, index) keys)
+   cuts sweeps per collapse by up to five times but multiplies contradictions; restoring a
+   checkpoint from before the failing round, instead of restarting the chunk, makes each
+   contradiction cost a few rounds. Combined at radius 1, 256 chunks take 0.17 ms each, about 15
+   times one CPU thread in the same run, with no chunk failing.
 5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
 
 ## How we will know it worked

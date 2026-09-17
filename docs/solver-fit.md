@@ -98,6 +98,10 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Block kernel, every local minimum within radius r collapses per round, 256 chunks | r=0: 0.93 ms per chunk, restarts median 1; **r=1: 0.50 ms but 73 of 256 chunks fail** (median 35 restarts); r=2: 0.79 ms, median 10 restarts, 2 fail; r=3 (64 chunks): 2.4 ms, median 16 | `block_solver_bench`, restart-only recovery, seed 7, cap 64 attempts |
 | Same, sweeps per collapse | 3.25 (r=0) → 0.63 / 1.21 / 1.73 (r=1/2/3) | same |
 | Block kernel sweep counts across builds | vary by one or two for the same seed (3555 against 3554), collapses and restarts identical | epochs are read while other lanes write them, so how many sweeps a change takes to be noticed depends on scheduling; the fixpoint does not |
+| Block kernel with undo (restore the checkpoint before the failing round, doubling), 256 chunks | r=0: **0.27 ms** per chunk (restart-only 0.92); **r=1: 0.17 ms**, 15.5× one CPU thread, 0 of 256 failed; r=2: 0.21 ms; r=3: 0.26 ms | `block_solver_bench`, 32 checkpoints per chunk in a storage buffer, seed 7, 3 warm-ups, median of 5; CPU 2.64 ms in the same run |
+| Same, slowest against mean steps, r=1 | 1915 against 456 (restart-only r=0: 9917 against 2620) | same |
+| Same, noise | single rows at 2 to 9 times the typical µs per step (112 µs, 39 µs against 12 to 15) despite medians of 5 | same; treat one row as indicative, not settled |
+| Checkpoint ring bug, found by the 64-chunk validity test | a chunk reported success with 2 empty cells: undo restored slot k after an earlier, deeper stretch of the attempt had overwritten it at round k + 32, possibly mid-contradiction | fixed by undoing only to rounds with k + 32 above the deepest round reached; a restored empty cell now fails the chunk loudly, and removing the guard trips that check on the same chunk |
 | CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
 | CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
 | CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |
@@ -288,7 +292,10 @@ Each of these is an inference. The reasoning is given so a future pass can check
    to cut the tail) and less work per step (visit only changed cells). The 11 µs floor is a fit to
    five points on one stack, not a measurement of what the floor consists of.
 
-13. **Parallel collapse only pays once a contradiction is cheap to recover from.**
+13. ~~**Parallel collapse only pays once a contradiction is cheap to recover from.**~~ **Confirmed on
+   one build:** with undo, radius 1 goes from 73 of 256 chunks failing to none, and from 0.51 ms to
+   0.17 ms per chunk; undo alone also takes one-cell rounds from 0.92 to 0.27 ms. Kept with its
+   original reasoning:
    *Reasoning:* collapsing every local minimum per round cuts sweeps per collapse by 2.7 to 5 times,
    but blind simultaneous choices multiply contradictions, and restart-only recovery pays a whole
    attempt for each: at radius 1 the median chunk restarts 35 times. The CPU literature says the same
