@@ -46,6 +46,9 @@ impl Worker {
     /// # Errors
     /// Building runs on the worker's thread, so a failure there arrives at the first
     /// [`Worker::drain`] rather than here.
+    ///
+    /// # Panics
+    /// If the operating system will not start a thread.
     pub fn spawn<S, B>(build: B) -> Self
     where
         S: Solver,

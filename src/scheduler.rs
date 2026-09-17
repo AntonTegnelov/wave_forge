@@ -71,15 +71,19 @@ pub(crate) fn wanted(focus: &[FocusPoint], extent: &WorldExtent) -> BTreeSet<Chu
 }
 
 /// The wanted chunks still to generate, nearest focus first and stable on ties.
+///
+/// `skip` holds the chunks a dispatch would be wasted on: the ones given up on, and the ones
+/// waiting for a repair. Dispatching either again would only fail the same way, because a region's
+/// solve depends on nothing that changes in between.
 pub(crate) fn missing(
     wanted: &BTreeSet<ChunkCoord>,
     store: &ChunkStore,
-    failed: &BTreeSet<ChunkCoord>,
+    skip: &BTreeSet<ChunkCoord>,
     focus: &[FocusPoint],
 ) -> Vec<ChunkCoord> {
     let mut missing: Vec<(u32, ChunkCoord)> = wanted
         .iter()
-        .filter(|chunk| !store.contains(**chunk) && !failed.contains(*chunk))
+        .filter(|chunk| !store.contains(**chunk) && !skip.contains(*chunk))
         .map(|chunk| {
             let distance = focus
                 .iter()

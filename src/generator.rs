@@ -34,6 +34,7 @@ pub struct GeneratorStats {
     /// Chunks that needed a repair, and the chunks those repairs rewrote. A rule set is
     /// streaming-clean when the first of these stays zero.
     pub repaired: u32,
+    /// Chunks a repair rewrote cells of, counted once per repair that touched them.
     pub rewritten_by_repair: u32,
     /// Chunks no repair could place.
     pub failed: u32,
@@ -107,7 +108,7 @@ impl<S: Solver> WorldGenerator<S> {
         if self.pending.is_some() {
             return Ok(());
         }
-        let missing = scheduler::missing(&self.wanted, &self.store, &self.failed, &self.focus);
+        let missing = scheduler::missing(&self.wanted, &self.store, &self.deferred(), &self.focus);
         let batch = scheduler::next_batch(
             &missing,
             &self.store,
@@ -176,8 +177,17 @@ impl<S: Solver> WorldGenerator<S> {
     /// How many wanted chunks are still to generate, including any being worked on.
     #[must_use]
     pub fn pending_chunks(&self) -> usize {
-        scheduler::missing(&self.wanted, &self.store, &self.failed, &self.focus).len()
+        scheduler::missing(&self.wanted, &self.store, &self.deferred(), &self.focus).len()
             + self.repairs.len()
+    }
+
+    /// The chunks a batch must leave alone: those given up on, and those a repair is queued for.
+    fn deferred(&self) -> BTreeSet<ChunkCoord> {
+        self.failed
+            .iter()
+            .copied()
+            .chain(self.repairs.iter().map(|(chunk, _)| *chunk))
+            .collect()
     }
 
     /// A generated chunk.
@@ -196,6 +206,18 @@ impl<S: Solver> WorldGenerator<S> {
     #[must_use]
     pub const fn config(&self) -> &WorldConfig {
         &self.config
+    }
+
+    /// The solver the world generates on.
+    #[must_use]
+    pub const fn solver(&self) -> &S {
+        &self.solver
+    }
+
+    /// The solver, to set up before generation starts: a GPU solver compiles a kernel per region
+    /// shape, and [`wfc_gpu::BlockSolver::warm`] does that at load rather than at the first batch.
+    pub const fn solver_mut(&mut self) -> &mut S {
+        &mut self.solver
     }
 
     /// What generation has cost.

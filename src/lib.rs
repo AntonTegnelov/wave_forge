@@ -30,9 +30,12 @@
 //! - The same sequence of requests gives an identical world on any backend, on any number of
 //!   threads, and whatever a solver's invocation count is. Every choice is a hash of the world
 //!   seed, the chunk's coordinate, and where the solve had got to.
-//! - Without repairs, a chunk's tiles depend only on its coordinate, so evicting a chunk and
-//!   generating it again gives the same tiles. A chunk is solved against its face neighbours and
-//!   nothing else, and the scheduler does not start one before they are finished.
+//! - A chunk is solved against its face neighbours and nothing else. The scheduler solves one
+//!   parity of the chunk lattice first and holds a chunk of the other parity until the four or six
+//!   chunks it reads are finished, so without repairs a chunk's tiles are a function of its
+//!   coordinate: evicting a neighbourhood and asking for it again gives the same tiles. Evicting
+//!   part of one does not. A chunk generated again beside a neighbour that stayed is solved against
+//!   that neighbour, which is what keeps the seam invisible, and need not give the tiles it had.
 //! - A repair rewrites cells of the neighbours it covers, which makes those chunks depend on the
 //!   order the world was generated in. Every chunk a repair rewrote is reported as
 //!   [`ChunkEvent::Updated`] and counted in [`GeneratorStats`]; a rule set is *streaming-clean*
@@ -47,9 +50,9 @@ pub use scheduler::FocusPoint;
 pub use worker::Worker;
 
 pub use wfc_core::{
-    Chunk, ChunkCoord, ChunkShape, ChunkStore, Domains, ModelError, Prior, Region, RegionShape,
-    RegionStats, RegionStatus, RuleTable, Ruleset, SolveBudget, Solver, SolverError, TileMask,
-    WorldCell, WorldExtent,
+    BatchResult, Chunk, ChunkCoord, ChunkShape, ChunkStore, Domains, JobId, ModelError, Prior,
+    Region, RegionBatch, RegionShape, RegionStats, RegionStatus, RuleTable, Ruleset, SolveBudget,
+    Solver, SolverError, TileMask, WorldCell, WorldExtent,
 };
 #[cfg(feature = "wgpu")]
 pub use wfc_gpu::{BlockSolver, SolverConfig, wgpu_backend::WgpuBackend};
@@ -80,6 +83,8 @@ pub enum Error {
 /// into a corner, and it is why a repair reports every chunk it touched.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RepairPolicy {
+    /// Whether a chunk that will not solve is repaired at all. With this off, it is reported as
+    /// [`ChunkEvent::Failed`] and left out of the world.
     pub enabled: bool,
     /// The widest halo a repair may use. Wider needs more of the device's workgroup memory than it
     /// has at some point, and the solver is asked before each step.
