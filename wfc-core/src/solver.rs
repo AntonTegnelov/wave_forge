@@ -10,6 +10,19 @@ use crate::chunk::RegionShape;
 use crate::domains::Domains;
 use thiserror::Error;
 
+/// How hard a solver should try on a batch.
+///
+/// A first attempt at a chunk deserves the solver's full budget. A repair does not: when it cannot
+/// place a chunk quickly, widening its halo is the better move, and a repair that searches for a
+/// second holds up everything behind it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SolveBudget {
+    /// Attempts at a region before it is reported as exhausted.
+    pub max_attempts: u32,
+    /// Steps a region may take, whatever a step means to the solver.
+    pub max_steps: u32,
+}
+
 /// A batch of regions to solve, all of one shape.
 #[derive(Clone, Debug)]
 pub struct RegionBatch {
@@ -21,6 +34,8 @@ pub struct RegionBatch {
     pub seeds: Vec<u32>,
     /// Every region's starting domains, one region after another.
     pub init: Domains,
+    /// How hard to try, or the solver's own default.
+    pub budget: Option<SolveBudget>,
 }
 
 impl RegionBatch {
@@ -130,6 +145,13 @@ pub enum SolverError {
 pub trait Solver {
     /// The most regions one batch may hold.
     fn max_batch(&self) -> u32;
+
+    /// Whether the solver can take regions of this shape at all. A device bounds how large a region
+    /// may be, so a caller widening a halo asks rather than guessing.
+    fn accepts(&self, region: RegionShape) -> bool {
+        let _ = region;
+        true
+    }
 
     /// Starts a batch.
     ///

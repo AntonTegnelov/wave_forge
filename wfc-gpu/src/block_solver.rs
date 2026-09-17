@@ -323,8 +323,16 @@ impl<B: ComputeBackend> Solver for BlockSolver<B> {
         self.config.max_batch.min(self.backend.limits().workgroups)
     }
 
+    fn accepts(&self, region: RegionShape) -> bool {
+        self.fits(region)
+    }
+
     fn start(&mut self, batch: RegionBatch) -> Result<JobId, SolverError> {
-        let params = Params::solve(&self.config);
+        let mut params = Params::solve(&self.config);
+        if let Some(budget) = batch.budget {
+            params.max_attempts = budget.max_attempts;
+            params.max_steps = budget.max_steps;
+        }
         self.start_with(batch, params)
     }
 
