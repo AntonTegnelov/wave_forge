@@ -150,6 +150,27 @@ impl TileGrid {
         Self::new(width, height, depth, tiles)
     }
 
+    /// Writes the text format [`TileGrid::parse_text`] reads.
+    #[must_use]
+    pub fn to_text(&self) -> String {
+        let mut text = String::new();
+        for z in 0..self.depth {
+            if z > 0 {
+                text.push('\n');
+            }
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    if x > 0 {
+                        text.push(' ');
+                    }
+                    text.push_str(&self.get(x, y, z).to_string());
+                }
+                text.push('\n');
+            }
+        }
+        text
+    }
+
     const fn index(&self, x: usize, y: usize, z: usize) -> usize {
         (z * self.height + y) * self.width + x
     }
