@@ -26,6 +26,8 @@ const CELLS: u32 = CX * CY * CZ;
 const WORDS: u32 = 3;
 /// Entries of the per-chunk statistics record the kernel writes.
 const STATS: u32 = 8;
+/// Invocations per workgroup in the correctness tests. Each lane owns every `INVOCATIONS`-th cell.
+const INVOCATIONS: u32 = 256;
 
 /// The kernel, as a state machine that advances once per workgroup-wide step.
 ///
@@ -47,7 +49,7 @@ const CX: u32 = {CX}u;
 const CY: u32 = {CY}u;
 const CELLS: u32 = {CELLS}u;
 const NT: u32 = {NT}u;
-const WG: u32 = 256u;
+const WG: u32 = {WG}u;
 const RULE_WORDS: u32 = {RULE_WORDS}u;
 const STATS: u32 = {STATS}u;
 const NONE: u32 = 0xFFFFFFFFu;
@@ -87,7 +89,7 @@ struct Ctrl {
 var<workgroup> dom: array<atomic<u32>, {DOM_WORDS}>;
 var<workgroup> rules_s: array<u32, {RULE_WORDS}>;
 var<workgroup> epoch: array<atomic<u32>, {CELLS}>;
-var<workgroup> keys: array<u32, 256>;
+var<workgroup> keys: array<u32, {WG}>;
 var<workgroup> changed: atomic<u32>;
 // CELLS - c for the lowest emptied cell c, so zero means none and atomicMax keeps the lowest.
 var<workgroup> contra: atomic<u32>;
@@ -207,7 +209,7 @@ fn sweep_lane(lane: u32, sweep: u32) {
     keys[lane] = best;
 }
 
-@compute @workgroup_size(256)
+@compute @workgroup_size({WG})
 fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: vec3<u32>) {
     let chunk = wid.x;
     let base = chunk * CELLS * 3u;
@@ -215,7 +217,8 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
     loop {
         // Per-lane work for the current state. No barriers in here.
         if (st.phase == LOAD) {
-            for (var i = lane * 6u; i < min(lane * 6u + 6u, RULE_WORDS); i++) {
+            let per_lane = (RULE_WORDS + WG - 1u) / WG;
+            for (var i = lane * per_lane; i < min((lane + 1u) * per_lane, RULE_WORDS); i++) {
                 rules_s[i] = rules[i];
             }
             for (var c = lane; c < CELLS; c += WG) {
@@ -352,7 +355,7 @@ fn bench_device() -> BenchDevice {
     BenchDevice { device, queue }
 }
 
-fn kernel_source(num_tiles: usize) -> String {
+fn kernel_source(num_tiles: usize, invocations: u32) -> String {
     let rule_words = 6 * num_tiles as u32 * WORDS;
     KERNEL
         .replace("{CX}", &CX.to_string())
@@ -362,6 +365,7 @@ fn kernel_source(num_tiles: usize) -> String {
         .replace("{NT}", &num_tiles.to_string())
         .replace("{RULE_WORDS}", &rule_words.to_string())
         .replace("{STATS}", &STATS.to_string())
+        .replace("{WG}", &invocations.to_string())
 }
 
 /// The rule table in the layout the solver's own shaders use: one `WORDS`-word mask per
@@ -428,11 +432,12 @@ impl Kernel {
         rules: &wfc_rules::AdjacencyRules,
         weights: &[f32],
         chunks: u32,
+        invocations: u32,
     ) -> Self {
         let device = &gpu.device;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("block solver"),
-            source: wgpu::ShaderSource::Wgsl(kernel_source(rules.num_tiles()).into()),
+            source: wgpu::ShaderSource::Wgsl(kernel_source(rules.num_tiles(), invocations).into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("block solver"),
@@ -588,7 +593,7 @@ fn one_chunk_propagates_to_the_reference_fixpoint() {
         initial.len()
     );
     let gpu = bench_device();
-    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1);
+    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS);
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
 
@@ -639,7 +644,7 @@ fn one_chunk_solves_validly_and_reproducibly() {
     let (w, h, d) = (CX as usize, CY as usize, CZ as usize);
     let initial = reference::city_initial_cells(&city, w, h, d);
     let gpu = bench_device();
-    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1);
+    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS);
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
     let solve = |seed: u32| {
@@ -714,64 +719,86 @@ fn chunk_throughput_against_the_cpu_reference() {
         seed: 7,
         max_attempts: 64,
     };
-    for chunks in [1u32, 16, 64, 256] {
-        let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, chunks);
-        let words: Vec<u32> = (0..chunks).flat_map(|_| to_words(&initial)).collect();
-        gpu.queue
-            .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&words));
-        // Pipeline creation and the first dispatches run cold; the GPU also raises its clocks under
-        // load, so only warm samples are compared.
-        for _ in 0..3 {
-            kernel.run(&gpu, params);
-        }
-        let mut samples = Vec::new();
-        for _ in 0..5 {
-            let started = std::time::Instant::now();
-            kernel.run(&gpu, params);
-            samples.push(started.elapsed().as_secs_f64() * 1000.0);
-        }
-        let wall_ms = median(samples);
-
-        let stats = read_u32s(&gpu, &kernel.stats);
-        let records: Vec<&[u32]> = stats.chunks(STATS as usize).collect();
-        let domains = from_words(&read_u32s(&gpu, &kernel.out));
-        let mut failed = 0;
-        for (chunk, record) in records.iter().enumerate() {
-            if record[0] != 0 {
-                failed += 1;
-                continue;
+    // Invocations per workgroup trade parallelism inside a sweep against the cost of synchronising
+    // every step across all of them.
+    for invocations in [1u32, 4, 16, 64, 256] {
+        // Windows resets the device when one dispatch runs for about two seconds, and a reset here
+        // takes the host's display driver with it. Chunk counts grow by 4, so a dispatch is only
+        // attempted while four times the previous one stays well inside that limit.
+        let mut previous_ms = 0.0;
+        for chunks in [1u32, 4, 16, 64, 256] {
+            if previous_ms * 4.0 > 600.0 {
+                eprintln!(
+                    "block_solver: invocations={invocations} chunks={chunks} skipped: {previous_ms:.0} ms at a quarter of the chunks risks the device timeout"
+                );
+                break;
             }
-            let cells = &domains[chunk * CELLS as usize..(chunk + 1) * CELLS as usize];
-            let grid = wfc_devtools::TileGrid::new(w, h, d, decided_tiles(cells, &initial))
-                .expect("dimensions match");
-            let violations = wfc_devtools::adjacency_violations(
-                &grid,
-                &m.rules,
-                wfc_core::BoundaryCondition::Finite,
-            );
-            assert!(
-                violations.is_empty(),
-                "chunk {chunk}: {} violations",
-                violations.len()
+            let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, chunks, invocations);
+            let words: Vec<u32> = (0..chunks).flat_map(|_| to_words(&initial)).collect();
+            gpu.queue
+                .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&words));
+            // Pipeline creation and the first dispatches run cold; the GPU also raises its clocks under
+            // load, so only warm samples are compared.
+            for _ in 0..3 {
+                kernel.run(&gpu, params);
+            }
+            let mut samples = Vec::new();
+            for _ in 0..5 {
+                let started = std::time::Instant::now();
+                kernel.run(&gpu, params);
+                samples.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
+            let wall_ms = median(samples);
+            previous_ms = wall_ms;
+
+            let stats = read_u32s(&gpu, &kernel.stats);
+            let records: Vec<&[u32]> = stats.chunks(STATS as usize).collect();
+            let domains = from_words(&read_u32s(&gpu, &kernel.out));
+            let mut failed = 0;
+            for (chunk, record) in records.iter().enumerate() {
+                if record[0] != 0 {
+                    failed += 1;
+                    continue;
+                }
+                let cells = &domains[chunk * CELLS as usize..(chunk + 1) * CELLS as usize];
+                let grid = wfc_devtools::TileGrid::new(w, h, d, decided_tiles(cells, &initial))
+                    .expect("dimensions match");
+                let violations = wfc_devtools::adjacency_violations(
+                    &grid,
+                    &m.rules,
+                    wfc_core::BoundaryCondition::Finite,
+                );
+                assert!(
+                    violations.is_empty(),
+                    "chunk {chunk}: {} violations",
+                    violations.len()
+                );
+            }
+            let collapses: u32 = records.iter().map(|r| r[2]).sum();
+            let sweeps: u32 = records.iter().map(|r| r[1]).sum();
+            let mut restarts: Vec<u32> = records.iter().map(|r| r[3]).collect();
+            restarts.sort_unstable();
+            // A dispatch finishes when its slowest workgroup does, so if chunks really run in
+            // parallel the slowest chunk's step count, not the total, predicts wall time.
+            let max_steps = records.iter().map(|r| r[5]).max().expect("a chunk");
+            let mean_steps =
+                records.iter().map(|r| f64::from(r[5])).sum::<f64>() / records.len() as f64;
+            let cells = f64::from(chunks * CELLS);
+            eprintln!(
+                "block_solver: invocations={invocations} chunks={chunks} wall_ms={wall_ms:.2} ms_per_chunk={:.3} cells_per_s={:.0} \
+             vs_cpu_thread={:.2}x failed={failed} collapses={collapses} sweeps_per_collapse={:.2} \
+             us_per_collapse={:.1} restarts[min,median,max]=[{},{},{}] \
+             max_steps={max_steps} mean_steps={mean_steps:.0} us_per_step_of_slowest={:.1}",
+                wall_ms / f64::from(chunks),
+                cells / (wall_ms / 1000.0),
+                cpu_ms * f64::from(chunks) / wall_ms,
+                f64::from(sweeps) / f64::from(collapses.max(1)),
+                wall_ms * 1000.0 / f64::from(collapses.max(1)),
+                restarts[0],
+                restarts[restarts.len() / 2],
+                restarts[restarts.len() - 1],
+                wall_ms * 1000.0 / f64::from(max_steps),
             );
         }
-        let collapses: u32 = records.iter().map(|r| r[2]).sum();
-        let sweeps: u32 = records.iter().map(|r| r[1]).sum();
-        let mut restarts: Vec<u32> = records.iter().map(|r| r[3]).collect();
-        restarts.sort_unstable();
-        let cells = f64::from(chunks * CELLS);
-        eprintln!(
-            "block_solver: chunks={chunks} wall_ms={wall_ms:.2} ms_per_chunk={:.3} cells_per_s={:.0} \
-             vs_cpu_thread={:.2}x failed={failed} collapses={collapses} sweeps_per_collapse={:.2} \
-             us_per_collapse={:.1} restarts[min,median,max]=[{},{},{}]",
-            wall_ms / f64::from(chunks),
-            cells / (wall_ms / 1000.0),
-            cpu_ms * f64::from(chunks) / wall_ms,
-            f64::from(sweeps) / f64::from(collapses.max(1)),
-            wall_ms * 1000.0 / f64::from(collapses.max(1)),
-            restarts[0],
-            restarts[restarts.len() / 2],
-            restarts[restarts.len() - 1],
-        );
     }
 }

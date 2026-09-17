@@ -91,6 +91,10 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Block kernel, full solve, one 8×8×8 city chunk | valid (0 violations), same seed bit-identical; seed 1: 1127 collapses, 2 restarts, 3555 sweeps; seed 2: 372 collapses, 0 restarts | `block_solver_bench`, restart-on-contradiction, pcg3d choice |
 | Block kernel throughput, 1 chunk per dispatch | 29.7 ms, 41 µs per collapse, 3.2 sweeps per collapse; one CPU thread does the chunk in 2.7 ms | `block_solver_bench` at a22601b + bench, seed 7, 3 warm-ups, median of 5; CPU median of 16 seeds in the same run |
 | Same, 16 / 64 / 256 chunks per dispatch | 108 / 109 / 232 ms: **1.7 ms** per chunk at 64, **0.91 ms** at 256 (564k cells/s, 3.0× one CPU thread) | same; every chunk valid, restarts median 1, max 8, none failed |
+| Block kernel, 1 chunk, 1 / 4 / 16 / 64 / 256 invocations per workgroup | 875 / 294 / 106 / 49 / 29 ms: **445 / 146 / 52 / 24 / 12.7 µs per step** | `block_solver_bench` after e035586, seed 7, 3 warm-ups, median of 5 |
+| Same, µs per step of the slowest chunk, 1 → 64 chunks | flat: 51.7→51.5 (16 inv.), 23.8→23.4 (64), 12.6→11.9 (256); doubles to 23.6 at 256 chunks × 256 invocations | same |
+| Same, slowest chunk against the mean, 256 chunks | 9902 against 2619 steps; restarts max 8, median 1 | same |
+| A dispatch of 256 chunks at 1 invocation | device removed by the Windows timeout (about 2 s) | same; the bench now grows chunk counts only while 4× the last dispatch stays under 600 ms |
 | CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
 | CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
 | CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |
@@ -270,6 +274,16 @@ Each of these is an inference. The reasoning is given so a future pass can check
    *Reasoning:* published kernel-launch overheads are microseconds; we measure 0.099 ms warm for a
    trivial dispatch, and batching dispatches into one submit made things *worse*, which is atypical.
    Not verified against native Vulkan.
+
+12. **A block-kernel dispatch costs (slowest chunk's steps) × (cost per step), and the cost per step
+   is mostly per-cell sweep work plus a floor near 11 µs.**
+   *Reasoning:* at one chunk, µs per step falls almost in proportion to cells per invocation (445 µs at
+   512 cells per invocation, 52 µs at 32, 12.7 µs at 2), fitting roughly 11 µs + 0.85 µs per cell; and
+   µs per step of the slowest chunk stays flat from 1 to 64 chunks, so chunks do run in parallel. This
+   rules out barrier synchronisation as the main cost, which was the prediction before measuring. It
+   implies two levers: fewer steps per chunk (several collapses per step, or undo instead of restart
+   to cut the tail) and less work per step (visit only changed cells). The 11 µs floor is a fit to
+   five points on one stack, not a measurement of what the floor consists of.
 
 ## Unknowns
 

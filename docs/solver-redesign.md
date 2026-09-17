@@ -264,8 +264,11 @@ Ranked by how directly each makes the work GPU-shaped, and by the least work to 
    none of the falsifiers hit, but the shape differs from the prediction. One chunk alone takes
    29.7 ms, ten times one CPU thread, at about 13 µs per workgroup step. 64 chunks cost 3.7 times one
    chunk rather than 1 to 2 times, and 256 chunks reach 0.91 ms per chunk, three times one CPU thread
-   but below a 12-core CPU. Per-step cost, not the work in a step, sets the price: a sweep does little
-   (a collapse dirties a handful of cells) while every step pays a barrier across 256 invocations.
+   but below a 12-core CPU. Varying the invocations per workgroup then refuted the first explanation
+   (that every step pays a barrier across 256 invocations): one invocation is 30 times *slower*, so
+   the sweep's per-cell work dominates. Chunks do run in parallel, and a dispatch lasts as long as
+   its slowest chunk, which the restart tail makes 3.8 times the mean. The next levers are fewer steps
+   per chunk and less work per step (guess 12 in [solver-fit.md](solver-fit.md)).
 5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
 
 ## How we will know it worked
