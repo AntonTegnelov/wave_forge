@@ -30,7 +30,10 @@ pub struct Style<'a> {
 
 impl Style<'_> {
     fn color(&self, tile: usize) -> Color {
-        self.palette.get(tile).copied().unwrap_or_else(|| default_color(tile))
+        self.palette
+            .get(tile)
+            .copied()
+            .unwrap_or_else(|| default_color(tile))
     }
 
     fn is_empty(&self, tile: usize) -> bool {
@@ -92,14 +95,32 @@ fn fill_cell(image: &mut RgbImage, x: u32, y: u32, size: u32, color: Color) {
 
 /// One `z` layer seen from above: `+x` to the right, `+y` up.
 pub fn render_layer(grid: &TileGrid, z: usize, style: &Style) -> RgbImage {
-    assert!(z < grid.depth, "layer {z} out of range for depth {}", grid.depth);
+    assert!(
+        z < grid.depth,
+        "layer {z} out of range for depth {}",
+        grid.depth
+    );
     let c = style.cell();
-    let mut image = RgbImage::from_pixel(grid.width as u32 * c, grid.height as u32 * c, Rgb(BACKGROUND));
+    let mut image = RgbImage::from_pixel(
+        grid.width as u32 * c,
+        grid.height as u32 * c,
+        Rgb(BACKGROUND),
+    );
     for y in 0..grid.height {
         for x in 0..grid.width {
             let tile = grid.get(x, y, z);
-            let color = if style.is_empty(tile) { EMPTY } else { style.color(tile) };
-            fill_cell(&mut image, x as u32 * c, (grid.height - 1 - y) as u32 * c, c, color);
+            let color = if style.is_empty(tile) {
+                EMPTY
+            } else {
+                style.color(tile)
+            };
+            fill_cell(
+                &mut image,
+                x as u32 * c,
+                (grid.height - 1 - y) as u32 * c,
+                c,
+                color,
+            );
         }
     }
     image
@@ -124,7 +145,11 @@ pub fn render_four_view(grid: &TileGrid, style: &Style) -> RgbImage {
     let col1 = iso.width().max(side.width());
     let row0 = top.height().max(iso.height());
     let row1 = front.height().max(side.height());
-    let mut sheet = RgbImage::from_pixel(pad * 3 + col0 + col1, pad * 3 + row0 + row1, Rgb(BACKGROUND));
+    let mut sheet = RgbImage::from_pixel(
+        pad * 3 + col0 + col1,
+        pad * 3 + row0 + row1,
+        Rgb(BACKGROUND),
+    );
     for (view, x, y) in [
         (&top, pad, pad),
         (&iso, pad * 2 + col0, pad),
@@ -138,14 +163,29 @@ pub fn render_four_view(grid: &TileGrid, style: &Style) -> RgbImage {
 
 fn top_view(grid: &TileGrid, style: &Style) -> RgbImage {
     let c = style.cell();
-    let mut image = RgbImage::from_pixel(grid.width as u32 * c, grid.height as u32 * c, Rgb(BACKGROUND));
+    let mut image = RgbImage::from_pixel(
+        grid.width as u32 * c,
+        grid.height as u32 * c,
+        Rgb(BACKGROUND),
+    );
     for y in 0..grid.height {
         for x in 0..grid.width {
-            let hit = (0..grid.depth).rev().find(|&z| !style.is_empty(grid.get(x, y, z)));
+            let hit = (0..grid.depth)
+                .rev()
+                .find(|&z| !style.is_empty(grid.get(x, y, z)));
             let color = hit.map_or(EMPTY, |z| {
-                shade(style.color(grid.get(x, y, z)), depth_brightness(grid.depth - 1 - z, grid.depth))
+                shade(
+                    style.color(grid.get(x, y, z)),
+                    depth_brightness(grid.depth - 1 - z, grid.depth),
+                )
             });
-            fill_cell(&mut image, x as u32 * c, (grid.height - 1 - y) as u32 * c, c, color);
+            fill_cell(
+                &mut image,
+                x as u32 * c,
+                (grid.height - 1 - y) as u32 * c,
+                c,
+                color,
+            );
         }
     }
     image
@@ -153,12 +193,27 @@ fn top_view(grid: &TileGrid, style: &Style) -> RgbImage {
 
 fn front_view(grid: &TileGrid, style: &Style) -> RgbImage {
     let c = style.cell();
-    let mut image = RgbImage::from_pixel(grid.width as u32 * c, grid.depth as u32 * c, Rgb(BACKGROUND));
+    let mut image = RgbImage::from_pixel(
+        grid.width as u32 * c,
+        grid.depth as u32 * c,
+        Rgb(BACKGROUND),
+    );
     for z in 0..grid.depth {
         for x in 0..grid.width {
             let hit = (0..grid.height).find(|&y| !style.is_empty(grid.get(x, y, z)));
-            let color = hit.map_or(EMPTY, |y| shade(style.color(grid.get(x, y, z)), depth_brightness(y, grid.height)));
-            fill_cell(&mut image, x as u32 * c, (grid.depth - 1 - z) as u32 * c, c, color);
+            let color = hit.map_or(EMPTY, |y| {
+                shade(
+                    style.color(grid.get(x, y, z)),
+                    depth_brightness(y, grid.height),
+                )
+            });
+            fill_cell(
+                &mut image,
+                x as u32 * c,
+                (grid.depth - 1 - z) as u32 * c,
+                c,
+                color,
+            );
         }
     }
     image
@@ -166,14 +221,29 @@ fn front_view(grid: &TileGrid, style: &Style) -> RgbImage {
 
 fn side_view(grid: &TileGrid, style: &Style) -> RgbImage {
     let c = style.cell();
-    let mut image = RgbImage::from_pixel(grid.height as u32 * c, grid.depth as u32 * c, Rgb(BACKGROUND));
+    let mut image = RgbImage::from_pixel(
+        grid.height as u32 * c,
+        grid.depth as u32 * c,
+        Rgb(BACKGROUND),
+    );
     for z in 0..grid.depth {
         for y in 0..grid.height {
-            let hit = (0..grid.width).rev().find(|&x| !style.is_empty(grid.get(x, y, z)));
+            let hit = (0..grid.width)
+                .rev()
+                .find(|&x| !style.is_empty(grid.get(x, y, z)));
             let color = hit.map_or(EMPTY, |x| {
-                shade(style.color(grid.get(x, y, z)), depth_brightness(grid.width - 1 - x, grid.width))
+                shade(
+                    style.color(grid.get(x, y, z)),
+                    depth_brightness(grid.width - 1 - x, grid.width),
+                )
             });
-            fill_cell(&mut image, y as u32 * c, (grid.depth - 1 - z) as u32 * c, c, color);
+            fill_cell(
+                &mut image,
+                y as u32 * c,
+                (grid.depth - 1 - z) as u32 * c,
+                c,
+                color,
+            );
         }
     }
     image
@@ -199,9 +269,24 @@ fn isometric_view(grid: &TileGrid, style: &Style) -> RgbImage {
     for (x, y, z) in voxels {
         let color = style.color(grid.get(x, y, z));
         let (x, y, z) = (x as f32, y as f32, z as f32);
-        let top = [project(x, y, z + 1.0), project(x + 1.0, y, z + 1.0), project(x + 1.0, y + 1.0, z + 1.0), project(x, y + 1.0, z + 1.0)];
-        let pos_x = [project(x + 1.0, y, z), project(x + 1.0, y + 1.0, z), project(x + 1.0, y + 1.0, z + 1.0), project(x + 1.0, y, z + 1.0)];
-        let pos_y = [project(x, y + 1.0, z), project(x + 1.0, y + 1.0, z), project(x + 1.0, y + 1.0, z + 1.0), project(x, y + 1.0, z + 1.0)];
+        let top = [
+            project(x, y, z + 1.0),
+            project(x + 1.0, y, z + 1.0),
+            project(x + 1.0, y + 1.0, z + 1.0),
+            project(x, y + 1.0, z + 1.0),
+        ];
+        let pos_x = [
+            project(x + 1.0, y, z),
+            project(x + 1.0, y + 1.0, z),
+            project(x + 1.0, y + 1.0, z + 1.0),
+            project(x + 1.0, y, z + 1.0),
+        ];
+        let pos_y = [
+            project(x, y + 1.0, z),
+            project(x + 1.0, y + 1.0, z),
+            project(x + 1.0, y + 1.0, z + 1.0),
+            project(x, y + 1.0, z + 1.0),
+        ];
         fill_convex_quad(&mut image, top, color);
         fill_convex_quad(&mut image, pos_x, shade(color, 0.78));
         fill_convex_quad(&mut image, pos_y, shade(color, 0.6));
@@ -223,13 +308,19 @@ impl VoxelModel {
     /// A model with no voxels.
     pub fn empty(resolution: usize) -> Self {
         assert!(resolution > 0, "voxel resolution must be positive");
-        Self { resolution, voxels: vec![None; resolution.pow(3)] }
+        Self {
+            resolution,
+            voxels: vec![None; resolution.pow(3)],
+        }
     }
 
     /// Index of voxel `(x, y, z)` in [`VoxelModel::voxels`].
     pub fn index(&self, x: usize, y: usize, z: usize) -> usize {
         let r = self.resolution;
-        assert!(x < r && y < r && z < r, "voxel ({x}, {y}, {z}) outside resolution {r}");
+        assert!(
+            x < r && y < r && z < r,
+            "voxel ({x}, {y}, {z}) outside resolution {r}"
+        );
         (z * r + y) * r + x
     }
 
@@ -271,28 +362,43 @@ impl VoxelModel {
 /// surface rather than the grid volume.
 pub fn render_voxel_isometric(grid: &TileGrid, models: &[VoxelModel], voxel_px: u32) -> RgbImage {
     let r = models.first().map_or(1, |m| m.resolution);
-    assert!(models.iter().all(|m| m.resolution == r), "voxel models must share one resolution");
+    assert!(
+        models.iter().all(|m| m.resolution == r),
+        "voxel models must share one resolution"
+    );
     let (w, h, d) = (grid.width * r, grid.height * r, grid.depth * r);
     let voxel_at = |x: usize, y: usize, z: usize| -> Option<Color> {
         if x >= w || y >= h || z >= d {
             return None;
         }
         let tile = grid.get(x / r, y / r, z / r);
-        models.get(tile).unwrap_or_else(|| panic!("no voxel model for tile {tile}")).get(x % r, y % r, z % r)
+        models
+            .get(tile)
+            .unwrap_or_else(|| panic!("no voxel model for tile {tile}"))
+            .get(x % r, y % r, z % r)
     };
 
     let a = voxel_px.max(1) as f32;
     let width = ((w + h) as f32 * a).ceil() as u32 + 1;
     let height = ((w + h) as f32 * a / 2.0 + d as f32 * a).ceil() as u32 + 1;
     let mut image = RgbImage::from_pixel(width, height, Rgb(BACKGROUND));
-    let project = |x: f32, y: f32, z: f32| ((x - y + h as f32) * a, (x + y) * a / 2.0 + (d as f32 - z) * a);
+    let project = |x: f32, y: f32, z: f32| {
+        (
+            (x - y + h as f32) * a,
+            (x + y) * a / 2.0 + (d as f32 - z) * a,
+        )
+    };
 
     let mut visible = Vec::new();
     for z in 0..d {
         for y in 0..h {
             for x in 0..w {
                 if let Some(color) = voxel_at(x, y, z) {
-                    let open = [voxel_at(x + 1, y, z).is_none(), voxel_at(x, y + 1, z).is_none(), voxel_at(x, y, z + 1).is_none()];
+                    let open = [
+                        voxel_at(x + 1, y, z).is_none(),
+                        voxel_at(x, y + 1, z).is_none(),
+                        voxel_at(x, y, z + 1).is_none(),
+                    ];
                     if open.iter().any(|&o| o) {
                         visible.push((x, y, z, color, open));
                     }
@@ -306,15 +412,30 @@ pub fn render_voxel_isometric(grid: &TileGrid, models: &[VoxelModel], voxel_px: 
     for (x, y, z, color, [open_x, open_y, open_z]) in visible {
         let (x, y, z) = (x as f32, y as f32, z as f32);
         if open_z {
-            let top = [project(x, y, z + 1.0), project(x + 1.0, y, z + 1.0), project(x + 1.0, y + 1.0, z + 1.0), project(x, y + 1.0, z + 1.0)];
+            let top = [
+                project(x, y, z + 1.0),
+                project(x + 1.0, y, z + 1.0),
+                project(x + 1.0, y + 1.0, z + 1.0),
+                project(x, y + 1.0, z + 1.0),
+            ];
             fill_convex_quad(&mut image, top, color);
         }
         if open_x {
-            let pos_x = [project(x + 1.0, y, z), project(x + 1.0, y + 1.0, z), project(x + 1.0, y + 1.0, z + 1.0), project(x + 1.0, y, z + 1.0)];
+            let pos_x = [
+                project(x + 1.0, y, z),
+                project(x + 1.0, y + 1.0, z),
+                project(x + 1.0, y + 1.0, z + 1.0),
+                project(x + 1.0, y, z + 1.0),
+            ];
             fill_convex_quad(&mut image, pos_x, shade(color, 0.78));
         }
         if open_y {
-            let pos_y = [project(x, y + 1.0, z), project(x + 1.0, y + 1.0, z), project(x + 1.0, y + 1.0, z + 1.0), project(x, y + 1.0, z + 1.0)];
+            let pos_y = [
+                project(x, y + 1.0, z),
+                project(x + 1.0, y + 1.0, z),
+                project(x + 1.0, y + 1.0, z + 1.0),
+                project(x, y + 1.0, z + 1.0),
+            ];
             fill_convex_quad(&mut image, pos_y, shade(color, 0.6));
         }
     }
@@ -333,11 +454,33 @@ fn fill_convex_quad(image: &mut RgbImage, points: [(f32, f32); 4], color: Color)
         return;
     }
     let orientation = signed_area.signum();
-    let bound = |select: fn(&(f32, f32)) -> f32, limit: u32, round: fn(f32) -> f32, pick: fn(f32, f32) -> f32, start: f32| {
+    let bound = |select: fn(&(f32, f32)) -> f32,
+                 limit: u32,
+                 round: fn(f32) -> f32,
+                 pick: fn(f32, f32) -> f32,
+                 start: f32| {
         round(points.iter().map(select).fold(start, pick)).clamp(0.0, (limit - 1) as f32) as u32
     };
-    let (min_x, max_x) = (bound(|p| p.0, image.width(), f32::floor, f32::min, f32::INFINITY), bound(|p| p.0, image.width(), f32::ceil, f32::max, f32::NEG_INFINITY));
-    let (min_y, max_y) = (bound(|p| p.1, image.height(), f32::floor, f32::min, f32::INFINITY), bound(|p| p.1, image.height(), f32::ceil, f32::max, f32::NEG_INFINITY));
+    let (min_x, max_x) = (
+        bound(|p| p.0, image.width(), f32::floor, f32::min, f32::INFINITY),
+        bound(
+            |p| p.0,
+            image.width(),
+            f32::ceil,
+            f32::max,
+            f32::NEG_INFINITY,
+        ),
+    );
+    let (min_y, max_y) = (
+        bound(|p| p.1, image.height(), f32::floor, f32::min, f32::INFINITY),
+        bound(
+            |p| p.1,
+            image.height(),
+            f32::ceil,
+            f32::max,
+            f32::NEG_INFINITY,
+        ),
+    );
     for py in min_y..=max_y {
         for px in min_x..=max_x {
             let (cx, cy) = (px as f32 + 0.5, py as f32 + 0.5);
@@ -360,7 +503,11 @@ mod tests {
     const BLUE: Color = [40, 40, 200];
 
     fn style<'a>(palette: &'a [Color], empty_tiles: &'a [usize]) -> Style<'a> {
-        Style { palette, empty_tiles, cell_px: 8 }
+        Style {
+            palette,
+            empty_tiles,
+            cell_px: 8,
+        }
     }
 
     #[test]
@@ -368,9 +515,17 @@ mod tests {
         let grid = TileGrid::new(1, 2, 1, vec![0, 1]).unwrap();
         let image = render_layer(&grid, 0, &style(&[RED, BLUE], &[]));
         assert_eq!(image.dimensions(), (8, 16));
-        assert_eq!(image.get_pixel(4, 4).0, BLUE, "y = 1 is drawn in the top cell");
+        assert_eq!(
+            image.get_pixel(4, 4).0,
+            BLUE,
+            "y = 1 is drawn in the top cell"
+        );
         assert_eq!(image.get_pixel(4, 12).0, RED);
-        assert_eq!(image.get_pixel(0, 0).0, shade(BLUE, 0.7), "cells have a darker outline");
+        assert_eq!(
+            image.get_pixel(0, 0).0,
+            shade(BLUE, 0.7),
+            "cells have a darker outline"
+        );
     }
 
     #[test]
@@ -401,7 +556,12 @@ mod tests {
         let grid = TileGrid::new(2, 3, 4, vec![0; 24]).unwrap();
         let s = style(&[RED], &[]);
         let sheet = render_four_view(&grid, &s);
-        let (top, iso, front, side) = (top_view(&grid, &s), isometric_view(&grid, &s), front_view(&grid, &s), side_view(&grid, &s));
+        let (top, iso, front, side) = (
+            top_view(&grid, &s),
+            isometric_view(&grid, &s),
+            front_view(&grid, &s),
+            side_view(&grid, &s),
+        );
         let pad = 8;
         assert_eq!(
             sheet.dimensions(),

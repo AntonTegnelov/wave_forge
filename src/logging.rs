@@ -73,7 +73,9 @@ pub fn init_chrome_trace(path: &std::path::Path) -> tracing_chrome::FlushGuard {
     // fails because env_logger already owns the global logger.
     match tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer)) {
         Ok(()) => log::info!("Writing trace timeline to {}", path.display()),
-        Err(error) => log::warn!("Trace timeline disabled, a tracing subscriber is already set: {error}"),
+        Err(error) => {
+            log::warn!("Trace timeline disabled, a tracing subscriber is already set: {error}")
+        }
     }
     guard
 }

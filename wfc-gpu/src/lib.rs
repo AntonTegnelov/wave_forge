@@ -38,9 +38,9 @@ pub use utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer, Visualizat
 pub use utils::subgrid::SubgridConfig; // Coordination API
 
 // Error types (updated to use the new error module)
+pub use utils::error::WfcError;
 pub use utils::error::gpu_error::{GpuError, GpuErrorContext, GpuResourceType};
 pub use utils::error::io_error::{IoError, IoResourceType};
-pub use utils::error::WfcError;
 pub use utils::error::{ErrorLocation, ErrorSeverity, ErrorWithContext};
 
 // Error recovery - maintain compatibility
@@ -59,9 +59,9 @@ pub use utils::error_recovery::{
 mod tests;
 
 // Re-exports from shader module
+pub use shader::ShaderType;
 pub use shader::pipeline::ComputePipelines;
 pub use shader::shader_registry::ShaderRegistry;
-pub use shader::ShaderType;
 
 // Re-exports from gpu module
 pub use gpu::GpuSynchronizer;
@@ -69,4 +69,3 @@ pub use gpu::{BackendError, GpuBackend, WgpuBackend};
 
 // Re-export propagator
 pub use propagator::GpuConstraintPropagator;
-

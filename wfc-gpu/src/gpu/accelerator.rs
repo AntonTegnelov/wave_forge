@@ -12,32 +12,32 @@ use super::{
 use crate::coordination::strategy;
 use crate::{
     buffers::{CollapseInfoUniform, GpuBuffers, GpuEntropyShaderParams, GpuParamsUniform},
-    coordination::{strategy::CoordinationStrategyFactory, DefaultCoordinator, WfcCoordinator},
+    coordination::{DefaultCoordinator, WfcCoordinator, strategy::CoordinationStrategyFactory},
     entropy::{EntropyStrategy, EntropyStrategyFactory, GpuEntropyCalculator, GpuEntropyStrategy},
     propagator::{GpuConstraintPropagator, PropagationStrategyFactory},
     shader::pipeline::ComputePipelines,
+    utils::RwLock as GpuRwLock,
     utils::debug_viz::{DebugVisualizationConfig, DebugVisualizer},
     utils::error::{
-        gpu_error::GpuError as NewGpuError, gpu_error::GpuErrorContext, RecoveryAction,
-        RecoveryHookRegistry, WfcError,
+        RecoveryAction, RecoveryHookRegistry, WfcError, gpu_error::GpuError as NewGpuError,
+        gpu_error::GpuErrorContext,
     },
     utils::error_recovery::{GpuError, GridCoord},
     utils::subgrid::SubgridConfig,
-    utils::RwLock as GpuRwLock,
 };
 
 use anyhow::Error as AnyhowError;
 use log::{info, trace};
-use tracing::{Instrument, info_span};
 use rand;
 use std::time::Instant;
+use tracing::{Instrument, info_span};
 use wfc_core::{
+    BoundaryCondition, ProgressInfo,
     entropy::{
         EntropyCalculator, EntropyError as CoreEntropyError,
         EntropyHeuristicType as CoreEntropyHeuristicType,
     },
     grid::PossibilityGrid,
-    BoundaryCondition, ProgressInfo,
 };
 use wfc_rules::AdjacencyRules;
 
@@ -695,7 +695,9 @@ impl GpuAccelerator {
                 collapsed_cells = collapsed_cells.saturating_sub(undone);
                 current_grid = choice.grid;
                 let (bx, by, bz) = choice.cell;
-                let cell = current_grid.get_mut(bx, by, bz).expect("cell from history is in bounds");
+                let cell = current_grid
+                    .get_mut(bx, by, bz)
+                    .expect("cell from history is in bounds");
                 cell.set(choice.tile, false);
                 if cell.count_ones() == 0 {
                     // Every tile here has now been ruled out, so the mistake lies further back.
@@ -714,7 +716,9 @@ impl GpuAccelerator {
                         let revived = banned_ledger
                             .keys()
                             .filter(|((bx, by, bz), tile)| {
-                                current_grid.get(*bx, *by, *bz).is_some_and(|cell| cell[*tile])
+                                current_grid
+                                    .get(*bx, *by, *bz)
+                                    .is_some_and(|cell| cell[*tile])
                             })
                             .count();
                         if revived > 0 {
@@ -787,7 +791,11 @@ impl GpuAccelerator {
                         &buffers,
                         &device,
                         &queue,
-                        vec![GridCoord { x: bx, y: by, z: bz }],
+                        vec![GridCoord {
+                            x: bx,
+                            y: by,
+                            z: bz,
+                        }],
                     )
                     .instrument(backtrack_span.clone())
                     .await
@@ -852,9 +860,14 @@ impl GpuAccelerator {
                             &buffers,
                             &device,
                             &queue,
-                            changed.into_iter().map(|(x, y, z)| GridCoord { x, y, z }).collect(),
+                            changed
+                                .into_iter()
+                                .map(|(x, y, z)| GridCoord { x, y, z })
+                                .collect(),
                         )
-                        .instrument(info_span!(parent: &iteration_span, "constraint_propagation", cells))
+                        .instrument(
+                            info_span!(parent: &iteration_span, "constraint_propagation", cells),
+                        )
                         .await
                     {
                         constraint_failure = Some((e.to_string(), None));
@@ -907,7 +920,9 @@ impl GpuAccelerator {
                 for cz in 0..current_grid.depth {
                     for cy in 0..current_grid.height {
                         for cx in 0..current_grid.width {
-                            let count = current_grid.get(cx, cy, cz).map_or(0, |cell| cell.count_ones());
+                            let count = current_grid
+                                .get(cx, cy, cz)
+                                .map_or(0, |cell| cell.count_ones());
                             if count > 1 {
                                 candidates.push((count, (cx, cy, cz)));
                             }
@@ -920,7 +935,8 @@ impl GpuAccelerator {
                         break;
                     }
                     let far_enough = batch.iter().all(|&(bx, by, bz)| {
-                        bx.abs_diff(coord.0) + by.abs_diff(coord.1) + bz.abs_diff(coord.2) >= BATCH_SPACING
+                        bx.abs_diff(coord.0) + by.abs_diff(coord.1) + bz.abs_diff(coord.2)
+                            >= BATCH_SPACING
                     });
                     if far_enough {
                         batch.push(coord);
@@ -932,70 +948,73 @@ impl GpuAccelerator {
             let mut collapsed_this_round: Vec<GridCoord> = Vec::with_capacity(batch.len());
             let mut batch_failure = None;
             for &(x, y, z) in &batch {
-            let cell = current_grid.get_mut(x, y, z).unwrap();
-            let possible_states = cell.iter_ones().collect::<Vec<_>>();
-            if possible_states.is_empty() {
-                // An earlier choice emptied this cell; undo instead of failing the run.
-                batch_failure = Some((format!("no tiles left at ({x}, {y}, {z})"), Some((x, y, z))));
-                break;
-            }
-            if possible_states.len() == 1 {
-                // An earlier collapse in this batch already decided it.
-                continue;
-            }
-
-            // Choose a remaining state, in proportion to its weight when weights are set.
-            //
-            // This is the only place a *statistical* rule can act. It shifts probability inside the
-            // set of tiles already legal here, so it cannot be a GlobalConstraint: `apply` may only
-            // clear bits, and a likelihood rule clears none (docs/thrashing.md).
-            use rand::distr::{Distribution, weighted::WeightedIndex};
-            let weights: Option<Vec<f32>> = match (&self.cell_weighting, &self.tile_weights) {
-                // A cell-aware weighting wins: it can express everything a flat table can.
-                (Some(weighting), _) => Some(
-                    possible_states
-                        .iter()
-                        .map(|&tile| weighting.weight(&current_grid, (x, y, z), tile))
-                        .collect(),
-                ),
-                (None, Some(flat)) => Some(possible_states.iter().map(|&tile| flat[tile]).collect()),
-                (None, None) => None,
-            };
-            let chosen_state = match weights {
-                Some(weights) => {
-                    // Per-cell weights cannot be validated up front the way `with_tile_weights` checks
-                    // a flat table, so a bad set surfaces here as a failed run rather than a panic or
-                    // a silently skewed choice.
-                    let distribution = WeightedIndex::new(weights)
-                        .map_err(|e| WfcError::other(format!("invalid tile weights: {e}")))?;
-                    possible_states[distribution.sample(&mut rng)]
+                let cell = current_grid.get_mut(x, y, z).unwrap();
+                let possible_states = cell.iter_ones().collect::<Vec<_>>();
+                if possible_states.is_empty() {
+                    // An earlier choice emptied this cell; undo instead of failing the run.
+                    batch_failure =
+                        Some((format!("no tiles left at ({x}, {y}, {z})"), Some((x, y, z))));
+                    break;
                 }
-                None => possible_states[rng.random_range(0..possible_states.len())],
-            };
+                if possible_states.len() == 1 {
+                    // An earlier collapse in this batch already decided it.
+                    continue;
+                }
 
-            // Remember the state before the collapse so this choice can be undone.
-            if history.len() == MAX_HISTORY {
-                history.pop_front();
-            }
-            history.push_back(Choice {
-                grid: current_grid.clone(),
-                cell: (x, y, z),
-                tile: chosen_state,
-            });
+                // Choose a remaining state, in proportion to its weight when weights are set.
+                //
+                // This is the only place a *statistical* rule can act. It shifts probability inside the
+                // set of tiles already legal here, so it cannot be a GlobalConstraint: `apply` may only
+                // clear bits, and a likelihood rule clears none (docs/thrashing.md).
+                use rand::distr::{Distribution, weighted::WeightedIndex};
+                let weights: Option<Vec<f32>> = match (&self.cell_weighting, &self.tile_weights) {
+                    // A cell-aware weighting wins: it can express everything a flat table can.
+                    (Some(weighting), _) => Some(
+                        possible_states
+                            .iter()
+                            .map(|&tile| weighting.weight(&current_grid, (x, y, z), tile))
+                            .collect(),
+                    ),
+                    (None, Some(flat)) => {
+                        Some(possible_states.iter().map(|&tile| flat[tile]).collect())
+                    }
+                    (None, None) => None,
+                };
+                let chosen_state = match weights {
+                    Some(weights) => {
+                        // Per-cell weights cannot be validated up front the way `with_tile_weights` checks
+                        // a flat table, so a bad set surfaces here as a failed run rather than a panic or
+                        // a silently skewed choice.
+                        let distribution = WeightedIndex::new(weights)
+                            .map_err(|e| WfcError::other(format!("invalid tile weights: {e}")))?;
+                        possible_states[distribution.sample(&mut rng)]
+                    }
+                    None => possible_states[rng.random_range(0..possible_states.len())],
+                };
 
-            // Use the grid's collapse method directly
-            current_grid.collapse(x, y, z, chosen_state).map_err(|e| {
-                WfcError::other(format!(
-                    "Failed to collapse cell ({},{},{}): {}",
-                    x, y, z, e
-                ))
-            })?;
-            collapsed_cells += 1;
-            collapsed_this_round.push(GridCoord { x, y, z });
+                // Remember the state before the collapse so this choice can be undone.
+                if history.len() == MAX_HISTORY {
+                    history.pop_front();
+                }
+                history.push_back(Choice {
+                    grid: current_grid.clone(),
+                    cell: (x, y, z),
+                    tile: chosen_state,
+                });
 
-            // Only this cell changed; a full upload would repack and rewrite the whole grid.
-            info_span!(parent: &iteration_span, "upload_cell", x, y, z)
-                .in_scope(|| synchronizer.upload_cell(&current_grid, x, y, z));
+                // Use the grid's collapse method directly
+                current_grid.collapse(x, y, z, chosen_state).map_err(|e| {
+                    WfcError::other(format!(
+                        "Failed to collapse cell ({},{},{}): {}",
+                        x, y, z, e
+                    ))
+                })?;
+                collapsed_cells += 1;
+                collapsed_this_round.push(GridCoord { x, y, z });
+
+                // Only this cell changed; a full upload would repack and rewrite the whole grid.
+                info_span!(parent: &iteration_span, "upload_cell", x, y, z)
+                    .in_scope(|| synchronizer.upload_cell(&current_grid, x, y, z));
             }
 
             if let Some(reason) = batch_failure {
@@ -1011,7 +1030,13 @@ impl GpuAccelerator {
             let batched = collapsed_this_round.len();
             let first = collapsed_this_round[0];
             if let Err(e) = coordinator
-                .coordinate_propagation(&propagator, &buffers, &device, &queue, collapsed_this_round)
+                .coordinate_propagation(
+                    &propagator,
+                    &buffers,
+                    &device,
+                    &queue,
+                    collapsed_this_round,
+                )
                 .instrument(info_span!(parent: &iteration_span, "propagate", batched))
                 .await
             {

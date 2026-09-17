@@ -41,11 +41,20 @@ fn main() -> Result<()> {
     let text = std::fs::read_to_string(&args.grid)
         .with_context(|| format!("reading {}", args.grid.display()))?;
     let grid = TileGrid::parse_text(&text).map_err(anyhow::Error::msg)?;
-    let style = Style { palette: &[], empty_tiles: &args.empty_tiles, cell_px: args.cell_px };
+    let style = Style {
+        palette: &[],
+        empty_tiles: &args.empty_tiles,
+        cell_px: args.cell_px,
+    };
 
     let image = match args.view {
         View::Layer => {
-            ensure!(args.z < grid.depth, "layer {} is out of range for depth {}", args.z, grid.depth);
+            ensure!(
+                args.z < grid.depth,
+                "layer {} is out of range for depth {}",
+                args.z,
+                grid.depth
+            );
             render::render_layer(&grid, args.z, &style)
         }
         View::FourView => render::render_four_view(&grid, &style),

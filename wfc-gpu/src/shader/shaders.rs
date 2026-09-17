@@ -301,7 +301,9 @@ impl ShaderManager {
                 return Ok(content);
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                info!("[ShaderManager] Pre-compiled variant not found, attempting dynamic compilation...");
+                info!(
+                    "[ShaderManager] Pre-compiled variant not found, attempting dynamic compilation..."
+                );
                 // Proceed to dynamic compilation
             }
             Err(e) => {

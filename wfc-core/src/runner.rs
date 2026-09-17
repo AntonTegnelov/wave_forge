@@ -1,20 +1,20 @@
 use crate::{
+    BoundaryCondition, ProgressInfo, WfcCheckpoint, WfcError,
     entropy::EntropyCalculator,
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    BoundaryCondition, ProgressInfo, WfcCheckpoint, WfcError,
 };
 use log::{debug, error, info, warn};
 use rand::{
-    distr::{weighted::WeightedIndex, Distribution},
-    rngs::StdRng,
     SeedableRng,
+    distr::{Distribution, weighted::WeightedIndex},
+    rngs::StdRng,
 };
 #[cfg(feature = "serde")]
 use serde_json;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use wfc_rules::AdjacencyRules;
 
@@ -489,14 +489,20 @@ pub async fn run<
                         }
 
                         state.current_backtrack_depth += 1;
-                        info!("Backtracked to iteration {} with {} possibilities remaining for cell {:?}",
-                             backtrack_point.iteration, backtrack_point.available_tiles.len(), backtrack_point.coords);
+                        info!(
+                            "Backtracked to iteration {} with {} possibilities remaining for cell {:?}",
+                            backtrack_point.iteration,
+                            backtrack_point.available_tiles.len(),
+                            backtrack_point.coords
+                        );
 
                         // Continue algorithm execution
                         continue;
                     } else {
                         // No alternatives available at this choice point, try next one if available
-                        info!("No alternative tiles available at this choice point, looking deeper...");
+                        info!(
+                            "No alternative tiles available at this choice point, looking deeper..."
+                        );
                         state.current_backtrack_depth += 1;
                         continue;
                     }
@@ -609,7 +615,10 @@ async fn perform_iteration<
         }
         None => {
             // This means either fully collapsed or only contradictions remain (entropy <= 0)
-            debug!("Observation phase found no cells with positive entropy to collapse. Observation took: {:?}", start_observe.elapsed());
+            debug!(
+                "Observation phase found no cells with positive entropy to collapse. Observation took: {:?}",
+                start_observe.elapsed()
+            );
             // Verify if actually fully collapsed or if it's a contradiction state not caught earlier
             match grid.is_fully_collapsed() {
                 Ok(true) => {
@@ -618,7 +627,9 @@ async fn perform_iteration<
                 }
                 Ok(false) => {
                     // This implies contradictions exist but weren't handled before observation
-                    error!("Observation found no positive entropy cells, but grid is not fully collapsed. Likely unhandled contradiction.");
+                    error!(
+                        "Observation found no positive entropy cells, but grid is not fully collapsed. Likely unhandled contradiction."
+                    );
                     // Attempt to find a contradiction cell to report
                     for cz in 0..grid.depth {
                         for cy in 0..grid.height {
@@ -661,7 +672,7 @@ async fn perform_iteration<
         None => {
             return Err(WfcError::InternalError(
                 "Selected cell out of bounds?".into(),
-            ))
+            ));
         }
     };
 
@@ -830,14 +841,14 @@ fn load_checkpoint(_path: &std::path::Path) -> Result<WfcCheckpoint, WfcError> {
 mod tests {
     use super::*;
     use crate::{
+        BoundaryCondition, WfcCheckpoint, WfcError,
         entropy::EntropyCalculator,
         grid::{EntropyGrid, PossibilityGrid},
         propagator::{ConstraintPropagator, PropagationError},
-        BoundaryCondition, WfcCheckpoint, WfcError,
     };
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
-    use std::sync::{atomic::AtomicBool, Arc};
+    use rand::rngs::StdRng;
+    use std::sync::{Arc, atomic::AtomicBool};
     use wfc_rules::{AdjacencyRules, TileSet, Transformation};
 
     // --- Mock Implementations ---

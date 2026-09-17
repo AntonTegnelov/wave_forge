@@ -572,7 +572,9 @@ impl GpuEntropyCalculator {
                     debug!("Selected lowest entropy cell: ({}, {}, {})", x, y, z);
                     Some((x, y, z))
                 } else {
-                    debug!("No cell with positive entropy found (or grid fully collapsed/contradiction).");
+                    debug!(
+                        "No cell with positive entropy found (or grid fully collapsed/contradiction)."
+                    );
                     None // Grid might be fully collapsed or in a contradiction state
                 }
             }
@@ -653,7 +655,9 @@ impl GpuEntropyCalculator {
                     );
                     Ok(Some((x, y, z, entropy)))
                 } else {
-                    debug!("No candidate cell (reset key or non-finite entropy: key={key:08x}, index={index})");
+                    debug!(
+                        "No candidate cell (reset key or non-finite entropy: key={key:08x}, index={index})"
+                    );
                     Ok(None) // Grid might be fully collapsed, contradiction, or no positive entropy found
                 }
             }

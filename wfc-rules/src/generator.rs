@@ -26,7 +26,8 @@ use log::debug;
 ///   This holds for simple rotational symmetry but might need refinement for more complex symmetries
 ///   or rules involving the axis of rotation itself (e.g., Z-axis rules with Z-axis rotation).
 ///
-#[must_use] pub fn generate_transformed_rules(
+#[must_use]
+pub fn generate_transformed_rules(
     base_rules: &[(TileId, TileId, usize)],
     tileset: &TileSet,
     num_axes: usize,
@@ -71,7 +72,9 @@ use log::debug;
                     .expect("Failed to get transformed ID (tile2)");
 
                 if transformed_axis >= num_axes {
-                    log::error!("Derived rule {ttid1:?} -> {ttid2:?} resulted in invalid transformed axis {transformed_axis} from base axis {base_axis} and transform {tform1:?}");
+                    log::error!(
+                        "Derived rule {ttid1:?} -> {ttid2:?} resulted in invalid transformed axis {transformed_axis} from base axis {base_axis} and transform {tform1:?}"
+                    );
                     continue;
                 }
 

@@ -7,19 +7,19 @@
 use crate::{
     buffers::{DownloadRequest, GpuBuffers},
     entropy::{EntropyStrategy, GpuEntropyCalculator},
-    gpu::{sync::GpuSynchronizer, GpuAccelerator},
+    gpu::{GpuAccelerator, sync::GpuSynchronizer},
     propagator::gpu_constraint_propagator::GpuConstraintPropagator,
-    utils::error_recovery::{GpuError, GridCoord},
     utils::RwLock,
+    utils::error_recovery::{GpuError, GridCoord},
 };
 use async_trait::async_trait;
 use log::{error, trace};
 use std::fmt::Debug;
 use std::sync::Arc;
 use wfc_core::{
+    WfcError,
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    WfcError,
 };
 use wgpu::{Device, Queue};
 
@@ -355,10 +355,7 @@ impl WfcCoordinator for DefaultCoordinator {
 
             trace!(
                 "Selected cell at ({}, {}, {}) with entropy {}",
-                x,
-                y,
-                z,
-                min_data.0
+                x, y, z, min_data.0
             );
 
             // We now have our minimum entropy cell

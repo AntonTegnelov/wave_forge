@@ -109,8 +109,14 @@ fn work_per_dispatch_versus_dispatch_count() {
         label: Some("dispatch cost"),
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: data.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: params.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: data.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: params.as_entire_binding(),
+            },
         ],
     });
 
@@ -172,9 +178,18 @@ fn work_per_dispatch_versus_dispatch_count() {
         label: Some("dispatch cost, storage reads"),
         layout: &storage_pipeline.get_bind_group_layout(0),
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: data.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: params.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: rules.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: data.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: params.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: rules.as_entire_binding(),
+            },
         ],
     });
     let run_storage = |iterations: u32, dispatches: u32| -> std::time::Duration {

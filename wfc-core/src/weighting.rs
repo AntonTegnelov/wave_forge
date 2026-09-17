@@ -115,8 +115,9 @@ impl TileWeighting for DistanceWeighting {
                     if dx == 0 && dy == 0 && dz == 0 {
                         continue;
                     }
-                    let moved =
-                        |v: usize, d: isize, size: usize| v.checked_add_signed(d).filter(|&v| v < size);
+                    let moved = |v: usize, d: isize, size: usize| {
+                        v.checked_add_signed(d).filter(|&v| v < size)
+                    };
                     let (Some(nx), Some(ny), Some(nz)) = (
                         moved(x, dx, grid.width),
                         moved(y, dy, grid.height),
@@ -175,7 +176,10 @@ mod tests {
         let near_weight = rule.weight(&near, (0, 0, 0), SHOP);
         let far_weight = rule.weight(&far, (0, 0, 0), SHOP);
         assert_eq!(near_weight, 5.0, "adjacent attractor adds strength / 1");
-        assert_eq!(far_weight, 3.0, "attractor two cells away adds strength / 2");
+        assert_eq!(
+            far_weight, 3.0,
+            "attractor two cells away adds strength / 2"
+        );
         assert!(near_weight > far_weight);
     }
 
@@ -211,6 +215,10 @@ mod tests {
         let rule = UniformWeighting::new([2.0, 3.0]);
         assert_eq!(rule.weight(&grid, (0, 0, 0), PLAIN), 2.0);
         assert_eq!(rule.weight(&grid, (0, 0, 0), SHOP), 3.0);
-        assert_eq!(rule.weight(&grid, (0, 0, 0), 99), 1.0, "unknown tiles weigh 1");
+        assert_eq!(
+            rule.weight(&grid, (0, 0, 0), 99),
+            1.0,
+            "unknown tiles weigh 1"
+        );
     }
 }

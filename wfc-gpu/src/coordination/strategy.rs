@@ -11,7 +11,7 @@ use crate::{
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
-use wfc_core::{grid::PossibilityGrid, propagator::ConstraintPropagator, WfcError};
+use wfc_core::{WfcError, grid::PossibilityGrid, propagator::ConstraintPropagator};
 use wfc_rules::AdjacencyRules;
 
 /// The core strategy interface for WFC algorithm coordination.
@@ -248,7 +248,7 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
                             return Err(WfcError::InternalError(format!(
                                 "Failed to get possibilities for selected cell ({}, {}, {})",
                                 x, y, z
-                            )))
+                            )));
                         }
                     };
 
@@ -303,7 +303,10 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
                             let x = flat_index as usize % width;
                             log::warn!(
                                 "Contradiction detected after propagation! Flat Index: {}, Location: ({}, {}, {})",
-                                flat_index, x, y, z
+                                flat_index,
+                                x,
+                                y,
+                                z
                             );
                         } else {
                             log::warn!(
@@ -312,7 +315,9 @@ impl CoordinationStrategy for DefaultCoordinationStrategy {
                             );
                         }
                     } else {
-                        log::warn!("Contradiction detected after propagation, but location index is missing!");
+                        log::warn!(
+                            "Contradiction detected after propagation, but location index is missing!"
+                        );
                     }
                     return Ok(StepResult::Contradiction);
                 }

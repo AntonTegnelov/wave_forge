@@ -1,6 +1,6 @@
 //! Handles saving the generated WFC grid state to output files.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
@@ -47,11 +47,22 @@ pub fn save_grid_to_file(grid: &PossibilityGrid, output_path: &Path) -> Result<(
                         if possibilities.count_ones() == 1 {
                             TileId(id)
                         } else {
-                            bail!("Grid cell ({},{},{}) is not fully collapsed ({} possibilities), cannot save.", x, y, z, possibilities.count_ones());
+                            bail!(
+                                "Grid cell ({},{},{}) is not fully collapsed ({} possibilities), cannot save.",
+                                x,
+                                y,
+                                z,
+                                possibilities.count_ones()
+                            );
                         }
                     }
                     None => {
-                        bail!("Grid cell ({},{},{}) has a contradiction (0 possibilities), cannot save.", x, y, z);
+                        bail!(
+                            "Grid cell ({},{},{}) has a contradiction (0 possibilities), cannot save.",
+                            x,
+                            y,
+                            z
+                        );
                     }
                 };
 

@@ -12,8 +12,8 @@ use std::sync::Arc;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::AdjacencyRules;
 use wgpu;
-use wgpu::util::DeviceExt;
 use wgpu::BindGroup;
+use wgpu::util::DeviceExt;
 
 // Type alias for backward compatibility
 pub type GpuError = OldGpuError;
@@ -571,7 +571,7 @@ impl GpuSynchronizer {
                 label: Some("Reset Worklist Counts"),
             });
         encoder.clear_buffer(&self.buffers.worklist_buffers.worklist_count_buf, 0, None); // Use single count buffer
-                                                                                          // Remove redundant clear for non-existent buffer B
+        // Remove redundant clear for non-existent buffer B
         self.submit_commands(encoder);
         Ok(())
     }
@@ -897,7 +897,8 @@ impl GpuSynchronizer {
         trace!("Uploading adjacency rules to GPU");
 
         // The rule buffers are sized for the rule set they were created with.
-        if rules.num_tiles() != self.buffers.num_tiles || rules.num_axes() != self.buffers.num_axes {
+        if rules.num_tiles() != self.buffers.num_tiles || rules.num_axes() != self.buffers.num_axes
+        {
             warn!(
                 "Skipping rule upload: rules have {} tiles / {} axes but GPU buffers expect {} / {}",
                 rules.num_tiles(),

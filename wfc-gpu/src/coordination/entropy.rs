@@ -172,15 +172,14 @@ impl EntropyCoordinator {
             Ok(Some((x, y, z, entropy_value))) => {
                 trace!(
                     "EntropyCoordinator: Selected cell at ({}, {}, {}) with entropy {}",
-                    x,
-                    y,
-                    z,
-                    entropy_value
+                    x, y, z, entropy_value
                 );
                 Ok(Some((entropy_value, Coord3D { x, y, z })))
             }
             Ok(None) => {
-                trace!("EntropyCoordinator: No cell with positive entropy found (grid fully collapsed or contradiction).");
+                trace!(
+                    "EntropyCoordinator: No cell with positive entropy found (grid fully collapsed or contradiction)."
+                );
                 Ok(None)
             }
             Err(e) => {

@@ -181,7 +181,7 @@ impl crate::propagator::AsyncPropagationStrategy for SubgridPropagationStrategy 
         synchronizer: &GpuSynchronizer,
     ) -> Result<(), PropagationError> {
         use crate::utils::subgrid::{
-            divide_into_subgrids, extract_subgrid, merge_subgrids, SubgridConfig,
+            SubgridConfig, divide_into_subgrids, extract_subgrid, merge_subgrids,
         };
         use futures::future::join_all;
 

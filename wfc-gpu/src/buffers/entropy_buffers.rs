@@ -2,8 +2,8 @@
 
 //! Module for GPU buffers specifically related to entropy calculations.
 
-use crate::buffers::{DynamicBufferConfig, GpuBuffers}; // Need GpuBuffers for create_buffer and resize_buffer
 use crate::GpuError;
+use crate::buffers::{DynamicBufferConfig, GpuBuffers}; // Need GpuBuffers for create_buffer and resize_buffer
 use std::sync::Arc;
 use wgpu::BufferUsages;
 
@@ -113,7 +113,8 @@ mod tests {
     use wgpu::Instance;
 
     async fn setup_device() -> wgpu::Device {
-        let instance = Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance =
+            Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
             .await

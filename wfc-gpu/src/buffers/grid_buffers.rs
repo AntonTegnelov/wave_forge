@@ -80,9 +80,15 @@ impl GridBuffers {
                             return Err(GpuError::BufferOperationError {
                                 msg: format!(
                                     "Possibility grid cell ({}, {}, {}) has unexpected length: {} (expected {})",
-                                    x, y, z, cell_possibilities.len(), num_tiles
+                                    x,
+                                    y,
+                                    z,
+                                    cell_possibilities.len(),
+                                    num_tiles
                                 ),
-                                context: Box::new(crate::utils::error::gpu_error::GpuErrorContext::default())
+                                context: Box::new(
+                                    crate::utils::error::gpu_error::GpuErrorContext::default(),
+                                ),
                             });
                         }
                         // Pack the BitSlice into u32s

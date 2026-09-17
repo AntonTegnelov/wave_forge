@@ -87,7 +87,9 @@ pub enum WfcError {
     Contradiction { x: usize, y: usize, z: usize },
 
     /// WFC finished, but grid is not fully collapsed, and no specific CPU-side contradiction was found.
-    #[error("WFC process finished, but the grid is not fully collapsed and no specific CPU-side contradiction was found.")]
+    #[error(
+        "WFC process finished, but the grid is not fully collapsed and no specific CPU-side contradiction was found."
+    )]
     IncompleteCollapse,
 
     /// Error during CPU-side grid state check after WFC completion.

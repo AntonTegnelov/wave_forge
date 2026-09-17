@@ -47,8 +47,7 @@ impl fmt::Display for GpuResourceType {
 }
 
 /// Debug information about GPU state
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct GpuStateInfo {
     /// Available GPU memory at the time of error (if available)
     pub available_memory: Option<u64>,
@@ -69,7 +68,6 @@ pub struct GpuStateInfo {
     /// Current frame number
     pub frame_number: Option<u64>,
 }
-
 
 impl GpuStateInfo {
     /// Create a new GPU state info
@@ -598,7 +596,7 @@ impl ErrorWithContext for GpuError {
                 1. Check resource usage flags and ensure they match the operation\n\
                 2. Verify bind group layouts match pipeline expectations\n\
                 3. Ensure buffer sizes are sufficient for the operation";
-                
+
                 // Add more specific advice based on the error message
                 let specific_advice = if msg.contains("out of memory") {
                     "\n4. Reduce resource usage or buffer sizes\n\
@@ -615,7 +613,7 @@ impl ErrorWithContext for GpuError {
                 } else {
                     ""
                 };
-                
+
                 Some(format!("{}{}", basic_msg, specific_advice))
             }
             Self::CommandExecutionError { .. } => {
@@ -774,56 +772,79 @@ impl ErrorWithContext for GpuError {
 impl From<crate::utils::error_recovery::GpuError> for GpuError {
     fn from(err: crate::utils::error_recovery::GpuError) -> Self {
         use crate::utils::error_recovery::GpuError as RecoveryGpuError;
-        
+
         match err {
             RecoveryGpuError::MemoryAllocation(msg) => Self::BufferOperationError {
                 msg,
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Buffer)
-                    .with_details("Memory allocation failed")),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Buffer)
+                        .with_details("Memory allocation failed"),
+                ),
             },
-            RecoveryGpuError::ComputationTimeout { grid_size, duration } => Self::Timeout {
-                msg: format!("Computation timeout for grid {}x{} after {:?}", grid_size.0, grid_size.1, duration),
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details("GPU computation timed out")),
+            RecoveryGpuError::ComputationTimeout {
+                grid_size,
+                duration,
+            } => Self::Timeout {
+                msg: format!(
+                    "Computation timeout for grid {}x{} after {:?}",
+                    grid_size.0, grid_size.1, duration
+                ),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Other)
+                        .with_details("GPU computation timed out"),
+                ),
             },
             RecoveryGpuError::KernelExecution(msg) => Self::CommandExecutionError {
                 msg,
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details("Kernel execution error")),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Other)
+                        .with_details("Kernel execution error"),
+                ),
             },
             RecoveryGpuError::QueueSubmission(msg) => Self::CommandExecutionError {
                 msg,
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Queue)
-                    .with_details("Queue submission error")),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Queue)
+                        .with_details("Queue submission error"),
+                ),
             },
             RecoveryGpuError::DeviceLost(msg) => Self::DeviceLost {
                 msg,
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Device)
-                    .with_details("Device lost")),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Device).with_details("Device lost"),
+                ),
             },
             RecoveryGpuError::InvalidState(msg) => Self::ValidationError {
                 msg,
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details("Invalid state")),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Other).with_details("Invalid state"),
+                ),
             },
             RecoveryGpuError::BarrierSynchronization(msg) => Self::CommandExecutionError {
                 msg,
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details("Barrier synchronization error")),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Other)
+                        .with_details("Barrier synchronization error"),
+                ),
             },
             RecoveryGpuError::BufferCopy(msg) => Self::TransferError {
                 msg,
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Buffer)
-                    .with_details("Buffer copy error")),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Buffer).with_details("Buffer copy error"),
+                ),
             },
             RecoveryGpuError::BufferMapping(msg) => Self::BufferMapFailed {
                 msg,
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Buffer)
-                    .with_details("Buffer mapping error")),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Buffer)
+                        .with_details("Buffer mapping error"),
+                ),
             },
             RecoveryGpuError::ContradictionDetected { context } => Self::ContradictionDetected {
-                context: Box::new(GpuErrorContext::new(GpuResourceType::Other)
-                    .with_details(format!("Contradiction detected: {}", context))),
+                context: Box::new(
+                    GpuErrorContext::new(GpuResourceType::Other)
+                        .with_details(format!("Contradiction detected: {}", context)),
+                ),
             },
             RecoveryGpuError::Other(msg) => Self::Other {
                 msg,

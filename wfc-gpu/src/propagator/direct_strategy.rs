@@ -39,7 +39,11 @@ impl DirectPropagationStrategy {
     /// Runs `passes` dispatches over the whole grid without the per-pass readbacks. Benchmark only:
     /// the result is not a fixpoint and contradictions go unnoticed. See docs/performance.md.
     #[doc(hidden)]
-    pub fn benchmark_blind_passes(max_iterations: u32, pipelines: Arc<ComputePipelines>, passes: u32) -> Self {
+    pub fn benchmark_blind_passes(
+        max_iterations: u32,
+        pipelines: Arc<ComputePipelines>,
+        passes: u32,
+    ) -> Self {
         Self {
             blind_passes: Some(passes),
             ..Self::new(max_iterations, pipelines)
@@ -48,7 +52,11 @@ impl DirectPropagationStrategy {
 
     /// Like [`Self::benchmark_blind_passes`], but all dispatches go into one command buffer.
     #[doc(hidden)]
-    pub fn benchmark_blind_batched(max_iterations: u32, pipelines: Arc<ComputePipelines>, passes: u32) -> Self {
+    pub fn benchmark_blind_batched(
+        max_iterations: u32,
+        pipelines: Arc<ComputePipelines>,
+        passes: u32,
+    ) -> Self {
         Self {
             blind_passes: Some(passes),
             blind_single_submit: true,
@@ -57,7 +65,13 @@ impl DirectPropagationStrategy {
     }
 
     /// Records `passes` dispatches into one encoder and submits them together.
-    fn run_passes_batched(&self, buffers: &GpuBuffers, synchronizer: &GpuSynchronizer, input_count: u32, passes: u32) {
+    fn run_passes_batched(
+        &self,
+        buffers: &GpuBuffers,
+        synchronizer: &GpuSynchronizer,
+        input_count: u32,
+        passes: u32,
+    ) {
         let _span = tracing::info_span!("propagation_passes_batched", passes).entered();
         let device = synchronizer.device();
         let queue = synchronizer.queue();
@@ -80,13 +94,23 @@ impl DirectPropagationStrategy {
             });
             compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
             compute_pass.set_bind_group(0, &bind_groups[(pass % 2) as usize], &[]);
-            compute_pass.dispatch_workgroups(input_count.div_ceil(PROPAGATION_WORKGROUP_SIZE), 1, 1);
+            compute_pass.dispatch_workgroups(
+                input_count.div_ceil(PROPAGATION_WORKGROUP_SIZE),
+                1,
+                1,
+            );
         }
         queue.submit(Some(encoder.finish()));
     }
 
     /// Submits one pass without reading the contradiction flag or the worklist count.
-    fn run_pass_blind(&self, buffers: &GpuBuffers, synchronizer: &GpuSynchronizer, worklist_idx: usize, input_count: u32) {
+    fn run_pass_blind(
+        &self,
+        buffers: &GpuBuffers,
+        synchronizer: &GpuSynchronizer,
+        worklist_idx: usize,
+        input_count: u32,
+    ) {
         let _span = tracing::info_span!("propagation_pass_blind", input_count).entered();
         let device = synchronizer.device();
         let queue = synchronizer.queue();
@@ -95,7 +119,11 @@ impl DirectPropagationStrategy {
             std::mem::offset_of!(GpuParamsUniform, worklist_size) as u64,
             bytemuck::bytes_of(&input_count),
         );
-        queue.write_buffer(&buffers.worklist_buffers.worklist_count_buf, 0, bytemuck::bytes_of(&0u32));
+        queue.write_buffer(
+            &buffers.worklist_buffers.worklist_count_buf,
+            0,
+            bytemuck::bytes_of(&0u32),
+        );
         let bind_group = self.create_propagation_bind_group_for_pass(device, buffers, worklist_idx);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Propagation Pass Encoder (blind)"),
@@ -107,7 +135,11 @@ impl DirectPropagationStrategy {
             });
             compute_pass.set_pipeline(&self.pipelines.propagation_pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
-            compute_pass.dispatch_workgroups(input_count.div_ceil(PROPAGATION_WORKGROUP_SIZE), 1, 1);
+            compute_pass.dispatch_workgroups(
+                input_count.div_ceil(PROPAGATION_WORKGROUP_SIZE),
+                1,
+                1,
+            );
         }
         queue.submit(Some(encoder.finish()));
     }
@@ -296,7 +328,11 @@ impl crate::propagator::AsyncPropagationStrategy for DirectPropagationStrategy {
             / std::mem::size_of::<u32>() as u64) as u32;
         let all_cells: Vec<u32> = (0..num_cells).collect();
 
-        queue.write_buffer(&buffers.contradiction_flag_buf, 0, bytemuck::bytes_of(&0u32));
+        queue.write_buffer(
+            &buffers.contradiction_flag_buf,
+            0,
+            bytemuck::bytes_of(&0u32),
+        );
 
         let initial: Vec<u32> = updated_cells
             .iter()
@@ -313,7 +349,9 @@ impl crate::propagator::AsyncPropagationStrategy for DirectPropagationStrategy {
         if let Some(passes) = self.blind_passes {
             if self.blind_single_submit {
                 self.run_passes_batched(buffers, synchronizer, input_count, passes);
-                let _ = synchronizer.device().poll(wgpu::PollType::wait_indefinitely());
+                let _ = synchronizer
+                    .device()
+                    .poll(wgpu::PollType::wait_indefinitely());
                 return Ok(());
             }
             for _ in 0..passes {
@@ -321,7 +359,9 @@ impl crate::propagator::AsyncPropagationStrategy for DirectPropagationStrategy {
                 worklist_idx = 1 - worklist_idx;
             }
             // One wait at the end, so the timing covers work the GPU actually finished.
-            let _ = synchronizer.device().poll(wgpu::PollType::wait_indefinitely());
+            let _ = synchronizer
+                .device()
+                .poll(wgpu::PollType::wait_indefinitely());
             return Ok(());
         }
 
