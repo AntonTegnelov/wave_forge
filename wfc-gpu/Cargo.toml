@@ -37,6 +37,12 @@ serde_json = "1.0.151"
 anyhow = "1.0.104"
 regex = "1.13.1"  # For parsing grid coordinates from error strings
 
+[features]
+default = ["wgpu"]
+# The wgpu backend. A Godot extension builds without it and supplies its own ComputeBackend over
+# the engine's RenderingDevice.
+wgpu = []
+
 [dev-dependencies]
 wgpu = { version = "30.0.1", features = ["dx12", "metal", "vulkan", "wgsl"] }
 wfc-devtools = { path = "../wfc-devtools" }

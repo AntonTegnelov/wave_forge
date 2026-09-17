@@ -288,6 +288,15 @@ Ranked by how directly each makes the work GPU-shaped, and by the least work to 
    tick, and the world comes out complete and seamless. Only the first tick, which fills the whole
    view at once, exceeds the budget. What that measures is a benchmark kernel, not the solver: the
    shipped `GpuAccelerator` still runs the per-collapse loop this document opened with.
+
+   **Now in the library** (`wfc-gpu`: `backend.rs`, `kernel.rs`, `kernel/block.wgsl`,
+   `block_solver.rs`, `wgpu_backend.rs`). `BlockSolver` takes a batch of regions and returns one
+   result each through the `Solver` seam in `wfc-core`; a `ComputeBackend` is all it needs from a
+   compute API, so an engine can supply its own. Two things the move taught us. A mask has to be
+   generated with its words written out: a loop over the words per cell put it in scratch memory and
+   cost 2.5 times as much per step. And one kernel specialisation takes about four seconds to
+   compile through dozen, so a game compiles the ones it needs when it loads, and a benchmark that
+   does not warm them measures the compiler instead of the solver.
 5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
 
 ## How we will know it worked

@@ -102,6 +102,12 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Same, slowest against mean steps, r=1 | 1915 against 456 (restart-only r=0: 9917 against 2620) | same |
 | Same, noise | single rows at 2 to 9 times the typical µs per step (112 µs, 39 µs against 12 to 15) despite medians of 5 | same; treat one row as indicative, not settled |
 | Checkpoint ring bug, found by the 64-chunk validity test | a chunk reported success with 2 empty cells: undo restored slot k after an earlier, deeper stretch of the attempt had overwritten it at round k + 32, possibly mid-contradiction | fixed by undoing only to rounds with k + 32 above the deepest round reached; a restored empty cell now fails the chunk loudly, and removing the guard trips that check on the same chunk |
+| Block kernel as a library, 256 chunks per dispatch, radius 1 with undo | **0.183 ms per chunk** (46.8 ms), 21 µs per step of the slowest chunk, none failing; radius 2: 0.19 ms; radius 0: 0.34 ms | `block_solver_bench` at the library commit, seed 7, 3 warm-ups, median of 5, kernels pre-compiled; CPU reference 3.9 ms per chunk on one thread and 0.79 ms on 24 in the same run |
+| Same kernel with the mask words in a loop instead of written out | **0.453 ms per chunk**, 51 µs per step: 2.5× slower | same build, same seeds; a mask indexed by a loop variable lands in scratch memory, where one written out stays in registers |
+| Compiling one kernel specialisation (dozen, 81 tiles, 8×8×8 with halo) | **about 4 s**; ten specialisations took 43 s | `block_solver_bench`, `World::warm`; a game compiles them when it loads, and a dispatch that compiles first looked like a 4.8 s solve |
+| Live streaming on the library solver, 24×8 chunks, view radius 4 | 192 chunks (98 304 cells) in **1.11 s of dispatches**: median tick **32 ms**, p90 66 ms, busiest 443 ms (the initial 40-chunk fill) inside a 500 ms budget, 88k cells/s while generating | `block_solver_bench::live_streaming_keeps_ahead_of_a_walking_player`, halo 1, radius 1 with undo |
+| Same, chunks that could not be placed | **3 of 192** (1.6%), after repairs at halo 1 and 2; 14 chunks repaired; 0 seam violations | same; halo 3 does not fit the device at 81 tiles (38 288 B against 32 768 B), so the repair ladder stops at 2 |
+| Stitching an 8×8-chunk world on the library solver | checkerboard without a halo leaves 30 of 64 chunks; with halo 1 and repair both the checkerboard (14 repairs) and the diagonal order (2 repairs) complete it, 0 violations | `block_solver_bench` schedule tests |
 | CPU reference after the model move (u32 words, pcg3d choice, integer weights) | 8×8×8: **128–164k cells/s** (was 120–190k on `[u64; 2]`); 24×24×8: 23–29k (was 29–35k); the naive undo now thrashes on 1 of 8 seeds at 8×8×8 and 2 of 8 at 24×24×8 | `cpu_reference` at the model commit, release, Ryzen 9 5900X, one run per seed; trajectories differ from the old reference because the choice rule changed, so the tail is not comparable |
 | CPU reference on all 24 threads (Ryzen 9 5900X), 256 chunks | 150 ms, **0.59 ms per chunk**, 3 of 256 seeds thrash to the 20 000-backtrack cap (time included) | `block_solver_bench`, median of 3; against the block kernel's 45 ms for the same 256 chunks at radius 1 with undo in the same run |
 | Block kernel, 1 to 4 chunks per dispatch | µs per step bimodal across runs: radius 2 without undo 9.4 ms then 29.7 ms for the same 625 steps; radius 1 with undo 100 µs per step twice against 12 µs at 16 chunks | same; small dispatches are not a stable measurement on this stack |
@@ -326,6 +332,21 @@ Each of these is an inference. The reasoning is given so a future pass can check
    proves one completion exists without committing to it. A second cell of halo does not help
    further; releasing the halo so the repair may rewrite committed neighbours (modifying in blocks)
    then fixed every remaining chunk. One world, one seed per pass: indicative.
+
+16. **A mask that a loop indexes costs twice as much as one written out.**
+   *Reasoning:* generalising the kernel from the bench's hard-coded three words to a loop over
+   `words` per cell took 256 chunks from 0.18 to 0.45 ms each and the cost per step from 21 to 51 µs,
+   with everything else equal. A local array or vector indexed by a loop variable cannot stay in
+   registers, so each word touches scratch memory. The kernel now generates its mask type and
+   operations with every word written out, which restored the figure exactly. Measured on one stack;
+   the mechanism is general but the factor is not.
+17. **About one chunk in sixty of the city cannot be placed against fixed borders.**
+   *Reasoning:* 3 of 192 chunks in the live run, and 30 of 64 without a halo, end with borders no
+   arrangement satisfies; repairs at halo 1 and 2 fix all but those three, and halo 3 does not fit
+   the device. Since a solve is a function of the chunk and its neighbours, asking again is pointless,
+   which is why the scheduler reports such a chunk once instead of retrying it. The remedy is
+   module-set design, not solver work: a set is streaming-clean when the repair count is zero. One
+   world, one seed.
 
 ## Unknowns
 
