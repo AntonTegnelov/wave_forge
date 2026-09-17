@@ -8,6 +8,19 @@
 
 // --- Private/Internal Modules ---
 // These are implementation details not part of the public API unless re-exported.
+// The block solver: one workgroup solves one whole region inside a single dispatch. These replace
+// the per-collapse loop in `gpu::accelerator`, which still runs the CLI (docs/solver-redesign.md).
+pub mod backend;
+pub mod block_solver;
+pub mod error;
+pub mod kernel;
+#[cfg(feature = "wgpu")]
+pub mod wgpu_backend;
+
+pub use backend::{BackendLimits, BufferUsage, ComputeBackend};
+pub use block_solver::BlockSolver;
+pub use kernel::{KernelSpec, Params, SolverConfig};
+
 pub mod gpu;
 pub mod shader; // New shader module that contains all shader-related functionality // New gpu module that contains all GPU-related functionality
 
