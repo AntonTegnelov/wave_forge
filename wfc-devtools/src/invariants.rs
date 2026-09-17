@@ -6,6 +6,7 @@
 //! image.
 
 use wfc_core::BoundaryCondition;
+use wfc_core::Domains;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::AdjacencyRules;
 
@@ -52,6 +53,29 @@ impl TileGrid {
             depth,
             tiles,
         })
+    }
+
+    /// Converts a solved region, failing on any cell that is not decided.
+    ///
+    /// # Errors
+    /// If the domains do not describe a `width` x `height` x `depth` grid, or a cell is undecided.
+    pub fn from_domains(
+        domains: &Domains,
+        width: usize,
+        height: usize,
+        depth: usize,
+    ) -> Result<Self, String> {
+        let tiles = (0..domains.cells())
+            .map(|cell| {
+                domains
+                    .decided(cell)
+                    .map(|tile| tile as usize)
+                    .ok_or_else(|| {
+                        format!("cell {cell} has {} possible tiles", domains.count(cell))
+                    })
+            })
+            .collect::<Result<Vec<usize>, String>>()?;
+        Self::new(width, height, depth, tiles)
     }
 
     /// Converts solver output, failing on any cell that is not collapsed to exactly one tile.

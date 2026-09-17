@@ -24,5 +24,8 @@ pollster = "1.0.1" # Added pollster for blocking async calls in tests
 
 [features]
 default = []
+# The CPU reference solver: ground truth for tests and the yardstick for benchmarks, never a
+# fallback, so it is not compiled into a shipped build.
+reference = []
 clap = ["dep:clap"]
 serde = ["dep:serde", "dep:serde_json", "wfc-rules/serde"] # Added dep:serde_json

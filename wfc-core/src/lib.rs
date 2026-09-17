@@ -25,6 +25,59 @@ pub mod weighting;
 /// The core WFC algorithm runner.
 pub mod runner;
 
+// The model the chunk solver works on (docs/architecture.md §3). These replace the grid and runner
+// above, which the old per-collapse GPU loop still uses.
+pub mod chunk;
+pub mod domains;
+pub mod hash;
+pub mod prior;
+#[cfg(feature = "reference")]
+pub mod reference;
+pub mod rules;
+pub mod solver;
+pub mod store;
+
+pub use crate::chunk::{ChunkCoord, ChunkShape, Region, RegionShape, WorldCell};
+pub use crate::domains::Domains;
+pub use crate::prior::Prior;
+pub use crate::rules::{MAX_TILES, RuleTable, Ruleset, TileMask};
+pub use crate::solver::{
+    BatchResult, JobId, RegionBatch, RegionStats, RegionStatus, Solver, SolverError,
+};
+pub use crate::store::{Chunk, ChunkStore, WorldExtent, region_init};
+
+/// What a rule set, a world or a region can be wrong about.
+#[derive(Error, Debug)]
+pub enum ModelError {
+    /// A rule set the solver cannot represent.
+    #[error("a rule set of {tiles} tiles is outside the supported range of 1 to {max}")]
+    TileCount { tiles: usize, max: u32 },
+    /// Rules defined over the wrong number of directions.
+    #[error("rules over {axes} axes, but a solver needs the 6 of a cubic grid")]
+    AxisCount { axes: usize },
+    /// One weight per tile is required.
+    #[error("{tiles} tiles but {weights} weights")]
+    WeightCount { tiles: usize, weights: usize },
+    /// A weight that cannot be used.
+    #[error("tile {tile} has weight {weight}, which is not a finite, non-negative number")]
+    Weight { tile: usize, weight: f32 },
+    /// Every tile has weight zero, so nothing could ever be chosen.
+    #[error("no tile has a positive weight")]
+    NoPositiveWeight,
+    /// Domain words that do not match the cells they describe.
+    #[error("{expected} words describe these cells, but {got} were given")]
+    WordCount { expected: usize, got: usize },
+    /// A chunk outside the world's extent.
+    #[error("chunk ({}, {}, {}) is outside the world", chunk.x, chunk.y, chunk.z)]
+    OutsideWorld { chunk: crate::chunk::ChunkCoord },
+    /// A chunk with the wrong number of cells.
+    #[error("a chunk of this world holds {expected} cells, but {got} were given")]
+    ChunkCells { expected: usize, got: usize },
+    /// A cell that should have been decided by now.
+    #[error("cell ({}, {}, {}) is not decided", cell[0], cell[1], cell[2])]
+    Undecided { cell: crate::chunk::WorldCell },
+}
+
 // Re-export core public items
 
 /// Trait defining the interface for entropy calculation strategies.

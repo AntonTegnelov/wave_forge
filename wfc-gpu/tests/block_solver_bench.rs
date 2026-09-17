@@ -14,8 +14,13 @@
 //! Correctness is asserted against the CPU reference solver (`wfc_devtools::reference`); timings
 //! are printed. A timing describes one build on one machine and driver stack.
 
+use std::sync::Arc;
+use wfc_core::reference::ReferenceSolver;
+use wfc_core::{
+    ChunkCoord, ChunkShape, Domains, Region, RegionShape, RuleTable, Ruleset, TileMask, WorldExtent,
+};
 use wfc_devtools::city;
-use wfc_devtools::reference::{self, ReferenceSolver};
+use wfc_devtools::city::city_prior;
 
 /// Chunk dimensions. Workgroup memory holds the chunk, so these bound what fits (see `KERNEL`).
 const CX: u32 = 8;
@@ -550,42 +555,62 @@ fn kernel_source(num_tiles: usize, invocations: u32, shape: [u32; 3]) -> String 
         .replace("{RING}", &RING.to_string())
 }
 
-/// The rule table in the layout the solver's own shaders use: one `WORDS`-word mask per
-/// `(axis, tile)` of the tiles allowed in the neighbour along `axis`.
-fn pack_rules(rules: &wfc_rules::AdjacencyRules) -> Vec<u32> {
-    let n = rules.num_tiles();
-    let words = WORDS as usize;
-    let mut table = vec![0u32; 6 * n * words];
-    for axis in 0..6 {
-        for a in 0..n {
-            for b in 0..n {
-                if rules.check(a, b, axis) {
-                    table[(axis * n + a) * words + b / 32] |= 1 << (b % 32);
-                }
-            }
-        }
-    }
-    table
+/// The city's rule set, packed once.
+fn city_ruleset(city: &city::City) -> Ruleset {
+    Ruleset::from_modules(&city.modules).expect("the city rule set compiles")
 }
 
-fn to_words(cells: &[reference::Cell]) -> Vec<u32> {
-    cells
-        .iter()
-        .flat_map(|cell| {
-            let low = cell[0];
-            let high = cell[1];
-            [low as u32, (low >> 32) as u32, high as u32]
-        })
+/// A world of exactly one chunk of these cell dimensions: what the bench's grids are.
+fn one_chunk_extent(width: usize, height: usize, depth: usize) -> (ChunkShape, WorldExtent) {
+    let shape = ChunkShape {
+        x: width as u32,
+        y: height as u32,
+        z: depth as u32,
+    };
+    let extent = WorldExtent::new(shape)
+        .with_x(0..1)
+        .with_y(0..1)
+        .with_z(0..1);
+    (shape, extent)
+}
+
+/// Every cell's starting domain for a city grid, row-major: the layer masks plus the bans that keep
+/// paths from leading out of the world.
+fn city_domains(city: &city::City, width: usize, height: usize, depth: usize) -> Vec<TileMask> {
+    let (shape, extent) = one_chunk_extent(width, height, depth);
+    let prior = city_prior(city, depth as u32);
+    Region::new(ChunkCoord::new(0, 0, 0), shape.region([0, 0, 0]))
+        .cells()
+        .map(|(at, _)| prior.domain(at, &extent))
         .collect()
 }
 
-fn from_words(words: &[u32]) -> Vec<reference::Cell> {
+/// The domains of a run of cells, as the kernel's buffers hold them.
+fn to_domains(cells: &[TileMask]) -> Domains {
+    Domains::from_masks(WORDS, cells.iter().copied())
+}
+
+fn to_words(cells: &[TileMask]) -> Vec<u32> {
+    to_domains(cells).as_words().to_vec()
+}
+
+fn from_words(words: &[u32]) -> Vec<TileMask> {
     words
-        .as_chunks::<3>()
+        .as_chunks::<{ WORDS as usize }>()
         .0
         .iter()
-        .map(|w| [u64::from(w[0]) | (u64::from(w[1]) << 32), u64::from(w[2])])
+        .map(|w| TileMask::from_words(w))
         .collect()
+}
+
+/// The shape of a region of `cells` cells laid out as `width` x `height` x `depth`.
+fn region_shape(width: usize, height: usize, depth: usize) -> RegionShape {
+    ChunkShape {
+        x: width as u32,
+        y: height as u32,
+        z: depth as u32,
+    }
+    .region([0, 0, 0])
 }
 
 struct Kernel {
@@ -647,7 +672,10 @@ impl Kernel {
                 mapped_at_creation: false,
             })
         };
-        let rule_table = pack_rules(rules);
+        let rule_table = RuleTable::pack(rules)
+            .expect("the rule set packs")
+            .as_words()
+            .to_vec();
         let rules_buf = storage(
             "rules",
             (rule_table.len() * 4) as u64,
@@ -794,13 +822,16 @@ fn one_chunk_propagates_to_the_reference_fixpoint() {
     let city = city::city();
     let m = &city.modules;
     let (w, h, d) = (CX as usize, CY as usize, CZ as usize);
-    let initial = reference::city_initial_cells(&city, w, h, d);
-    let solver = ReferenceSolver::new(&m.rules, &m.tileset.weights, w, h, d);
-    let mut expected = initial.clone();
-    let mut stack: Vec<usize> = (0..expected.len()).collect();
+    let initial = city_domains(&city, w, h, d);
+    let solver = ReferenceSolver::new(Arc::new(city_ruleset(&city)));
+    let mut expected = to_domains(&initial);
+    let mut stack: Vec<u32> = (0..expected.cells()).collect();
     solver
-        .propagate(&mut expected, &mut stack)
+        .propagate(region_shape(w, h, d), &mut expected, &mut stack)
         .expect("the city chunk is consistent");
+    let expected = (0..expected.cells())
+        .map(|cell| expected.mask(cell))
+        .collect::<Vec<_>>();
     // A kernel that did nothing would pass if propagation had nothing to do.
     let narrowed = initial
         .iter()
@@ -846,18 +877,17 @@ fn one_chunk_propagates_to_the_reference_fixpoint() {
 }
 
 /// A chunk's tiles, after checking every cell was decided within its initial domain.
-fn decided_tiles(domains: &[reference::Cell], initial: &[reference::Cell]) -> Vec<usize> {
+fn decided_tiles(domains: &[TileMask], initial: &[TileMask]) -> Vec<usize> {
     domains
         .iter()
         .zip(initial)
         .map(|(&cell, &start)| {
-            assert_eq!(reference::count(cell), 1, "every cell is decided");
-            assert_eq!(
-                [cell[0] & !start[0], cell[1] & !start[1]],
-                [0, 0],
+            assert_eq!(cell.count(), 1, "every cell is decided");
+            assert!(
+                cell.subtract(start).is_empty(),
                 "a tile outside the initial domain"
             );
-            reference::set_bits(cell).next().expect("one tile")
+            cell.iter().next().expect("one tile") as usize
         })
         .collect()
 }
@@ -869,7 +899,7 @@ fn one_chunk_solves_validly_and_reproducibly() {
     let city = city::city();
     let m = &city.modules;
     let (w, h, d) = (CX as usize, CY as usize, CZ as usize);
-    let initial = reference::city_initial_cells(&city, w, h, d);
+    let initial = city_domains(&city, w, h, d);
     let gpu = bench_device();
     let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS, CHUNK);
     gpu.queue
@@ -941,14 +971,21 @@ fn chunk_throughput_against_the_cpu_reference() {
     let city = city::city();
     let m = &city.modules;
     let (w, h, d) = (CX as usize, CY as usize, CZ as usize);
-    let initial = reference::city_initial_cells(&city, w, h, d);
+    let initial = city_domains(&city, w, h, d);
 
     // The CPU yardstick: sixteen seeds of the same chunk, one thread, after one warm-up solve.
-    let solver = ReferenceSolver::new(&m.rules, &m.tileset.weights, w, h, d);
-    solver.solve(initial.clone(), 0);
+    let ruleset = Arc::new(city_ruleset(&city));
+    let solver = ReferenceSolver::new(Arc::clone(&ruleset));
+    let shape = region_shape(w, h, d);
+    let one_chunk = to_domains(&initial);
+    let _ = solver.solve_region(shape, &one_chunk, 0, 0);
     let cpu_ms = median(
         (1..=16)
-            .map(|seed| solver.solve(initial.clone(), seed).seconds * 1000.0)
+            .map(|seed| {
+                let started = std::time::Instant::now();
+                let _ = solver.solve_region(shape, &one_chunk, 0, seed);
+                started.elapsed().as_secs_f64() * 1000.0
+            })
             .collect(),
     );
     eprintln!(
@@ -966,11 +1003,14 @@ fn chunk_throughput_against_the_cpu_reference() {
                 thrashed = std::thread::scope(|scope| {
                     let workers: Vec<_> = (0..threads)
                         .map(|thread| {
-                            let (solver, initial) = (&solver, &initial);
+                            let (solver, one_chunk) = (&solver, &one_chunk);
                             scope.spawn(move || {
-                                (0..256u64)
+                                (0..256u32)
                                     .filter(|seed| *seed as usize % threads == thread)
-                                    .filter(|&seed| solver.solve(initial.clone(), seed).thrashed)
+                                    .filter(|&seed| {
+                                        solver.solve_region(shape, one_chunk, 0, seed).1
+                                            != wfc_core::RegionStatus::Solved
+                                    })
                                     .count()
                             })
                         })
@@ -1116,7 +1156,7 @@ fn every_reported_success_is_a_valid_chunk() {
     let city = city::city();
     let m = &city.modules;
     let (w, h, d) = (CX as usize, CY as usize, CZ as usize);
-    let initial = reference::city_initial_cells(&city, w, h, d);
+    let initial = city_domains(&city, w, h, d);
     let chunks = 64u32;
     let gpu = bench_device();
     let kernel = Kernel::new(
@@ -1162,8 +1202,8 @@ fn every_reported_success_is_a_valid_chunk() {
                 continue;
             }
             let cells = &domains[chunk * CELLS as usize..(chunk + 1) * CELLS as usize];
-            let empty = cells.iter().filter(|&&c| reference::count(c) == 0).count();
-            let open = cells.iter().filter(|&&c| reference::count(c) > 1).count();
+            let empty = cells.iter().filter(|c| c.is_empty()).count();
+            let open = cells.iter().filter(|c| c.count() > 1).count();
             if empty + open > 0 {
                 invalid.push((chunk, empty, open, record.to_vec()));
             }
@@ -1183,14 +1223,8 @@ fn every_reported_success_is_a_valid_chunk() {
 }
 
 /// The tiles a cell may hold when its neighbour along `axis` holds `tile`, per the rules.
-fn allowed_next_to(rules: &wfc_rules::AdjacencyRules, tile: usize, axis: usize) -> reference::Cell {
-    let mut cell = [0u64; reference::WORDS];
-    for other in 0..rules.num_tiles() {
-        if rules.check(tile, other, axis) {
-            cell[other / 64] |= 1 << (other % 64);
-        }
-    }
-    cell
+fn allowed_next_to(table: &RuleTable, tile: usize, axis: usize) -> TileMask {
+    table.allowed_next_to(tile as u32, axis)
 }
 
 /// What stitching a world from chunks produced.
@@ -1204,6 +1238,7 @@ struct Stitched {
 /// An 8x8-chunk city world assembled from block-kernel solves.
 struct World<'a> {
     city: &'a city::City,
+    ruleset: Ruleset,
     gpu: &'a BenchDevice,
     /// One kernel per (chunk capacity, region shape): building one compiles the shader, which is
     /// far more expensive than a dispatch.
@@ -1213,10 +1248,9 @@ struct World<'a> {
     height: usize,
     /// Every cell's domain before anything is decided: street level at the bottom, air on top, and
     /// no path leaving the world's outer faces. Faces between chunks are left to the solver.
-    initial: Vec<reference::Cell>,
-    /// The layering alone, for halo cells beyond the world's edge: the middle column of a grid too
-    /// small to have an interior rim.
-    open_column: Vec<reference::Cell>,
+    initial: Vec<TileMask>,
+    /// The layering alone, for halo cells beyond the world's edge.
+    open_column: Vec<TileMask>,
     tiles: Vec<Option<usize>>,
     /// How long the last dispatch took, excluding the host work around it.
     last_wall_ms: f64,
@@ -1225,17 +1259,20 @@ struct World<'a> {
 impl<'a> World<'a> {
     fn new(city: &'a city::City, gpu: &'a BenchDevice, chunks_x: usize, chunks_y: usize) -> Self {
         let (width, height) = (chunks_x * CX as usize, chunks_y * CY as usize);
-        let grid = reference::city_initial_cells(city, 3, 3, CZ as usize);
+        let depth = CZ as usize;
+        let (_, extent) = one_chunk_extent(width, height, depth);
+        let prior = city_prior(city, CZ);
         Self {
             city,
+            ruleset: city_ruleset(city),
             gpu,
             kernels: std::collections::HashMap::new(),
             chunks_x,
             width,
             height,
-            initial: reference::city_initial_cells(city, width, height, CZ as usize),
-            open_column: (0..CZ as usize)
-                .map(|z| grid[(z * 3 + 1) * 3 + 1])
+            initial: city_domains(city, width, height, depth),
+            open_column: (0..CZ as i32)
+                .map(|z| prior.open_domain([0, 0, z], &extent))
                 .collect(),
             tiles: vec![None; width * height * CZ as usize],
             last_wall_ms: 0.0,
@@ -1276,7 +1313,7 @@ impl<'a> World<'a> {
     /// Starting domains for a region. Decided cells inside it are pinned to their tiles, unless
     /// `release` frees them to be solved again; decided cells just outside restrict their
     /// neighbours inside.
-    fn region_init(&self, k: usize, halo: usize, release: bool) -> Vec<reference::Cell> {
+    fn region_init(&self, k: usize, halo: usize, release: bool) -> Vec<TileMask> {
         let region = self.region(k, halo);
         let members: std::collections::HashSet<(isize, isize, isize)> =
             region.iter().map(|(at, _)| *at).collect();
@@ -1287,9 +1324,7 @@ impl<'a> World<'a> {
                     return self.open_column[at.2 as usize];
                 };
                 if let (Some(tile), false) = (self.tiles[i], release) {
-                    let mut pinned = [0u64; reference::WORDS];
-                    pinned[tile / 64] = 1 << (tile % 64);
-                    return pinned;
+                    return TileMask::single(tile as u32);
                 }
                 let mut cell = self.initial[i];
                 for (axis, (dx, dy, dz)) in
@@ -1302,8 +1337,8 @@ impl<'a> World<'a> {
                     if let Some(tile) = self.index(next).and_then(|n| self.tiles[n]) {
                         // The neighbour lies along `axis` from this cell, so this cell lies along
                         // the opposite axis from the neighbour.
-                        let allowed = allowed_next_to(&self.city.modules.rules, tile, axis ^ 1);
-                        cell = [cell[0] & allowed[0], cell[1] & allowed[1]];
+                        cell =
+                            cell.intersect(allowed_next_to(self.ruleset.table(), tile, axis ^ 1));
                     }
                 }
                 cell
@@ -1322,10 +1357,9 @@ impl<'a> World<'a> {
         release: bool,
         seed: u32,
     ) -> Vec<u32> {
-        let m = &self.city.modules;
         let (rx, ry, cz) = (CX as usize + 2 * halo, CY as usize + 2 * halo, CZ as usize);
         let region_cells = rx * ry * cz;
-        let init: Vec<reference::Cell> = chunks
+        let init: Vec<TileMask> = chunks
             .iter()
             .flat_map(|&k| self.region_init(k, halo, release))
             .collect();
@@ -1381,13 +1415,13 @@ impl<'a> World<'a> {
             if status == 3 {
                 // A border contradiction must be real: the CPU reference, propagating the same
                 // initial domains, has to empty a cell too.
-                let mut cells = init[span.clone()].to_vec();
-                let mut stack: Vec<usize> = (0..cells.len()).collect();
-                let emptied = ReferenceSolver::new(&m.rules, &m.tileset.weights, rx, ry, cz)
-                    .propagate(&mut cells, &mut stack)
+                let mut cells = to_domains(&init[span.clone()]);
+                let mut stack: Vec<u32> = (0..cells.cells()).collect();
+                let emptied = ReferenceSolver::new(Arc::new(self.ruleset.clone()))
+                    .propagate(region_shape(rx, ry, cz), &mut cells, &mut stack)
                     .expect_err("the kernel reports a border contradiction the CPU does not find");
                 if counts[3] == 1 {
-                    let (at, inner) = self.region(k, halo)[emptied];
+                    let (at, inner) = self.region(k, halo)[emptied as usize];
                     eprintln!(
                         "block_solver: {label}: chunk {k} first border contradiction at world {at:?}, {}",
                         if inner {
@@ -1404,12 +1438,8 @@ impl<'a> World<'a> {
             for ((at, inner), cell) in self.region(k, halo).into_iter().zip(&domains[span]) {
                 let Some(i) = self.index(at) else { continue };
                 if inner || (release && self.tiles[i].is_some()) {
-                    assert_eq!(
-                        reference::count(*cell),
-                        1,
-                        "chunk {k} left {at:?} undecided"
-                    );
-                    self.tiles[i] = reference::set_bits(*cell).next();
+                    assert_eq!(cell.count(), 1, "chunk {k} left {at:?} undecided");
+                    self.tiles[i] = cell.iter().next().map(|tile| tile as usize);
                 }
             }
         }

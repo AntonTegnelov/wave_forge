@@ -21,6 +21,7 @@ use std::collections::VecDeque;
 use wfc_core::BoundaryCondition;
 use wfc_core::constraint::ConnectivityConstraint;
 use wfc_core::grid::PossibilityGrid;
+use wfc_core::{Prior, TileMask};
 use wfc_rules::modules::{
     CompiledModules, DOWN, Face, HorizontalFace as H, ModulePrototype, ModuleSet, NEG_X, NEG_Y,
     NUM_AXES, POS_X, POS_Y, UP, VerticalFace as V, opposite,
@@ -409,6 +410,44 @@ pub fn constrain_city(grid: &mut PossibilityGrid, city: &City) {
             }
         }
     }
+}
+
+/// The same boundary conditions as [`constrain_city`], as a [`Prior`] the chunk solver reads.
+///
+/// `depth` is how many layers tall the world is. Layer masks pin the bottom to street level and the
+/// top to air; face bans keep paths from pointing out of a bounded world's sides. A streamed world
+/// is unbounded along x and y, so no ban applies there and roads simply continue into the next
+/// chunk.
+///
+/// # Panics
+/// If `depth` is below three: a city needs a street, a roof and air above it.
+#[must_use]
+pub fn city_prior(city: &City, depth: u32) -> Prior {
+    assert!(
+        depth >= 3,
+        "a city needs at least a street, a roof and air above it"
+    );
+    let num_tiles = city.modules.variants.len() as u32;
+    let mask_of = |tiles: &[usize]| {
+        tiles.iter().fold(TileMask::EMPTY, |mask, &tile| {
+            mask.union(TileMask::single(tile as u32))
+        })
+    };
+    let street_level = mask_of(&city.modules.variants_tagged(STREET_LEVEL));
+    let mut layers = vec![TileMask::all(num_tiles); depth as usize];
+    layers[0] = street_level;
+    layers[depth as usize - 1] = TileMask::single(city.air as u32);
+    let paths_out = |axis: usize| {
+        (0..num_tiles)
+            .filter(|&tile| {
+                matches!(city.modules.face(tile as usize, axis), Face::Horizontal(f) if f.enforce_walkable_neighbor)
+            })
+            .fold(TileMask::EMPTY, |mask, tile| mask.union(TileMask::single(tile)))
+    };
+    [POS_X, NEG_X, POS_Y, NEG_Y].iter().fold(
+        Prior::open(num_tiles).with_layers(layers),
+        |prior, &axis| prior.with_face_ban(axis, paths_out(axis)),
+    )
 }
 
 /// Pairs of tiles someone can walk between, as `(axis, from, to)`: `to` in the neighbour along
