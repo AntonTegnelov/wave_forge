@@ -58,6 +58,7 @@ const WRITE: u32 = 2u;
 const DONE: u32 = 3u;
 
 const STATUS_OK: u32 = 0u;
+const STATUS_FAILED: u32 = 1u;
 const STATUS_CAP: u32 = 2u;
 const STATUS_BOUNDARY: u32 = 3u;
 
@@ -72,6 +73,8 @@ struct Ctrl {
     sweeps: u32,
     collapses: u32,
     restarts: u32,
+    // Collapses in the current attempt; zero means a contradiction came from the chunk's own borders.
+    step: u32,
 };
 
 @group(0) @binding(0) var<storage, read> rules: array<u32>;
@@ -79,6 +82,7 @@ struct Ctrl {
 @group(0) @binding(2) var<storage, read_write> out: array<u32>;
 @group(0) @binding(3) var<storage, read_write> stats: array<u32>;
 @group(0) @binding(4) var<uniform> params: Params;
+@group(0) @binding(5) var<storage, read> weights: array<f32>;
 
 var<workgroup> dom: array<atomic<u32>, {DOM_WORDS}>;
 var<workgroup> rules_s: array<u32, {RULE_WORDS}>;
@@ -134,6 +138,45 @@ fn allowed_by(d: vec3<u32>, axis: u32) -> vec3<u32> {
     return acc;
 }
 
+// Jarzynski and Olano's pcg3d: a stateless hash, so a choice depends only on its inputs.
+fn pcg3d(v0: vec3<u32>) -> vec3<u32> {
+    var v = v0 * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> vec3<u32>(16u);
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
+}
+
+// A tile of `d` chosen in proportion to its weight, `u` in [0, 1).
+fn weighted_tile(d: vec3<u32>, u: f32) -> u32 {
+    var total = 0.0;
+    for (var w = 0u; w < 3u; w++) {
+        var bits = d[w];
+        while (bits != 0u) {
+            total += weights[w * 32u + countTrailingZeros(bits)];
+            bits &= bits - 1u;
+        }
+    }
+    var pick = u * total;
+    var chosen = NONE;
+    for (var w = 0u; w < 3u; w++) {
+        var bits = d[w];
+        while (bits != 0u) {
+            let tile = w * 32u + countTrailingZeros(bits);
+            bits &= bits - 1u;
+            if (pick > 0.0 || chosen == NONE) {
+                chosen = tile;
+                pick -= weights[tile];
+            }
+        }
+    }
+    return chosen;
+}
+
 // One gather sweep over this lane's cells; also leaves each lane's best selection key.
 fn sweep_lane(lane: u32, sweep: u32) {
     var best = NONE;
@@ -168,7 +211,7 @@ fn sweep_lane(lane: u32, sweep: u32) {
 fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: vec3<u32>) {
     let chunk = wid.x;
     let base = chunk * CELLS * 3u;
-    var st = Ctrl(LOAD, 1u, STATUS_OK, 0u, NONE, 0u, 0u, 0u);
+    var st = Ctrl(LOAD, 1u, STATUS_OK, 0u, NONE, 0u, 0u, 0u, 0u);
     loop {
         // Per-lane work for the current state. No barriers in here.
         if (st.phase == LOAD) {
@@ -207,12 +250,43 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                 atomicStore(&changed, 0u);
                 if (emptied != 0u) {
                     next.contra_cell = CELLS - emptied;
-                    next.status = STATUS_BOUNDARY;
-                    next.phase = WRITE;
+                    if (st.step == 0u) {
+                        // No choice has been made, so another attempt would fail the same way.
+                        next.status = STATUS_BOUNDARY;
+                        next.phase = WRITE;
+                    } else if (st.restarts + 1u >= params.max_attempts) {
+                        next.status = STATUS_FAILED;
+                        next.phase = WRITE;
+                    } else {
+                        next.restarts += 1u;
+                        next.step = 0u;
+                        next.phase = LOAD;
+                        next.sweep = st.sweep + 1u;
+                    }
                 } else if (moved != 0u) {
                     next.sweep = st.sweep + 1u;
-                } else {
+                } else if (params.mode == 0u) {
                     next.phase = WRITE;
+                } else {
+                    // At a fixpoint the keys from this last sweep describe the current domains.
+                    var best = NONE;
+                    for (var i = 0u; i < WG; i++) {
+                        best = min(best, keys[i]);
+                    }
+                    if (best == NONE) {
+                        next.phase = WRITE;
+                    } else {
+                        let cell = best & 0xFFFFu;
+                        let h = pcg3d(vec3<u32>(params.seed ^ (chunk * 0x9E3779B9u), st.restarts, st.step)).x;
+                        let tile = weighted_tile(load_dom(cell), f32(h >> 8u) / 16777216.0);
+                        var one = vec3<u32>(0u);
+                        one[tile / 32u] = 1u << (tile % 32u);
+                        store_dom(cell, one);
+                        atomicStore(&epoch[cell], st.sweep);
+                        next.sweep = st.sweep + 1u;
+                        next.step = st.step + 1u;
+                        next.collapses += 1u;
+                    }
                 }
             } else if (st.phase == WRITE) {
                 next.phase = DONE;
@@ -341,6 +415,7 @@ struct Kernel {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 struct Params {
+    /// 0 propagates to a fixpoint and stops; 1 solves the chunk.
     mode: u32,
     max_steps: u32,
     seed: u32,
@@ -348,7 +423,12 @@ struct Params {
 }
 
 impl Kernel {
-    fn new(gpu: &BenchDevice, rules: &wfc_rules::AdjacencyRules, chunks: u32) -> Self {
+    fn new(
+        gpu: &BenchDevice,
+        rules: &wfc_rules::AdjacencyRules,
+        weights: &[f32],
+        chunks: u32,
+    ) -> Self {
         let device = &gpu.device;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("block solver"),
@@ -378,6 +458,13 @@ impl Kernel {
         );
         gpu.queue
             .write_buffer(&rules_buf, 0, bytemuck::cast_slice(&rule_table));
+        let weights_buf = storage(
+            "weights",
+            std::mem::size_of_val(weights) as u64,
+            wgpu::BufferUsages::empty(),
+        );
+        gpu.queue
+            .write_buffer(&weights_buf, 0, bytemuck::cast_slice(weights));
         let domain_bytes = u64::from(chunks * CELLS * WORDS * 4);
         let init = storage("init", domain_bytes, wgpu::BufferUsages::empty());
         let out = storage("out", domain_bytes, wgpu::BufferUsages::COPY_SRC);
@@ -415,6 +502,10 @@ impl Kernel {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: weights_buf.as_entire_binding(),
                 },
             ],
         });
@@ -497,7 +588,7 @@ fn one_chunk_propagates_to_the_reference_fixpoint() {
         initial.len()
     );
     let gpu = bench_device();
-    let kernel = Kernel::new(&gpu, &m.rules, 1);
+    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1);
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
 
@@ -520,4 +611,70 @@ fn one_chunk_propagates_to_the_reference_fixpoint() {
         differing, 0,
         "cells whose domain differs from the reference fixpoint"
     );
+}
+
+/// A chunk's tiles, after checking every cell was decided within its initial domain.
+fn decided_tiles(domains: &[reference::Cell], initial: &[reference::Cell]) -> Vec<usize> {
+    domains
+        .iter()
+        .zip(initial)
+        .map(|(&cell, &start)| {
+            assert_eq!(reference::count(cell), 1, "every cell is decided");
+            assert_eq!(
+                [cell[0] & !start[0], cell[1] & !start[1]],
+                [0, 0],
+                "a tile outside the initial domain"
+            );
+            reference::set_bits(cell).next().expect("one tile")
+        })
+        .collect()
+}
+
+/// Solving one chunk inside one dispatch yields a valid, reproducible chunk.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn one_chunk_solves_validly_and_reproducibly() {
+    let city = city::city();
+    let m = &city.modules;
+    let (w, h, d) = (CX as usize, CY as usize, CZ as usize);
+    let initial = reference::city_initial_cells(&city, w, h, d);
+    let gpu = bench_device();
+    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1);
+    gpu.queue
+        .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
+    let solve = |seed: u32| {
+        kernel.run(
+            &gpu,
+            Params {
+                mode: 1,
+                max_steps: 50_000,
+                seed,
+                max_attempts: 64,
+            },
+        );
+        let stats = read_u32s(&gpu, &kernel.stats);
+        eprintln!(
+            "block_solver: seed={seed} status={} sweeps={} collapses={} restarts={} last_contradiction={} steps={}",
+            stats[0], stats[1], stats[2], stats[3], stats[4] as i32, stats[5]
+        );
+        assert_eq!(stats[0], 0, "status OK");
+        from_words(&read_u32s(&gpu, &kernel.out))
+    };
+
+    let first = solve(1);
+    let again = solve(1);
+    let other = solve(2);
+
+    let tiles = decided_tiles(&first, &initial);
+    let grid = wfc_devtools::TileGrid::new(w, h, d, tiles).expect("dimensions match");
+    let violations =
+        wfc_devtools::adjacency_violations(&grid, &m.rules, wfc_core::BoundaryCondition::Finite);
+    assert!(
+        violations.is_empty(),
+        "{} adjacency violations, first {:?}",
+        violations.len(),
+        violations.first()
+    );
+    assert!(first == again, "the same seed reproduces the chunk");
+    assert!(first != other, "another seed gives another chunk");
 }

@@ -88,6 +88,7 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | GPU loop, 24×24×8, seed 1, at e28ab9d | 25.8 s: propagate 16.2 s, download 4.3 s, entropy + select 3.0 s | one traced run, cold |
 | Blocking drains per collapse, GPU loop | 2 + 2·P (P ≈ 1.8), plus 3 full grid clones | read from the code at e28ab9d |
 | Block kernel, propagation only, one 8×8×8 city chunk | **identical** to the CPU reference fixpoint (412 of 512 cells narrowed), 8 sweeps, 0 readbacks | `block_solver_bench`, dozen, 32 KiB workgroup storage granted |
+| Block kernel, full solve, one 8×8×8 city chunk | valid (0 violations), same seed bit-identical; seed 1: 1127 collapses, 2 restarts, 3555 sweeps; seed 2: 372 collapses, 0 restarts | `block_solver_bench`, restart-on-contradiction, pcg3d choice |
 | CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
 | CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
 | CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |
