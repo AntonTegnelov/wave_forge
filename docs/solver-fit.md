@@ -95,6 +95,9 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Same, µs per step of the slowest chunk, 1 → 64 chunks | flat: 51.7→51.5 (16 inv.), 23.8→23.4 (64), 12.6→11.9 (256); doubles to 23.6 at 256 chunks × 256 invocations | same |
 | Same, slowest chunk against the mean, 256 chunks | 9902 against 2619 steps; restarts max 8, median 1 | same |
 | A dispatch of 256 chunks at 1 invocation | device removed by the Windows timeout (about 2 s) | same; the bench now grows chunk counts only while 4× the last dispatch stays under 600 ms |
+| Block kernel, every local minimum within radius r collapses per round, 256 chunks | r=0: 0.93 ms per chunk, restarts median 1; **r=1: 0.50 ms but 73 of 256 chunks fail** (median 35 restarts); r=2: 0.79 ms, median 10 restarts, 2 fail; r=3 (64 chunks): 2.4 ms, median 16 | `block_solver_bench`, restart-only recovery, seed 7, cap 64 attempts |
+| Same, sweeps per collapse | 3.25 (r=0) → 0.63 / 1.21 / 1.73 (r=1/2/3) | same |
+| Block kernel sweep counts across builds | vary by one or two for the same seed (3555 against 3554), collapses and restarts identical | epochs are read while other lanes write them, so how many sweeps a change takes to be noticed depends on scheduling; the fixpoint does not |
 | CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
 | CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
 | CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |
@@ -284,6 +287,13 @@ Each of these is an inference. The reasoning is given so a future pass can check
    implies two levers: fewer steps per chunk (several collapses per step, or undo instead of restart
    to cut the tail) and less work per step (visit only changed cells). The 11 µs floor is a fit to
    five points on one stack, not a measurement of what the floor consists of.
+
+13. **Parallel collapse only pays once a contradiction is cheap to recover from.**
+   *Reasoning:* collapsing every local minimum per round cuts sweeps per collapse by 2.7 to 5 times,
+   but blind simultaneous choices multiply contradictions, and restart-only recovery pays a whole
+   attempt for each: at radius 1 the median chunk restarts 35 times. The CPU literature says the same
+   about batching (thrashing.md H2). An undo that restores the checkpoint before the failing round
+   costs a few steps instead, which would let the per-round saving through. Untested.
 
 ## Unknowns
 

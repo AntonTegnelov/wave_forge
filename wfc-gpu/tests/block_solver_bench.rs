@@ -43,11 +43,13 @@ const INVOCATIONS: u32 = 256;
 /// never remove a supported tile; the fixpoint does not depend on thread order.
 ///
 /// Workgroup memory at 8x8x8 and 81 tiles: domains 6144 B, rules 5832 B, epochs 2048 B, reduction
-/// keys 1024 B, control 40 B, which is 15088 B against the 16384 B WebGPU default.
+/// keys 1024 B, per-cell keys 2048 B, control 44 B: 17140 B, over the 16384 B WebGPU default, so
+/// the bench requests the adapter's limit (32768 B through dozen).
 const KERNEL: &str = r#"
 const CX: u32 = {CX}u;
 const CY: u32 = {CY}u;
 const CELLS: u32 = {CELLS}u;
+const CZ: u32 = CELLS / (CX * CY);
 const NT: u32 = {NT}u;
 const WG: u32 = {WG}u;
 const RULE_WORDS: u32 = {RULE_WORDS}u;
@@ -58,13 +60,25 @@ const LOAD: u32 = 0u;
 const PROPAGATE: u32 = 1u;
 const WRITE: u32 = 2u;
 const DONE: u32 = 3u;
+const SELECT: u32 = 4u;
 
 const STATUS_OK: u32 = 0u;
 const STATUS_FAILED: u32 = 1u;
 const STATUS_CAP: u32 = 2u;
 const STATUS_BOUNDARY: u32 = 3u;
 
-struct Params { mode: u32, max_steps: u32, seed: u32, max_attempts: u32 };
+struct Params {
+    mode: u32,
+    max_steps: u32,
+    seed: u32,
+    max_attempts: u32,
+    // 0 collapses the single global minimum per round; r > 0 collapses every local minimum within
+    // Chebyshev radius r at once.
+    radius: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
+};
 
 struct Ctrl {
     phase: u32,
@@ -90,6 +104,9 @@ var<workgroup> dom: array<atomic<u32>, {DOM_WORDS}>;
 var<workgroup> rules_s: array<u32, {RULE_WORDS}>;
 var<workgroup> epoch: array<atomic<u32>, {CELLS}>;
 var<workgroup> keys: array<u32, {WG}>;
+// Each cell's (count << 16 | index) key from the latest sweep, NONE once decided.
+var<workgroup> cell_keys: array<u32, {CELLS}>;
+var<workgroup> chosen: atomic<u32>;
 var<workgroup> changed: atomic<u32>;
 // CELLS - c for the lowest emptied cell c, so zero means none and atomicMax keeps the lowest.
 var<workgroup> contra: atomic<u32>;
@@ -202,11 +219,50 @@ fn sweep_lane(lane: u32, sweep: u32) {
             }
         }
         let n = tile_count(nd);
+        var key = NONE;
         if (n > 1u) {
-            best = min(best, (n << 16u) | c);
+            key = (n << 16u) | c;
+            best = min(best, key);
         }
+        cell_keys[c] = key;
     }
     keys[lane] = best;
+}
+
+// Whether no undecided cell within Chebyshev `radius` of `c` has a smaller key. Two such local
+// minima are always more than `radius` apart, and the global minimum is always one.
+fn is_local_minimum(c: u32, radius: i32) -> bool {
+    let key = cell_keys[c];
+    let x = i32(c % CX);
+    let y = i32((c / CX) % CY);
+    let z = i32(c / (CX * CY));
+    for (var dz = max(-radius, -z); dz <= min(radius, i32(CZ) - 1 - z); dz++) {
+        for (var dy = max(-radius, -y); dy <= min(radius, i32(CY) - 1 - y); dy++) {
+            for (var dx = max(-radius, -x); dx <= min(radius, i32(CX) - 1 - x); dx++) {
+                let n = u32((z + dz) * i32(CX * CY) + (y + dy) * i32(CX) + x + dx);
+                if (cell_keys[n] < key) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// Collapses every local minimum this lane owns, each with its own hashed choice.
+fn select_lane(lane: u32, chunk: u32, st: Ctrl) {
+    for (var c = lane; c < CELLS; c += WG) {
+        if (cell_keys[c] == NONE || !is_local_minimum(c, i32(params.radius))) {
+            continue;
+        }
+        let h = pcg3d(vec3<u32>(params.seed ^ (chunk * 0x9E3779B9u), st.restarts, st.step * CELLS + c)).x;
+        let tile = weighted_tile(load_dom(c), f32(h >> 8u) / 16777216.0);
+        var one = vec3<u32>(0u);
+        one[tile / 32u] = 1u << (tile % 32u);
+        store_dom(c, one);
+        atomicStore(&epoch[c], st.sweep);
+        atomicAdd(&chosen, 1u);
+    }
 }
 
 @compute @workgroup_size({WG})
@@ -229,6 +285,8 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
             }
         } else if (st.phase == PROPAGATE) {
             sweep_lane(lane, st.sweep);
+        } else if (st.phase == SELECT) {
+            select_lane(lane, chunk, st);
         } else if (st.phase == WRITE) {
             for (var c = lane; c < CELLS; c += WG) {
                 for (var w = 0u; w < 3u; w++) {
@@ -270,6 +328,8 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                     next.sweep = st.sweep + 1u;
                 } else if (params.mode == 0u) {
                     next.phase = WRITE;
+                } else if (params.radius > 0u) {
+                    next.phase = SELECT;
                 } else {
                     // At a fixpoint the keys from this last sweep describe the current domains.
                     var best = NONE;
@@ -290,6 +350,18 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                         next.step = st.step + 1u;
                         next.collapses += 1u;
                     }
+                }
+            } else if (st.phase == SELECT) {
+                let n = atomicLoad(&chosen);
+                atomicStore(&chosen, 0u);
+                if (n == 0u) {
+                    // No undecided cell was left to be a minimum.
+                    next.phase = WRITE;
+                } else {
+                    next.phase = PROPAGATE;
+                    next.sweep = st.sweep + 1u;
+                    next.step = st.step + 1u;
+                    next.collapses += n;
                 }
             } else if (st.phase == WRITE) {
                 next.phase = DONE;
@@ -424,6 +496,9 @@ struct Params {
     max_steps: u32,
     seed: u32,
     max_attempts: u32,
+    /// 0 collapses one cell per round; `r` collapses every local minimum within radius `r`.
+    radius: u32,
+    padding: [u32; 3],
 }
 
 impl Kernel {
@@ -604,6 +679,8 @@ fn one_chunk_propagates_to_the_reference_fixpoint() {
             max_steps: 10_000,
             seed: 1,
             max_attempts: 1,
+            radius: 0,
+            padding: [0; 3],
         },
     );
 
@@ -647,7 +724,7 @@ fn one_chunk_solves_validly_and_reproducibly() {
     let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS);
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
-    let solve = |seed: u32| {
+    let solve = |seed: u32, radius: u32| {
         kernel.run(
             &gpu,
             Params {
@@ -655,33 +732,47 @@ fn one_chunk_solves_validly_and_reproducibly() {
                 max_steps: 50_000,
                 seed,
                 max_attempts: 64,
+                radius,
+                padding: [0; 3],
             },
         );
         let stats = read_u32s(&gpu, &kernel.stats);
         eprintln!(
-            "block_solver: seed={seed} status={} sweeps={} collapses={} restarts={} last_contradiction={} steps={}",
+            "block_solver: radius={radius} seed={seed} status={} sweeps={} collapses={} restarts={} last_contradiction={} steps={}",
             stats[0], stats[1], stats[2], stats[3], stats[4] as i32, stats[5]
         );
         assert_eq!(stats[0], 0, "status OK");
         from_words(&read_u32s(&gpu, &kernel.out))
     };
 
-    let first = solve(1);
-    let again = solve(1);
-    let other = solve(2);
+    // One cell per round, then every local minimum within radius 2 per round.
+    for radius in [0, 2] {
+        let first = solve(1, radius);
+        let again = solve(1, radius);
+        let other = solve(2, radius);
 
-    let tiles = decided_tiles(&first, &initial);
-    let grid = wfc_devtools::TileGrid::new(w, h, d, tiles).expect("dimensions match");
-    let violations =
-        wfc_devtools::adjacency_violations(&grid, &m.rules, wfc_core::BoundaryCondition::Finite);
-    assert!(
-        violations.is_empty(),
-        "{} adjacency violations, first {:?}",
-        violations.len(),
-        violations.first()
-    );
-    assert!(first == again, "the same seed reproduces the chunk");
-    assert!(first != other, "another seed gives another chunk");
+        let tiles = decided_tiles(&first, &initial);
+        let grid = wfc_devtools::TileGrid::new(w, h, d, tiles).expect("dimensions match");
+        let violations = wfc_devtools::adjacency_violations(
+            &grid,
+            &m.rules,
+            wfc_core::BoundaryCondition::Finite,
+        );
+        assert!(
+            violations.is_empty(),
+            "radius {radius}: {} adjacency violations, first {:?}",
+            violations.len(),
+            violations.first()
+        );
+        assert!(
+            first == again,
+            "radius {radius}: the same seed reproduces the chunk"
+        );
+        assert!(
+            first != other,
+            "radius {radius}: another seed gives another chunk"
+        );
+    }
 }
 
 /// Median of `samples`, which must not be empty.
@@ -713,15 +804,26 @@ fn chunk_throughput_against_the_cpu_reference() {
     );
 
     let gpu = bench_device();
-    let params = Params {
-        mode: 1,
-        max_steps: 50_000,
-        seed: 7,
-        max_attempts: 64,
-    };
     // Invocations per workgroup trade parallelism inside a sweep against the cost of synchronising
-    // every step across all of them.
-    for invocations in [1u32, 4, 16, 64, 256] {
+    // every step; the radius trades collapses per round against choices made blind to each other.
+    for (invocations, radius) in [
+        (1u32, 0u32),
+        (4, 0),
+        (16, 0),
+        (64, 0),
+        (256, 0),
+        (256, 1),
+        (256, 2),
+        (256, 3),
+    ] {
+        let params = Params {
+            mode: 1,
+            max_steps: 50_000,
+            seed: 7,
+            max_attempts: 64,
+            radius,
+            padding: [0; 3],
+        };
         // Windows resets the device when one dispatch runs for about two seconds, and a reset here
         // takes the host's display driver with it. Chunk counts grow by 4, so a dispatch is only
         // attempted while four times the previous one stays well inside that limit.
@@ -729,7 +831,7 @@ fn chunk_throughput_against_the_cpu_reference() {
         for chunks in [1u32, 4, 16, 64, 256] {
             if previous_ms * 4.0 > 600.0 {
                 eprintln!(
-                    "block_solver: invocations={invocations} chunks={chunks} skipped: {previous_ms:.0} ms at a quarter of the chunks risks the device timeout"
+                    "block_solver: invocations={invocations} radius={radius} chunks={chunks} skipped: {previous_ms:.0} ms at a quarter of the chunks risks the device timeout"
                 );
                 break;
             }
@@ -785,7 +887,7 @@ fn chunk_throughput_against_the_cpu_reference() {
                 records.iter().map(|r| f64::from(r[5])).sum::<f64>() / records.len() as f64;
             let cells = f64::from(chunks * CELLS);
             eprintln!(
-                "block_solver: invocations={invocations} chunks={chunks} wall_ms={wall_ms:.2} ms_per_chunk={:.3} cells_per_s={:.0} \
+                "block_solver: invocations={invocations} radius={radius} chunks={chunks} wall_ms={wall_ms:.2} ms_per_chunk={:.3} cells_per_s={:.0} \
              vs_cpu_thread={:.2}x failed={failed} collapses={collapses} sweeps_per_collapse={:.2} \
              us_per_collapse={:.1} restarts[min,median,max]=[{},{},{}] \
              max_steps={max_steps} mean_steps={mean_steps:.0} us_per_step_of_slowest={:.1}",
