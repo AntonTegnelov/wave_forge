@@ -15,6 +15,8 @@ wfc-core = { path = "../wfc-core" }
 wfc-rules = { path = "../wfc-rules" }
 
 [dev-dependencies]
+# The CPU reference solver is the ground truth for the tests here, never a fallback.
+wfc-core = { path = "../wfc-core", features = ["reference"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 # Opt-in profiling of the stress runs; see docs/performance.md.
 tracing = "0.1.44"

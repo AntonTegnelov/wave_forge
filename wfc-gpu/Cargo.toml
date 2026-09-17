@@ -40,6 +40,8 @@ regex = "1.13.1"  # For parsing grid coordinates from error strings
 [dev-dependencies]
 wgpu = { version = "30.0.1", features = ["dx12", "metal", "vulkan", "wgsl"] }
 wfc-devtools = { path = "../wfc-devtools" }
+# The CPU reference solver is the ground truth the kernel's tests check against.
+wfc-core = { path = "../wfc-core", features = ["serde", "reference"] }
 env_logger = "0.11.11"
 rand = "0.10.2"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
