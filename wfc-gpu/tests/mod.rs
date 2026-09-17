@@ -265,7 +265,7 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
     println!("Number of axes in rules: {}", 6);
 
     // Initialize grid with the number of transformed tiles
-    let mut grid = PossibilityGrid::new(
+    let grid = PossibilityGrid::new(
         grid_size.0,
         grid_size.1,
         grid_size.2,
@@ -296,7 +296,7 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
     println!("\nStarting wave function collapse...");
     let result = accelerator
         .run_with_callback(
-            &mut grid,
+            &grid,
             &rules,
             (grid_size.0 * grid_size.1 * grid_size.2 * 2) as u64, // enough iterations to collapse every cell
             |_progress| Ok(true),                                 // Continue running
@@ -345,10 +345,10 @@ async fn test_basic_3d_generation() -> anyhow::Result<()> {
     for z in 0..final_grid.depth {
         for y in 0..final_grid.height {
             for x in 0..final_grid.width {
-                if let Some(cell) = final_grid.get(x, y, z) {
-                    if cell.count_ones() == 1 {
-                        collapsed_count += 1;
-                    }
+                if let Some(cell) = final_grid.get(x, y, z)
+                    && cell.count_ones() == 1
+                {
+                    collapsed_count += 1;
                 }
             }
         }
@@ -387,29 +387,29 @@ fn verify_adjacency_rules(grid: &PossibilityGrid, rules: &AdjacencyRules) -> usi
     for x in 0..w {
         for y in 0..h {
             for z in 0..d {
-                if let Some(cell) = grid.get(x, y, z) {
-                    if cell.count_ones() == 1 {
-                        let tile = cell.iter_ones().next().unwrap();
-                        // Check each direction
-                        for (dx, dy, dz, axis) in [
-                            (1, 0, 0, 0),  // +x (axis 0)
-                            (-1, 0, 0, 1), // -x (axis 1)
-                            (0, 1, 0, 2),  // +y (axis 2)
-                            (0, -1, 0, 3), // -y (axis 3)
-                            (0, 0, 1, 4),  // +z (axis 4)
-                            (0, 0, -1, 5), // -z (axis 5)
-                        ] {
-                            let nx = (x as i32 + dx).rem_euclid(w as i32) as usize;
-                            let ny = (y as i32 + dy).rem_euclid(h as i32) as usize;
-                            let nz = (z as i32 + dz).rem_euclid(d as i32) as usize;
+                if let Some(cell) = grid.get(x, y, z)
+                    && cell.count_ones() == 1
+                {
+                    let tile = cell.iter_ones().next().unwrap();
+                    // Check each direction
+                    for (dx, dy, dz, axis) in [
+                        (1, 0, 0, 0),  // +x (axis 0)
+                        (-1, 0, 0, 1), // -x (axis 1)
+                        (0, 1, 0, 2),  // +y (axis 2)
+                        (0, -1, 0, 3), // -y (axis 3)
+                        (0, 0, 1, 4),  // +z (axis 4)
+                        (0, 0, -1, 5), // -z (axis 5)
+                    ] {
+                        let nx = (x as i32 + dx).rem_euclid(w as i32) as usize;
+                        let ny = (y as i32 + dy).rem_euclid(h as i32) as usize;
+                        let nz = (z as i32 + dz).rem_euclid(d as i32) as usize;
 
-                            if let Some(neighbor_cell) = grid.get(nx, ny, nz) {
-                                if neighbor_cell.count_ones() == 1 {
-                                    let neighbor_tile = neighbor_cell.iter_ones().next().unwrap();
-                                    if !rules.check(tile, neighbor_tile, axis) {
-                                        violations += 1;
-                                    }
-                                }
+                        if let Some(neighbor_cell) = grid.get(nx, ny, nz)
+                            && neighbor_cell.count_ones() == 1
+                        {
+                            let neighbor_tile = neighbor_cell.iter_ones().next().unwrap();
+                            if !rules.check(tile, neighbor_tile, axis) {
+                                violations += 1;
                             }
                         }
                     }
