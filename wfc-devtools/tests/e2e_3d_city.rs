@@ -1,4 +1,4 @@
-//! End to end: a small marian42-style city generated on the GPU, checked for structural
+//! End to end: a small marian42-style city generated through the library, checked for structural
 //! invariants and rendered as voxel models plus a street-level map.
 //!
 //! This is the realistic workload next to the toy fixtures: 52 rotated module variants from
@@ -7,38 +7,55 @@
 mod common;
 
 use std::collections::BTreeMap;
+use wave_forge::{Builder, ChunkCoord, ChunkShape, FocusPoint, Ruleset, WorldExtent};
 use wfc_core::BoundaryCondition;
 use wfc_core::grid::PossibilityGrid;
-use wfc_devtools::city::{self, STREET_LEVEL};
+use wfc_devtools::city::{self, STREET_LEVEL, city_prior};
 use wfc_devtools::render::{self, Style};
 use wfc_devtools::{TileGrid, adjacency_violations};
 
-#[tokio::test]
-async fn small_city_is_structurally_sound_and_renders() {
+#[test]
+fn small_city_is_structurally_sound_and_renders() {
     let city = city::city();
     let m = &city.modules;
-    let (width, height, depth) = (12, 12, 6);
-    let mut initial = PossibilityGrid::new(width, height, depth, m.variants.len());
-    city::constrain_city(&mut initial, &city);
+    let (width, height, depth) = (12u32, 12u32, 6u32);
+    let ruleset = Ruleset::from_modules(m).expect("the city compiles");
+    let chunk = ChunkShape {
+        x: width,
+        y: height,
+        z: depth,
+    };
+    let at = ChunkCoord::new(0, 0, 0);
 
-    let solved = common::solve_rules(
-        &initial,
-        &m.rules,
-        Some(&m.tileset.weights),
-        None,
-        BoundaryCondition::Finite,
-        10,
-    )
-    .await;
+    let mut world = Builder::new(ruleset, city_prior(&city, depth))
+        .seed(3)
+        .extent(
+            WorldExtent::new(chunk)
+                .with_x(0..1)
+                .with_y(0..1)
+                .with_z(0..1),
+        )
+        .build()
+        .expect("a compute device");
+    world.request(&[FocusPoint::new(at, 0)]);
+    let events = world.run_until_idle().expect("the solver runs");
+
+    let solved = world
+        .chunk(at)
+        .unwrap_or_else(|| panic!("the city was not generated: {events:?}"));
     eprintln!(
-        "solved {width}x{height}x{depth} city with {} variants: attempt {}, run {:?}, total {:?}",
+        "solved {width}x{height}x{depth} city with {} variants: {:?}",
         m.variants.len(),
-        solved.attempts,
-        solved.solve_time,
-        solved.total_time
+        world.stats()
     );
-    let grid =
-        TileGrid::from_possibilities(&solved.grid).expect("every cell collapsed to one tile");
+    let grid = TileGrid::new(
+        width as usize,
+        height as usize,
+        depth as usize,
+        solved.tiles.iter().map(|&tile| tile as usize).collect(),
+    )
+    .expect("one tile per cell");
+    let (width, height, depth) = (width as usize, height as usize, depth as usize);
 
     let artifacts = common::artifact_dir();
     let map_palette = city.map_palette();

@@ -174,10 +174,23 @@ mod tests {
 
         let wanted = wanted(&focus, &extent());
 
-        // A 3x3 square clipped to the world's corner, plus nothing outside it.
-        assert_eq!(wanted.len(), 4);
+        // A 3x3 square clipped to the world's corner (four chunks), plus the two neighbours the
+        // second-parity chunks of that square read, and nothing outside the world.
+        assert_eq!(wanted.len(), 6, "{wanted:?}");
         assert!(wanted.contains(&ChunkCoord::new(1, 1, 0)));
+        assert!(
+            wanted.contains(&ChunkCoord::new(2, 0, 0)),
+            "read by (1, 0, 0)"
+        );
+        assert!(
+            wanted.contains(&ChunkCoord::new(0, 2, 0)),
+            "read by (0, 1, 0)"
+        );
         assert!(!wanted.contains(&ChunkCoord::new(-1, 0, 0)));
+        assert!(
+            !wanted.contains(&ChunkCoord::new(2, 2, 0)),
+            "nothing diagonal"
+        );
     }
 
     #[test]
