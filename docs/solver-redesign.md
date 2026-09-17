@@ -283,6 +283,11 @@ Ranked by how directly each makes the work GPU-shaped, and by the least work to 
    cells, which is what modifying in blocks and marian42's clearing both do: re-solving a failed chunk
    alone with its halo released completed the world under both orders. The checkerboard then needs
    only two dispatches of 32 chunks plus about ten single-chunk repairs.
+   Put together, that is live generation on this build: walking a player across a 192×64×8 world at
+   1.4 m/s with a four-chunk view radius costs a median of 43 ms of dispatch time per half-second
+   tick, and the world comes out complete and seamless. Only the first tick, which fills the whole
+   view at once, exceeds the budget. What that measures is a benchmark kernel, not the solver: the
+   shipped `GpuAccelerator` still runs the per-collapse loop this document opened with.
 5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
 
 ## How we will know it worked

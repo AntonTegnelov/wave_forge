@@ -63,7 +63,23 @@ Local rules cannot forbid a network that is cut off as a whole, so `city::discon
 - `city_street_level.png`: the bottom layer, one colour per module variant
 - `stress_<name>.png`: from the stress suite
 
-### Known gaps
+### Benchmarks
+
+Both are `#[ignore]`d and print their numbers; run them in release mode.
+
+```bash
+cargo test -p wfc-devtools --release --test cpu_reference -- --ignored --nocapture
+cargo test -p wfc-gpu --release --test block_solver_bench -- --ignored --nocapture --test-threads=1
+```
+
+`cpu_reference` times the single-threaded CPU solver in `wfc_devtools::reference`, the yardstick every
+GPU number is printed against. `block_solver_bench` holds the block-local chunk kernel: its
+correctness tests check chunks against that reference and against the adjacency rules, and its
+benchmarks report per-chunk cost, seams across a stitched world, and live streaming around a moving
+focus. A timing describes one build on one machine and driver stack; see
+[solver-fit.md](solver-fit.md) for what each number means.
+
+## Known gaps
 
 - **Results are not reproducible yet** (A-6 in [status.md](status.md#alignment-tasks)), so tests assert invariants rather than comparing against golden images. Once seeds work, add golden-image tests for fixed seeds.
 - **Contradictions are retried** by rerunning from scratch (`tests/common/mod.rs`). That is a stopgap until the solver can backtrack or restart regions itself (A-9); the retry count is logged so frequent contradictions stay visible.

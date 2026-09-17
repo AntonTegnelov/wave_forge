@@ -109,6 +109,7 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Same with a halo solved and discarded, 1 cell / 2 cells | checkerboard: 10 / 11 of 32; diagonal: **3 / 3 of 63** | same; halo cells inside solved chunks pinned to their tiles |
 | Seam violations between decided cells | 0 in every schedule | same |
 | Same, repairing each failed chunk alone with its halo released (rewriting the neighbours' cells it covers), halo 1 then wider | **complete world, 0 seam violations** under both orders: checkerboard 10 of 10 repaired (one needed halo 2), diagonal 4 of 4 at halo 1 | `block_solver_bench` `*_with_repair_completes_the_world`; the isometric render shows no chunk grid |
+| **Live streaming across a 24×8-chunk world** (192×64×8 cells), view radius 4 chunks, walking 1.4 m/s at 2 m cells, 0.5 s ticks | 192 chunks (98 304 cells) in **1.78 s of dispatches**: median tick **43 ms**, p90 141 ms, busiest 854 ms (the initial 40-chunk view fill), 10 chunks repaired, 0 seam violations, world complete | `block_solver_bench::live_streaming_keeps_ahead_of_a_walking_player`, halo 1, radius 1 with undo, kernels compiled before timing |
 | CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
 | CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
 | CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |

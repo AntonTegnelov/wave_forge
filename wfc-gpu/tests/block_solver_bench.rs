@@ -120,6 +120,9 @@ struct Ctrl {
 @group(0) @binding(5) var<storage, read> weights: array<f32>;
 // A ring of RING checkpoints per chunk: slot k holds the fixpoint reached before round k.
 @group(0) @binding(6) var<storage, read_write> snaps: array<u32>;
+// The world identity of each chunk in this dispatch, so its choices depend on where it is rather
+// than on its place in the batch: an evicted chunk regenerates identically.
+@group(0) @binding(7) var<storage, read> ids: array<u32>;
 
 var<workgroup> dom: array<atomic<u32>, {DOM_WORDS}>;
 var<workgroup> rules_s: array<u32, {RULE_WORDS}>;
@@ -288,7 +291,7 @@ fn restore_lane(lane: u32, chunk: u32, st: Ctrl) {
 }
 
 // Lane 0 only: collapses the fewest-possibilities cell. False when every cell is decided.
-fn collapse_global_minimum(chunk: u32, st: Ctrl) -> bool {
+fn collapse_global_minimum(id: u32, st: Ctrl) -> bool {
     var best = NONE;
     for (var i = 0u; i < WG; i++) {
         best = min(best, keys[i]);
@@ -297,7 +300,7 @@ fn collapse_global_minimum(chunk: u32, st: Ctrl) -> bool {
         return false;
     }
     let cell = best & 0xFFFFu;
-    let h = pcg3d(vec3<u32>(params.seed ^ (chunk * 0x9E3779B9u), st.tries, st.step)).x;
+    let h = pcg3d(vec3<u32>(params.seed ^ (id * 0x9E3779B9u), st.tries, st.step)).x;
     let tile = weighted_tile(load_dom(cell), f32(h >> 8u) / 16777216.0);
     var one = vec3<u32>(0u);
     one[tile / 32u] = 1u << (tile % 32u);
@@ -327,12 +330,12 @@ fn is_local_minimum(c: u32, radius: i32) -> bool {
 }
 
 // Collapses every local minimum this lane owns, each with its own hashed choice.
-fn select_lane(lane: u32, chunk: u32, st: Ctrl) {
+fn select_lane(lane: u32, id: u32, st: Ctrl) {
     for (var c = lane; c < CELLS; c += WG) {
         if (cell_keys[c] == NONE || !is_local_minimum(c, i32(params.radius))) {
             continue;
         }
-        let h = pcg3d(vec3<u32>(params.seed ^ (chunk * 0x9E3779B9u), st.tries, st.step * CELLS + c)).x;
+        let h = pcg3d(vec3<u32>(params.seed ^ (id * 0x9E3779B9u), st.tries, st.step * CELLS + c)).x;
         let tile = weighted_tile(load_dom(c), f32(h >> 8u) / 16777216.0);
         var one = vec3<u32>(0u);
         one[tile / 32u] = 1u << (tile % 32u);
@@ -345,6 +348,7 @@ fn select_lane(lane: u32, chunk: u32, st: Ctrl) {
 @compute @workgroup_size({WG})
 fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: vec3<u32>) {
     let chunk = wid.x;
+    let id = ids[chunk];
     let base = chunk * CELLS * 3u;
     var st = Ctrl(LOAD, 1u, STATUS_OK, 0u, NONE, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
     loop {
@@ -363,7 +367,7 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
         } else if (st.phase == PROPAGATE) {
             sweep_lane(lane, chunk, st);
         } else if (st.phase == SELECT) {
-            select_lane(lane, chunk, st);
+            select_lane(lane, id, st);
         } else if (st.phase == RESTORE) {
             restore_lane(lane, chunk, st);
         } else if (st.phase == WRITE) {
@@ -428,7 +432,7 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                     next.phase = WRITE;
                 } else if (params.radius > 0u) {
                     next.phase = SELECT;
-                } else if (collapse_global_minimum(chunk, st)) {
+                } else if (collapse_global_minimum(id, st)) {
                     // At a fixpoint the keys from this last sweep describe the current domains.
                     next.sweep = st.sweep + 1u;
                     next.step = st.step + 1u;
@@ -443,7 +447,7 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wid: 
                     next.phase = WRITE;
                 } else if (params.radius > 0u) {
                     next.phase = SELECT;
-                } else if (collapse_global_minimum(chunk, st)) {
+                } else if (collapse_global_minimum(id, st)) {
                     next.phase = PROPAGATE;
                     next.sweep = st.sweep + 1u;
                     next.step = st.step + 1u;
@@ -588,6 +592,7 @@ struct Kernel {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     init: wgpu::Buffer,
+    ids: wgpu::Buffer,
     out: wgpu::Buffer,
     stats: wgpu::Buffer,
     params: wgpu::Buffer,
@@ -659,6 +664,7 @@ impl Kernel {
             .write_buffer(&weights_buf, 0, bytemuck::cast_slice(weights));
         let domain_bytes = u64::from(chunks * cells * WORDS * 4);
         let init = storage("init", domain_bytes, wgpu::BufferUsages::empty());
+        let ids = storage("ids", u64::from(chunks * 4), wgpu::BufferUsages::empty());
         let out = storage("out", domain_bytes, wgpu::BufferUsages::COPY_SRC);
         let snaps = storage(
             "snaps",
@@ -708,12 +714,17 @@ impl Kernel {
                     binding: 6,
                     resource: snaps.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: ids.as_entire_binding(),
+                },
             ],
         });
         Self {
             pipeline,
             bind_group,
             init,
+            ids,
             out,
             stats,
             params,
@@ -721,8 +732,19 @@ impl Kernel {
         }
     }
 
-    /// Runs one dispatch over every chunk and waits for it.
-    fn run(&self, gpu: &BenchDevice, params: Params) {
+    /// Tells the kernel which world chunk each slot of the dispatch holds.
+    fn set_ids(&self, gpu: &BenchDevice, ids: &[u32]) {
+        gpu.queue
+            .write_buffer(&self.ids, 0, bytemuck::cast_slice(ids));
+    }
+
+    /// Runs one dispatch over the first `chunks` chunks and waits for it.
+    fn run_chunks(&self, gpu: &BenchDevice, params: Params, chunks: u32) {
+        assert!(
+            chunks <= self.chunks,
+            "the kernel is sized for {} chunks",
+            self.chunks
+        );
         gpu.queue
             .write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
@@ -730,12 +752,17 @@ impl Kernel {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(self.chunks, 1, 1);
+            pass.dispatch_workgroups(chunks, 1, 1);
         }
         gpu.queue.submit(Some(encoder.finish()));
         gpu.device
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("the dispatch completes");
+    }
+
+    /// Runs one dispatch over every chunk the kernel is sized for.
+    fn run(&self, gpu: &BenchDevice, params: Params) {
+        self.run_chunks(gpu, params, self.chunks);
     }
 }
 
@@ -792,6 +819,7 @@ fn one_chunk_propagates_to_the_reference_fixpoint() {
     let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS, CHUNK);
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
+    kernel.set_ids(&gpu, &[0]);
 
     kernel.run(
         &gpu,
@@ -846,6 +874,7 @@ fn one_chunk_solves_validly_and_reproducibly() {
     let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS, CHUNK);
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
+    kernel.set_ids(&gpu, &[0]);
     let solve = |seed: u32, radius: u32, undo: u32| {
         kernel.run(
             &gpu,
@@ -1008,6 +1037,7 @@ fn chunk_throughput_against_the_cpu_reference() {
             let words: Vec<u32> = (0..chunks).flat_map(|_| to_words(&initial)).collect();
             gpu.queue
                 .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&words));
+            kernel.set_ids(&gpu, &(0..chunks).collect::<Vec<u32>>());
             // Pipeline creation and the first dispatches run cold; the GPU also raises its clocks under
             // load, so only warm samples are compared.
             for _ in 0..3 {
@@ -1100,6 +1130,7 @@ fn every_reported_success_is_a_valid_chunk() {
     let words: Vec<u32> = (0..chunks).flat_map(|_| to_words(&initial)).collect();
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&words));
+    kernel.set_ids(&gpu, &(0..chunks).collect::<Vec<u32>>());
 
     for (seed, radius, undo) in [7, 11, 13]
         .into_iter()
@@ -1174,6 +1205,9 @@ struct Stitched {
 struct World<'a> {
     city: &'a city::City,
     gpu: &'a BenchDevice,
+    /// One kernel per (chunk capacity, region shape): building one compiles the shader, which is
+    /// far more expensive than a dispatch.
+    kernels: std::collections::HashMap<(u32, [u32; 3]), Kernel>,
     chunks_x: usize,
     width: usize,
     height: usize,
@@ -1184,16 +1218,18 @@ struct World<'a> {
     /// small to have an interior rim.
     open_column: Vec<reference::Cell>,
     tiles: Vec<Option<usize>>,
+    /// How long the last dispatch took, excluding the host work around it.
+    last_wall_ms: f64,
 }
 
 impl<'a> World<'a> {
-    fn new(city: &'a city::City, gpu: &'a BenchDevice) -> Self {
-        let (chunks_x, chunks_y) = (8, 8);
+    fn new(city: &'a city::City, gpu: &'a BenchDevice, chunks_x: usize, chunks_y: usize) -> Self {
         let (width, height) = (chunks_x * CX as usize, chunks_y * CY as usize);
         let grid = reference::city_initial_cells(city, 3, 3, CZ as usize);
         Self {
             city,
             gpu,
+            kernels: std::collections::HashMap::new(),
             chunks_x,
             width,
             height,
@@ -1202,6 +1238,7 @@ impl<'a> World<'a> {
                 .map(|z| grid[(z * 3 + 1) * 3 + 1])
                 .collect(),
             tiles: vec![None; width * height * CZ as usize],
+            last_wall_ms: 0.0,
         }
     }
 
@@ -1292,34 +1329,48 @@ impl<'a> World<'a> {
             .iter()
             .flat_map(|&k| self.region_init(k, halo, release))
             .collect();
-        let kernel = Kernel::new(
-            self.gpu,
-            &m.rules,
-            &m.tileset.weights,
-            chunks.len() as u32,
-            INVOCATIONS,
-            [rx as u32, ry as u32, CZ],
-        );
-        self.gpu
-            .queue
-            .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&init)));
-        let started = std::time::Instant::now();
-        kernel.run(
-            self.gpu,
-            Params {
-                mode: 1,
-                max_steps: 50_000,
-                seed,
-                max_attempts: 64,
-                radius: 1,
-                undo: 1,
-                padding: [0; 2],
-            },
-        );
-        let wall_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-        let stats = read_u32s(self.gpu, &kernel.stats);
-        let domains = from_words(&read_u32s(self.gpu, &kernel.out));
+        let (city, gpu) = (self.city, self.gpu);
+        // Capacities in powers of two, so a dispatch reuses a kernel instead of compiling one.
+        let capacity = chunks.len().next_power_of_two() as u32;
+        let shape = [rx as u32, ry as u32, CZ];
+        let (wall_ms, stats, domains) = {
+            let kernel = self.kernels.entry((capacity, shape)).or_insert_with(|| {
+                let m = &city.modules;
+                Kernel::new(
+                    gpu,
+                    &m.rules,
+                    &m.tileset.weights,
+                    capacity,
+                    INVOCATIONS,
+                    shape,
+                )
+            });
+            gpu.queue
+                .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&init)));
+            let ids: Vec<u32> = chunks.iter().map(|&k| k as u32).collect();
+            kernel.set_ids(gpu, &ids);
+            let started = std::time::Instant::now();
+            kernel.run_chunks(
+                gpu,
+                Params {
+                    mode: 1,
+                    max_steps: 50_000,
+                    seed,
+                    max_attempts: 64,
+                    radius: 1,
+                    undo: 1,
+                    padding: [0; 2],
+                },
+                chunks.len() as u32,
+            );
+            let wall_ms = started.elapsed().as_secs_f64() * 1000.0;
+            (
+                wall_ms,
+                read_u32s(gpu, &kernel.stats),
+                from_words(&read_u32s(gpu, &kernel.out)),
+            )
+        };
+        self.last_wall_ms = wall_ms;
         let mut statuses = Vec::with_capacity(chunks.len());
         let mut counts = [0usize; 5];
         for (r, &k) in chunks.iter().enumerate() {
@@ -1368,6 +1419,63 @@ impl<'a> World<'a> {
             chunks.len()
         );
         statuses
+    }
+
+    /// Whether every cell of chunk `k` is decided.
+    fn chunk_decided(&self, k: usize) -> bool {
+        self.region(k, 0)
+            .into_iter()
+            .all(|(at, _)| self.index(at).is_some_and(|i| self.tiles[i].is_some()))
+    }
+
+    /// Solves `chunks` in as few dispatches as the schedule allows, repairing what fails, and
+    /// returns the time the dispatches took. Chunks sharing a face cannot be in one dispatch, so
+    /// each batch takes one parity of the chunk grid.
+    fn solve_batch(
+        &mut self,
+        label: &str,
+        chunks: &[usize],
+        halo: usize,
+        seed: u32,
+    ) -> (f64, usize) {
+        let mut wall_ms = 0.0;
+        let mut repaired = 0;
+        for parity in [0, 1] {
+            let batch: Vec<usize> = chunks
+                .iter()
+                .copied()
+                .filter(|k| (k % self.chunks_x + k / self.chunks_x) % 2 == parity)
+                .collect();
+            if batch.is_empty() {
+                continue;
+            }
+            let statuses = self.solve(
+                &format!("{label} parity {parity}"),
+                &batch,
+                halo,
+                false,
+                seed,
+            );
+            wall_ms += self.last_wall_ms;
+            for (&k, _) in batch
+                .iter()
+                .zip(&statuses)
+                .filter(|(_, status)| **status != 0)
+            {
+                // One chunk per dispatch: released halos of neighbouring chunks would overlap.
+                for widened in 1..=3 {
+                    let label = format!("{label} repair chunk {k} halo {widened}");
+                    let solved =
+                        self.solve(&label, &[k], widened, true, seed + widened as u32) == [0];
+                    wall_ms += self.last_wall_ms;
+                    if solved {
+                        repaired += 1;
+                        break;
+                    }
+                }
+            }
+        }
+        (wall_ms, repaired)
     }
 
     /// Checks and renders the world; only pairs of decided cells can violate a rule.
@@ -1425,7 +1533,7 @@ fn stitch_world(
 ) -> Stitched {
     let city = city::city();
     let gpu = bench_device();
-    let mut world = World::new(&city, &gpu);
+    let mut world = World::new(&city, &gpu, 8, 8);
     let (mut border_contradictions, mut repaired) = (0, 0);
     for pass in 0..passes {
         let members: Vec<usize> = (0..64).filter(|k| pass_of(k % 8, k / 8) == pass).collect();
@@ -1537,4 +1645,107 @@ fn checkerboard_schedule_with_repair_completes_the_world() {
         "{} chunks repaired",
         stitched.repaired
     );
+}
+
+/// Can the city be generated live, in front of a walking player?
+///
+/// The player walks along a 24x8-chunk world; every tick, chunks that have come within the view
+/// radius are generated. marian42's blocks are 2 m, so an 8-cell chunk is 16 m, and a walking pace
+/// of 1.4 m/s crosses one chunk every 11 s. Generation keeps up if the work a tick asks for fits in
+/// the tick.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn live_streaming_keeps_ahead_of_a_walking_player() {
+    const CELL_M: f64 = 2.0;
+    const WALK_M_S: f64 = 1.4;
+    const TICK_S: f64 = 0.5;
+    const VIEW_CHUNKS: isize = 4;
+
+    let city = city::city();
+    let gpu = bench_device();
+    let (chunks_x, chunks_y) = (24usize, 8usize);
+    let mut world = World::new(&city, &gpu, chunks_x, chunks_y);
+    let chunk_m = CELL_M * f64::from(CX);
+    let focus_y = (chunks_y / 2) as isize;
+    // The kernels compile on first use; a live system would build them at load time.
+    world.solve_batch("live warm-up", &[0], 1, 1);
+    world.tiles.fill(None);
+
+    let mut ticks: Vec<(f64, usize)> = Vec::new();
+    let mut repaired = 0;
+    let mut generated = 0;
+    let mut focus_m = 0.0;
+    while focus_m < (chunks_x as isize - VIEW_CHUNKS) as f64 * chunk_m {
+        let focus_x = (focus_m / chunk_m) as isize;
+        // Nearest first, as a streaming scheduler would order them.
+        let mut wanted: Vec<(isize, usize)> = ((focus_x - VIEW_CHUNKS)..=(focus_x + VIEW_CHUNKS))
+            .flat_map(|kx| {
+                ((focus_y - VIEW_CHUNKS)..=(focus_y + VIEW_CHUNKS)).map(move |ky| (kx, ky))
+            })
+            .filter(|&(kx, ky)| {
+                kx >= 0 && ky >= 0 && kx < chunks_x as isize && ky < chunks_y as isize
+            })
+            .map(|(kx, ky)| {
+                (
+                    (kx - focus_x).abs().max((ky - focus_y).abs()),
+                    ky as usize * chunks_x + kx as usize,
+                )
+            })
+            .filter(|&(_, k)| !world.chunk_decided(k))
+            .collect();
+        wanted.sort_unstable();
+        let missing: Vec<usize> = wanted.into_iter().map(|(_, k)| k).collect();
+        if !missing.is_empty() {
+            let label = format!("live tick at {focus_m:.0} m");
+            let (wall_ms, fixed) = world.solve_batch(&label, &missing, 1, 11);
+            ticks.push((wall_ms, missing.len()));
+            generated += missing.len();
+            repaired += fixed;
+        }
+        focus_m += WALK_M_S * TICK_S;
+    }
+
+    let mut walls: Vec<f64> = ticks.iter().map(|(wall, _)| *wall).collect();
+    walls.sort_by(f64::total_cmp);
+    let busiest = ticks
+        .iter()
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .expect("a tick");
+    let total_ms: f64 = walls.iter().sum();
+    let cells = generated * CELLS as usize;
+    eprintln!(
+        "block_solver: live streaming across {chunks_x}x{chunks_y} chunks: {generated} chunks \
+         ({cells} cells) in {total_ms:.0} ms of dispatches, {repaired} repaired; \
+         ticks needing work {}, median {:.1} ms, p90 {:.1} ms, busiest {:.1} ms for {} chunks; \
+         budget {:.0} ms per tick; {:.0} cells/s while generating",
+        ticks.len(),
+        walls[walls.len() / 2],
+        walls[walls.len() * 9 / 10],
+        busiest.0,
+        busiest.1,
+        TICK_S * 1000.0,
+        cells as f64 / (total_ms / 1000.0),
+    );
+
+    // Filling the first view is a load, not a step of play; every later tick must fit its budget.
+    let worst_in_play = ticks[1..].iter().map(|(wall, _)| *wall).fold(0.0, f64::max);
+    assert!(
+        worst_in_play < TICK_S * 1000.0,
+        "a tick needed {worst_in_play:.0} ms of a {:.0} ms budget",
+        TICK_S * 1000.0
+    );
+
+    let stitched = world.report("live", 0, repaired);
+    assert_eq!(stitched.violations, 0);
+    for k in 0..chunks_x * chunks_y {
+        let (kx, ky) = ((k % chunks_x) as isize, (k / chunks_x) as isize);
+        let reached = kx <= chunks_x as isize - VIEW_CHUNKS - 1 + VIEW_CHUNKS
+            && (ky - focus_y).abs() <= VIEW_CHUNKS;
+        if reached {
+            assert!(
+                world.chunk_decided(k),
+                "chunk {k} was in view but never finished"
+            );
+        }
+    }
 }
