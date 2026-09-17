@@ -274,7 +274,7 @@ impl<S: Solver> WorldGenerator<S> {
             region: shape,
             ids: chunks.iter().map(|chunk| chunk.id()).collect(),
             // A chunk's own identity salts the choice, so every region of a batch shares the seed.
-            seeds: vec![world_seed(self.config.seed); chunks.len()],
+            seeds: vec![batch_seed(self.config.seed, halo, release); chunks.len()],
             init,
             budget: release.then_some(self.config.repair.budget),
         };
@@ -353,8 +353,19 @@ impl<S: Solver> WorldGenerator<S> {
     }
 }
 
-/// The world seed as the solver's hash takes it. A chunk's own identity is mixed in there, so
-/// folding the high half in here only has to keep both halves of the seed meaningful.
-fn world_seed(seed: u64) -> u32 {
-    (seed as u32) ^ ((seed >> 32) as u32)
+/// The seed a batch's choices derive from, as the solver's hash takes it. A chunk's own identity is
+/// mixed in there, so folding the high half in here only has to keep both halves of the seed
+/// meaningful.
+///
+/// A repair gets a stream of its own, keyed by how wide it is: its chunk exhausted every restart the
+/// first attempt had, so trying the same sequence of choices again with one more row of freedom is
+/// the weakest thing a repair could do. The stream still depends on nothing but the world seed and
+/// the halo, so the world stays a function of its configuration.
+fn batch_seed(seed: u64, halo: u32, repair: bool) -> u32 {
+    let world = (seed as u32) ^ ((seed >> 32) as u32);
+    if repair {
+        world ^ 0x9E37_79B9_u32.wrapping_mul(halo + 1)
+    } else {
+        world
+    }
 }

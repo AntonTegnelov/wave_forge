@@ -51,10 +51,10 @@ Conventions:
 
 ### 4. Look at the timeline
 
-The CLI can write a Chrome-format trace of every span:
+The stress tests can write a Chrome-format trace of every span:
 
 ```bash
-cargo run --release -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8 --trace-chrome trace.json
+WFC_TRACE_CHROME=trace.json cargo test -p wfc-devtools --release --test stress -- --ignored --nocapture
 ```
 
 Open `trace.json` in [Perfetto](https://ui.perfetto.dev) (or `chrome://tracing`). Things to look for: which stage dominates each iteration, how many propagation passes a collapse triggers, and gaps where the CPU is waiting on the GPU. The JSON is also easy to summarise in a script, which is much more useful to an LLM than raw logs.
