@@ -221,7 +221,7 @@ about 7.4 ms per collapse.
 
 ### The CPU reference
 
-`wfc-devtools/tests/cpu_reference.rs` is a deliberately plain single-threaded solver on the same rules:
+`wfc_devtools::reference` (timed by `wfc-devtools/tests/cpu_reference.rs`) is a deliberately plain single-threaded solver on the same rules:
 two `u64` words per cell, a stack for propagation, a full scan for selection, marian42's undo-doubling.
 It is a yardstick, not a product: a GPU design that cannot beat one CPU thread at chunk latency is not
 worth shipping. At e28ab9d on a Ryzen 9 5900X (release, eight seeds, one run each, no warm-up beyond
