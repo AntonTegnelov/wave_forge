@@ -130,7 +130,7 @@ pub fn print_profiler_summary(profiler: &Profiler) {
 
     // Sort sections by total time (descending)
     let mut sections: Vec<(&String, &ProfileMetric)> = metrics.iter().collect();
-    sections.sort_by(|a, b| b.1.total_time.cmp(&a.1.total_time));
+    sections.sort_by_key(|section| std::cmp::Reverse(section.1.total_time));
 
     println!("=== {} Profiling Results ===", profiler.name());
     println!(

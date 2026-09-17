@@ -69,10 +69,10 @@ pub fn setup_visualization(
                                     running = false;
                                     continue;
                                 }
-                                if visualizer.is_enabled() {
-                                    if let Err(e) = visualizer.display_state(&grid) {
-                                        log::error!("Failed to display grid: {}", e);
-                                    }
+                                if visualizer.is_enabled()
+                                    && let Err(e) = visualizer.display_state(&grid)
+                                {
+                                    log::error!("Failed to display grid: {}", e);
                                 }
                             }
                         }

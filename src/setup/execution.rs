@@ -58,7 +58,7 @@ fn calculate_median(data: &mut [f64]) -> Option<f64> {
     }
     data.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = data.len() / 2;
-    if data.len() % 2 == 0 {
+    if data.len().is_multiple_of(2) {
         Some((data[mid - 1] + data[mid]) / 2.0)
     } else {
         Some(data[mid])
@@ -572,7 +572,7 @@ pub async fn run_standard_mode(
         Some(Box::new(
             move |_grid: &PossibilityGrid, iteration: u64| -> Result<(), WfcError> {
                 // Fetch the latest state directly from GPU
-                if iteration % 10 == 0 {
+                if iteration.is_multiple_of(10) {
                     // Only process every 10th iteration to reduce overhead
                     match pollster::block_on(gpu_clone.get_intermediate_result()) {
                         Ok(latest_grid) => {
