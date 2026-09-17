@@ -26,6 +26,8 @@ const CELLS: u32 = CX * CY * CZ;
 const WORDS: u32 = 3;
 /// Entries of the per-chunk statistics record the kernel writes.
 const STATS: u32 = 8;
+/// The chunk shape of the single-chunk and throughput tests.
+const CHUNK: [u32; 3] = [CX, CY, CZ];
 /// Checkpoints kept per chunk for undo.
 const RING: u32 = 32;
 /// Invocations per workgroup in the correctness tests. Each lane owns every `INVOCATIONS`-th cell.
@@ -529,13 +531,14 @@ fn bench_device() -> BenchDevice {
     BenchDevice { device, queue }
 }
 
-fn kernel_source(num_tiles: usize, invocations: u32) -> String {
+fn kernel_source(num_tiles: usize, invocations: u32, shape: [u32; 3]) -> String {
+    let cells = shape[0] * shape[1] * shape[2];
     let rule_words = 6 * num_tiles as u32 * WORDS;
     KERNEL
-        .replace("{CX}", &CX.to_string())
-        .replace("{CY}", &CY.to_string())
-        .replace("{CELLS}", &CELLS.to_string())
-        .replace("{DOM_WORDS}", &(CELLS * WORDS).to_string())
+        .replace("{CX}", &shape[0].to_string())
+        .replace("{CY}", &shape[1].to_string())
+        .replace("{CELLS}", &cells.to_string())
+        .replace("{DOM_WORDS}", &(cells * WORDS).to_string())
         .replace("{NT}", &num_tiles.to_string())
         .replace("{RULE_WORDS}", &rule_words.to_string())
         .replace("{STATS}", &STATS.to_string())
@@ -613,11 +616,15 @@ impl Kernel {
         weights: &[f32],
         chunks: u32,
         invocations: u32,
+        shape: [u32; 3],
     ) -> Self {
+        let cells = shape[0] * shape[1] * shape[2];
         let device = &gpu.device;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("block solver"),
-            source: wgpu::ShaderSource::Wgsl(kernel_source(rules.num_tiles(), invocations).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                kernel_source(rules.num_tiles(), invocations, shape).into(),
+            ),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("block solver"),
@@ -650,12 +657,12 @@ impl Kernel {
         );
         gpu.queue
             .write_buffer(&weights_buf, 0, bytemuck::cast_slice(weights));
-        let domain_bytes = u64::from(chunks * CELLS * WORDS * 4);
+        let domain_bytes = u64::from(chunks * cells * WORDS * 4);
         let init = storage("init", domain_bytes, wgpu::BufferUsages::empty());
         let out = storage("out", domain_bytes, wgpu::BufferUsages::COPY_SRC);
         let snaps = storage(
             "snaps",
-            u64::from(chunks * RING * CELLS * WORDS * 4),
+            u64::from(chunks * RING * cells * WORDS * 4),
             wgpu::BufferUsages::empty(),
         );
         let stats = storage(
@@ -782,7 +789,7 @@ fn one_chunk_propagates_to_the_reference_fixpoint() {
         initial.len()
     );
     let gpu = bench_device();
-    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS);
+    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS, CHUNK);
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
 
@@ -836,7 +843,7 @@ fn one_chunk_solves_validly_and_reproducibly() {
     let (w, h, d) = (CX as usize, CY as usize, CZ as usize);
     let initial = reference::city_initial_cells(&city, w, h, d);
     let gpu = bench_device();
-    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS);
+    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, 1, INVOCATIONS, CHUNK);
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&initial)));
     let solve = |seed: u32, radius: u32, undo: u32| {
@@ -990,7 +997,14 @@ fn chunk_throughput_against_the_cpu_reference() {
                 );
                 break;
             }
-            let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, chunks, invocations);
+            let kernel = Kernel::new(
+                &gpu,
+                &m.rules,
+                &m.tileset.weights,
+                chunks,
+                invocations,
+                CHUNK,
+            );
             let words: Vec<u32> = (0..chunks).flat_map(|_| to_words(&initial)).collect();
             gpu.queue
                 .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&words));
@@ -1075,7 +1089,14 @@ fn every_reported_success_is_a_valid_chunk() {
     let initial = reference::city_initial_cells(&city, w, h, d);
     let chunks = 64u32;
     let gpu = bench_device();
-    let kernel = Kernel::new(&gpu, &m.rules, &m.tileset.weights, chunks, INVOCATIONS);
+    let kernel = Kernel::new(
+        &gpu,
+        &m.rules,
+        &m.tileset.weights,
+        chunks,
+        INVOCATIONS,
+        CHUNK,
+    );
     let words: Vec<u32> = (0..chunks).flat_map(|_| to_words(&initial)).collect();
     gpu.queue
         .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&words));
@@ -1128,4 +1149,321 @@ fn every_reported_success_is_a_valid_chunk() {
             "seed {seed}, radius {radius}, undo {undo}"
         );
     }
+}
+
+/// The tiles a cell may hold when its neighbour along `axis` holds `tile`, per the rules.
+fn allowed_next_to(rules: &wfc_rules::AdjacencyRules, tile: usize, axis: usize) -> reference::Cell {
+    let mut cell = [0u64; reference::WORDS];
+    for other in 0..rules.num_tiles() {
+        if rules.check(tile, other, axis) {
+            cell[other / 64] |= 1 << (other % 64);
+        }
+    }
+    cell
+}
+
+/// What stitching a world from chunks produced.
+struct Stitched {
+    undecided_cells: usize,
+    violations: usize,
+    border_contradictions: usize,
+}
+
+/// Solves an 8x8-chunk world pass by pass, each pass one dispatch over its chunks.
+///
+/// Each chunk is solved as a region `halo` cells wider on every side. Region cells inside chunks
+/// already solved are pinned to their tiles, and a decided cell just outside the region restricts
+/// the region cell next to it; the rest of the halo is solved and then discarded. With no halo a
+/// chunk's free faces constrain nothing, so it can leave border tiles no row of neighbours can
+/// complete. `pass_of` assigns a chunk to a pass.
+fn stitch_world(
+    name: &str,
+    passes: usize,
+    halo: usize,
+    pass_of: impl Fn(usize, usize) -> usize,
+) -> Stitched {
+    let city = city::city();
+    let m = &city.modules;
+    let (cx, cy, cz) = (CX as usize, CY as usize, CZ as usize);
+    let (rx, ry) = (cx + 2 * halo, cy + 2 * halo);
+    let region_cells = rx * ry * cz;
+    let (chunks_x, chunks_y) = (8usize, 8usize);
+    let (world_w, world_h) = (chunks_x * cx, chunks_y * cy);
+    // The whole world constrained as one grid: street level at the bottom, air on top, and no path
+    // leaving the world's outer faces. Faces between chunks are left to the solver.
+    let world_initial = reference::city_initial_cells(&city, world_w, world_h, cz);
+    // Halo cells beyond the world's edge get the layering alone, from the middle column of a grid
+    // too small to have an interior rim.
+    let open_column: Vec<reference::Cell> = {
+        let grid = reference::city_initial_cells(&city, 3, 3, cz);
+        (0..cz).map(|z| grid[(z * 3 + 1) * 3 + 1]).collect()
+    };
+    let world_index = |x: usize, y: usize, z: usize| (z * world_h + y) * world_w + x;
+    let in_world = |x: isize, y: isize, z: isize| {
+        x >= 0
+            && y >= 0
+            && z >= 0
+            && (x as usize) < world_w
+            && (y as usize) < world_h
+            && (z as usize) < cz
+    };
+    // World coordinates of a region's cells, in the region's row-major order.
+    let region_cells_of = |k: usize| {
+        let (ox, oy) = (
+            ((k % chunks_x) * cx) as isize,
+            ((k / chunks_x) * cy) as isize,
+        );
+        (0..cz).flat_map(move |z| {
+            (0..ry).flat_map(move |j| {
+                (0..rx).map(move |i| {
+                    (
+                        ox + i as isize - halo as isize,
+                        oy + j as isize - halo as isize,
+                        z as isize,
+                    )
+                })
+            })
+        })
+    };
+    let is_inner = |i: usize| {
+        let (x, y) = (i % rx, (i / rx) % ry);
+        x >= halo && x < halo + cx && y >= halo && y < halo + cy
+    };
+    let mut world_tiles: Vec<Option<usize>> = vec![None; world_w * world_h * cz];
+    let mut border_contradictions = 0;
+    let gpu = bench_device();
+
+    for pass in 0..passes {
+        let members: Vec<usize> = (0..chunks_x * chunks_y)
+            .filter(|k| pass_of(k % chunks_x, k / chunks_x) == pass)
+            .collect();
+        let mut init: Vec<reference::Cell> = Vec::with_capacity(members.len() * region_cells);
+        for &k in &members {
+            let (ox, oy) = (
+                ((k % chunks_x) * cx) as isize,
+                ((k / chunks_x) * cy) as isize,
+            );
+            let in_region = |x: isize, y: isize| {
+                x >= ox - halo as isize
+                    && x < ox + (cx + halo) as isize
+                    && y >= oy - halo as isize
+                    && y < oy + (cy + halo) as isize
+            };
+            for (x, y, z) in region_cells_of(k) {
+                if !in_world(x, y, z) {
+                    init.push(open_column[z as usize]);
+                    continue;
+                }
+                let at = world_index(x as usize, y as usize, z as usize);
+                if let Some(tile) = world_tiles[at] {
+                    let mut pinned = [0u64; reference::WORDS];
+                    pinned[tile / 64] = 1 << (tile % 64);
+                    init.push(pinned);
+                    continue;
+                }
+                let mut cell = world_initial[at];
+                for (axis, (dx, dy, dz)) in
+                    wfc_devtools::invariants::AXIS_OFFSETS.iter().enumerate()
+                {
+                    let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+                    if in_region(nx, ny) || !in_world(nx, ny, nz) {
+                        continue;
+                    }
+                    if let Some(tile) =
+                        world_tiles[world_index(nx as usize, ny as usize, nz as usize)]
+                    {
+                        // The neighbour lies along `axis` from this cell, so this cell lies along
+                        // the opposite axis from the neighbour.
+                        let allowed = allowed_next_to(&m.rules, tile, axis ^ 1);
+                        cell = [cell[0] & allowed[0], cell[1] & allowed[1]];
+                    }
+                }
+                init.push(cell);
+            }
+        }
+        let shape = [rx as u32, ry as u32, CZ];
+        let kernel = Kernel::new(
+            &gpu,
+            &m.rules,
+            &m.tileset.weights,
+            members.len() as u32,
+            INVOCATIONS,
+            shape,
+        );
+        gpu.queue
+            .write_buffer(&kernel.init, 0, bytemuck::cast_slice(&to_words(&init)));
+        let started = std::time::Instant::now();
+        kernel.run(
+            &gpu,
+            Params {
+                mode: 1,
+                max_steps: 50_000,
+                // Chunks are indexed per pass in the hash, so each pass takes its own seed.
+                seed: 7 + pass as u32,
+                max_attempts: 64,
+                radius: 1,
+                undo: 1,
+                padding: [0; 2],
+            },
+        );
+        let wall_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        let stats = read_u32s(&gpu, &kernel.stats);
+        let domains = from_words(&read_u32s(&gpu, &kernel.out));
+        let mut statuses = [0usize; 5];
+        for (r, &k) in members.iter().enumerate() {
+            let record = &stats[r * STATS as usize..(r + 1) * STATS as usize];
+            statuses[record[0] as usize] += 1;
+            let region = r * region_cells..(r + 1) * region_cells;
+            if record[0] == 3 {
+                // A border contradiction must be real: the CPU reference, propagating the same
+                // initial domains, has to empty a cell too.
+                let mut cells = init[region.clone()].to_vec();
+                let mut stack: Vec<usize> = (0..cells.len()).collect();
+                let emptied = ReferenceSolver::new(&m.rules, &m.tileset.weights, rx, ry, cz)
+                    .propagate(&mut cells, &mut stack)
+                    .expect_err("the kernel reports a border contradiction the CPU does not find");
+                if statuses[3] == 1 {
+                    let at = region_cells_of(k).nth(emptied).expect("in region");
+                    eprintln!(
+                        "block_solver: {name} pass {pass}: chunk {k} first border contradiction at world {at:?}, {}",
+                        if is_inner(emptied) {
+                            "inside the chunk"
+                        } else {
+                            "in the halo"
+                        }
+                    );
+                }
+            }
+            if record[0] != 0 {
+                continue;
+            }
+            for ((i, (x, y, z)), cell) in region_cells_of(k).enumerate().zip(&domains[region]) {
+                if !is_inner(i) {
+                    continue;
+                }
+                assert_eq!(
+                    reference::count(*cell),
+                    1,
+                    "chunk {k} left ({x}, {y}, {z}) undecided"
+                );
+                world_tiles[world_index(x as usize, y as usize, z as usize)] =
+                    reference::set_bits(*cell).next();
+            }
+        }
+        border_contradictions += statuses[3];
+        eprintln!(
+            "block_solver: {name} pass {pass}: {} chunks in {wall_ms:.1} ms (cold), \
+             [ok, failed, step cap, border contradiction, bad checkpoint] = {statuses:?}",
+            members.len()
+        );
+    }
+
+    let undecided_cells = world_tiles.iter().filter(|t| t.is_none()).count();
+    // Undecided cells render as air, so only pairs of decided cells are checked.
+    let tiles: Vec<usize> = world_tiles.iter().map(|t| t.unwrap_or(city.air)).collect();
+    let grid = wfc_devtools::TileGrid::new(world_w, world_h, cz, tiles).expect("dimensions match");
+    let violations =
+        wfc_devtools::adjacency_violations(&grid, &m.rules, wfc_core::BoundaryCondition::Finite)
+            .into_iter()
+            .filter(|v| {
+                world_tiles[world_index(v.cell.0, v.cell.1, v.cell.2)].is_some()
+                    && world_tiles[world_index(v.neighbor.0, v.neighbor.1, v.neighbor.2)].is_some()
+            })
+            .count();
+    eprintln!(
+        "block_solver: {name} world {world_w}x{world_h}x{cz}: undecided cells {undecided_cells}, \
+         violations between decided cells {violations}"
+    );
+    let path =
+        std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}_city.png"));
+    wfc_devtools::render::render_voxel_isometric(&grid, &city.voxels, 2)
+        .save(&path)
+        .expect("write PNG");
+    eprintln!("block_solver: rendered {}", path.display());
+    Stitched {
+        undecided_cells,
+        violations,
+        border_contradictions,
+    }
+}
+
+/// Checkerboard: even chunks first with free faces, then odd chunks with all four side faces fixed.
+/// Decided cells never violate the rules, even where a chunk could not be solved.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn checkerboard_schedule_never_breaks_a_seam() {
+    let stitched = stitch_world("checkerboard", 2, 0, |x, y| (x + y) % 2);
+
+    eprintln!(
+        "block_solver: checkerboard border contradictions {}",
+        stitched.border_contradictions
+    );
+    assert_eq!(stitched.violations, 0);
+}
+
+/// Diagonal waves, as in N-WFC: chunks with the same x + y share no face, so each wave is one
+/// dispatch, and every chunk has at most two fixed faces (towards -x and -y).
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn diagonal_schedule_never_breaks_a_seam() {
+    let stitched = stitch_world("diagonal", 15, 0, |x, y| x + y);
+
+    eprintln!(
+        "block_solver: diagonal border contradictions {}, undecided cells {}",
+        stitched.border_contradictions, stitched.undecided_cells
+    );
+    assert_eq!(stitched.violations, 0);
+}
+
+/// Diagonal waves again, each chunk solved with a one-cell halo that is discarded afterwards.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn diagonal_schedule_with_halo_never_breaks_a_seam() {
+    let stitched = stitch_world("diagonal_halo1", 15, 1, |x, y| x + y);
+
+    eprintln!(
+        "block_solver: diagonal with halo 1: border contradictions {}, undecided cells {}",
+        stitched.border_contradictions, stitched.undecided_cells
+    );
+    assert_eq!(stitched.violations, 0);
+}
+
+/// Checkerboard with a one-cell halo.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn checkerboard_schedule_with_halo_never_breaks_a_seam() {
+    let stitched = stitch_world("checkerboard_halo1", 2, 1, |x, y| (x + y) % 2);
+
+    eprintln!(
+        "block_solver: checkerboard with halo 1: border contradictions {}, undecided cells {}",
+        stitched.border_contradictions, stitched.undecided_cells
+    );
+    assert_eq!(stitched.violations, 0);
+}
+
+/// Diagonal waves with a two-cell halo.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn diagonal_schedule_with_halo_2_never_breaks_a_seam() {
+    let stitched = stitch_world("diagonal_halo2", 15, 2, |x, y| x + y);
+
+    eprintln!(
+        "block_solver: diagonal with halo 2: border contradictions {}, undecided cells {}",
+        stitched.border_contradictions, stitched.undecided_cells
+    );
+    assert_eq!(stitched.violations, 0);
+}
+
+/// Checkerboard with a two-cell halo.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn checkerboard_schedule_with_halo_2_never_breaks_a_seam() {
+    let stitched = stitch_world("checkerboard_halo2", 2, 2, |x, y| (x + y) % 2);
+
+    eprintln!(
+        "block_solver: checkerboard with halo 2: border contradictions {}, undecided cells {}",
+        stitched.border_contradictions, stitched.undecided_cells
+    );
+    assert_eq!(stitched.violations, 0);
 }

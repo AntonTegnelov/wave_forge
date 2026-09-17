@@ -275,6 +275,12 @@ Ranked by how directly each makes the work GPU-shaped, and by the least work to 
    checkpoint from before the failing round, instead of restarting the chunk, makes each
    contradiction cost a few rounds. Combined at radius 1, 256 chunks take 0.17 ms each, about 15
    times one CPU thread in the same run, with no chunk failing.
+   Stitching those chunks into a world is where the approach meets its known weakness, the one every
+   block-based source warns about. With faces fixed to already solved neighbours, 28 of 63 chunks
+   under N-WFC's diagonal order have unsatisfiable borders (29 of 32 under a checkerboard).
+   Solving each chunk with a one-cell halo that is discarded afterwards brings the diagonal order down
+   to 3 of 63, and never produced a seam violation. The rest need a repair that may change committed
+   cells, which is what modifying in blocks and marian42's clearing both do.
 5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
 
 ## How we will know it worked

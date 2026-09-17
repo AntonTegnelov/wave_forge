@@ -104,6 +104,10 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Checkpoint ring bug, found by the 64-chunk validity test | a chunk reported success with 2 empty cells: undo restored slot k after an earlier, deeper stretch of the attempt had overwritten it at round k + 32, possibly mid-contradiction | fixed by undoing only to rounds with k + 32 above the deepest round reached; a restored empty cell now fails the chunk loudly, and removing the guard trips that check on the same chunk |
 | CPU reference on all 24 threads (Ryzen 9 5900X), 256 chunks | 150 ms, **0.59 ms per chunk**, 3 of 256 seeds thrash to the 20 000-backtrack cap (time included) | `block_solver_bench`, median of 3; against the block kernel's 45 ms for the same 256 chunks at radius 1 with undo in the same run |
 | Block kernel, 1 to 4 chunks per dispatch | µs per step bimodal across runs: radius 2 without undo 9.4 ms then 29.7 ms for the same 625 steps; radius 1 with undo 100 µs per step twice against 12 µs at 16 chunks | same; small dispatches are not a stable measurement on this stack |
+| Stitching an 8×8-chunk world (64×64×8), chunks with a border contradiction or exhausted, halo 0 | checkerboard: **29 of 32** second-pass chunks; diagonal waves (N-WFC order): **28 of 63** | `block_solver_bench`, radius 1 with undo; every kernel border contradiction re-checked by the CPU reference propagating the same domains, which empties a cell too |
+| Where they empty | at street level (z 0 or 1) on the chunk face, across from a fixed road, door or building tile | first contradiction per pass printed with its fixed neighbours |
+| Same with a halo solved and discarded, 1 cell / 2 cells | checkerboard: 10 / 11 of 32; diagonal: **3 / 3 of 63** | same; halo cells inside solved chunks pinned to their tiles |
+| Seam violations between decided cells | 0 in every schedule | same |
 | CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
 | CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
 | CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |
@@ -310,6 +314,15 @@ Each of these is an inference. The reasoning is given so a future pass can check
    seeds. The kernel has checkpoint undo and parallel selection. Giving the CPU the same undo and an
    incremental selection would plausibly cut its time several fold, so the measured 3.3× over 24
    threads is an upper bound on the GPU's advantage, not an estimate of it.
+
+15. **A chunk solved with free faces leaves border tiles that no row of neighbours can complete.**
+   *Reasoning:* each tile on a free face only needs *some* neighbour to exist, one at a time, while a
+   neighbouring chunk must supply a whole consistent row. Every first contradiction sits on the face
+   at street level next to roads and doors, where tiles demand specific continuations, and solving a
+   one-cell halo that is then discarded removes 25 of 28 failures under diagonal order. The halo
+   proves one completion exists without committing to it. A second cell of halo does not help
+   further, so the rest need a different mechanism (re-solving with some committed cells released,
+   as in modifying in blocks). One world, one seed per pass: indicative.
 
 ## Unknowns
 
