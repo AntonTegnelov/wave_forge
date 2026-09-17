@@ -16,9 +16,11 @@ Wave Forge is a parallel program whose main work happens on the GPU. Its bugs ra
 |---|---|---|---|
 | Unit | `#[cfg(test)]` modules in each crate | Rule compilation and transformations, bit packing, host/shader struct layouts, output format, invariant checker, renderers, fixtures | No |
 | GPU integration | `wfc-gpu/tests/` | Solver behaviour on a real device, for example that pre-constrained cells propagate before the first collapse | Yes |
+| Library contract | `tests/facade.rs` | What the facade promises: the same requests give the same world, the order they are asked in does not matter, no batch holds two chunks that share a face, a repair reports every chunk it rewrote, a worker generates the same world on a thread | No, it runs on the CPU reference |
 | End to end | `wfc-devtools/tests/` | Whole runs on reference rule sets: a 2D coastline and a small 3D city, with invariants checked and images written | Yes |
 | Global constraint | `e2e_3d_city::the_connectivity_constraint_leaves_one_walkable_network` | The path constraint plus backtracking: every walkable cell of the city is connected | Yes |
 | Stress (opt-in) | `wfc-devtools/tests/stress.rs` | Large cities and grids, timed; `#[ignore]`d so `cargo test` stays fast | Yes |
+| Streaming (opt-in) | `wfc-devtools/tests/streaming.rs` | A whole world asked for at once, and a city generated in front of a walking player against a 500 ms tick budget; `#[ignore]`d | Yes |
 
 "Needs a GPU" means a Vulkan, Metal or DirectX 12 device. Wave Forge has no CPU fallback ([vision.md](vision.md#non-goals)). In the dev container tests run on the host RTX 3070 through Mesa's dozen driver ([development.md](development.md#toolchain-and-environment)). Where no GPU is available, a software Vulkan device (Mesa llvmpipe, or `WGPU_ADAPTER_NAME=llvmpipe`) is good enough to check correctness, but never for performance.
 
@@ -70,18 +72,20 @@ Both are `#[ignore]`d and print their numbers; run them in release mode.
 ```bash
 cargo test -p wfc-devtools --release --test cpu_reference -- --ignored --nocapture
 cargo test -p wfc-gpu --release --test block_solver_bench -- --ignored --nocapture --test-threads=1
+cargo test -p wfc-devtools --release --test streaming -- --ignored --nocapture --test-threads=1
 ```
 
 `cpu_reference` times the single-threaded CPU solver in `wfc_devtools::reference`, the yardstick every
 GPU number is printed against. `block_solver_bench` holds the block-local chunk kernel: its
 correctness tests check chunks against that reference and against the adjacency rules, and its
 benchmarks report per-chunk cost, seams across a stitched world, and live streaming around a moving
-focus. A timing describes one build on one machine and driver stack; see
-[solver-fit.md](solver-fit.md) for what each number means.
+focus. `streaming` measures the same two worlds through the library, so what a game would get is
+timed rather than what a bench arranged by hand. A timing describes one build on one machine and
+driver stack; see [solver-fit.md](solver-fit.md) for what each number means.
 
 ## Known gaps
 
-- **Results are not reproducible yet** (A-6 in [status.md](status.md#alignment-tasks)), so tests assert invariants rather than comparing against golden images. Once seeds work, add golden-image tests for fixed seeds.
+- **Golden images are still missing.** Generation through the facade is reproducible, and `tests/facade.rs` compares whole worlds cell for cell, but the tests that render (the end-to-end pair) still assert invariants rather than comparing against a stored image.
 - **Contradictions are retried** by rerunning from scratch (`tests/common/mod.rs`). That is a stopgap until the solver can backtrack or restart regions itself (A-9); the retry count is logged so frequent contradictions stay visible.
 - **The city needs restarts.** Without backtracking, some runs contradict and start over. The count is part of what the stress suite reports.
 
@@ -100,7 +104,7 @@ Each run prints one line, for example `stress: city_medium 24x24x8 cells=4608 ti
 `wfc-devtools` is a developer-only crate: it is never part of the shipped library.
 
 ```bash
-cargo run --release -- --rule-file examples/simple-pattern.ron --width 12 --height 12 --depth 6 -o grid.txt
+cargo run -p wfc-devtools --release --bin wave-forge -- --rule-file examples/simple-pattern.ron --width 12 --height 12 --depth 6 --output grid.txt
 cargo run -p wfc-devtools --bin wfc-render -- grid.txt --out grid.png --empty-tile 0
 cargo run -p wfc-devtools --bin wfc-render -- grid.txt --view layer --z 0 --out layer0.png
 ```

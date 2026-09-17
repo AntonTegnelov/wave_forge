@@ -17,7 +17,7 @@ enum View {
 #[derive(Parser)]
 #[command(about = "Render a Wave Forge output grid to PNG (developer tool)")]
 struct Args {
-    /// Grid text file written by `wave_forge --output-path`.
+    /// Grid text file written by `wave-forge --output`.
     grid: PathBuf,
     /// PNG file to write.
     #[arg(short, long, default_value = "grid.png")]

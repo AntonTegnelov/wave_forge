@@ -18,7 +18,7 @@ How to build, test and contribute. For *what* we are building and *why*, read [v
 ```bash
 cargo build --workspace
 cargo test --workspace
-cargo run --release -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8
+cargo run -p wfc-devtools --release --bin wave-forge -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8
 ```
 
 See [testing.md](testing.md) for the test layers, artifacts and rendering tools, [debugging.md](debugging.md) for tracing and debugging practices, and [build-profiles.md](build-profiles.md) before timing or profiling anything.

@@ -6,16 +6,19 @@ Phase 1 is a standalone, GPU-accelerated **wave function collapse** generator fo
 
 ## Status
 
-**Early development, not ready for use.** The GPU WFC solver works end to end for small 3D grids through a development CLI, but there is no library API yet, and the solver is slow for large grids and not yet deterministic. See [docs/status.md](docs/status.md) for exactly what works, what doesn't, and the plan to align the code with the architecture.
+**Early development, not ready for use.** The library generates a world in chunks around moving focus points, on the GPU, fast enough to keep ahead of a walking player, and the same requests give the same world. There is no Bevy plugin and no Godot extension yet. See [docs/status.md](docs/status.md) for exactly what works, what doesn't, and the plan to align the code with the architecture.
 
 ## Try it
 
 Requires Rust 1.98.1 (pinned via `rust-toolchain.toml`) and a Vulkan, Metal or DirectX 12 capable device. A software Vulkan driver such as Mesa llvmpipe also works.
 
 ```bash
-cargo run --release -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8
-cargo run --release -- --help
+cargo run -p wfc-devtools --release --bin wave-forge -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8
+cargo run -p wfc-devtools --bin wave-forge -- --help
 ```
+
+That is the developer CLI: it generates one chunk and writes it out, which is the smallest way to
+look at a rule set. A game drives the library instead, through `wave_forge::Builder`.
 
 The output file (`output.txt` by default) lists the chosen tile index for every cell: one line per row, blank lines between Z layers.
 

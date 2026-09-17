@@ -93,6 +93,7 @@ impl World {
             ids: chunks.iter().map(|c| c.id()).collect(),
             seeds: vec![seed; chunks.len()],
             init: init.clone(),
+            budget: None,
         };
 
         let params = if release {
@@ -363,6 +364,7 @@ fn repeated(region: &Region, init: &Domains, regions: u32, seed: u32) -> RegionB
         ids: (0..regions).collect(),
         seeds: vec![seed; regions as usize],
         init: domains,
+        budget: None,
     }
 }
 

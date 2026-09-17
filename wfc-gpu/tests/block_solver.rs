@@ -65,6 +65,7 @@ impl OneChunk {
             ids: runs.iter().map(|(id, _)| *id).collect(),
             seeds: runs.iter().map(|(_, seed)| *seed).collect(),
             init,
+            budget: None,
         }
     }
 
@@ -299,6 +300,7 @@ fn an_impossible_border_is_reported_rather_than_searched() {
         ids: vec![1],
         seeds: vec![1],
         init,
+        budget: None,
     };
     let mut solver = chunk.solver(SolverConfig::default());
 
@@ -396,6 +398,7 @@ fn a_malformed_batch_is_refused_before_the_device_sees_it() {
         ids: Vec::new(),
         seeds: Vec::new(),
         init: Domains::from_words(0, chunk.ruleset.words_per_cell(), Vec::new()).expect("empty"),
+        budget: None,
     };
     assert!(matches!(
         solver.start(empty),

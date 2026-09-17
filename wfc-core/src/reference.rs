@@ -11,7 +11,7 @@ use crate::domains::Domains;
 use crate::hash::{choice_hash, choose_tile};
 use crate::rules::{AXES, MAX_WORDS, Ruleset, TILES_PER_WORD, TileMask};
 use crate::solver::{
-    BatchResult, JobId, RegionBatch, RegionStats, RegionStatus, Solver, SolverError,
+    BatchResult, JobId, RegionBatch, RegionStats, RegionStatus, SolveBudget, Solver, SolverError,
 };
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -141,6 +141,22 @@ impl ReferenceSolver {
         chunk_id: u32,
         seed: u32,
     ) -> (Domains, RegionStatus, RegionStats) {
+        self.solve_region_within(shape, init, chunk_id, seed, None)
+    }
+
+    /// As [`ReferenceSolver::solve_region`], within a budget: `max_steps` caps the work and
+    /// `max_attempts` the contradictions recovered from.
+    #[must_use]
+    pub fn solve_region_within(
+        &self,
+        shape: RegionShape,
+        init: &Domains,
+        chunk_id: u32,
+        seed: u32,
+        budget: Option<SolveBudget>,
+    ) -> (Domains, RegionStatus, RegionStats) {
+        let backtracks = budget.map_or(self.config.max_backtracks, |b| b.max_attempts);
+        let steps = budget.map_or(u32::MAX, |b| b.max_steps);
         let mut domains = init.clone();
         let mut stats = RegionStats::default();
         let mut stack: Vec<u32> = (0..domains.cells()).collect();
@@ -168,7 +184,7 @@ impl ReferenceSolver {
                 stats.tries += 1;
                 stats.backtracks += 1;
                 stats.contradiction_cell = Some(cell);
-                if stats.backtracks >= self.config.max_backtracks {
+                if stats.backtracks >= backtracks {
                     return (domains, RegionStatus::Exhausted, stats);
                 }
                 let mut restored = None;
@@ -197,6 +213,9 @@ impl ReferenceSolver {
                 failure = self.propagate(shape, &mut domains, &mut stack).err();
             }
             undo = 1;
+            if stats.steps >= steps {
+                return (domains, RegionStatus::StepCap, stats);
+            }
         }
         (domains, RegionStatus::Solved, stats)
     }
@@ -228,7 +247,8 @@ impl Solver for ReferenceSolver {
             .expect("an empty batch result");
         for (region, (&id, &seed)) in batch.ids.iter().zip(&batch.seeds).enumerate() {
             let init = batch.init.chunk(region as u32, cells);
-            let (solved, status, region_stats) = self.solve_region(batch.region, &init, id, seed);
+            let (solved, status, region_stats) =
+                self.solve_region_within(batch.region, &init, id, seed, batch.budget);
             domains.append(&solved);
             statuses.push(status);
             stats.push(region_stats);
@@ -391,6 +411,7 @@ mod tests {
             ids: vec![3, 4],
             seeds: vec![7, 7],
             init,
+            budget: None,
         };
 
         let job = solver.start(batch).expect("a well-formed batch");
@@ -412,6 +433,7 @@ mod tests {
             ids: vec![1, 2],
             seeds: vec![1],
             init: Domains::filled(region().cells(), 2),
+            budget: None,
         };
 
         assert!(matches!(

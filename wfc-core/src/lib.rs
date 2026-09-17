@@ -42,7 +42,7 @@ pub use crate::domains::Domains;
 pub use crate::prior::Prior;
 pub use crate::rules::{MAX_TILES, RuleTable, Ruleset, TileMask};
 pub use crate::solver::{
-    BatchResult, JobId, RegionBatch, RegionStats, RegionStatus, Solver, SolverError,
+    BatchResult, JobId, RegionBatch, RegionStats, RegionStatus, SolveBudget, Solver, SolverError,
 };
 pub use crate::store::{Chunk, ChunkStore, WorldExtent, region_init};
 
