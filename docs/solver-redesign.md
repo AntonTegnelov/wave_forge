@@ -280,7 +280,9 @@ Ranked by how directly each makes the work GPU-shaped, and by the least work to 
    under N-WFC's diagonal order have unsatisfiable borders (29 of 32 under a checkerboard).
    Solving each chunk with a one-cell halo that is discarded afterwards brings the diagonal order down
    to 3 of 63, and never produced a seam violation. The rest need a repair that may change committed
-   cells, which is what modifying in blocks and marian42's clearing both do.
+   cells, which is what modifying in blocks and marian42's clearing both do: re-solving a failed chunk
+   alone with its halo released completed the world under both orders. The checkerboard then needs
+   only two dispatches of 32 chunks plus about ten single-chunk repairs.
 5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
 
 ## How we will know it worked

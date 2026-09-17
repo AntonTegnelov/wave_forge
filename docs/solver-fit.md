@@ -108,6 +108,7 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | Where they empty | at street level (z 0 or 1) on the chunk face, across from a fixed road, door or building tile | first contradiction per pass printed with its fixed neighbours |
 | Same with a halo solved and discarded, 1 cell / 2 cells | checkerboard: 10 / 11 of 32; diagonal: **3 / 3 of 63** | same; halo cells inside solved chunks pinned to their tiles |
 | Seam violations between decided cells | 0 in every schedule | same |
+| Same, repairing each failed chunk alone with its halo released (rewriting the neighbours' cells it covers), halo 1 then wider | **complete world, 0 seam violations** under both orders: checkerboard 10 of 10 repaired (one needed halo 2), diagonal 4 of 4 at halo 1 | `block_solver_bench` `*_with_repair_completes_the_world`; the isometric render shows no chunk grid |
 | CPU reference, 8×8×8, 8 seeds | **2.8–4.6 ms** per chunk, 0–179 backtracks | `cpu_reference.rs`, Ryzen 9 5900X, one run per seed |
 | CPU reference, 12×12×6, 8 seeds | 8.3–9.6 ms | same |
 | CPU reference, 24×24×8 | 0.14–0.16 s on 6 seeds; 2 thrash under its naive undo | same |
@@ -321,8 +322,8 @@ Each of these is an inference. The reasoning is given so a future pass can check
    at street level next to roads and doors, where tiles demand specific continuations, and solving a
    one-cell halo that is then discarded removes 25 of 28 failures under diagonal order. The halo
    proves one completion exists without committing to it. A second cell of halo does not help
-   further, so the rest need a different mechanism (re-solving with some committed cells released,
-   as in modifying in blocks). One world, one seed per pass: indicative.
+   further; releasing the halo so the repair may rewrite committed neighbours (modifying in blocks)
+   then fixed every remaining chunk. One world, one seed per pass: indicative.
 
 ## Unknowns
 
