@@ -1,7 +1,7 @@
 //! Benchmarking utilities for WFC GPU performance.
 //! Now focuses solely on GPU performance.
 
-use crate::profiler::{print_profiler_summary, ProfileMetric, Profiler};
+use crate::profiler::{ProfileMetric, Profiler, print_profiler_summary};
 use crate::{config::AppConfig, error::AppError};
 use anyhow::Error;
 use std::{
@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, Mutex}, // Consolidated sync imports
     time::{Duration, Instant},
 };
-use wfc_core::{grid::PossibilityGrid, BoundaryCondition, ExecutionMode, ProgressInfo, WfcError};
+use wfc_core::{BoundaryCondition, ExecutionMode, ProgressInfo, WfcError, grid::PossibilityGrid};
 use wfc_gpu::gpu::accelerator::GpuAccelerator;
 use wfc_rules::{AdjacencyRules, TileSet};
 
@@ -174,10 +174,10 @@ fn get_memory_usage() -> Result<usize, Error> {
         for line in status.lines() {
             if line.starts_with("VmRSS:") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(kb) = parts[1].parse::<usize>() {
-                        return Ok(kb * 1024); // Convert KB to bytes
-                    }
+                if parts.len() >= 2
+                    && let Ok(kb) = parts[1].parse::<usize>()
+                {
+                    return Ok(kb * 1024); // Convert KB to bytes
                 }
             }
         }

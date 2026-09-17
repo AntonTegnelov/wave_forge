@@ -6,7 +6,7 @@ use crate::buffers::DynamicBufferConfig;
 use crate::utils::error_recovery::GpuError;
 use std::sync::Arc;
 use wfc_rules::AdjacencyRules;
-use wgpu::{util::DeviceExt, BufferUsages}; // Import DynamicBufferConfig
+use wgpu::{BufferUsages, util::DeviceExt}; // Import DynamicBufferConfig
 
 /// Holds GPU buffers containing WFC adjacency rules and related data.
 #[derive(Debug, Clone)] // Added Clone as buffers are Arc
@@ -29,7 +29,7 @@ impl RuleBuffers {
     pub(crate) fn pack_adjacency_rules(rules: &AdjacencyRules) -> Vec<u32> {
         let num_tiles = rules.num_tiles();
         let num_axes = rules.num_axes();
-        let words_per_row = num_tiles.div_ceil(32).max(1);
+        let words_per_row = Self::rule_words_per_row(num_tiles);
 
         let mut bit_array = vec![0u32; num_axes * num_tiles * words_per_row];
         for (axis, tile1, tile2) in rules.get_allowed_rules_map().keys() {
@@ -74,7 +74,6 @@ impl RuleBuffers {
         rules: &AdjacencyRules,
         _config: &DynamicBufferConfig,
     ) -> Result<Self, GpuError> {
-
         // Pack basic adjacency rules into a bit array
         let adjacency_bits = Self::pack_adjacency_rules(rules);
 
@@ -119,7 +118,8 @@ mod tests {
         // propagate.wgsl reads the mask for (axis, tile1) at word `(axis * n + tile1) * words_per_row`
         // and tests bit `tile2` within it; host and shader must agree.
         let n = 3;
-        let rules = AdjacencyRules::from_allowed_tuples(n, 6, vec![(0, 0, 0), (1, 2, 1), (5, 2, 2)]);
+        let rules =
+            AdjacencyRules::from_allowed_tuples(n, 6, vec![(0, 0, 0), (1, 2, 1), (5, 2, 2)]);
         let words = RuleBuffers::pack_adjacency_rules(&rules);
         let per_row = RuleBuffers::rule_words_per_row(n);
         assert_eq!(words.len(), 6 * n * per_row);
@@ -129,13 +129,19 @@ mod tests {
         let bit_of = |axis: usize, tile1: usize, tile2: usize| {
             ((axis * n + tile1) * per_row + tile2 / 32) * 32 + tile2 % 32
         };
-        assert_eq!(set_bits, vec![bit_of(0, 0, 0), bit_of(1, 2, 1), bit_of(5, 2, 2)]);
+        assert_eq!(
+            set_bits,
+            vec![bit_of(0, 0, 0), bit_of(1, 2, 1), bit_of(5, 2, 2)]
+        );
     }
 
     #[test]
     fn default_weights_pack_to_a_single_dummy_entry() {
         // The weights buffer must never be empty because zero-sized storage bindings are invalid.
         let rules = AdjacencyRules::from_allowed_tuples(2, 6, vec![(0, 0, 1)]);
-        assert_eq!(RuleBuffers::pack_rule_weights(&rules), vec![0, 1.0f32.to_bits()]);
+        assert_eq!(
+            RuleBuffers::pack_rule_weights(&rules),
+            vec![0, 1.0f32.to_bits()]
+        );
     }
 }

@@ -6,12 +6,12 @@ use crate::{
     utils::subgrid::SubgridConfig,
     utils::{
         debug_viz::DebugVisualizer,
-        error_recovery::{gpu_error_to_propagation_error, GridCoord},
+        error_recovery::{GridCoord, gpu_error_to_propagation_error},
     },
 };
 use async_trait::async_trait;
 use log::debug;
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::{Arc, atomic::AtomicUsize};
 use wfc_core::{
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},

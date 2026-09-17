@@ -572,7 +572,9 @@ impl GpuEntropyCalculator {
                     debug!("Selected lowest entropy cell: ({}, {}, {})", x, y, z);
                     Some((x, y, z))
                 } else {
-                    debug!("No cell with positive entropy found (or grid fully collapsed/contradiction).");
+                    debug!(
+                        "No cell with positive entropy found (or grid fully collapsed/contradiction)."
+                    );
                     None // Grid might be fully collapsed or in a contradiction state
                 }
             }
@@ -653,7 +655,9 @@ impl GpuEntropyCalculator {
                     );
                     Ok(Some((x, y, z, entropy)))
                 } else {
-                    debug!("No candidate cell (reset key or non-finite entropy: key={key:08x}, index={index})");
+                    debug!(
+                        "No candidate cell (reset key or non-finite entropy: key={key:08x}, index={index})"
+                    );
                     Ok(None) // Grid might be fully collapsed, contradiction, or no positive entropy found
                 }
             }
@@ -767,14 +771,14 @@ fn parse_coords_from_context(context: &GpuErrorContext) -> Option<(usize, usize,
     // Fallback to parsing from details if available
     if let Some(details) = &context.details {
         let parts: Vec<&str> = details.split(&['(', ',', ')'][..]).collect();
-        if parts.len() >= 4 {
-            if let (Ok(x), Ok(y), Ok(z)) = (
+        if parts.len() >= 4
+            && let (Ok(x), Ok(y), Ok(z)) = (
                 parts[1].trim().parse::<usize>(),
                 parts[2].trim().parse::<usize>(),
                 parts[3].trim().parse::<usize>(),
-            ) {
-                return Some((x, y, z));
-            }
+            )
+        {
+            return Some((x, y, z));
         }
     }
     None

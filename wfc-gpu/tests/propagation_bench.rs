@@ -23,7 +23,12 @@ async fn city_setup(
     width: usize,
     height: usize,
     depth: usize,
-) -> (Arc<GpuBuffers>, GpuSynchronizer, Arc<ComputePipelines>, PossibilityGrid) {
+) -> (
+    Arc<GpuBuffers>,
+    GpuSynchronizer,
+    Arc<ComputePipelines>,
+    PossibilityGrid,
+) {
     let city = city::city();
     let rules = &city.modules.rules;
     let num_tiles = city.modules.variants.len();
@@ -54,11 +59,17 @@ async fn propagation_pass_cost_readback_vs_gpu() {
     // Warm up first: a cold GPU runs at low clocks, which made an earlier cold measurement look
     // several times worse than the identical pattern measured warm.
     {
-        let warm = DirectPropagationStrategy::benchmark_blind_passes(1000, pipelines.clone(), passes);
+        let warm =
+            DirectPropagationStrategy::benchmark_blind_passes(1000, pipelines.clone(), passes);
         for _ in 0..3 {
-            warm.propagate(&mut grid, &[GridCoord { x: 0, y: 0, z: 0 }], &buffers, &sync)
-                .await
-                .expect("warm-up passes");
+            warm.propagate(
+                &mut grid,
+                &[GridCoord { x: 0, y: 0, z: 0 }],
+                &buffers,
+                &sync,
+            )
+            .await
+            .expect("warm-up passes");
         }
     }
 
@@ -66,13 +77,20 @@ async fn propagation_pass_cost_readback_vs_gpu() {
     let blind = DirectPropagationStrategy::benchmark_blind_passes(1000, pipelines.clone(), passes);
     let cells = vec![GridCoord { x: 0, y: 0, z: 0 }];
     let started = Instant::now();
-    blind.propagate(&mut grid, &cells, &buffers, &sync).await.expect("blind passes");
+    blind
+        .propagate(&mut grid, &cells, &buffers, &sync)
+        .await
+        .expect("blind passes");
     let blind_time = started.elapsed();
 
     // Same dispatches again, but recorded into one command buffer and submitted once.
-    let batched = DirectPropagationStrategy::benchmark_blind_batched(1000, pipelines.clone(), passes);
+    let batched =
+        DirectPropagationStrategy::benchmark_blind_batched(1000, pipelines.clone(), passes);
     let started = Instant::now();
-    batched.propagate(&mut grid, &cells, &buffers, &sync).await.expect("batched passes");
+    batched
+        .propagate(&mut grid, &cells, &buffers, &sync)
+        .await
+        .expect("batched passes");
     let batched_time = started.elapsed();
 
     // The same dispatches again, but each pass covers every cell instead of one. If this costs the
@@ -82,7 +100,10 @@ async fn propagation_pass_cost_readback_vs_gpu() {
         .collect();
     let sweep = DirectPropagationStrategy::benchmark_blind_passes(1000, pipelines.clone(), passes);
     let started = Instant::now();
-    sweep.propagate(&mut grid, &every_cell, &buffers, &sync).await.expect("sweep passes");
+    sweep
+        .propagate(&mut grid, &every_cell, &buffers, &sync)
+        .await
+        .expect("sweep passes");
     let sweep_time = started.elapsed();
 
     // Is a pass's cost the dispatch, or the per-cell work? The shader unions allowed-neighbour masks
@@ -99,10 +120,15 @@ async fn propagation_pass_cost_readback_vs_gpu() {
             }
         }
     }
-    sync.upload_grid(&collapsed_grid).expect("upload collapsed grid");
-    let collapsed = DirectPropagationStrategy::benchmark_blind_passes(1000, pipelines.clone(), passes);
+    sync.upload_grid(&collapsed_grid)
+        .expect("upload collapsed grid");
+    let collapsed =
+        DirectPropagationStrategy::benchmark_blind_passes(1000, pipelines.clone(), passes);
     let started = Instant::now();
-    collapsed.propagate(&mut collapsed_grid, &every_cell, &buffers, &sync).await.expect("collapsed passes");
+    collapsed
+        .propagate(&mut collapsed_grid, &every_cell, &buffers, &sync)
+        .await
+        .expect("collapsed passes");
     let collapsed_time = started.elapsed();
     sync.upload_grid(&grid).expect("restore grid");
 

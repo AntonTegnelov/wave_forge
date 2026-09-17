@@ -1,5 +1,5 @@
-use crate::formats::{ron_format::RonFormatParser, FormatParser};
-use crate::{formats, AdjacencyRules, LoadError, TileSet};
+use crate::formats::{FormatParser, ron_format::RonFormatParser};
+use crate::{AdjacencyRules, LoadError, TileSet, formats};
 use std::fs::File;
 use std::io::Read as _;
 use std::path::Path;

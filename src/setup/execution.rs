@@ -13,21 +13,21 @@ use std::{
     fs::OpenOptions,
     io::{BufWriter, Write},
     sync::{
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::Sender,
-        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
 };
 use wfc_core::{
-    entropy::EntropyHeuristicType, grid::PossibilityGrid, BoundaryCondition, ProgressInfo, WfcError,
+    BoundaryCondition, ProgressInfo, WfcError, entropy::EntropyHeuristicType, grid::PossibilityGrid,
 };
 use wfc_gpu::{
     gpu::accelerator::GpuAccelerator,
     utils::{error::gpu_error::GpuError, subgrid::SubgridConfig},
 };
-use wfc_rules::{loader::load_from_file, AdjacencyRules, TileSet};
+use wfc_rules::{AdjacencyRules, TileSet, loader::load_from_file};
 use wgpu::Instance;
 
 // Helper function to parse "WxHxD" strings
@@ -58,7 +58,7 @@ fn calculate_median(data: &mut [f64]) -> Option<f64> {
     }
     data.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = data.len() / 2;
-    if data.len() % 2 == 0 {
+    if data.len().is_multiple_of(2) {
         Some((data[mid - 1] + data[mid]) / 2.0)
     } else {
         Some(data[mid])
@@ -223,8 +223,14 @@ pub async fn run_benchmark_mode(
                     acc
                 }
                 Err(e) => {
-                    log::error!("Failed to initialize GPU accelerator for scenario {:?} ({}x{}x{}): {}. Skipping scenario.",
-                        rule_file_path.file_name().unwrap_or_default(), width, height, depth, e);
+                    log::error!(
+                        "Failed to initialize GPU accelerator for scenario {:?} ({}x{}x{}): {}. Skipping scenario.",
+                        rule_file_path.file_name().unwrap_or_default(),
+                        width,
+                        height,
+                        depth,
+                        e
+                    );
                     continue; // Skip this scenario if GPU init fails
                 }
             };
@@ -306,9 +312,15 @@ pub async fn run_benchmark_mode(
     // 4. Report Summary
     println!("\n--- GPU Benchmark Suite Summary ---");
     println!("GPU: {} ({:?})", adapter_info.name, adapter_info.backend);
-    println!("-------------------------------------------------------------------------------------------------------------------------------");
-    println!("Rule File             | Size (WxHxD) | Tiles | Runs | Success | Failed | Avg Time (ms) | Median (ms) | Std Dev (ms) | Notes");
-    println!("----------------------|--------------|-------|------|---------|--------|---------------|-------------|--------------|-------");
+    println!(
+        "-------------------------------------------------------------------------------------------------------------------------------"
+    );
+    println!(
+        "Rule File             | Size (WxHxD) | Tiles | Runs | Success | Failed | Avg Time (ms) | Median (ms) | Std Dev (ms) | Notes"
+    );
+    println!(
+        "----------------------|--------------|-------|------|---------|--------|---------------|-------------|--------------|-------"
+    );
 
     for scenario_res in &all_scenario_results {
         let rule_name = scenario_res
@@ -346,7 +358,9 @@ pub async fn run_benchmark_mode(
             stddev_time_str,
         );
     }
-    println!("-------------------------------------------------------------------------------------------------------------------------------");
+    println!(
+        "-------------------------------------------------------------------------------------------------------------------------------"
+    );
 
     // 5. Write to CSV if requested
     if let Some(csv_path) = &config.benchmark_csv_output {
@@ -474,7 +488,12 @@ pub async fn run_standard_mode(
                 };
                 let msg = format!(
                     "Progress: Iter {}, Collapsed {}/{} ({:.1}%), Elapsed: {:.2?}, Rate: {:.1} cells/s",
-                    info.iterations, info.collapsed_cells, info.total_cells, percentage, info.elapsed_time, collapse_rate
+                    info.iterations,
+                    info.collapsed_cells,
+                    info.total_cells,
+                    percentage,
+                    info.elapsed_time,
+                    collapse_rate
                 );
                 // Use the cloned progress_log_level
                 match progress_log_level {
@@ -553,7 +572,7 @@ pub async fn run_standard_mode(
         Some(Box::new(
             move |_grid: &PossibilityGrid, iteration: u64| -> Result<(), WfcError> {
                 // Fetch the latest state directly from GPU
-                if iteration % 10 == 0 {
+                if iteration.is_multiple_of(10) {
                     // Only process every 10th iteration to reduce overhead
                     match pollster::block_on(gpu_clone.get_intermediate_result()) {
                         Ok(latest_grid) => {

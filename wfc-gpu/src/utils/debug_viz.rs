@@ -292,7 +292,7 @@ impl DebugVisualizer {
     pub fn should_snapshot(&self, current_iteration: usize) -> bool {
         self.enabled
             && self.config.snapshot_interval > Duration::from_secs(0)
-            && current_iteration % self.config.snapshot_interval.as_secs() as usize == 0
+            && current_iteration.is_multiple_of(self.config.snapshot_interval.as_secs() as usize)
     }
 
     /// Get all stored snapshots

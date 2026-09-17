@@ -68,8 +68,11 @@ impl RuleBuilder {
 }
 
 fn uniform_tileset(num_tiles: usize) -> TileSet {
-    TileSet::new(vec![1.0; num_tiles], vec![vec![Transformation::Identity]; num_tiles])
-        .expect("uniform tile set is valid")
+    TileSet::new(
+        vec![1.0; num_tiles],
+        vec![vec![Transformation::Identity]; num_tiles],
+    )
+    .expect("uniform tile set is valid")
 }
 
 /// Tiles of [`coast_2d`].

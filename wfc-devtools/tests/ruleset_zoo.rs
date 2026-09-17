@@ -384,7 +384,11 @@ async fn zoo_counting() {
         !roads.is_empty() && !doors.is_empty(),
         "the rule needs both doors and roads to exist, or it constrains nothing"
     );
-    eprintln!("zoo: counting over {} doors, {} roads", doors.len(), roads.len());
+    eprintln!(
+        "zoo: counting over {} doors, {} roads",
+        doors.len(),
+        roads.len()
+    );
 
     let constraint = CountingConstraint::new(roads, doors, 1, 3);
     run_zoo("counting", Some(counted(Box::new(constraint)))).await;

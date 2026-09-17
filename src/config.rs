@@ -31,8 +31,7 @@ pub enum ProgressLogLevel {
 }
 
 /// Global log level for all application components.
-#[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[derive(Default)]
+#[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize, Serialize, Default)]
 pub enum GlobalLogLevel {
     /// Trace level - extremely verbose (all details)
     Trace,
@@ -46,7 +45,6 @@ pub enum GlobalLogLevel {
     /// Error level - error events that might still allow the application to continue
     Error,
 }
-
 
 /// Defines the execution backend for WFC (CLI/Config version).
 #[derive(ValueEnum, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]

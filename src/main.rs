@@ -9,12 +9,12 @@ use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
 use figment::{
-    providers::{Env, Format, Serialized, Toml},
     Figment,
+    providers::{Env, Format, Serialized, Toml},
 };
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 use std::thread;
 use wfc_core::grid::PossibilityGrid;
 use wfc_rules::loader::load_from_file;
@@ -72,14 +72,19 @@ pub async fn run_app() -> Result<()> {
 
     // --- Validate Configuration ---
     if config.benchmark_mode && config.benchmark_csv_output.is_none() {
-        log::warn!("Running in benchmark mode without --benchmark-csv-output specified. Results will not be saved to CSV.");
+        log::warn!(
+            "Running in benchmark mode without --benchmark-csv-output specified. Results will not be saved to CSV."
+        );
     }
     // Add other validations here...
 
     // Initialize logging with the configured log level
     logging::init_logger(&config);
     // Keep the guard alive for the whole run: dropping it flushes and closes the trace file.
-    let _trace_guard = config.trace_chrome.as_deref().map(logging::init_chrome_trace);
+    let _trace_guard = config
+        .trace_chrome
+        .as_deref()
+        .map(logging::init_chrome_trace);
 
     log::info!("Wave Forge App Starting");
     log::debug!("Loaded Config: {:?}", config);

@@ -687,8 +687,14 @@ mod tests {
             no_floor_above_wall().apply(&mut grid),
             Ok(vec![(0, 0, 1), (0, 0, 2)])
         );
-        assert_eq!(grid.get(0, 0, 1).unwrap().iter_ones().collect::<Vec<_>>(), vec![WALL]);
-        assert_eq!(grid.get(0, 0, 2).unwrap().iter_ones().collect::<Vec<_>>(), vec![WALL]);
+        assert_eq!(
+            grid.get(0, 0, 1).unwrap().iter_ones().collect::<Vec<_>>(),
+            vec![WALL]
+        );
+        assert_eq!(
+            grid.get(0, 0, 2).unwrap().iter_ones().collect::<Vec<_>>(),
+            vec![WALL]
+        );
     }
 
     #[test]
@@ -711,7 +717,10 @@ mod tests {
         // Only z = 0 is decided, so it is the only source. Leaving the cells between undecided
         // matters: any cell decided to WALL is a source in its own right, and a column of decided
         // walls would put z = 3 within reach of the ones at z = 1 and z = 2.
-        let mut grid = column(&[&[WALL], &[WALL, FLOOR], &[WALL, FLOOR], &[WALL, FLOOR]], 2);
+        let mut grid = column(
+            &[&[WALL], &[WALL, FLOOR], &[WALL, FLOOR], &[WALL, FLOOR]],
+            2,
+        );
         assert_eq!(
             no_floor_above_wall().apply(&mut grid),
             Ok(vec![(0, 0, 1), (0, 0, 2)])

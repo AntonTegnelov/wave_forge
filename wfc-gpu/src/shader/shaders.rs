@@ -13,7 +13,6 @@
 //! Manages runtime loading and access to pre-compiled WGSL shader variants.
 #![allow(unused_variables, dead_code)] // Allow unused items during development
 
-use env_logger;
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -301,7 +300,9 @@ impl ShaderManager {
                 return Ok(content);
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                info!("[ShaderManager] Pre-compiled variant not found, attempting dynamic compilation...");
+                info!(
+                    "[ShaderManager] Pre-compiled variant not found, attempting dynamic compilation..."
+                );
                 // Proceed to dynamic compilation
             }
             Err(e) => {

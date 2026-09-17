@@ -42,16 +42,34 @@ async fn city_run(name: &str, width: usize, height: usize, depth: usize) {
     let m = &city.modules;
     let mut initial = PossibilityGrid::new(width, height, depth, m.variants.len());
     city::constrain_city(&mut initial, &city);
-    let solved = common::solve_rules(&initial, &m.rules, Some(&m.tileset.weights), None, BoundaryCondition::Finite, ATTEMPTS)
-        .await;
+    let solved = common::solve_rules(
+        &initial,
+        &m.rules,
+        Some(&m.tileset.weights),
+        None,
+        BoundaryCondition::Finite,
+        ATTEMPTS,
+    )
+    .await;
     report(name, &initial, m.variants.len(), &solved);
 
-    let grid = TileGrid::from_possibilities(&solved.grid).expect("every cell collapsed to one tile");
+    let grid =
+        TileGrid::from_possibilities(&solved.grid).expect("every cell collapsed to one tile");
     let violations = adjacency_violations(&grid, &m.rules, BoundaryCondition::Finite);
-    assert!(violations.is_empty(), "{} adjacency violations, first: {:?}", violations.len(), violations.first());
-    eprintln!("stress: {name} disconnected_walkable_cells={}", city::disconnected_walkable_cells(&grid, &city).len());
+    assert!(
+        violations.is_empty(),
+        "{} adjacency violations, first: {:?}",
+        violations.len(),
+        violations.first()
+    );
+    eprintln!(
+        "stress: {name} disconnected_walkable_cells={}",
+        city::disconnected_walkable_cells(&grid, &city).len()
+    );
     let path = common::artifact_dir().join(format!("stress_{name}.png"));
-    render::render_voxel_isometric(&grid, &city.voxels, 2).save(&path).expect("write PNG");
+    render::render_voxel_isometric(&grid, &city.voxels, 2)
+        .save(&path)
+        .expect("write PNG");
     eprintln!("rendered {}", path.display());
 }
 
@@ -61,11 +79,14 @@ async fn permissive_run(name: &str, size: usize) {
     let _trace = common::trace_to_chrome();
     let num_tiles = 2;
     let tuples: Vec<(usize, usize, usize)> = (0..6)
-        .flat_map(|axis| (0..num_tiles).flat_map(move |a| (0..num_tiles).map(move |b| (axis, a, b))))
+        .flat_map(|axis| {
+            (0..num_tiles).flat_map(move |a| (0..num_tiles).map(move |b| (axis, a, b)))
+        })
         .collect();
     let rules = AdjacencyRules::from_allowed_tuples(num_tiles, 6, tuples);
     let initial = PossibilityGrid::new(size, size, size, num_tiles);
-    let solved = common::solve_rules(&initial, &rules, None, None, BoundaryCondition::Finite, 1).await;
+    let solved =
+        common::solve_rules(&initial, &rules, None, None, BoundaryCondition::Finite, 1).await;
     report(name, &initial, num_tiles, &solved);
     assert_eq!(solved.grid.is_fully_collapsed(), Ok(true));
 }

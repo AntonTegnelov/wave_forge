@@ -544,14 +544,16 @@ impl ComputePipelines {
             ShaderType::Collapse => "main",
         };
         log::debug!("Creating compute pipeline for {}", entry_point);
-        Ok(Arc::new(device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(&format!("{}_Pipeline", entry_point)),
-            layout: Some(layout),
-            module,
-            entry_point: Some(entry_point),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        })))
+        Ok(Arc::new(device.create_compute_pipeline(
+            &wgpu::ComputePipelineDescriptor {
+                label: Some(&format!("{}_Pipeline", entry_point)),
+                layout: Some(layout),
+                module,
+                entry_point: Some(entry_point),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            },
+        )))
     }
 
     pub fn create_propagation_bind_groups(
@@ -678,11 +680,15 @@ mod workgroup_tests {
     #[test]
     fn host_workgroup_sizes_match_the_shaders() {
         let entropy = include_str!("shaders/entropy.wgsl");
-        assert!(entropy.contains(&format!("const WORKGROUP_SIZE = {ENTROPY_WORKGROUP_SIZE}u;")));
+        assert!(entropy.contains(&format!(
+            "const WORKGROUP_SIZE = {ENTROPY_WORKGROUP_SIZE}u;"
+        )));
         assert!(entropy.contains("@workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1u)"));
         let propagate = include_str!("shaders/propagate.wgsl");
         assert!(propagate.contains(&format!("@workgroup_size({PROPAGATION_WORKGROUP_SIZE})")));
         assert!(propagate.contains(&format!("const MAX_WORDS: u32 = {MAX_WORDS_PER_CELL}u;")));
-        assert!(propagate.contains(&format!("alias PossibilityMask = array<u32, {MAX_WORDS_PER_CELL}>;")));
+        assert!(propagate.contains(&format!(
+            "alias PossibilityMask = array<u32, {MAX_WORDS_PER_CELL}>;"
+        )));
     }
 }

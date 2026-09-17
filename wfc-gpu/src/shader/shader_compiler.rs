@@ -9,8 +9,8 @@
 use super::shaders::ShaderType;
 // Import build-time components from shader_registry
 use super::shader_registry::{self, ShaderComponent, ShaderRegistry};
-use crate::gpu::features::{AtomicsSupport, GpuCapabilities, GpuFeature, WorkgroupSupport};
 use crate::GpuError; // Or define a specific CompilationError
+use crate::gpu::features::{AtomicsSupport, GpuCapabilities, GpuFeature, WorkgroupSupport};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use thiserror::Error;

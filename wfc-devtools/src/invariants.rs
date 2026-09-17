@@ -33,7 +33,12 @@ pub struct TileGrid {
 
 impl TileGrid {
     /// Creates a grid from tiles in `z`, then `y`, then `x` order.
-    pub fn new(width: usize, height: usize, depth: usize, tiles: Vec<usize>) -> Result<Self, String> {
+    pub fn new(
+        width: usize,
+        height: usize,
+        depth: usize,
+        tiles: Vec<usize>,
+    ) -> Result<Self, String> {
         if tiles.len() != width * height * depth {
             return Err(format!(
                 "expected {} tiles for a {width}x{height}x{depth} grid, got {}",
@@ -41,7 +46,12 @@ impl TileGrid {
                 tiles.len()
             ));
         }
-        Ok(Self { width, height, depth, tiles })
+        Ok(Self {
+            width,
+            height,
+            depth,
+            tiles,
+        })
     }
 
     /// Converts solver output, failing on any cell that is not collapsed to exactly one tile.
@@ -91,15 +101,24 @@ impl TileGrid {
 
         let depth = layers.len();
         let height = layers.first().map_or(0, Vec::len);
-        let width = layers.first().and_then(|layer| layer.first()).map_or(0, Vec::len);
+        let width = layers
+            .first()
+            .and_then(|layer| layer.first())
+            .map_or(0, Vec::len);
         let mut tiles = Vec::with_capacity(width * height * depth);
         for (z, layer) in layers.iter().enumerate() {
             if layer.len() != height {
-                return Err(format!("layer {z} has {} rows, expected {height}", layer.len()));
+                return Err(format!(
+                    "layer {z} has {} rows, expected {height}",
+                    layer.len()
+                ));
             }
             for (y, row) in layer.iter().enumerate() {
                 if row.len() != width {
-                    return Err(format!("layer {z}, row {y} has {} tiles, expected {width}", row.len()));
+                    return Err(format!(
+                        "layer {z}, row {y} has {} tiles, expected {width}",
+                        row.len()
+                    ));
                 }
                 tiles.extend_from_slice(row);
             }
@@ -113,7 +132,10 @@ impl TileGrid {
 
     /// Tile at a cell. Panics when out of bounds, like slice indexing.
     pub fn get(&self, x: usize, y: usize, z: usize) -> usize {
-        assert!(x < self.width && y < self.height && z < self.depth, "cell ({x}, {y}, {z}) out of bounds");
+        assert!(
+            x < self.width && y < self.height && z < self.depth,
+            "cell ({x}, {y}, {z}) out of bounds"
+        );
         self.tiles[self.index(x, y, z)]
     }
 
@@ -134,10 +156,16 @@ impl TileGrid {
             let moved = value as isize + delta;
             match boundary {
                 BoundaryCondition::Periodic => Some(moved.rem_euclid(size as isize) as usize),
-                BoundaryCondition::Finite => (0..size as isize).contains(&moved).then_some(moved as usize),
+                BoundaryCondition::Finite => (0..size as isize)
+                    .contains(&moved)
+                    .then_some(moved as usize),
             }
         };
-        Some((step(x, dx, self.width)?, step(y, dy, self.height)?, step(z, dz, self.depth)?))
+        Some((
+            step(x, dx, self.width)?,
+            step(y, dy, self.height)?,
+            step(z, dz, self.depth)?,
+        ))
     }
 }
 
@@ -168,7 +196,13 @@ pub fn adjacency_violations(
                     };
                     let neighbor_tile = grid.get(neighbor.0, neighbor.1, neighbor.2);
                     if !rules.check(tile, neighbor_tile, axis) {
-                        violations.push(Violation { cell: (x, y, z), tile, axis, neighbor, neighbor_tile });
+                        violations.push(Violation {
+                            cell: (x, y, z),
+                            tile,
+                            axis,
+                            neighbor,
+                            neighbor_tile,
+                        });
                     }
                 }
             }
@@ -183,7 +217,9 @@ mod tests {
 
     /// Tiles 0 and 1 may only touch themselves.
     fn self_only_rules() -> AdjacencyRules {
-        let tuples: Vec<(usize, usize, usize)> = (0..6).flat_map(|axis| (0..2).map(move |t| (axis, t, t))).collect();
+        let tuples: Vec<(usize, usize, usize)> = (0..6)
+            .flat_map(|axis| (0..2).map(move |t| (axis, t, t)))
+            .collect();
         AdjacencyRules::from_allowed_tuples(2, 6, tuples)
     }
 
@@ -204,13 +240,18 @@ mod tests {
     fn finite_neighbors_stop_at_the_edge_and_periodic_ones_wrap() {
         let grid = TileGrid::new(3, 1, 1, vec![0; 3]).unwrap();
         assert_eq!(grid.neighbor((0, 0, 0), 1, BoundaryCondition::Finite), None);
-        assert_eq!(grid.neighbor((0, 0, 0), 1, BoundaryCondition::Periodic), Some((2, 0, 0)));
+        assert_eq!(
+            grid.neighbor((0, 0, 0), 1, BoundaryCondition::Periodic),
+            Some((2, 0, 0))
+        );
     }
 
     #[test]
     fn uniform_grid_has_no_violations() {
         let grid = TileGrid::new(2, 2, 2, vec![1; 8]).unwrap();
-        assert!(adjacency_violations(&grid, &self_only_rules(), BoundaryCondition::Periodic).is_empty());
+        assert!(
+            adjacency_violations(&grid, &self_only_rules(), BoundaryCondition::Periodic).is_empty()
+        );
     }
 
     #[test]
@@ -219,7 +260,16 @@ mod tests {
         let violations = adjacency_violations(&grid, &self_only_rules(), BoundaryCondition::Finite);
         // 0 -> 1 along +x and 1 -> 0 along -x.
         assert_eq!(violations.len(), 2);
-        assert_eq!(violations[0], Violation { cell: (0, 0, 0), tile: 0, axis: 0, neighbor: (1, 0, 0), neighbor_tile: 1 });
+        assert_eq!(
+            violations[0],
+            Violation {
+                cell: (0, 0, 0),
+                tile: 0,
+                axis: 0,
+                neighbor: (1, 0, 0),
+                neighbor_tile: 1
+            }
+        );
     }
 
     #[test]

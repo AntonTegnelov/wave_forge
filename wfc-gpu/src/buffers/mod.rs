@@ -9,7 +9,7 @@ use log::{debug, info, trace, warn};
 use std::mem;
 use std::sync::Arc;
 use std::time::Instant;
-use wfc_core::{grid::PossibilityGrid, BoundaryCondition};
+use wfc_core::{BoundaryCondition, grid::PossibilityGrid};
 use wfc_rules::AdjacencyRules;
 use wgpu::util::DeviceExt;
 use wgpu::{self};
@@ -452,7 +452,7 @@ impl GpuBuffers {
             let queue = None;
 
             let num_cells = self.grid_dims.0 * self.grid_dims.1 * self.grid_dims.2;
-            let u32s_per_cell = (self.num_tiles + 31) / 32; // Ceiling division by 32
+            let u32s_per_cell = self.num_tiles.div_ceil(32); // Ceiling division by 32
             let download_size = num_cells * u32s_per_cell * mem::size_of::<u32>();
             let buffer = &*self.grid_buffers.grid_possibilities_buf;
             let _staging_buffer = &*self.grid_buffers.staging_grid_possibilities_buf;
@@ -548,7 +548,7 @@ impl GpuBuffers {
     ) -> Result<PossibilityGrid, GpuError> {
         let (width, height, depth) = grid_dims;
         let num_cells = width * height * depth;
-        let u32s_per_cell = (num_tiles + 31) / 32;
+        let u32s_per_cell = num_tiles.div_ceil(32);
         let expected_data_size = num_cells * u32s_per_cell;
 
         if data.len() < expected_data_size {
@@ -826,7 +826,7 @@ impl GpuDownloadResults {
     ) -> Result<PossibilityGrid, GpuError> {
         let (width, height, depth) = grid_dims;
         let num_cells = width * height * depth;
-        let u32s_per_cell = (num_tiles + 31) / 32;
+        let u32s_per_cell = num_tiles.div_ceil(32);
 
         let grid_possibilities =
             self.grid_possibilities
@@ -917,11 +917,18 @@ mod layout_tests {
             .find(&format!("struct {name} {{"))
             .unwrap_or_else(|| panic!("struct {name} not found"));
         let rest = &source[start..];
-        let body = &rest[rest.find('{').expect("open brace") + 1..rest.find('}').expect("close brace")];
+        let body =
+            &rest[rest.find('{').expect("open brace") + 1..rest.find('}').expect("close brace")];
         body.lines()
             .map(|line| line.split("//").next().unwrap_or_default().trim())
             .filter(|line| !line.is_empty())
-            .map(|line| line.split(':').next().unwrap_or_default().trim().to_string())
+            .map(|line| {
+                line.split(':')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            })
             .collect()
     }
 
@@ -935,17 +942,30 @@ mod layout_tests {
     #[test]
     fn shader_params_structs_mirror_gpu_params_uniform() {
         for (file, source) in [
-            ("propagate.wgsl", include_str!("../shader/shaders/propagate.wgsl")),
-            ("collapse_cell.wgsl", include_str!("../shader/shaders/collapse_cell.wgsl")),
+            (
+                "propagate.wgsl",
+                include_str!("../shader/shaders/propagate.wgsl"),
+            ),
+            (
+                "collapse_cell.wgsl",
+                include_str!("../shader/shaders/collapse_cell.wgsl"),
+            ),
         ] {
-            assert_eq!(wgsl_struct_fields(source, "Params"), PARAMS_FIELDS, "{file}");
+            assert_eq!(
+                wgsl_struct_fields(source, "Params"),
+                PARAMS_FIELDS,
+                "{file}"
+            );
         }
     }
 
     #[test]
     fn entropy_shader_params_mirror_gpu_entropy_shader_params() {
         let fields = wgsl_struct_fields(include_str!("../shader/shaders/entropy.wgsl"), "Params");
-        assert_eq!(fields, ["grid_dims", "heuristic_type", "num_tiles", "u32s_per_cell"]);
+        assert_eq!(
+            fields,
+            ["grid_dims", "heuristic_type", "num_tiles", "u32s_per_cell"]
+        );
         // `grid_dims: vec3<u32>` occupies the first 12 bytes in WGSL, like `[u32; 3]`.
         assert_eq!(offset_of!(GpuEntropyShaderParams, heuristic_type), 3 * 4);
         assert_eq!(offset_of!(GpuEntropyShaderParams, u32s_per_cell), 5 * 4);

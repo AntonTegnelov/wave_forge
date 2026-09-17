@@ -1,20 +1,20 @@
 use crate::{
+    BoundaryCondition, ProgressInfo, WfcCheckpoint, WfcError,
     entropy::EntropyCalculator,
     grid::PossibilityGrid,
     propagator::{ConstraintPropagator, PropagationError},
-    BoundaryCondition, ProgressInfo, WfcCheckpoint, WfcError,
 };
 use log::{debug, error, info, warn};
 use rand::{
-    distr::{weighted::WeightedIndex, Distribution},
-    rngs::StdRng,
     SeedableRng,
+    distr::{Distribution, weighted::WeightedIndex},
+    rngs::StdRng,
 };
 #[cfg(feature = "serde")]
 use serde_json;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use wfc_rules::AdjacencyRules;
 
@@ -300,7 +300,7 @@ fn initialize_run_state<
 /// # Arguments
 ///
 /// * `grid`: A mutable reference to the `PossibilityGrid` representing the state of the system.
-///            It will be modified in place during the WFC run.
+///   It will be modified in place during the WFC run.
 /// * `tileset`: A reference to the `TileSet` containing information about tile weights.
 /// * `rules`: A reference to the `AdjacencyRules` defining valid neighbor constraints.
 /// * `propagator`: An instance of the chosen `ConstraintPropagator` implementation.
@@ -403,13 +403,13 @@ pub async fn run<
                 if is_backtracking_enabled {
                     state.backtrack_history.push(backtrack_info);
                     // Trim history if it exceeds reasonable size
-                    if let Some(max_depth) = config.max_backtrack_depth {
-                        if state.backtrack_history.len() > max_depth * 2 {
-                            // Keep twice the max depth to allow for some history while avoiding excessive memory use
-                            state
-                                .backtrack_history
-                                .drain(0..state.backtrack_history.len() - max_depth);
-                        }
+                    if let Some(max_depth) = config.max_backtrack_depth
+                        && state.backtrack_history.len() > max_depth * 2
+                    {
+                        // Keep twice the max depth to allow for some history while avoiding excessive memory use
+                        state
+                            .backtrack_history
+                            .drain(0..state.backtrack_history.len() - max_depth);
                     }
                 }
 
@@ -479,24 +479,30 @@ pub async fn run<
                         for z in 0..grid.depth {
                             for y in 0..grid.height {
                                 for x in 0..grid.width {
-                                    if let Some(cell) = grid.get(x, y, z) {
-                                        if cell.count_ones() == 1 {
-                                            state.collapsed_cells_count += 1;
-                                        }
+                                    if let Some(cell) = grid.get(x, y, z)
+                                        && cell.count_ones() == 1
+                                    {
+                                        state.collapsed_cells_count += 1;
                                     }
                                 }
                             }
                         }
 
                         state.current_backtrack_depth += 1;
-                        info!("Backtracked to iteration {} with {} possibilities remaining for cell {:?}",
-                             backtrack_point.iteration, backtrack_point.available_tiles.len(), backtrack_point.coords);
+                        info!(
+                            "Backtracked to iteration {} with {} possibilities remaining for cell {:?}",
+                            backtrack_point.iteration,
+                            backtrack_point.available_tiles.len(),
+                            backtrack_point.coords
+                        );
 
                         // Continue algorithm execution
                         continue;
                     } else {
                         // No alternatives available at this choice point, try next one if available
-                        info!("No alternative tiles available at this choice point, looking deeper...");
+                        info!(
+                            "No alternative tiles available at this choice point, looking deeper..."
+                        );
                         state.current_backtrack_depth += 1;
                         continue;
                     }
@@ -514,21 +520,20 @@ pub async fn run<
 
         // --- Checkpointing ---
         if let (Some(interval), Some(path)) = (config.checkpoint_interval, &config.checkpoint_path)
+            && state.iterations % interval == 0
         {
-            if state.iterations % interval == 0 {
-                info!(
-                    "Saving checkpoint at iteration {} to {:?}...",
-                    state.iterations, path
-                );
-                let checkpoint = WfcCheckpoint {
-                    iterations: state.iterations,
-                    grid: grid.clone(),
-                    // Add other relevant state if needed (e.g., RNG state)
-                };
-                match save_checkpoint(&checkpoint, path) {
-                    Ok(_) => info!("Checkpoint saved successfully."),
-                    Err(e) => warn!("Failed to save checkpoint: {}", e),
-                }
+            info!(
+                "Saving checkpoint at iteration {} to {:?}...",
+                state.iterations, path
+            );
+            let checkpoint = WfcCheckpoint {
+                iterations: state.iterations,
+                grid: grid.clone(),
+                // Add other relevant state if needed (e.g., RNG state)
+            };
+            match save_checkpoint(&checkpoint, path) {
+                Ok(_) => info!("Checkpoint saved successfully."),
+                Err(e) => warn!("Failed to save checkpoint: {}", e),
             }
         }
     }
@@ -609,7 +614,10 @@ async fn perform_iteration<
         }
         None => {
             // This means either fully collapsed or only contradictions remain (entropy <= 0)
-            debug!("Observation phase found no cells with positive entropy to collapse. Observation took: {:?}", start_observe.elapsed());
+            debug!(
+                "Observation phase found no cells with positive entropy to collapse. Observation took: {:?}",
+                start_observe.elapsed()
+            );
             // Verify if actually fully collapsed or if it's a contradiction state not caught earlier
             match grid.is_fully_collapsed() {
                 Ok(true) => {
@@ -618,15 +626,17 @@ async fn perform_iteration<
                 }
                 Ok(false) => {
                     // This implies contradictions exist but weren't handled before observation
-                    error!("Observation found no positive entropy cells, but grid is not fully collapsed. Likely unhandled contradiction.");
+                    error!(
+                        "Observation found no positive entropy cells, but grid is not fully collapsed. Likely unhandled contradiction."
+                    );
                     // Attempt to find a contradiction cell to report
                     for cz in 0..grid.depth {
                         for cy in 0..grid.height {
                             for cx in 0..grid.width {
-                                if let Some(cell) = grid.get(cx, cy, cz) {
-                                    if cell.count_ones() == 0 {
-                                        return Err(WfcError::Contradiction(cx, cy, cz));
-                                    }
+                                if let Some(cell) = grid.get(cx, cy, cz)
+                                    && cell.count_ones() == 0
+                                {
+                                    return Err(WfcError::Contradiction(cx, cy, cz));
                                 }
                             }
                         }
@@ -661,7 +671,7 @@ async fn perform_iteration<
         None => {
             return Err(WfcError::InternalError(
                 "Selected cell out of bounds?".into(),
-            ))
+            ));
         }
     };
 
@@ -830,14 +840,14 @@ fn load_checkpoint(_path: &std::path::Path) -> Result<WfcCheckpoint, WfcError> {
 mod tests {
     use super::*;
     use crate::{
+        BoundaryCondition, WfcCheckpoint, WfcError,
         entropy::EntropyCalculator,
         grid::{EntropyGrid, PossibilityGrid},
         propagator::{ConstraintPropagator, PropagationError},
-        BoundaryCondition, WfcCheckpoint, WfcError,
     };
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
-    use std::sync::{atomic::AtomicBool, Arc};
+    use rand::rngs::StdRng;
+    use std::sync::{Arc, atomic::AtomicBool};
     use wfc_rules::{AdjacencyRules, TileSet, Transformation};
 
     // --- Mock Implementations ---
