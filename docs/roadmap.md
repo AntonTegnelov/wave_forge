@@ -37,9 +37,12 @@ This is the next phase. The library API exists and was designed against what eac
 owns, so the remaining risk is engine scheduling rather than the API's shape
 ([architecture.md §5.1](architecture.md#51-the-solver-seam)):
 
-- **Bevy** exposes its own wgpu device and queue, so the plugin builds a generator on it with
-  `build_on`, holds it as a resource, and calls `request`, `poll` and `tick` from one system per
-  frame.
+- **Bevy** is done (`wave_forge_bevy`): the plugin builds a generator on Bevy's own device with
+  `build_on`, holds it as a resource, and asks, starts and collects from two systems per frame. It
+  tracks Bevy 0.20 because that is the first release on wgpu 30, which is what makes sharing the
+  device a matter of handing two resources over. The one wrinkle worth knowing: a kernel
+  specialisation takes seconds to compile, so `WaveForgePlugin::warm` exists to do it while a game
+  loads.
 - **Godot** runs compute on a `RenderingDevice` that takes SPIR-V, blocks in `sync()`, and belongs to
   one thread. Two shapes need a prototype to choose between: a `ComputeBackend` whose dispatch is a
   `WorkerThreadPool` task, with `is_done` as `is_task_completed`, so `_process` drives the same
