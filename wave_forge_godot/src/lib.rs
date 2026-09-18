@@ -7,6 +7,9 @@
 //! func _ready() -> void:
 //!     var world: WaveForgeWorld = $WaveForgeWorld
 //!     world.chunk_updated.connect(_on_chunk_updated)
+//!     # What belongs on the ground and what belongs above it, if the rule set leaves that open.
+//!     var layers: Array[PackedInt32Array] = [PackedInt32Array([ROAD, GRASS]), PackedInt32Array([AIR])]
+//!     world.set_layer_tiles(layers)
 //!     var rules := FileAccess.get_file_as_string("res://rules.ron")
 //!     world.start(rules)
 //!
@@ -41,7 +44,7 @@ use godot::classes::{INode, Node};
 use godot::prelude::*;
 use wave_forge::{
     Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, Prior, RegionShape, RegionStatus,
-    Ruleset, Worker, WorldExtent,
+    Ruleset, TileMask, Worker, WorldExtent,
 };
 
 struct WaveForgeExtension;
@@ -91,6 +94,13 @@ pub struct WaveForgeWorld {
     #[export]
     warm_kernels: bool,
 
+    /// Tiles allowed on each layer, from the world's lowest layer up, as set by
+    /// [`WaveForgeWorld::set_layer_tiles`].
+    layers: Vec<Vec<u32>>,
+    /// Tiles banned on each of the world's six faces, as set by
+    /// [`WaveForgeWorld::ban_tiles_on_face`].
+    face_bans: [Vec<u32>; 6],
+
     /// The generating thread, once [`WaveForgeWorld::start`] has built it.
     worker: Option<Worker>,
     /// The chunk the last [`WaveForgeWorld::follow`] landed in, so an unmoved player asks nothing.
@@ -110,6 +120,8 @@ impl INode for WaveForgeWorld {
             evict_margin: 0,
             world_chunks: Vector3i::ZERO,
             warm_kernels: true,
+            layers: Vec::new(),
+            face_bans: Default::default(),
             worker: None,
             followed: None,
         }
@@ -190,7 +202,14 @@ impl WaveForgeWorld {
                 return false;
             }
         };
-        let prior = Prior::open(ruleset.num_tiles());
+        let tiles = ruleset.num_tiles();
+        if let Some(tile) = self.prior_tile_outside(tiles) {
+            godot_error!(
+                "wave forge: the prior names tile {tile}, but the rule set has {tiles} tiles"
+            );
+            return false;
+        }
+        let prior = self.prior(tiles);
         let extent = self.extent();
         let (seed, halo) = (self.seed as u64, self.halo.max(0) as u32);
         let warm = self.warm_kernels.then(|| self.batch_capacities());
@@ -215,6 +234,51 @@ impl WaveForgeWorld {
             Ok(world)
         }));
         true
+    }
+
+    /// Restricts what each layer of the world may hold, from its lowest layer up.
+    ///
+    /// One array of tile indices per layer; the last one covers everything above it. This is how a
+    /// world gets a ground layer and open sky: give the bottom layer the tiles that belong on the
+    /// ground and the top layer the ones that belong in the air. An empty array means the layer
+    /// allows everything.
+    ///
+    /// Call it before [`WaveForgeWorld::start`], which is when the world is built.
+    #[func]
+    fn set_layer_tiles(&mut self, layers: Array<PackedInt32Array>) {
+        self.layers = layers
+            .iter_shared()
+            .map(|tiles| {
+                tiles
+                    .as_slice()
+                    .iter()
+                    .map(|&tile| tile.unsigned_abs())
+                    .collect()
+            })
+            .collect();
+    }
+
+    /// Forbids `tiles` in the cells along one face of a bounded world, where nothing outside would
+    /// continue them: a road may leave the world, a bridge to nowhere may not.
+    ///
+    /// `axis` is 0 to 5 for +x, -x, +y, -y, +z, -z, on the lattice's own axes. An axis the world is
+    /// unbounded along has no face, so its ban never applies. Call it before
+    /// [`WaveForgeWorld::start`].
+    #[func]
+    fn ban_tiles_on_face(&mut self, axis: i32, tiles: PackedInt32Array) {
+        let Ok(axis) = usize::try_from(axis) else {
+            godot_error!("wave forge: no axis {axis}");
+            return;
+        };
+        if axis >= self.face_bans.len() {
+            godot_error!("wave forge: no axis {axis}, the lattice has six");
+            return;
+        }
+        self.face_bans[axis] = tiles
+            .as_slice()
+            .iter()
+            .map(|&tile| tile.unsigned_abs())
+            .collect();
     }
 
     /// Asks for the chunks around `position`, which is where the player is.
@@ -329,6 +393,38 @@ impl WaveForgeWorld {
         } else {
             vec![1, parity]
         }
+    }
+
+    /// A tile index the prior names that the rule set does not have, if there is one.
+    fn prior_tile_outside(&self, num_tiles: u32) -> Option<u32> {
+        self.layers
+            .iter()
+            .chain(&self.face_bans)
+            .flatten()
+            .copied()
+            .find(|&tile| tile >= num_tiles)
+    }
+
+    /// What a cell may hold before anything is decided: the layer masks and face bans a scene set,
+    /// or everything if it set none.
+    fn prior(&self, num_tiles: u32) -> Prior {
+        let mask = |tiles: &[u32]| {
+            let mut mask = TileMask::EMPTY;
+            for &tile in tiles {
+                mask.insert(tile);
+            }
+            mask
+        };
+        let mut prior = Prior::open(num_tiles);
+        if !self.layers.is_empty() {
+            prior = prior.with_layers(self.layers.iter().map(|tiles| mask(tiles)).collect());
+        }
+        for (axis, tiles) in self.face_bans.iter().enumerate() {
+            if !tiles.is_empty() {
+                prior = prior.with_face_ban(axis, mask(tiles));
+            }
+        }
+        prior
     }
 
     fn extent(&self) -> WorldExtent {
