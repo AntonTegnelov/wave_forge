@@ -1,0 +1,39 @@
+# Its own workspace: an engine brings hundreds of crates with it, and the library's own workspace
+# should not build them.
+[workspace]
+
+[package]
+name = "wave_forge_bevy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+description = "Wave Forge as a Bevy plugin: chunks generated around a focus, on Bevy's own GPU device."
+
+[dependencies]
+# The sub-crates the plugin needs, rather than the `bevy` facade, so a game that does not render
+# still builds it. They are released in lockstep, so a game on the same Bevy version matches.
+bevy_app = "0.20.0-rc.1"
+bevy_ecs = "0.20.0-rc.1"
+bevy_math = "0.20.0-rc.1"
+bevy_render = "0.20.0-rc.1"
+bevy_transform = "0.20.0-rc.1"
+wave_forge = { path = ".." }
+# The types Bevy's device and queue are, handed straight to `Builder::build_on`. Declaring it is
+# what makes a wgpu version disagreement between the plugin and Bevy a plain Cargo error.
+wgpu = { version = "30.0.1", default-features = false }
+
+[dev-dependencies]
+# The CPU reference solver, so the plugin's wiring is tested without a device.
+wfc-core = { path = "../wfc-core", features = ["reference"] }
+# The city rule set, for the test that runs on a real device.
+wfc-devtools = { path = "../wfc-devtools" }
+# The engine itself, for the test that lets Bevy's own render plugin create the device. Headless:
+# no windowing feature, so `DefaultPlugins` brings no winit and the app runs without a display.
+bevy = { version = "0.20.0-rc.1", default-features = false, features = [
+    "bevy_render",
+    "bevy_asset",
+] }
+# A device made the way Bevy makes one, for the shared-device test.
+pollster = "1.0.1"
+wgpu = { version = "30.0.1", features = ["dx12", "metal", "vulkan", "wgsl"] }

@@ -36,6 +36,12 @@ members = [
     "wfc-gpu",
     "wfc-devtools",
 ]
+# The engine integrations are their own workspaces. An engine brings hundreds of crates with it, and
+# nothing in the library depends on one, so `cargo test --workspace` stays about the library.
+exclude = [
+    "wave_forge_bevy",
+    "wave_forge_godot",
+]
 
 [workspace.dependencies]
 # Add common dependencies here if needed later
