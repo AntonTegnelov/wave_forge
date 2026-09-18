@@ -11,7 +11,7 @@ How to build, test and contribute. For *what* we are building and *why*, read [v
 - **wgpu only sees the RTX 3070 when the instance is built from the environment.** Mesa marks dozen non-conformant and wgpu hides such adapters unless `WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER=1` (set by the container) is applied, which happens only through `InstanceDescriptor::new_without_display_handle_from_env()`. All wave_forge instances are created that way; keep it so for new ones. `WGPU_ADAPTER_NAME=3070` or `WGPU_ADAPTER_NAME=llvmpipe` forces an adapter.
 - **Timings through dozen are not native.** The translation layer adds dispatch and transfer overhead, so compare measurements within the container, and confirm conclusions about CPU/GPU crossover points on native hardware.
 - **Known issue: GPU test binaries crash at thread exit on dozen.** When the wgpu instance is dropped, WSL's `libd3d12core.so` is unloaded while other threads still hold its thread-local destructors, so multi-threaded binaries such as test runners die with `SIGSEGV` after the tests themselves pass. The dev container image works around it by setting the Cargo runner variable `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER` to preload `/usr/lib/wsl/lib/libd3d12core.so` for binaries Cargo runs. When running a test binary directly, set that variable yourself. The workaround lives in the container, not the repository, because the bug is in the WSL driver stack and a preload would be wrong on any other machine.
-- **Keep GPU work bounded.** A runaway shader can hang the GPU and make Windows reset its graphics driver, so GPU tests use small grids and timeouts. `XDG_RUNTIME_DIR` warnings in test output come from the windowing libraries and are harmless.
+- **Keep GPU work bounded.** A runaway shader can hang the GPU and make Windows reset its graphics driver, so the kernel caps how many steps a region may take and tests keep their regions and batches small. `XDG_RUNTIME_DIR` warnings in test output come from the windowing libraries and are harmless.
 
 ## Building and testing
 
@@ -21,7 +21,7 @@ cargo test --workspace
 cargo run -p wfc-devtools --release --bin wave-forge -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8
 ```
 
-See [testing.md](testing.md) for the test layers, artifacts and rendering tools, [debugging.md](debugging.md) for tracing and debugging practices, and [build-profiles.md](build-profiles.md) before timing or profiling anything.
+See [testing.md](testing.md) for the test layers, artifacts and rendering tools, [debugging.md](debugging.md) for debugging practices, and [build-profiles.md](build-profiles.md) before timing or profiling anything.
 
 **Build output location matters.** The repository is bind-mounted from the host. The dev container redirects only the main checkout's `target/` to a named volume; git worktrees (for example under `.claude/worktrees/`) are not covered, and their build output would land on the host drive (several GB per worktree). When building from a worktree, point Cargo elsewhere:
 

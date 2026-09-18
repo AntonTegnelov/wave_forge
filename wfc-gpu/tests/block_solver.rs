@@ -152,7 +152,7 @@ fn a_region_solves_validly_and_the_same_seed_repeats_it() {
     let adjacency = wfc_devtools::adjacency_violations(
         &wfc_devtools::TileGrid::from_domains(&first, 8, 8, 8).expect("decided"),
         &city::city().modules.rules,
-        wfc_core::BoundaryCondition::Finite,
+        wfc_devtools::BoundaryCondition::Finite,
     );
     assert!(
         adjacency.is_empty(),

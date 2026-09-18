@@ -35,9 +35,11 @@ Two further tools sit next to the rules:
 - **Weights** shape *how much* of each thing appears, not what is legal. Note they apply per rotated
   variant, so a prototype with four rotations weighs four times its number. Getting this wrong once
   filled our sky with walkways.
-- **Boundary constraints** pin what lies outside the grid, which adjacency cannot see: our bottom
-  layer is street level, the top layer is air, and the side borders ban paths that would point out of
-  the grid. marian42 applies the same idea through a 1×H×1 wrap-around default column.
+- **Boundary constraints** pin what lies outside the world, which adjacency cannot see: our bottom
+  layer is street level, the top layer is air, and the side borders of a bounded world ban paths that
+  would point out of it. They are expressed as a `Prior` (`city_prior` in `wfc-devtools/src/city.rs`),
+  which is also how a layer below WFC will say "this area is water". marian42 applies the same idea
+  through a 1×H×1 wrap-around default column.
 
 ## What adjacency cannot express
 
@@ -55,7 +57,7 @@ that survives every local check but fails globally needs something else.
 
 marian42's city is the reference for "you can walk everywhere", and it has **no** global constraint:
 `EnforceWalkway` in his code is dead. We verified where the connectivity comes from by re-simulating
-his rules (see the ranked findings in [status.md](status.md) and the notes below):
+his rules, in the order the findings ranked:
 
 1. **Buildings you can walk through.** 38 interior modules connect to the outside through door and
    tunnel connectors. Solid mass drops to about 9% of cells, and the largest connected walkable group
@@ -83,54 +85,92 @@ buildings, and 0.14 to 0.32 with them removed.
 - Measure the global property you care about even when you do not enforce it. A number per run turns
   "looks disconnected" into a comparison.
 
-## Global constraints: the path constraint
+## Future capabilities: global constraints and statistical rules
+
+Neither is in the library today. Both were built against the old per-collapse solver, measured, and
+left out of the chunk solver so that the first Godot and Bevy integrations have less to carry. What
+follows is what they mean, what they cost when we ran them, and what the chunk kernel would need to
+host them, so that bringing either back starts from evidence rather than from scratch.
+
+### A global constraint (the path constraint)
 
 When a global property must hold, the WFC-friendly way is a constraint that runs **between**
 propagation steps, prunes possibilities and reports failure, following Boris the Brave's path
-constraint for DeBroglie. `wfc-core/src/constraint.rs` implements this as
-`ConnectivityConstraint`, behind the `GlobalConstraint` trait:
+constraint for DeBroglie. We implemented it as a `ConnectivityConstraint` behind a `GlobalConstraint`
+trait:
 
 1. Build the graph of cells that could still connect, where an edge exists if *some* remaining tile
    in one cell links to *some* remaining tile in the other.
 2. If cells that can only hold network tiles fall into different components, no later choice can join
-   them: report a contradiction so the run restarts.
+   them: report a contradiction so the run recovers.
 3. Cells outside the component that holds the network can never join it, so ban network tiles there.
 4. Cells whose removal would split the network (articulation points, found with Tarjan's algorithm)
    must stay passable, so ban tiles that are not.
 
 Because the graph only loses edges as possibilities shrink, a fully collapsed grid that passes every
-step is connected. The solver applies it after every propagation, uploads what it changed and
-propagates again until it changes nothing (`GpuAccelerator::with_global_constraint`).
+step is connected. The solver applied it after every propagation, uploaded what it changed and
+propagated again until it changed nothing.
 
-**Why it needs backtracking.** A constraint that prunes hard turns unlikely layouts into
+**It only works with backtracking.** A constraint that prunes hard turns unlikely layouts into
 contradictions. With restart-on-failure, the fully constrained city never finished: 20 of 20 attempts
 on an 8x8x5 grid ended in a contradiction, because every island the module set would have produced
-becomes a failure. The fix is not to weaken the requirement but to recover from the failure: the
-solver keeps the grid state before every collapse and, on any contradiction, undoes an exponentially
-growing number of choices and forbids the choice it came back to (A-9, modelled on marian42's
-history). The lesson generalises: **a global constraint is only as usable as the solver's ability to
-take a choice back.**
+becomes a failure. The fix was not to weaken the requirement but to recover from the failure. The
+lesson generalises: **a global constraint is only as usable as the solver's ability to take a choice
+back.**
 
 **Undo the cause, not the most recent choice.** Plain chronological backtracking was not enough: it
 solved one of three runs, and the other two burned 16000 iterations and ~11000 undos without
 converging. A connectivity violation surfaces long after the choice that caused it, when some earlier
 decision has already sealed a region off, so undoing the last 1-64 collapses usually retries the same
-dead end. Failures therefore carry the cell where they surfaced, and the solver jumps back to the most
-recent choice adjacent to it, falling back to the doubling step count when no such choice exists. That
-change alone took the same test from one of three runs to three of three, in 5 to 136 seconds on an
-8x8x5 grid.
+dead end. Once failures carried the cell where they surfaced and the solver jumped back to the most
+recent choice adjacent to it, the same test went from one of three runs to three of three, in 5 to
+136 seconds on an 8x8x5 grid.
 
-**What it costs.** CPU work proportional to the grid on every observation; the grid on the CPU (which
-today's run loop already needs, but a device-resident solver would not); and search, since each
-violation costs the collapses that are undone. Run times vary by more than an order of magnitude (5
-to 136 seconds for the same 8x8x5 city) because a run either walks into few conflicts or into many.
-It is by far the heaviest workload we run, which also makes it a useful benchmark for the solver
-redesign. The default city
-test deliberately runs without it, so the module set is still measured on its own.
+**What it cost.** CPU work proportional to the grid on every observation, the grid on the CPU, and
+search, since each violation costs the collapses that are undone. Run times varied by more than an
+order of magnitude for the same 8x8x5 city, because a run either walks into few conflicts or into
+many. It was by far the heaviest workload we ran.
+
+**What the chunk kernel would need.** The kernel solves a whole region inside one dispatch, so there
+is no "between propagation steps" for a host pass to run in. Two shapes fit the design:
+
+- A **host pass between dispatches**: solve a chunk, run the constraint over the result, and re-solve
+  the chunk with what it banned added to the prior. That reuses the repair machinery (a chunk solved
+  again with a tighter prior) and keeps the constraint on the CPU where Tarjan's algorithm belongs,
+  at the cost of whole-chunk restarts instead of fine-grained undo.
+- A **connectivity check inside the kernel**, over the region's own cells, as another reason to
+  restore a checkpoint. Cheap enough only if the check is local: a flood fill per round over a whole
+  region would dwarf the propagation it sits between.
+
+Either way the property is only global within a chunk. Connectivity *across* chunks is a different
+problem, and the honest answer for a streamed world is a skeleton laid out before WFC runs (see
+"Alternatives we did not need" below, and Phase 2 in [architecture.md](architecture.md#7-phase-2-layered-generation-design-constraints-to-keep-in-mind-now)).
 
 **When to reach for one:** a property that must hold every time (a guaranteed path from spawn to
 exit), or one that design alone cannot approximate. For "usually connected", designing the module set
 is cheaper and scales better.
+
+### A statistical rule (cell-aware weights)
+
+Every rule kind above removes possibilities. A statistical rule ("a shop becomes more likely the more
+shops are nearby, and nearer ones count for more") removes none: it shifts probability mass inside
+the set of tiles that were already legal. That is why it cannot be a global constraint, whose `apply`
+may only clear bits; a likelihood rule there could only return "I cleared nothing", and making it
+prune to express a preference would change which outputs are valid, which is exactly what a rule
+about likelihood must not do.
+
+It hooks the collapse choice instead. We had it as a `TileWeighting` trait: the weight of a tile
+became a function of the cell and its neighbourhood rather than of the tile alone, with an
+implementation that added `strength / distance` for every decided attractor within a Chebyshev
+radius.
+
+**What the chunk kernel would need.** The kernel's choice is `hash % total` over a weight table in a
+storage buffer, shared by every region of a batch. A neighbourhood-dependent weight means recomputing
+the table per cell as its neighbours are decided, which is a scan per collapse in the middle of the
+hot loop, so the shape that fits is **a weight table per chunk**, computed on the host from what the
+neighbours already hold and uploaded with the batch. That expresses "more shops in this part of town"
+at chunk granularity, which is the granularity a streamed world thinks in anyway, and it keeps the
+kernel's inner loop untouched. Weights must stay integers ([architecture.md §3.2](architecture.md#32-tiles-and-compiled-rules)).
 
 ## Alternatives we did not need
 
@@ -140,11 +180,12 @@ is cheaper and scales better.
   size, and it hides how bad the rule set is.
 - **Hierarchical generation:** lay out a connected skeleton (streets, stairs) first, then fill in with
   WFC constrained to it. The most promising route for large worlds, and a natural fit for the
-  region-based solving in [roadmap.md](roadmap.md).
+  chunk-based solving the library now does: a skeleton is a prior.
 
 ## See also
 
 - [architecture.md](architecture.md) for where rules, weights and the solver live.
 - [testing.md](testing.md) for the city test and its connectivity report.
+- [thrashing.md](thrashing.md) for the measurements behind the recovery this page keeps referring to.
 - marian42, ["Infinite procedurally generated city with the Wave Function Collapse algorithm"](https://marian42.de/article/wfc/).
 - Boris the Brave, "Path constraints" and the [DeBroglie](https://github.com/BorisTheBrave/DeBroglie) constraint set.

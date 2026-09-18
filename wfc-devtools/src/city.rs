@@ -15,12 +15,9 @@
 //! Coordinates are `+z` up, with one module per cell. See [`wfc_rules::modules`] for how connectors
 //! become adjacency.
 
-use crate::invariants::TileGrid;
+use crate::invariants::{BoundaryCondition, TileGrid};
 use crate::render::{Color, VoxelModel};
 use std::collections::VecDeque;
-use wfc_core::BoundaryCondition;
-use wfc_core::constraint::ConnectivityConstraint;
-use wfc_core::grid::PossibilityGrid;
 use wfc_core::{Prior, TileMask};
 use wfc_rules::modules::{
     CompiledModules, DOWN, Face, HorizontalFace as H, ModulePrototype, ModuleSet, NEG_X, NEG_Y,
@@ -353,66 +350,12 @@ impl City {
     }
 }
 
-/// Pins what the rules leave open at the grid's edges: the bottom layer is street level (the
-/// rules already keep street level off every other layer), the top layer is air, so every
-/// building gets its roof inside the grid, and no path (walkway, door, landing) points out of the
-/// grid's sides, where nothing would continue it. Roads may leave the grid. This mirrors marian42's
-/// boundary constraints.
-pub fn constrain_city(grid: &mut PossibilityGrid, city: &City) {
-    assert!(
-        grid.depth >= 3,
-        "a city needs at least a street, a roof and air above it"
-    );
-    let street_level = city.modules.variants_tagged(STREET_LEVEL);
-    let num_tiles = city.modules.variants.len();
-    let top = grid.depth - 1;
-    let (width, height) = (grid.width, grid.height);
-    let paths_out = |axis: usize| -> Vec<usize> {
-        (0..num_tiles)
-            .filter(|&tile| matches!(city.modules.face(tile, axis), Face::Horizontal(f) if f.enforce_walkable_neighbor))
-            .collect()
-    };
-    for (axis, on_border) in [
-        (
-            POS_X,
-            &(|x: usize, _: usize| x + 1 == width) as &dyn Fn(usize, usize) -> bool,
-        ),
-        (NEG_X, &|x: usize, _: usize| x == 0),
-        (POS_Y, &|_: usize, y: usize| y + 1 == height),
-        (NEG_Y, &|_: usize, y: usize| y == 0),
-    ] {
-        let banned = paths_out(axis);
-        for z in 0..grid.depth {
-            for y in 0..grid.height {
-                for x in 0..grid.width {
-                    if on_border(x, y) {
-                        let cell = grid.get_mut(x, y, z).expect("cell in bounds");
-                        for &tile in &banned {
-                            cell.set(tile, false);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    for y in 0..grid.height {
-        for x in 0..grid.width {
-            if let Some(cell) = grid.get_mut(x, y, 0) {
-                for tile in 0..num_tiles {
-                    if !street_level.contains(&tile) {
-                        cell.set(tile, false);
-                    }
-                }
-            }
-            if let Some(cell) = grid.get_mut(x, y, top) {
-                cell.fill(false);
-                cell.set(city.air, true);
-            }
-        }
-    }
-}
-
-/// The same boundary conditions as [`constrain_city`], as a [`Prior`] the chunk solver reads.
+/// What the rules leave open at a bounded world's edges, as a [`Prior`] the solver reads.
+///
+/// The bottom layer is street level (the rules already keep street level off every other layer),
+/// the top layer is air, so every building gets its roof inside the world, and no path (walkway,
+/// door, landing) points out of the world's sides, where nothing would continue it. Roads may leave
+/// it. This mirrors marian42's boundary constraints.
 ///
 /// `depth` is how many layers tall the world is. Layer masks pin the bottom to street level and the
 /// top to air; face bans keep paths from pointing out of a bounded world's sides. A streamed world
@@ -490,17 +433,6 @@ pub fn walkable_tiles(m: &CompiledModules) -> Vec<usize> {
                 .any(|axis| matches!(m.face(tile, axis), Face::Horizontal(f) if f.walkable))
         })
         .collect()
-}
-
-/// A constraint that forces the city into a single walkable network: every cell that can only hold
-/// walkable tiles must stay connected to every other over [`walk_links`].
-///
-/// The module set alone gets close (see docs/constraints.md); this guarantees it, at the cost of
-/// work between propagation steps and more restarts. It is not used by the default city test.
-pub fn connectivity_constraint(city: &City) -> ConnectivityConstraint {
-    let m = &city.modules;
-    let walkable = walkable_tiles(m);
-    ConnectivityConstraint::new(m.variants.len(), walkable.clone(), walkable, walk_links(m))
 }
 
 /// Walkable cells outside the largest walkable network, found by flood fill over [`walk_links`].
@@ -739,6 +671,7 @@ fn prototype_model(prototype: &ModulePrototype) -> VoxelModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wfc_core::{ChunkShape, WorldExtent};
     use wfc_rules::modules::{DOWN, UP};
 
     #[test]
@@ -823,51 +756,65 @@ mod tests {
             .expect("door variant has a door face")
     }
 
+    /// The world the prior is read against: three chunks along x and y so the sides are borders,
+    /// and one chunk tall.
+    fn world(depth: u32) -> WorldExtent {
+        WorldExtent::new(ChunkShape {
+            x: 3,
+            y: 3,
+            z: depth,
+        })
+        .with_x(0..1)
+        .with_y(0..1)
+        .with_z(0..1)
+    }
+
     #[test]
-    fn constraints_pin_street_level_below_and_air_on_top() {
+    fn the_prior_pins_street_level_below_and_air_on_top() {
         let city = city();
-        let n = city.modules.variants.len();
-        let mut grid = PossibilityGrid::new(2, 2, 3, n);
-        constrain_city(&mut grid, &city);
-        let bottom: Vec<usize> = grid.get(0, 0, 0).unwrap().iter_ones().collect();
+        let n = city.modules.variants.len() as u32;
+        let extent = world(3);
+        let prior = city_prior(&city, 3);
+
+        let bottom = prior.domain([1, 1, 0], &extent);
         let street_level = city.modules.variants_tagged(STREET_LEVEL);
         assert!(
-            bottom.iter().all(|t| street_level.contains(t)),
+            bottom.iter().all(|t| street_level.contains(&(t as usize))),
             "only street level on the bottom layer"
         );
-        assert!(bottom.contains(&city.modules.variants_of("grass")[0]));
+        assert!(bottom.contains(city.modules.variants_of("grass")[0] as u32));
         assert_eq!(
-            grid.get(1, 1, 2).unwrap().iter_ones().collect::<Vec<_>>(),
-            vec![city.air]
+            prior.domain([1, 1, 2], &extent).iter().collect::<Vec<_>>(),
+            vec![city.air as u32],
+            "air on top, so every building roofs inside the world"
         );
-        assert!(
-            grid.get(0, 1, 1).unwrap().count_ones() < n,
-            "border cells lose outward paths"
+        assert_eq!(
+            prior.domain([1, 1, 1], &extent).count(),
+            n,
+            "inner cells stay open"
         );
     }
 
     #[test]
-    fn no_path_points_out_of_the_grid() {
+    fn the_prior_lets_no_path_point_out_of_a_bounded_world() {
         let city = city();
         let m = &city.modules;
-        let n = m.variants.len();
-        let mut grid = PossibilityGrid::new(3, 3, 3, n);
-        constrain_city(&mut grid, &city);
-        let outward_path = |tile: usize, axis: usize| matches!(m.face(tile, axis), Face::Horizontal(f) if f.enforce_walkable_neighbor);
+        let extent = world(3);
+        let prior = city_prior(&city, 3);
+        let outward_path = |tile: u32, axis: usize| matches!(m.face(tile as usize, axis), Face::Horizontal(f) if f.enforce_walkable_neighbor);
+
         for (x, y, axis) in [(2, 1, POS_X), (0, 1, NEG_X), (1, 2, POS_Y), (1, 0, NEG_Y)] {
-            let cell = grid.get(x, y, 1).unwrap();
+            let cell = prior.domain([x, y, 1], &extent);
             assert!(
-                cell.iter_ones().all(|t| !outward_path(t, axis)),
+                cell.iter().all(|t| !outward_path(t, axis)),
                 "({x}, {y}) axis {axis}"
             );
         }
-        let centre = grid.get(1, 1, 1).unwrap();
-        assert_eq!(centre.count_ones(), n, "inner cells stay unconstrained");
         let road_out = m
             .variants_of("road_straight")
             .into_iter()
-            .any(|t| grid.get(2, 1, 0).unwrap()[t]);
-        assert!(road_out, "roads may leave the grid");
+            .any(|t| prior.domain([2, 1, 0], &extent).contains(t as u32));
+        assert!(road_out, "roads may leave the world");
     }
 
     /// The variant of `name` whose face along `axis` has `connector`.

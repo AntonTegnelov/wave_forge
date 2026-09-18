@@ -1,12 +1,11 @@
 //! End to end: a 2D coastline generated through the library, checked against its rules and
-//! rendered to a PNG (written to the artifact directory, see `common::artifact_dir`).
+//! rendered to a PNG (written to the artifact directory, see `artifacts::dir`).
 
-mod common;
+mod artifacts;
 
 use wave_forge::{Builder, ChunkCoord, ChunkShape, FocusPoint, Prior, Ruleset, WorldExtent};
-use wfc_core::BoundaryCondition;
 use wfc_devtools::render::{self, Style};
-use wfc_devtools::{TileGrid, adjacency_violations, fixtures};
+use wfc_devtools::{BoundaryCondition, TileGrid, adjacency_violations, fixtures};
 
 #[test]
 fn coastline_2d_obeys_its_rules_and_renders() {
@@ -59,7 +58,7 @@ fn coastline_2d_obeys_its_rules_and_renders() {
         cell_px,
     };
     let image = render::render_layer(&grid, 0, &style);
-    let path = common::artifact_dir().join("coast_2d.png");
+    let path = artifacts::dir().join("coast_2d.png");
     image.save(&path).expect("write PNG");
     eprintln!("rendered {}", path.display());
 

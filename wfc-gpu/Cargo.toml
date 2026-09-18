@@ -4,62 +4,30 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
-build = "build.rs"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "The GPU solver for Wave Forge: one workgroup solves one region per dispatch."
 
 [dependencies]
-bitvec = "1.1.1"
-futures = "0.3.34" # Required by pollster
-function_name = "0.3.0" # For error location information
 bytemuck = { version = "1.25.2", features = ["derive"] }
-log = "0.4.34"
-tracing = "0.1.44"
-env_logger = "0.11.11"
-pollster = "1.0.1"
-rand = "0.10.2"  # Added for random number generation
-semver = "1.0.28"     # For version parsing in shader registry
 thiserror = "2.0.20"
-wgpu = { version = "30.0.1", features = ["dx12", "metal", "vulkan", "wgsl"] }
-image = "0.25.10" # Added image crate
-
-wfc-core = { path = "../wfc-core", features = ["serde"] }
-wfc-rules = { path = "../wfc-rules" }
-
-# Add async-trait
-async-trait = "0.1.92"
-# Add tokio (time feature needed for sleep in tests)
-tokio = { version = "1.53.1", features = ["sync", "time", "rt"] }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
-
-# Add other dependencies needed by wfc-gpu
-anyhow = "1.0.104"
-regex = "1.13.1"  # For parsing grid coordinates from error strings
+wfc-core = { path = "../wfc-core" }
+# wgpu's device and buffer requests are futures; this blocks on them without pulling in a runtime.
+pollster = { version = "1.0.1", optional = true }
+# The wgpu backend. A Godot extension builds without it and supplies its own ComputeBackend over
+# the engine's RenderingDevice, so both are optional with the feature.
+wgpu = { version = "30.0.1", features = [
+    "dx12",
+    "metal",
+    "vulkan",
+    "wgsl",
+], optional = true }
 
 [features]
 default = ["wgpu"]
-# The wgpu backend. A Godot extension builds without it and supplies its own ComputeBackend over
-# the engine's RenderingDevice.
-wgpu = []
+wgpu = ["dep:wgpu", "dep:pollster"]
 
 [dev-dependencies]
-wgpu = { version = "30.0.1", features = ["dx12", "metal", "vulkan", "wgsl"] }
-wfc-devtools = { path = "../wfc-devtools" }
 # The CPU reference solver is the ground truth the kernel's tests check against.
-wfc-core = { path = "../wfc-core", features = ["serde", "reference"] }
-env_logger = "0.11.11"
-rand = "0.10.2"
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
-
-[[bench]]
-name = "gpu_benchmarks"
-harness = false 
-
-[[bin]]
-name = "shader-optimizer"
-path = "tools/shader_optimizer.rs"
-
-[[bin]]
-name = "shader-validator"
-path = "tools/shader_validator.rs"
+wfc-core = { path = "../wfc-core", features = ["reference"] }
+# The city rule set the benchmarks measure, and the invariant checker.
+wfc-devtools = { path = "../wfc-devtools" }
+wfc-rules = { path = "../wfc-rules" }

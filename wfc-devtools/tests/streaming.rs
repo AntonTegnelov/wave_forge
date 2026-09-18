@@ -15,9 +15,8 @@ use wave_forge::{
     BlockSolver, Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, RegionShape, Ruleset,
     WgpuBackend, WorldExtent, WorldGenerator,
 };
-use wfc_core::BoundaryCondition;
 use wfc_devtools::city::{self, City, city_prior};
-use wfc_devtools::{TileGrid, adjacency_violations};
+use wfc_devtools::{BoundaryCondition, TileGrid, adjacency_violations};
 
 /// The chunk the city is generated in: 8 cells of 2 m is a 16 m block, eight storeys tall, which is
 /// marian42's scale.

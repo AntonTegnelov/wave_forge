@@ -10,4 +10,4 @@ pub mod fixtures;
 pub mod invariants;
 pub mod render;
 
-pub use invariants::{TileGrid, Violation, adjacency_violations};
+pub use invariants::{BoundaryCondition, TileGrid, Violation, adjacency_violations};
