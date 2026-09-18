@@ -140,6 +140,7 @@ fn a_worker_generates_on_a_thread_of_its_own() {
                 ChunkEvent::Updated(chunk) => {
                     updated.insert(chunk);
                 }
+                ChunkEvent::Evicted(chunk) => panic!("nothing was evicted: {chunk:?}"),
                 ChunkEvent::Failed { chunk, status } => panic!("{chunk:?}: {status:?}"),
             }
         }
@@ -147,7 +148,7 @@ fn a_worker_generates_on_a_thread_of_its_own() {
     }
 
     for (coord, tiles) in tiles(&direct) {
-        let from_worker = worker.chunk(coord).expect("the worker generated it");
+        let from_worker = worker.chunk(coord).expect("the worker reported it");
         assert_eq!(from_worker.tiles.to_vec(), tiles, "{coord:?}");
     }
 }
@@ -251,6 +252,7 @@ fn a_repair_reports_every_chunk_it_rewrote() {
     for event in &events {
         match event {
             ChunkEvent::Updated(chunk) => *reported.entry(*chunk).or_default() += 1,
+            ChunkEvent::Evicted(chunk) => panic!("nothing was evicted: {chunk:?}"),
             ChunkEvent::Failed { chunk, status } => panic!("{chunk:?}: {status:?}"),
         }
     }

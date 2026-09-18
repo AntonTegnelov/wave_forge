@@ -451,6 +451,8 @@ fn generate<S: Solver + Send + Sync + 'static>(
             ChunkEvent::Failed { chunk, status } => {
                 failed.write(ChunkFailed { chunk, status });
             }
+            // The generator hands evicted chunks back to `follow_focus` rather than reporting them.
+            ChunkEvent::Evicted(_) => {}
         }
     }
     Ok(())
