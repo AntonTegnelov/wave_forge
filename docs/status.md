@@ -13,11 +13,12 @@ Where the project actually is, as of September 2026, and what has to change to m
 - Constraints enter as a `Prior` on starting domains: masks per layer, bans per world face, overrides per cell. The city's boundary conditions are expressed that way.
 - Up to 256 tile variants, weights quantised to integers, and rule sets wider than one possibility word (the city's 81 variants need three).
 - End-to-end tests generate a 2D coastline and a small marian42-style 3D city through the library, check them against their rules and render them to PNG; `wave-forge` generates one chunk from a rule file and `wfc-render` draws it ([testing.md](testing.md)).
+- **A Bevy plugin generates on Bevy's own device.** `wave_forge_bevy` adds `WaveForgePlugin`, a `GenerationFocus` component and `ChunkUpdated` messages; it hands Bevy's `RenderDevice` and `RenderQueue` to `Builder::build_on`, so there is no second adapter. It tracks Bevy 0.20, the first release on wgpu 30. A headless app with the real `DefaultPlugins` generates a city on that device, and the tiles match what the library generates on a device of its own.
 - In the dev container it runs on the host's NVIDIA RTX 3070 through Mesa's dozen driver (Vulkan on Direct3D 12); timings carry translation overhead. Without a GPU, a software Vulkan device (Mesa llvmpipe) is enough for correctness tests but not for performance work.
 
 ## Known limitations
 
-- **No engine integrations yet.** The seams are drawn for them and the library API is what they will bind to, but there is no Bevy plugin and no Godot extension, and the Godot backend's threading has not been prototyped ([architecture.md §5.1](architecture.md#51-the-solver-seam)).
+- **No Godot extension yet.** The Bevy plugin is in `wave_forge_bevy`; Godot's `RenderingDevice` backend and its threading have not been prototyped ([architecture.md §5.1](architecture.md#51-the-solver-seam)).
 - **3D only**, with 6 fixed axes; 2D means a world one cell deep (A-2).
 - **A region must fit the device's workgroup memory.** At 81 tiles, an 8×8×8 chunk fits with a halo of 1 or 2 but not 3 (38 288 B against 32 768 B), so a repair ladder stops there. Bigger chunks or more tiles need a kernel that keeps domains in a storage buffer instead, which nothing needs yet.
 - **Some chunks cannot be placed.** 3.2% of city chunks in the streaming test, after repairs. A chunk whose borders no arrangement satisfies is a property of the module set rather than of the solver: a set is *streaming-clean* when that count is zero, and the city's is not. It is reported, not retried.
