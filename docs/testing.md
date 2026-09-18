@@ -14,12 +14,10 @@ Wave Forge is a parallel program whose main work happens on the GPU. Its bugs ra
 
 | Layer | Where | What it covers | Needs a GPU |
 |---|---|---|---|
-| Unit | `#[cfg(test)]` modules in each crate | Rule compilation and transformations, bit packing, host/shader struct layouts, output format, invariant checker, renderers, fixtures | No |
-| GPU integration | `wfc-gpu/tests/` | Solver behaviour on a real device, for example that pre-constrained cells propagate before the first collapse | Yes |
+| Unit | `#[cfg(test)]` modules in each crate | Rule compilation and transformations, mask and domain layouts, chunk and region geometry, the prior, the chunk store, the scheduler, the kernel's generated source, the invariant checker, the renderers and the fixtures | No |
+| GPU integration | `wfc-gpu/tests/block_solver.rs` | The kernel on a real device: propagation against the reference fixpoint, validity and reproducibility, the same result at 64 and 256 invocations, weights, rule sets two and five words wide, and the errors a refused batch gives | Yes |
 | Library contract | `tests/facade.rs` | What the facade promises: the same requests give the same world, the order they are asked in does not matter, no batch holds two chunks that share a face, a repair reports every chunk it rewrote, a worker generates the same world on a thread | No, it runs on the CPU reference |
 | End to end | `wfc-devtools/tests/` | Whole runs on reference rule sets: a 2D coastline and a small 3D city, with invariants checked and images written | Yes |
-| Global constraint | `e2e_3d_city::the_connectivity_constraint_leaves_one_walkable_network` | The path constraint plus backtracking: every walkable cell of the city is connected | Yes |
-| Stress (opt-in) | `wfc-devtools/tests/stress.rs` | Large cities and grids, timed; `#[ignore]`d so `cargo test` stays fast | Yes |
 | Streaming (opt-in) | `wfc-devtools/tests/streaming.rs` | A whole world asked for at once, and a city generated in front of a walking player against a 500 ms tick budget; `#[ignore]`d | Yes |
 
 "Needs a GPU" means a Vulkan, Metal or DirectX 12 device. Wave Forge has no CPU fallback ([vision.md](vision.md#non-goals)). In the dev container tests run on the host RTX 3070 through Mesa's dozen driver ([development.md](development.md#toolchain-and-environment)). Where no GPU is available, a software Vulkan device (Mesa llvmpipe, or `WGPU_ADAPTER_NAME=llvmpipe`) is good enough to check correctness, but never for performance.
@@ -30,12 +28,14 @@ cargo test --workspace --lib           # unit tests only, no GPU needed
 cargo test -p wfc-devtools --test e2e_3d_city -- --nocapture   # one E2E test, showing artifact paths
 ```
 
-**The workspace build does not test each crate's own feature set.** Cargo unifies features across a workspace build, and `wfc-gpu` enables `wfc-core/serde`, so `cargo test --workspace` compiles `wfc-core` with `serde` even though its default feature set is empty. An unguarded `use serde` in `wfc-core` therefore passes the workspace build and breaks anyone who depends on `wfc-core` alone. There is no CI to catch this, so when a change touches optional dependencies or `#[cfg(feature = ...)]` code, also build the affected crates on their own:
+**The workspace build does not test each crate's own feature set.** Cargo unifies features across a workspace build, so a crate can compile there with a feature it does not enable itself and still break anyone who depends on it alone. The CPU reference (`wfc-core/reference`) is enabled by several dev-dependencies, and the wgpu backend is a feature a Godot extension will build without. There is no CI to catch either, so when a change touches optional dependencies or `#[cfg(feature = ...)]` code, also build the affected crates on their own:
 
 ```bash
-cargo test -p wfc-core                          # default features (none)
+cargo test -p wfc-core                             # default features (none)
 cargo test -p wfc-core --all-features
-cargo test -p wfc-rules --no-default-features   # RON parsing disabled
+cargo check -p wfc-gpu --no-default-features       # no wgpu: what a Godot backend builds against
+cargo check -p wave_forge --no-default-features    # the facade without a bundled solver
+cargo test -p wfc-rules --no-default-features      # RON parsing disabled
 ```
 
 ## End-to-end tests
@@ -63,11 +63,11 @@ Local rules cannot forbid a network that is cut off as a whole, so `city::discon
 - `coast_2d.png`
 - `city_isometric.png`: every module drawn as its small voxel model
 - `city_street_level.png`: the bottom layer, one colour per module variant
-- `stress_<name>.png`: from the stress suite
+- `stitched.png` and `live.png`: whole worlds from the streaming suite, in `$CARGO_TARGET_DIR/tmp/`
 
 ### Benchmarks
 
-Both are `#[ignore]`d and print their numbers; run them in release mode.
+All three are `#[ignore]`d and print their numbers; run them in release mode.
 
 ```bash
 cargo test -p wfc-devtools --release --test cpu_reference -- --ignored --nocapture
@@ -75,55 +75,15 @@ cargo test -p wfc-gpu --release --test block_solver_bench -- --ignored --nocaptu
 cargo test -p wfc-devtools --release --test streaming -- --ignored --nocapture --test-threads=1
 ```
 
-`cpu_reference` times the single-threaded CPU solver in `wfc_devtools::reference`, the yardstick every
-GPU number is printed against. `block_solver_bench` holds the block-local chunk kernel: its
-correctness tests check chunks against that reference and against the adjacency rules, and its
-benchmarks report per-chunk cost, seams across a stitched world, and live streaming around a moving
-focus. `streaming` measures the same two worlds through the library, so what a game would get is
-timed rather than what a bench arranged by hand. A timing describes one build on one machine and
-driver stack; see [solver-fit.md](solver-fit.md) for what each number means.
+`cpu_reference` times the single-threaded CPU solver (`wfc-core`, feature `reference`), the yardstick
+every GPU number is printed against. `block_solver_bench` measures what only it can: one chunk's cost
+against one CPU thread and against all of them, how that scales with the chunks in a dispatch, and
+that every chunk a many-chunk dispatch reports as solved is valid. `streaming` measures whole worlds
+through the library, so what a game would get is what is timed. A timing describes one build on one
+machine and driver stack; see [solver-fit.md](solver-fit.md) for what each number means.
 
 ## Known gaps
 
 - **Golden images are still missing.** Generation through the facade is reproducible, and `tests/facade.rs` compares whole worlds cell for cell, but the tests that render (the end-to-end pair) still assert invariants rather than comparing against a stored image.
-- **Contradictions are retried** by rerunning from scratch (`tests/common/mod.rs`). That is a stopgap until the solver can backtrack or restart regions itself (A-9); the retry count is logged so frequent contradictions stay visible.
-- **The city needs restarts.** Without backtracking, some runs contradict and start over. The count is part of what the stress suite reports.
-
-## Stress and profiling suite
-
-`wfc-devtools/tests/stress.rs` runs large grids that would make the normal test run slow: cities of 24×24×8, 48×48×10 and 96×96×12 cells, and a permissive two-tile 24³ grid that isolates per-collapse overhead from propagation cost. Every test is `#[ignore]`d. Run them in release mode, one at a time so they don't compete for the GPU:
-
-```bash
-cargo test -p wfc-devtools --release --test stress -- --ignored --nocapture --test-threads=1
-```
-
-Each run prints one line, for example `stress: city_medium 24x24x8 cells=4608 tiles=81 attempts=1 run_s=… total_s=… cells_per_s=…`. `run_s` is the successful run only, and `total_s` includes device setup and restarted attempts. Compare these lines before and after a performance change, and add `--trace-chrome` style tracing ([debugging.md](debugging.md)) to see where the time goes. The large runs are the baseline for the solver redesign in [#7](https://github.com/AntonTegnelov/wave_forge/issues/7).
-
-## Rendering tools
-
-`wfc-devtools` is a developer-only crate: it is never part of the shipped library.
-
-```bash
-cargo run -p wfc-devtools --release --bin wave-forge -- --rule-file examples/simple-pattern.ron --width 12 --height 12 --depth 6 --output grid.txt
-cargo run -p wfc-devtools --bin wfc-render -- grid.txt --out grid.png --empty-tile 0
-cargo run -p wfc-devtools --bin wfc-render -- grid.txt --view layer --z 0 --out layer0.png
-```
-
-The four-view sheet (`--view four-view`, the default) shows the whole grid with `+z` up:
-
-| | |
-|---|---|
-| **Top**: looking down, `+x` right, `+y` up | **Isometric**: seen from `+x`, `+y`, `+z` |
-| **Front**: from `-y`, `+x` right | **Side**: from `+x`, `+y` right |
-
-Orthographic views show exact positions without perspective, and the isometric view shows how they fit together. Nearer surfaces are brighter, and tiles marked empty (`--empty-tile`) are see-through.
-
-**Why a small CPU rasteriser and not Godot or Bevy:** the images have to be produced inside tests and containers without a display, must be pixel-for-pixel reproducible so they can be compared, and should cost nothing to generate after every run. An engine-based viewer can still be added for interactive inspection once the engine integrations exist.
-
-## Writing tests
-
-- **Name tests as statements of behaviour** (`pre_constrained_cells_propagate_before_first_collapse`) and explain in the doc comment *why* the behaviour matters, especially for regression tests.
-- **Assert invariants, not incidental output.** Prefer "no adjacency violations" and structural checks over exact tile layouts until runs are deterministic.
-- **Keep GPU tests independent.** Several tests create their own device in one process; nothing that holds GPU resources may be shared through globals (a process-wide pipeline cache once handed one device's pipelines to another).
-- **When a host struct must match a shader struct, add a layout test** next to the Rust definition (see `wfc-gpu/src/buffers/mod.rs`).
-- **Write an artifact whenever a failure would be hard to understand from the assertion alone.**
+- **Kernel internals are tested through whole-region results** (A-16). A wrong sweep or a bad checkpoint shows up as an invalid or unsolved region, which is a coarse signal; the checkpoint-ring bug that `every_reported_success_is_a_valid_chunk` caught is the kind of thing a unit test would have caught sooner.
+- **Some city chunks cannot be placed** (3.2% in the streaming test). The suite asserts that the share stays small rather than zero, because it is a property of the module set ([constraints.md](constraints.md)).

@@ -6,8 +6,8 @@ third but not ignored. Where a fast design hurts readability, the fix is documen
 **why**, not a slower design.
 
 This page records how we work on performance. The concrete plan and its tasks live in
-[roadmap.md](roadmap.md) and [status.md](status.md) (A-4, A-10, A-11, A-12); the current work is
-issue [#7](https://github.com/AntonTegnelov/wave_forge/issues/7).
+[roadmap.md](roadmap.md) and [status.md](status.md); the solver redesign was issue
+[#7](https://github.com/AntonTegnelov/wave_forge/issues/7).
 
 ## Method
 
@@ -17,12 +17,12 @@ issue [#7](https://github.com/AntonTegnelov/wave_forge/issues/7).
    propagation, arc-consistency variants, GPU constraint solving), and the answer changes what we
    should build. Write down what was found and why the chosen approach fits.
 2. **Profile the real workload.** Optimise what the profile shows, not what looks slow. The realistic
-   benchmark is the city rule set and the opt-in stress suite ([testing.md](testing.md)), not the toy
-   fixtures: a two-tile grid measures per-collapse overhead, a structured 81-variant set measures
-   propagation.
+   benchmark is the city rule set, in the chunk benchmark and the streaming suite
+   ([testing.md](testing.md)), not the toy fixtures: 81 structured variants exercise propagation and
+   recovery the way a real set does, and a handful of tiles exercises neither.
 3. **Measure the compiled artefact.** Some optimisations only exist in release builds, and a
    profiling build needs debug info without losing optimisation, so build profiles are part of the
-   method rather than an afterthought. Timelines come from `--trace-chrome`
+   method rather than an afterthought. What a solve cost comes back with its result, as counters
    ([debugging.md](debugging.md)).
 4. **Change one thing, measure again, keep the number.** Every performance claim in this repo should
    be traceable to a measurement on a named workload and machine.
@@ -48,8 +48,8 @@ distort exactly those numbers.
 Keeping data in L1–L3 and staying inside RAM bandwidth matters as much as instruction count for a
 solver that sweeps large grids:
 
-- Possibility data should be one contiguous word array shared by CPU and GPU layouts (A-4), not a
-  per-cell allocation, so a sweep is a linear scan.
+- Possibility data is one contiguous word array in the layout the shader reads, not a per-cell
+  allocation, so a sweep is a linear scan and a batch crosses to the device as it is.
 - Prefer layouts where propagation touches neighbouring memory, and sizes where the working set of a
   region fits in cache.
 - Profile to find where bandwidth, not compute, is the limit; cache simulation is available through
@@ -57,10 +57,12 @@ solver that sweeps large grids:
 
 ## Code-level priorities
 
-- **Static dispatch** in place of `Box<dyn …>` and `async_trait` wherever it measurably helps; the
-  solver's hot paths should not pay for virtual calls or boxed futures (A-12).
-- **Less cloning.** Grid states and buffers are the big ones; passing the whole grid through the
-  CPU/GPU boundary every collapse is the current bottleneck (A-10).
+- **Static dispatch.** The solver and the generator are generic over their seams, and the kernel is
+  specialised per region shape; nothing on a hot path pays for a virtual call. Specialisation is not
+  only about calls: the same kernel with its mask words in a loop rather than written out is 2.5×
+  slower, because an indexed mask lands in scratch memory.
+- **Nothing crosses the boundary per collapse.** A batch of regions costs one upload, one dispatch
+  and one readback; a region's domains stay in workgroup memory for the whole solve.
 - **Fewer per-iteration allocations:** bind groups, encoders and staging buffers should be created
   once and reused.
 
@@ -68,47 +70,37 @@ solver that sweeps large grids:
 
 The generator should build very large worlds, but bounded ones: WFC will never be practical on a
 grid the size of a galaxy, and no game needs one at once. The design target is **continuous solving
-of the region around the player**, streaming regions in and out with constrained borders (A-13),
-rather than one enormous grid. Keep that in mind when choosing data structures: the working set is a
+of the region around the player**, streaming chunks in and out with constrained borders, rather than
+one enormous grid. Keep that in mind when choosing data structures: the working set is a
 region and its neighbours, not the world.
 
-## Baseline
+## Where it stands
 
-Measured on an RTX 3070 through the container's translation layer, release build, before the #7 work.
-From the stress suite ([testing.md](testing.md)):
+Every number here describes one build on one machine and driver stack (an RTX 3070 through the
+container's dozen translation layer, release), and [solver-fit.md](solver-fit.md) records each one
+with its protocol. Two are the ones to know:
 
-| Workload | Cells | Tiles | Run | Cells/s |
-|---|---|---|---|---|
-| Permissive 2-tile 24³ | 13824 | 2 | 96.0 s | 144 |
-| City 24×24×8 | 4608 | 81 | 45.3 s | 102 |
-| City 48×48×10 | 23040 | 81 | 403.8 s | 57 |
+| | |
+|---|---|
+| One 8×8×8 city chunk, 256 chunks in one dispatch | **0.18 ms per chunk**, against 3.9 ms on one CPU thread and 0.79 ms spread over 24 |
+| A 24×8-chunk city around a walking focus | **median 47 ms** per 0.5 s tick, p90 61 ms |
 
-Throughput falls as the grid grows even though the rules do not change, which points at per-collapse
-overhead rather than propagation cost: the whole grid crosses the CPU/GPU boundary on every collapse,
-so each one costs more on a larger grid (A-10). A trace of a smaller run splits roughly half into
-propagation and the rest between downloading the grid, selecting a cell, entropy and upload, with
-about six synchronisation points per collapse.
+What the redesign that produced them changed, and what each change was worth:
 
-When reading a Chrome trace from the stress suite, note that it contains no `wfc_run` span (the suite
-drives the accelerator directly), so percentages must be taken against the measured wall time rather
-than against a parent span.
+- **The region stays on the device.** The old loop uploaded the whole grid, collapsed one cell,
+  propagated and downloaded the whole grid again, so a collapse cost more on a bigger grid: the
+  24×24×8 city ran at 102 cells/s and the 48×48×10 city at 57. Keeping a region in workgroup memory
+  for the whole solve removed the round-trip entirely; the streaming world generates at about 86 000
+  cells/s while it is generating.
+- **Many regions per dispatch.** A dispatch lasts as long as its slowest region, so batching is the
+  multiplier: the same kernel costs 29.7 ms for one chunk and 46.8 ms for 256.
+- **Recovery decides how aggressive selection can be.** Collapsing every local minimum within a
+  radius is 1.8× faster than collapsing one, but with restart-only recovery it also failed 73 of 256
+  chunks. With checkpoint undo the same radius fails none.
+- **Per-step cost is per-cell sweep work, not barriers.** One step of an 8×8×8 chunk with a halo
+  costs about 21 µs at 256 invocations, and 445 µs at one, which is what says the kernel is bound by
+  the work it does per cell rather than by synchronisation.
 
-Where that time goes on the realistic workload, from a Chrome trace of the 24x24x8 city
-(`WFC_TRACE_CHROME=<file> cargo test -p wfc-devtools --release --test stress -- --ignored --exact stress_city_medium_24x24x8`):
-
-| Span | Count | Total | Mean |
-|---|---|---|---|
-| propagate | 7073 | 36.9 s | 5.21 ms |
-| propagation_pass | 15284 | 36.1 s | 2.36 ms |
-| download_grid | 7048 | 4.4 s | 0.63 ms |
-| upload_grid | 3524 | 2.3 s | 0.64 ms |
-| entropy_pass | 7048 | 1.6 s | 0.23 ms |
-| select_cell | 7048 | 1.5 s | 0.21 ms |
-
-**Propagation dominates at 76% of the run**, not the grid transfers that dominate the toy two-tile
-benchmark: with 81 variants each pass does far more work, and there are about two passes per collapse.
-Note also 7073 propagations for 4608 cells, so backtracking redoes roughly half as much work again.
-
-Two more numbers are worth keeping in view: backtracking-heavy runs are far slower than the median
-(one 48×48×10 run exhausted its iteration budget after ~11000 undos), and the connectivity-constrained
-8×8×5 city ranges from 5 to 136 seconds. Search cost, not just throughput, is part of the problem.
+The old loop's profile is kept in [solver-fit.md](solver-fit.md) because it is the evidence the
+redesign rests on: propagation was 76% of that run, so the answer was never "move the transfers", it
+was "stop having a per-collapse loop at all".

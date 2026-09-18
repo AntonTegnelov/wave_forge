@@ -2,11 +2,11 @@
 
 This is the reasoning behind the performance work in
 [#7](https://github.com/AntonTegnelov/wave_forge/issues/7). It records what we measured, what the
-literature says, and which changes follow from both — in that order, because the measurement
+literature says, and which changes followed from both, in that order, because the measurement
 overturned the assumption we started with.
 
 See [performance.md](performance.md) for the priorities and method, and [constraints.md](constraints.md)
-for the constraint machinery the solver has to keep supporting.
+for the constraint machinery, including the two kinds the chunk solver does not host yet.
 
 ## What we measured
 
@@ -221,8 +221,11 @@ about 7.4 ms per collapse.
 
 ### The CPU reference
 
-`wfc_devtools::reference` (timed by `wfc-devtools/tests/cpu_reference.rs`) is a deliberately plain single-threaded solver on the same rules:
-two `u64` words per cell, a stack for propagation, a full scan for selection, marian42's undo-doubling.
+The reference solver (now `wfc-core`, feature `reference`, timed by `wfc-devtools/tests/cpu_reference.rs`)
+is a deliberately plain single-threaded solver on the same rules: a stack for propagation, a full scan
+for selection, marian42's undo-doubling. It held two `u64` words per cell when these numbers were
+taken and holds `u32` words in the layout the shader reads now, which moved its throughput; both
+numbers are in [solver-fit.md](solver-fit.md) with their builds.
 It is a yardstick, not a product: a GPU design that cannot beat one CPU thread at chunk latency is not
 worth shipping. At e28ab9d on a Ryzen 9 5900X (release, eight seeds, one run each, no warm-up beyond
 the previous seed) it solves an 8x8x8 chunk in 2.8 to 4.6 ms and a 24x24x8 grid in 0.14 to 0.16 s on
@@ -286,8 +289,7 @@ Ranked by how directly each makes the work GPU-shaped, and by the least work to 
    Put together, that is live generation on this build: walking a player across a 192×64×8 world at
    1.4 m/s with a four-chunk view radius costs a median of 43 ms of dispatch time per half-second
    tick, and the world comes out complete and seamless. Only the first tick, which fills the whole
-   view at once, exceeds the budget. What that measures is a benchmark kernel, not the solver: the
-   shipped `GpuAccelerator` still runs the per-collapse loop this document opened with.
+   view at once, exceeds the budget.
 
    **Now in the library** (`wfc-gpu`: `backend.rs`, `kernel.rs`, `kernel/block.wgsl`,
    `block_solver.rs`, `wgpu_backend.rs`). `BlockSolver` takes a batch of regions and returns one
@@ -297,14 +299,24 @@ Ranked by how directly each makes the work GPU-shaped, and by the least work to 
    cost 2.5 times as much per step. And one kernel specialisation takes about four seconds to
    compile through dozen, so a game compiles the ones it needs when it loads, and a benchmark that
    does not warm them measures the compiler instead of the solver.
+
+   **And in the library's own hands** (`wave_forge`: `generator.rs`, `scheduler.rs`, `worker.rs`).
+   The schedule the benchmark arranged by hand is what `WorldGenerator` does: parity batches, a halo
+   that is discarded, repairs for what fixed borders leave unsolvable, and events for every chunk a
+   repair rewrote. Driven that way the same walk costs a median of 47 ms per tick, and 3.2% of chunks
+   cannot be placed rather than 1.6%, because the library closes its wanted set over face neighbours
+   so that a chunk's tiles do not depend on where the player came from
+   ([architecture.md §6.2](architecture.md#62-the-schedule)).
 5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
 
-## How we will know it worked
+## How we knew it worked
 
-The stress suite is the yardstick, run in release with the same three workloads. A change is kept when
-it moves `cells_per_s` on the 81-variant city, not on the toy two-tile grid, and when the E2E and
-constrained-city tests still pass. Every number in this document came from
-`wfc-devtools/tests/stress.rs`, `WFC_TRACE_CHROME`, `wfc-gpu/tests/propagation_bench.rs` or
-`wfc-devtools/tests/cpu_reference.rs`, so each claim can be re-measured after any change. A number is
+It worked: the numbers are in [solver-fit.md](solver-fit.md) and the summary is in
+[performance.md](performance.md#where-it-stands). The yardstick is now `block_solver_bench` for one
+chunk's cost, `streaming` for whole worlds through the library, and `cpu_reference` for the CPU
+thread everything is printed against; a change is kept when it moves the 81-variant city, not a toy
+two-tile grid, and when the end-to-end and facade tests still pass. The numbers in this document were
+taken before that, from the stress suite, the Chrome traces and the propagation benchmark that the
+per-collapse solver came with, all of which went with it. A number is
 evidence about one build on one machine and stack; it is quoted with that context, and it becomes a
 design conclusion only after it has been reproduced with a warm-up and medians over interleaved samples.

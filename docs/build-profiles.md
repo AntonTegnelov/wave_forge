@@ -32,13 +32,13 @@ Binaries land in `target/<profile>/`, for example `target/profiling/wave_forge`.
 |---|---|---|
 | `panic = "abort"` | Slightly faster, smaller binaries (no unwinding tables) | Must be measured first. Also interacts with FFI: engines embedding the library (GDExtension) should never see a Rust unwind crossing the boundary, which argues *for* it, so decide together with the engine integration design. |
 | `-C target-cpu=native` | Enables the newest SIMD instructions for the build machine | Produces binaries that crash on older CPUs, so it can never be used for anything shipped. Wide SIMD should instead use runtime feature detection (for example `std::arch` with `is_x86_feature_detected!`) so one binary serves every player. Acceptable only for local experiments, labelled as such. |
-| Profile-guided optimisation (PGO) / BOLT | Often 10% or more | Needs representative workloads (the stress suite planned in [#13](https://github.com/AntonTegnelov/wave_forge/issues/13)) and a more complex build. Revisit once hot paths have stabilised. |
+| Profile-guided optimisation (PGO) / BOLT | Often 10% or more | Needs representative workloads (the streaming suite) and a more complex build. Revisit once hot paths have stabilised. |
 | Alternative allocator (mimalloc, jemalloc) | Can be large for allocation-heavy code | The hot path should not allocate per step at all; measure after allocation hot spots are removed rather than masking them. |
 | `lto = "thin"` in `profiling` for faster builds | Shorter profiling build | Would make profiles describe a different binary than `release`. |
 
 ## Profiling in the dev container
 
-- **GPU work** is measured with the `tracing` spans and `--trace-chrome` timeline ([debugging.md](debugging.md)); CPU profilers only see the CPU side waiting on the driver.
+- **GPU work** is measured by the counters a solve returns and wall clock around the dispatch ([debugging.md](debugging.md)); CPU profilers only see the CPU side waiting on the driver.
 - **callgrind** (`valgrind --tool=callgrind`) works without extra permissions and can also simulate the L1/LL caches (`--cache-sim=yes`), which answers "is this loop cache-friendly" questions deterministically. It is slow (tens of times slower than native), so run it on small inputs or on CPU-only benchmarks.
 - **perf** is installed but cannot open performance counters inside the container (`perf_event_paranoid` and the container's permissions). Enabling it requires changing the container's capabilities or the WSL kernel setting, which widens the sandbox. That is a deliberate decision, not a default.
 - **Timings through dozen** (Vulkan on Direct3D 12) include translation overhead. Compare measurements within the same environment, and confirm conclusions about CPU/GPU crossover points on native hardware.
