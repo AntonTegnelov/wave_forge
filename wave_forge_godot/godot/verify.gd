@@ -16,6 +16,11 @@ const CELL_SIZE := 2.0
 ## How many chunks to keep around the focus, and how far beyond that to keep them.
 const VIEW_RADIUS := 1
 const EVICT_MARGIN := 1
+## Tile indices, in the order `rules.ron` declares them.
+const WATER := 0
+const SAND := 1
+const GRASS := 2
+const FOREST := 3
 ## The focus walks to this chunk and back, one chunk at a time.
 const WALK_TO := CHUNKS_X - 2
 
@@ -43,6 +48,13 @@ func _initialize() -> void:
 	world.halo = 1
 	world.evict_margin = EVICT_MARGIN
 	world.world_chunks = Vector3i(CHUNKS_X, CHUNKS_Y, 1)
+	# What a game does with a prior: no water on the ground layer, and no forest against the edges
+	# of a bounded world. The rule set only lets a material meet itself vertically, so a ground
+	# layer without water is a world without water, which is easy to check.
+	var ground: Array[PackedInt32Array] = [PackedInt32Array([SAND, GRASS, FOREST])]
+	world.set_layer_tiles(ground)
+	for axis in 4:
+		world.ban_tiles_on_face(axis, PackedInt32Array([FOREST]))
 	world.chunk_updated.connect(_on_chunk_updated)
 	world.chunk_failed.connect(_on_chunk_failed)
 	world.chunk_evicted.connect(_on_chunk_evicted)
@@ -185,6 +197,18 @@ func _check() -> void:
 				_fail("%s at %s sits beside %s" % [names[material], cell, names[other]])
 				return
 
+	# The prior the scene set: the ground layer had no water, so nothing does, and the world's
+	# edges had no forest.
+	for cell: Vector3i in world_tiles:
+		var material: int = world_tiles[cell]
+		if material == WATER:
+			_fail("water at %s although the ground layer forbade it" % cell)
+			return
+		var on_edge: bool = cell.x == 0 or cell.x == CHUNKS_X * CELLS - 1 or cell.y == 0 or cell.y == CHUNKS_Y * CELLS - 1
+		if on_edge and material == FOREST:
+			_fail("forest at %s although the world's faces forbade it" % cell)
+			return
+
 	# A chunk the focus left and came back to is generated again from its coordinate alone, so it
 	# has to hold what it held the first time.
 	var again: PackedInt32Array = world.tiles_at(Vector3i(1, 1, 0))
@@ -195,7 +219,7 @@ func _check() -> void:
 		_fail("chunk (1, 1, 0) came back different after being dropped")
 		return
 
-	print("verify: %d cells, every column one material, every neighbour legal, and the chunk walked back to is unchanged" % world_tiles.size())
+	print("verify: %d cells, every column one material, every neighbour legal, the prior obeyed, and the chunk walked back to is unchanged" % world_tiles.size())
 	quit(0)
 
 func _fail(message: String) -> void:
