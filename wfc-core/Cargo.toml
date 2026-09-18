@@ -4,28 +4,14 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "The model Wave Forge generates from, and the seam a solver plugs into."
 
 [dependencies]
-wfc-rules = { path = "../wfc-rules" } # Added for rule/tileset types
-bitvec = { version = "1.1.1", features = ["serde"] } # Enable serde feature for bitvec
-log = "0.4.34"
-rand = "0.10.2" # Added for random tile selection during collapse
+wfc-rules = { path = "../wfc-rules" }
 thiserror = "2.0.20"
-serde = { version = "1.0.229", features = ["derive"], optional = true } # Added serde dependency
-serde_json = { version = "1.0.151", optional = true } # Added serde_json dependency
-clap = { version = "4.6.7", features = ["derive"], optional = true }
-async-trait = "0.1.92"
-
-[dev-dependencies]
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
-pollster = "1.0.1" # Added pollster for blocking async calls in tests
 
 [features]
 default = []
 # The CPU reference solver: ground truth for tests and the yardstick for benchmarks, never a
 # fallback, so it is not compiled into a shipped build.
 reference = []
-clap = ["dep:clap"]
-serde = ["dep:serde", "dep:serde_json", "wfc-rules/serde"] # Added dep:serde_json

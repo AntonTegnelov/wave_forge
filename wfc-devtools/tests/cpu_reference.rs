@@ -1,5 +1,4 @@
-//! The CPU reference solver on the city: the yardstick every GPU number is printed against, and a
-//! check that the city's [`city_prior`] says exactly what `constrain_city` used to.
+//! The CPU reference solver on the city: the yardstick every GPU number is printed against.
 //!
 //! ```text
 //! cargo test -p wfc-devtools --release --test cpu_reference -- --ignored --nocapture
@@ -12,11 +11,10 @@ use std::sync::Arc;
 use std::time::Instant;
 use wfc_core::reference::ReferenceSolver;
 use wfc_core::{
-    BoundaryCondition, ChunkCoord, ChunkShape, ChunkStore, Region, RegionStatus, Ruleset,
-    WorldExtent, region_init,
+    ChunkCoord, ChunkShape, ChunkStore, Region, RegionStatus, Ruleset, WorldExtent, region_init,
 };
 use wfc_devtools::city::{self, city_prior};
-use wfc_devtools::{TileGrid, adjacency_violations};
+use wfc_devtools::{BoundaryCondition, TileGrid, adjacency_violations};
 
 /// One grid as a single chunk of a world that holds nothing else: what the CLI generates.
 fn one_chunk_world(width: u32, height: u32, depth: u32) -> (ChunkStore, Region) {
@@ -31,43 +29,6 @@ fn one_chunk_world(width: u32, height: u32, depth: u32) -> (ChunkStore, Region) 
         .with_z(0..1);
     let region = Region::new(ChunkCoord::new(0, 0, 0), shape.region(extent.halo(1)));
     (ChunkStore::new(extent), region)
-}
-
-#[test]
-fn the_city_prior_says_what_constrain_city_said() {
-    let city = city::city();
-    let (width, height, depth) = (12, 12, 6);
-    let mut grid = wfc_core::grid::PossibilityGrid::new(
-        width as usize,
-        height as usize,
-        depth as usize,
-        city.modules.variants.len(),
-    );
-    city::constrain_city(&mut grid, &city);
-    let ruleset = Ruleset::from_modules(&city.modules).expect("the city compiles");
-    let (store, region) = one_chunk_world(width, height, depth);
-
-    let domains = region_init(&store, &city_prior(&city, depth), &ruleset, &region, false);
-
-    assert_eq!(
-        region.shape().cells(),
-        width * height * depth,
-        "a lone chunk has no halo"
-    );
-    for (cell, (at, _)) in region.cells().enumerate() {
-        let expected = grid
-            .get(at[0] as usize, at[1] as usize, at[2] as usize)
-            .expect("a cell of the grid");
-        let mask = domains.mask(cell as u32);
-        let same = (0..city.modules.variants.len())
-            .all(|tile| expected[tile] == mask.contains(tile as u32));
-        assert!(
-            same,
-            "cell {at:?} differs: {:?} against {:?}",
-            expected.count_ones(),
-            mask.count()
-        );
-    }
 }
 
 #[test]

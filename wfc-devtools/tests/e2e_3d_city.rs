@@ -4,15 +4,13 @@
 //! This is the realistic workload next to the toy fixtures: 52 rotated module variants from
 //! connectors (several possibility words per cell), weights, and structure spanning many cells.
 
-mod common;
+mod artifacts;
 
 use std::collections::BTreeMap;
 use wave_forge::{Builder, ChunkCoord, ChunkShape, FocusPoint, Ruleset, WorldExtent};
-use wfc_core::BoundaryCondition;
-use wfc_core::grid::PossibilityGrid;
 use wfc_devtools::city::{self, STREET_LEVEL, city_prior};
 use wfc_devtools::render::{self, Style};
-use wfc_devtools::{TileGrid, adjacency_violations};
+use wfc_devtools::{BoundaryCondition, TileGrid, adjacency_violations};
 
 #[test]
 fn small_city_is_structurally_sound_and_renders() {
@@ -57,7 +55,7 @@ fn small_city_is_structurally_sound_and_renders() {
     .expect("one tile per cell");
     let (width, height, depth) = (width as usize, height as usize, depth as usize);
 
-    let artifacts = common::artifact_dir();
+    let artifacts = artifacts::dir();
     let map_palette = city.map_palette();
     let street_style = Style {
         palette: &map_palette,
@@ -192,58 +190,4 @@ fn small_city_is_structurally_sound_and_renders() {
         roofs.iter().any(|&t| grid.count(t) > 0),
         "expected at least one roof: {histogram:?}"
     );
-}
-
-/// With the global connectivity constraint the result is one walkable network, not almost one.
-///
-/// This is also the hardest workload the solver runs: 81 module variants, and a constraint that
-/// prunes possibilities between propagation steps until it changes nothing. It is a proof of
-/// concept, not how the city is normally generated; see docs/constraints.md.
-#[tokio::test]
-async fn the_connectivity_constraint_leaves_one_walkable_network() {
-    use std::sync::Arc;
-    use wfc_core::constraint::GlobalConstraint;
-
-    let city = city::city();
-    let m = &city.modules;
-    let (width, height, depth) = (8, 8, 5);
-    let mut initial = PossibilityGrid::new(width, height, depth, m.variants.len());
-    city::constrain_city(&mut initial, &city);
-
-    let constraint: Arc<dyn GlobalConstraint> = Arc::new(city::connectivity_constraint(&city));
-    let solved = common::solve_rules(
-        &initial,
-        &m.rules,
-        Some(&m.tileset.weights),
-        Some(constraint),
-        BoundaryCondition::Finite,
-        3,
-    )
-    .await;
-    eprintln!(
-        "constrained {width}x{height}x{depth} city: attempt {}, run {:?}",
-        solved.attempts, solved.solve_time
-    );
-    let grid =
-        TileGrid::from_possibilities(&solved.grid).expect("every cell collapsed to one tile");
-
-    let violations = adjacency_violations(&grid, &m.rules, BoundaryCondition::Finite);
-    assert!(
-        violations.is_empty(),
-        "{} adjacency violations, first: {:?}",
-        violations.len(),
-        violations.first()
-    );
-    let disconnected = city::disconnected_walkable_cells(&grid, &city);
-    assert!(
-        disconnected.is_empty(),
-        "{} walkable cells cut off: {disconnected:?}",
-        disconnected.len()
-    );
-
-    let path = common::artifact_dir().join("city_connected.png");
-    render::render_voxel_isometric(&grid, &city.voxels, 6)
-        .save(&path)
-        .expect("write PNG");
-    eprintln!("rendered {}", path.display());
 }

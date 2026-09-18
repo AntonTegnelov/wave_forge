@@ -5,10 +5,22 @@
 //! Tests therefore assert invariants mechanically instead of relying on someone looking at an
 //! image.
 
-use wfc_core::BoundaryCondition;
 use wfc_core::Domains;
-use wfc_core::grid::PossibilityGrid;
 use wfc_rules::AdjacencyRules;
+
+/// How a grid's edges behave when the checker looks for a neighbour.
+///
+/// A generated world has no edges to speak of: it reaches as far as its extent, and what lies
+/// beyond a chunk's faces is either a solved neighbour or the prior's own masks. The distinction
+/// survives here because a checker still has to decide what the cell past the last one is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BoundaryCondition {
+    /// Edges wrap around, so the grid is a torus.
+    Periodic,
+    /// The grid ends; a cell outside it has no tile to disagree with.
+    #[default]
+    Finite,
+}
 
 /// Neighbour offsets in the axis order used by [`AdjacencyRules`]: +x, -x, +y, -y, +z, -z.
 pub const AXIS_OFFSETS: [(isize, isize, isize); 6] = [
@@ -22,8 +34,8 @@ pub const AXIS_OFFSETS: [(isize, isize, isize); 6] = [
 
 /// A fully collapsed grid: exactly one tile index per cell.
 ///
-/// Kept separate from `PossibilityGrid` so checks and renderers work the same on solver output
-/// and on grids read back from the CLI's text output.
+/// The solver works on domains and the store on chunks; this is the flat, decided grid that checks
+/// and renderers want, and what the CLI's text output reads back into.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TileGrid {
     pub width: usize,
@@ -78,26 +90,7 @@ impl TileGrid {
         Self::new(width, height, depth, tiles)
     }
 
-    /// Converts solver output, failing on any cell that is not collapsed to exactly one tile.
-    pub fn from_possibilities(grid: &PossibilityGrid) -> Result<Self, String> {
-        let mut tiles = Vec::with_capacity(grid.width * grid.height * grid.depth);
-        for z in 0..grid.depth {
-            for y in 0..grid.height {
-                for x in 0..grid.width {
-                    let cell = grid
-                        .get(x, y, z)
-                        .ok_or_else(|| format!("cell ({x}, {y}, {z}) is out of bounds"))?;
-                    match cell.count_ones() {
-                        1 => tiles.push(cell.first_one().expect("one bit is set")),
-                        n => return Err(format!("cell ({x}, {y}, {z}) has {n} possible tiles")),
-                    }
-                }
-            }
-        }
-        Self::new(grid.width, grid.height, grid.depth, tiles)
-    }
-
-    /// Parses the text format written by the `wave_forge` CLI: space-separated tile indices along
+    /// Parses the text format the `wave-forge` CLI writes: space-separated tile indices along
     /// `x`, one line per `y` row, and a blank line between `z` layers.
     pub fn parse_text(text: &str) -> Result<Self, String> {
         let mut layers: Vec<Vec<Vec<usize>>> = vec![Vec::new()];
@@ -315,15 +308,5 @@ mod tests {
                 neighbor_tile: 1
             }
         );
-    }
-
-    #[test]
-    fn converts_only_fully_collapsed_possibility_grids() {
-        let mut grid = PossibilityGrid::new(2, 1, 1, 2);
-        assert!(TileGrid::from_possibilities(&grid).is_err());
-        grid.collapse(0, 0, 0, 1).unwrap();
-        grid.collapse(1, 0, 0, 0).unwrap();
-        let tiles = TileGrid::from_possibilities(&grid).unwrap();
-        assert_eq!((tiles.get(0, 0, 0), tiles.get(1, 0, 0)), (1, 0));
     }
 }
