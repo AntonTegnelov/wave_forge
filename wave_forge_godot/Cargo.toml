@@ -1,0 +1,18 @@
+# Its own workspace: an engine brings hundreds of crates with it, and the library's own workspace
+# should not build them.
+[workspace]
+
+[package]
+name = "wave_forge_godot"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+description = "Wave Forge as a Godot GDExtension: chunks generated around a focus, on a worker thread."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+godot = "0.5.5"
+wave_forge = { path = ".." }

@@ -1,0 +1,37 @@
+// Four materials in bands: water only touches sand, sand touches grass, grass touches forest.
+// Vertically a material only meets itself, so a correct world has uniform columns, which is what
+// the verification script checks from GDScript.
+(
+    tiles: [
+        ( name: "water", weight: 1.0 ),
+        ( name: "sand", weight: 1.0 ),
+        ( name: "grass", weight: 2.0 ),
+        ( name: "forest", weight: 1.0 ),
+    ],
+    adjacency: [
+        ("water", "water", "+x"), ("water", "water", "-x"),
+        ("water", "water", "+y"), ("water", "water", "-y"),
+        ("water", "water", "+z"), ("water", "water", "-z"),
+        ("sand", "sand", "+x"), ("sand", "sand", "-x"),
+        ("sand", "sand", "+y"), ("sand", "sand", "-y"),
+        ("sand", "sand", "+z"), ("sand", "sand", "-z"),
+        ("grass", "grass", "+x"), ("grass", "grass", "-x"),
+        ("grass", "grass", "+y"), ("grass", "grass", "-y"),
+        ("grass", "grass", "+z"), ("grass", "grass", "-z"),
+        ("forest", "forest", "+x"), ("forest", "forest", "-x"),
+        ("forest", "forest", "+y"), ("forest", "forest", "-y"),
+        ("forest", "forest", "+z"), ("forest", "forest", "-z"),
+        ("water", "sand", "+x"), ("sand", "water", "-x"),
+        ("sand", "water", "+x"), ("water", "sand", "-x"),
+        ("water", "sand", "+y"), ("sand", "water", "-y"),
+        ("sand", "water", "+y"), ("water", "sand", "-y"),
+        ("sand", "grass", "+x"), ("grass", "sand", "-x"),
+        ("grass", "sand", "+x"), ("sand", "grass", "-x"),
+        ("sand", "grass", "+y"), ("grass", "sand", "-y"),
+        ("grass", "sand", "+y"), ("sand", "grass", "-y"),
+        ("grass", "forest", "+x"), ("forest", "grass", "-x"),
+        ("forest", "grass", "+x"), ("grass", "forest", "-x"),
+        ("grass", "forest", "+y"), ("forest", "grass", "-y"),
+        ("forest", "grass", "+y"), ("grass", "forest", "-y"),
+    ],
+)
