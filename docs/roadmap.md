@@ -33,9 +33,9 @@ abstraction is a cost question rather than a capability one.
 
 **Goal:** a Bevy plugin and a Godot GDExtension published to the Godot Asset Library, both thin wrappers around the library.
 
-This is the next phase. The library API exists and was designed against what each engine actually
-owns, so the remaining risk is engine scheduling rather than the API's shape
-([architecture.md §5.1](architecture.md#51-the-solver-seam)):
+Both exist and are verified against a real engine; neither is published. The library API was
+designed against what each engine actually owns, and that is what each integration turned out to
+need ([architecture.md §5.1](architecture.md#51-the-solver-seam)):
 
 - **Bevy** is done (`wave_forge_bevy`): the plugin builds a generator on Bevy's own device with
   `build_on`, holds it as a resource, and asks, starts and collects from two systems per frame. It
@@ -43,13 +43,22 @@ owns, so the remaining risk is engine scheduling rather than the API's shape
   device a matter of handing two resources over. The one wrinkle worth knowing: a kernel
   specialisation takes seconds to compile, so `WaveForgePlugin::warm` exists to do it while a game
   loads.
-- **Godot** runs compute on a `RenderingDevice` that takes SPIR-V, blocks in `sync()`, and belongs to
-  one thread. Two shapes need a prototype to choose between: a `ComputeBackend` whose dispatch is a
-  `WorkerThreadPool` task, with `is_done` as `is_task_completed`, so `_process` drives the same
-  non-blocking poll loop as Bevy; or, if a local device will not tolerate being driven from whichever
-  pool thread takes the task, a `Worker` owning the device with `_process` draining events into
-  signals. Whether to translate WGSL to SPIR-V with naga at runtime or to bake a matrix at build time
-  is the other question the prototype answers.
+- **Godot** is done as far as a game is concerned (`wave_forge_godot`), on the second of the two
+  shapes we had in mind: a `Worker` owns the generator on a thread with a wgpu device of its own, and
+  `_process` drains its events into signals. Nothing on Godot's side waits for the device, and
+  nothing on the generating thread touches a Godot object, so the extension needs none of
+  godot-rust's thread-safety features. `verify.sh` drives it in a real Godot and checks what it
+  produced.
+
+  **Still open: generating on Godot's own `RenderingDevice`.** It would avoid a second device and its
+  allocator, which is the reason the `ComputeBackend` seam exists. It needs the kernel's WGSL
+  translated to SPIR-V (naga can, either at runtime or as a build-time matrix) and Godot's compute
+  API driven from a worker thread, with `is_done` as `is_task_completed` on a `WorkerThreadPool`
+  task. What it *cannot* have here is a measurement: this dev container reaches its GPU through
+  Mesa's dozen, which does not expose `VK_KHR_swapchain`, and Godot refuses to create any
+  `RenderingDevice` without it. Godot does run on the software Vulkan device (lavapipe), which is
+  enough to check that such a backend produces correct worlds but says nothing about whether it is
+  faster than a device of its own. The comparison belongs on a desktop Godot.
 
 ## Phase 2: layered world generation
 
