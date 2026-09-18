@@ -16,6 +16,11 @@ pub enum ChunkEvent {
     /// The chunk's tiles are new or have changed, so anything built from them is stale. A repair
     /// reports every chunk it rewrote, not only the one it was repairing.
     Updated(ChunkCoord),
+    /// The chunk left every focus and was dropped, so anything built from it can go too.
+    ///
+    /// Only a [`crate::Worker`] reports this: [`WorldGenerator::evict_outside`] hands the chunks
+    /// straight back to its caller instead.
+    Evicted(ChunkCoord),
     /// The chunk could not be generated. Asking again would fail the same way, so the generator
     /// leaves it alone until its neighbourhood changes.
     Failed {

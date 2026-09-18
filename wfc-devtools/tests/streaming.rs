@@ -184,7 +184,7 @@ fn live_streaming_keeps_ahead_of_a_walking_player() {
             ticks.push((started.elapsed().as_secs_f64() * 1000.0, wanted));
             failed.extend(events.iter().filter_map(|event| match event {
                 ChunkEvent::Failed { chunk, .. } => Some(*chunk),
-                ChunkEvent::Updated(_) => None,
+                ChunkEvent::Updated(_) | ChunkEvent::Evicted(_) => None,
             }));
         }
         focus_m += WALK_M_S * TICK_S;

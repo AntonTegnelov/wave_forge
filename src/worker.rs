@@ -8,6 +8,7 @@
 use crate::generator::{ChunkEvent, GeneratorStats, WorldGenerator};
 use crate::scheduler::FocusPoint;
 use crate::{Chunk, ChunkCoord, Error, Solver};
+use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
 
@@ -16,23 +17,33 @@ enum Command {
     Request(Vec<FocusPoint>),
     Evict { focus: Vec<FocusPoint>, margin: u32 },
     Import(Box<Chunk>),
-    Chunk(ChunkCoord),
     Stop,
 }
 
 /// What the worker's thread reports.
+///
+/// A batch's events come with the tiles they are about. Anything else would leave a caller with a
+/// coordinate and no way to read it without a round trip to a thread that may be mid-dispatch.
 enum Report {
-    Events(Vec<ChunkEvent>),
-    Chunk(Option<Box<Chunk>>),
-    Stats(Box<GeneratorStats>),
+    Batch {
+        events: Vec<ChunkEvent>,
+        chunks: Vec<Chunk>,
+        stats: Box<GeneratorStats>,
+    },
+    Evicted(Vec<Chunk>),
     Failed(String),
 }
 
 /// A generator running on its own thread.
+///
+/// The worker keeps the chunks it has reported, so [`Worker::chunk`] reads tiles without waiting
+/// for the generating thread. [`Worker::drain`] is what moves both forward: it takes the events and
+/// the tiles that came with them.
 pub struct Worker {
     commands: Sender<Command>,
     reports: Receiver<Report>,
     thread: Option<JoinHandle<()>>,
+    chunks: HashMap<ChunkCoord, Chunk>,
     stats: GeneratorStats,
     failure: Option<String>,
 }
@@ -64,6 +75,7 @@ impl Worker {
             commands,
             reports: results,
             thread: Some(thread),
+            chunks: HashMap::new(),
             stats: GeneratorStats::default(),
             failure: None,
         }
@@ -87,35 +99,48 @@ impl Worker {
         self.send(Command::Import(Box::new(chunk)));
     }
 
-    /// Takes the events the worker has produced, without blocking.
+    /// Takes the events the worker has produced, without blocking, and with them the tiles of
+    /// every chunk they are about.
     pub fn drain(&mut self) -> Vec<ChunkEvent> {
         let mut events = Vec::new();
         loop {
             match self.reports.try_recv() {
-                Ok(Report::Events(batch)) => events.extend(batch),
-                Ok(Report::Stats(stats)) => self.stats = *stats,
-                Ok(Report::Chunk(_)) => {}
+                Ok(Report::Batch {
+                    events: batch,
+                    chunks,
+                    stats,
+                }) => {
+                    events.extend(batch);
+                    for chunk in chunks {
+                        self.chunks.insert(chunk.coord, chunk);
+                    }
+                    self.stats = *stats;
+                }
+                Ok(Report::Evicted(chunks)) => {
+                    for chunk in &chunks {
+                        self.chunks.remove(&chunk.coord);
+                    }
+                    events.extend(
+                        chunks
+                            .into_iter()
+                            .map(|chunk| ChunkEvent::Evicted(chunk.coord)),
+                    );
+                }
                 Ok(Report::Failed(reason)) => self.failure = Some(reason),
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => return events,
             }
         }
     }
 
-    /// A chunk's tiles, waiting for the worker to answer.
-    pub fn chunk(&mut self, coord: ChunkCoord) -> Option<Chunk> {
-        self.send(Command::Chunk(coord));
-        while let Ok(report) = self.reports.recv() {
-            match report {
-                Report::Chunk(chunk) => return chunk.map(|chunk| *chunk),
-                Report::Events(_) => {}
-                Report::Stats(stats) => self.stats = *stats,
-                Report::Failed(reason) => {
-                    self.failure = Some(reason);
-                    return None;
-                }
-            }
-        }
-        None
+    /// A chunk's tiles, as of the last [`Worker::drain`].
+    #[must_use]
+    pub fn chunk(&self, coord: ChunkCoord) -> Option<&Chunk> {
+        self.chunks.get(&coord)
+    }
+
+    /// Every chunk the worker has reported and not evicted.
+    pub fn chunks(&self) -> impl Iterator<Item = &Chunk> {
+        self.chunks.values()
     }
 
     /// What generation has cost, as of the last report.
@@ -167,16 +192,15 @@ where
             match orders.try_recv() {
                 Ok(Command::Request(focus)) => world.request(&focus),
                 Ok(Command::Evict { focus, margin }) => {
-                    world.evict_outside(&focus, margin);
+                    let dropped = world.evict_outside(&focus, margin);
+                    if !dropped.is_empty() {
+                        let _ = reports.send(Report::Evicted(dropped));
+                    }
                 }
                 Ok(Command::Import(chunk)) => {
                     if let Err(error) = world.import(*chunk) {
                         let _ = reports.send(Report::Failed(error.to_string()));
                     }
-                }
-                Ok(Command::Chunk(coord)) => {
-                    let chunk = world.chunk(coord).cloned().map(Box::new);
-                    let _ = reports.send(Report::Chunk(chunk));
                 }
                 Ok(Command::Stop) => return,
                 Err(TryRecvError::Empty) => break,
@@ -193,29 +217,39 @@ where
                 Ok(Command::Stop) | Err(_) => return,
                 Ok(Command::Request(focus)) => world.request(&focus),
                 Ok(Command::Evict { focus, margin }) => {
-                    world.evict_outside(&focus, margin);
+                    let dropped = world.evict_outside(&focus, margin);
+                    if !dropped.is_empty() {
+                        let _ = reports.send(Report::Evicted(dropped));
+                    }
                 }
                 Ok(Command::Import(chunk)) => {
                     if let Err(error) = world.import(*chunk) {
                         let _ = reports.send(Report::Failed(error.to_string()));
                     }
                 }
-                Ok(Command::Chunk(coord)) => {
-                    let chunk = world.chunk(coord).cloned().map(Box::new);
-                    let _ = reports.send(Report::Chunk(chunk));
-                }
             }
         }
     }
 }
 
-/// One batch of generation, reported as it finishes.
+/// One batch of generation, reported with the tiles it produced.
 fn work<S: Solver>(world: &mut WorldGenerator<S>, reports: &Sender<Report>) -> Result<(), Error> {
     world.tick()?;
     let events = world.wait()?;
-    if !events.is_empty() {
-        let _ = reports.send(Report::Events(events));
-        let _ = reports.send(Report::Stats(Box::new(*world.stats())));
+    if events.is_empty() {
+        return Ok(());
     }
+    let chunks: Vec<Chunk> = events
+        .iter()
+        .filter_map(|event| match event {
+            ChunkEvent::Updated(coord) => world.chunk(*coord).cloned(),
+            ChunkEvent::Failed { .. } | ChunkEvent::Evicted(_) => None,
+        })
+        .collect();
+    let _ = reports.send(Report::Batch {
+        events,
+        chunks,
+        stats: Box::new(*world.stats()),
+    });
     Ok(())
 }

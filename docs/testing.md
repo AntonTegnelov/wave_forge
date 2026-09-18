@@ -19,6 +19,8 @@ Wave Forge is a parallel program whose main work happens on the GPU. Its bugs ra
 | Library contract | `tests/facade.rs` | What the facade promises: the same requests give the same world, the order they are asked in does not matter, no batch holds two chunks that share a face, a repair reports every chunk it rewrote, a worker generates the same world on a thread | No, it runs on the CPU reference |
 | End to end | `wfc-devtools/tests/` | Whole runs on reference rule sets: a 2D coastline and a small 3D city, with invariants checked and images written | Yes |
 | Streaming (opt-in) | `wfc-devtools/tests/streaming.rs` | A whole world asked for at once, and a city generated in front of a walking player against a 500 ms tick budget; `#[ignore]`d | Yes |
+| Bevy plugin | `wave_forge_bevy/tests/` | `wiring.rs` on the CPU reference: a focus entity generates around itself, messages arrive, eviction is reported, the lattice sits where Bevy's Y-up space says. `shared_device.rs` and `real_render_plugin.rs` (`#[ignore]`d) generate a city on a device Bevy created | Only the two ignored ones |
+| Godot extension | `wave_forge_godot/godot/verify.gd` | A focus walks a strip of chunks and back inside a real Godot: chunks arrive, chunks behind are dropped, tiles obey the rules across seams, a chunk returned to is unchanged, and the main loop stays fast | Yes, and a Godot binary |
 
 "Needs a GPU" means a Vulkan, Metal or DirectX 12 device. Wave Forge has no CPU fallback ([vision.md](vision.md#non-goals)). In the dev container tests run on the host RTX 3070 through Mesa's dozen driver ([development.md](development.md#toolchain-and-environment)). Where no GPU is available, a software Vulkan device (Mesa llvmpipe, or `WGPU_ADAPTER_NAME=llvmpipe`) is good enough to check correctness, but never for performance.
 
@@ -81,6 +83,28 @@ against one CPU thread and against all of them, how that scales with the chunks 
 that every chunk a many-chunk dispatch reports as solved is valid. `streaming` measures whole worlds
 through the library, so what a game would get is what is timed. A timing describes one build on one
 machine and driver stack; see [solver-fit.md](solver-fit.md) for what each number means.
+
+## The engine integrations
+
+Both live in their own workspaces, so the library's `cargo test --workspace` does not compile an
+engine. Run them explicitly:
+
+```bash
+cargo test --manifest-path wave_forge_bevy/Cargo.toml                       # no device needed
+cargo test --manifest-path wave_forge_bevy/Cargo.toml --release -- --ignored --nocapture
+GODOT=/path/to/godot wave_forge_godot/verify.sh                             # needs a Godot 4 binary
+```
+
+`verify.sh` builds the extension, copies it into `wave_forge_godot/godot`, writes the extension list
+Godot would otherwise only write from the editor, and runs `verify.gd` headless. It exits non-zero on
+any failure and prints what it generated.
+
+Two environment details matter in this dev container. Godot has to be started with
+`LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so`, or it crashes at shutdown for the same reason test
+binaries do ([development.md](development.md#toolchain-and-environment)). And Godot's own
+`RenderingDevice` cannot be created here at all, with or without a display, because Mesa's dozen does
+not expose `VK_KHR_swapchain`; that only limits the backend discussed in
+[roadmap.md](roadmap.md#engine-integrations), not the extension, which brings its own device.
 
 ## Known gaps
 

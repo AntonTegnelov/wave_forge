@@ -11,6 +11,8 @@ How to build, test and contribute. For *what* we are building and *why*, read [v
 - **wgpu only sees the RTX 3070 when the instance is built from the environment.** Mesa marks dozen non-conformant and wgpu hides such adapters unless `WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER=1` (set by the container) is applied, which happens only through `InstanceDescriptor::new_without_display_handle_from_env()`. All wave_forge instances are created that way; keep it so for new ones. `WGPU_ADAPTER_NAME=3070` or `WGPU_ADAPTER_NAME=llvmpipe` forces an adapter.
 - **Timings through dozen are not native.** The translation layer adds dispatch and transfer overhead, so compare measurements within the container, and confirm conclusions about CPU/GPU crossover points on native hardware.
 - **Known issue: GPU test binaries crash at thread exit on dozen.** When the wgpu instance is dropped, WSL's `libd3d12core.so` is unloaded while other threads still hold its thread-local destructors, so multi-threaded binaries such as test runners die with `SIGSEGV` after the tests themselves pass. The dev container image works around it by setting the Cargo runner variable `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER` to preload `/usr/lib/wsl/lib/libd3d12core.so` for binaries Cargo runs. When running a test binary directly, set that variable yourself. The workaround lives in the container, not the repository, because the bug is in the WSL driver stack and a preload would be wrong on any other machine.
+- **Godot cannot create a `RenderingDevice` in this container.** Mesa's dozen does not expose `VK_KHR_swapchain`, which Godot requires of any device, so `RenderingServer.create_local_rendering_device()` returns null on the RTX 3070 whether or not a display exists (`--headless`, or X11 through `xvfb-run`). Forcing the software device with `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json` does give a working `RenderingDevice`, slowly. The Godot extension does not need one, since it brings its own wgpu device, so this only limits prototyping a `RenderingDevice` backend.
+- **A crashed container leaves zero-filled build artifacts.** `rustc` then reports "memory map must have a non-zero length", or a linked library fails with "invalid ELF header". `cargo clean` for the affected workspace is the fix; the files are not recoverable.
 - **Keep GPU work bounded.** A runaway shader can hang the GPU and make Windows reset its graphics driver, so the kernel caps how many steps a region may take and tests keep their regions and batches small. `XDG_RUNTIME_DIR` warnings in test output come from the windowing libraries and are harmless.
 
 ## Building and testing
@@ -18,6 +20,8 @@ How to build, test and contribute. For *what* we are building and *why*, read [v
 ```bash
 cargo build --workspace
 cargo test --workspace
+# The engine integrations are their own workspaces; see testing.md.
+cargo test --manifest-path wave_forge_bevy/Cargo.toml
 cargo run -p wfc-devtools --release --bin wave-forge -- --rule-file examples/simple-pattern.ron --width 8 --height 8 --depth 8
 ```
 

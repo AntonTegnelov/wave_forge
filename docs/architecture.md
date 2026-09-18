@@ -44,7 +44,7 @@ Each principle is a consequence of the vision's priority list (performance first
 
 Dependencies only point downwards. The model and the seams can be used, fuzzed, benchmarked and profiled with nothing above them, and an engine integration cannot leak engine types into the core: it supplies either a [`Solver`](#51-the-solver-seam) or a [`ComputeBackend`](#82-the-backend-seam) and gets plain data back.
 
-There are two seams rather than one because engines differ in what they own. Bevy owns a wgpu device and will share it, so its plugin uses the wgpu backend and the kernel unchanged. Godot owns a `RenderingDevice` that takes SPIR-V and blocks in `sync()`, so its extension supplies a backend of its own, or, if that turns out to be the wrong shape, a whole solver.
+There are two seams rather than one because engines differ in what they own. Bevy owns a wgpu device and shares it, so `wave_forge_bevy` uses the wgpu backend and the kernel unchanged. Godot owns a `RenderingDevice` that takes SPIR-V and blocks in `sync()`, and `wave_forge_godot` does not use it: it runs the generator on a [`Worker`](#53-a-thread-when-an-engine-needs-one) with a device of its own, which is what keeps Godot's frame loop free without translating a kernel. A backend over `RenderingDevice` would save the second device; the seam is there for it (see the Godot section of [roadmap.md](roadmap.md#engine-integrations)).
 
 ## 3. Model
 
@@ -206,7 +206,7 @@ Nothing of this exists yet, and it should not be built before Phase 1 is solid. 
 
 `ComputeBackend` is everything the kernel needs from a device: limits, a pipeline from WGSL text, buffers, writes, a dispatch with its readbacks, and either polling or waiting on a submission. `can_poll` is part of it because a Godot local device cannot be asked without blocking.
 
-`WgpuBackend::from_env` builds a device of its own (and, in this dev container, allows Mesa's non-conformant dozen adapter); `WgpuBackend::from_device` takes one an engine already owns, which is how a Bevy plugin shares Bevy's.
+`WgpuBackend::from_env` builds a device of its own (and, in this dev container, allows Mesa's non-conformant dozen adapter); `WgpuBackend::from_device` takes one an engine already owns, which is how the Bevy plugin shares Bevy's. Sharing requires the plugin and the engine to agree on a wgpu version, which is why `wave_forge_bevy` tracks the Bevy release that uses ours.
 
 ## 9. Errors and observability
 
