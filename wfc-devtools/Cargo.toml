@@ -13,7 +13,9 @@ clap = { version = "4.6.7", features = ["derive"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 wfc-core = { path = "../wfc-core" }
 wfc-rules = { path = "../wfc-rules" }
+# The library the CLI and the end-to-end tests drive.
+wave_forge = { path = ".." }
 
 [dev-dependencies]
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
-wfc-gpu = { path = "../wfc-gpu" }
+# The CPU reference solver is the ground truth for the tests here, never a fallback.
+wfc-core = { path = "../wfc-core", features = ["reference"] }

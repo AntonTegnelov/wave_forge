@@ -1,0 +1,3 @@
+# The built extension is copied in by verify.sh, and Godot's own caches.
+bin/
+.godot/

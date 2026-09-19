@@ -25,7 +25,8 @@ impl Transformation {
     /// Calculates the resulting axis index after applying the transformation.
     /// Assumes a standard 3D axis convention:
     /// 0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
-    #[must_use] pub fn transform_axis(self, axis: usize) -> usize {
+    #[must_use]
+    pub fn transform_axis(self, axis: usize) -> usize {
         match self {
             Self::Identity => axis,
             Self::Rot90 => match axis {
@@ -74,7 +75,8 @@ impl Transformation {
     }
 
     /// Returns the inverse transformation.
-    #[must_use] pub const fn inverse(self) -> Self {
+    #[must_use]
+    pub const fn inverse(self) -> Self {
         match self {
             Self::Identity => Self::Identity,
             Self::Rot90 => Self::Rot270,
@@ -89,7 +91,8 @@ impl Transformation {
     /// Combines this transformation with another (applies `other` then `self`).
     /// Equivalent to matrix multiplication: `self * other`.
     /// NOTE: Combination logic for reflections is currently unimplemented.
-    #[must_use] pub fn combine(self, other: Self) -> Self {
+    #[must_use]
+    pub fn combine(self, other: Self) -> Self {
         match (self, other) {
             // Identity cases
             (Self::Identity, _) => other,
@@ -122,8 +125,8 @@ impl Transformation {
             }
 
             // Any combination involving a Flip is currently unimplemented
-            (Self::FlipX | Self::FlipY | Self::FlipZ, _) |
-(_, Self::FlipX | Self::FlipY | Self::FlipZ) => {
+            (Self::FlipX | Self::FlipY | Self::FlipZ, _)
+            | (_, Self::FlipX | Self::FlipY | Self::FlipZ) => {
                 panic!("Transformation::combine is not implemented for reflections yet.");
             }
         }
@@ -257,13 +260,15 @@ impl TileSet {
     }
 
     /// Gets the total number of unique transformed tile states.
-    #[must_use] pub const fn num_transformed_tiles(&self) -> usize {
+    #[must_use]
+    pub const fn num_transformed_tiles(&self) -> usize {
         self.num_transformed_tiles
     }
 
     /// Gets the unique `TransformedTileId` (usize index) for a given base tile and transformation.
     /// Returns `None` if the transformation is not allowed for the base tile.
-    #[must_use] pub fn get_transformed_id(
+    #[must_use]
+    pub fn get_transformed_id(
         &self,
         base_id: TileId,
         transformation: Transformation,
@@ -275,7 +280,8 @@ impl TileSet {
 
     /// Gets the base tile and transformation corresponding to a `TransformedTileId` (usize index).
     /// Returns `None` if the index is out of bounds.
-    #[must_use] pub fn get_base_tile_and_transform(
+    #[must_use]
+    pub fn get_base_tile_and_transform(
         &self,
         transformed_id: usize,
     ) -> Option<(TileId, Transformation)> {
@@ -285,7 +291,8 @@ impl TileSet {
     /// Gets the weight for a specific `TileId`.
     ///
     /// Returns `None` if the `TileId` is out of bounds.
-    #[must_use] pub fn get_weight(&self, tile_id: TileId) -> Option<f32> {
+    #[must_use]
+    pub fn get_weight(&self, tile_id: TileId) -> Option<f32> {
         self.weights.get(tile_id.0).copied()
     }
 }
@@ -364,18 +371,21 @@ impl AdjacencyRules {
     }
 
     /// Gets the total number of unique transformed tile states used in these rules.
-    #[must_use] pub const fn num_tiles(&self) -> usize {
+    #[must_use]
+    pub const fn num_tiles(&self) -> usize {
         self.num_tiles
     }
 
     /// Gets the number of axes/directions these rules are defined for.
-    #[must_use] pub const fn num_axes(&self) -> usize {
+    #[must_use]
+    pub const fn num_axes(&self) -> usize {
         self.num_axes
     }
 
     /// Provides read-only access to the internal `HashMap` storing allowed adjacencies.
     /// Useful for debugging or advanced analysis.
-    #[must_use] pub const fn get_allowed_rules_map(&self) -> &HashMap<(usize, usize, usize), bool> {
+    #[must_use]
+    pub const fn get_allowed_rules_map(&self) -> &HashMap<(usize, usize, usize), bool> {
         &self.allowed
     }
 
@@ -384,7 +394,8 @@ impl AdjacencyRules {
     /// Performs bounds checks internally and returns `false` if indices are out of range.
     /// Returns `true` only if the specific rule `(axis, ttid1, ttid2)` exists in the map.
     #[inline]
-    #[must_use] pub fn check(
+    #[must_use]
+    pub fn check(
         &self,
         transformed_tile1_id: usize,
         transformed_tile2_id: usize,
@@ -406,7 +417,8 @@ impl AdjacencyRules {
     /// 0: +X, 1: -X, 2: +Y, 3: -Y, 4: +Z, 5: -Z
     /// Panics if the input axis is invalid (>= `num_axes`, usually 6).
     #[inline]
-    #[must_use] pub fn opposite_axis(&self, axis: usize) -> usize {
+    #[must_use]
+    pub fn opposite_axis(&self, axis: usize) -> usize {
         match axis {
             0 => 1,
             1 => 0,
@@ -435,7 +447,8 @@ impl AdjacencyRules {
     ///
     /// A value between 0.0 and 1.0 representing the weight of the rule.
     #[inline]
-    #[must_use] pub fn get_weight(
+    #[must_use]
+    pub fn get_weight(
         &self,
         transformed_tile1_id: usize,
         transformed_tile2_id: usize,
@@ -465,13 +478,15 @@ impl AdjacencyRules {
 
     /// Provides read-only access to the internal `HashMap` storing weighted adjacencies.
     /// Useful for debugging or advanced analysis.
-    #[must_use] pub const fn get_weighted_rules_map(&self) -> &HashMap<(usize, usize, usize), f32> {
+    #[must_use]
+    pub const fn get_weighted_rules_map(&self) -> &HashMap<(usize, usize, usize), f32> {
         &self.weighted
     }
 
     /// Returns the weight associated with the *base tile* underlying the `transformed_tile_id`.
     /// **Placeholder:** Currently returns 1.0. Requires access to `TileSet` for correct implementation.
-    #[must_use] pub const fn get_tile_weight(&self, transformed_tile_id: usize) -> f32 {
+    #[must_use]
+    pub const fn get_tile_weight(&self, transformed_tile_id: usize) -> f32 {
         // TODO: Implement correctly using TileSet access.
         // This requires either storing Arc<TileSet> or passing TileSet reference.
         if transformed_tile_id >= self.num_tiles {
@@ -692,7 +707,11 @@ mod transformation_tests {
     fn inverse_undoes_every_transformation() {
         for t in ALL {
             for axis in 0..6 {
-                assert_eq!(t.inverse().transform_axis(t.transform_axis(axis)), axis, "{t:?} on axis {axis}");
+                assert_eq!(
+                    t.inverse().transform_axis(t.transform_axis(axis)),
+                    axis,
+                    "{t:?} on axis {axis}"
+                );
             }
         }
     }
@@ -703,7 +722,11 @@ mod transformation_tests {
         // transformed copy of a symmetric rule would no longer be symmetric.
         for t in ALL {
             for axis in 0..6 {
-                assert_eq!(t.transform_axis(axis ^ 1), t.transform_axis(axis) ^ 1, "{t:?} on axis {axis}");
+                assert_eq!(
+                    t.transform_axis(axis ^ 1),
+                    t.transform_axis(axis) ^ 1,
+                    "{t:?} on axis {axis}"
+                );
             }
         }
     }

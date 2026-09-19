@@ -1,9 +1,9 @@
 // Only use TileId and Transformation when serde feature is enabled
+use crate::LoadError;
 use crate::formats::FormatParser;
 use crate::types::{AdjacencyRules, TileSet, TileSetError};
 #[cfg(feature = "serde")]
 use crate::types::{TileId, Transformation};
-use crate::LoadError;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
 #[cfg(feature = "serde")] // Only need HashMap when deserializing
@@ -66,11 +66,9 @@ fn axis_name_to_index(axis_name: &str) -> Result<usize, LoadError> {
         "-y" => Ok(3),
         "+z" => Ok(4),
         "-z" => Ok(5),
-        _ => {
-            Err(LoadError::InvalidData(format!(
-                "Invalid axis name: {axis_name}"
-            )))
-        }
+        _ => Err(LoadError::InvalidData(format!(
+            "Invalid axis name: {axis_name}"
+        ))),
     }
 }
 
@@ -83,9 +81,8 @@ impl FormatParser for RonFormatParser {
     #[cfg(feature = "serde")]
     fn parse(&self, ron_content: &str) -> Result<(TileSet, AdjacencyRules), LoadError> {
         // 1. Deserialize the RON string
-        let rule_file: RonRuleFile = ron::from_str(ron_content).map_err(|e| {
-            LoadError::ParseError(format!("RON deserialization failed: {e}"))
-        })?;
+        let rule_file: RonRuleFile = ron::from_str(ron_content)
+            .map_err(|e| LoadError::ParseError(format!("RON deserialization failed: {e}")))?;
 
         // 2. Validate tiles
         if rule_file.tiles.is_empty() {
