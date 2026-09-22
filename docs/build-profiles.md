@@ -19,7 +19,7 @@ Binaries land in `target/<profile>/`, for example `target/profiling/wave_forge`.
 
 - **`lto = true` (fat link-time optimisation).** Lets LLVM inline and specialise across crate boundaries: our crates, `wgpu`, `bitvec` and friends. That matters most for the small, hot, generic functions that static dispatch is supposed to make cheap. Thin LTO is typically 10–20% faster than none; fat LTO can go further but costs the most compile time, which is the trade-off this project accepts.
 - **`codegen-units = 1`.** Compiling each crate as one unit gives the optimiser the whole crate at once, for better inlining and dead-code removal, at the cost of parallel compilation.
-- **`strip = true`.** Removes symbols from shipped binaries. Size matters for games and the Godot Asset Library, and nobody profiles a shipped build.
+- **`strip = true`.** Removes symbols from shipped binaries. Size matters for games and the Godot Asset Store, and nobody profiles a shipped build.
 
 ### `profiling`
 

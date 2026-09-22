@@ -121,7 +121,7 @@ Work that publishing would require, and that pays for itself before then:
   Unlicense, except godot-rust (`godot` and its `godot-*` crates, 0.5.5), which is MPL-2.0. That is
   compatible with shipping our MIT code, but a distributed extension binary has to say where the
   MPL-covered source can be obtained.
-- **Builds for every desktop platform** the Asset Library expects (Windows, macOS, Linux). Whether
+- **Builds for every desktop platform** the Godot Asset Store expects (Windows, macOS, Linux). Whether
   and when anything is published is the owner's decision.
 
 ## Phase 2: layered world generation

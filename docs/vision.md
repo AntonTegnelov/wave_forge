@@ -10,9 +10,9 @@ A generator that produces 2D and 3D worlds from rules, delivered in three forms 
 |---|---|---|
 | **Rust library** | Any Rust program, custom engines, tools | The universal core. Everything else is a thin wrapper around it, so there is exactly one place where generation logic lives and is tested. |
 | **Bevy plugin** | Bevy games | Bevy is the main Rust game engine; a plugin lets generation plug into its ECS, asset and task systems instead of fighting them. |
-| **Godot GDExtension** (published on the Godot Asset Library) | Godot games | Godot has the largest open-source engine audience. GDExtension lets native Rust code run inside Godot without forking the engine, and the Asset Library is where Godot users look for tools. |
+| **Godot GDExtension** (published on the Godot Asset Store) | Godot games | Godot has the largest open-source engine audience. GDExtension lets native Rust code run inside Godot without forking the engine, and the Asset Store is where Godot users look for tools. |
 
-Everything is released under the **MIT license**, so it can ship inside commercial and open-source games alike, including through the Godot Asset Library. That also constrains dependencies: every crate we depend on must be MIT-compatible.
+Everything is released under the **MIT license**, so it can ship inside commercial and open-source games alike, including through the Godot Asset Store. That also constrains dependencies: every crate we depend on must be MIT-compatible.
 
 ## Priorities, in order
 
@@ -70,6 +70,7 @@ The Bevy plugin and Godot GDExtension wrap the library. Both exist; what is left
 ## Non-goals
 
 - **No CPU fallback.** A GPU (Vulkan, Metal or DirectX 12) is a hard requirement. The games this is built for always have one, and maintaining a second, CPU-only solver would double the work while hiding GPU performance problems behind a slower path that still "works". CPU threads and SIMD remain *performance tiers* for work that is faster on the CPU, not substitutes for a missing GPU.
-- **Not a game engine or renderer.** Wave Forge produces data (which tile goes where); engines turn it into meshes, scenes and gameplay. Any rendering in this repository (PNG exports, orthographic views) is **developer tooling** to inspect results, not a shipped feature.
-- **Not an editor.** Authoring tools may come later, but the product is the runtime generator.
+- **Not a game engine or renderer.** Wave Forge never draws anything or owns an engine object. The library produces render-, physics-, navigation- and gameplay-ready data (instance sets, meshes with levels of detail, colliders, navigation source geometry, spawn points); the integrations map that data onto each engine's own systems and ship reference materials and shaders ([engine-integration.md](engine-integration.md)). Any rendering in this repository itself (PNG exports, orthographic views) is **developer tooling** to inspect results.
+- **Not a standalone editor.** Authoring tools (preview, brushes, baking a region as a starting point for handcrafted work) live inside the engines' own editors, and their logic lives in the library. The product is still the runtime generator.
+- **No web target.** Web exports have no GPU compute path (Godot's is WebGL 2 only), and there is no CPU fallback.
 - **No unbounded generation.** We design for bounded regions around a focus, not whole universes.
