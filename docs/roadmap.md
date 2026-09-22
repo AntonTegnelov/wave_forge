@@ -58,14 +58,14 @@ need ([architecture.md §5.1](architecture.md#51-the-solver-seam)):
 The extension produces tile data, but nothing yet turns a city into something a player walks
 through. In order:
 
-1. **The city has to reach Godot as data.** Godot loads RON rule files, the city is a connector-based
+1. **The city has to reach Godot as data** ([#30](https://github.com/AntonTegnelov/wave_forge/issues/30)). Godot loads RON rule files, the city is a connector-based
    module set written in Rust (`wfc-devtools/src/city.rs`), and the RON loader only creates identity
    variants (A-3). Rule files learn to describe modules by their connectors, with rotated variants
    derived as `wfc_rules::modules` does today, and the city moves into a `city.ron` that the tests,
    the CLI and both engines load.
-2. **A game has to know what to draw.** Each tile is a variant of a prototype at a rotation; the
+2. **A game has to know what to draw** ([#33](https://github.com/AntonTegnelov/wave_forge/issues/33)). Each tile is a variant of a prototype at a rotation; the
    facade and both integrations expose that mapping, so a game can place one model per prototype.
-3. **No chunk may be left unplaced.** 3.2% of city chunks cannot be placed in the streaming test,
+3. **No chunk may be left unplaced** ([#31](https://github.com/AntonTegnelov/wave_forge/issues/31)). 3.2% of city chunks cannot be placed in the streaming test,
    after repairs, and a walker would see every one of them as a hole. The target is zero. The
    approach is to measure first (which border patterns fail, from the contradiction cell each solve
    reports), then fix it in the module set, so that every border it can produce has a completion, or
@@ -73,7 +73,7 @@ through. In order:
    against 32 768 B at 81 tiles. A third candidate, from the alternate architecture linked in
    [#5](https://github.com/AntonTegnelov/wave_forge/issues/5), is a coarse pass that decides chunk
    boundary faces before any interior is solved.
-4. **Models to draw.** A devtools command exports each prototype's voxel model as a mesh (glTF, which
+4. **Models to draw** ([#34](https://github.com/AntonTegnelov/wave_forge/issues/34)). A devtools command exports each prototype's voxel model as a mesh (glTF, which
    both engines import). Authored models can replace them later without touching the library.
 5. **The walk itself.** A game that places the models per chunk, builds colliders from them, and lets
    a first-person player walk an unbounded city. Verified by a scripted walk: frame rate while
@@ -108,13 +108,13 @@ Godot, and nothing gets built for it before that measurement says it is worth it
 
 Work that publishing would require, and that pays for itself before then:
 
-- **Continuous integration on free, standard GitHub-hosted runners** (the repository is public).
+- **Continuous integration on free, standard GitHub-hosted runners** ([#32](https://github.com/AntonTegnelov/wave_forge/issues/32); the repository is public).
   Formatting, clippy with warnings as errors, the tests that need no GPU (units, the facade on the
   CPU reference, the Bevy wiring tests), and the per-crate feature builds from
   [testing.md](testing.md#test-layers). GPU tests run on Mesa's software Vulkan device if they stay
   fast there; that is measured before it is added. Heavy engine builds run only when their
   directories change.
-- **Golden worlds (A-16).** A hash of a small generated world, recorded on the RTX 3070 and
+- **Golden worlds (A-16, [#35](https://github.com/AntonTegnelov/wave_forge/issues/35)).** A hash of a small generated world, recorded on the RTX 3070 and
   compared on the software device in CI. That is the first test of the promise that a world is the
   same on any GPU vendor, which so far has only been observed on one.
 - **Licences.** Everything in both integrations' dependency trees is MIT, Apache-2.0, Zlib or
