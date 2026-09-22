@@ -19,8 +19,9 @@ Wave Forge is a parallel program whose main work happens on the GPU. Its bugs ra
 | Library contract | `tests/facade.rs` | What the facade promises: the same requests give the same world, the order they are asked in does not matter, no batch holds two chunks that share a face, a repair reports every chunk it rewrote, a worker generates the same world on a thread | No, it runs on the CPU reference |
 | End to end | `wfc-devtools/tests/` | Whole runs on reference rule sets: a 2D coastline and a small 3D city, with invariants checked and images written | Yes |
 | Streaming (opt-in) | `wfc-devtools/tests/streaming.rs` | A whole world asked for at once, and a city generated in front of a walking player against a 500 ms tick budget; `#[ignore]`d | Yes |
+| Game session (opt-in) | `wfc-devtools/tests/game_session.rs` | A player walks and runs through an unbounded city in wall-clock time, driving a `Worker` the way an engine does: nothing in view is ever missing or a hole, no rule breaks across seams, the main thread's cost per frame, bounded memory, chunks walked back to, paths across seams; `#[ignore]`d | Yes |
 | Bevy plugin | `wave_forge_bevy/tests/` | `wiring.rs` on the CPU reference: a focus entity generates around itself, messages arrive, eviction is reported, the lattice sits where Bevy's Y-up space says. `shared_device.rs` and `real_render_plugin.rs` (`#[ignore]`d) generate a city on a device Bevy created | Only the two ignored ones |
-| Godot extension | `wave_forge_godot/godot/verify.gd` | A focus walks a strip of chunks and back inside a real Godot: chunks arrive, chunks behind are dropped, tiles obey the rules across seams, a chunk returned to is unchanged, and the main loop stays fast | Yes, and a Godot binary |
+| Godot extension | `wave_forge_godot/godot/verify.gd` | A focus runs a strip of chunks and back inside a real Godot, by the clock and without waiting for generation: the chunks beside it are there on every frame, chunks behind are dropped, tiles obey the rules across seams, a chunk returned to is unchanged, and Godot's process time stays under 8 ms at the 99th percentile | Yes, and a Godot binary |
 
 "Needs a GPU" means a Vulkan, Metal or DirectX 12 device. Wave Forge has no CPU fallback ([vision.md](vision.md#non-goals)). In the dev container tests run on the host RTX 3070 through Mesa's dozen driver ([development.md](development.md#toolchain-and-environment)). Where no GPU is available, a software Vulkan device (Mesa llvmpipe, or `WGPU_ADAPTER_NAME=llvmpipe`) is good enough to check correctness, but never for performance.
 
@@ -66,6 +67,7 @@ Local rules cannot forbid a network that is cut off as a whole, so `city::discon
 - `city_isometric.png`: every module drawn as its small voxel model
 - `city_street_level.png`: the bottom layer, one colour per module variant
 - `stitched.png` and `live.png`: whole worlds from the streaming suite, in `$CARGO_TARGET_DIR/tmp/`
+- `game_session.png`: the chunks held at the end of the game session, back at its start, in `$CARGO_TARGET_DIR/tmp/`
 
 ### Benchmarks
 
@@ -84,6 +86,43 @@ that every chunk a many-chunk dispatch reports as solved is valid. `streaming` m
 through the library, so what a game would get is what is timed. A timing describes one build on one
 machine and driver stack; see [solver-fit.md](solver-fit.md) for what each number means.
 
+### The game session
+
+```bash
+cargo test -p wfc-devtools --release --test game_session -- --ignored --nocapture --test-threads=1
+```
+
+The streaming suite asks whether the work of a simulated tick fits the tick. The game session asks
+what a player of a game like marian42's city would see. It plays the city once, in wall-clock time,
+the way an engine drives the library: a 60 Hz frame loop hands the player's position to a `Worker`
+when it enters another chunk, drains the worker's events, and never waits for generation. The
+player follows a fixed 776 m route on an unbounded world: a walk at 1.4 m/s, runs at 4.2 m/s
+(marian42's run multiplier of three), turns of 45 and 90 degrees, a diagonal, and a return to the
+start after the start has been dropped. A chunk is in view when its ground comes within 30 m of the
+player, which is marian42's generation range, and chunks are generated three out from the player's
+chunk. The session takes about five minutes, most of it the walk, and each test reads it and checks
+one thing:
+
+| Test | Holds when |
+|---|---|
+| `no_chunk_in_view_is_ever_missing_while_it_generates` | no chunk in view is without tiles on any frame |
+| `no_chunk_in_view_is_a_hole` | no chunk in view is one that could not be placed |
+| `no_generated_cell_breaks_a_rule_inside_a_chunk_or_across_a_seam` | every chunk, checked when it arrives, against the chunks beside it at that moment |
+| `generation_costs_the_main_thread_under_a_millisecond_a_frame` | asking for chunks, dropping them and draining events costs at most 1 ms at the 99th percentile and 4 ms at worst |
+| `memory_stays_bounded_while_the_player_travels` | the chunks held at once stay within the radius, the margin and one chunk of movement, over a route that generates at least three times as many |
+| `a_chunk_walked_back_to_comes_back_the_same` | every chunk generated twice whose tiles its coordinate alone decides both times is identical, over at least 20 |
+| `seams_cut_no_more_paths_than_chunk_interiors` | where a face someone can walk through meets another, the walk goes on across seams at least as often as inside chunks, less 0.05 |
+
+A chunk's coordinate alone decides its tiles when no repair touched it, no neighbour failed, and
+it was solved with no neighbour present (first parity) or against four such neighbours (second
+parity); that is the determinism the library promises, and anything else is counted as not
+comparable. The share of walkable cells in the largest network at the end is printed, not
+asserted: it is a property of the module set ([constraints.md](constraints.md)).
+
+`no_chunk_in_view_is_a_hole` fails today. It is the bar of
+[#31](https://github.com/AntonTegnelov/wave_forge/issues/31), held rather than loosened so that the
+suite says when it is met.
+
 ## The engine integrations
 
 Both live in their own workspaces, so the library's `cargo test --workspace` does not compile an
@@ -92,12 +131,15 @@ engine. Run them explicitly:
 ```bash
 cargo test --manifest-path wave_forge_bevy/Cargo.toml                       # no device needed
 cargo test --manifest-path wave_forge_bevy/Cargo.toml --release -- --ignored --nocapture
-GODOT=/path/to/godot wave_forge_godot/verify.sh                             # needs a Godot 4 binary
+GODOT=/path/to/godot wave_forge_godot/verify.sh release                     # needs a Godot 4 binary
 ```
 
 `verify.sh` builds the extension, copies it into `wave_forge_godot/godot`, writes the extension list
 Godot would otherwise only write from the editor, and runs `verify.gd` headless. It exits non-zero on
-any failure and prints what it generated.
+any failure and prints what it generated and how long frames took. Headless, Godot's renderer is a
+dummy, so the frame time it checks is Godot's own thread (the extension and the script), not drawing.
+It uses a four-tile rule set because it tests the extension's contract; the city reaches Godot as a
+rule file with [#30](https://github.com/AntonTegnelov/wave_forge/issues/30).
 
 Two environment details matter in this dev container. Godot has to be started with
 `LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so`, or it crashes at shutdown for the same reason test
@@ -110,4 +152,5 @@ not expose `VK_KHR_swapchain`; that only limits the backend discussed in
 
 - **Golden images are still missing.** Generation through the facade is reproducible, and `tests/facade.rs` compares whole worlds cell for cell, but the tests that render (the end-to-end pair) still assert invariants rather than comparing against a stored image.
 - **Kernel internals are tested through whole-region results** (A-16). A wrong sweep or a bad checkpoint shows up as an invalid or unsolved region, which is a coarse signal; the checkpoint-ring bug that `every_reported_success_is_a_valid_chunk` caught is the kind of thing a unit test would have caught sooner.
-- **Some city chunks cannot be placed** (3.2% in the streaming test). The suite asserts that the share stays small rather than zero, because it is a property of the module set ([constraints.md](constraints.md)).
+- **The city leaves holes.** `game_session::no_chunk_in_view_is_a_hole` fails: 13 chunks in view could not be placed on the 776 m route, 18 of 432 generated. The streaming suite still tolerates up to 5%. Both are a property of the module set ([constraints.md](constraints.md)) and are [#31](https://github.com/AntonTegnelov/wave_forge/issues/31).
+- **What a game draws is not tested here.** Meshes, colliders, draw cost, and the city inside Godot come with [#30](https://github.com/AntonTegnelov/wave_forge/issues/30), [#34](https://github.com/AntonTegnelov/wave_forge/issues/34) and the walk demo ([roadmap.md](roadmap.md#mvp-engine-integrations-and-a-walkable-city)).
