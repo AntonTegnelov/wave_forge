@@ -402,14 +402,12 @@ pub fn city_prior(city: &City, depth: u32) -> Prior {
 pub fn walk_links(m: &CompiledModules) -> Vec<(usize, usize, usize)> {
     let stairs = m.variants_tagged("stair");
     let name = |tile: usize| m.prototype_of(tile).name.as_str();
-    let walkable_face =
-        |tile: usize, axis: usize| matches!(m.face(tile, axis), Face::Horizontal(f) if f.walkable);
     let n = m.variants.len();
     let mut links = Vec::new();
     for from in 0..n {
         for to in 0..n {
             for axis in [POS_X, NEG_X, POS_Y, NEG_Y] {
-                let walk = walkable_face(from, axis) && walkable_face(to, opposite(axis));
+                let walk = walkable_face(m, from, axis) && walkable_face(m, to, opposite(axis));
                 if walk && m.rules.check(from, to, axis) {
                     links.push((axis, from, to));
                 }
@@ -430,7 +428,7 @@ pub fn walkable_tiles(m: &CompiledModules) -> Vec<usize> {
         .filter(|&tile| {
             [POS_X, NEG_X, POS_Y, NEG_Y]
                 .into_iter()
-                .any(|axis| matches!(m.face(tile, axis), Face::Horizontal(f) if f.walkable))
+                .any(|axis| walkable_face(m, tile, axis))
         })
         .collect()
 }
@@ -500,6 +498,89 @@ pub fn disconnected_walkable_cells(grid: &TileGrid, city: &City) -> Vec<Cell> {
         }
     }
     disconnected
+}
+
+/// How often a walkable face meets a walkable face across it, among the horizontal faces where at
+/// least one side is walkable.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FaceMeetings {
+    /// Adjacent pairs with a walkable face on at least one side.
+    pub walkable: usize,
+    /// Of those, the pairs where the walk continues: both facing faces are walkable.
+    pub continued: usize,
+}
+
+impl FaceMeetings {
+    /// The share of walkable faces the walk continues through, or `None` when there were none.
+    #[must_use]
+    pub fn share(self) -> Option<f64> {
+        (self.walkable > 0).then(|| self.continued as f64 / self.walkable as f64)
+    }
+}
+
+impl std::ops::Add for FaceMeetings {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            walkable: self.walkable + other.walkable,
+            continued: self.continued + other.continued,
+        }
+    }
+}
+
+/// Walkable faces meeting inside chunks and across the seams between them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WalkContinuity {
+    pub inside: FaceMeetings,
+    pub across_seams: FaceMeetings,
+}
+
+/// Counts, for a grid laid out in chunks of `chunk` cells along x and y, how often a path that
+/// reaches a face goes on through it, separately inside chunks and across their seams.
+///
+/// A chunk is solved against its neighbours' fixed borders, so a seam is where generation could cut
+/// paths that the rules alone would have continued. Comparing the two shares shows whether it does.
+pub fn walk_continuity(grid: &TileGrid, city: &City, chunk: (usize, usize)) -> WalkContinuity {
+    let m = &city.modules;
+    let mut continuity = WalkContinuity::default();
+    for z in 0..grid.depth {
+        for y in 0..grid.height {
+            for x in 0..grid.width {
+                let tile = grid.get(x, y, z);
+                for (axis, seam) in [
+                    (POS_X, (x + 1) % chunk.0 == 0),
+                    (POS_Y, (y + 1) % chunk.1 == 0),
+                ] {
+                    let Some(next) = grid.neighbor((x, y, z), axis, BoundaryCondition::Finite)
+                    else {
+                        continue;
+                    };
+                    let other = grid.get(next.0, next.1, next.2);
+                    let (here, there) = (
+                        walkable_face(m, tile, axis),
+                        walkable_face(m, other, opposite(axis)),
+                    );
+                    if !(here || there) {
+                        continue;
+                    }
+                    let meetings = if seam {
+                        &mut continuity.across_seams
+                    } else {
+                        &mut continuity.inside
+                    };
+                    meetings.walkable += 1;
+                    meetings.continued += usize::from(here && there);
+                }
+            }
+        }
+    }
+    continuity
+}
+
+/// Whether `tile`'s face along a horizontal `axis` is one someone can walk through.
+fn walkable_face(m: &CompiledModules, tile: usize, axis: usize) -> bool {
+    matches!(m.face(tile, axis), Face::Horizontal(f) if f.walkable)
 }
 
 /// The voxel model of an unrotated prototype. Geometry is deliberately crude: it only has to make
@@ -875,6 +956,65 @@ mod tests {
             disconnected_walkable_cells(&TileGrid::new(5, 1, 2, with_door).unwrap(), &city),
             vec![(3, 0, 1)],
             "a door does not lead up through a solid building"
+        );
+    }
+
+    #[test]
+    fn a_path_that_goes_on_counts_as_continued() {
+        let city = city();
+        let grass = city.modules.variants_of("grass")[0];
+        let grid = TileGrid::new(2, 1, 1, vec![grass, grass]).unwrap();
+
+        let continuity = walk_continuity(&grid, &city, (2, 1));
+
+        let one_continued = FaceMeetings {
+            walkable: 1,
+            continued: 1,
+        };
+        assert_eq!(continuity.inside, one_continued);
+        assert_eq!(continuity.across_seams, FaceMeetings::default());
+    }
+
+    #[test]
+    fn a_path_that_runs_into_a_wall_counts_as_cut() {
+        let city = city();
+        let m = &city.modules;
+        let grid = TileGrid::new(
+            2,
+            1,
+            1,
+            vec![m.variants_of("grass")[0], m.variants_of("building_base")[0]],
+        )
+        .unwrap();
+
+        let continuity = walk_continuity(&grid, &city, (2, 1));
+
+        assert_eq!(
+            continuity.inside,
+            FaceMeetings {
+                walkable: 1,
+                continued: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_pair_that_straddles_a_chunk_boundary_is_a_seam() {
+        let city = city();
+        let m = &city.modules;
+        let (grass, base) = (m.variants_of("grass")[0], m.variants_of("building_base")[0]);
+        // A 2x2 grid of 1x1 chunks: every adjacent pair is a seam.
+        let grid = TileGrid::new(2, 2, 1, vec![grass, grass, grass, base]).unwrap();
+
+        let continuity = walk_continuity(&grid, &city, (1, 1));
+
+        assert_eq!(continuity.inside, FaceMeetings::default());
+        assert_eq!(
+            continuity.across_seams,
+            FaceMeetings {
+                walkable: 4,
+                continued: 2
+            }
         );
     }
 
