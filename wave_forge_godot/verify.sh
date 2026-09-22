@@ -2,7 +2,8 @@
 # Builds the extension, copies it into the verification project and drives it with Godot headless.
 #
 # Needs a Godot 4 binary: set GODOT, or have `godot` on PATH. The check itself is `godot/verify.gd`,
-# which generates a 3x3-chunk world through the node and asserts what a game would rely on.
+# which runs a focus through a streamed world in real time and asserts what a game would rely on.
+# Build in release: its frame-time bars describe the extension a game would ship.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
