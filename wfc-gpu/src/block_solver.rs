@@ -10,6 +10,9 @@ use wfc_core::{
     Solver, SolverError,
 };
 
+/// Where a region's statistics record keeps its step count.
+const STEPS: usize = 5;
+
 /// Words of a `u32` buffer, as bytes.
 const fn bytes(words: u32) -> u64 {
     words as u64 * 4
@@ -151,6 +154,10 @@ impl<B: ComputeBackend> BlockSolver<B> {
             backend.write(&kernel.ids, 0, &batch.ids);
             backend.write(&kernel.seeds, 0, &batch.seeds);
             backend.write(&kernel.params, 0, bytemuck::cast_slice(&[params]));
+            // A kernel's buffers outlive its batches, so a record left over from the last one would
+            // pass for this one's if the device dropped the work. Every region writes a record with
+            // at least one step, so a cleared record that stays cleared is a region never reported.
+            backend.write(&kernel.stats, 0, &vec![0; (STATS_WORDS * regions) as usize]);
             backend
                 .dispatch(
                     &kernel.pipeline,
@@ -284,6 +291,9 @@ impl<B: ComputeBackend> BlockSolver<B> {
         let mut per_region = Vec::with_capacity(running.regions as usize);
         for region in 0..running.regions {
             let record = &stats[(region * STATS_WORDS) as usize..][..STATS_WORDS as usize];
+            if record[STEPS] == 0 {
+                return Err(SolverError::NoReport { region });
+            }
             statuses.push(match record[0] {
                 0 => RegionStatus::Solved,
                 1 => RegionStatus::Exhausted,
@@ -291,13 +301,18 @@ impl<B: ComputeBackend> BlockSolver<B> {
                 3 => RegionStatus::BorderContradiction,
                 // The kernel restored a checkpoint holding an empty cell, which the rules cannot
                 // cause: it is a bug in the checkpoint ring, so it fails the batch loudly.
-                _ => return Err(SolverError::BadCheckpoint { region }),
+                4 => return Err(SolverError::BadCheckpoint { region }),
+                status => {
+                    return Err(SolverError::Backend(format!(
+                        "region {region} reported status {status}, which the kernel never writes"
+                    )));
+                }
             });
             per_region.push(RegionStats {
                 sweeps: record[1],
                 collapses: record[2],
                 restarts: record[3],
-                steps: record[5],
+                steps: record[STEPS],
                 backtracks: record[6],
                 tries: record[7],
                 contradiction_cell: (record[4] != u32::MAX).then_some(record[4]),

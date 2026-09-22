@@ -15,7 +15,7 @@ use thiserror::Error;
 pub enum BufferUsage {
     /// Written by the host, read by the kernel.
     Input,
-    /// Written by the kernel, copied out after a dispatch.
+    /// Written by the kernel and copied out after a dispatch; the host may reset it beforehand.
     Output,
     /// Written by the kernel and read by it again; never leaves the device.
     Scratch,

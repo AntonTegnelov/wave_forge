@@ -22,6 +22,8 @@ pub struct WgpuBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     limits: BackendLimits,
+    /// The adapter behind the device, when this backend chose it.
+    adapter: Option<wgpu::AdapterInfo>,
 }
 
 /// Work submitted to wgpu, and how many of its readbacks have been mapped.
@@ -36,19 +38,25 @@ impl WgpuBackend {
     ///
     /// The instance is built from the environment so `WGPU_*` variables apply; the dev container
     /// reaches its GPU through a translation layer wgpu hides unless one of them is set.
+    /// `WGPU_ADAPTER_NAME` picks the first adapter whose name contains it, ignoring case, which is
+    /// how a test run is pointed at a software device; without it the high-performance adapter is
+    /// used.
     ///
     /// # Errors
-    /// If no adapter or device can be had.
+    /// If no adapter or device can be had, or `WGPU_ADAPTER_NAME` matches no adapter.
     pub fn from_env() -> Result<Self, BackendError> {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-        }))
-        .map_err(|error| BackendError::NoDevice(error.to_string()))?;
+        let adapter = match std::env::var("WGPU_ADAPTER_NAME") {
+            Ok(wanted) => adapter_named(&instance, &wanted)?,
+            Err(_) => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            }))
+            .map_err(|error| BackendError::NoDevice(error.to_string()))?,
+        };
         let offered = adapter.limits();
         let limits = wgpu::Limits {
             max_compute_workgroup_storage_size: offered
@@ -72,7 +80,10 @@ impl WgpuBackend {
             ..Default::default()
         }))
         .map_err(|error| BackendError::NoDevice(error.to_string()))?;
-        Ok(Self::from_device(device, queue))
+        Ok(Self {
+            adapter: Some(adapter.get_info()),
+            ..Self::from_device(device, queue)
+        })
     }
 
     /// A backend on a device an engine owns.
@@ -88,6 +99,7 @@ impl WgpuBackend {
             device,
             queue,
             limits,
+            adapter: None,
         }
     }
 
@@ -97,11 +109,41 @@ impl WgpuBackend {
         &self.device
     }
 
-    /// What adapter it found, for a benchmark's report.
+    /// What it runs on, for a benchmark's or a test run's report: the adapter and driver when this
+    /// backend chose them, and the workgroup storage it was granted.
     #[must_use]
     pub fn describe(&self) -> String {
-        format!("{} B workgroup storage", self.limits.workgroup_storage)
+        match &self.adapter {
+            Some(adapter) => format!(
+                "{} ({:?}, {} {}), {} B workgroup storage",
+                adapter.name,
+                adapter.backend,
+                adapter.driver,
+                adapter.driver_info,
+                self.limits.workgroup_storage
+            ),
+            None => format!(
+                "an engine's device, {} B workgroup storage",
+                self.limits.workgroup_storage
+            ),
+        }
     }
+}
+
+/// The first adapter whose name contains `wanted`, ignoring case.
+fn adapter_named(instance: &wgpu::Instance, wanted: &str) -> Result<wgpu::Adapter, BackendError> {
+    let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    let wanted_lower = wanted.to_lowercase();
+    let names: Vec<String> = adapters.iter().map(|a| a.get_info().name).collect();
+    adapters
+        .into_iter()
+        .find(|adapter| adapter.get_info().name.to_lowercase().contains(&wanted_lower))
+        .ok_or_else(|| {
+            BackendError::NoDevice(format!(
+                "WGPU_ADAPTER_NAME={wanted} matches none of the adapters: {}",
+                names.join(", ")
+            ))
+        })
 }
 
 impl ComputeBackend for WgpuBackend {
@@ -149,7 +191,11 @@ impl ComputeBackend for WgpuBackend {
         }
         let usage = match usage {
             BufferUsage::Input => wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            BufferUsage::Output => wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            BufferUsage::Output => {
+                wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST
+            }
             BufferUsage::Scratch => wgpu::BufferUsages::STORAGE,
             BufferUsage::Uniform => wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             BufferUsage::Readback => wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
