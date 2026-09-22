@@ -70,26 +70,19 @@ fn report(name: &str, city: &City, world: &CityWorld) -> (usize, usize) {
         .iter()
         .filter(|chunk| world.chunk(**chunk).is_none())
         .count();
-    let (width, height, depth) = (
-        (chunks.iter().map(|c| c.x).max().unwrap_or(0) + 1) as usize * CHUNK.x as usize,
-        (chunks.iter().map(|c| c.y).max().unwrap_or(0) + 1) as usize * CHUNK.y as usize,
-        CHUNK.z as usize,
-    );
     let store = world.store();
-    let decided =
-        |x: usize, y: usize, z: usize| store.tile([x as i32, y as i32, z as i32]).is_some();
-    let tiles: Vec<usize> = (0..depth)
-        .flat_map(|z| {
-            (0..height).flat_map(move |y| {
-                (0..width).map(move |x| {
-                    store
-                        .tile([x as i32, y as i32, z as i32])
-                        .map_or(city.air, usize::from)
-                })
-            })
-        })
-        .collect();
-    let grid = TileGrid::new(width, height, depth, tiles).expect("the world's dimensions");
+    let (grid, lowest) =
+        TileGrid::from_chunks(CHUNK, store.iter(), city.air).expect("a world with chunks");
+    let origin = lowest.origin(CHUNK);
+    let decided = |x: usize, y: usize, z: usize| {
+        let at = [
+            x as i32 + origin[0],
+            y as i32 + origin[1],
+            z as i32 + origin[2],
+        ];
+        store.tile(at).is_some()
+    };
+    let (width, height, depth) = (grid.width, grid.height, grid.depth);
     let violations = adjacency_violations(&grid, &city.modules.rules, BoundaryCondition::Finite)
         .into_iter()
         .filter(|violation| {
