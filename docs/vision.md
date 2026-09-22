@@ -65,7 +65,7 @@ The system has to support **layering, blending between techniques, and multiple 
 
 ### Engine packaging
 
-The Bevy plugin and Godot GDExtension wrap the library once its API has settled. Their exact timing is an open decision; see [roadmap.md](roadmap.md).
+The Bevy plugin and Godot GDExtension wrap the library. Both exist; what is left before they count as delivered, and what publishing needs, is in [roadmap.md](roadmap.md).
 
 ## Non-goals
 
