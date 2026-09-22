@@ -137,6 +137,13 @@ pub enum SolverError {
     WorkgroupStorage { needed: u32, available: u32 },
     #[error("the solver restored a checkpoint holding an empty cell in region {region}")]
     BadCheckpoint { region: u32 },
+    /// The device said the batch finished, but region `region` never reported: the driver ended
+    /// the work without running it to the end, and nothing that was read back is a result.
+    #[error(
+        "the device finished the batch but region {region} never reported; the compute driver \
+         dropped the work"
+    )]
+    NoReport { region: u32 },
     #[error("compute backend: {0}")]
     Backend(String),
 }
