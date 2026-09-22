@@ -137,7 +137,13 @@ fn adapter_named(instance: &wgpu::Instance, wanted: &str) -> Result<wgpu::Adapte
     let names: Vec<String> = adapters.iter().map(|a| a.get_info().name).collect();
     adapters
         .into_iter()
-        .find(|adapter| adapter.get_info().name.to_lowercase().contains(&wanted_lower))
+        .find(|adapter| {
+            adapter
+                .get_info()
+                .name
+                .to_lowercase()
+                .contains(&wanted_lower)
+        })
         .ok_or_else(|| {
             BackendError::NoDevice(format!(
                 "WGPU_ADAPTER_NAME={wanted} matches none of the adapters: {}",
