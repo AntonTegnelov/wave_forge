@@ -1,0 +1,111 @@
+# Checks every pull request and every push to develop on free GitHub-hosted runners.
+#
+# The runners have no GPU, so GPU tests run on Mesa's lavapipe, a software Vulkan device. That is
+# enough to check correctness, never performance. Mesa 22.3's lavapipe drops long dispatches (see
+# docs/development.md); the library job prints the Mesa version so a failure can be read against it.
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
+  push:
+    branches: [develop]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The software device, by adapter name; WgpuBackend::from_env fails if it is not there.
+  WGPU_ADAPTER_NAME: llvmpipe
+  GODOT_VERSION: 4.7.2
+  # From SHA512-SUMS.txt of the Godot 4.7.2 release, pinned so a changed download fails the job.
+  GODOT_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
+
+jobs:
+  library:
+    name: Library
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@v2
+      - name: Software Vulkan device
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy mesa-vulkan-drivers vulkan-tools
+          dpkg-query -W mesa-vulkan-drivers
+          vulkaninfo --summary | grep -E "deviceName|driverName|driverInfo"
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace -- --nocapture
+      # A workspace build unifies features across crates, so each crate is also built on its own
+      # feature set (docs/testing.md).
+      - name: Per-crate feature sets
+        run: |
+          cargo test -p wfc-core
+          cargo test -p wfc-core --all-features
+          cargo check -p wfc-gpu --no-default-features
+          cargo check -p wave_forge --no-default-features
+          cargo test -p wfc-rules --no-default-features
+
+  godot:
+    name: Godot extension
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wave_forge_godot
+      - name: Software Vulkan device
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy mesa-vulkan-drivers
+          dpkg-query -W mesa-vulkan-drivers
+      - name: Godot
+        run: |
+          zip="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -sSfLO "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${zip}"
+          echo "${GODOT_SHA512}  ${zip}" | sha512sum --check
+          unzip -q "${zip}" -d "$RUNNER_TEMP/godot"
+          echo "GODOT=$RUNNER_TEMP/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Clippy
+        run: cargo clippy --manifest-path wave_forge_godot/Cargo.toml --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --manifest-path wave_forge_godot/Cargo.toml
+      # Release, because its frame-time bars describe the extension a game would ship.
+      - name: A focus runs through a streamed world in a real Godot
+        run: bash wave_forge_godot/verify.sh release
+
+  bevy:
+    name: Bevy plugin
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wave_forge_bevy
+      # What Bevy's default features link against on Linux.
+      - name: System libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+      - name: Clippy
+        run: cargo clippy --manifest-path wave_forge_bevy/Cargo.toml --all-targets -- -D warnings
+      # The tests that need no device; the two that generate on a device Bevy creates are ignored.
+      - name: Tests
+        run: cargo test --manifest-path wave_forge_bevy/Cargo.toml
