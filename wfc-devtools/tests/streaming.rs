@@ -9,11 +9,13 @@
 //! what each number means. Validity is asserted here too, because a measurement of a wrong world
 //! is worthless.
 
+mod kernels;
+
 use std::collections::BTreeSet;
 use std::time::Instant;
 use wave_forge::{
-    BlockSolver, Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, RegionShape, Ruleset,
-    WgpuBackend, WorldExtent, WorldGenerator,
+    BlockSolver, Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, Ruleset, WgpuBackend,
+    WorldExtent, WorldGenerator,
 };
 use wfc_devtools::city::{self, City, city_prior};
 use wfc_devtools::{BoundaryCondition, TileGrid, adjacency_violations};
@@ -42,26 +44,6 @@ fn city_world(chunks_x: i32, chunks_y: i32) -> (City, CityWorld) {
     (city, world)
 }
 
-/// Compiles every kernel a run will need, which is what a game would do when it loads: the first
-/// dispatch of a new specialisation otherwise pays for translating it to the device's own language,
-/// and that is seconds, not milliseconds.
-fn warm(world: &mut CityWorld, capacities: &[u32]) {
-    let config = world.config().clone();
-    let solver = world.solver_mut();
-    let shapes: Vec<(u32, RegionShape)> = (1..=config.repair.max_halo)
-        .map(|halo| config.chunk.region(config.extent.halo(halo)))
-        .filter(|region| solver.fits(*region))
-        .flat_map(|region| capacities.iter().map(move |&capacity| (capacity, region)))
-        .collect();
-    let started = Instant::now();
-    solver.warm(&shapes).expect("the kernels compile");
-    eprintln!(
-        "streaming: compiled {} kernels in {:.1} s",
-        shapes.len(),
-        started.elapsed().as_secs_f64()
-    );
-}
-
 /// What a generated world looks like from the outside: undecided chunks, and rule violations
 /// between cells that were decided. Renders the world as a voxel model as well.
 fn report(name: &str, city: &City, world: &CityWorld) -> (usize, usize) {
@@ -70,26 +52,19 @@ fn report(name: &str, city: &City, world: &CityWorld) -> (usize, usize) {
         .iter()
         .filter(|chunk| world.chunk(**chunk).is_none())
         .count();
-    let (width, height, depth) = (
-        (chunks.iter().map(|c| c.x).max().unwrap_or(0) + 1) as usize * CHUNK.x as usize,
-        (chunks.iter().map(|c| c.y).max().unwrap_or(0) + 1) as usize * CHUNK.y as usize,
-        CHUNK.z as usize,
-    );
     let store = world.store();
-    let decided =
-        |x: usize, y: usize, z: usize| store.tile([x as i32, y as i32, z as i32]).is_some();
-    let tiles: Vec<usize> = (0..depth)
-        .flat_map(|z| {
-            (0..height).flat_map(move |y| {
-                (0..width).map(move |x| {
-                    store
-                        .tile([x as i32, y as i32, z as i32])
-                        .map_or(city.air, usize::from)
-                })
-            })
-        })
-        .collect();
-    let grid = TileGrid::new(width, height, depth, tiles).expect("the world's dimensions");
+    let (grid, lowest) =
+        TileGrid::from_chunks(CHUNK, store.iter(), city.air).expect("a world with chunks");
+    let origin = lowest.origin(CHUNK);
+    let decided = |x: usize, y: usize, z: usize| {
+        let at = [
+            x as i32 + origin[0],
+            y as i32 + origin[1],
+            z as i32 + origin[2],
+        ];
+        store.tile(at).is_some()
+    };
+    let (width, height, depth) = (grid.width, grid.height, grid.depth);
     let violations = adjacency_violations(&grid, &city.modules.rules, BoundaryCondition::Finite)
         .into_iter()
         .filter(|violation| {
@@ -121,7 +96,7 @@ fn report(name: &str, city: &City, world: &CityWorld) -> (usize, usize) {
 #[ignore = "needs a compute device; run with --ignored in release mode"]
 fn a_world_asked_for_at_once_comes_out_seamless() {
     let (city, mut world) = city_world(8, 8);
-    warm(&mut world, &[1, 8, 32]);
+    kernels::warm(&mut world, &[1, 8, 32]);
 
     let started = Instant::now();
     world.request(&[FocusPoint::new(ChunkCoord::new(4, 4, 0), 4)]);
@@ -167,7 +142,7 @@ fn live_streaming_keeps_ahead_of_a_walking_player() {
 
     let (chunks_x, chunks_y) = (24, 8);
     let (city, mut world) = city_world(chunks_x, chunks_y);
-    warm(&mut world, &[1, 4, 8, 16, 32]);
+    kernels::warm(&mut world, &[1, 4, 8, 16, 32]);
     let chunk_m = CELL_M * f64::from(CHUNK.x);
     let focus_y = chunks_y / 2;
 

@@ -5,7 +5,7 @@
 //! Tests therefore assert invariants mechanically instead of relying on someone looking at an
 //! image.
 
-use wfc_core::Domains;
+use wfc_core::{Chunk, ChunkCoord, ChunkShape, Domains};
 use wfc_rules::AdjacencyRules;
 
 /// How a grid's edges behave when the checker looks for a neighbour.
@@ -88,6 +88,60 @@ impl TileGrid {
             })
             .collect::<Result<Vec<usize>, String>>()?;
         Self::new(width, height, depth, tiles)
+    }
+
+    /// Lays chunks of one `shape` out as a single grid covering their bounding box, with `fill` in
+    /// every cell no chunk covers, and returns the grid with the chunk at its lowest corner.
+    ///
+    /// # Errors
+    /// If there are no chunks, or a chunk does not hold one tile per cell of `shape`.
+    pub fn from_chunks<'a>(
+        shape: ChunkShape,
+        chunks: impl IntoIterator<Item = &'a Chunk>,
+        fill: usize,
+    ) -> Result<(Self, ChunkCoord), String> {
+        let chunks: Vec<&Chunk> = chunks.into_iter().collect();
+        let Some(first) = chunks.first() else {
+            return Err("no chunks to lay out".to_owned());
+        };
+        let (mut low, mut high) = (first.coord, first.coord);
+        for chunk in &chunks {
+            if chunk.tiles.len() != shape.cells() as usize {
+                return Err(format!(
+                    "chunk {:?} has {} tiles, a {shape:?} chunk has {}",
+                    chunk.coord,
+                    chunk.tiles.len(),
+                    shape.cells()
+                ));
+            }
+            low = ChunkCoord::new(
+                low.x.min(chunk.coord.x),
+                low.y.min(chunk.coord.y),
+                low.z.min(chunk.coord.z),
+            );
+            high = ChunkCoord::new(
+                high.x.max(chunk.coord.x),
+                high.y.max(chunk.coord.y),
+                high.z.max(chunk.coord.z),
+            );
+        }
+        let (sx, sy, sz) = (shape.x as usize, shape.y as usize, shape.z as usize);
+        let width = (high.x - low.x + 1) as usize * sx;
+        let height = (high.y - low.y + 1) as usize * sy;
+        let depth = (high.z - low.z + 1) as usize * sz;
+        let mut tiles = vec![fill; width * height * depth];
+        for chunk in &chunks {
+            let (ox, oy, oz) = (
+                (chunk.coord.x - low.x) as usize * sx,
+                (chunk.coord.y - low.y) as usize * sy,
+                (chunk.coord.z - low.z) as usize * sz,
+            );
+            for (index, &tile) in chunk.tiles.iter().enumerate() {
+                let (x, y, z) = (index % sx, index / sx % sy, index / (sx * sy));
+                tiles[((oz + z) * height + oy + y) * width + ox + x] = usize::from(tile);
+            }
+        }
+        Ok((Self::new(width, height, depth, tiles)?, low))
     }
 
     /// Parses the text format the `wave-forge` CLI writes: space-separated tile indices along
@@ -267,6 +321,52 @@ mod tests {
         assert_eq!((grid.width, grid.height, grid.depth), (2, 2, 2));
         assert_eq!(grid.get(1, 0, 0), 1);
         assert_eq!(grid.get(0, 1, 1), 6);
+    }
+
+    const SHAPE: ChunkShape = ChunkShape { x: 2, y: 2, z: 1 };
+
+    /// A chunk whose cells hold `first`, `first + 1`, ... in the store's row-major order.
+    fn numbered_chunk(coord: ChunkCoord, first: u16) -> Chunk {
+        Chunk {
+            coord,
+            tiles: (first..first + SHAPE.cells() as u16).collect(),
+            version: 1,
+        }
+    }
+
+    #[test]
+    fn chunks_side_by_side_land_where_their_cells_are() {
+        let left = numbered_chunk(ChunkCoord::new(-1, 3, 0), 10);
+        let right = numbered_chunk(ChunkCoord::new(0, 3, 0), 20);
+
+        let (grid, lowest) = TileGrid::from_chunks(SHAPE, [&right, &left], 0).unwrap();
+
+        assert_eq!(lowest, ChunkCoord::new(-1, 3, 0));
+        assert_eq!((grid.width, grid.height, grid.depth), (4, 2, 1));
+        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let at = [x as i32 - 2, y as i32 + 6, 0];
+            assert_eq!(grid.get(x, y, 0), usize::from(left.tile(SHAPE, at)));
+            let at = [x as i32, y as i32 + 6, 0];
+            assert_eq!(grid.get(x + 2, y, 0), usize::from(right.tile(SHAPE, at)));
+        }
+    }
+
+    #[test]
+    fn cells_no_chunk_covers_hold_the_fill() {
+        let corner = numbered_chunk(ChunkCoord::new(0, 0, 0), 10);
+        let opposite = numbered_chunk(ChunkCoord::new(1, 1, 0), 20);
+
+        let (grid, _) = TileGrid::from_chunks(SHAPE, [&corner, &opposite], 99).unwrap();
+
+        assert_eq!((grid.width, grid.height), (4, 4));
+        assert_eq!(grid.count(99), 8);
+        assert_eq!(grid.get(3, 0, 0), 99);
+        assert_eq!(grid.get(0, 3, 0), 99);
+    }
+
+    #[test]
+    fn no_chunks_make_no_grid() {
+        assert!(TileGrid::from_chunks(SHAPE, [], 0).is_err());
     }
 
     #[test]

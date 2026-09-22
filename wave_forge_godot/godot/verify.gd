@@ -1,9 +1,12 @@
 ## Drives the extension the way a game would and checks what it produced.
 ##
 ## Run through `../verify.sh`, which builds the extension, copies it in and starts Godot headless.
-## A focus walks across a strip of chunks and back, which is the whole of what a game does: chunks
-## appear ahead of it, chunks behind it are dropped, and the ones it returns to come back the same.
-## The script exits non-zero with a message on any failure, so a shell can tell whether it passed.
+## A focus runs across a strip of chunks and back in real time, which is the whole of what a game
+## does: chunks appear ahead of it, chunks behind it are dropped, and the ones it returns to come back
+## the same. It never waits for generation, so a generator that falls behind shows up as a chunk
+## missing beside the player, and every frame is timed, so a stall on Godot's own thread shows up
+## too. The script exits non-zero with a message on any failure, so a shell can tell whether it
+## passed.
 extends SceneTree
 
 ## The world is this many chunks along x, three along y, one tall.
@@ -13,27 +16,49 @@ const CHUNKS_Y := 3
 const CELLS := 8
 ## World units per cell, so one chunk is 16 units across.
 const CELL_SIZE := 2.0
-## How many chunks to keep around the focus, and how far beyond that to keep them.
-const VIEW_RADIUS := 1
+## How many chunks to generate around the focus, and how far beyond that to keep them. A column two
+## chunks out is asked for when the focus enters a chunk and is needed when it enters the next one,
+## 16 units later.
+const VIEW_RADIUS := 2
 const EVICT_MARGIN := 1
+## Every chunk this close to the focus's chunk has to have tiles on every frame of the walk.
+const READY_RADIUS := 1
+## Units per second: a running player, three times a walking pace of 1.4.
+const PACE := 4.2
+## The frame rate a game would cap its main loop at.
+const FPS := 60
+## How long Godot's own thread may spend processing a frame, including the extension and the signal
+## handlers: half a frame at the 99th percentile, leaving the rest to rendering, and never a whole one.
+const PROCESS_P99_MS := 8.0
+const PROCESS_MAX_MS := 1000.0 / FPS
+## Building the device, compiling kernels and generating the first view is loading, not play.
+const LOAD_TIMEOUT_S := 180.0
 ## Tile indices, in the order `rules.ron` declares them.
 const WATER := 0
 const SAND := 1
 const GRASS := 2
 const FOREST := 3
-## The focus walks to this chunk and back, one chunk at a time.
+## The focus starts in the middle of this chunk, runs to the middle of the other and back.
+const WALK_FROM := 1
 const WALK_TO := CHUNKS_X - 2
 
 var world: Node
 var updated := {}
 var failed := {}
 var evicted := {}
+## The chunks that have tiles now, as the signals tell it.
+var present := {}
 ## The tiles of the chunk the walk starts in, to compare against when it comes back.
 var first_tiles: PackedInt32Array
-var seconds := 0.0
-var frames := 0
-var focus_x := 1
-var walking_back := false
+var started_usec := 0
+var walk_started_usec := -1
+var last_frame_usec := 0
+## Per frame of the walk: Godot's process time, and the time since the previous frame.
+var process_ms := PackedFloat64Array()
+var period_ms := PackedFloat64Array()
+## Frames on which a chunk within the ready radius had no tiles, and the first of them.
+var late_frames := 0
+var first_late := ""
 var done := false
 
 func _initialize() -> void:
@@ -50,9 +75,10 @@ func _initialize() -> void:
 	world.world_chunks = Vector3i(CHUNKS_X, CHUNKS_Y, 1)
 	# What a game does with a prior: no water on the ground layer, and no forest against the edges
 	# of a bounded world. The rule set only lets a material meet itself vertically, so a ground
-	# layer without water is a world without water, which is easy to check.
-	var ground: Array[PackedInt32Array] = [PackedInt32Array([SAND, GRASS, FOREST])]
-	world.set_layer_tiles(ground)
+	# layer without water is a world without water, which is easy to check. The layers above it are
+	# left open with an empty array, which is how a scene says "anything goes here".
+	var layers: Array[PackedInt32Array] = [PackedInt32Array([SAND, GRASS, FOREST]), PackedInt32Array()]
+	world.set_layer_tiles(layers)
 	for axis in 4:
 		world.ban_tiles_on_face(axis, PackedInt32Array([FOREST]))
 	world.chunk_updated.connect(_on_chunk_updated)
@@ -68,62 +94,96 @@ func _initialize() -> void:
 	if not world.start(rules):
 		_fail("the rule set was refused")
 		return
-	world.follow(_position_at(focus_x))
-	print("verify: starting in chunk ", world.chunk_at(_position_at(focus_x)))
+	Engine.max_fps = FPS
+	started_usec = Time.get_ticks_usec()
+	world.follow(_position_at(_start_x()))
+	print("verify: starting in chunk ", world.chunk_at(_position_at(_start_x())))
 
-## A player who walks no faster than generation: the focus steps on once everything within its
-## view radius is there, which is what a game would gate movement or streaming on.
-func _process(delta: float) -> bool:
+## Loads until the chunks around the start are there, then runs the route by the clock, whatever
+## generation is doing.
+func _process(_delta: float) -> bool:
 	if done:
 		return true
-	seconds += delta
-	frames += 1
 	if not world.is_generating():
 		_fail("generation stopped")
 		return true
-	if seconds > 180.0:
-		_fail("stuck at chunk %d after %d frames and %.0f s, %d generated" % [focus_x, frames, seconds, updated.size()])
-		return true
-	if not _view_complete():
+	var now := Time.get_ticks_usec()
+	if walk_started_usec < 0:
+		var loading := (now - started_usec) / 1e6
+		if loading > LOAD_TIMEOUT_S:
+			_fail("the first view was not there after %.0f s, %d generated" % [loading, updated.size()])
+			return true
+		if _ready_around(WALK_FROM):
+			print("verify: loaded in %.2f s" % loading)
+			first_tiles = world.tiles_at(Vector3i(WALK_FROM, 1, 0))
+			walk_started_usec = now
+			last_frame_usec = now
 		return false
 
-	if focus_x == 1 and first_tiles.is_empty():
-		first_tiles = world.tiles_at(Vector3i(1, 1, 0))
-	if walking_back and focus_x == 1:
+	# The time Godot's own thread spent on the previous frame: the extension draining its worker
+	# and emitting signals, and this script's handlers.
+	process_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
+	period_ms.append((now - last_frame_usec) / 1000.0)
+	last_frame_usec = now
+	var x := _x_at((now - walk_started_usec) / 1e6)
+	if is_nan(x):
 		_check()
 		return true
-	if focus_x == WALK_TO:
-		walking_back = true
-	focus_x += -1 if walking_back else 1
-	world.follow(_position_at(focus_x))
+	world.follow(_position_at(x))
+	var chunk_x := int(floor(x / _chunk_units()))
+	if not _ready_around(chunk_x):
+		late_frames += 1
+		if first_late.is_empty():
+			first_late = "around chunk %d at %.2f s" % [chunk_x, (now - walk_started_usec) / 1e6]
 	return false
 
-## Whether every chunk of the world within the view radius of the focus has tiles.
-func _view_complete() -> bool:
-	for x in range(focus_x - VIEW_RADIUS, focus_x + VIEW_RADIUS + 1):
+## Where along x the focus is `t` seconds into the run, or NAN once it is back.
+func _x_at(t: float) -> float:
+	var one_way := (WALK_TO - WALK_FROM) * _chunk_units()
+	var run := t * PACE
+	if run > 2.0 * one_way:
+		return NAN
+	return _start_x() + (run if run <= one_way else 2.0 * one_way - run)
+
+## Whether every chunk of the world within the ready radius of column `chunk_x` has tiles.
+func _ready_around(chunk_x: int) -> bool:
+	for x in range(chunk_x - READY_RADIUS, chunk_x + READY_RADIUS + 1):
 		if x < 0 or x >= CHUNKS_X:
 			continue
 		for y in CHUNKS_Y:
-			if not _has_chunk(Vector3i(x, y, 0)):
+			if not present.has(Vector3i(x, y, 0)):
 				return false
 	return true
 
-func _position_at(chunk_x: int) -> Vector3:
-	var chunk_units := CELLS * CELL_SIZE
+func _chunk_units() -> float:
+	return CELLS * CELL_SIZE
+
+func _start_x() -> float:
+	return (WALK_FROM + 0.5) * _chunk_units()
+
+func _position_at(x: float) -> Vector3:
 	# Godot's xz plane is the lattice's xy: the strip runs along x, and the middle row is y = 1.
-	return Vector3((float(chunk_x) + 0.5) * chunk_units, 0.0, 1.5 * chunk_units)
+	return Vector3(x, 0.0, 1.5 * _chunk_units())
+
+## The value below which a share `q` of `values` lie.
+func _quantile(values: PackedFloat64Array, q: float) -> float:
+	var sorted := values.duplicate()
+	sorted.sort()
+	return sorted[int(round((sorted.size() - 1) * q))]
 
 func _has_chunk(chunk: Vector3i) -> bool:
 	return not world.tiles_at(chunk).is_empty()
 
 func _on_chunk_updated(chunk: Vector3i) -> void:
 	updated[chunk] = updated.get(chunk, 0) + 1
+	present[chunk] = true
 
 func _on_chunk_failed(chunk: Vector3i, status: String) -> void:
 	failed[chunk] = status
 
 func _on_chunk_evicted(chunk: Vector3i) -> void:
 	evicted[chunk] = true
+	present.erase(chunk)
 
 func _on_generation_failed(reason: String) -> void:
 	_fail("generation failed: " + reason)
@@ -131,14 +191,26 @@ func _on_generation_failed(reason: String) -> void:
 ## Everything the extension promised a game, checked against what it can see from GDScript.
 func _check() -> void:
 	done = true
-	var fps := frames / maxf(seconds, 0.001)
-	print("verify: walked to chunk %d and back in %.2f s over %d frames (%.0f frames per second)" % [WALK_TO, seconds, frames, fps])
-	print("verify: %d chunks generated, %d dropped, stats %s" % [updated.size(), evicted.size(), world.stats()])
+	var seconds := (Time.get_ticks_usec() - walk_started_usec) / 1e6
+	var slow_frames := 0
+	for period in period_ms:
+		if period > 1000.0 / FPS + 2.0:
+			slow_frames += 1
+	print("verify: ran to chunk %d and back at %.1f units/s in %.2f s over %d frames" % [WALK_TO, PACE, seconds, period_ms.size()])
+	print("verify: process time p50 %.3f ms, p99 %.3f ms, max %.3f ms; frame period p50 %.2f ms, p99 %.2f ms, max %.2f ms, %d frames over %.1f ms" % [
+		_quantile(process_ms, 0.5), _quantile(process_ms, 0.99), _quantile(process_ms, 1.0),
+		_quantile(period_ms, 0.5), _quantile(period_ms, 0.99), _quantile(period_ms, 1.0),
+		slow_frames, 1000.0 / FPS + 2.0])
+	print("verify: %d chunks generated, %d dropped, %d late frames, stats %s" % [updated.size(), evicted.size(), late_frames, world.stats()])
 
 	# The point of the worker thread: building the device, compiling kernels and dispatching all
-	# happen off Godot's own thread, so the main loop keeps running while a world appears.
-	if fps < 30.0:
-		_fail("the main loop ran at %.0f frames per second while generating" % fps)
+	# happen off Godot's own thread, so the main loop keeps its frame time while a world appears.
+	if _quantile(process_ms, 0.99) > PROCESS_P99_MS or _quantile(process_ms, 1.0) > PROCESS_MAX_MS:
+		_fail("Godot's thread spent up to %.1f ms on a frame, %.1f ms at the 99th percentile" % [_quantile(process_ms, 1.0), _quantile(process_ms, 0.99)])
+		return
+	# And generation keeps ahead of a running player, which it cannot fake by making them wait.
+	if late_frames > 0:
+		_fail("%d frames had a chunk beside the focus without tiles, first %s" % [late_frames, first_late])
 		return
 	if not failed.is_empty():
 		_fail("chunks could not be placed: %s" % failed)
@@ -152,7 +224,7 @@ func _check() -> void:
 			return
 
 	var generated: Array = world.generated_chunks()
-	if generated.size() < (2 * VIEW_RADIUS + 1) * CHUNKS_Y:
+	if generated.size() < (2 * READY_RADIUS + 1) * CHUNKS_Y:
 		_fail("only %d chunks around the focus at the end: %s" % [generated.size(), generated])
 		return
 
@@ -211,12 +283,12 @@ func _check() -> void:
 
 	# A chunk the focus left and came back to is generated again from its coordinate alone, so it
 	# has to hold what it held the first time.
-	var again: PackedInt32Array = world.tiles_at(Vector3i(1, 1, 0))
+	var again: PackedInt32Array = world.tiles_at(Vector3i(WALK_FROM, 1, 0))
 	if first_tiles.is_empty():
 		_fail("the starting chunk was never read")
 		return
 	if again != first_tiles:
-		_fail("chunk (1, 1, 0) came back different after being dropped")
+		_fail("chunk (%d, 1, 0) came back different after being dropped" % WALK_FROM)
 		return
 
 	print("verify: %d cells, every column one material, every neighbour legal, the prior obeyed, and the chunk walked back to is unchanged" % world_tiles.size())

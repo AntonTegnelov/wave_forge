@@ -73,6 +73,8 @@ through. In order:
    against 32 768 B at 81 tiles. A third candidate, from the alternate architecture linked in
    [#5](https://github.com/AntonTegnelov/wave_forge/issues/5), is a coarse pass that decides chunk
    boundary faces before any interior is solved.
+   The game session's `no_chunk_in_view_is_a_hole` holds this bar and fails until it is met: 13
+   holes in view on a 776 m walk ([testing.md](testing.md#the-game-session)).
 4. **Models to draw** ([#34](https://github.com/AntonTegnelov/wave_forge/issues/34)). A devtools command exports each prototype's voxel model as a mesh (glTF, which
    both engines import). Authored models can replace them later without touching the library.
 5. **The walk itself**, with the products it needs from the library: instance sets, a collider

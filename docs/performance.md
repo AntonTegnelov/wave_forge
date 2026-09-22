@@ -84,6 +84,7 @@ with its protocol. Two are the ones to know:
 |---|---|
 | One 8×8×8 city chunk, 256 chunks in one dispatch | **0.18 ms per chunk**, against 3.9 ms on one CPU thread and 0.79 ms spread over 24 |
 | A 24×8-chunk city around a walking focus | **median 47 ms** per 0.5 s tick, p90 61 ms |
+| A player walking and running an unbounded city in real time | **no chunk in view ever late**, at most 0.18 ms of a frame on the main thread |
 
 What the redesign that produced them changed, and what each change was worth:
 

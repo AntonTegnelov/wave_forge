@@ -212,7 +212,9 @@ impl WaveForgeWorld {
         let prior = self.prior(tiles);
         let extent = self.extent();
         let (seed, halo) = (self.seed as u64, self.halo.max(0) as u32);
-        let warm = self.warm_kernels.then(|| self.batch_capacities());
+        let warm = self
+            .warm_kernels
+            .then(|| batch_capacities(self.view_radius.max(0) as u32));
         self.followed = None;
         // Everything here happens on the generating thread, including building the device and
         // compiling the kernels, so Godot's own thread never waits for either.
@@ -223,13 +225,20 @@ impl WaveForgeWorld {
                 .halo(halo)
                 .build()?;
             if let Some(capacities) = warm {
-                let region = world
-                    .config()
-                    .chunk
-                    .region(world.config().extent.halo(halo));
-                let shapes: Vec<(u32, RegionShape)> =
-                    capacities.iter().map(|&batch| (batch, region)).collect();
-                world.solver_mut().warm(&shapes)?;
+                let config = world.config().clone();
+                let region = |halo: u32| config.chunk.region(config.extent.halo(halo));
+                let solver = world.solver_mut();
+                // A repair solves one chunk, at any halo up to the widest the device fits.
+                let repairs = (1..=config.repair.max_halo)
+                    .map(region)
+                    .filter(|shape| solver.fits(*shape))
+                    .map(|shape| (1, shape));
+                let shapes: Vec<(u32, RegionShape)> = capacities
+                    .iter()
+                    .map(|&batch| (batch, region(halo)))
+                    .chain(repairs)
+                    .collect();
+                solver.warm(&shapes)?;
             }
             Ok(world)
         }));
@@ -383,18 +392,6 @@ impl WaveForgeWorld {
         self.worker.is_some()
     }
 
-    /// The batch sizes a run will dispatch, which is what a kernel is specialised for: one chunk
-    /// for a repair, and one parity of the chunks a focus asks for.
-    fn batch_capacities(&self) -> Vec<u32> {
-        let across = 2 * self.view_radius.max(0) as u32 + 1;
-        let parity = (across * across).div_ceil(2).max(1);
-        if parity == 1 {
-            vec![1]
-        } else {
-            vec![1, parity]
-        }
-    }
-
     /// A tile index the prior names that the rule set does not have, if there is one.
     fn prior_tile_outside(&self, num_tiles: u32) -> Option<u32> {
         self.layers
@@ -417,7 +414,14 @@ impl WaveForgeWorld {
         };
         let mut prior = Prior::open(num_tiles);
         if !self.layers.is_empty() {
-            prior = prior.with_layers(self.layers.iter().map(|tiles| mask(tiles)).collect());
+            let layer = |tiles: &Vec<u32>| {
+                if tiles.is_empty() {
+                    TileMask::all(num_tiles)
+                } else {
+                    mask(tiles)
+                }
+            };
+            prior = prior.with_layers(self.layers.iter().map(layer).collect());
         }
         for (axis, tiles) in self.face_bans.iter().enumerate() {
             if !tiles.is_empty() {
@@ -464,5 +468,47 @@ const fn status_name(status: RegionStatus) -> &'static str {
         RegionStatus::Exhausted => "exhausted",
         RegionStatus::StepCap => "step_cap",
         RegionStatus::BorderContradiction => "border_contradiction",
+    }
+}
+
+/// The batch capacities a focus of `radius` chunks can dispatch, which is what a kernel is
+/// specialised for.
+///
+/// A batch holds one parity of the chunks a focus asks for, and those include the ring of
+/// neighbours the second parity reads, so a batch is at most half of a square two chunks wider than
+/// the view. The solver rounds a batch up to a power of two, and a walking player dispatches every
+/// size from one chunk to that, so every power of two up to it is needed.
+fn batch_capacities(radius: u32) -> Vec<u32> {
+    let across = 2 * radius + 3;
+    let largest = (across * across).div_ceil(2).next_power_of_two();
+    std::iter::successors(Some(1), |&capacity| {
+        (capacity < largest).then_some(capacity * 2)
+    })
+    .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_batch_a_focus_can_dispatch_has_a_warmed_kernel() {
+        for radius in 0..6u32 {
+            // One parity of the square a focus asks for, and of the ring of neighbours the second
+            // parity reads, is the most one batch can hold.
+            let across = 2 * radius + 3;
+            let largest: u32 = (across * across).div_ceil(2);
+
+            let capacities = batch_capacities(radius);
+
+            for batch in 1..=largest {
+                // The solver rounds a batch up to a power of two and specialises for that.
+                let capacity = batch.next_power_of_two();
+                assert!(
+                    capacities.contains(&capacity),
+                    "radius {radius}: a batch of {batch} needs capacity {capacity}, warmed {capacities:?}"
+                );
+            }
+        }
     }
 }
