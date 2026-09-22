@@ -75,10 +75,12 @@ through. In order:
    boundary faces before any interior is solved.
 4. **Models to draw** ([#34](https://github.com/AntonTegnelov/wave_forge/issues/34)). A devtools command exports each prototype's voxel model as a mesh (glTF, which
    both engines import). Authored models can replace them later without touching the library.
-5. **The walk itself.** A game that places the models per chunk, builds colliders from them, and lets
-   a first-person player walk an unbounded city. Verified by a scripted walk: frame rate while
-   walking, no holes, the player never falls through, and a chunk walked back to comes back
-   identical. The same city then gets a Bevy walk.
+5. **The walk itself**, with the products it needs from the library: instance sets, a collider
+   library and mesh levels of detail ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38),
+   [engine-integration.md](engine-integration.md)). A game that places the models per chunk, builds
+   colliders from them, and lets a first-person player walk an unbounded city. Verified by a
+   scripted walk: frame rate while walking, no holes, the player never falls through, and a chunk
+   walked back to comes back identical. The same city then gets a Bevy walk.
 
 Items 1 to 4 are library work and happen here. The games in item 5 live in **their own
 repository**: they are consumers of the library, they carry art that has no place in a library
@@ -123,6 +125,27 @@ Work that publishing would require, and that pays for itself before then:
   MPL-covered source can be obtained.
 - **Builds for every desktop platform** the Godot Asset Store expects (Windows, macOS, Linux). Whether
   and when anything is published is the owner's decision.
+
+## Deeper engine integration
+
+The integrations should do more than hand out tile ids: the library emits typed products per chunk
+(instance sets, meshes with levels of detail, colliders, navigation source geometry, region tags,
+spawn points), and each integration maps them onto its engine's own systems and ships reference
+shaders and authoring tools. The design, with the reasoning and the evidence for each engine, is in
+[engine-integration.md](engine-integration.md). The work is staged around the rest of this roadmap:
+
+- with the MVP walk: the products the walk needs ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38));
+- with hardening: the measurement that decides where the solver runs in both engines ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)),
+  Godot editor polish and the Godot 4.7 minimum ([#40](https://github.com/AntonTegnelov/wave_forge/issues/40)), and a spike on Rust resources loaded off
+  the main thread ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41));
+- after the MVP: navigation ([#42](https://github.com/AntonTegnelov/wave_forge/issues/42)), audio and localisation tags ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)), and placing users'
+  own scenes by rule ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44));
+- with Phase 2: noise that means the same in both engines ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)), ground, grass and wind
+  ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), far proxies and occluders ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47));
+- then authoring: recipes, brushes and bake, in Godot first because Bevy has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
+
+Products that stay on the GPU are built only where a measurement shows the read-back path is too
+slow.
 
 ## Phase 2: layered world generation
 

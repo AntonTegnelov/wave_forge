@@ -366,22 +366,23 @@ engines make that impossible or pointless:
 
 The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
 
-- **A, with the MVP walk.** Only the products the walk needs: InstanceSet with stable ids, the
+- **A, with the MVP walk** ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)). Only the products the walk needs: InstanceSet with stable ids, the
   per-prototype collider library, level-of-detail lists for the exported module meshes, and a
   collider ring smaller than the visual ring, applied in Godot through `RenderingServer` and
   `PhysicsServer3D` in one call per chunk. Measured here, on Compatibility and Jolt: the main-thread
   cost of creating a chunk's colliders (node path against server path, shapes added before or after
   `body_set_space`), the node path against the server path for visuals, and whether Compatibility
   applies supplied levels of detail.
-- **B, hardening.** The device measurement of §3.2 on desktops, InstanceSet and ChunkHash in the
-  golden worlds, the Godot improvements of §6.2, and the godot-rust resource spike.
-- **C, systems.** NavSource with its halo and asynchronous baking (measuring bake time per chunk),
-  RegionTags with the audio and localisation helpers, SpawnPoints with preloading, pooling and
-  saved edits, and the Bevy adapter crates once the ecosystem reaches Bevy 0.20.
-- **D, Phase 2 layers.** HeightTile and MaterialTile, `NoiseConfig` with the FastNoiseLite port and
-  golden tests, scatter from density with integer existence decisions, CoverMap with reference grass
-  and wind shaders in both engines, splines, and merged far proxies.
-- **E, authoring.** The recipe resources and layer list, the brush plugin, bake (linked and
+- **B, hardening.** The device measurement of §3.2 on desktops ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), InstanceSet and ChunkHash in the
+  golden worlds, the Godot improvements of §6.2 ([#40](https://github.com/AntonTegnelov/wave_forge/issues/40)), and the godot-rust resource spike ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
+- **C, systems.** NavSource with its halo and asynchronous baking, measuring bake time per chunk
+  ([#42](https://github.com/AntonTegnelov/wave_forge/issues/42)); RegionTags with the audio and localisation helpers ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)); SpawnPoints with
+  preloading, pooling and saved edits ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)); and the Bevy adapter crates once the ecosystem reaches Bevy 0.20.
+- **D, Phase 2 layers.** `NoiseConfig` with the FastNoiseLite port and golden tests ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45));
+  HeightTile, MaterialTile and CoverMap with reference grass and wind shaders in both engines
+  ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)); scatter from density with integer existence decisions; splines; merged far proxies and
+  generated occluders ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)).
+- **E, authoring** ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). The recipe resources and layer list, the brush plugin, bake (linked and
   detached), and importing a `MeshLibrary` as WFC modules; a graph editor last.
 - **F, GPU-resident products**, only where a measurement demands them: product kernels on Godot's
   main `RenderingDevice` (after checking naga's SPIR-V on lavapipe), 4.8 mesh buffers, Bevy
