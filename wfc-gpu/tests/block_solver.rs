@@ -4,6 +4,7 @@
 //! timings live in `block_solver_bench.rs`.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use wfc_core::reference::ReferenceSolver;
 use wfc_core::rules::AXES;
 use wfc_core::{
@@ -365,13 +366,19 @@ fn a_batch_is_polled_rather_than_waited_on() {
     let job = solver
         .start(chunk.batch(&runs))
         .expect("a well-formed batch");
+    // A poll never blocks, so how many it takes depends on the device's speed; what is bounded is
+    // how long the device may take, and a software device is slow.
+    let started = Instant::now();
     let mut polls = 0;
     let result = loop {
         polls += 1;
         if let Some(result) = solver.poll(job).expect("the job is the running one") {
             break result;
         }
-        assert!(polls < 1_000_000, "the dispatch never finished");
+        assert!(
+            started.elapsed() < Duration::from_secs(120),
+            "the dispatch never finished"
+        );
     };
 
     eprintln!(
