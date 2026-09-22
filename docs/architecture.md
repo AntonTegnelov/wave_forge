@@ -191,6 +191,7 @@ Nothing of this exists yet, and it should not be built before Phase 1 is solid. 
 - The solver accepts external constraints as a `Prior` on starting domains (principle 6), so a lower layer can decide "this area is water" before WFC runs.
 - Chunks, seeds and the scheduler are about a lattice and a solver seam, not about WFC, so another kind of layer can use the same machinery.
 - Outputs are plain tiles that other layers can consume, which supports blending between techniques and several passes over one area.
+- What the layers finally hand an engine is a set of typed products per chunk (instance sets, meshes with levels of detail, colliders, navigation source geometry, region tags, spawn points), and a recipe of layers plus sparse edits is what runtime generation, editor brushes and baking share. [engine-integration.md](engine-integration.md) describes both.
 
 ## 8. GPU specifics
 

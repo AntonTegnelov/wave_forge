@@ -13,6 +13,7 @@ Read in this order:
 
 Reference:
 
+- **[Engine integration](engine-integration.md):** what the library emits for Godot and Bevy (instance sets, meshes, colliders, navigation, spawn points), where the solver runs in each engine, which engine features it feeds, and how users configure it.
 - **[Constraints](constraints.md):** what adjacency rules can and cannot express, designing module sets for properties like connectivity, and the global and statistical rules kept as future capabilities.
 - **[Performance](performance.md):** priorities, how we measure, where work should run (GPU, threads, SIMD), and the baseline.
 - **[What fits](solver-fit.md):** whether to adopt CDCL/SAT, ghost cells and block decomposition, what changes the parallelism story, and the resulting recommendation.

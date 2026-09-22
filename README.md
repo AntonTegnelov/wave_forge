@@ -1,6 +1,6 @@
 # Wave Forge
 
-A procedural world generator built to run inside games at runtime and scale to massive, complex worlds. It will ship as a **Rust library**, a **Bevy plugin** and a **Godot GDExtension** (via the Godot Asset Library), all under the MIT license.
+A procedural world generator built to run inside games at runtime and scale to massive, complex worlds. It will ship as a **Rust library**, a **Bevy plugin** and a **Godot GDExtension** (via the Godot Asset Store), all under the MIT license.
 
 Phase 1 is a standalone, GPU-accelerated **wave function collapse** generator for 2D and 3D worlds. Phase 2 extends it into layered world generation that combines WFC with other techniques (noise landscapes, Voronoi-based coastlines) in the spirit of [LayerProcGen](https://github.com/runevision/LayerProcGen). The reasoning is in [docs/vision.md](docs/vision.md).
 
