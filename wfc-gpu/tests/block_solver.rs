@@ -374,7 +374,10 @@ fn a_batch_is_polled_rather_than_waited_on() {
         assert!(polls < 1_000_000, "the dispatch never finished");
     };
 
-    eprintln!("block_solver: the batch was polled {polls} times before it finished");
+    eprintln!(
+        "block_solver: on {}, the batch was polled {polls} times before it finished",
+        solver.backend().describe()
+    );
     assert_eq!(result.statuses.len(), runs.len());
     assert!(
         matches!(solver.poll(job), Err(SolverError::UnknownJob(_))),
