@@ -417,7 +417,14 @@ impl WaveForgeWorld {
         };
         let mut prior = Prior::open(num_tiles);
         if !self.layers.is_empty() {
-            prior = prior.with_layers(self.layers.iter().map(|tiles| mask(tiles)).collect());
+            let layer = |tiles: &Vec<u32>| {
+                if tiles.is_empty() {
+                    TileMask::all(num_tiles)
+                } else {
+                    mask(tiles)
+                }
+            };
+            prior = prior.with_layers(self.layers.iter().map(layer).collect());
         }
         for (axis, tiles) in self.face_bans.iter().enumerate() {
             if !tiles.is_empty() {

@@ -50,9 +50,10 @@ func _initialize() -> void:
 	world.world_chunks = Vector3i(CHUNKS_X, CHUNKS_Y, 1)
 	# What a game does with a prior: no water on the ground layer, and no forest against the edges
 	# of a bounded world. The rule set only lets a material meet itself vertically, so a ground
-	# layer without water is a world without water, which is easy to check.
-	var ground: Array[PackedInt32Array] = [PackedInt32Array([SAND, GRASS, FOREST])]
-	world.set_layer_tiles(ground)
+	# layer without water is a world without water, which is easy to check. The layers above it are
+	# left open with an empty array, which is how a scene says "anything goes here".
+	var layers: Array[PackedInt32Array] = [PackedInt32Array([SAND, GRASS, FOREST]), PackedInt32Array()]
+	world.set_layer_tiles(layers)
 	for axis in 4:
 		world.ban_tiles_on_face(axis, PackedInt32Array([FOREST]))
 	world.chunk_updated.connect(_on_chunk_updated)
