@@ -130,37 +130,111 @@ impl Reach {
 }
 
 /// A field's value at one cell column.
+///
+/// Coordinates are in cells, measured from the world's origin to the centre of the column, with
+/// the lattice's x and y.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum Expr {
     Constant(f32),
     /// Value noise in 0..1: `octaves` layers, the first with `frequency` lattice points per cell,
-    /// each next one at twice the frequency and half the weight.
+    /// each next one at twice the frequency and half the weight. A noise with a `name` draws from
+    /// a stream of that name, the same in every stage that names it, so it can be read again
+    /// elsewhere; one without draws from its stage's own stream, which every unnamed noise of the
+    /// stage shares.
     Noise {
         frequency: f32,
         octaves: u32,
+        #[serde(default)]
+        name: Option<String>,
     },
     /// Another field's value at the same column.
     Input(String),
+    /// The column's x and y.
+    X,
+    Y,
+    /// How far the column is from a point, in cells.
+    Distance((f32, f32)),
+    /// The direction from a point to the column, as a fraction of a whole turn from +x towards
+    /// +y, in 0..1.
+    Angle((f32, f32)),
     Add(Box<Expr>, Box<Expr>),
+    Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
+    Min(Box<Expr>, Box<Expr>),
+    Max(Box<Expr>, Box<Expr>),
+    Abs(Box<Expr>),
+    Floor(Box<Expr>),
+    /// The value, held between a low and a high bound.
+    Clamp(Box<Expr>, f32, f32),
+    /// 0 at or below the first edge, 1 at or above the second, and a smooth step between.
+    Smoothstep(f32, f32, Box<Expr>),
+    /// The value mapped linearly from one range onto another, without clamping.
+    Remap(Box<Expr>, (f32, f32), (f32, f32)),
+    /// A piecewise-linear curve through `(x, y)` points in increasing x, level beyond its ends.
+    Curve(Box<Expr>, Vec<(f32, f32)>),
+    /// `then` where the condition holds, `otherwise` where it does not.
+    Select {
+        when: Condition,
+        then: Box<Expr>,
+        otherwise: Box<Expr>,
+    },
+}
+
+/// A comparison of two expressions at one column.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub enum Condition {
+    Less(Box<Expr>, Box<Expr>),
+    Greater(Box<Expr>, Box<Expr>),
 }
 
 impl Expr {
     fn inputs<'a>(&'a self, into: &mut Vec<&'a str>) {
         match self {
-            Self::Constant(_) | Self::Noise { .. } => {}
+            Self::Constant(_)
+            | Self::Noise { .. }
+            | Self::X
+            | Self::Y
+            | Self::Distance(_)
+            | Self::Angle(_) => {}
             Self::Input(name) => into.push(name),
-            Self::Add(a, b) | Self::Mul(a, b) => {
+            Self::Add(a, b)
+            | Self::Sub(a, b)
+            | Self::Mul(a, b)
+            | Self::Min(a, b)
+            | Self::Max(a, b) => {
                 a.inputs(into);
                 b.inputs(into);
+            }
+            Self::Abs(a)
+            | Self::Floor(a)
+            | Self::Clamp(a, ..)
+            | Self::Smoothstep(_, _, a)
+            | Self::Remap(a, ..)
+            | Self::Curve(a, _) => a.inputs(into),
+            Self::Select {
+                when: Condition::Less(a, b) | Condition::Greater(a, b),
+                then,
+                otherwise,
+            } => {
+                for expr in [a, b, then, otherwise] {
+                    expr.inputs(into);
+                }
             }
         }
     }
 
     fn check(&self) -> Result<(), String> {
+        let finite = |values: &[f32]| -> Result<(), String> {
+            match values.iter().find(|value| !value.is_finite()) {
+                Some(value) => Err(format!("{value} is not a finite number")),
+                None => Ok(()),
+            }
+        };
         match self {
-            Self::Constant(value) if !value.is_finite() => Err(format!("constant {value}")),
-            Self::Noise { frequency, octaves } => {
+            Self::Constant(value) => finite(&[*value]),
+            Self::Noise {
+                frequency, octaves, ..
+            } => {
                 if !(frequency.is_finite() && *frequency > 0.0) {
                     Err(format!(
                         "noise frequency {frequency} is not a positive number"
@@ -171,8 +245,62 @@ impl Expr {
                     Ok(())
                 }
             }
-            Self::Add(a, b) | Self::Mul(a, b) => a.check().and_then(|()| b.check()),
-            Self::Constant(_) | Self::Input(_) => Ok(()),
+            Self::Input(_) | Self::X | Self::Y => Ok(()),
+            Self::Distance((x, y)) | Self::Angle((x, y)) => finite(&[*x, *y]),
+            Self::Add(a, b)
+            | Self::Sub(a, b)
+            | Self::Mul(a, b)
+            | Self::Min(a, b)
+            | Self::Max(a, b) => a.check().and_then(|()| b.check()),
+            Self::Abs(a) | Self::Floor(a) => a.check(),
+            Self::Clamp(a, low, high) => {
+                finite(&[*low, *high])?;
+                if low > high {
+                    return Err(format!("clamp between {low} and {high}, low above high"));
+                }
+                a.check()
+            }
+            Self::Smoothstep(low, high, a) => {
+                finite(&[*low, *high])?;
+                if low == high {
+                    return Err(format!("smoothstep with both edges at {low}"));
+                }
+                a.check()
+            }
+            Self::Remap(a, (from_low, from_high), (to_low, to_high)) => {
+                finite(&[*from_low, *from_high, *to_low, *to_high])?;
+                if from_low == from_high {
+                    return Err(format!("remap from a range of one value, {from_low}"));
+                }
+                a.check()
+            }
+            Self::Curve(a, points) => {
+                if points.len() < 2 {
+                    return Err(format!(
+                        "a curve through {} points; it needs two",
+                        points.len()
+                    ));
+                }
+                for (x, y) in points {
+                    finite(&[*x, *y])?;
+                }
+                if let Some(pair) = points.windows(2).find(|pair| pair[0].0 >= pair[1].0) {
+                    return Err(format!(
+                        "curve points at x {} then {}; x has to increase",
+                        pair[0].0, pair[1].0
+                    ));
+                }
+                a.check()
+            }
+            Self::Select {
+                when: Condition::Less(a, b) | Condition::Greater(a, b),
+                then,
+                otherwise,
+            } => a
+                .check()
+                .and_then(|()| b.check())
+                .and_then(|()| then.check())
+                .and_then(|()| otherwise.check()),
         }
     }
 }
@@ -427,7 +555,7 @@ pub(crate) const fn point_stage_id(salt: u32) -> u16 {
 
 /// FNV-1a of a stage's name: the same for a stage wherever it sits in the pack, so adding or
 /// reordering stages changes no other stage's random decisions.
-fn salt(name: &str) -> u32 {
+pub(crate) fn salt(name: &str) -> u32 {
     name.bytes().fold(0x811C_9DC5_u32, |hash, byte| {
         (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
     })
