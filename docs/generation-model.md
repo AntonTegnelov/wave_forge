@@ -241,7 +241,8 @@ reproduction impossible anyway.
 3. The repair-purity prototype and its measurement (§5).
 4. The first slice, a Valheim-like surface world with WFC inside masks: Field (height), Sites, Apply
    (flatten), Rules (to a Prior), Solve, Scatter and Emit, verified by the order-diff test before the
-   Field stage moves to the GPU.
+   Field stage moves to the GPU. The slice and its test pack are built here; the survival game on top
+   of it lives in its own repository ([roadmap.md](roadmap.md#games-packs-and-repositories)).
 5. Godot authoring resources and the viewers; the Bevy loader.
 6. Later slices, one stage kind each: region jobs (rivers, Qud zones, cave levels), Assemble (jigsaw,
    room graphs), density volumes (Minecraft and Deep Rock caves), Records and hierarchy (Elite, No
