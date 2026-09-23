@@ -111,9 +111,8 @@ Work that publishing would require, and that pays for itself before then:
   [testing.md](testing.md#test-layers). GPU tests run on Mesa's software Vulkan device if they stay
   fast there; that is measured before it is added. Heavy engine builds run only when their
   directories change.
-- **Golden worlds (A-16, [#35](https://github.com/AntonTegnelov/wave_forge/issues/35)).** A hash of a small generated world, recorded on the RTX 3070 and
-  compared on the software device in CI. That is the first test of the promise that a world is the
-  same on any GPU vendor, which so far has only been observed on one.
+- ~~**Golden worlds (A-16, [#35](https://github.com/AntonTegnelov/wave_forge/issues/35)).**~~ Done: a 4×4-chunk city recorded on the RTX 3070 is tile for
+  tile the same on Mesa's lavapipe, which CI checks on every pull request.
 - **Licences.** Everything in both integrations' dependency trees is MIT, Apache-2.0, Zlib or
   Unlicense, except godot-rust (`godot` and its `godot-*` crates, 0.5.5), which is MPL-2.0. That is
   compatible with shipping our MIT code, but a distributed extension binary has to say where the
