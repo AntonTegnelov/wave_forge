@@ -327,6 +327,12 @@ impl<S: Solver> WorldGenerator<S> {
         &self.solver
     }
 
+    /// Ends the world and hands its solver back, to generate another world on it.
+    #[must_use]
+    pub fn into_solver(self) -> S {
+        self.solver
+    }
+
     /// The solver, to set up before generation starts: a GPU solver compiles a kernel per region
     /// shape, and [`wfc_gpu::BlockSolver::warm`] does that at load rather than at the first batch.
     pub const fn solver_mut(&mut self) -> &mut S {

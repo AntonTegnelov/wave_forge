@@ -5,6 +5,7 @@
 //! hand. Loading checks everything that can be checked before generating: the version, unknown
 //! and duplicate names, parameters out of range, and cycles, each error naming the stage.
 
+use crate::towns::Selector;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -52,6 +53,17 @@ pub enum StageKind {
         sites: String,
         blend: u32,
     },
+    /// A town on each of `sites`: a bounded WFC world of the rule set named `rules`, the size of
+    /// the site's footprint, solved whole, with `bottom` on its lowest layer and `top` on its
+    /// highest.
+    Solve {
+        sites: String,
+        rules: String,
+        #[serde(default)]
+        bottom: Option<Selector>,
+        #[serde(default)]
+        top: Option<Selector>,
+    },
 }
 
 /// What a stage produces, which decides which stages may read it.
@@ -59,6 +71,7 @@ pub enum StageKind {
 pub(crate) enum Output {
     Field,
     Sites,
+    Tiles,
 }
 
 impl StageKind {
@@ -66,6 +79,7 @@ impl StageKind {
         match self {
             Self::Field(_) | Self::Blur { .. } | Self::Flatten { .. } => Output::Field,
             Self::Sites { .. } => Output::Sites,
+            Self::Solve { .. } => Output::Tiles,
         }
     }
 }
@@ -255,6 +269,9 @@ impl Pack {
                     (height.as_str(), Reach::Cells(0), Output::Field),
                     (sites.as_str(), Reach::Cells(*blend), Output::Sites),
                 ],
+                StageKind::Solve { sites, .. } => {
+                    vec![(sites.as_str(), Reach::Cells(0), Output::Sites)]
+                }
             };
             let mut inputs = Vec::with_capacity(reads.len());
             for (name, reach, expected) in reads {

@@ -232,7 +232,7 @@ and are unverified from Iron Gate).
 
 **Needs.** Field, Rules, Region jobs (rivers, the location table), Network, Sites, Apply, Scatter,
 Assemble, Edits, per-stage persistence. This is the first slice's target
-([generation-model.md §8](generation-model.md#8-order-of-work)). **Status:** not started (2026-09-23).
+([generation-model.md §8](generation-model.md#8-order-of-work)). **Status:** in progress (2026-09-23): the stage runtime generates biome-free height fields, sites with levelled ground and a WFC city on each site, the same in any order ([testing.md](testing.md)); biomes, rivers, locations, vegetation, dungeons and edits are to come.
 
 ### G8. A Deep Rock Galactic-like cave level
 
