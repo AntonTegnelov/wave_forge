@@ -223,8 +223,9 @@ pub enum StageKind {
         size: String,
         max_size: u32,
     },
-    /// The `height` field levelled to each of `sites`' heights inside its footprint and blended
-    /// back to the field over `blend` cells around it.
+    /// The `height` field levelled to each footprint of `sites` inside it and blended back to the
+    /// field over `blend` cells around it: a sites stage's sites at their heights, or an Assemble
+    /// stage's pieces at their floors.
     Flatten {
         height: String,
         sites: String,
@@ -305,8 +306,9 @@ pub enum StageKind {
     ///    scattered around it;
     /// 2. tests at each point's column: the height within `between`, the slope at most
     ///    `max_slope` (height per cell), every condition of `when`, the depth under `water`, at
-    ///    least `margin` cells from every site of `avoid`, and at least its clearance from every
-    ///    point of each Scatter stage `block` names, which is placed first and so wins;
+    ///    least `margin` cells from every footprint of `avoid` (a sites stage's sites or an
+    ///    Assemble stage's pieces), and at least its clearance from every point of each Scatter
+    ///    stage `block` names, which is placed first and so wins;
     /// 3. spacing: no candidate that passes its tests and has a higher priority closer than
     ///    `apart` cells, a test that reads neighbours' candidates, never their results, so points
     ///    keep their distance across chunk seams;
@@ -343,7 +345,77 @@ pub enum StageKind {
         #[serde(default)]
         align: f32,
     },
+    /// Pieces grown on each of `sites` (only those of `kinds`, if it names any) from connectors,
+    /// as a jigsaw village or a dungeon of rooms is: the piece named `start` at the centre of the
+    /// site's footprint, then, for each open door in the order doors opened, a piece drawn by
+    /// weight among those with a door of the same kind, turned to face it and kept if it stays
+    /// inside the footprint and clear of every piece placed, `tries` draws at most. Growth stops
+    /// at `max` pieces; each door still open is closed by the first end piece of its kind that
+    /// fits. An assembly of fewer than `min` pieces, end pieces aside, is grown again from a new
+    /// hash stream, `rerolls` times at most. Pieces stand `lift` cells above their site, a
+    /// dungeon above its entrance say. A chunk's product is the pieces overlapping it.
+    Assemble {
+        sites: String,
+        #[serde(default)]
+        kinds: Vec<String>,
+        start: String,
+        pieces: Vec<Piece>,
+        max: u32,
+        #[serde(default)]
+        min: u32,
+        #[serde(default = "twenty_tries")]
+        tries: u32,
+        #[serde(default)]
+        rerolls: u32,
+        #[serde(default)]
+        lift: f32,
+    },
 }
+
+/// A piece an Assemble stage grows from ([`StageKind::Assemble`]): a box of cells a prefab fills,
+/// which an engine binds a scene to by its name, authored at turn 0 with its footprint centred on
+/// its origin and its floor at the origin's height.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Piece {
+    pub name: String,
+    /// Cells along the lattice's x and y, and levels upward.
+    pub size: (u32, u32, u32),
+    /// How often it is drawn against the others with a matching door.
+    #[serde(default = "one_weight")]
+    pub weight: u32,
+    /// Whether it only closes open doors, never grows.
+    #[serde(default)]
+    pub end: bool,
+    pub doors: Vec<Door>,
+}
+
+/// A connector on a piece's side ([`Piece`]): two doors of one `kind` join when they face each
+/// other from neighbouring cells on the same level.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Door {
+    /// The cell it opens from, in the piece's cells and levels, on the side it faces.
+    pub at: (u32, u32, u32),
+    pub facing: Facing,
+    pub kind: String,
+}
+
+/// A side of a piece along the lattice: north is toward +y, east toward +x.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum Facing {
+    North,
+    East,
+    South,
+    West,
+}
+
+const fn one_weight() -> u32 {
+    1
+}
+
+/// The most pieces one Assemble stage's assembly may hold, and the most rerolls it may take.
+pub const MAX_PIECES: u32 = 1024;
 
 /// One kind of site of a location table ([`StageKind::Locations`]).
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -463,6 +535,7 @@ pub(crate) enum Output {
     Tiles,
     Points,
     Curves,
+    Pieces,
 }
 
 impl StageKind {
@@ -500,6 +573,7 @@ impl StageKind {
             Self::Sites { .. } | Self::TableSites { .. } | Self::Locations { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
             Self::Scatter { .. } => Output::Points,
+            Self::Assemble { .. } => Output::Pieces,
         }
     }
 }
@@ -1398,11 +1472,12 @@ impl Pack {
                         | StageKind::Flatten { .. }
                         | StageKind::Solve { .. }
                         | StageKind::Scatter { .. }
+                        | StageKind::Assemble { .. }
                 )
             {
                 return Err(invalid(format!(
-                    "a scale of {}; sites, flattening, towns and scatter work on the WFC lattice, \
-                     scale 1",
+                    "a scale of {}; sites, flattening, towns, scatter and assemblies work on the \
+                     WFC lattice, scale 1",
                     def.scale
                 )));
             }
@@ -1624,8 +1699,40 @@ impl Pack {
                     blend,
                 } => vec![
                     (height.as_str(), Reach::Cells(0), Output::Field),
-                    (sites.as_str(), Reach::Cells(*blend), Output::Sites),
+                    (
+                        sites.as_str(),
+                        Reach::Cells(*blend),
+                        footprints(&by_name, &outputs, sites),
+                    ),
                 ],
+                StageKind::Assemble {
+                    sites,
+                    start,
+                    pieces,
+                    max,
+                    min,
+                    tries,
+                    rerolls,
+                    lift,
+                    ..
+                } => {
+                    check_pieces(pieces, start).map_err(invalid)?;
+                    if !(1..=MAX_PIECES).contains(max) || min > max || *rerolls > MAX_PIECES {
+                        return Err(invalid(format!(
+                            "from {min} to {max} pieces over {rerolls} rerolls; up to \
+                             {MAX_PIECES} pieces and rerolls are allowed"
+                        )));
+                    }
+                    if !(1..=MAX_TRIES).contains(tries) {
+                        return Err(invalid(format!(
+                            "{tries} tries; 1 to {MAX_TRIES} are allowed"
+                        )));
+                    }
+                    if !lift.is_finite() {
+                        return Err(invalid(format!("a lift of {lift}")));
+                    }
+                    vec![(sites.as_str(), Reach::Cells(0), Output::Sites)]
+                }
                 StageKind::Region {
                     region,
                     halo,
@@ -1758,7 +1865,11 @@ impl Pack {
                     }
                     let mut reads = widest_reads(fields);
                     if let Some((sites, margin)) = avoid {
-                        reads.push((sites.as_str(), Reach::Cells(base + margin), Output::Sites));
+                        reads.push((
+                            sites.as_str(),
+                            Reach::Cells(base + margin),
+                            footprints(&by_name, &outputs, sites),
+                        ));
                     }
                     for (points, clearance) in block {
                         if !(clearance.is_finite() && *clearance >= 0.0) {
@@ -1838,6 +1949,7 @@ impl Pack {
                 | StageKind::Apply { .. }
                 | StageKind::Flatten { .. }
                 | StageKind::Solve { .. }
+                | StageKind::Assemble { .. }
                 | StageKind::Region { .. }
                 | StageKind::Rivers { .. } => {}
             }
@@ -1853,7 +1965,7 @@ impl Pack {
         }
         let mut point_ids: BTreeMap<u16, &str> = BTreeMap::new();
         for stage in &stages {
-            if let StageKind::Scatter { .. } = stage.kind
+            if let StageKind::Scatter { .. } | StageKind::Assemble { .. } = stage.kind
                 && let Some(other) = point_ids.insert(point_stage_id(stage.salt), &stage.name)
             {
                 return Err(PackError::Invalid {
@@ -2000,6 +2112,59 @@ fn check_categories(
         }
     }
     Ok(())
+}
+
+/// What a stage that keeps to footprints reads `name` as: an Assemble stage's pieces, or else
+/// sites, which the check of what each stage produces then holds it to.
+fn footprints(by_name: &BTreeMap<String, usize>, outputs: &[Output], name: &str) -> Output {
+    match by_name.get(name).map(|&index| outputs[index]) {
+        Some(Output::Pieces) => Output::Pieces,
+        _ => Output::Sites,
+    }
+}
+
+/// Whether an Assemble stage's pieces can be grown: names that differ, a `start` that grows,
+/// boxes of at least a cell, weights for the pieces that grow, and every door on the side it
+/// faces.
+fn check_pieces(pieces: &[Piece], start: &str) -> Result<(), String> {
+    for (index, piece) in pieces.iter().enumerate() {
+        let refuse = |message: String| format!("piece {:?}: {message}", piece.name);
+        if pieces[..index]
+            .iter()
+            .any(|earlier| earlier.name == piece.name)
+        {
+            return Err(refuse("two pieces share the name".to_owned()));
+        }
+        let (x, y, levels) = piece.size;
+        if x == 0 || y == 0 || levels == 0 {
+            return Err(refuse(format!("a size of {:?}", piece.size)));
+        }
+        if !piece.end && piece.weight == 0 {
+            return Err(refuse(
+                "a weight of 0; only an end piece goes unweighted".to_owned(),
+            ));
+        }
+        for door in &piece.doors {
+            let (dx, dy, level) = door.at;
+            let on_side = match door.facing {
+                Facing::North => dy == y - 1,
+                Facing::East => dx == x - 1,
+                Facing::South => dy == 0,
+                Facing::West => dx == 0,
+            };
+            if dx >= x || dy >= y || level >= levels || !on_side {
+                return Err(refuse(format!(
+                    "a door at {:?} facing {:?}, which is not on that side of it",
+                    door.at, door.facing
+                )));
+            }
+        }
+    }
+    match pieces.iter().find(|piece| piece.name == start) {
+        Some(piece) if !piece.end => Ok(()),
+        Some(_) => Err(format!("it starts from {start:?}, an end piece")),
+        None => Err(format!("it starts from {start:?}, which no piece is named")),
+    }
 }
 
 /// Whether a Solve stage over `sites` may choose its rule set by `column`: the sites come from a

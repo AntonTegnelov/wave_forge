@@ -7,6 +7,7 @@
 //! and the stage reads them only through a view bounded by that area. Whatever order chunks are
 //! asked for in, each is computed from the same inputs and comes out the same.
 
+use super::assemble::Growth;
 use super::edits::{Edit, Edits};
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId, Table};
@@ -107,6 +108,26 @@ pub struct TownChunk {
     pub tiles: Arc<[u16]>,
 }
 
+/// A piece an Assemble stage placed: a prefab an engine binds a scene to by the piece's name.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct Stamp {
+    /// Positional: the chunk and the cell of its footprint's centre, the stage, and its place in
+    /// its assembly's growth, so it never changes when other assemblies do.
+    pub id: InstanceId,
+    /// The site it was grown on.
+    pub site: SiteId,
+    /// The piece's name in the stage.
+    pub piece: Arc<str>,
+    /// The centre of its footprint along the lattice's x and y, and its floor's height, in cells.
+    pub position: [f32; 3],
+    /// Its turn about the vertical from the piece as authored, as a fraction of a whole turn: 0,
+    /// 0.25, 0.5 or 0.75, from +x toward +y.
+    pub turn: f32,
+    /// The columns it covers, from `min` up to but not including `max`.
+    pub min: [i64; 2],
+    pub max: [i64; 2],
+}
+
 /// A point a Scatter stage placed.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Point {
@@ -201,12 +222,43 @@ pub enum Product {
     Points(Vec<Point>),
     /// The curves of the chunk's region that pass through the chunk.
     Curves(Vec<Curve>),
+    /// The pieces of assemblies whose footprint overlaps the chunk.
+    Stamps(Vec<Stamp>),
 }
 
 impl Product {
-    fn sites(&self) -> &[Site] {
+    /// The footprints of a sites stage's sites or an Assemble stage's pieces, each with what names
+    /// it.
+    fn levelled(&self, size: [u32; 2]) -> Vec<(LevelledId, Levelled)> {
+        let columns = |chunk: (i32, i32)| {
+            [
+                i64::from(chunk.0) * i64::from(size[0]),
+                i64::from(chunk.1) * i64::from(size[1]),
+            ]
+        };
         match self {
-            Self::Sites(sites) => sites,
+            Self::Sites(sites) => sites
+                .iter()
+                .map(|site| {
+                    let footprint = Levelled {
+                        min: columns(site.min),
+                        max: columns(site.max),
+                        height: site.height,
+                    };
+                    (LevelledId::Site(site.id.clone()), footprint)
+                })
+                .collect(),
+            Self::Stamps(stamps) => stamps
+                .iter()
+                .map(|stamp| {
+                    let footprint = Levelled {
+                        min: stamp.min,
+                        max: stamp.max,
+                        height: stamp.position[2],
+                    };
+                    (LevelledId::Stamp(stamp.id), footprint)
+                })
+                .collect(),
             Self::Field(_)
             | Self::Categories(_)
             | Self::Tiles(_)
@@ -215,6 +267,50 @@ impl Product {
                 unreachable!("inputs are type checked when the pack loads")
             }
         }
+    }
+
+    fn sites(&self) -> &[Site] {
+        match self {
+            Self::Sites(sites) => sites,
+            Self::Field(_)
+            | Self::Categories(_)
+            | Self::Tiles(_)
+            | Self::Points(_)
+            | Self::Curves(_)
+            | Self::Stamps(_) => {
+                unreachable!("inputs are type checked when the pack loads")
+            }
+        }
+    }
+}
+
+/// A site and the pieces grown on it.
+type Assembly = (Site, Arc<[Stamp]>);
+
+/// What names a footprint, so one seen from several chunks is counted once.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LevelledId {
+    Site(SiteId),
+    Stamp(InstanceId),
+}
+
+/// A rectangle of columns at a height: a site's or an assembled piece's, which Flatten levels the
+/// ground under and Scatter keeps a margin from.
+#[derive(Clone, Copy, Debug)]
+struct Levelled {
+    /// The columns it covers, from `min` up to but not including `max`.
+    min: [i64; 2],
+    max: [i64; 2],
+    height: f32,
+}
+
+impl Levelled {
+    /// How far the column `x`, `y` is from it, in columns; zero inside it.
+    fn distance(&self, x: i64, y: i64) -> f32 {
+        let span = |at: i64, low: i64, high: i64| (low - at).max(at - (high - 1)).max(0) as f32;
+        let dx = span(x, self.min[0], self.max[0]);
+        let dy = span(y, self.min[1], self.max[1]);
+        (dx * dx + dy * dy).sqrt()
     }
 }
 
@@ -290,6 +386,14 @@ pub enum StageError {
         site: SiteId,
         message: String,
     },
+    /// An Assemble stage's assembly on a site stayed under its least number of pieces after
+    /// every reroll.
+    #[error("stage {stage:?} grew fewer than {min} pieces on {site:?} after every reroll")]
+    Assemble {
+        stage: String,
+        site: SiteId,
+        min: u32,
+    },
 }
 
 /// One input of a stage, readable only within the stage's reach of the chunk being generated: a
@@ -346,7 +450,11 @@ impl FieldView<'_> {
         match product {
             Product::Field(field) => field.get(x, y),
             Product::Categories(categories) => f32::from(categories.get(x, y)),
-            Product::Sites(_) | Product::Tiles(_) | Product::Points(_) | Product::Curves(_) => {
+            Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Curves(_)
+            | Product::Stamps(_) => {
                 unreachable!("inputs are type checked when the pack loads")
             }
         }
@@ -374,6 +482,8 @@ pub struct Runtime {
     /// Towns solved, by Solve stage and site, with the site, kept while a chunk it covers is
     /// needed.
     solved: BTreeMap<(usize, SiteId), (Site, Arc<Town>)>,
+    /// Assemblies grown, by Assemble stage and site, with the site, kept as towns are.
+    assembled: BTreeMap<(usize, SiteId), Assembly>,
     /// What each stage has cost, by stage index.
     timings: Vec<StageTiming>,
     /// The region jobs Region stages name, by name.
@@ -452,6 +562,7 @@ impl Runtime {
             products: BTreeMap::new(),
             towns: None,
             solved: BTreeMap::new(),
+            assembled: BTreeMap::new(),
             facts: None,
             edits: Folded::default(),
             log: Edits::default(),
@@ -841,12 +952,15 @@ impl Runtime {
             }
             !gone
         });
+        let fresh = |stage: usize, site: &Site| match stale.get(&stage) {
+            None => true,
+            Some(Stale::All) => false,
+            Some(Stale::Chunks(chunks)) => !chunks.iter().any(|&chunk| site.overlaps(chunk)),
+        };
         self.solved
-            .retain(|&(stage, _), (site, _)| match stale.get(&stage) {
-                None => true,
-                Some(Stale::All) => false,
-                Some(Stale::Chunks(chunks)) => !chunks.iter().any(|&chunk| site.overlaps(chunk)),
-            });
+            .retain(|&(stage, _), (site, _)| fresh(stage, site));
+        self.assembled
+            .retain(|&(stage, _), (site, _)| fresh(stage, site));
         let pack = Arc::clone(&self.pack);
         self.regions.retain(|&(stage, region), _| {
             let (StageKind::Region { region: size, .. } | StageKind::Rivers { region: size, .. }) =
@@ -1109,7 +1223,8 @@ impl Runtime {
             other @ (Product::Categories(_)
             | Product::Sites(_)
             | Product::Tiles(_)
-            | Product::Curves(_)) => other,
+            | Product::Curves(_)
+            | Product::Stamps(_)) => other,
         }
     }
 
@@ -1238,11 +1353,15 @@ impl Runtime {
             keep
         });
         let pack = Arc::clone(&self.pack);
-        self.solved.retain(|&(stage, _), (site, _)| {
+        let covered = |stage: usize, site: &Site| {
             needed
                 .get(&stage)
                 .is_some_and(|chunks| chunks.iter().any(|&chunk| site.overlaps(chunk)))
-        });
+        };
+        self.solved
+            .retain(|&(stage, _), (site, _)| covered(stage, site));
+        self.assembled
+            .retain(|&(stage, _), (site, _)| covered(stage, site));
         // A bounded world has few regions, so it keeps every one it has computed, as a finite
         // world computes them once before streaming.
         let finite = pack.bound.is_some();
@@ -1367,6 +1486,7 @@ impl Runtime {
                     Some(frozen) => Product::clone(frozen),
                     None => {
                         self.solve_town_of(index, chunk)?;
+                        self.assemble_of(index, chunk)?;
                         self.run_region_of(index, chunk)?;
                         self.place_locations_of(index, chunk)?;
                         let product = self.generate(index, chunk)?;
@@ -1422,7 +1542,8 @@ impl Runtime {
             | Product::Tiles(_)
             | Product::Points(_)
             | Product::Categories(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 
@@ -1436,7 +1557,8 @@ impl Runtime {
             | Product::Sites(_)
             | Product::Tiles(_)
             | Product::Points(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 
@@ -1524,6 +1646,7 @@ impl Runtime {
             | StageKind::Flatten { .. }
             | StageKind::Solve { .. }
             | StageKind::Scatter { .. }
+            | StageKind::Assemble { .. }
             | StageKind::Region { .. }
             | StageKind::Rivers { .. } => return Err(StageError::NotSampled(stage.name.clone())),
         };
@@ -1549,7 +1672,23 @@ impl Runtime {
             | Product::Categories(_)
             | Product::Sites(_)
             | Product::Tiles(_)
-            | Product::Points(_) => None,
+            | Product::Points(_)
+            | Product::Stamps(_) => None,
+        }
+    }
+
+    /// The pieces `stage` placed whose footprint overlaps `chunk`, if it is an Assemble stage and
+    /// the chunk is generated.
+    #[must_use]
+    pub fn stamps(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Stamp]> {
+        match self.product(stage, chunk)? {
+            Product::Stamps(stamps) => Some(stamps),
+            Product::Field(_)
+            | Product::Categories(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Curves(_) => None,
         }
     }
 
@@ -1562,7 +1701,8 @@ impl Runtime {
             | Product::Tiles(_)
             | Product::Points(_)
             | Product::Categories(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 
@@ -1576,7 +1716,8 @@ impl Runtime {
             | Product::Sites(_)
             | Product::Points(_)
             | Product::Categories(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 
@@ -1589,7 +1730,8 @@ impl Runtime {
             | Product::Sites(_)
             | Product::Tiles(_)
             | Product::Categories(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 
@@ -1866,24 +2008,7 @@ impl Runtime {
             .towns
             .as_mut()
             .ok_or_else(|| StageError::NoTownSolver(stage.name.clone()))?;
-        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
-        let [high, low, _] = match &site.id {
-            SiteId::Region(x, y) => pcg3d([world ^ stage.salt, *x as u32, *y as u32]),
-            SiteId::Location { region, index } => pcg3d([
-                world ^ stage.salt ^ 0x6C6F_6361,
-                region.0 as u32,
-                (region.1 as u32) ^ index.wrapping_mul(0x9E37_79B9),
-            ]),
-            SiteId::Row(row) => {
-                let hash = row
-                    .0
-                    .iter()
-                    .fold(world ^ stage.salt ^ 0x524F_5753, |hash, &part| {
-                        pcg3d([hash, part as u32, (part >> 32) as u32])[0]
-                    });
-                pcg3d([hash, row.0.len() as u32, 0])
-            }
-        };
+        let [high, low, _] = site_hash(self.seed, stage.salt, &site.id);
         let request = TownRequest {
             rules,
             seed: (u64::from(high) << 32) | u64::from(low),
@@ -1901,6 +2026,101 @@ impl Runtime {
         })?;
         self.solved
             .insert((index, site.id.clone()), (site, Arc::new(town)));
+        Ok(())
+    }
+
+    /// The site of an Assemble stage's chunk, if the chunk lies in one of the kinds it grows on.
+    fn assembly_site(&self, index: usize, chunk: ChunkCoord) -> Option<Site> {
+        let StageKind::Assemble { kinds, .. } = &self.pack.stages[index].kind else {
+            unreachable!("only an Assemble stage's chunks lie in assemblies")
+        };
+        self.site_of(index, chunk).filter(|site| {
+            kinds.is_empty()
+                || site
+                    .kind
+                    .as_deref()
+                    .is_some_and(|kind| kinds.iter().any(|known| known == kind))
+        })
+    }
+
+    /// Grows the assembly of `chunk`'s site for Assemble stage `index`, unless it is grown already
+    /// or the chunk lies in no site it grows on.
+    fn assemble_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Assemble {
+            start,
+            pieces,
+            max,
+            min,
+            tries,
+            rerolls,
+            lift,
+            ..
+        } = &stage.kind
+        else {
+            return Ok(());
+        };
+        let Some(site) = self.assembly_site(index, chunk) else {
+            return Ok(());
+        };
+        if self.assembled.contains_key(&(index, site.id.clone())) {
+            return Ok(());
+        }
+        let growth = Growth {
+            pieces,
+            start: pieces
+                .iter()
+                .position(|piece| piece.name == *start)
+                .expect("checked when loaded"),
+            max: *max,
+            min: *min,
+            tries: *tries,
+            rerolls: *rerolls,
+        };
+        let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+        let [high, low, _] = site_hash(self.seed, stage.salt, &site.id);
+        let placed = growth
+            .grow(
+                [i64::from(site.min.0) * sx, i64::from(site.min.1) * sy],
+                [i64::from(site.max.0) * sx, i64::from(site.max.1) * sy],
+                [high, low],
+            )
+            .ok_or_else(|| StageError::Assemble {
+                stage: stage.name.clone(),
+                site: site.id.clone(),
+                min: *min,
+            })?;
+        let id_stage = point_stage_id(stage.salt);
+        let stamps: Arc<[Stamp]> = placed
+            .iter()
+            .enumerate()
+            .map(|(slot, placed)| {
+                let [x, y, level] = placed.min;
+                let [width, depth, _] = placed.size.map(i64::from);
+                let centre = (x + width / 2, y + depth / 2);
+                let owner = ChunkCoord::new(
+                    i32::try_from(centre.0.div_euclid(sx)).expect("a chunk coordinate"),
+                    i32::try_from(centre.1.div_euclid(sy)).expect("a chunk coordinate"),
+                    0,
+                );
+                let cell = (centre.1.rem_euclid(sy) * sx + centre.0.rem_euclid(sx)) as u32;
+                Stamp {
+                    id: InstanceId::new(owner, id_stage, cell, slot as u16),
+                    site: site.id.clone(),
+                    piece: Arc::from(pieces[placed.piece].name.as_str()),
+                    position: [
+                        x as f32 + width as f32 / 2.0,
+                        y as f32 + depth as f32 / 2.0,
+                        site.height + lift + level as f32,
+                    ],
+                    turn: f32::from(placed.turn) / 4.0,
+                    min: [x, y],
+                    max: [x + width, y + depth],
+                }
+            })
+            .collect();
+        self.assembled
+            .insert((index, site.id.clone()), (site, stamps));
         Ok(())
     }
 
@@ -2028,15 +2248,20 @@ impl Runtime {
         self.view_over(stage, input, self.reader_box(chunk, reach), reach[0])
     }
 
-    /// Every site of `input` within `reach` of `chunk`, once each.
-    fn sites_near(&self, index: usize, chunk: ChunkCoord, input: usize, reach: Reach) -> Vec<Site> {
-        let mut sites: BTreeMap<SiteId, Site> = BTreeMap::new();
+    /// Every footprint of `input`, a sites stage or an Assemble stage, within `reach` of `chunk`,
+    /// once each.
+    fn levelled_near(
+        &self,
+        index: usize,
+        chunk: ChunkCoord,
+        input: usize,
+        reach: Reach,
+    ) -> Vec<Levelled> {
+        let mut footprints: BTreeMap<LevelledId, Levelled> = BTreeMap::new();
         for (_, product) in self.inputs_within(index, chunk, input, reach.cells(self.size)) {
-            for site in product.sites() {
-                sites.insert(site.id.clone(), site.clone());
-            }
+            footprints.extend(product.levelled(self.size));
         }
-        sites.into_values().collect()
+        footprints.into_values().collect()
     }
 
     fn generate(&self, index: usize, chunk: ChunkCoord) -> Result<Product, StageError> {
@@ -2051,6 +2276,24 @@ impl Runtime {
                     tiles: Arc::clone(&town.chunks[(y as u32 * town.size.0 + x as u32) as usize]),
                 }
             })));
+        }
+        if let StageKind::Assemble { .. } = &stage.kind {
+            let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+            let (x0, y0) = (i64::from(chunk.x) * sx, i64::from(chunk.y) * sy);
+            let overlaps = |stamp: &&Stamp| {
+                stamp.min[0] < x0 + sx
+                    && x0 < stamp.max[0]
+                    && stamp.min[1] < y0 + sy
+                    && y0 < stamp.max[1]
+            };
+            return Ok(Product::Stamps(
+                self.assembly_site(index, chunk)
+                    .map(|site| {
+                        let (_, stamps) = &self.assembled[&(index, site.id)];
+                        stamps.iter().filter(overlaps).cloned().collect()
+                    })
+                    .unwrap_or_default(),
+            ));
         }
         if let StageKind::Locations { region, .. } = &stage.kind {
             let placed = &self.placed[&(index, region_of(chunk, *region))];
@@ -2175,10 +2418,10 @@ impl Runtime {
                 values,
             }));
         }
-        let near: Vec<Site> = match &stage.kind {
+        let near: Vec<Levelled> = match &stage.kind {
             StageKind::Flatten { .. } => {
                 let (sites, reach) = stage.inputs[1];
-                self.sites_near(index, chunk, sites, reach)
+                self.levelled_near(index, chunk, sites, reach)
             }
             _ => Vec::new(),
         };
@@ -2199,14 +2442,14 @@ impl Runtime {
                         let base = view.get(column[0], column[1])?;
                         let nearest = near
                             .iter()
-                            .map(|site| (site.distance(column[0], column[1], self.size), site))
+                            .map(|footprint| (footprint.distance(column[0], column[1]), footprint))
                             .min_by(|a, b| a.0.total_cmp(&b.0));
                         match nearest {
-                            Some((0.0, site)) => site.height,
-                            Some((distance, site)) if distance < *blend as f32 => {
+                            Some((0.0, footprint)) => footprint.height,
+                            Some((distance, footprint)) if distance < *blend as f32 => {
                                 let t = distance / *blend as f32;
                                 let t = t * t * (3.0 - 2.0 * t);
-                                site.height + (base - site.height) * t
+                                footprint.height + (base - footprint.height) * t
                             }
                             _ => base,
                         }
@@ -2219,6 +2462,7 @@ impl Runtime {
                     | StageKind::Apply { .. }
                     | StageKind::Solve { .. }
                     | StageKind::Scatter { .. }
+                    | StageKind::Assemble { .. }
                     | StageKind::Rules { .. }
                     | StageKind::Region { .. }
                     | StageKind::Rivers { .. } => {
@@ -2381,7 +2625,7 @@ impl Runtime {
             views[&self.pack.index(name).expect("linked when loaded")].get(x, y)
         };
         let heights = &views[&self.pack.index(height).expect("linked when loaded")];
-        let sites = match avoid {
+        let avoided = match avoid {
             Some((name, _)) => {
                 let input = self.pack.index(name).expect("linked when loaded");
                 let (_, reach) = *stage
@@ -2389,7 +2633,7 @@ impl Runtime {
                     .iter()
                     .find(|&&(known, _)| known == input)
                     .expect("linked when loaded");
-                self.sites_near(index, chunk, input, reach)
+                self.levelled_near(index, chunk, input, reach)
             }
             None => Vec::new(),
         };
@@ -2486,9 +2730,9 @@ impl Runtime {
             }) {
                 return Ok(None);
             }
-            if sites
+            if avoided
                 .iter()
-                .any(|site| site.distance(x, y, self.size) < margin as f32)
+                .any(|footprint| footprint.distance(x, y) < margin as f32)
             {
                 return Ok(None);
             }
@@ -2965,6 +3209,29 @@ fn value_noise(seed: u64, salt: u32, frequency: f32, octaves: u32, at: [f32; 2])
         scale *= 2.0;
     }
     sum / total
+}
+
+/// The hash a Solve or Assemble stage seeds a site's town or assembly from: the world's seed, the
+/// stage's salt and the site's id, so a site grows the same whichever chunk asks for it.
+fn site_hash(seed: u64, salt: u32, id: &SiteId) -> [u32; 3] {
+    let world = (seed as u32) ^ ((seed >> 32) as u32);
+    match id {
+        SiteId::Region(x, y) => pcg3d([world ^ salt, *x as u32, *y as u32]),
+        SiteId::Location { region, index } => pcg3d([
+            world ^ salt ^ 0x6C6F_6361,
+            region.0 as u32,
+            (region.1 as u32) ^ index.wrapping_mul(0x9E37_79B9),
+        ]),
+        SiteId::Row(row) => {
+            let hash = row
+                .0
+                .iter()
+                .fold(world ^ salt ^ 0x524F_5753, |hash, &part| {
+                    pcg3d([hash, part as u32, (part >> 32) as u32])[0]
+                });
+            pcg3d([hash, row.0.len() as u32, 0])
+        }
+    }
 }
 
 #[cfg(test)]

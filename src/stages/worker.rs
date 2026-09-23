@@ -8,7 +8,9 @@
 use super::edits::Edits;
 use super::facts::{Facts, RowId};
 use super::regions::Curve;
-use super::runtime::{Categories, Field, Point, Product, Runtime, Site, StageTiming, TownChunk};
+use super::runtime::{
+    Categories, Field, Point, Product, Runtime, Site, StageTiming, Stamp, TownChunk,
+};
 use super::save::Save;
 use crate::ChunkCoord;
 use crate::scheduler::FocusPoint;
@@ -224,7 +226,8 @@ impl StageWorker {
             | Product::Tiles(_)
             | Product::Points(_)
             | Product::Categories(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 
@@ -237,7 +240,8 @@ impl StageWorker {
             | Product::Sites(_)
             | Product::Tiles(_)
             | Product::Points(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 
@@ -250,7 +254,23 @@ impl StageWorker {
             | Product::Categories(_)
             | Product::Sites(_)
             | Product::Tiles(_)
-            | Product::Points(_) => None,
+            | Product::Points(_)
+            | Product::Stamps(_) => None,
+        }
+    }
+
+    /// The pieces an Assemble stage placed whose footprint overlaps a chunk, if they have
+    /// arrived.
+    #[must_use]
+    pub fn stamps(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Stamp]> {
+        match self.product(stage, chunk)? {
+            Product::Stamps(stamps) => Some(stamps),
+            Product::Field(_)
+            | Product::Categories(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Curves(_) => None,
         }
     }
 
@@ -263,7 +283,8 @@ impl StageWorker {
             | Product::Tiles(_)
             | Product::Points(_)
             | Product::Categories(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 
@@ -276,7 +297,8 @@ impl StageWorker {
             | Product::Sites(_)
             | Product::Points(_)
             | Product::Categories(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 
@@ -289,7 +311,8 @@ impl StageWorker {
             | Product::Sites(_)
             | Product::Tiles(_)
             | Product::Categories(_)
-            | Product::Curves(_) => None,
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
         }
     }
 }
