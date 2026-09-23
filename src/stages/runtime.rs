@@ -257,6 +257,8 @@ pub enum StageError {
     },
     #[error("the pack names no noise {0:?}")]
     UnknownNoise(String),
+    #[error("the pack gives the world no bound")]
+    Unbounded,
     #[error("no table is named {0:?}")]
     UnknownTable(String),
     #[error("table {table:?}: {message}")]
@@ -909,7 +911,8 @@ impl Runtime {
                 })
             })
             .collect();
-        // Focus points are in the WFC lattice's chunks; a coarser target's chunks cover several.
+        // Focus points are in the WFC lattice's chunks; a coarser target's chunks cover several. A
+        // target's chunk wholly outside the world's bound is never asked for.
         let mut needed: BTreeMap<usize, BTreeSet<ChunkCoord>> = targets
             .into_iter()
             .map(|target| {
@@ -917,6 +920,7 @@ impl Runtime {
                 let chunks = asked
                     .iter()
                     .map(|c| ChunkCoord::new(c.x.div_euclid(scale), c.y.div_euclid(scale), 0))
+                    .filter(|&chunk| self.within_bound(target, chunk))
                     .collect();
                 (target, chunks)
             })
@@ -956,25 +960,68 @@ impl Runtime {
                 .get(&stage)
                 .is_some_and(|chunks| chunks.iter().any(|&chunk| site.overlaps(chunk)))
         });
+        // A bounded world has few regions, so it keeps every one it has computed, as a finite
+        // world computes them once before streaming.
+        let finite = pack.bound.is_some();
         self.regions.retain(|&(stage, region), _| {
             let StageKind::Region { region: size, .. } = pack.stages[stage].kind else {
                 unreachable!("only Region stages compute regions")
             };
-            needed
-                .get(&stage)
-                .is_some_and(|chunks| chunks.iter().any(|&chunk| region_of(chunk, size) == region))
+            finite
+                || needed.get(&stage).is_some_and(|chunks| {
+                    chunks.iter().any(|&chunk| region_of(chunk, size) == region)
+                })
         });
         self.placed.retain(|&(stage, region), _| {
             let StageKind::Locations { region: size, .. } = pack.stages[stage].kind else {
                 unreachable!("only Locations stages place locations")
             };
-            needed
-                .get(&stage)
-                .is_some_and(|chunks| chunks.iter().any(|&chunk| region_of(chunk, size) == region))
+            finite
+                || needed.get(&stage).is_some_and(|chunks| {
+                    chunks.iter().any(|&chunk| region_of(chunk, size) == region)
+                })
         });
         self.needed = needed;
         self.focus = focus.to_vec();
         Ok(dropped)
+    }
+
+    /// Asks for the `targets` stages in every chunk that meets the world's bound, replacing the
+    /// previous request as [`Runtime::request`] does: how a finite world computes its regions,
+    /// region jobs and location tables before play, which it then keeps.
+    ///
+    /// # Errors
+    /// [`StageError::Unbounded`] if the pack has no bound, and [`StageError::UnknownStage`] as
+    /// [`Runtime::request`].
+    pub fn request_bound(
+        &mut self,
+        targets: &[&str],
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let bound = *self.pack.bound.as_ref().ok_or(StageError::Unbounded)?;
+        let (low, high) = bound.extent();
+        let [sx, sy] = self.size.map(|size| size as f32);
+        let chunk = |at: f32, side: f32| (at / side).floor() as i32;
+        let focus: Vec<FocusPoint> = (chunk(low[1], sy)..=chunk(high[1], sy))
+            .flat_map(|y| (chunk(low[0], sx)..=chunk(high[0], sx)).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let min = [x as f32 * sx, y as f32 * sy];
+                bound.meets(min, [min[0] + sx, min[1] + sy])
+            })
+            .map(|(x, y)| FocusPoint::new(ChunkCoord::new(x, y, 0), 0))
+            .collect();
+        self.request(&focus, targets)
+    }
+
+    /// Whether any column of `chunk` of stage `index` lies inside the world's bound; every chunk
+    /// does without one.
+    fn within_bound(&self, index: usize, chunk: ChunkCoord) -> bool {
+        let Some(bound) = &self.pack.bound else {
+            return true;
+        };
+        let scale = self.pack.stages[index].scale as f32;
+        let [sx, sy] = self.size.map(|size| size as f32 * scale);
+        let min = [chunk.x as f32 * sx, chunk.y as f32 * sy];
+        bound.meets(min, [min[0] + sx, min[1] + sy])
     }
 
     /// Generates everything the request needs that is missing, inputs first and nearest first,

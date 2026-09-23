@@ -8,6 +8,8 @@
 // biomes shape them.
 (
     version: 1,
+    // A finite island: nothing is generated beyond the sea around it.
+    bound: Some(Disk(centre: (0.0, 0.0), radius: 110.0)),
     stages: [
         // Broad continents times rolling hills, with detail added where there is land.
         (name: "land", kind: Field(Sub(

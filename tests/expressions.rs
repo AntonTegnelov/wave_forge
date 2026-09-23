@@ -28,6 +28,7 @@ fn pack(stages: Vec<StageDef>) -> Result<Pack, PackError> {
         stages,
         tables: Vec::new(),
         noises: std::collections::BTreeMap::new(),
+        bound: None,
     })
 }
 

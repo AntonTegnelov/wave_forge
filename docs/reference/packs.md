@@ -54,6 +54,26 @@ in its reader's columns times the reader's scale, plus one column of an input re
 columns. `Pack::scale(stage)` gives a stage's scale.
 `Pack::stage_names` and `Pack::kind` describe the stages to a tool or an engine.
 
+## World bound
+
+A pack may give the world an edge:
+
+```ron
+bound: Some(Disk(centre: (0.0, 0.0), radius: 110.0)),
+```
+
+or `Some(Rect(min: (x, y), max: (x, y)))`, in cells. The runtime never asks for a chunk of a target
+stage that lies wholly outside the bound, so a finite world costs nothing beyond its edge, and an
+engine draws its own sea there; a target chunk inside the bound still reads its inputs within its
+reach, beyond the edge too. A chunk meets the bound when any of its area, up to its far edge, lies
+inside. The pack shapes the coast itself, falling into the sea before the edge as the ring world
+does. Loading refuses a bound that holds nothing.
+
+`Runtime::request_bound(targets)` asks for the targets in every chunk the bound meets: how a finite
+world computes its region jobs and location tables before play. A bounded world keeps every region
+and location table it has computed, since it has few; without a bound it fails with
+`StageError::Unbounded`. `Pack::bound` gives the bound to an engine.
+
 ## Levels
 
 A stage may declare a `scale`: how many WFC cells one of its columns spans along each axis, 1 by
@@ -464,7 +484,8 @@ let trees = runtime.points("trees", chunk);
 
 - `Runtime::request(focus, targets)` works out, from the targets backwards, which chunks of every
   stage the request needs, replaces the previous request, and returns what it dropped as
-  `(stage, chunk)`.
+  `(stage, chunk)`. `request_bound(targets)` asks for everything inside the world's bound
+  ([World bound](#world-bound)).
 - `run_until_idle` generates what is missing, stage by stage with inputs first, nearest chunk
   first; `step(budget)` generates at most `budget` products, so a caller can take new requests in
   between; `is_idle` says whether anything is left.

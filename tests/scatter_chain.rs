@@ -291,21 +291,14 @@ fn ring_world() -> Arc<Pack> {
 /// Every point of `stage` over the ring island, and the runtime that placed them.
 fn ring_points(stage: &str) -> (Runtime, Vec<Point>) {
     let mut runtime = Runtime::new(ring_world(), 7, SIZE);
-    let focus: Vec<FocusPoint> = (-13..13)
-        .flat_map(|y| (-13..13).map(move |x| FocusPoint::new(ChunkCoord::new(x, y, 0), 0)))
-        .collect();
     runtime
-        .request(&focus, &[stage, "biome", "terrain", "roughness"])
-        .expect("stages");
+        .request_bound(&[stage, "biome", "terrain", "roughness"])
+        .expect("a bounded island");
     runtime.run_until_idle().expect("the stages run");
-    let points = focus
-        .iter()
-        .flat_map(|focus| {
-            runtime
-                .points(stage, focus.chunk)
-                .expect("generated")
-                .to_vec()
-        })
+    // Only the chunks that meet the island's bound are generated.
+    let points = (-14..14)
+        .flat_map(|y| (-14..14).map(move |x| ChunkCoord::new(x, y, 0)))
+        .flat_map(|chunk| runtime.points(stage, chunk).unwrap_or_default().to_vec())
         .collect();
     (runtime, points)
 }
