@@ -10,7 +10,8 @@
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId, Table};
 use super::pack::{
-    Column, Expr, Output, Pack, Profile, Reach, Stage, StageKind, TableKind, point_stage_id, salt,
+    Column, Expr, MAX_SCATTER_SLOTS, Output, Pack, Profile, Reach, Stage, StageKind, TableKind,
+    point_stage_id, salt,
 };
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use crate::products::InstanceId;
@@ -104,8 +105,53 @@ pub struct Point {
     pub kind: Arc<str>,
     /// Where it stands, in cells: x and y along the lattice's ground, z the height field's value.
     pub position: [f32; 3],
-    /// Its turn about the vertical, as a fraction of a whole turn.
+    /// Its turn about its own up, as a fraction of a whole turn.
     pub turn: f32,
+    /// How much larger than its model it stands, 1 for as large.
+    pub scale: f32,
+    /// Its up, a unit vector along the lattice's x, y and height: straight up unless the stage
+    /// tilts it or stands it along the ground.
+    pub up: [f32; 3],
+}
+
+impl Point {
+    /// Its rotation and scale in a Y-up engine's axes (the lattice's x, the height, the lattice's
+    /// y), as the rows of a 3x3 matrix: turned by `turn` about the vertical, leant so the vertical
+    /// becomes `up`, and scaled by `scale`.
+    #[must_use]
+    pub fn y_up_basis(&self) -> [[f32; 3]; 3] {
+        let (sin, cos) = (self.turn * std::f32::consts::TAU).sin_cos();
+        let turned = [[cos, 0.0, sin], [0.0, 1.0, 0.0], [-sin, 0.0, cos]];
+        // The rotation taking the vertical to `up` about the axis perpendicular to both.
+        let up = [self.up[0], self.up[2], self.up[1]];
+        let (axis, lean_sin, lean_cos) = {
+            let cross = [up[2], 0.0, -up[0]];
+            let length = cross[0].hypot(cross[2]);
+            if length < 1e-6 {
+                ([1.0, 0.0, 0.0], 0.0, up[1].signum())
+            } else {
+                ([cross[0] / length, 0.0, cross[2] / length], length, up[1])
+            }
+        };
+        let [kx, ky, kz] = axis;
+        let skew = [[0.0, -kz, ky], [kz, 0.0, -kx], [-ky, kx, 0.0]];
+        let mut leant = [[0.0; 3]; 3];
+        for (row, leant_row) in leant.iter_mut().enumerate() {
+            for (col, value) in leant_row.iter_mut().enumerate() {
+                let identity = f32::from(u8::from(row == col));
+                let squared: f32 = (0..3).map(|k| skew[row][k] * skew[k][col]).sum();
+                *value = identity + skew[row][col] * lean_sin + squared * (1.0 - lean_cos);
+            }
+        }
+        let mut basis = [[0.0; 3]; 3];
+        for (row, basis_row) in basis.iter_mut().enumerate() {
+            for (col, value) in basis_row.iter_mut().enumerate() {
+                let sum: f32 = (0..3).map(|k| leant[row][k] * turned[k][col]).sum();
+                *value = sum * self.scale;
+            }
+        }
+        basis
+    }
 }
 
 /// A category per cell column of one chunk: an index into the categories its Rules stage names
@@ -1698,32 +1744,59 @@ impl Runtime {
 
     /// The points of Scatter stage `index` whose column lies in `chunk`.
     ///
-    /// Every block of `spacing` columns has one candidate at a hashed column, with a hashed
-    /// priority. A candidate passes its own tests (chance, height, slope, sites) from what lies
-    /// at and around its column, and is kept if it passes and no candidate that also passes, of
-    /// higher priority, lies closer than `apart`. Everything a decision reads is within the
-    /// stage's reach, so a chunk's points are the same whatever else has been generated.
+    /// Every block of `spacing` columns has `count` candidates, each at a hashed column, with a
+    /// hashed priority. A candidate passes its own tests (chance, height, slope, conditions,
+    /// water, sites) from what lies at and around its column, and is kept if it passes and no
+    /// candidate that also passes, of higher priority, lies closer than `apart`. A kept candidate
+    /// is the first point of its group; the others scatter around it and each passes the same tests
+    /// at its own column. Everything a decision reads is within the stage's reach, so a chunk's
+    /// points are the same whatever else has been generated.
     fn scatter(&self, index: usize, chunk: ChunkCoord) -> Result<Vec<Point>, StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Scatter {
             kind,
+            height,
             spacing,
+            count,
+            group,
             chance,
             between,
             max_slope,
+            when,
+            water,
             avoid,
             apart,
-            ..
+            scale,
+            tilt,
+            align,
         } = &stage.kind
         else {
             unreachable!("called for Scatter stages")
         };
-        let (height, reach) = stage.inputs[0];
-        let heights = self.view(index, chunk, height, reach);
+        let views: BTreeMap<usize, FieldView<'_>> = stage
+            .inputs
+            .iter()
+            .filter(|&&(input, _)| {
+                matches!(
+                    self.pack.stages[input].kind.output(),
+                    Output::Field | Output::Categories
+                )
+            })
+            .map(|&(input, reach)| (input, self.view(index, chunk, input, reach)))
+            .collect();
+        let read = |name: &str, x: i64, y: i64| {
+            views[&self.pack.index(name).expect("linked when loaded")].get(x, y)
+        };
+        let heights = &views[&self.pack.index(height).expect("linked when loaded")];
         let sites = match avoid {
-            Some(_) => {
-                let (sites, reach) = stage.inputs[1];
-                self.sites_near(index, chunk, sites, reach)
+            Some((name, _)) => {
+                let input = self.pack.index(name).expect("linked when loaded");
+                let (_, reach) = *stage
+                    .inputs
+                    .iter()
+                    .find(|&&(known, _)| known == input)
+                    .expect("linked when loaded");
+                self.sites_near(index, chunk, input, reach)
             }
             None => Vec::new(),
         };
@@ -1734,42 +1807,50 @@ impl Runtime {
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
         let (x0, y0) = (i64::from(chunk.x) * sx, i64::from(chunk.y) * sy);
         let apart = i64::from(*apart);
-        // The blocks that can hold a candidate within `apart` of the chunk's columns.
+        let radius = group.map_or(0.0, |group| group.radius);
+        // Candidates up to a group's radius beyond the chunk can have points in it, and those are
+        // crowded by candidates up to `apart` further out.
+        let reach = apart + radius.ceil() as i64;
         let blocks = |low: i64, high: i64| low.div_euclid(spacing)..=high.div_euclid(spacing);
         let mut candidates: Vec<Candidate> = Vec::new();
-        for by in blocks(y0 - apart, y0 + sy - 1 + apart) {
-            for bx in blocks(x0 - apart, x0 + sx - 1 + apart) {
-                let [place, rank, turn] =
-                    pcg3d([world ^ stage.salt, bx as u32, (by as u32) ^ 0x5bd1_e995]);
-                let column = (
-                    bx * spacing + i64::from(place) % spacing,
-                    by * spacing + i64::from(place >> 16) % spacing,
-                );
-                // Only a candidate within `apart` columns of the chunk can crowd one inside it: a
-                // point stands within its column, so one further out is more than `apart` away.
-                let near = (x0 - apart..=x0 + sx - 1 + apart).contains(&column.0)
-                    && (y0 - apart..=y0 + sy - 1 + apart).contains(&column.1);
-                if !near {
-                    continue;
+        for by in blocks(y0 - reach, y0 + sy - 1 + reach) {
+            for bx in blocks(x0 - reach, x0 + sx - 1 + reach) {
+                let many = count.0
+                    + pcg3d([world ^ stage.salt ^ COUNT_STREAM, bx as u32, by as u32])[0]
+                        % (count.1 - count.0 + 1);
+                for slot in 0..many {
+                    let [place, rank, turn] = pcg3d([
+                        world ^ stage.salt,
+                        bx as u32,
+                        (by as u32) ^ 0x5bd1_e995 ^ slot.wrapping_mul(0x9E37_79B9),
+                    ]);
+                    let column = (
+                        bx * spacing + i64::from(place) % spacing,
+                        by * spacing + i64::from(place >> 16) % spacing,
+                    );
+                    let near = (x0 - reach..=x0 + sx - 1 + reach).contains(&column.0)
+                        && (y0 - reach..=y0 + sy - 1 + reach).contains(&column.1);
+                    if !near {
+                        continue;
+                    }
+                    let fraction = (
+                        f32::from((rank & 0xFF) as u8) / 256.0,
+                        f32::from(((rank >> 8) & 0xFF) as u8) / 256.0,
+                    );
+                    candidates.push(Candidate {
+                        column,
+                        at: (column.0 as f32 + fraction.0, column.1 as f32 + fraction.1),
+                        priority: (rank, bx, by, slot),
+                        slot,
+                        turn: unit(turn),
+                        exists: u64::from(turn) < threshold,
+                    });
                 }
-                let fraction = (
-                    f32::from((rank & 0xFF) as u8) / 256.0,
-                    f32::from(((rank >> 8) & 0xFF) as u8) / 256.0,
-                );
-                candidates.push(Candidate {
-                    column,
-                    at: (column.0 as f32 + fraction.0, column.1 as f32 + fraction.1),
-                    priority: (rank, bx, by),
-                    turn: (turn >> 8) as f32 / (1u32 << 24) as f32,
-                    exists: u64::from(turn) < threshold,
-                });
             }
         }
-        let passes = |candidate: &Candidate| -> Result<Option<f32>, StageError> {
-            if !candidate.exists {
-                return Ok(None);
-            }
-            let (x, y) = candidate.column;
+        // A point's height at `column`, if it passes the stage's tests there.
+        let passes = |column: (i64, i64)| -> Result<Option<f32>, StageError> {
+            let (x, y) = column;
             let here = heights.get(x, y)?;
             if between.is_some_and(|(low, high)| !(low..=high).contains(&here)) {
                 return Ok(None);
@@ -1781,6 +1862,17 @@ impl Runtime {
                     return Ok(None);
                 }
             }
+            let place = self.place(index, [x, y], &read);
+            for condition in when {
+                if !holds(condition, &place)? {
+                    return Ok(None);
+                }
+            }
+            if water.is_some_and(|water| {
+                !(water.depth.0..=water.depth.1).contains(&(water.level - here))
+            }) {
+                return Ok(None);
+            }
             if sites
                 .iter()
                 .any(|site| site.distance(x, y, self.size) < margin as f32)
@@ -1791,15 +1883,18 @@ impl Runtime {
         };
         let mut heights_of: Vec<Option<f32>> = Vec::with_capacity(candidates.len());
         for candidate in &candidates {
-            heights_of.push(passes(candidate)?);
+            heights_of.push(if candidate.exists {
+                passes(candidate.column)?
+            } else {
+                None
+            });
         }
         let point_stage = point_stage_id(stage.salt);
         let kind: Arc<str> = Arc::from(kind.as_str());
+        let inside = |(x, y): (i64, i64)| (x0..x0 + sx).contains(&x) && (y0..y0 + sy).contains(&y);
         let mut points = Vec::new();
         for (i, candidate) in candidates.iter().enumerate() {
-            let (x, y) = candidate.column;
-            let inside = (x0..x0 + sx).contains(&x) && (y0..y0 + sy).contains(&y);
-            let Some(z) = heights_of[i].filter(|_| inside) else {
+            let Some(anchor_height) = heights_of[i] else {
                 continue;
             };
             let crowded = candidates.iter().enumerate().any(|(j, other)| {
@@ -1814,13 +1909,74 @@ impl Runtime {
             if crowded {
                 continue;
             }
-            let cell = ((y - y0) * sx + (x - x0)) as u32;
-            points.push(Point {
-                id: InstanceId::new(chunk, point_stage, cell, 0),
-                kind: Arc::clone(&kind),
-                position: [candidate.at.0, candidate.at.1, z],
-                turn: candidate.turn,
+            let (column, stream) = (
+                candidate.column,
+                [candidate.column.0 as u32, candidate.column.1 as u32],
+            );
+            let members = group.map_or(1, |group| {
+                group.size.0
+                    + pcg3d([world ^ stage.salt ^ GROUP_STREAM, stream[0], stream[1]])[0]
+                        % (group.size.1 - group.size.0 + 1)
             });
+            // Ids name the candidate's own column, so a member standing in the next chunk still
+            // has an id no other point shares.
+            let owner = ChunkCoord::new(
+                i32::try_from(column.0.div_euclid(sx)).expect("a chunk coordinate"),
+                i32::try_from(column.1.div_euclid(sy)).expect("a chunk coordinate"),
+                0,
+            );
+            let cell = (column.1.rem_euclid(sy) * sx + column.0.rem_euclid(sx)) as u32;
+            for member in 0..members {
+                let slot = candidate.slot * MAX_SCATTER_SLOTS + member;
+                let key = stream[1] ^ slot.wrapping_mul(0x2545_F491);
+                let [angle, distance, turn] =
+                    pcg3d([world ^ stage.salt ^ GROUP_STREAM, stream[0], key]);
+                let (at, turn) = if member == 0 {
+                    (candidate.at, candidate.turn)
+                } else {
+                    let (sin, cos) = (unit(angle) * std::f32::consts::TAU).sin_cos();
+                    let away = radius * unit(distance).sqrt();
+                    (
+                        (candidate.at.0 + cos * away, candidate.at.1 + sin * away),
+                        unit(turn),
+                    )
+                };
+                let standing = (at.0.floor() as i64, at.1.floor() as i64);
+                if !inside(standing) {
+                    continue;
+                }
+                let z = if member == 0 {
+                    anchor_height
+                } else {
+                    match passes(standing)? {
+                        Some(z) => z,
+                        None => continue,
+                    }
+                };
+                let [size, lean, aligned] =
+                    pcg3d([world ^ stage.salt ^ LOOK_STREAM, stream[0], key]);
+                let up = if unit(aligned) < *align {
+                    let (x, y) = standing;
+                    let along_x = (heights.get(x + 1, y)? - heights.get(x - 1, y)?) / 2.0;
+                    let along_y = (heights.get(x, y + 1)? - heights.get(x, y - 1)?) / 2.0;
+                    let length = (along_x * along_x + along_y * along_y + 1.0).sqrt();
+                    [-along_x / length, -along_y / length, 1.0 / length]
+                } else {
+                    let degrees = tilt.0 + (tilt.1 - tilt.0) * unit(lean);
+                    let (sin, cos) = degrees.to_radians().sin_cos();
+                    let (towards_y, towards_x) =
+                        (unit(lean.rotate_left(16)) * std::f32::consts::TAU).sin_cos();
+                    [sin * towards_x, sin * towards_y, cos]
+                };
+                points.push(Point {
+                    id: InstanceId::new(owner, point_stage, cell, slot as u16),
+                    kind: Arc::clone(&kind),
+                    position: [at.0, at.1, z],
+                    turn,
+                    scale: scale.0 + (scale.1 - scale.0) * unit(size),
+                    up,
+                });
+            }
         }
         Ok(points)
     }
@@ -2129,13 +2285,27 @@ fn noise_stream(name: &str) -> u32 {
 }
 
 /// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the
-/// block breaking ties), its turn, and whether the chance test lets it exist at all.
+/// block and the candidate's place in it breaking ties), that place, its turn, and whether the
+/// chance test lets it exist at all.
 struct Candidate {
     column: (i64, i64),
     at: (f32, f32),
-    priority: (u32, i64, i64),
+    priority: (u32, i64, i64, u32),
+    slot: u32,
     turn: f32,
     exists: bool,
+}
+
+/// Mixed into a Scatter stage's stream for how many candidates a block has.
+const COUNT_STREAM: u32 = 0x636E_7473;
+/// Mixed into a Scatter stage's stream for a group's size and its members' places.
+const GROUP_STREAM: u32 = 0x6772_7570;
+/// Mixed into a Scatter stage's stream for a point's scale, tilt and alignment.
+const LOOK_STREAM: u32 = 0x6C6F_6F6B;
+
+/// A hash as a number from 0 up to but not including 1.
+fn unit(hash: u32) -> f32 {
+    (hash >> 8) as f32 / (1u32 << 24) as f32
 }
 
 /// A random number in 0..1 for one lattice point of one octave, from the world seed and the

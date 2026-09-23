@@ -1,8 +1,9 @@
 // A round island whose biomes lie in rings (docs/product/user-stories.md, G7): the land rises from
 // products of noises, is flattened around the centre where a player starts, and falls into the sea
 // past the island's edge, 90 to 96 cells out. Biomes are first-match rules over height, distance
-// from the centre and noise, with a wobble that keeps the rings from being perfect circles. The
-// test pack for G7's biome rules and per-biome height; heights run from about -0.3 to 1 before the
+// from the centre and noise, with a wobble that keeps the rings from being perfect circles; ore and
+// groves of birches are scattered by biome, height and how uneven the ground is. The test pack for
+// G7's biome rules, per-biome height and placement rules; heights run from about -0.3 to 1 before the
 // biomes shape them.
 (
     version: 1,
@@ -67,5 +68,30 @@
             otherwise: Input("height"),
             blend: 3,
         ))),
+        // How uneven the ground is within two cells, and where each biome ends: ore and trees keep
+        // off steep ground, and ore off the edge of its biome.
+        (name: "roughness", kind: Delta(input: "terrain", radius: 2)),
+        (name: "edges", kind: Area(input: "biome", distance: 2)),
+        // Ore rocks in the woods, one or two per block of 16 cells, on gentle ground in the middle
+        // of the woods, each a little larger or smaller and leaning a little.
+        (name: "woods_ore", kind: Scatter(kind: "ore_rock", height: "terrain", spacing: 16, count: (2, 3),
+            apart: 8, scale: (0.8, 1.4), tilt: (0.0, 12.0),
+            when: [
+                Greater(Is("biome", ["woods"]), Constant(0.5)),
+                Greater(Is("edges", ["median"]), Constant(0.5)),
+                Less(Input("roughness"), Constant(0.25)),
+            ])),
+        // Ore veins high in the peaks, rarer and larger, standing along the slope.
+        (name: "peak_ore", kind: Scatter(kind: "ore_vein", height: "terrain", spacing: 16, chance: 0.6,
+            apart: 12, scale: (1.0, 1.6), align: 1.0,
+            when: [
+                Greater(Is("biome", ["peaks"]), Constant(0.5)),
+                Greater(Input("terrain"), Constant(0.8)),
+            ])),
+        // Birches in groves of three to six on the grassland's flatter ground.
+        (name: "birch_groves", kind: Scatter(kind: "birch", height: "terrain", spacing: 20, chance: 0.7,
+            apart: 10, group: Some((size: (3, 6), radius: 4.0)), max_slope: Some(0.1),
+            scale: (0.85, 1.15), tilt: (0.0, 4.0),
+            when: [Greater(Is("biome", ["grassland"]), Constant(0.5))])),
     ],
 )

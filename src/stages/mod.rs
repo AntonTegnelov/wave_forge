@@ -11,8 +11,9 @@ pub mod worker;
 
 pub use facts::{Facts, GivenRow, MAX_SHARED, Row, RowId, Table, Value};
 pub use pack::{
-    Column, Condition, Expr, MAX_BLEND, MAX_CATEGORIES, MAX_CHILDREN, PACK_VERSION, Pack,
-    PackError, PackFile, Profile, Rule, StageDef, StageKind, TableDef, TableKind,
+    Column, Condition, Expr, Group, MAX_BLEND, MAX_CATEGORIES, MAX_CHILDREN, MAX_SCATTER_SLOTS,
+    PACK_VERSION, Pack, PackError, PackFile, Profile, Rule, StageDef, StageKind, TableDef,
+    TableKind, Water,
 };
 pub use runtime::{
     Categories, Field, FieldView, Point, Product, Runtime, Site, SiteId, StageError, StageTiming,
