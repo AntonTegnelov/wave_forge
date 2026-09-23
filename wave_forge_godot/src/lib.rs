@@ -7,18 +7,24 @@
 //! func _ready() -> void:
 //!     var world: WaveForgeWorld = $WaveForgeWorld
 //!     world.chunk_updated.connect(_on_chunk_updated)
-//!     # What belongs on the ground and what belongs above it, if the rule set leaves that open.
-//!     var layers: Array[PackedInt32Array] = [PackedInt32Array([ROAD, GRASS]), PackedInt32Array([AIR])]
+//!     world.load_rules(FileAccess.get_file_as_string("res://city.ron"))
+//!     # What belongs on the ground and what belongs above it, by the tags and names the rule set
+//!     # gives its modules. An empty layer allows everything.
+//!     var layers: Array[PackedInt32Array] = [
+//!         world.tiles_tagged("street_level"), PackedInt32Array(), world.tiles_named("air"),
+//!     ]
 //!     world.set_layer_tiles(layers)
-//!     var rules := FileAccess.get_file_as_string("res://rules.ron")
-//!     world.start(rules)
+//!     world.start()
 //!
 //! func _process(_delta: float) -> void:
 //!     $WaveForgeWorld.follow($Player.global_position)
 //!
 //! func _on_chunk_updated(chunk: Vector3i) -> void:
 //!     var tiles := $WaveForgeWorld.tiles_at(chunk)   # one tile index per cell
-//!     build_mesh_for(chunk, tiles)
+//!     for cell in tiles.size():
+//!         var tile := tiles[cell]
+//!         # One model per name, placed at the cell's centre and turned by the tile's rotation.
+//!         place(world.tile_name(tile), Transform3D(world.tile_basis(tile), world.cell_position(chunk, cell)))
 //! ```
 //!
 //! # Where the work happens
@@ -42,9 +48,10 @@
 
 use godot::classes::{INode, Node};
 use godot::prelude::*;
+use wave_forge::loader::RuleFile;
 use wave_forge::{
     Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, Prior, RegionShape, RegionStatus,
-    Ruleset, TileMask, Worker, WorldExtent,
+    Ruleset, TileMask, Worker, WorldExtent, YUpSpace,
 };
 
 struct WaveForgeExtension;
@@ -54,9 +61,10 @@ unsafe impl ExtensionLibrary for WaveForgeExtension {}
 
 /// Generates a world in chunks around a position the game keeps handing it.
 ///
-/// Set the properties in the editor or from a script, call [`WaveForgeWorld::start`] with a rule
-/// set, then call [`WaveForgeWorld::follow`] as the player moves and read the tiles of every chunk
-/// the `chunk_updated` signal names.
+/// Set the properties in the editor or from a script, load a rule set with
+/// [`WaveForgeWorld::load_rules`], set the prior, call [`WaveForgeWorld::start`], then call
+/// [`WaveForgeWorld::follow`] as the player moves and read the tiles of every chunk the
+/// `chunk_updated` signal names.
 #[derive(GodotClass)]
 #[class(base = Node)]
 pub struct WaveForgeWorld {
@@ -101,6 +109,8 @@ pub struct WaveForgeWorld {
     /// [`WaveForgeWorld::ban_tiles_on_face`].
     face_bans: [Vec<u32>; 6],
 
+    /// The rule set [`WaveForgeWorld::load_rules`] read, which also says what each tile is.
+    rules: Option<RuleFile>,
     /// The generating thread, once [`WaveForgeWorld::start`] has built it.
     worker: Option<Worker>,
     /// The chunk the last [`WaveForgeWorld::follow`] landed in, so an unmoved player asks nothing.
@@ -122,6 +132,7 @@ impl INode for WaveForgeWorld {
             warm_kernels: true,
             layers: Vec::new(),
             face_bans: Default::default(),
+            rules: None,
             worker: None,
             followed: None,
         }
@@ -179,22 +190,37 @@ impl WaveForgeWorld {
     #[signal]
     fn generation_failed(reason: GString);
 
-    /// Starts generating from a rule set in Wave Forge's RON format, either tiles with their
-    /// adjacency or modules described by connectors, usually read with
-    /// `FileAccess.get_file_as_string` so that it works inside an exported game.
+    /// Reads a rule set in Wave Forge's RON format, either tiles with their adjacency or modules
+    /// described by connectors, usually read with `FileAccess.get_file_as_string` so that it works
+    /// inside an exported game.
     ///
-    /// Returns whether the rule set could be used. The GPU device and the first kernels are built
-    /// on the generating thread, so a failure there arrives as `generation_failed` rather than
-    /// here.
+    /// Once it is loaded, the tile functions say what each tile is, which is what a scene needs to
+    /// set the prior by name or tag before [`WaveForgeWorld::start`]. Returns whether the rule set
+    /// could be read; why not is reported as an error.
     #[func]
-    fn start(&mut self, rules: GString) -> bool {
-        let text = rules.to_string();
-        let file = match wave_forge::loader::parse_rule_file(&text) {
-            Ok(file) => file,
+    fn load_rules(&mut self, rules: GString) -> bool {
+        match wave_forge::loader::parse_rule_file(&rules.to_string()) {
+            Ok(file) => {
+                self.rules = Some(file);
+                true
+            }
             Err(error) => {
                 godot_error!("wave forge: {error}");
-                return false;
+                false
             }
+        }
+    }
+
+    /// Starts generating from the rule set [`WaveForgeWorld::load_rules`] read, with the prior and
+    /// properties set now.
+    ///
+    /// Returns whether generation could start. The GPU device and the first kernels are built on
+    /// the generating thread, so a failure there arrives as `generation_failed` rather than here.
+    #[func]
+    fn start(&mut self) -> bool {
+        let Some(file) = &self.rules else {
+            godot_error!("wave forge: start() needs a rule set; call load_rules() first");
+            return false;
         };
         let ruleset = match Ruleset::new(file.rules(), &file.tileset().weights) {
             Ok(ruleset) => ruleset,
@@ -328,33 +354,86 @@ impl WaveForgeWorld {
     /// The chunk a position in Godot's world space falls in.
     #[func]
     fn chunk_at(&self, position: Vector3) -> Vector3i {
-        let size = self.chunk_size();
-        to_vector(ChunkCoord::new(
-            (position.x / size.x).floor() as i32,
-            (position.z / size.z).floor() as i32,
-            (position.y / size.y).floor() as i32,
-        ))
+        to_vector(self.space().chunk_at(position.to_array()))
     }
 
     /// Where a chunk's lowest corner sits in Godot's world space.
     #[func]
     fn position_of(&self, chunk: Vector3i) -> Vector3 {
-        let size = self.chunk_size();
-        Vector3::new(
-            chunk.x as f32 * size.x,
-            chunk.z as f32 * size.y,
-            chunk.y as f32 * size.z,
-        )
+        Vector3::from_array(self.space().chunk_origin(from_vector(chunk)))
+    }
+
+    /// The centre of one cell of a chunk in Godot's world space. `cell` is an index into the chunk's
+    /// [`WaveForgeWorld::tiles_at`].
+    #[func]
+    fn cell_position(&self, chunk: Vector3i, cell: i32) -> Vector3 {
+        let cells = self.extent().shape().cells();
+        match u32::try_from(cell) {
+            Ok(cell) if cell < cells => {
+                Vector3::from_array(self.space().cell_center(from_vector(chunk), cell))
+            }
+            _ => {
+                godot_error!("wave forge: no cell {cell} in a chunk of {cells}");
+                Vector3::ZERO
+            }
+        }
     }
 
     /// How large one chunk is in Godot's world units.
     #[func]
     fn chunk_size(&self) -> Vector3 {
-        Vector3::new(
-            self.cell_size.x * self.chunk_cells.x.max(1) as f32,
-            self.cell_size.y * self.chunk_cells.z.max(1) as f32,
-            self.cell_size.z * self.chunk_cells.y.max(1) as f32,
-        )
+        Vector3::from_array(self.space().chunk_size())
+    }
+
+    /// How many tiles the loaded rule set has, or zero before [`WaveForgeWorld::load_rules`].
+    #[func]
+    fn tile_count(&self) -> i32 {
+        self.rules.as_ref().map_or(0, |file| {
+            i32::try_from(file.num_tiles()).expect("at most 256 tiles")
+        })
+    }
+
+    /// What a tile is called: its own name in a tile set, its module's name in a module set, where
+    /// every rotation of a module shares the name. Draw one model per name.
+    #[func]
+    fn tile_name(&self, tile: i32) -> GString {
+        self.tile(tile)
+            .map_or_else(GString::new, |(file, tile)| GString::from(file.name(tile)))
+    }
+
+    /// How far a tile is turned from its module, in quarter turns. Zero in a tile set.
+    #[func]
+    fn tile_rotation(&self, tile: i32) -> i32 {
+        self.tile(tile)
+            .map_or(0, |(file, tile)| i32::from(file.rotation(tile)))
+    }
+
+    /// The rotation to place a tile's model with: its turn from its module, about Godot's up axis.
+    #[func]
+    fn tile_basis(&self, tile: i32) -> Basis {
+        self.tile(tile).map_or(Basis::IDENTITY, |(file, tile)| {
+            Basis::from_axis_angle(Vector3::UP, YUpSpace::yaw(file.rotation(tile)))
+        })
+    }
+
+    /// Every tile called `name`: one in a tile set, every rotation of the module in a module set.
+    #[func]
+    fn tiles_named(&self, name: GString) -> PackedInt32Array {
+        self.rules
+            .as_ref()
+            .map_or_else(PackedInt32Array::new, |file| {
+                to_packed(file.tiles_named(&name.to_string()))
+            })
+    }
+
+    /// Every tile whose module carries `tag` in a module set. A tile set has no tags.
+    #[func]
+    fn tiles_tagged(&self, tag: GString) -> PackedInt32Array {
+        self.rules
+            .as_ref()
+            .map_or_else(PackedInt32Array::new, |file| {
+                to_packed(file.tiles_tagged(&tag.to_string()))
+            })
     }
 
     /// The coordinates of every chunk generated and not yet dropped.
@@ -391,6 +470,29 @@ impl WaveForgeWorld {
     #[func]
     fn is_generating(&self) -> bool {
         self.worker.is_some()
+    }
+
+    /// The lattice in Godot's Y-up world space.
+    fn space(&self) -> YUpSpace {
+        YUpSpace::new(self.extent().shape(), self.cell_size.to_array())
+    }
+
+    /// The loaded rule set and a tile index a script passed, if both are valid; an error otherwise.
+    fn tile(&self, tile: i32) -> Option<(&RuleFile, usize)> {
+        let Some(file) = &self.rules else {
+            godot_error!("wave forge: no rule set is loaded; call load_rules() first");
+            return None;
+        };
+        match usize::try_from(tile) {
+            Ok(index) if index < file.num_tiles() => Some((file, index)),
+            _ => {
+                godot_error!(
+                    "wave forge: no tile {tile}, the rule set has {}",
+                    file.num_tiles()
+                );
+                None
+            }
+        }
     }
 
     /// A tile index the prior names that the rule set does not have, if there is one.
@@ -460,6 +562,14 @@ const fn to_vector(chunk: ChunkCoord) -> Vector3i {
 
 const fn from_vector(chunk: Vector3i) -> ChunkCoord {
     ChunkCoord::new(chunk.x, chunk.y, chunk.z)
+}
+
+/// Tile indices as a script receives them.
+fn to_packed(tiles: Vec<usize>) -> PackedInt32Array {
+    tiles
+        .into_iter()
+        .map(|tile| i32::try_from(tile).expect("at most 256 tiles"))
+        .collect()
 }
 
 /// A status as a name a script can compare, rather than a number that would go stale.
