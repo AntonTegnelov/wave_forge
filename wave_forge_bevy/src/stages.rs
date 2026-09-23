@@ -22,7 +22,9 @@ use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_transform::components::GlobalTransform;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use wave_forge::stages::{Field, Point, Runtime, Site, StageEvent, StageWorker, TownChunk};
+use wave_forge::stages::{
+    Categories, Field, Point, Runtime, Site, StageEvent, StageWorker, TownChunk,
+};
 use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, ground, ground_readers};
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
@@ -77,6 +79,13 @@ impl WaveForgeStages {
     #[must_use]
     pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
         self.worker.field(stage, chunk)
+    }
+
+    /// A Rules stage's categories for a chunk, if they have arrived: indices into the categories
+    /// the stage names ([`wave_forge::stages::StageKind::categories`]).
+    #[must_use]
+    pub fn categories(&self, stage: &str, chunk: ChunkCoord) -> Option<&Categories> {
+        self.worker.categories(stage, chunk)
     }
 
     /// A Sites stage's sites overlapping a chunk, if they have arrived.

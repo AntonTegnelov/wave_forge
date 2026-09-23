@@ -22,6 +22,7 @@ const PACK: &str = r#"(
     stages: [
         (name: "height", kind: Field(Mul(Noise(frequency: 0.04, octaves: 3), Constant(20.0)))),
         (name: "trees", kind: Scatter(kind: "tree", height: "height", spacing: 3, apart: 3)),
+        (name: "cover", kind: Rules(rules: [(category: "high", when: [Greater(Input("height"), Constant(10.0))])], otherwise: "low")),
     ],
 )"#;
 
@@ -63,7 +64,7 @@ fn collect(
 }
 
 fn plugin() -> WaveForgeStagesPlugin {
-    WaveForgeStagesPlugin::new(&["height", "trees"], SETTINGS, || Ok(runtime()))
+    WaveForgeStagesPlugin::new(&["height", "trees", "cover"], SETTINGS, || Ok(runtime()))
 }
 
 fn app() -> App {
@@ -280,4 +281,30 @@ fn moving_away_drops_the_ground() {
             .ground(origin)
             .is_none()
     );
+}
+
+#[test]
+fn categories_arrive_as_the_runtime_generates_them() {
+    let mut app = app();
+    let mut direct = runtime();
+    direct
+        .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 1)], &["cover"])
+        .expect("stages");
+    direct.run_until_idle().expect("the stages run");
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        around_origin()
+            .iter()
+            .all(|&c| stages.categories("cover", c).is_some())
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    for chunk in around_origin() {
+        assert_eq!(
+            stages.categories("cover", chunk),
+            direct.categories("cover", chunk),
+            "{chunk:?}"
+        );
+    }
 }

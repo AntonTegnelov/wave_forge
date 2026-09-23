@@ -95,9 +95,31 @@ pub struct WaveForgeStages {
     collision_shapes: HashMap<String, Gd<Shape3D>>,
     /// The chunks whose ground is built: its mesh, and its `RenderingServer` mesh and instance.
     grounds: HashMap<ChunkCoord, (GroundMesh, Rid, Rid)>,
+    /// What the node's slowest frame since the start spent Godot's thread on.
+    slowest_frame: FrameCost,
     /// Each chunk's static body and its ground's height map shape, which the body does not own,
     /// and what it holds, to tell when it has to be built again.
     bodies: HashMap<ChunkCoord, (Rid, Option<Rid>, BodyContents)>,
+}
+
+/// What one frame of `process` cost Godot's thread, and what it spent it on.
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameCost {
+    ms: f64,
+    /// Events drained, and the milliseconds spent emitting them as signals, the handlers a game
+    /// connected to them included.
+    events: usize,
+    signals_ms: f64,
+    /// Chunks whose ground was built, and the milliseconds that took.
+    grounds: usize,
+    grounds_ms: f64,
+    /// Chunks whose body was built, and the milliseconds that took.
+    bodies: usize,
+    bodies_ms: f64,
+}
+
+fn elapsed_ms(since: std::time::Instant) -> f64 {
+    since.elapsed().as_secs_f64() * 1000.0
 }
 
 /// What a chunk's body was built from: whether it has the ground, and which Solve stages' towns.
@@ -131,6 +153,7 @@ impl INode for WaveForgeStages {
             collision_shapes: HashMap::new(),
             grounds: HashMap::new(),
             bodies: HashMap::new(),
+            slowest_frame: FrameCost::default(),
         }
     }
 
@@ -163,6 +186,11 @@ impl INode for WaveForgeStages {
         }
         let ground_stage = self.ground_stage.to_string();
         let (mut arrived, mut gone) = (Vec::new(), Vec::new());
+        let mut frame = FrameCost {
+            events: events.len(),
+            ..FrameCost::default()
+        };
+        let signalling = std::time::Instant::now();
         for event in events {
             match event {
                 StageEvent::Generated { stage, chunk } => {
@@ -183,10 +211,18 @@ impl INode for WaveForgeStages {
                 }
             }
         }
-        self.update_ground(&arrived, &gone);
-        self.update_colliders();
-        self.process_ms
-            .push(processing.elapsed().as_secs_f64() * 1000.0);
+        frame.signals_ms = elapsed_ms(signalling);
+        let grounding = std::time::Instant::now();
+        frame.grounds = self.update_ground(&arrived, &gone);
+        frame.grounds_ms = elapsed_ms(grounding);
+        let building = std::time::Instant::now();
+        frame.bodies = self.update_colliders();
+        frame.bodies_ms = elapsed_ms(building);
+        frame.ms = elapsed_ms(processing);
+        self.process_ms.push(frame.ms);
+        if frame.ms > self.slowest_frame.ms {
+            self.slowest_frame = frame;
+        }
     }
 }
 
@@ -310,6 +346,30 @@ impl WaveForgeStages {
             .and_then(|worker| worker.field(&stage.to_string(), from_vector(chunk)))
             .map_or_else(PackedFloat32Array::new, |field| {
                 PackedFloat32Array::from(field.values.as_slice())
+            })
+    }
+
+    /// A Rules stage's categories for a chunk, column by column with the lattice's x fastest, as
+    /// indices into `category_names(stage)`; empty if it is not a Rules stage or the chunk has not
+    /// arrived.
+    #[func]
+    fn categories(&self, stage: GString, chunk: Vector3i) -> PackedByteArray {
+        self.worker
+            .as_ref()
+            .and_then(|worker| worker.categories(&stage.to_string(), from_vector(chunk)))
+            .map_or_else(PackedByteArray::new, |categories| {
+                PackedByteArray::from(categories.values.as_slice())
+            })
+    }
+
+    /// The categories a Rules stage names, in the order of their indices; empty for another stage.
+    #[func]
+    fn category_names(&self, stage: GString) -> PackedStringArray {
+        self.pack
+            .as_ref()
+            .and_then(|pack| pack.kind(&stage.to_string()))
+            .map_or_else(PackedStringArray::new, |kind| {
+                kind.categories().into_iter().map(GString::from).collect()
             })
     }
 
@@ -513,10 +573,30 @@ impl WaveForgeStages {
     }
 
     /// What the node has cost Godot's thread: `process_ms_median`, `_p99` and `_max` over recent
-    /// frames, once there are some.
+    /// frames, once there are some; and what its slowest frame since the start spent the time on:
+    /// `slowest_frame_ms` in all, `slowest_frame_events` drained and `slowest_frame_signals_ms`
+    /// emitting them (the handlers connected to them included), `slowest_frame_grounds` chunks
+    /// given ground in `slowest_frame_grounds_ms`, and `slowest_frame_bodies` chunks given a body
+    /// in `slowest_frame_bodies_ms`.
     #[func]
     fn stats(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
+        let slowest = self.slowest_frame;
+        for (key, value) in [
+            ("slowest_frame_ms", slowest.ms),
+            ("slowest_frame_signals_ms", slowest.signals_ms),
+            ("slowest_frame_grounds_ms", slowest.grounds_ms),
+            ("slowest_frame_bodies_ms", slowest.bodies_ms),
+        ] {
+            out.set(&key.to_variant(), &value.to_variant());
+        }
+        for (key, count) in [
+            ("slowest_frame_events", slowest.events),
+            ("slowest_frame_grounds", slowest.grounds),
+            ("slowest_frame_bodies", slowest.bodies),
+        ] {
+            out.set(&key.to_variant(), &(count as i64).to_variant());
+        }
         if let Some([median, p99, max]) = self.process_ms.summary() {
             out.set(&"process_ms_median".to_variant(), &median.to_variant());
             out.set(&"process_ms_p99".to_variant(), &p99.to_variant());
@@ -572,7 +652,9 @@ impl WaveForgeStages {
 
     /// Builds the ground of every chunk a newly arrived field may have completed, and frees the
     /// ground of chunks whose own field was dropped.
-    fn update_ground(&mut self, arrived: &[ChunkCoord], gone: &[ChunkCoord]) {
+    ///
+    /// Returns how many chunks got ground.
+    fn update_ground(&mut self, arrived: &[ChunkCoord], gone: &[ChunkCoord]) -> usize {
         let mut rendering = RenderingServer::singleton();
         for chunk in gone {
             if let Some((_, mesh, instance)) = self.grounds.remove(chunk) {
@@ -581,7 +663,7 @@ impl WaveForgeStages {
             }
         }
         let Some(worker) = &self.worker else {
-            return;
+            return 0;
         };
         let Some(scenario) = self
             .base()
@@ -589,7 +671,7 @@ impl WaveForgeStages {
             .and_then(|viewport| viewport.find_world_3d())
             .map(|world| world.get_scenario())
         else {
-            return;
+            return 0;
         };
         let stage = self.ground_stage.to_string();
         let cell = self.cell_size.to_array();
@@ -604,6 +686,7 @@ impl WaveForgeStages {
                 }
             }
         }
+        let count = built.len();
         for (chunk, mesh) in built {
             let rid = rendering.mesh_create();
             let mut arrays = VarArray::new();
@@ -640,14 +723,17 @@ impl WaveForgeStages {
             );
             self.grounds.insert(chunk, (mesh, rid, instance));
         }
+        count
     }
 
     /// Keeps one static body on every chunk within `collider_radius` of the followed chunk that
     /// has ground or a town with shapes, building it again when what it would hold changes, and
     /// frees the others.
-    fn update_colliders(&mut self) {
+    ///
+    /// Returns how many chunks got a body.
+    fn update_colliders(&mut self) -> usize {
         let (Some(pack), Some(focus)) = (self.pack.clone(), self.followed) else {
-            return;
+            return 0;
         };
         let radius = self.collider_radius;
         let within = |chunk: ChunkCoord| {
@@ -693,7 +779,7 @@ impl WaveForgeStages {
             .and_then(|viewport| viewport.find_world_3d())
             .map(|world| world.get_space())
         else {
-            return;
+            return 0;
         };
         let range = focus.x - radius.max(0)..=focus.x + radius.max(0);
         let wanted: Vec<(ChunkCoord, BodyContents)> = range
@@ -706,6 +792,7 @@ impl WaveForgeStages {
             .filter(|(_, held)| held.ground || !held.towns.is_empty())
             .collect();
         let owner = u64::from_ne_bytes(self.base().instance_id().to_i64().to_ne_bytes());
+        let count = wanted.len();
         for (chunk, held) in wanted {
             let body = physics.body_create();
             physics.body_set_mode(body, BodyMode::STATIC);
@@ -739,6 +826,7 @@ impl WaveForgeStages {
             physics.body_set_space(body, space);
             self.bodies.insert(chunk, (body, ground_shape, held));
         }
+        count
     }
 
     /// Adds a chunk's ground to `body` as a height map and returns the shape, which the caller

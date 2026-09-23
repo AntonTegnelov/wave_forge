@@ -19,7 +19,7 @@ const CELL_SIZE := 2.0
 const RADIUS := 3
 ## How far to look for a town first, in chunks: sixteen of the pack's regions of six chunks.
 const SEARCH_RADIUS := 12
-const TARGETS := ["level", "city", "trees"]
+const TARGETS := ["level", "city", "trees", "cover"]
 const LOAD_TIMEOUT_S := 180.0
 ## The node's own time on Godot's thread, at the 99th percentile and at worst.
 const NODE_P99_MS := 2.0
@@ -145,11 +145,14 @@ func _process(_delta: float) -> bool:
 					return true
 				return false
 	print("verify_stages: %d chunks of %s arrived in %.1f s" % [_view().size(), TARGETS, waited])
-	if not _check_towns() or not _check_trees():
+	if not _check_towns() or not _check_trees() or not _check_cover():
 		return true
 	var stats: Dictionary = world.stats()
-	print("verify_stages: the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms" % [
-		stats["process_ms_median"], stats["process_ms_p99"], stats["process_ms_max"]])
+	print("verify_stages: the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms; its slowest frame: %d events in %.3f ms, %d grounds in %.3f ms, %d bodies in %.3f ms" % [
+		stats["process_ms_median"], stats["process_ms_p99"], stats["process_ms_max"],
+		stats["slowest_frame_events"], stats["slowest_frame_signals_ms"],
+		stats["slowest_frame_grounds"], stats["slowest_frame_grounds_ms"],
+		stats["slowest_frame_bodies"], stats["slowest_frame_bodies_ms"]])
 	if stats["process_ms_p99"] > NODE_P99_MS or stats["process_ms_max"] > NODE_MAX_MS:
 		_fail("the node's process took %.2f ms at the 99th percentile, %.2f ms at worst" % [stats["process_ms_p99"], stats["process_ms_max"]])
 		return true
@@ -325,6 +328,29 @@ func _check_trees() -> bool:
 		_fail("no tree around the focus")
 		return false
 	print("verify_stages: %d trees, each on the ground and outside the towns" % trees)
+	return true
+
+## Every column's cover is highland above 30 cells of height and lowland elsewhere, as the pack's
+## rule says.
+func _check_cover() -> bool:
+	var names: PackedStringArray = world.category_names("cover")
+	if names != PackedStringArray(["highland", "lowland"]):
+		_fail("the cover's categories are %s" % [names])
+		return false
+	var counts := {"highland": 0, "lowland": 0}
+	for chunk in _view():
+		var level: PackedFloat32Array = world.field_values("level", chunk)
+		var cover: PackedByteArray = world.categories("cover", chunk)
+		if cover.size() != level.size():
+			_fail("the cover of %s has %d columns, its height %d" % [chunk, cover.size(), level.size()])
+			return false
+		for i in level.size():
+			var expected := "highland" if level[i] > 30.0 else "lowland"
+			if names[cover[i]] != expected:
+				_fail("column %d of %s is %s at height %.2f" % [i, chunk, names[cover[i]], level[i]])
+				return false
+			counts[expected] += 1
+	print("verify_stages: the cover follows its rule: %s" % [counts])
 	return true
 
 ## Moving far away drops every chunk of the first view.

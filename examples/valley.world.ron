@@ -1,6 +1,6 @@
-// A Valheim-like valley (docs/product/user-stories.md, G7): rolling ground, towns on levelled sites
-// built by the city module set, and trees on the ground between them. The test pack for the first
-// slice.
+// A valley (docs/product/user-stories.md, G7): rolling ground, towns on levelled sites
+// built by the city module set, trees on the ground between them, and the ground's cover by
+// height. The test pack for the first slice.
 (
     version: 1,
     stages: [
@@ -11,5 +11,6 @@
         (name: "city", kind: Solve(sites: "towns", rules: "city", bottom: Some(Tagged("street_level")), top: Some(Named("air")))),
         (name: "trees", kind: Scatter(kind: "tree", height: "level", spacing: 3, chance: 0.9,
             between: Some((6.0, 40.0)), max_slope: Some(1.2), avoid: Some(("towns", 4)), apart: 3)),
+        (name: "cover", kind: Rules(rules: [(category: "highland", when: [Greater(Input("level"), Constant(30.0))])], otherwise: "lowland")),
     ],
 )
