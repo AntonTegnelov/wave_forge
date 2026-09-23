@@ -95,6 +95,9 @@ second, published once a second, not the last frame's time.
 
 ### Functions
 
+- `noises`: a Dictionary of a pack's noise names to `FastNoiseLite` resources; each replaces the
+  pack's noise of that name, so a Field reading `FastNoise(name)` holds exactly what the
+  resource's `get_noise_2d` gives at each column's centre in cells.
 - `start()` loads the pack and the rule sets and starts the stages' thread, where a town solver
   builds its device.
 - `follow(position)` generates around a position in Godot's world space, asking again only when it
@@ -161,7 +164,7 @@ are deep. Ground and bodies go when their chunk's field is dropped or the player
 
 `wave_forge_godot/verify.sh` builds the extension and runs `godot/verify.gd` (the WFC world, with
 colliders and navigation), `godot/verify_stages.gd` (the valley pack, its ground, and a walk
-through a town) and `godot/verify_tables.gd` (tables of facts given from GDScript) in a real
-headless Godot.
+through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) and
+`godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack) in a real headless Godot.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).

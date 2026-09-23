@@ -15,12 +15,18 @@ use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::{ArrayType, PrimitiveType};
 use godot::classes::{
-    FileAccess, INode, Material, Node, PhysicsServer3D, ProjectSettings, RenderingServer, Shape3D,
+    FastNoiseLite, FileAccess, INode, Material, Node, PhysicsServer3D, ProjectSettings,
+    RenderingServer, Shape3D,
 };
+use godot::obj::EngineEnum;
 use godot::prelude::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use wave_forge::loader::{RuleFile, parse_rule_file};
+use wave_forge::noise::{
+    CellularDistanceFunction, CellularReturnType, DomainWarpFractalType, DomainWarpType,
+    FractalType, NoiseConfig, NoiseType,
+};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
     Column, Facts, GivenRow, Pack, RowId, Runtime, SiteId, StageEvent, StageKind, StageWorker,
@@ -52,6 +58,11 @@ pub struct WaveForgeStages {
     /// The stages to generate around the followed position; what they read comes with them.
     #[export]
     targets: PackedStringArray,
+    /// Noises that replace the ones the pack names, as name to `FastNoiseLite` resource: a Field
+    /// stage reading `FastNoise(name)` then gives exactly what the resource's `get_noise_2d` gives
+    /// at each column's centre in cells.
+    #[export]
+    noises: VarDictionary,
     /// Whether to start as soon as the node enters the scene tree.
     #[export]
     start_on_ready: bool,
@@ -150,6 +161,98 @@ struct FrameCost {
     bodies_ms: f64,
 }
 
+/// A Godot `FastNoiseLite` resource as the library's noise configuration, every property read as
+/// the resource holds it.
+fn noise_config(noise: &Gd<FastNoiseLite>) -> Result<NoiseConfig, String> {
+    fn pick<T: Copy>(options: &[T], ord: i32, what: &str) -> Result<T, String> {
+        usize::try_from(ord)
+            .ok()
+            .and_then(|at| options.get(at).copied())
+            .ok_or_else(|| format!("{what} {ord} is not one Wave Forge knows"))
+    }
+    let offset = noise.get_offset();
+    Ok(NoiseConfig {
+        noise_type: pick(
+            &[
+                NoiseType::Simplex,
+                NoiseType::SimplexSmooth,
+                NoiseType::Cellular,
+                NoiseType::Perlin,
+                NoiseType::ValueCubic,
+                NoiseType::Value,
+            ],
+            noise.get_noise_type().ord(),
+            "noise type",
+        )?,
+        seed: noise.get_seed(),
+        frequency: noise.get_frequency(),
+        offset: [offset.x, offset.y, offset.z],
+        fractal_type: pick(
+            &[
+                FractalType::None,
+                FractalType::Fbm,
+                FractalType::Ridged,
+                FractalType::PingPong,
+            ],
+            noise.get_fractal_type().ord(),
+            "fractal type",
+        )?,
+        fractal_octaves: noise.get_fractal_octaves(),
+        fractal_lacunarity: noise.get_fractal_lacunarity(),
+        fractal_gain: noise.get_fractal_gain(),
+        fractal_weighted_strength: noise.get_fractal_weighted_strength(),
+        fractal_ping_pong_strength: noise.get_fractal_ping_pong_strength(),
+        cellular_distance_function: pick(
+            &[
+                CellularDistanceFunction::Euclidean,
+                CellularDistanceFunction::EuclideanSquared,
+                CellularDistanceFunction::Manhattan,
+                CellularDistanceFunction::Hybrid,
+            ],
+            noise.get_cellular_distance_function().ord(),
+            "cellular distance function",
+        )?,
+        cellular_return_type: pick(
+            &[
+                CellularReturnType::CellValue,
+                CellularReturnType::Distance,
+                CellularReturnType::Distance2,
+                CellularReturnType::Distance2Add,
+                CellularReturnType::Distance2Sub,
+                CellularReturnType::Distance2Mul,
+                CellularReturnType::Distance2Div,
+            ],
+            noise.get_cellular_return_type().ord(),
+            "cellular return type",
+        )?,
+        cellular_jitter: noise.get_cellular_jitter(),
+        domain_warp_enabled: noise.is_domain_warp_enabled(),
+        domain_warp_type: pick(
+            &[
+                DomainWarpType::Simplex,
+                DomainWarpType::SimplexReduced,
+                DomainWarpType::BasicGrid,
+            ],
+            noise.get_domain_warp_type().ord(),
+            "domain warp type",
+        )?,
+        domain_warp_amplitude: noise.get_domain_warp_amplitude(),
+        domain_warp_frequency: noise.get_domain_warp_frequency(),
+        domain_warp_fractal_type: pick(
+            &[
+                DomainWarpFractalType::None,
+                DomainWarpFractalType::Progressive,
+                DomainWarpFractalType::Independent,
+            ],
+            noise.get_domain_warp_fractal_type().ord(),
+            "domain warp fractal type",
+        )?,
+        domain_warp_fractal_octaves: noise.get_domain_warp_fractal_octaves(),
+        domain_warp_fractal_lacunarity: noise.get_domain_warp_fractal_lacunarity(),
+        domain_warp_fractal_gain: noise.get_domain_warp_fractal_gain(),
+    })
+}
+
 /// Puts what names a site in `out`: its `region` for a Sites stage's, its `row` for a TableSites
 /// stage's.
 fn name_site(out: &mut VarDictionary, site: &SiteId) {
@@ -220,6 +323,7 @@ impl INode for WaveForgeStages {
             base,
             pack_file: GString::new(),
             rules_files: VarDictionary::new(),
+            noises: VarDictionary::new(),
             targets: PackedStringArray::new(),
             start_on_ready: false,
             seed: 0,
@@ -383,6 +487,29 @@ impl WaveForgeStages {
                     .to_string(),
             )
         });
+        let mut noises = Vec::new();
+        for (name, noise) in self.noises.iter_shared() {
+            let name = name.to::<GString>().to_string();
+            let Ok(noise) = noise.try_to::<Gd<FastNoiseLite>>() else {
+                godot_error!("wave forge: noise {name:?} is not a FastNoiseLite");
+                return false;
+            };
+            match noise_config(&noise) {
+                Ok(config) => noises.push((name, config)),
+                Err(message) => {
+                    godot_error!("wave forge: noise {name:?}: {message}");
+                    return false;
+                }
+            }
+        }
+        let with_noises = move |mut runtime: Runtime| -> Result<Runtime, String> {
+            for (name, config) in &noises {
+                runtime = runtime
+                    .with_noise(name, *config)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(runtime)
+        };
         let facts = match Facts::new(Arc::clone(&pack), seed) {
             Ok(facts) => facts,
             Err(error) => {
@@ -390,7 +517,14 @@ impl WaveForgeStages {
                 return false;
             }
         };
-        let mut sampler = Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y]);
+        let mut sampler =
+            match with_noises.clone()(Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y])) {
+                Ok(sampler) => sampler,
+                Err(error) => {
+                    godot_error!("wave forge: {}: {error}", self.pack_file);
+                    return false;
+                }
+            };
         sampler
             .set_facts(facts.clone())
             .expect("facts made for the sampler's pack and seed");
@@ -406,7 +540,7 @@ impl WaveForgeStages {
         self.clear_ground_and_bodies();
         // The towns' device is built on the stages' thread, which is where it is used.
         self.worker = Some(StageWorker::spawn(move || {
-            let mut runtime = Runtime::new(for_thread, seed, [shape.x, shape.y]);
+            let mut runtime = with_noises(Runtime::new(for_thread, seed, [shape.x, shape.y]))?;
             runtime
                 .set_facts(thread_facts)
                 .map_err(|error| error.to_string())?;

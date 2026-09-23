@@ -1,0 +1,11 @@
+// The pack of the noise check (verify_noise.gd): one field that reads the noise named "hills",
+// which the check replaces with a Godot FastNoiseLite resource.
+(
+    version: 1,
+    noises: {
+        "hills": (),
+    },
+    stages: [
+        (name: "height", kind: Field(FastNoise("hills"))),
+    ],
+)

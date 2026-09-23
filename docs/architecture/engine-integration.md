@@ -367,8 +367,10 @@ Bevy gets the same tools once its editor can host them.
 
 ### Noise that means the same in both engines
 
-This is the design for [#45](https://github.com/AntonTegnelov/wave_forge/issues/45); none of it is
-built yet. Godot's `FastNoiseLite` is the default noise source in Godot. Its `Noise` base class has no
+This is the design for [#45](https://github.com/AntonTegnelov/wave_forge/issues/45). Built: the configuration, the
+2D port, the golden tests and Godot's conversion ([packs.md](../reference/packs.md#godots-noise)).
+Not built yet: 3D noise, the WGSL port, Bevy's `Reflect`, quantisation and `sample_height()`.
+Godot's `FastNoiseLite` is the default noise source in Godot. Its `Noise` base class has no
 overridable sampling, so a custom noise subclass cannot occur.
 
 The library defines a `NoiseConfig` that mirrors Godot's resource field for field: its enum order,
@@ -378,7 +380,7 @@ every field always serialised so defaults cannot drift between engines. Godot co
 `FastNoiseLite` resource into this configuration on the main thread; Bevy edits it through
 `Reflect`. The evaluator is our own port of FastNoiseLite 1.1.0, the version Godot bundles (whether
 1.1.0 and the 1.1.1 crate differ is **(unverified)**), plus a WGSL port, since upstream has none. Golden
-tests compare it with Godot's C++ output. Noise is quantised before any discrete decision, and the
+tests compare it with Godot's C++ output: the 2D port matches it exactly on every sample. Noise is quantised before any discrete decision, and the
 library offers `sample_height()` so gameplay code does not resample noise itself.
 
 Modules and props for Bevy are authored in Blender and exported as glTF, with Wave Forge metadata in

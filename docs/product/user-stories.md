@@ -335,7 +335,11 @@ authoring tools, Solve. **Status:** not started (2026-09-23).
 **Acceptance criteria.** Assigning a `FastNoiseLite` to a Field stage produces heights equal to
 Godot's own sampling of it within a stated tolerance (golden test against Godot's C++ output).
 **Needs.** Field, the FastNoiseLite port ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)).
-**Status:** not started (2026-09-23).
+**Status:** verified by automated checks (2026-09-23), with a tolerance of zero. The port gives every
+one of 2 560 samples Godot 4.7 computed over 80 configurations exactly (`tests/fastnoise.rs`, in the
+library's CI job), and `wave_forge_godot/godot/verify_noise.gd`, in the Godot job of every pull
+request's CI, assigns a cellular, ridged, warped `FastNoiseLite` to a pack's noise and finds the
+field equal to the resource's `get_noise_2d` at every column.
 
 ### N8. Bake an area to hand-edit
 

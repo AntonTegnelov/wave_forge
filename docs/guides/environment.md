@@ -229,8 +229,8 @@ CARGO_TARGET_DIR="$HOME/.cache/cargo-target/wave_forge_godot" \
   `wave_forge_godot/godot/bin`, copies `examples/city.ron` and `examples/valley.world.ron` next to it,
   exports the city's module models with `wfc-export-models`, and writes the extension list that
   Godot otherwise writes only from the editor.
-- `verify.sh` runs `prepare.sh`, then `verify.gd`, `verify_stages.gd` and `verify_tables.gd`
-  headless, then the history example's `prepare.sh` and `check.gd`. Use `release`:
+- `verify.sh` runs `prepare.sh`, then `verify.gd`, `verify_stages.gd`, `verify_tables.gd` and
+  `verify_noise.gd` headless, then the history example's `prepare.sh` and `check.gd`. Use `release`:
   the scripts' frame-time bars describe the extension a game would ship.
 - `render_city.sh` renders a city through the Compatibility renderer and needs a display; run it
   under `xvfb-run -a`.

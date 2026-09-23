@@ -161,6 +161,7 @@ in cells, measured from the world's origin to the column's centre, along the lat
 | `Constant(v)` | `v` |
 | `Noise(frequency: f, octaves: n)` | fractal value noise in 0..1: `n` layers (1 to 16), the first with `f` lattice points per cell, each next at twice the frequency and half the weight |
 | `Noise(frequency: f, octaves: n, name: "hills")` | the same, from the stream named `hills`: identical in every stage that names it |
+| `FastNoise("hills")` | the noise the pack's `noises` names `hills`, as Godot's `FastNoiseLite.get_noise_2d` gives it at the column's centre ([below](#godots-noise)) |
 | `Input("name")` | another field's value at the same column |
 | `X`, `Y` | the column's centre |
 | `Distance((x, y))` | the distance from a point to the column's centre |
@@ -194,6 +195,31 @@ any case plus the spread between the cases divided by `b + 1`, across chunk seam
 of 0 each column takes its own category's expression. Loading refuses a blend over the limit, two
 cases for one category, and a case for a category the rules do not give. The ring world's `terrain`
 stage shapes each biome's ground from the island's height this way.
+
+### Godot's noise
+
+A pack may name noises configured as Godot's `FastNoiseLite` resource is, and Field and Rules
+expressions and Scatter conditions read them with `FastNoise(name)`:
+
+```ron
+noises: {
+    "hills": (noise_type: Perlin, seed: 77, frequency: 0.03, fractal_octaves: 3),
+},
+```
+
+A noise's properties are the resource's, under the same names and with the same defaults, and any
+left out takes Godot's default: `noise_type` (`Simplex`, `SimplexSmooth`, `Cellular`, `Perlin`,
+`ValueCubic`, `Value`), `seed`, `frequency`, `offset`, the `fractal_` properties, the `cellular_`
+properties and the `domain_warp_` properties. `wave_forge::noise::NoiseConfig::sample` is a port of
+FastNoiseLite 1.1.0, the version Godot bundles, and gives exactly what Godot 4.7's `get_noise_2d`
+gives: `tests/fastnoise.rs` compares 2 560 samples over 80 configurations that Godot computed, with
+no tolerance. A noise keeps its own seed, as a resource does, so the world's seed does not change it.
+
+`Runtime::with_noise(name, config)` replaces a named noise, which is how an engine hands in a
+resource; the Godot node's `noises` does it ([godot.md](godot.md#waveforgestages)). Loading refuses
+a `FastNoise` of a name the pack's `noises` does not have, and `with_noise` of one fails with
+`StageError::UnknownNoise`. Only 2D noise exists; 3D noise comes with density volumes
+([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
 
 ### Rules
 
