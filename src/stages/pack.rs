@@ -196,8 +196,9 @@ pub enum StageKind {
     ///    it and kept with probability `chance`, and each the first of a `group` of points
     ///    scattered around it;
     /// 2. tests at each point's column: the height within `between`, the slope at most
-    ///    `max_slope` (height per cell), every condition of `when`, the depth under `water`, and
-    ///    at least `margin` cells from every site of `avoid`;
+    ///    `max_slope` (height per cell), every condition of `when`, the depth under `water`, at
+    ///    least `margin` cells from every site of `avoid`, and at least its clearance from every
+    ///    point of each Scatter stage `block` names, which is placed first and so wins;
     /// 3. spacing: no candidate that passes its tests and has a higher priority closer than
     ///    `apart` cells, a test that reads neighbours' candidates, never their results, so points
     ///    keep their distance across chunk seams;
@@ -223,6 +224,8 @@ pub enum StageKind {
         water: Option<Water>,
         #[serde(default)]
         avoid: Option<(String, u32)>,
+        #[serde(default)]
+        block: Vec<(String, f32)>,
         #[serde(default)]
         apart: u32,
         #[serde(default = "unscaled")]
@@ -1401,6 +1404,7 @@ impl Pack {
                     when,
                     water,
                     avoid,
+                    block,
                     apart,
                     scale,
                     tilt,
@@ -1496,6 +1500,15 @@ impl Pack {
                     let mut reads = widest_reads(fields);
                     if let Some((sites, margin)) = avoid {
                         reads.push((sites.as_str(), Reach::Cells(base + margin), Output::Sites));
+                    }
+                    for (points, clearance) in block {
+                        if !(clearance.is_finite() && *clearance >= 0.0) {
+                            return Err(invalid(format!(
+                                "a clearance of {clearance} cells from {points:?}"
+                            )));
+                        }
+                        let reach = Reach::Cells(base + clearance.ceil() as u32);
+                        reads.push((points.as_str(), reach, Output::Points));
                     }
                     reads
                 }

@@ -168,6 +168,7 @@ fn loading_lets_data_flow_only_from_coarse_to_fine() {
                         when: Vec::new(),
                         water: None,
                         avoid: None,
+                        block: Vec::new(),
                         apart: 0,
                         scale: (1.0, 1.0),
                         tilt: (0.0, 0.0),

@@ -365,3 +365,73 @@ fn the_ring_worlds_ore_and_groves_stand_where_their_rules_say() {
     }
     assert!(groups.values().any(|&n| n >= 3), "{groups:?}");
 }
+
+const BLOCKING: &str = r#"(
+    version: 1,
+    stages: [
+        (name: "ground", kind: Field(Mul(Noise(frequency: 0.05, octaves: 3), Constant(20.0)))),
+        (name: "rocks", kind: Scatter(kind: "rock", height: "ground", spacing: 5, count: (1, 2))),
+        (name: "trees", kind: Scatter(kind: "tree", height: "ground", spacing: 4,
+            group: Some((size: (2, 4), radius: 3.0)), block: [("rocks", 2.5)])),
+        (name: "free", kind: Scatter(kind: "tree", height: "ground", spacing: 4,
+            group: Some((size: (2, 4), radius: 3.0)))),
+    ],
+)"#;
+
+/// Every point of `stage` in the blocking pack over the area, asked for in `requests`' order.
+fn blocking(stage: &str, requests: &[Vec<ChunkCoord>]) -> BTreeMap<ChunkCoord, Vec<Point>> {
+    let mut runtime = Runtime::new(
+        Arc::new(Pack::parse(BLOCKING).expect("a valid pack")),
+        6,
+        SIZE,
+    );
+    let mut points = BTreeMap::new();
+    for request in requests {
+        let focus: Vec<FocusPoint> = request.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+        runtime.request(&focus, &[stage]).expect("a stage");
+        runtime.run_until_idle().expect("the stages run");
+        for &chunk in request {
+            points.insert(
+                chunk,
+                runtime.points(stage, chunk).expect("generated").to_vec(),
+            );
+        }
+    }
+    points
+}
+
+/// The least distance from any point of `a` to any point of `b`, across the ground.
+fn closest(a: &[Point], b: &[Point]) -> f32 {
+    a.iter()
+        .flat_map(|p| {
+            b.iter()
+                .map(move |q| (p.position[0] - q.position[0]).hypot(p.position[1] - q.position[1]))
+        })
+        .fold(f32::INFINITY, f32::min)
+}
+
+#[test]
+fn a_stage_keeps_clear_of_the_points_of_a_stage_it_defers_to_across_seams() {
+    let rocks = all(&blocking("rocks", &[area()]));
+
+    let trees = all(&blocking("trees", &[area()]));
+    let free = all(&blocking("free", &[area()]));
+
+    assert!(trees.len() > 100, "{} trees", trees.len());
+    assert!(closest(&trees, &rocks) >= 2.5);
+    assert!(
+        closest(&free, &rocks) < 2.5,
+        "without blocking, trees stand by rocks"
+    );
+}
+
+#[test]
+fn blocking_comes_out_the_same_in_any_order() {
+    let one_by_one: Vec<Vec<ChunkCoord>> = area().into_iter().map(|c| vec![c]).collect();
+    let backwards: Vec<Vec<ChunkCoord>> = area().into_iter().rev().map(|c| vec![c]).collect();
+
+    let at_once = blocking("trees", &[area()]);
+
+    assert_eq!(at_once, blocking("trees", &one_by_one));
+    assert_eq!(at_once, blocking("trees", &backwards));
+}
