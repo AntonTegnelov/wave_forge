@@ -1785,6 +1785,7 @@ impl Runtime {
             when,
             water,
             avoid,
+            block,
             apart,
             scale,
             tilt,
@@ -1821,6 +1822,26 @@ impl Runtime {
             None => Vec::new(),
         };
         let margin = avoid.as_ref().map_or(0, |(_, margin)| *margin);
+        // Every point of a blocking stage within reach, with the clearance kept from it.
+        let mut blockers: Vec<([f32; 2], f32)> = Vec::new();
+        for (name, clearance) in block {
+            let input = self.pack.index(name).expect("linked when loaded");
+            let (_, reach) = *stage
+                .inputs
+                .iter()
+                .find(|&&(known, _)| known == input)
+                .expect("linked when loaded");
+            for (_, product) in self.inputs_within(index, chunk, input, reach.cells(self.size)) {
+                let Product::Points(points) = product else {
+                    unreachable!("inputs are type checked when the pack loads")
+                };
+                blockers.extend(
+                    points
+                        .iter()
+                        .map(|point| ([point.position[0], point.position[1]], *clearance)),
+                );
+            }
+        }
         let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
         let spacing = i64::from(*spacing);
         let threshold = (f64::from(*chance) * 4_294_967_296.0) as u64;
@@ -1868,8 +1889,8 @@ impl Runtime {
                 }
             }
         }
-        // A point's height at `column`, if it passes the stage's tests there.
-        let passes = |column: (i64, i64)| -> Result<Option<f32>, StageError> {
+        // The height of a point standing at `at` in `column`, if it passes the stage's tests there.
+        let passes = |column: (i64, i64), at: (f32, f32)| -> Result<Option<f32>, StageError> {
             let (x, y) = column;
             let here = heights.get(x, y)?;
             if between.is_some_and(|(low, high)| !(low..=high).contains(&here)) {
@@ -1899,12 +1920,18 @@ impl Runtime {
             {
                 return Ok(None);
             }
+            if blockers
+                .iter()
+                .any(|&(point, clearance)| (point[0] - at.0).hypot(point[1] - at.1) < clearance)
+            {
+                return Ok(None);
+            }
             Ok(Some(here))
         };
         let mut heights_of: Vec<Option<f32>> = Vec::with_capacity(candidates.len());
         for candidate in &candidates {
             heights_of.push(if candidate.exists {
-                passes(candidate.column)?
+                passes(candidate.column, candidate.at)?
             } else {
                 None
             });
@@ -1968,7 +1995,7 @@ impl Runtime {
                 let z = if member == 0 {
                     anchor_height
                 } else {
-                    match passes(standing)? {
+                    match passes(standing, at)? {
                         Some(z) => z,
                         None => continue,
                     }
