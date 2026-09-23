@@ -7,8 +7,8 @@ pub mod runtime;
 pub mod worker;
 
 pub use pack::{
-    Condition, Expr, MAX_CATEGORIES, PACK_VERSION, Pack, PackError, PackFile, Rule, StageDef,
-    StageKind,
+    Condition, Expr, MAX_BLEND, MAX_CATEGORIES, PACK_VERSION, Pack, PackError, PackFile, Rule,
+    StageDef, StageKind,
 };
 pub use runtime::{
     Categories, Field, FieldView, Point, Product, Runtime, Site, StageError, TownChunk,

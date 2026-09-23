@@ -20,7 +20,7 @@ community port and are unverified from Iron Gate (see the story's sources).
 | Base height from products of Perlin octaves, with its own lacunarity and gain | Perlin or simplex noise, fBm parameters, a seed per noise, subtraction and absolute values | partial: value noise with fixed fBm; the formula itself is expressible (`tests/expressions.rs`) | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
 | Radial falloff to the edge, a flattened spawn area | distance to the origin, smoothstep, remap, clamp, min and max, curves | available (`tests/expressions.rs`) | |
 | Biomes by an ordered first-match list over distance, noise and height | categorical fields, a Rules stage | available (`examples/rings.world.ron`, `tests/rules.rs`) | |
-| Height per biome, blended where biomes meet | select by category, blending | missing | [#92](https://github.com/AntonTegnelov/wave_forge/issues/92) |
+| Height per biome, blended where biomes meet | select by category, blending | available (`examples/rings.world.ron`, `tests/blend.rs`) | |
 | Cellular noise, quantised height in some biomes | cellular noise, floor | partial: `Floor` quantises; cellular noise is missing | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
 | Lakes from a world scan | a region job on a coarse lattice | missing | [#69](https://github.com/AntonTegnelov/wave_forge/issues/69) |
 | Rivers and streams that carve the ground | curves, a network between sites, rasterising curves into height | missing | [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |

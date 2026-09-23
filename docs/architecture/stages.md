@@ -92,7 +92,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 
 | Kind | What it does | Reach | Serves | Today |
 |---|---|---|---|---|
-| **Field** | a fused pointwise expression graph: noise, splines, remap, math, first-match classifiers, image lookup | 0 | G1, G3, G6, G7, N2, N7 | value noise with named streams, coordinates and distances, arithmetic, clamps, smoothsteps, remaps, curves and selects; FastNoiseLite's noises are [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
+| **Field** | a fused pointwise expression graph: noise, splines, remap, math, first-match classifiers, image lookup | 0 | G1, G3, G6, G7, N2, N7 | value noise with named streams, coordinates and distances, arithmetic, clamps, smoothsteps, remaps, curves, selects, and a blended match per category; FastNoiseLite's noises are [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
 | **Filter** | stencils, blur, cellular automata, slope, distance transforms | declared per pass | G2, G5, G7 | `Blur`, `Flatten` ([#94](https://github.com/AntonTegnelov/wave_forge/issues/94)) |
 | **Rules** | first-match rule trees producing a Prior or a categorical field, like Minecraft's surface rules | that of its conditions | G1, G7, N4 | a categorical field; a Prior is not built yet |
 | **Solve** | WFC over a Prior; Wang tiling later | the solver's halo | G4, G5, N6 | one bounded town per site (below) |

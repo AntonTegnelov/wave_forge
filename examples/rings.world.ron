@@ -2,7 +2,8 @@
 // products of noises, is flattened around the centre where a player starts, and falls into the sea
 // past the island's edge, 90 to 96 cells out. Biomes are first-match rules over height, distance
 // from the centre and noise, with a wobble that keeps the rings from being perfect circles. The
-// test pack for G7's biome rules; heights run from about -0.3 to 1, before any biome shapes them.
+// test pack for G7's biome rules and per-biome height; heights run from about -0.3 to 1 before the
+// biomes shape them.
 (
     version: 1,
     stages: [
@@ -54,5 +55,17 @@
             ],
             otherwise: "grassland",
         )),
+        // The ground each biome shapes from the island's height, blended over three cells where
+        // biomes meet: the sea deepens, peaks steepen, marshes lie nearly flat.
+        (name: "terrain", kind: Field(Match(
+            input: "biome",
+            cases: [
+                ("sea", Mul(Input("height"), Constant(2.0))),
+                ("peaks", Add(Constant(0.45), Mul(Sub(Input("height"), Constant(0.45)), Constant(2.5)))),
+                ("marsh", Add(Constant(0.1), Mul(Sub(Input("height"), Constant(0.1)), Constant(0.3)))),
+            ],
+            otherwise: Input("height"),
+            blend: 3,
+        ))),
     ],
 )
