@@ -415,9 +415,9 @@ func _check_colliders() -> bool:
 	if hit.is_empty():
 		_fail("a ray down onto chunk %s hit nothing" % focus)
 		return false
-	var instance: int = world.collider_instance(hit["rid"], hit["shape"])
-	if instance & 0xFFFFFFFF != cell_index or hit["collider"] != world:
-		_fail("the ray hit instance %d of %s, expected cell %d" % [instance, hit["collider"], cell_index])
+	var instance: Dictionary = world.collider_instance(hit["rid"], hit["shape"])
+	if instance.is_empty() or instance["chunk"] != focus or instance["id"] & 0xFFFFFFFF != cell_index or hit["collider"] != world:
+		_fail("the ray hit instance %s of %s, expected cell %d of chunk %s" % [instance, hit["collider"], cell_index, focus])
 		return false
 	var top: float = world.cell_position(focus, cell_index).y + CELL_SIZE / 2.0
 	if absf(hit["position"].y - top) > 0.001:
