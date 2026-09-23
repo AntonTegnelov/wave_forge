@@ -380,6 +380,15 @@ The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
   cost of creating a chunk's colliders (node path against server path, shapes added before or after
   `body_set_space`), the node path against the server path for visuals, and whether Compatibility
   applies supplied levels of detail.
+
+  InstanceSets exist (`wave_forge::instance_sets`, `WaveForgeWorld.instance_sets`), and the visual
+  paths are measured. Drawing a city chunk of 8×8×8 cells costs Godot's thread about 7 ms either way
+  (13 chunks, Compatibility renderer on the RTX 3070, `render_city.sh`): computing the placements is
+  0.09 ms in the library against a GDScript loop, and almost all the rest is
+  `RenderingServer.multimesh_allocate_data` at about 280 µs per multimesh, against about 6 µs for
+  creating one, setting its buffer or creating its instance. So the cost is allocations, one per
+  module per chunk, and the next step is to reuse the multimeshes of dropped chunks rather than to
+  move more work into Rust. Whether Forward+ allocates as slowly is for a desktop to measure.
 - **B, hardening.** The device measurement of §3.2 on desktops ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), InstanceSet and ChunkHash in the
   golden worlds, the Godot improvements of §6.2 ([#40](https://github.com/AntonTegnelov/wave_forge/issues/40)), and the godot-rust resource spike ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
 - **C, systems.** NavSource with its halo and asynchronous baking, measuring bake time per chunk
