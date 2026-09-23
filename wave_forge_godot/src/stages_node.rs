@@ -29,7 +29,7 @@ use wave_forge::noise::{
 };
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, SiteId, StageEvent,
+    Column, Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, SiteId, StageEvent,
     StageKind, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
@@ -386,6 +386,11 @@ impl INode for WaveForgeStages {
             return;
         };
         let events = worker.drain();
+        let save = if events.contains(&StageEvent::Saved) {
+            worker.take_save()
+        } else {
+            None
+        };
         if let Some(reason) = worker.failure().map(ToOwned::to_owned) {
             self.worker = None;
             godot_error!("wave forge: stages stopped: {reason}");
@@ -402,10 +407,19 @@ impl INode for WaveForgeStages {
                     arrived.push(*chunk);
                 }
                 StageEvent::Dropped { stage, chunk } if *stage == ground_stage => gone.push(*chunk),
-                StageEvent::Generated { .. } | StageEvent::Dropped { .. } => {}
+                StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
             }
         }
-        self.pending.extend(events);
+        if let Some(save) = save {
+            self.signals()
+                .saved()
+                .emit(&GString::from(save.to_ron().as_str()));
+        }
+        self.pending.extend(
+            events
+                .into_iter()
+                .filter(|event| *event != StageEvent::Saved),
+        );
         let emitted = self.pending.len().min(SIGNALS_PER_FRAME);
         let mut frame = FrameCost {
             events: emitted,
@@ -422,6 +436,7 @@ impl INode for WaveForgeStages {
                     .signals()
                     .stage_dropped()
                     .emit(&GString::from(&stage), to_vector(chunk)),
+                StageEvent::Saved => unreachable!("a save is signalled as it arrives"),
             }
         }
         frame.signals_ms = elapsed_ms(signalling);
@@ -455,6 +470,12 @@ impl WaveForgeStages {
     /// Generation stopped, and why.
     #[signal]
     fn generation_failed(reason: GString);
+
+    /// The save `request_save` asked for, as text `load_save` takes: the player's edits, less
+    /// those of ephemeral stages, and every chunk of a frozen stage, with the Wave Forge version
+    /// and the pack's digest.
+    #[signal]
+    fn saved(save: GString);
 
     /// Loads `pack_file` and the rule sets its Solve stages name, and starts the stages' thread.
     /// Returns whether it could start; why not is reported as an error. A town solver builds its
@@ -827,6 +848,40 @@ impl WaveForgeStages {
             ),
             by,
         })
+    }
+
+    /// Asks the stages' thread for a save of the world, which arrives as the `saved` signal.
+    #[func]
+    fn request_save(&self) {
+        match &self.worker {
+            Some(worker) => worker.request_save(),
+            None => godot_error!("wave forge: request_save before start"),
+        }
+    }
+
+    /// Brings the world back from a save `saved` gave: the edits, and every chunk of a frozen
+    /// stage as it was first generated, even if the pack has changed since. Returns whether the
+    /// text is a save the pack takes; if not, that is reported as an error and nothing changes.
+    #[func]
+    fn load_save(&mut self, text: GString) -> bool {
+        let (Some(sampler), Some(worker)) = (&mut self.sampler, &self.worker) else {
+            godot_error!("wave forge: load_save before start");
+            return false;
+        };
+        let save = match Save::from_ron(&text.to_string()) {
+            Ok(save) => save,
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                return false;
+            }
+        };
+        if let Err(error) = sampler.load(&save) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        self.edits = save.edits.clone();
+        worker.load(save);
+        true
     }
 
     /// The player's edits as text, for a save: a world is its pack, seed, facts and edits.
