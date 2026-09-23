@@ -9,9 +9,13 @@ description = "The model Wave Forge generates from, and the seam a solver plugs 
 [dependencies]
 wfc-rules = { path = "../wfc-rules" }
 thiserror = "2.0.20"
+# Saves of generated products name their chunks; the version the rest of the workspace uses.
+serde = { version = "1.0.229", features = ["derive"], optional = true }
 
 [features]
 default = []
 # The CPU reference solver: ground truth for tests and the yardstick for benchmarks, never a
 # fallback, so it is not compiled into a shipped build.
 reference = []
+# Serde for the coordinates products carry, for saves.
+serde = ["dep:serde"]

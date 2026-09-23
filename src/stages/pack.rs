@@ -146,7 +146,23 @@ pub struct StageDef {
     /// ground. Stages read only stages as coarse as themselves or coarser.
     #[serde(default = "base_scale")]
     pub scale: u32,
+    /// What a save keeps of the stage. Default [`Persist::Pure`].
+    #[serde(default)]
+    pub persist: Persist,
     pub kind: StageKind,
+}
+
+/// What a save keeps of a stage.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum Persist {
+    /// Nothing but the edits of it: it is generated again from the pack, and the edits replayed.
+    #[default]
+    Pure,
+    /// Each chunk as it was first generated, which it keeps after the pack changes: a zone the
+    /// player has seen stays as they saw it. The edits of it are replayed on top.
+    Frozen,
+    /// Nothing, not even the edits of it: grass and other clutter, generated again every time.
+    Ephemeral,
 }
 
 const fn base_scale() -> u32 {
@@ -1243,6 +1259,7 @@ pub(crate) struct Stage {
     pub(crate) salt: u32,
     /// WFC cells per column along each axis.
     pub(crate) scale: u32,
+    pub(crate) persist: Persist,
     /// The tables whose focused row it reads.
     pub(crate) tables: Vec<usize>,
 }
@@ -1261,6 +1278,8 @@ pub struct Pack {
     /// The noises Field expressions read by name.
     pub(crate) noises: BTreeMap<String, NoiseConfig>,
     pub(crate) bound: Option<Bound>,
+    /// FNV-1a of the pack as RON, which a save records.
+    pub(crate) digest: u64,
 }
 
 impl Pack {
@@ -1279,6 +1298,7 @@ impl Pack {
     /// # Errors
     /// [`PackError`] naming what is wrong and in which stage.
     pub fn from_file(file: PackFile) -> Result<Self, PackError> {
+        let digest = digest(&ron::to_string(&file).expect("a pack is plain data"));
         if file.version != PACK_VERSION {
             return Err(PackError::Version {
                 found: file.version,
@@ -1825,6 +1845,7 @@ impl Pack {
                 tables: read_tables,
                 salt: salt(&def.name),
                 scale: def.scale,
+                persist: def.persist,
                 name: def.name,
                 kind: def.kind,
                 inputs,
@@ -1853,6 +1874,7 @@ impl Pack {
             table_order,
             noises: file.noises,
             bound: file.bound,
+            digest,
         })
     }
 
@@ -1905,6 +1927,13 @@ impl Pack {
                 .map(|(index, cells)| (self.stages[index].name.clone(), cells))
                 .collect(),
         )
+    }
+
+    /// A digest of everything the pack says, the same for the same pack however it was written: a
+    /// save records it, so a game can tell when the pack has changed since.
+    #[must_use]
+    pub const fn digest(&self) -> u64 {
+        self.digest
     }
 
     /// Where the world ends, if the pack gives it an edge.
@@ -2004,6 +2033,13 @@ fn check_solve_by(
         }
     }
     Ok(())
+}
+
+/// FNV-1a over 64 bits.
+fn digest(text: &str) -> u64 {
+    text.bytes().fold(0xCBF2_9CE4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01B3)
+    })
 }
 
 /// FNV-1a of a stage's name: the same for a stage wherever it sits in the pack, so adding or

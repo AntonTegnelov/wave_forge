@@ -49,6 +49,7 @@ impl ChunkShape {
 
 /// Which chunk, in chunk coordinates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChunkCoord {
     pub x: i32,
     pub y: i32,

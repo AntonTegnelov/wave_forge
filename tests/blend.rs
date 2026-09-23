@@ -28,6 +28,7 @@ fn stage(name: &str, kind: StageKind) -> StageDef {
     StageDef {
         name: name.to_owned(),
         scale: 1,
+        persist: wave_forge::stages::Persist::Pure,
         kind,
     }
 }

@@ -20,7 +20,7 @@ use wfc_core::hash::pcg3d;
 
 /// A polyline a region job produced: points in world columns along the lattice's x and y, and a
 /// value per point for the job to give meaning to, a river's width say.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Curve {
     pub id: CurveId,
     pub points: Vec<[f32; 2]>,
@@ -29,7 +29,9 @@ pub struct Curve {
 
 /// Which curve it is. Positional, so the same in every run and whatever order curves are computed
 /// in.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize,
+)]
 pub enum CurveId {
     /// A region job's curve: the region that made it and its place in that region's list.
     Region { region: (i32, i32), index: u32 },
