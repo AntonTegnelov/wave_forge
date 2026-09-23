@@ -115,7 +115,8 @@ second, published once a second, not the last frame's time.
   modules of a rule set that carry a tag, to assign shapes by tag.
 - `sample(stage, position)` and `atlas(stage, min, size)`: a stage's value at a position on the
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
-  field, rules and blur stages. An error, and NaN or an empty array, for another stage.
+  Field, Rules, Blur, Delta and Area stages. An error, and NaN or an empty array, for another
+  stage.
 - `give_table(table, rows)` replaces a given table of facts ([packs.md](packs.md#tables-of-facts)):
   an Array of Dictionaries, typed or not, each with an `id`, a whole number from 0 (a float such as
   JSON reads back is taken if it is whole), and a number or, for a names column, a

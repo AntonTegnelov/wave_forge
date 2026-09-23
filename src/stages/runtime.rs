@@ -190,9 +190,12 @@ pub enum StageError {
     NoTownSolver(String),
     #[error("stage {0:?} names a region job the runtime was not given")]
     NoRegionJob(String),
-    /// Only stages computed column by column from what they read, fields, rules and blurs of such
-    /// stages, can be sampled without chunks.
-    #[error("stage {0:?} cannot be sampled without chunks: it is not a field, rules or blur stage")]
+    /// Only stages computed column by column from what they read (Field, Rules, Blur, Delta and
+    /// Area stages over such stages) can be sampled without chunks.
+    #[error(
+        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, blur, delta or area \
+         stage"
+    )]
     NotSampled(String),
     #[error("stage {stage:?} gave up on region {region:?} after {} attempts: {}", log.len(), log.join("; "))]
     RegionRejected {
@@ -993,8 +996,8 @@ impl Runtime {
 
     /// A stage's value at a point in WFC cells without generating any chunk: a field's value, or a
     /// category's index, at the column of the stage the point lies in. It equals what the chunk
-    /// holding that column would hold. Only field, rules and blur stages whose inputs are too can
-    /// be sampled; the pack's other kinds need neighbouring chunks. A runtime made only to sample
+    /// holding that column would hold. Only Field, Rules, Blur, Delta and Area stages whose inputs
+    /// are too can be sampled; the pack's other kinds need neighbouring chunks. A runtime made only to sample
     /// never holds a product, so a game can keep one on any thread.
     ///
     /// # Errors
