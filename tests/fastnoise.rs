@@ -294,11 +294,22 @@ fn an_engine_replaces_a_named_noise_and_the_world_seed_leaves_it_alone() {
 
 #[test]
 fn a_noise_the_pack_does_not_name_is_refused_by_stage() {
-    let result =
+    let field =
         Pack::parse(r#"(version: 1, stages: [(name: "height", kind: Field(FastNoise("hills")))])"#);
+    let scatter = Pack::parse(
+        r#"(version: 1, stages: [
+            (name: "height", kind: Field(Constant(1.0))),
+            (name: "trees", kind: Scatter(kind: "tree", height: "height", spacing: 4,
+                when: [Greater(FastNoise("forest"), Constant(0.2))])),
+        ])"#,
+    );
 
     assert!(
-        matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "height"),
-        "{result:?}"
+        matches!(&field, Err(PackError::Invalid { stage, .. }) if stage == "height"),
+        "{field:?}"
+    );
+    assert!(
+        matches!(&scatter, Err(PackError::Invalid { stage, .. }) if stage == "trees"),
+        "{scatter:?}"
     );
 }

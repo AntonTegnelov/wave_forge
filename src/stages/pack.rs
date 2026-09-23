@@ -1153,6 +1153,11 @@ impl Pack {
                         condition.visit(&mut note);
                     }
                 }
+                StageKind::Scatter { when, .. } => {
+                    for condition in when {
+                        condition.visit(&mut note);
+                    }
+                }
                 _ => {}
             }
             if let Some(name) = unknown {
