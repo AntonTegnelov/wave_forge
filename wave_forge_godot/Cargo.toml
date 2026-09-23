@@ -15,5 +15,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # register-docs turns the doc comments into Godot's own help and inspector tooltips.
-godot = { version = "0.5.5", features = ["register-docs"] }
+# experimental-godot-api exposes the classes Godot's documentation marks experimental, which include
+# all of navigation (NavigationServer3D, NavigationMesh and its source geometry): the node bakes each
+# chunk's navigation mesh through them. It changes no behaviour; it is how godot-rust labels API that
+# Godot may still change between versions.
+godot = { version = "0.5.5", features = ["register-docs", "experimental-godot-api"] }
 wave_forge = { path = ".." }
