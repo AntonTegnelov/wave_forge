@@ -141,6 +141,15 @@ impl Product {
     }
 }
 
+/// What generating one stage has cost so far: how many products, and the milliseconds they took
+/// in all and at most. A Solve stage's time includes the towns it solved.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StageTiming {
+    pub products: u64,
+    pub ms: f64,
+    pub slowest_ms: f64,
+}
+
 /// Why generating a stage failed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum StageError {
@@ -234,6 +243,8 @@ pub struct Runtime {
     towns: Option<Box<dyn TownSolver>>,
     /// Towns solved, by Solve stage and site region, kept while a chunk of their region is needed.
     solved: BTreeMap<(usize, (i32, i32)), Arc<Town>>,
+    /// What each stage has cost, by stage index.
+    timings: Vec<StageTiming>,
 }
 
 impl Runtime {
@@ -241,6 +252,7 @@ impl Runtime {
     #[must_use]
     pub fn new(pack: Arc<Pack>, seed: u64, size: [u32; 2]) -> Self {
         Self {
+            timings: vec![StageTiming::default(); pack.stages.len()],
             pack,
             seed,
             size,
@@ -397,13 +409,30 @@ impl Runtime {
                 (distance, *chunk)
             });
             for chunk in missing.into_iter().take(budget - generated.len()) {
+                let started = std::time::Instant::now();
                 self.solve_town_of(index, chunk)?;
                 let product = self.generate(index, chunk)?;
+                let ms = started.elapsed().as_secs_f64() * 1000.0;
+                let timing = &mut self.timings[index];
+                timing.products += 1;
+                timing.ms += ms;
+                timing.slowest_ms = timing.slowest_ms.max(ms);
                 self.products.insert((index, chunk), Arc::new(product));
                 generated.push((self.pack.stages[index].name.clone(), chunk));
             }
         }
         Ok(generated)
+    }
+
+    /// What each stage has cost since the runtime was made, in the order the pack lists them.
+    #[must_use]
+    pub fn timings(&self) -> Vec<(String, StageTiming)> {
+        self.pack
+            .stages
+            .iter()
+            .zip(&self.timings)
+            .map(|(stage, timing)| (stage.name.clone(), *timing))
+            .collect()
     }
 
     /// What `stage` holds for `chunk`, if it has been generated and is still needed.

@@ -5,7 +5,7 @@
 //! request never waits long, and hands every product back shared, so the engine's thread reads it
 //! without a copy and without asking.
 
-use super::runtime::{Categories, Field, Point, Product, Runtime, Site, TownChunk};
+use super::runtime::{Categories, Field, Point, Product, Runtime, Site, StageTiming, TownChunk};
 use crate::ChunkCoord;
 use crate::scheduler::FocusPoint;
 use std::collections::HashMap;
@@ -24,7 +24,11 @@ enum Order {
 }
 
 enum Report {
-    Generated(Vec<(String, ChunkCoord, Arc<Product>)>),
+    /// Products, and every stage's cost so far.
+    Generated(
+        Vec<(String, ChunkCoord, Arc<Product>)>,
+        Vec<(String, StageTiming)>,
+    ),
     Dropped(Vec<(String, ChunkCoord)>),
     Failed(String),
 }
@@ -46,6 +50,7 @@ pub struct StageWorker {
     reports: Mutex<Receiver<Report>>,
     products: HashMap<(String, ChunkCoord), Arc<Product>>,
     failure: Option<String>,
+    timings: Vec<(String, StageTiming)>,
 }
 
 impl StageWorker {
@@ -71,6 +76,7 @@ impl StageWorker {
             reports: Mutex::new(received),
             products: HashMap::new(),
             failure: None,
+            timings: Vec::new(),
         }
     }
 
@@ -92,7 +98,8 @@ impl StageWorker {
             .expect("nothing panics while holding the reports");
         loop {
             match reports.try_recv() {
-                Ok(Report::Generated(products)) => {
+                Ok(Report::Generated(products, timings)) => {
+                    self.timings = timings;
                     for (stage, chunk, product) in products {
                         events.push(StageEvent::Generated {
                             stage: stage.clone(),
@@ -111,6 +118,13 @@ impl StageWorker {
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => return events,
             }
         }
+    }
+
+    /// What each stage has cost on the thread, as of the last [`StageWorker::drain`], in the
+    /// order the pack lists them; empty until something is generated.
+    #[must_use]
+    pub fn timings(&self) -> &[(String, StageTiming)] {
+        &self.timings
     }
 
     /// Why the thread stopped, if it did.
@@ -246,7 +260,7 @@ where
                         (stage, chunk, product)
                     })
                     .collect();
-                let _ = reports.send(Report::Generated(products));
+                let _ = reports.send(Report::Generated(products, runtime.timings()));
             }
             Err(error) => {
                 let _ = reports.send(Report::Failed(error.to_string()));
