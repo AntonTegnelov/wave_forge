@@ -9,8 +9,8 @@ use super::runtime::{Field, Point, Product, Runtime, Site, TownChunk};
 use crate::ChunkCoord;
 use crate::scheduler::FocusPoint;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::{Arc, Mutex};
 
 /// Products generated between two looks for new requests: small, so a request waits little.
 const STEP: usize = 8;
@@ -41,7 +41,9 @@ pub enum StageEvent {
 /// A runtime on its own thread. Dropping it asks the thread to stop and does not wait for it.
 pub struct StageWorker {
     orders: Sender<Order>,
-    reports: Receiver<Report>,
+    /// Behind a mutex only so the worker can live where Sync is required (a Bevy resource);
+    /// `drain` takes `&mut self` and reaches it without locking.
+    reports: Mutex<Receiver<Report>>,
     products: HashMap<(String, ChunkCoord), Arc<Product>>,
     failure: Option<String>,
 }
@@ -66,7 +68,7 @@ impl StageWorker {
             .expect("a thread");
         Self {
             orders,
-            reports: received,
+            reports: Mutex::new(received),
             products: HashMap::new(),
             failure: None,
         }
@@ -84,8 +86,12 @@ impl StageWorker {
     /// Takes what the thread has produced or dropped since the last call, without blocking.
     pub fn drain(&mut self) -> Vec<StageEvent> {
         let mut events = Vec::new();
+        let reports = self
+            .reports
+            .get_mut()
+            .expect("nothing panics while holding the reports");
         loop {
-            match self.reports.try_recv() {
+            match reports.try_recv() {
                 Ok(Report::Generated(products)) => {
                     for (stage, chunk, product) in products {
                         events.push(StageEvent::Generated {

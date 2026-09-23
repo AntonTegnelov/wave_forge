@@ -3459,6 +3459,8 @@ dependencies = [
 name = "wave_forge"
 version = "0.1.0"
 dependencies = [
+ "ron",
+ "serde",
  "thiserror 2.0.20",
  "wfc-core",
  "wfc-gpu",
@@ -3582,6 +3584,7 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "serde_json",
  "wave_forge",
  "wfc-core",
  "wfc-rules",

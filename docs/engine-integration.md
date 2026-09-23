@@ -358,6 +358,15 @@ Brushes, bake and preview docks exist only in Godot, because Bevy has no editor 
 is a deliberate, temporary exception: the Edits format and the brush logic live in the library, so
 Bevy gets the same tools once its editor can host them.
 
+**Packs of stages in Bevy.** `WaveForgeStagesPlugin` (`wave_forge_bevy::stages`) takes the stages
+to generate, where chunks and cells sit in Bevy's world, and a closure that builds the runtime.
+It runs the stages on a thread of their own through the same `StageWorker` the Godot node uses,
+asks for the chunks around every `GenerationFocus`, and sends `StageReady`, `StageDropped` and
+`StagesFailed` messages; the `WaveForgeStages` resource reads the products and places points in
+Bevy's world. A town solver builds its GPU device on that thread, a device of its own rather than
+Bevy's; whether towns should share Bevy's device is the same measurement as the solver's
+([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
+
 ### 6.4 Noise that means the same in both engines
 
 Godot's `FastNoiseLite` is the default noise source in Godot. Its `Noise` base class has no

@@ -30,6 +30,8 @@
 //! and Bevy's `y` is the lattice's `z`; [`WaveForgeSettings::cell_size`] says how large one cell is
 //! along each of Bevy's axes.
 
+pub mod stages;
+
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::error::Result;
 use bevy_ecs::message::{Message, MessageWriter};
