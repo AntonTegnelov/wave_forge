@@ -58,11 +58,9 @@ need ([architecture.md §5.1](architecture.md#51-the-solver-seam)):
 The extension produces tile data, but nothing yet turns a city into something a player walks
 through. In order:
 
-1. **The city has to reach Godot as data** ([#30](https://github.com/AntonTegnelov/wave_forge/issues/30)). Godot loads RON rule files, the city is a connector-based
-   module set written in Rust (`wfc-devtools/src/city.rs`), and the RON loader only creates identity
-   variants (A-3). Rule files learn to describe modules by their connectors, with rotated variants
-   derived as `wfc_rules::modules` does today, and the city moves into a `city.ron` that the tests,
-   the CLI and both engines load.
+1. ~~**The city has to reach Godot as data**~~ ([#30](https://github.com/AntonTegnelov/wave_forge/issues/30)). Done: a rule file can describe modules
+   by their connectors, with rotated variants derived, and the city is `examples/city.ron`, which the
+   tests, the CLI and the Godot extension load.
 2. **A game has to know what to draw** ([#33](https://github.com/AntonTegnelov/wave_forge/issues/33)). Each tile is a variant of a prototype at a rotation; the
    facade and both integrations expose that mapping, so a game can place one model per prototype.
 3. **No chunk may be left unplaced** ([#31](https://github.com/AntonTegnelov/wave_forge/issues/31)). 3.2% of city chunks cannot be placed in the streaming test,

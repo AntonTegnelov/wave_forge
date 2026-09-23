@@ -58,15 +58,13 @@ The model is a cubic lattice with six directions, and 2D is a world one cell dee
 
 ### 3.2 Tiles and compiled rules
 
-Authors describe tiles (with weights and allowed symmetries) and adjacency by name in rule files, or as connector-based module prototypes in Rust (`wfc_rules::modules`), which derive rotated variants, adjacency and weights. Before solving, rules are **compiled** into a dense form: `RuleTable` holds, for each (direction, tile), a bitmask of compatible neighbour tiles, as `words_per_cell` words at row `(axis * num_tiles + tile) * words_per_cell`.
+Rule files come in two forms, and one loader (`wfc_rules::loader::parse_rule_file`) tells them apart. A **tile set** lists tiles with weights and every allowed adjacency by name; it suits a handful of tiles and has no rotations. A **module set** describes each module by the connectors on its six faces, and rotated variants, adjacency and weights are derived (`wfc_rules::modules`, file form in `wfc_rules::formats::module_format`); the city (`examples/city.ron`) is written this way. A module set can also be built in Rust. Before solving, rules are **compiled** into a dense form: `RuleTable` holds, for each (direction, tile), a bitmask of compatible neighbour tiles, as `words_per_cell` words at row `(axis * num_tiles + tile) * words_per_cell`.
 
 **Why compile:** propagation needs "which neighbour tiles does *any* of my remaining tiles allow in this direction?" That is a union of precomputed masks, which is branch-free and suits both SIMD and a GPU. Named, symmetric rules exist for authors; the hot path never sees them.
 
 Weights are **quantised to integers** when a `Ruleset` is built (to at most 65535, and to at least 1 for any positive weight). A choice is then `hash % total` followed by a walk over the weights.
 
 **Why integers:** a float walk is not reproducible across devices. Drivers are free to contract a multiply and an add into one fused instruction, which changes the last bit, and one bit is enough to pick a different tile and send the whole region down another path.
-
-> **Misaligned today (A-3):** the RON loader still creates identity variants only, so symmetry in rule *files* is unsupported; module sets in Rust cover it. `generate_transformed_rules` also pairs a transformed tile only with the same transformation of its neighbour, so a rotated tile can never border an identity-only tile.
 
 ### 3.3 Possibility storage
 

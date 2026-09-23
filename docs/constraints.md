@@ -6,14 +6,15 @@ strong language, and most of what looks like global structure in a generated wor
 rules plus weights. It is also a hard limit: some properties are invisible to adjacency, and you
 either design around them or enforce them outside the rules.
 
-This page records what we learned building the city module set (`wfc-devtools/src/city.rs`), why the
+This page records what we learned building the city module set (`examples/city.ron`), why the
 rule set looks the way it does, and when a global constraint is worth its cost.
 
 ## What adjacency can express
 
 A rule set is a set of allowed `(axis, tile, neighbour)` triples, so a rule can only talk about one
 face. Writing those triples by hand does not scale, so modules describe their six faces with
-**connectors** and the triples are derived (`wfc-rules/src/modules.rs`), the way marian42 does it.
+**connectors** and the triples are derived (`wfc-rules/src/modules.rs`; a rule file can be written
+this way, see `wfc-rules/src/formats/module_format.rs`), the way marian42 does it.
 That gives, for free:
 
 - **Continuity.** A road face only fits another road face, so roads never stop mid-cell.
