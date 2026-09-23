@@ -21,7 +21,7 @@ const CELL_SIZE := 2.0
 const RADIUS := 3
 ## How far to look for a town first, in chunks: sixteen of the pack's regions of six chunks.
 const SEARCH_RADIUS := 12
-const TARGETS := ["level", "city", "trees", "cover"]
+const TARGETS := ["level", "city", "trees", "cover", "hills"]
 const LOAD_TIMEOUT_S := 180.0
 ## The node's own time on Godot's thread, at the 99th percentile and at worst.
 const NODE_P99_MS := 2.0
@@ -164,6 +164,9 @@ func _process(_delta: float) -> bool:
 					_fail("%s of %s had not arrived after %.0f s" % [stage, chunk, waited])
 					return true
 				return false
+	var queued: Dictionary = world.stats()
+	if queued["pending_signals"] > 0 or queued["pending_grounds"] > 0:
+		return false
 	print("verify_stages: %d chunks of %s arrived in %.1f s" % [_view().size(), TARGETS, waited])
 	if not _check_towns() or not _check_trees() or not _check_cover():
 		return true
@@ -187,10 +190,24 @@ func _process(_delta: float) -> bool:
 	if stats["process_ms_p99"] > NODE_P99_MS or stats["process_ms_max"] > NODE_MAX_MS:
 		_fail("the node's process took %.2f ms at the 99th percentile, %.2f ms at worst" % [stats["process_ms_p99"], stats["process_ms_max"]])
 		return true
-	if not _check_ground():
+	if not _check_ground() or not _check_sampling():
 		return true
 	_start_walk()
 	return false
+
+## A sample and an atlas of the ground give what its chunks hold, without generating any.
+func _check_sampling() -> bool:
+	var level: PackedFloat32Array = world.field_values("hills", centre)
+	var atlas: PackedFloat32Array = world.atlas("hills", Vector2i(centre.x * CELLS, centre.y * CELLS), Vector2i(CELLS, CELLS))
+	if atlas != level:
+		_fail("the atlas of the hills in %s differs from its chunk" % centre)
+		return false
+	var at := Vector3((centre.x * CELLS + 3.5) * CELL_SIZE, 0, (centre.y * CELLS + 5.5) * CELL_SIZE)
+	if world.sample("hills", at) != level[5 * CELLS + 3]:
+		_fail("a sample of the hills differs from its chunk")
+		return false
+	print("verify_stages: a sample and an atlas of the hills match their chunk")
+	return true
 
 ## A chunk has ground exactly when its height field and the eight around it are held, which the
 ## trees' reach makes every chunk of the view; every chunk within the collider radius has a body.

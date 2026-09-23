@@ -92,6 +92,8 @@ pub struct WaveForgeStages {
     kernel_cache: GString,
 
     pack: Option<Arc<Pack>>,
+    /// A runtime that only samples, on Godot's thread: it never generates a chunk.
+    sampler: Option<Runtime>,
     /// The rule sets Solve stages name, kept here too, to say what a town's tiles are.
     rules: BTreeMap<String, RuleFile>,
     worker: Option<StageWorker>,
@@ -99,6 +101,9 @@ pub struct WaveForgeStages {
     process_ms: Timings,
     /// Each town module's collision shape, by module name, for every Solve stage.
     collision_shapes: HashMap<String, Gd<Shape3D>>,
+    /// Chunks whose ground may be buildable: a field around them arrived since they were last
+    /// looked at.
+    ground_due: std::collections::BTreeSet<ChunkCoord>,
     /// The chunks whose ground is built: its mesh, and its `RenderingServer` mesh and instance.
     grounds: HashMap<ChunkCoord, (GroundMesh, Rid, Rid)>,
     /// What the node's slowest frame since the start spent Godot's thread on.
@@ -114,6 +119,11 @@ pub struct WaveForgeStages {
 /// thousands of products at once, and emitting each costs a microsecond or two before any handler
 /// a game connected runs, so the rest wait for the next frames.
 const SIGNALS_PER_FRAME: usize = 256;
+
+/// The most chunks one frame gives ground. A wide request makes dozens buildable at once, and
+/// building each takes tenths of a millisecond on Godot's thread, so the rest wait for the next
+/// frames, nearest the followed position first.
+const GROUNDS_PER_FRAME: usize = 8;
 
 /// What one frame of `process` cost Godot's thread, and what it spent it on.
 #[derive(Clone, Copy, Debug, Default)]
@@ -156,6 +166,7 @@ impl INode for WaveForgeStages {
             cell_size: Vector3::ONE,
             view_radius: 2,
             pack: None,
+            sampler: None,
             rules: BTreeMap::new(),
             worker: None,
             followed: None,
@@ -166,6 +177,7 @@ impl INode for WaveForgeStages {
             collider_radius: 1,
             collision_shapes: HashMap::new(),
             grounds: HashMap::new(),
+            ground_due: std::collections::BTreeSet::new(),
             bodies: HashMap::new(),
             slowest_frame: FrameCost::default(),
             pending: VecDeque::new(),
@@ -310,9 +322,11 @@ impl WaveForgeStages {
         });
         let for_thread = Arc::clone(&pack);
         self.rules = rules.clone();
+        self.sampler = Some(Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y]));
         self.pack = Some(pack);
         self.followed = None;
         self.pending.clear();
+        self.ground_due.clear();
         self.clear_ground_and_bodies();
         // The towns' device is built on the stages' thread, which is where it is used.
         self.worker = Some(StageWorker::spawn(move || {
@@ -433,6 +447,50 @@ impl WaveForgeStages {
                 out
             })
             .collect()
+    }
+
+    /// A stage's value at a position in Godot's world space, on the ground plane, computed on the
+    /// spot without generating chunks: a field's value, or a category's index. Only field, rules
+    /// and blur stages that read no others can be sampled; another stage is reported as an error
+    /// and gives NaN.
+    #[func]
+    fn sample(&self, stage: GString, position: Vector3) -> f32 {
+        let Some(sampler) = &self.sampler else {
+            godot_error!("wave forge: sample before start");
+            return f32::NAN;
+        };
+        let at = [position.x / self.cell_size.x, position.z / self.cell_size.z];
+        match sampler.sample(&stage.to_string(), at) {
+            Ok(value) => value,
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                f32::NAN
+            }
+        }
+    }
+
+    /// A world map: a stage's values over `size` of its own columns from `min`, row by row with x
+    /// fastest, one value per column of a coarse stage. Computed on Godot's thread without
+    /// generating chunks, for a game to read before play, a history's say. Empty, with an error
+    /// reported, for a stage that cannot be sampled.
+    #[func]
+    fn atlas(&self, stage: GString, min: Vector2i, size: Vector2i) -> PackedFloat32Array {
+        let Some(sampler) = &self.sampler else {
+            godot_error!("wave forge: atlas before start");
+            return PackedFloat32Array::new();
+        };
+        let area = [size.x.max(0) as u32, size.y.max(0) as u32];
+        match sampler.atlas(
+            &stage.to_string(),
+            [i64::from(min.x), i64::from(min.y)],
+            area,
+        ) {
+            Ok(values) => PackedFloat32Array::from(values.as_slice()),
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                PackedFloat32Array::new()
+            }
+        }
     }
 
     /// The categories a Rules stage names, in the order of their indices; empty for another stage.
@@ -652,7 +710,8 @@ impl WaveForgeStages {
     /// `slowest_frame_grounds` chunks given ground in `slowest_frame_grounds_ms`, and
     /// `slowest_frame_bodies` chunks given a body in `slowest_frame_bodies_ms`. And `stages`: what
     /// each stage has cost on the stages' thread, by name, as `products`, `ms` in all and
-    /// `slowest_ms` for one product. And `pending_signals`, the signals waiting for a later frame.
+    /// `slowest_ms` for one product. And `pending_signals` and `pending_grounds`, the signals and the
+    /// chunks' ground waiting for a later frame.
     #[func]
     fn stats(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
@@ -671,6 +730,10 @@ impl WaveForgeStages {
         out.set(
             &"pending_signals".to_variant(),
             &(self.pending.len() as i64).to_variant(),
+        );
+        out.set(
+            &"pending_grounds".to_variant(),
+            &(self.ground_due.len() as i64).to_variant(),
         );
         let slowest = self.slowest_frame;
         for (key, value) in [
@@ -741,8 +804,9 @@ impl WaveForgeStages {
         )
     }
 
-    /// Builds the ground of every chunk a newly arrived field may have completed, and frees the
-    /// ground of chunks whose own field was dropped.
+    /// Builds the ground of up to [`GROUNDS_PER_FRAME`] chunks a newly arrived field may have
+    /// completed, nearest the followed position first, and frees the ground of chunks whose own
+    /// field was dropped.
     ///
     /// Returns how many chunks got ground.
     fn update_ground(&mut self, arrived: &[ChunkCoord], gone: &[ChunkCoord]) -> usize {
@@ -766,15 +830,32 @@ impl WaveForgeStages {
         };
         let stage = self.ground_stage.to_string();
         let cell = self.cell_size.to_array();
+        self.ground_due
+            .extend(arrived.iter().copied().flat_map(ground_readers));
+        for chunk in gone {
+            self.ground_due.remove(chunk);
+        }
+        let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
+        let mut due: Vec<ChunkCoord> = self.ground_due.iter().copied().collect();
+        due.sort_by_key(|chunk| {
+            (
+                (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()),
+                *chunk,
+            )
+        });
         let mut built = Vec::new();
-        for &field in arrived {
-            for chunk in ground_readers(field) {
-                if self.grounds.contains_key(&chunk) || built.iter().any(|(c, _)| *c == chunk) {
-                    continue;
-                }
-                if let Some(mesh) = ground(chunk, |at| worker.field(&stage, at), cell) {
-                    built.push((chunk, mesh));
-                }
+        for chunk in due {
+            if built.len() == GROUNDS_PER_FRAME {
+                break;
+            }
+            // Looked at now: built, already built, or waiting for a field around it, whose arrival
+            // makes it due again.
+            self.ground_due.remove(&chunk);
+            if self.grounds.contains_key(&chunk) {
+                continue;
+            }
+            if let Some(mesh) = ground(chunk, |at| worker.field(&stage, at), cell) {
+                built.push((chunk, mesh));
             }
         }
         let count = built.len();
