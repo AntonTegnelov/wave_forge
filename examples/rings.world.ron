@@ -2,8 +2,9 @@
 // products of noises, is flattened around the centre where a player starts, and falls into the sea
 // past the island's edge, 90 to 96 cells out. Biomes are first-match rules over height, distance
 // from the centre and noise, with a wobble that keeps the rings from being perfect circles; ore and
-// groves of birches are scattered by biome, height and how uneven the ground is. The test pack for
-// G7's biome rules, per-biome height and placement rules; heights run from about -0.3 to 1 before the
+// groves of birches are scattered by biome, height and how uneven the ground is, and shrines are
+// placed per ring from a location table. The test pack for G7's biome rules, per-biome height,
+// placement rules and location table; heights run from about -0.3 to 1 before the
 // biomes shape them.
 (
     version: 1,
@@ -93,5 +94,17 @@
             apart: 10, group: Some((size: (3, 6), radius: 4.0)), max_slope: Some(0.1),
             scale: (0.85, 1.15), tilt: (0.0, 4.0),
             when: [Greater(Is("biome", ["grassland"]), Constant(0.5))])),
+        // Shrines per ring: in every region of 24 chunks, two in the woods at least 48 cells
+        // apart on gentle ground, one in the peaks and one on the grassland, the woods' first.
+        (name: "shrines", kind: Locations(height: "terrain", region: 24, kinds: [
+            (name: "woods_shrine", priority: 2, quota: 2, apart: 48.0, tries: 80, when: [
+                Greater(Is("biome", ["woods"]), Constant(0.5)),
+                Less(Input("roughness"), Constant(0.25)),
+            ]),
+            (name: "peak_shrine", priority: 1, quota: 1, tries: 80,
+                when: [Greater(Is("biome", ["peaks"]), Constant(0.5))]),
+            (name: "meadow_shrine", quota: 1, tries: 80,
+                when: [Greater(Is("biome", ["grassland"]), Constant(0.5))]),
+        ])),
     ],
 )

@@ -145,6 +145,7 @@ reads one type as another.
 | `Area` | Categories | one Rules stage, `distance` cells |
 | `Sites` | Sites | a height field, `region` chunks |
 | `TableSites` | Sites | a table's rows; a height field, `max_size` chunks |
+| `Locations` | Sites | a height field, and what its kinds' conditions read, `region` chunks |
 | `TableCurves` | Curves | a table's rows |
 | `Apply` | Field | a height field and a Region or TableCurves stage, `max_radius + blend` cells |
 | `Flatten` | Field | a height field, 0 cells; a Sites stage, `blend` cells |
@@ -266,6 +267,43 @@ centre and inner corners.
 
 A chunk's product lists the sites that overlap it. A `Site` has its `id`, `SiteId::Region` with
 the region that owns it, its footprint `min..max` in chunks, and its `height`.
+
+### Locations
+
+A location table: sites of several kinds, placed once per square region of `region` chunks.
+
+```ron
+(name: "places", kind: Locations(height: "ground", region: 24, kinds: [
+    (name: "altar", priority: 10, quota: 3, apart: 48.0, tries: 60,
+        when: [Greater(Is("biome", ["woods"]), Constant(0.5))]),
+    (name: "trader", priority: 5, quota: 1, size: 2),
+])),
+```
+
+Kinds are placed in order of `priority`, highest first, and by name on a tie. A kind tries `tries`
+(default 20, at most `MAX_TRIES`, 1 024) hashed footprints of `size` chunks a side (default 1), each
+one chunk inside the region, and keeps one that:
+
+- comes within a chunk of no site the region has placed already, of any kind;
+- lies at least `apart` cells (default 0) from every site of its own kind in the region, centre to
+  centre;
+- meets its `when` conditions, which a Rules stage takes, at the footprint's centre;
+
+until it has `quota` of them. A site's height is found as a Sites stage finds it. Keeping a chunk
+from the region's edge means sites of neighbouring regions never meet, so every region is placed
+alone, whatever order chunks are asked for in, and kept while any chunk of it is needed. A site's
+`kind` names its kind, and its id is `SiteId::Location` with its region and its place in the order
+the region placed its sites; Flatten, Solve and Scatter's `avoid` read these sites as any others.
+
+`Runtime::location_log(stage, chunk)` gives a line per kind for the region the chunk lies in, such
+as `altar: placed 2 of 3; refused 5 crowded, 1 near its kind, 12 failing its conditions`. A quota is
+per region, so what a world holds grows with the world; a finite world placed as one region holds
+exactly its quotas, and 'unique' is a quota of 1. Loading refuses a quota or a size of 0, a region
+too small to keep a site one chunk inside it, tries outside 1 to 1 024, a negative distance, two
+kinds of one name, and conditions that read what a stage cannot.
+
+`examples/rings.world.ron` places shrines per ring: two in the woods at least 48 cells apart on
+gentle ground, one in the peaks and one on the grassland, in every region of 24 chunks.
 
 ### TableSites
 
