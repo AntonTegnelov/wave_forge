@@ -15,6 +15,7 @@ pub use pack::{
     PackError, PackFile, Rule, StageDef, StageKind, TableDef, TableKind,
 };
 pub use runtime::{
-    Categories, Field, FieldView, Point, Product, Runtime, Site, StageError, StageTiming, TownChunk,
+    Categories, Field, FieldView, Point, Product, Runtime, Site, SiteId, StageError, StageTiming,
+    TownChunk,
 };
 pub use worker::{StageEvent, StageWorker};

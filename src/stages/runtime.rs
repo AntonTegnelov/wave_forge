@@ -9,7 +9,9 @@
 
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId};
-use super::pack::{Expr, Output, Pack, Reach, StageKind, point_stage_id, salt};
+use super::pack::{
+    Column, Expr, Output, Pack, Reach, Stage, StageKind, TableKind, point_stage_id, salt,
+};
 use super::regions::{Attempt, Curve, RegionInput, RegionJob, region_of};
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
@@ -42,11 +44,19 @@ impl Field {
     }
 }
 
+/// What names a site, and the town on it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SiteId {
+    /// A Sites stage's site: the region that owns it, which has at most one.
+    Region(i32, i32),
+    /// A TableSites stage's site: the row it stands for.
+    Row(RowId),
+}
+
 /// A settlement site: a rectangle of whole chunks at one height.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Site {
-    /// The region that owns it, which also names it: a region has at most one site.
-    pub region: (i32, i32),
+    pub id: SiteId,
     /// The chunks it covers, from `min` up to but not including `max`, along the lattice's x and y.
     pub min: (i32, i32),
     pub max: (i32, i32),
@@ -77,8 +87,8 @@ impl Site {
 /// One chunk of a site's town.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TownChunk {
-    /// The site's region, which names the town.
-    pub region: (i32, i32),
+    /// The site's id, which names the town.
+    pub site: SiteId,
     /// The site's levelled height, where an engine puts the town's lowest layer.
     pub height: f32,
     /// The chunk's tiles, x fastest, then y, then z, as a WFC chunk stores them.
@@ -196,16 +206,16 @@ pub enum StageError {
     Table { table: String, message: String },
     #[error("a stage reads the focused row of table {0:?}, but no row of it is focused")]
     NoFocus(String),
-    #[error("the runtime was given no facts to focus a row of")]
+    #[error("the runtime was given no facts, which a stage or a focus reads")]
     NoFacts,
     #[error("the facts were made for another pack or seed than the runtime's")]
     OtherFacts,
     #[error("the town solver's chunks are {solver:?} columns, the runtime's {runtime:?}")]
     ChunkMismatch { solver: [u32; 2], runtime: [u32; 2] },
-    #[error("stage {stage:?} could not solve the town of region {region:?}: {message}")]
+    #[error("stage {stage:?} could not solve the town of {site:?}: {message}")]
     Town {
         stage: String,
-        region: (i32, i32),
+        site: SiteId,
         message: String,
     },
 }
@@ -289,8 +299,9 @@ pub struct Runtime {
     focus: Vec<FocusPoint>,
     products: BTreeMap<(usize, ChunkCoord), Arc<Product>>,
     towns: Option<Box<dyn TownSolver>>,
-    /// Towns solved, by Solve stage and site region, kept while a chunk of their region is needed.
-    solved: BTreeMap<(usize, (i32, i32)), Arc<Town>>,
+    /// Towns solved, by Solve stage and site, with the site, kept while a chunk it covers is
+    /// needed.
+    solved: BTreeMap<(usize, SiteId), (Site, Arc<Town>)>,
     /// What each stage has cost, by stage index.
     timings: Vec<StageTiming>,
     /// The region jobs Region stages name, by name.
@@ -300,6 +311,18 @@ pub struct Runtime {
     facts: Option<Facts>,
     /// The focused row of each table that has one, by table index.
     focused: BTreeMap<usize, Row>,
+    /// Each TableSites stage's sites, by stage index: the row each stands for and the chunks it
+    /// covers, from the facts.
+    footprints: BTreeMap<usize, Arc<[Footprint]>>,
+}
+
+/// Where a table's row puts its site: the row, and the chunks from `min` up to but not including
+/// `max`.
+#[derive(Clone, Debug, PartialEq)]
+struct Footprint {
+    row: RowId,
+    min: (i32, i32),
+    max: (i32, i32),
 }
 
 impl Runtime {
@@ -320,6 +343,7 @@ impl Runtime {
             solved: BTreeMap::new(),
             facts: None,
             focused: BTreeMap::new(),
+            footprints: BTreeMap::new(),
         }
     }
 
@@ -329,10 +353,18 @@ impl Runtime {
     ///
     /// # Errors
     /// [`StageError::OtherFacts`] if the facts were made for another pack or seed, and
-    /// [`StageError::Table`] if a focused row is not in its table any more.
+    /// [`StageError::Table`] if a focused row is not in its table any more, or a TableSites stage's
+    /// row has a position that is not finite, a size that is not a whole number from 1 to its
+    /// `max_size`, or a site within a chunk of another row's.
     pub fn set_facts(&mut self, facts: Facts) -> Result<Vec<(String, ChunkCoord)>, StageError> {
         if !facts.made_for(&self.pack, self.seed) {
             return Err(StageError::OtherFacts);
+        }
+        let mut footprints = BTreeMap::new();
+        for (index, stage) in self.pack.stages.iter().enumerate() {
+            if let StageKind::TableSites { .. } = stage.kind {
+                footprints.insert(index, self.footprints_of(stage, &facts)?);
+            }
         }
         let mut focused = BTreeMap::new();
         for (&table, row) in &self.focused {
@@ -356,7 +388,69 @@ impl Runtime {
             .collect();
         self.facts = Some(facts);
         self.focused = focused;
+        self.footprints = footprints;
         Ok(self.invalidate(&changed))
+    }
+
+    /// The sites a TableSites stage's rows put down, checked: every position finite, every size a
+    /// whole number from 1 to the stage's `max_size`, and no two sites within a chunk of each
+    /// other.
+    fn footprints_of(&self, stage: &Stage, facts: &Facts) -> Result<Arc<[Footprint]>, StageError> {
+        let StageKind::TableSites {
+            table,
+            at,
+            size,
+            max_size,
+            ..
+        } = &stage.kind
+        else {
+            unreachable!("called for TableSites stages")
+        };
+        let rows = facts.table(table).expect("linked when loaded");
+        let column = |name: &str| rows.column(name).expect("checked when loaded");
+        let (x, y, side) = (column(&at.0), column(&at.1), column(size));
+        let failed = |message: String| StageError::Table {
+            table: table.clone(),
+            message: format!("stage {:?}: {message}", stage.name),
+        };
+        let mut footprints: Vec<Footprint> = Vec::with_capacity(rows.rows.len());
+        for row in &rows.rows {
+            let (at, side) = ([row.values[x], row.values[y]], row.values[side]);
+            if !(at[0].is_finite() && at[1].is_finite()) {
+                return Err(failed(format!("row {:?} stands at {at:?}", row.id.0)));
+            }
+            if side.fract() != 0.0 || !(1.0..=*max_size as f32).contains(&side) {
+                return Err(failed(format!(
+                    "row {:?} has a site of {side} chunks; 1 to {max_size} are allowed",
+                    row.id.0
+                )));
+            }
+            let chunk = (
+                (at[0] / self.size[0] as f32).floor() as i32,
+                (at[1] / self.size[1] as f32).floor() as i32,
+            );
+            let side = side as i32;
+            let min = (chunk.0 - (side - 1) / 2, chunk.1 - (side - 1) / 2);
+            let footprint = Footprint {
+                row: row.id.clone(),
+                min,
+                max: (min.0 + side, min.1 + side),
+            };
+            // Sites of a Sites stage keep a chunk between them, which Flatten and Solve rely on.
+            if let Some(other) = footprints.iter().find(|other| {
+                other.min.0 <= footprint.max.0
+                    && footprint.min.0 <= other.max.0
+                    && other.min.1 <= footprint.max.1
+                    && footprint.min.1 <= other.max.1
+            }) {
+                return Err(failed(format!(
+                    "the sites of rows {:?} and {:?} come within a chunk of each other",
+                    other.row.0, row.id.0
+                )));
+            }
+            footprints.push(footprint);
+        }
+        Ok(Arc::from(footprints))
     }
 
     /// Focuses the runtime on the row `id` of `table`, which stages read through
@@ -505,22 +599,10 @@ impl Runtime {
             keep
         });
         let pack = Arc::clone(&self.pack);
-        self.solved.retain(|&(stage, owner), _| {
-            let StageKind::Solve { sites, .. } = &pack.stages[stage].kind else {
-                unreachable!("only Solve stages solve towns")
-            };
-            let sites = pack.index(sites).expect("linked when loaded");
-            let StageKind::Sites { region, .. } = pack.stages[sites].kind else {
-                unreachable!("a Solve stage reads a Sites stage")
-            };
-            needed.get(&stage).is_some_and(|chunks| {
-                chunks.iter().any(|chunk| {
-                    (
-                        chunk.x.div_euclid(region as i32),
-                        chunk.y.div_euclid(region as i32),
-                    ) == owner
-                })
-            })
+        self.solved.retain(|&(stage, _), (site, _)| {
+            needed
+                .get(&stage)
+                .is_some_and(|chunks| chunks.iter().any(|&chunk| site.overlaps(chunk)))
         });
         self.regions.retain(|&(stage, region), _| {
             let StageKind::Region { region: size, .. } = pack.stages[stage].kind else {
@@ -727,6 +809,7 @@ impl Runtime {
             StageKind::Rules { .. } => f32::from(self.categorise(index, column, &read)?),
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
             StageKind::Sites { .. }
+            | StageKind::TableSites { .. }
             | StageKind::Flatten { .. }
             | StageKind::Solve { .. }
             | StageKind::Scatter { .. }
@@ -795,7 +878,7 @@ impl Runtime {
         let (sites, reach) = self.pack.stages[index].inputs[0];
         self.inputs_within(index, chunk, sites, reach.cells(self.size))
             .find(|&(at, _)| at == chunk)
-            .and_then(|(_, product)| product.sites().first().copied())
+            .and_then(|(_, product)| product.sites().first().cloned())
     }
 
     /// Computes the region of Region stage `index` that `chunk` lies in, if it is not computed yet:
@@ -871,7 +954,11 @@ impl Runtime {
     fn solve_town_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Solve {
-            rules, bottom, top, ..
+            rules,
+            by,
+            bottom,
+            top,
+            ..
         } = &stage.kind
         else {
             return Ok(());
@@ -879,19 +966,36 @@ impl Runtime {
         let Some(site) = self.site_of(index, chunk) else {
             return Ok(());
         };
-        if self.solved.contains_key(&(index, site.region)) {
+        if self.solved.contains_key(&(index, site.id.clone())) {
             return Ok(());
         }
+        let rules = match (&site.id, by) {
+            (SiteId::Row(row), Some((column, cases))) => {
+                let name = self.name_in_row(stage.inputs[0].0, row, column);
+                cases
+                    .iter()
+                    .find(|(case, _)| *case == name)
+                    .map_or(rules, |(_, rules)| rules)
+            }
+            _ => rules,
+        };
         let towns = self
             .towns
             .as_mut()
             .ok_or_else(|| StageError::NoTownSolver(stage.name.clone()))?;
         let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
-        let [high, low, _] = pcg3d([
-            world ^ stage.salt,
-            site.region.0 as u32,
-            site.region.1 as u32,
-        ]);
+        let [high, low, _] = match &site.id {
+            SiteId::Region(x, y) => pcg3d([world ^ stage.salt, *x as u32, *y as u32]),
+            SiteId::Row(row) => {
+                let hash = row
+                    .0
+                    .iter()
+                    .fold(world ^ stage.salt ^ 0x524F_5753, |hash, &part| {
+                        pcg3d([hash, part as u32, (part >> 32) as u32])[0]
+                    });
+                pcg3d([hash, row.0.len() as u32, 0])
+            }
+        };
         let request = TownRequest {
             rules,
             seed: (u64::from(high) << 32) | u64::from(low),
@@ -904,11 +1008,36 @@ impl Runtime {
         };
         let town = towns.solve(&request).map_err(|error| StageError::Town {
             stage: stage.name.clone(),
-            region: site.region,
+            site: site.id.clone(),
             message: error.to_string(),
         })?;
-        self.solved.insert((index, site.region), Arc::new(town));
+        self.solved
+            .insert((index, site.id.clone()), (site, Arc::new(town)));
         Ok(())
+    }
+
+    /// The name a TableSites stage's row holds in a names column of its table.
+    fn name_in_row(&self, sites: usize, row: &RowId, column: &str) -> &str {
+        let StageKind::TableSites { table, .. } = &self.pack.stages[sites].kind else {
+            unreachable!(
+                "a Solve stage chooses by a column only over TableSites, checked when loaded"
+            )
+        };
+        let Some(TableKind::Given { columns }) = self.pack.table(table) else {
+            unreachable!("checked when loaded")
+        };
+        let Some((_, Column::Names(names))) = columns.iter().find(|(name, _)| name == column)
+        else {
+            unreachable!("checked when loaded")
+        };
+        let rows = self
+            .facts
+            .as_ref()
+            .and_then(|facts| facts.table(table))
+            .expect("a site of a table's row was placed from the facts");
+        let value = rows.row(row).expect("a site's row is in its table").values
+            [rows.column(column).expect("checked when loaded")];
+        &names[value as usize]
     }
 
     /// How many chunks the runtime holds, over all stages.
@@ -1013,10 +1142,10 @@ impl Runtime {
 
     /// Every site of `input` within `reach` of `chunk`, once each.
     fn sites_near(&self, index: usize, chunk: ChunkCoord, input: usize, reach: Reach) -> Vec<Site> {
-        let mut sites: BTreeMap<(i32, i32), Site> = BTreeMap::new();
+        let mut sites: BTreeMap<SiteId, Site> = BTreeMap::new();
         for (_, product) in self.inputs_within(index, chunk, input, reach.cells(self.size)) {
             for site in product.sites() {
-                sites.insert(site.region, *site);
+                sites.insert(site.id.clone(), site.clone());
             }
         }
         sites.into_values().collect()
@@ -1026,14 +1155,35 @@ impl Runtime {
         let stage = &self.pack.stages[index];
         if let StageKind::Solve { .. } = &stage.kind {
             return Ok(Product::Tiles(self.site_of(index, chunk).map(|site| {
-                let town = &self.solved[&(index, site.region)];
+                let (_, town) = &self.solved[&(index, site.id.clone())];
                 let (x, y) = (chunk.x - site.min.0, chunk.y - site.min.1);
                 TownChunk {
-                    region: site.region,
+                    site: site.id.clone(),
                     height: site.height,
                     tiles: Arc::clone(&town.chunks[(y as u32 * town.size.0 + x as u32) as usize]),
                 }
             })));
+        }
+        if let StageKind::TableSites { .. } = &stage.kind {
+            let (height, reach) = stage.inputs[0];
+            let view = self.view(index, chunk, height, reach);
+            let mut sites = Vec::new();
+            let footprints = self.footprints.get(&index).ok_or(StageError::NoFacts)?;
+            for footprint in footprints.iter() {
+                let site = Site {
+                    id: SiteId::Row(footprint.row.clone()),
+                    min: footprint.min,
+                    max: footprint.max,
+                    height: 0.0,
+                };
+                if site.overlaps(chunk) {
+                    sites.push(Site {
+                        height: self.footprint_height(site.min, site.max, &view)?,
+                        ..site
+                    });
+                }
+            }
+            return Ok(Product::Sites(sites));
         }
         if let StageKind::Sites {
             region,
@@ -1139,6 +1289,7 @@ impl Runtime {
                         }
                     }
                     StageKind::Sites { .. }
+                    | StageKind::TableSites { .. }
                     | StageKind::Solve { .. }
                     | StageKind::Scatter { .. }
                     | StageKind::Rules { .. }
@@ -1314,6 +1465,22 @@ impl Runtime {
             owner.1 * region as i32 + oy as i32,
         );
         let max = (min.0 + w as i32, min.1 + h as i32);
+        Ok(Some(Site {
+            id: SiteId::Region(owner.0, owner.1),
+            min,
+            max,
+            height: self.footprint_height(min, max, height)?,
+        }))
+    }
+
+    /// The height a site over the chunks `min..max` is levelled to: the mean of `height` at its
+    /// footprint's centre and inner corners.
+    fn footprint_height(
+        &self,
+        min: (i32, i32),
+        max: (i32, i32),
+        height: &FieldView<'_>,
+    ) -> Result<f32, StageError> {
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
         let (x0, y0) = (i64::from(min.0) * sx, i64::from(min.1) * sy);
         let (x1, y1) = (i64::from(max.0) * sx - 1, i64::from(max.1) * sy - 1);
@@ -1328,12 +1495,7 @@ impl Runtime {
         for (x, y) in samples {
             sum += height.get(x, y)?;
         }
-        Ok(Some(Site {
-            region: owner,
-            min,
-            max,
-            height: sum / samples.len() as f32,
-        }))
+        Ok(sum / samples.len() as f32)
     }
 
     /// Where stage `index`'s expressions are evaluated at `column`, reading inputs through `read`.

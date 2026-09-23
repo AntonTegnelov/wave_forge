@@ -90,10 +90,10 @@ fn every_point_passes_its_tests_and_stands_on_the_ground() {
             .expect("generated")
             .get(x.rem_euclid(8) as u32, y.rem_euclid(8) as u32)
     };
-    let sites: BTreeMap<(i32, i32), wave_forge::stages::Site> = area()
+    let sites: BTreeMap<wave_forge::stages::SiteId, wave_forge::stages::Site> = area()
         .into_iter()
         .flat_map(|chunk| runtime.sites("towns", chunk).expect("generated").to_vec())
-        .map(|site| (site.region, site))
+        .map(|site| (site.id.clone(), site))
         .collect();
 
     for (&chunk, chunk_points) in &points {

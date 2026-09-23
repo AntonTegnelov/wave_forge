@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use wave_forge::stages::{Pack, Runtime};
+use wave_forge::stages::{Pack, Runtime, Site, SiteId};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 const PACK: &str = r#"(
@@ -105,10 +105,10 @@ fn sites_of_area() -> (Runtime, Vec<wave_forge::stages::Site>) {
         .collect();
     runtime.request(&focus, &["level"]).expect("a stage");
     runtime.run_until_idle().expect("the stages run");
-    let mut sites: BTreeMap<(i32, i32), wave_forge::stages::Site> = BTreeMap::new();
+    let mut sites: BTreeMap<SiteId, Site> = BTreeMap::new();
     for chunk in chunks {
         for site in runtime.sites("towns", chunk).expect("generated") {
-            sites.insert(site.region, *site);
+            sites.insert(site.id.clone(), site.clone());
         }
     }
     (runtime, sites.into_values().collect())
@@ -120,7 +120,10 @@ fn sites_stay_inside_their_region_and_two_chunks_apart() {
 
     assert!(sites.len() > 15, "only {} sites", sites.len());
     for site in &sites {
-        let region = (site.region.0 * 5, site.region.1 * 5);
+        let SiteId::Region(x, y) = site.id else {
+            panic!("a Sites stage's site is named by its region: {site:?}")
+        };
+        let region = (x * 5, y * 5);
         assert!(
             site.min.0 > region.0 && site.max.0 < region.0 + 5,
             "{site:?}"
