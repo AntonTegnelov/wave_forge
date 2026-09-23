@@ -6,10 +6,10 @@
 //! set of chunks given up on. A mismatch names the first chunk and cell that differ and how many
 //! chunks differ in all.
 //!
-//! Without repairs the generator promises this outright: a chunk of the first parity is solved
-//! alone and one of the second against its first-parity neighbours only, so its tiles are a
-//! function of its coordinate. A repair rewrites neighbours that were already solved, which makes
-//! them depend on the order (#66); `repairs_and_generation_order` measures by how much.
+//! A chunk of the first parity is solved alone and one of the second against its first-parity
+//! neighbours only, so its tiles are a function of its coordinate. A repair rewrites neighbours
+//! that were already solved, and stays a function of coordinates because it waits for every
+//! neighbour it can see and for the repairs of lower classes around it (docs/architecture.md §6.3).
 
 use std::collections::{BTreeMap, BTreeSet};
 use wave_forge::{
@@ -139,25 +139,28 @@ fn without_repairs_generation_order_does_not_change_the_world() {
     }
 }
 
-/// Measures, and does not assert: how far repairs make the world depend on generation order. It
-/// becomes an assertion when repairs are pure (#66); until then it is run on demand.
 #[test]
-#[ignore = "a measurement for #66: cargo test -p wfc-devtools --test order_diff -- --ignored --nocapture"]
-fn repairs_and_generation_order() {
+fn with_repairs_generation_order_does_not_change_the_world() {
     let mut reverse = raster();
     reverse.reverse();
 
     for seed in [8, 11] {
         let all = generate(seed, RepairPolicy::default(), &Order::AllAtOnce);
+        let forward = generate(
+            seed,
+            RepairPolicy::default(),
+            &Order::ChunkByChunk(raster()),
+        );
         let backward = generate(
             seed,
             RepairPolicy::default(),
             &Order::ChunkByChunk(reverse.clone()),
         );
 
-        eprintln!(
-            "order_diff: seed {seed}, repairs on, all at once against reverse raster: {}",
-            difference(&all, &backward).unwrap_or_else(|| "identical".to_owned())
-        );
+        for (name, other) in [("raster", &forward), ("reverse raster", &backward)] {
+            if let Some(difference) = difference(&all, other) {
+                panic!("seed {seed}, repairs on: all at once against {name}: {difference}");
+            }
+        }
     }
 }

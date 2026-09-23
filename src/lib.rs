@@ -36,10 +36,15 @@
 //!   coordinate: evicting a neighbourhood and asking for it again gives the same tiles. Evicting
 //!   part of one does not. A chunk generated again beside a neighbour that stayed is solved against
 //!   that neighbour, which is what keeps the seam invisible, and need not give the tiles it had.
-//! - A repair rewrites cells of the neighbours it covers, which makes those chunks depend on the
-//!   order the world was generated in. Every chunk a repair rewrote is reported as
-//!   [`ChunkEvent::Updated`] and counted in [`GeneratorStats`]; a rule set is *streaming-clean*
-//!   when that count stays zero, and until then the generated tiles are the source of truth.
+//! - A repair rewrites cells of the neighbours it covers, and still leaves the world a function of
+//!   its configuration: it waits until every chunk it can see has had its first attempt and the
+//!   failed ones of lower repair classes around it are repaired, so it sees the same neighbourhood
+//!   whatever order the world was generated in. Every chunk a repair rewrote is reported as
+//!   [`ChunkEvent::Updated`] and counted in [`GeneratorStats`]. Two limits remain: in a world more
+//!   than one chunk tall a first-parity repair also reaches corner chunks it does not wait for,
+//!   and a chunk evicted and generated again comes back as its first attempt, without the repairs
+//!   of neighbours that had rewritten it. A rule set is *streaming-clean* when no repair is ever
+//!   needed, which makes partial eviction safe too.
 
 pub mod generator;
 pub mod products;
@@ -47,7 +52,7 @@ pub mod scheduler;
 pub mod space;
 pub mod worker;
 
-pub use generator::{ChunkEvent, GeneratorStats, WorldGenerator};
+pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
 pub use products::{InstanceId, InstanceSet, NavSource, NavSourceError, instance_sets, nav_source};
 pub use scheduler::FocusPoint;
 pub use space::YUpSpace;

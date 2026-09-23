@@ -61,13 +61,50 @@ pub(crate) fn wanted(focus: &[FocusPoint], extent: &WorldExtent) -> BTreeSet<Chu
         })
         .filter(|chunk| extent.contains_chunk(*chunk))
         .collect();
-    let neighbours: BTreeSet<ChunkCoord> = asked
+    with_read_neighbours(&asked, extent)
+}
+
+/// `chunks` and the face neighbours their second-parity chunks are solved against, inside the
+/// world: everything that has to be generated for `chunks` to be.
+pub(crate) fn with_read_neighbours(
+    chunks: &BTreeSet<ChunkCoord>,
+    extent: &WorldExtent,
+) -> BTreeSet<ChunkCoord> {
+    let neighbours: BTreeSet<ChunkCoord> = chunks
         .iter()
         .filter(|chunk| chunk.parity() == 1)
         .flat_map(|chunk| chunk.face_neighbours())
         .filter(|chunk| extent.contains_chunk(*chunk))
         .collect();
-    asked.union(&neighbours).copied().collect()
+    chunks.union(&neighbours).copied().collect()
+}
+
+/// Which of the lattice's eight classes a chunk's repair belongs to: its coordinates' parities.
+/// Two chunks within one chunk of each other, diagonals included, differ along some axis by one
+/// and so fall in different classes; repairs of one class are therefore at least two chunks
+/// apart, and with a halo short of half a chunk they neither read nor write each other's cells.
+pub(crate) const fn repair_class(chunk: ChunkCoord) -> u8 {
+    ((chunk.x & 1) | ((chunk.y & 1) << 1) | ((chunk.z & 1) << 2)) as u8
+}
+
+/// The chunks a repair of `chunk` reads or rewrites, inside the world, apart from those that wait
+/// for it: every chunk within one of it, diagonals included, for a chunk of the second parity; the
+/// ones of its own parity for a chunk of the first, whose second-parity neighbours are solved only
+/// after it.
+///
+/// A repair runs only once every one of these has had its first attempt, and once the failed ones
+/// of lower classes among them are repaired. What it sees is then the same whatever order the world
+/// was generated in, so its result is too. In a world more than one chunk tall, a first-parity
+/// repair also reaches the corner chunks of the other parity, which this does not wait for: there,
+/// a repair can still depend on the order.
+pub(crate) fn repair_neighbourhood(chunk: ChunkCoord, extent: &WorldExtent) -> Vec<ChunkCoord> {
+    (-1..=1)
+        .flat_map(|x| (-1..=1).flat_map(move |y| (-1..=1).map(move |z| (x, y, z))))
+        .filter(|&offset| offset != (0, 0, 0))
+        .map(|(x, y, z)| ChunkCoord::new(chunk.x + x, chunk.y + y, chunk.z + z))
+        .filter(|neighbour| extent.contains_chunk(*neighbour))
+        .filter(|neighbour| chunk.parity() == 1 || neighbour.parity() == chunk.parity())
+        .collect()
 }
 
 /// The most chunks one batch can hold for a single focus of `radius`: one parity of the chunks it
@@ -181,6 +218,39 @@ mod tests {
                 version: 1,
             })
             .expect("in the world");
+    }
+
+    #[test]
+    fn chunks_within_one_of_each_other_have_different_repair_classes() {
+        let centre = ChunkCoord::new(-3, 4, 0);
+
+        let clashing: Vec<ChunkCoord> = (-1..=1)
+            .flat_map(|x| (-1..=1).flat_map(move |y| (-1..=1).map(move |z| (x, y, z))))
+            .filter(|&offset| offset != (0, 0, 0))
+            .map(|(x, y, z)| ChunkCoord::new(centre.x + x, centre.y + y, centre.z + z))
+            .filter(|chunk| repair_class(*chunk) == repair_class(centre))
+            .collect();
+
+        assert!(clashing.is_empty(), "{clashing:?}");
+    }
+
+    #[test]
+    fn a_first_parity_repair_does_not_wait_for_the_chunks_that_wait_for_it() {
+        let chunk = ChunkCoord::new(2, 2, 0);
+
+        let seen = repair_neighbourhood(chunk, &extent());
+
+        assert_eq!(seen.len(), 4, "the four diagonals: {seen:?}");
+        assert!(seen.iter().all(|n| n.parity() == 0));
+    }
+
+    #[test]
+    fn a_second_parity_repair_sees_every_chunk_around_it() {
+        let chunk = ChunkCoord::new(2, 3, 0);
+
+        let seen = repair_neighbourhood(chunk, &extent());
+
+        assert_eq!(seen.len(), 8, "{seen:?}");
     }
 
     #[test]

@@ -345,7 +345,9 @@ plugin; a linked bake can be regenerated with the designer's edits kept. **Needs
 **Acceptance criteria.** The same seed and pack give identical product hashes on two machines with
 GPUs from different vendors; a chunk hash lets peers confirm they agree. **Needs.** Determinism
 across GPUs (the golden world test), chunk hashes. **Status:** in progress (2026-09-23): the golden world is
-identical on NVIDIA through dozen and on Mesa's lavapipe ([testing.md](testing.md)), for tiles only.
+identical on NVIDIA through dozen and on Mesa's lavapipe, and a city is the same whatever order its
+chunks are generated in, repairs included ([testing.md](testing.md)), for tiles only; chunk hashes
+do not exist yet.
 
 ### N10. Something impressive in an hour
 

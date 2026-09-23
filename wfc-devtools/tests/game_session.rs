@@ -611,9 +611,11 @@ fn generation_costs_the_main_thread_under_a_millisecond_a_frame() {
 #[ignore = "needs a compute device; run with --ignored in release mode"]
 fn memory_stays_bounded_while_the_player_travels() {
     let session = session();
-    // A chunk is kept within the radius plus the margin of the focus it was asked for by, and the
-    // player may have moved on by one chunk since.
-    let side = 2 * (GENERATE_RADIUS + EVICT_MARGIN + 1) as usize + 1;
+    // A chunk is kept within the radius plus the margin of the focus it was asked for by, or, while
+    // a repair needs it, within the repair reach beyond the chunks asked for (the radius and the
+    // face neighbours they are solved against); and the player may have moved on by one chunk.
+    let kept = (GENERATE_RADIUS + EVICT_MARGIN).max(GENERATE_RADIUS + 1 + wave_forge::REPAIR_REACH);
+    let side = 2 * (kept + 1) as usize + 1;
 
     assert!(
         session.max_resident <= side * side,
