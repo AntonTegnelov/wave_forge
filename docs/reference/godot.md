@@ -109,7 +109,8 @@ second, published once a second, not the last frame's time.
 - `town_instance_sets(stage, chunk, names)`: a town chunk's placements in the layout of
   `WaveForgeWorld.instance_sets`, raised to the site's height.
 - `point_sets(stage, chunk)`: a Scatter stage's points, one dictionary per kind, with `transforms`
-  as a MultiMesh buffer standing on the field and each point's `ids`.
+  as a MultiMesh buffer standing on the field, turned, leant and scaled as each point is, and each
+  point's `ids`.
 - `set_collision_shape(module, shape)` gives every cell of a town's module a collider in the
   chunks within `collider_radius`, for every Solve stage; `modules_tagged(rules, tag)` names the
   modules of a rule set that carry a tag, to assign shapes by tag.

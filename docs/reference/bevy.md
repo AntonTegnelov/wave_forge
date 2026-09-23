@@ -49,7 +49,8 @@ thread.
 
 - `StagesSettings`: `chunk`, columns per chunk as the runtime was built with, and `cell_size`.
 - `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles` and `points` per stage and chunk, `timings()` per stage,
-  `translation_of(point)` in Bevy's world, and `failure()`. `set_facts(facts)` and `focus(table,
+  `translation_of(point)` and `transform_of(point)` (turned, leant and scaled) in Bevy's world, and
+  `failure()`. `set_facts(facts)` and `focus(table,
   id)` hand the stages new tables of facts and a focused row ([packs.md](packs.md#tables-of-facts)):
   a game keeps its own `Facts`, gives it rows, and hands a copy here; the runtime `build` makes is
   given its first facts and focus there.

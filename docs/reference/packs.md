@@ -292,21 +292,47 @@ Solve stage needs `Runtime::with_towns`, or generating fails with `StageError::N
 
 ### Scatter
 
-`Scatter(kind: "tree", height: "field", spacing: s, chance, between, max_slope, avoid, apart)`:
-points of `kind` standing on the height field.
+`Scatter(kind: "tree", height: "field", spacing: s, ...)`: points of `kind` standing on the height
+field, made by a chain of modifiers applied in this order. Every field after `spacing` is optional.
 
-- One candidate per square block of `s` cells, at a hashed column inside it, with a hashed
-  priority.
-- A candidate passes its own tests: kept with probability `chance` (default 1, compared as an
-  integer), height within `between`, slope at most `max_slope` in height per cell, and at least
-  `margin` cells from every site when `avoid: Some(("sites", margin))` is set.
-- A passing candidate is kept unless a passing candidate of higher priority lies closer than
-  `apart` cells. Neighbours are judged by their own tests, never by whether spacing kept them, so
-  the decision agrees across chunk seams.
+1. **Candidates.** `count: (low, high)` candidates per square block of `s` cells (default one), a
+   hashed number in the range for each block, each at a hashed column inside it with a hashed
+   priority, and kept with probability `chance` (default 1, compared as an integer). With
+   `group: Some((size: (low, high), radius: r))`, each candidate is the first point of a group of
+   that many points scattered within `r` cells of it.
+2. **Tests at each point's column**, the candidate's and each group member's own:
+   - the height within `between`;
+   - the slope at most `max_slope`, in height per cell;
+   - every condition of `when`, which takes the conditions a Rules stage takes over any
+     expression: a biome with `Greater(Is("biome", ["woods"]), Constant(0.5))`, an altitude, a mask
+     field, a terrain delta, a biome area;
+   - with `water: Some((level: w, depth: (low, high)))`, the ground between `low` and `high` cells
+     below `w`;
+   - at least `margin` cells from every site, with `avoid: Some(("sites", margin))`.
+3. **Spacing.** A candidate that passes its tests is kept unless a passing candidate of higher
+   priority lies closer than `apart` cells. Candidates are judged by their own tests, never by
+   whether spacing kept them, so the decision agrees across chunk seams. A kept candidate's group
+   members skip this test and pass or fail on their own.
+4. **Attributes.** `scale: (low, high)` (default 1), a `tilt: (low, high)` in degrees from the
+   vertical in a hashed direction, and with probability `align` (default 0) standing along the
+   ground's normal instead.
 
-A `Point` has a positional `InstanceId` (its chunk, 15 bits of the stage's salt and its column), a
-`kind`, a `position` in cells (x and y on the ground, z the field's value) and a `turn` about the
-vertical as a fraction of a whole turn. Loading checks that no two Scatter stages share a salt.
+Loading refuses counts and group sizes outside 1 to 255, a negative radius, a tilt outside 0 to
+180 degrees, an `align` outside 0 to 1, a scale that is not a positive range, an empty depth range,
+and conditions that read what a stage cannot. The reach grows with `apart`, the group's radius and
+what the conditions read.
+
+A `Point` has a positional `InstanceId`, a `kind`, a `position` in cells (x and y on the ground, z
+the field's value), a `turn` about its up as a fraction of a whole turn, a `scale`, and its `up`, a
+unit vector along the lattice's x, y and height. `Point::y_up_basis` gives its rotation and scale
+in a Y-up engine's axes. The id holds the candidate's chunk, 15 bits of the stage's salt, the
+candidate's column, and a slot of the candidate's place in its block times 256 plus the member's
+place in its group, so a group member standing in the next chunk still has an id of its own, and
+one candidate per block with no group gives the ids a Scatter stage always gave. Loading checks that
+no two Scatter stages share a salt.
+
+`examples/rings.world.ron` scatters ore rocks in the middle of the woods on gentle ground, ore veins
+high in the peaks along the slope, and groves of three to six birches on the grassland.
 
 ### Region
 

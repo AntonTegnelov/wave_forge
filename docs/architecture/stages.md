@@ -97,7 +97,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 | **Rules** | first-match rule trees producing a Prior or a categorical field, like Minecraft's surface rules | that of its conditions | G1, G7, N4 | a categorical field; a Prior is not built yet |
 | **Solve** | WFC over a Prior; Wang tiling later | the solver's halo | G4, G5, N6 | one bounded town per site (below) |
 | **Sites** | owned region-scale points, one candidate per region cell (Minecraft's `random_spread`), with spacing | a region | G1, G3, G7 | one footprint per region ([#97](https://github.com/AntonTegnelov/wave_forge/issues/97) adds a location table) |
-| **Scatter** | a generator and a chain of modifiers producing a PointSet (below) | its largest spacing or footprint | all G, N3, N5 | one kind per stage, four tests ([#95](https://github.com/AntonTegnelov/wave_forge/issues/95), [#96](https://github.com/AntonTegnelov/wave_forge/issues/96)) |
+| **Scatter** | a generator and a chain of modifiers producing a PointSet (below) | its largest spacing or footprint | all G, N3, N5 | one kind per stage, with counts, groups, conditions, water depth, scale, tilt and ground alignment; blocking across stages is [#96](https://github.com/AntonTegnelov/wave_forge/issues/96) |
 | **Network** | bounded paths between owned sites (roads, rivers, tunnels) | declared | G7, G8 | not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
 | **Assemble** | a jigsaw or room graph grown from one site into Stamps, with a bounded extent | the extent | G1, G7, G8 | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
 | **Apply** | rasterises curves and stamps into fields or Priors in a stable order | the primitives' bounds | G1, G3, G8 | `Flatten` for site footprints, and `Apply` for curves into a height field, levelled or carved; stamps and Priors are not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
@@ -119,10 +119,11 @@ A Scatter stage has:
 - **a binding** from each point's `kind` to an engine asset: a `PackedScene` in Godot, a scene
   handle in Bevy.
 
-Today a Scatter stage has the jittered-grid generator with chance, height, slope, a margin from
-sites and spacing. The full modifier chain, blocking across stages and the asset binding are **not
-built yet** ([#95](https://github.com/AntonTegnelov/wave_forge/issues/95),
-[#96](https://github.com/AntonTegnelov/wave_forge/issues/96),
+Today a Scatter stage has the jittered-grid generator with counts and groups per block, the tests
+(height, slope, any Rules-style condition, water depth, a margin from sites), spacing, and a
+scale, a tilt and a stance along the ground per point ([packs.md](../reference/packs.md#scatter)).
+Blocking across stages and the asset binding are **not built yet**
+([#96](https://github.com/AntonTegnelov/wave_forge/issues/96),
 [#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
 
 A placement's id is `InstanceId { chunk, local }` (`src/products.rs`): the chunk coordinate and a
