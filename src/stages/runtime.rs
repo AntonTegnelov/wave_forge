@@ -15,6 +15,7 @@ use super::pack::{
     TableKind, point_stage_id, salt,
 };
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
+use super::rivers::DownhillRivers;
 use crate::noise::NoiseConfig;
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
@@ -838,8 +839,10 @@ impl Runtime {
             });
         let pack = Arc::clone(&self.pack);
         self.regions.retain(|&(stage, region), _| {
-            let StageKind::Region { region: size, .. } = pack.stages[stage].kind else {
-                unreachable!("only Region stages compute regions")
+            let (StageKind::Region { region: size, .. } | StageKind::Rivers { region: size, .. }) =
+                pack.stages[stage].kind
+            else {
+                unreachable!("only Region and Rivers stages compute regions")
             };
             match stale.get(&stage) {
                 None => true,
@@ -1167,8 +1170,10 @@ impl Runtime {
         // world computes them once before streaming.
         let finite = pack.bound.is_some();
         self.regions.retain(|&(stage, region), _| {
-            let StageKind::Region { region: size, .. } = pack.stages[stage].kind else {
-                unreachable!("only Region stages compute regions")
+            let (StageKind::Region { region: size, .. } | StageKind::Rivers { region: size, .. }) =
+                pack.stages[stage].kind
+            else {
+                unreachable!("only Region and Rivers stages compute regions")
             };
             finite
                 || needed.get(&stage).is_some_and(|chunks| {
@@ -1431,7 +1436,8 @@ impl Runtime {
             | StageKind::Flatten { .. }
             | StageKind::Solve { .. }
             | StageKind::Scatter { .. }
-            | StageKind::Region { .. } => return Err(StageError::NotSampled(stage.name.clone())),
+            | StageKind::Region { .. }
+            | StageKind::Rivers { .. } => return Err(StageError::NotSampled(stage.name.clone())),
         };
         // A sample is what the chunk holds, raises included.
         let value = value
@@ -1511,24 +1517,44 @@ impl Runtime {
     /// the job's attempts in turn until one is accepted or the budget is spent.
     fn run_region_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let stage = &self.pack.stages[index];
-        let StageKind::Region {
-            job,
-            region: size,
-            halo,
-            budget,
-            ..
-        } = &stage.kind
-        else {
-            return Ok(());
+        let rivers;
+        let (job, size, halo, budget): (&dyn RegionJob, &u32, &u32, &u32) = match &stage.kind {
+            StageKind::Region {
+                job,
+                region,
+                halo,
+                budget,
+                ..
+            } => {
+                let job = self
+                    .region_jobs
+                    .get(job)
+                    .ok_or_else(|| StageError::NoRegionJob(stage.name.clone()))?;
+                (job.as_ref(), region, halo, budget)
+            }
+            StageKind::Rivers {
+                height,
+                region,
+                sources,
+                sea,
+                width,
+                step,
+            } => {
+                rivers = DownhillRivers {
+                    height,
+                    sources: *sources,
+                    sea: *sea,
+                    width: *width,
+                    step: *step,
+                };
+                (&rivers, region, &0, &1)
+            }
+            _ => return Ok(()),
         };
         let region = region_of(chunk, *size);
         if self.regions.contains_key(&(index, region)) {
             return Ok(());
         }
-        let job = self
-            .region_jobs
-            .get(job)
-            .ok_or_else(|| StageError::NoRegionJob(stage.name.clone()))?;
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
         let (size, halo) = (i64::from(*size), i64::from(*halo));
         // The region and its halo, in the stage's own columns.
@@ -1994,7 +2020,7 @@ impl Runtime {
         if let StageKind::Scatter { .. } = &stage.kind {
             return self.scatter(index, chunk).map(Product::Points);
         }
-        if let StageKind::Region { region, .. } = &stage.kind {
+        if let StageKind::Region { region, .. } | StageKind::Rivers { region, .. } = &stage.kind {
             let curves = &self.regions[&(index, region_of(chunk, *region))];
             let (min, max) = self.chunk_rect(chunk);
             return Ok(Product::Curves(
@@ -2106,7 +2132,8 @@ impl Runtime {
                     | StageKind::Solve { .. }
                     | StageKind::Scatter { .. }
                     | StageKind::Rules { .. }
-                    | StageKind::Region { .. } => {
+                    | StageKind::Region { .. }
+                    | StageKind::Rivers { .. } => {
                         unreachable!("handled above")
                     }
                 };
