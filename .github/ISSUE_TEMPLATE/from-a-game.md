@@ -25,4 +25,4 @@ Reproduce the problem with Wave Forge alone: a small pack or rule file, a seed, 
 **Output**
 <!-- The complete error or log, quoted as it was printed; numbers with build, driver and GPU. -->
 
-**User stories affected** <!-- e.g. P1, G7; see docs/user-stories.md -->
+**User stories affected** <!-- e.g. P1, G7; see docs/product/user-stories.md -->

@@ -197,8 +197,8 @@ impl KernelSpec {
 /// A cell's mask is a handful of words, and which word is which is known when the kernel is
 /// specialised. Writing the words out keeps a mask in registers: indexing one dynamically, in a
 /// loop over `words`, puts it in scratch memory instead, which measured twice the cost per step on
-/// the city (docs/solver-fit.md). Masks up to four words are one `vec4`; wider ones are two, which
-/// is why nothing here loops.
+/// the city (docs/research/measurements.md). Masks up to four words are one `vec4`; wider ones are
+/// two, which is why nothing here loops.
 fn mask_prelude(words: u32) -> String {
     assert!(
         (1..=MAX_WORDS as u32).contains(&words),

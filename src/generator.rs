@@ -406,8 +406,8 @@ impl<S: Solver> WorldGenerator<S> {
 
     /// Repairs one chunk: its region with the halo released, solved once per seed of the repair
     /// policy in one dispatch. A chunk that exhausted a first attempt usually has an arrangement
-    /// that another seed finds (docs/solver-fit.md), and the seeds run side by side, so trying many
-    /// costs about as much as trying one.
+    /// that another seed finds (docs/architecture/world.md, "Repairs"), and the seeds run side by
+    /// side, so trying many costs about as much as trying one.
     fn start_repair(&mut self, chunk: ChunkCoord, halo: u32) -> Result<(), Error> {
         let shape = self.region_shape(halo);
         let region = Region::new(chunk, shape);
@@ -466,7 +466,7 @@ impl<S: Solver> WorldGenerator<S> {
     /// neighbours, whose cells a halo could only pin as they are; what a halo adds is its diagonal
     /// corner cells, squeezed between two fixed neighbours, and those fail chunks that would
     /// otherwise solve. Measured on the city over five worlds: 176 repairs instead of 280 and a
-    /// third less solver time (docs/solver-fit.md).
+    /// third less solver time (docs/architecture/world.md, "The schedule").
     const fn first_attempt_halo(&self, parity: u8) -> u32 {
         if parity == 1 { 0 } else { self.config.halo }
     }

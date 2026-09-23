@@ -1,4 +1,4 @@
-//! A world generated from a pack of stages (docs/generation-model.md), for Godot.
+//! A world generated from a pack of stages (docs/reference/godot.md), for Godot.
 //!
 //! The node is a thin surface over [`wave_forge::stages::StageWorker`]: it loads a pack and the
 //! rule sets its Solve stages name, runs the stages on a thread of their own around the position

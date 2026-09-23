@@ -1,4 +1,4 @@
-//! A world generated from a pack of stages (docs/generation-model.md), in Bevy.
+//! A world generated from a pack of stages (docs/reference/bevy.md), in Bevy.
 //!
 //! [`WaveForgeStagesPlugin`] runs the stages on a thread of their own through
 //! [`wave_forge::stages::StageWorker`], asks for the chunks around every [`GenerationFocus`], and

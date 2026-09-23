@@ -1,15 +1,16 @@
 //! The same world whatever order its chunks are generated in.
 //!
 //! A world is meant to be a function of its configuration, not of the path a player took through it
-//! (docs/generation-model.md §2). This generates a small city three ways: all at once, chunk by chunk
-//! in raster order, and chunk by chunk in the reverse order, and compares every chunk's tiles and the
-//! set of chunks given up on. A mismatch names the first chunk and cell that differ and how many
-//! chunks differ in all.
+//! (docs/architecture/stages.md, "The execution contract"). This generates a small city three ways:
+//! all at once, chunk by chunk in raster order, and chunk by chunk in the reverse order, and
+//! compares every chunk's tiles and the set of chunks given up on. A mismatch names the first chunk
+//! and cell that differ and how many chunks differ in all.
 //!
 //! A chunk of the first parity is solved alone and one of the second against its first-parity
 //! neighbours only, so its tiles are a function of its coordinate. A repair rewrites neighbours
 //! that were already solved, and stays a function of coordinates because it waits for every
-//! neighbour it can see and for the repairs of lower classes around it (docs/architecture.md §6.3).
+//! neighbour it can see and for the repairs of lower classes around it (docs/architecture/world.md,
+//! "Repair classes").
 
 use std::collections::{BTreeMap, BTreeSet};
 use wave_forge::{

@@ -1,11 +1,11 @@
 //! Generating a pack's stages around focus points, providers first.
 //!
 //! A stage's output for a chunk is a pure function of the world seed, the stage, the chunk and what
-//! its inputs hold within the stage's reach of that chunk (docs/generation-model.md §2). The runtime
-//! makes that hold by construction: before a stage runs for a chunk, every chunk of its inputs that
-//! the chunk's area grown by the reach overlaps is generated, and the stage reads them only through
-//! a view bounded by that area. Whatever order chunks are asked for in, each is computed from the
-//! same inputs and comes out the same.
+//! its inputs hold within the stage's reach of that chunk (docs/architecture/stages.md, "The
+//! execution contract"). The runtime makes that hold by construction: before a stage runs for a
+//! chunk, every chunk of its inputs that the chunk's area grown by the reach overlaps is generated,
+//! and the stage reads them only through a view bounded by that area. Whatever order chunks are
+//! asked for in, each is computed from the same inputs and comes out the same.
 
 use super::pack::{Expr, Output, Pack, Reach, StageKind, point_stage_id};
 use crate::products::InstanceId;

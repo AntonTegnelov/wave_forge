@@ -229,7 +229,7 @@ impl ChunkStore {
     }
 
     /// Drops a chunk. A world regenerates it identically as long as no repair has rewritten its
-    /// neighbours since (docs/architecture.md, determinism).
+    /// neighbours since (docs/architecture/world.md, "What determinism means here").
     pub fn remove(&mut self, coord: ChunkCoord) -> Option<Chunk> {
         self.chunks.remove(&coord)
     }

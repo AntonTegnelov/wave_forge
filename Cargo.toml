@@ -49,7 +49,8 @@ exclude = [
 [workspace.dependencies]
 # Add common dependencies here if needed later
 
-# Settings and the reasoning behind them are documented in docs/build-profiles.md.
+# Settings and the reasoning behind them are documented in docs/guides/performance.md, "Build
+# profiles".
 [profile.release]
 lto = true
 strip = true

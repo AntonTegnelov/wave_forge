@@ -1,5 +1,6 @@
-// A Valheim-like valley (docs/user-stories.md, G7): rolling ground, towns on levelled sites built
-// by the city module set, and trees on the ground between them. The test pack for the first slice.
+// A Valheim-like valley (docs/product/user-stories.md, G7): rolling ground, towns on levelled sites
+// built by the city module set, and trees on the ground between them. The test pack for the first
+// slice.
 (
     version: 1,
     stages: [

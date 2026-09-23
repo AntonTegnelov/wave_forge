@@ -3,7 +3,7 @@
 //! A world is a lattice of chunks of one fixed shape. A chunk is solved as a *region*: the chunk
 //! itself widened by a halo on the axes that have neighbouring chunks. The halo is solved and
 //! thrown away; it exists because a chunk solved with free faces can leave border tiles that no
-//! row of neighbours can complete (docs/solver-fit.md).
+//! row of neighbours can complete (docs/architecture/world.md, "Chunks and the halo").
 
 use crate::rules::axis_offset;
 

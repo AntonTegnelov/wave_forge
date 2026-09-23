@@ -1,10 +1,10 @@
 //! Towns: bounded WFC worlds, solved whole, one per settlement site.
 //!
 //! In a world whose ground rises and falls, WFC runs per site rather than as one lattice across the
-//! terrain (docs/generation-model.md §9): each town is a bounded world the size of its site's
-//! footprint, solved all at once from a seed of its own, so its tiles are a function of the site
-//! alone. [`TownSolver`] is the seam to whatever solves it; [`WfcTowns`] is the one this library
-//! offers, over any [`Solver`].
+//! terrain (docs/architecture/stages.md, "How WFC joins"): each town is a bounded world the size of
+//! its site's footprint, solved all at once from a seed of its own, so its tiles are a function of
+//! the site alone. [`TownSolver`] is the seam to whatever solves it; [`WfcTowns`] is the one this
+//! library offers, over any [`Solver`].
 
 use crate::loader::RuleFile;
 use crate::{Builder, ChunkCoord, FocusPoint, Prior, Ruleset, Solver, WorldExtent};

@@ -2,9 +2,9 @@
 //!
 //! The runtime generates every input chunk within a stage's reach before the stage, and the stage
 //! reads nothing beyond it, so a chunk's output is a function of the seed and its coordinate
-//! (docs/generation-model.md §2). This asks for a 4×4-chunk area of a noise, blur and arithmetic
-//! pack all at once and one chunk at a time in raster and reverse raster order, and compares every
-//! value bit for bit.
+//! (docs/architecture/stages.md, "The execution contract"). This asks for a 4×4-chunk area of a
+//! noise, blur and arithmetic pack all at once and one chunk at a time in raster and reverse raster
+//! order, and compares every value bit for bit.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

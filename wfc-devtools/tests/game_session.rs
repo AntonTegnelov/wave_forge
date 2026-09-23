@@ -2,7 +2,8 @@
 //! through an unbounded city that is generated around them while they move?
 //!
 //! ```text
-//! cargo test -p wfc-devtools --release --test game_session -- --ignored --nocapture --test-threads=1
+//! cargo test -p wfc-devtools --release --test game_session -- --ignored --nocapture
+//! --test-threads=1
 //! ```
 //!
 //! One session is played in wall-clock time, the way a game would drive the library: a frame loop
@@ -14,7 +15,7 @@
 //!
 //! The tests are `#[ignore]`d: they need a compute device, and the session takes about four
 //! minutes because that is how long the route takes to walk. A timing describes one build on one
-//! machine and driver stack; docs/solver-fit.md records what the numbers mean.
+//! machine and driver stack; docs/research/measurements.md records what the numbers mean.
 
 mod kernels;
 

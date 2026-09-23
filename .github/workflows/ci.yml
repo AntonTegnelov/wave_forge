@@ -2,7 +2,8 @@
 #
 # The runners have no GPU, so GPU tests run on Mesa's lavapipe, a software Vulkan device. That is
 # enough to check correctness, never performance. Mesa 22.3's lavapipe drops long dispatches (see
-# docs/development.md); the library job prints the Mesa version so a failure can be read against it.
+# docs/guides/environment.md, "Software Vulkan (lavapipe)"); the library job prints the Mesa version
+# so a failure can be read against it.
 name: CI
 
 on:
@@ -50,7 +51,7 @@ jobs:
       - name: Tests
         run: cargo test --workspace -- --nocapture
       # A workspace build unifies features across crates, so each crate is also built on its own
-      # feature set (docs/testing.md).
+      # feature set (docs/guides/testing.md).
       - name: Per-crate feature sets
         run: |
           cargo test -p wfc-core

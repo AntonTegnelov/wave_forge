@@ -2,8 +2,9 @@
 //!
 //! A prior is how anything outside the solver constrains it: which tiles a layer allows (street
 //! level at the bottom, air on top), which tiles are forbidden where the world ends (a path may not
-//! lead out of a bounded world), and cells another generation layer has already decided. It is the
-//! only door into the solver, and the one a Phase 2 layer will use (docs/architecture.md §7).
+//! lead out of a bounded world), and cells another generation stage has already decided. It is the
+//! only door into the solver, and the one other stages drive WFC through
+//! (docs/architecture/solver.md, "The prior").
 
 use crate::chunk::WorldCell;
 use crate::rules::{AXES, TileMask, axis_offset};

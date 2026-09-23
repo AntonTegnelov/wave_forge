@@ -1,5 +1,6 @@
-//! Generation as a pack of stages (docs/generation-model.md): the pack a world is described by,
-//! and the runtime that generates its stages around focus points, providers first.
+//! Generation as a pack of stages (docs/architecture/stages.md, and docs/reference/packs.md for the
+//! format): the pack a world is described by, and the runtime that generates its stages around
+//! focus points, providers first.
 
 pub mod pack;
 pub mod runtime;
