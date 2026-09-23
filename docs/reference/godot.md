@@ -106,8 +106,8 @@ second, published once a second, not the last frame's time.
 - `categories(stage, chunk)`: a Rules stage's categories, a byte per column, as indices into
   `category_names(stage)`.
 - `sites(stage, chunk)`: the sites overlapping a chunk, each with what names it (its `region` for
-  a Sites stage, its `row` for a TableSites stage), footprint `min` and `max` in chunks, and
-  levelled `height`.
+  a Sites stage, its `row` for a TableSites stage, its `region` and `index` and its `kind` for a
+  Locations stage), footprint `min` and `max` in chunks, and levelled `height`.
 - `town(stage, chunk)`: a town's `region` or `row`, `height` and `tiles` in a chunk.
 - `town_instance_sets(stage, chunk, names)`: a town chunk's placements in the layout of
   `WaveForgeWorld.instance_sets`, raised to the site's height.
