@@ -404,6 +404,16 @@ The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
   one merged mesh per chunk instead of one multimesh per module, which Godot's own GPU
   optimization guidance recommends for static geometry, traded against the memory that instancing
   saves. Which wins, and whether Forward+ behaves differently, has to be measured on a desktop.
+
+  Colliders are built by the node itself (`set_collision_shape`, `collider_radius`): one static
+  body per chunk within the radius, a shape per instance, turned and centred as the models are
+  but unscaled, with a ray's hit mapped back to the instance's id (`collider_instance`). How they
+  are built was measured (headless Godot 4.7.2, 20 chunks of 200 boxes): through `PhysicsServer3D`
+  with every shape added before the body joins the space, 0.12 ms a chunk on Jolt and 0.16 ms on
+  Godot Physics; the body joining the space first, 3.1 ms on Jolt, which rebuilds the compound per
+  shape, and 0.08 ms on Godot Physics; as `StaticBody3D` and `CollisionShape3D` nodes, 1.0 ms and
+  0.68 ms. So the node adds every shape first. In the Godot check, with 512 boxes per chunk,
+  Godot's process time stays at 1.4 ms at worst.
 - **B, hardening.** The device measurement of §3.2 on desktops ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), InstanceSet and ChunkHash in the
   golden worlds, the Godot improvements of §6.2 ([#40](https://github.com/AntonTegnelov/wave_forge/issues/40)), and the godot-rust resource spike ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
 - **C, systems.** NavSource with its halo and asynchronous baking, measuring bake time per chunk

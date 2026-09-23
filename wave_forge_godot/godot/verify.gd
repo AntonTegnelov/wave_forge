@@ -21,6 +21,8 @@ const CELL_SIZE := 2.0
 ## 16 units later.
 const VIEW_RADIUS := 2
 const EVICT_MARGIN := 1
+## Chunks this close to the focus's chunk have colliders.
+const COLLIDER_RADIUS := 1
 ## Every chunk this close to the focus's chunk has to have tiles on every frame of the walk.
 const READY_RADIUS := 1
 ## Units per second: a running player, three times a walking pace of 1.4.
@@ -81,6 +83,12 @@ func _initialize() -> void:
 	# left open with an empty array, which is how a scene says "anything goes here".
 	var layers: Array[PackedInt32Array] = [PackedInt32Array([SAND, GRASS, FOREST]), PackedInt32Array()]
 	world.set_layer_tiles(layers)
+	# Every material's cell is solid ground: a box the size of the cell, in the chunks near the focus.
+	var box := BoxShape3D.new()
+	box.size = Vector3.ONE * CELL_SIZE
+	for material in 4:
+		world.set_collision_shape(["water", "sand", "grass", "forest"][material], box)
+	world.collider_radius = COLLIDER_RADIUS
 	for axis in 4:
 		world.ban_tiles_on_face(axis, PackedInt32Array([FOREST]))
 	world.chunk_updated.connect(_on_chunk_updated)
@@ -121,7 +129,7 @@ func _check_editor_setup() -> bool:
 		if property["usage"] & PROPERTY_USAGE_GROUP:
 			groups.append(property["name"])
 	# The node's own groups come first; Node's inherited ones follow.
-	if groups.slice(0, 4) != ["Rules", "World", "Streaming", "Advanced"]:
+	if groups.slice(0, 5) != ["Rules", "World", "Streaming", "Physics", "Advanced"]:
 		node.free()
 		_fail("the inspector groups are %s" % [groups])
 		return false
@@ -313,6 +321,41 @@ func _on_generation_failed(reason: String) -> void:
 	_fail("generation failed: " + reason)
 
 ## Everything the extension promised a game, checked against what it can see from GDScript.
+## The chunks near the focus have colliders and no others do, and a ray down onto a cell hits that
+## cell's instance.
+func _check_colliders() -> bool:
+	var focus := Vector3i(WALK_FROM, 1, 0)
+	var expected := {}
+	for x in range(focus.x - COLLIDER_RADIUS, focus.x + COLLIDER_RADIUS + 1):
+		for y in range(focus.y - COLLIDER_RADIUS, focus.y + COLLIDER_RADIUS + 1):
+			if x >= 0 and x < CHUNKS_X and y >= 0 and y < CHUNKS_Y:
+				expected[Vector3i(x, y, 0)] = true
+	var bodies := {}
+	for chunk: Vector3i in world.collider_chunks():
+		bodies[chunk] = true
+	if bodies.keys().size() != expected.keys().size() or not bodies.keys().all(func(c: Vector3i) -> bool: return expected.has(c)):
+		_fail("colliders on %s, expected the chunks within %d of %s" % [bodies.keys(), COLLIDER_RADIUS, focus])
+		return false
+	# Straight down onto the cell at (2, 5) of the focus's chunk: it hits the top of that column,
+	# cell z = 7, whose index is (7 * 8 + 5) * 8 + 2.
+	var cell_index := (7 * CELLS + 5) * CELLS + 2
+	var above: Vector3 = world.cell_position(focus, cell_index) + Vector3.UP * 10.0
+	var query := PhysicsRayQueryParameters3D.create(above, above + Vector3.DOWN * 40.0)
+	var hit := root.get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		_fail("a ray down onto chunk %s hit nothing" % focus)
+		return false
+	var instance: int = world.collider_instance(hit["rid"], hit["shape"])
+	if instance & 0xFFFFFFFF != cell_index or hit["collider"] != world:
+		_fail("the ray hit instance %d of %s, expected cell %d" % [instance, hit["collider"], cell_index])
+		return false
+	var top: float = world.cell_position(focus, cell_index).y + CELL_SIZE / 2.0
+	if absf(hit["position"].y - top) > 0.001:
+		_fail("the ray hit at height %.3f, the top of the column is %.3f" % [hit["position"].y, top])
+		return false
+	print("verify: colliders on the %d chunks near the focus, and a ray down hits the cell below it" % bodies.size())
+	return true
+
 func _check() -> void:
 	done = true
 	var seconds := (Time.get_ticks_usec() - walk_started_usec) / 1e6
@@ -416,6 +459,8 @@ func _check() -> void:
 		return
 
 	print("verify: %d cells, every column one material, every neighbour legal, the prior obeyed, and the chunk walked back to is unchanged" % world_tiles.size())
+	if not _check_colliders():
+		return
 	quit(0)
 
 func _fail(message: String) -> void:
