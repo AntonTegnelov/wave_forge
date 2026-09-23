@@ -131,12 +131,12 @@ kept as a capped log in the save
 [Building Worlds Using Math(s), GDC 2017](https://www.gdcvault.com/play/1024514/Building-Worlds-Using)).
 
 **Acceptance criteria.**
-- A test pack in this repository generates a planet section from a planet Record: 3D density with overhangs, sites
+- A test pack in this repository generates a planet section from a planet's row in a generated table: 3D density with overhangs, sites
   on an offset grid that flatten the ground under them, and props scattered by biome.
 - `locate(kind)` finds the nearest site from any position without generating the chunks between.
 - Terrain edits are kept in the edits log and survive leaving and returning.
 
-**Needs.** Records, Field with derivatives, density volumes, Sites with point queries, Apply
+**Needs.** Generated tables, Field with derivatives, density volumes, Sites with point queries, Apply
 (flatten), Scatter, Edits. The spherical domain and the universe scale are deferred
 ([stages.md](../architecture/stages.md#scope)). **Status:** not started (2026-09-23).
 
@@ -203,13 +203,13 @@ zones since Odyssey, scatter through noise graphs, and hand-built settlements pl
 Inserting authored bodies shifted procedural ids, which is why ids here are positional.
 
 **Acceptance criteria.**
-- A test pack in this repository produces a hierarchy of Records (sector, system, body) where each level reads only
-  its parent and its budget, with authored entries that do not shift any procedural id.
-- A body's Record drives a surface section: fields, zones, scatter with spacing, and an authored
+- A test pack in this repository produces a hierarchy of generated tables (sector, system, body) where each level reads only
+  its parent and its budget, with authored rows that do not shift any procedural id.
+- A body's row drives a surface section: fields, zones, scatter with spacing, and an authored
   site placed on flattened ground.
 - Two runs, and two travel orders, give the same systems and surfaces.
 
-**Needs.** Records and parent-level reads, Field, Scatter, Sites and Apply, positional ids. Galaxy
+**Needs.** Generated tables with parent-level reads, Field, Scatter, Sites and Apply, positional ids. Galaxy
 scale, spheres and `f64` are deferred. **Status:** not started (2026-09-23).
 
 ### G7. A Valheim-like island world

@@ -115,6 +115,14 @@ second, published once a second, not the last frame's time.
 - `sample(stage, position)` and `atlas(stage, min, size)`: a stage's value at a position on the
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
   field, rules and blur stages. An error, and NaN or an empty array, for another stage.
+- `give_table(table, rows)` replaces a given table of facts ([packs.md](packs.md#tables-of-facts)):
+  a plain Array of Dictionaries, each with an `id` from 0 and a number or, for a names column, a
+  name per column. `focus_row(table, id)` focuses the stages on a row, and `table_rows(table)`
+  returns a table's rows in the order of their ids, each with its `id` as a PackedInt64Array and
+  its columns, names as names. Give tables and focus a row after `start` and before `follow`, since
+  a stage that reads a row with none focused stops generation. A refused give or focus is reported
+  as an error, returns false and changes nothing; the stages that read a changed table are
+  generated again, with `stage_dropped` and `stage_ready` for their chunks.
 - `curves(stage, chunk)`: a Region stage's curves through a chunk, each with its `region`, `index`,
   `points` on the ground plane in Godot's world space, and `values`.
 - `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body.
@@ -147,7 +155,8 @@ are deep. Ground and bodies go when their chunk's field is dropped or the player
 ## Checking it
 
 `wave_forge_godot/verify.sh` builds the extension and runs `godot/verify.gd` (the WFC world, with
-colliders and navigation) and `godot/verify_stages.gd` (the valley pack, its ground, and a walk
-through a town) in a real headless Godot.
+colliders and navigation), `godot/verify_stages.gd` (the valley pack, its ground, and a walk
+through a town) and `godot/verify_tables.gd` (tables of facts given from GDScript) in a real
+headless Godot.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).
