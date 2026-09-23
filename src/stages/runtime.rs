@@ -8,11 +8,11 @@
 //! asked for in, each is computed from the same inputs and comes out the same.
 
 use super::evaluate::{Leaves, evaluate, holds};
-use super::facts::{Facts, Row, RowId};
+use super::facts::{Facts, Row, RowId, Table};
 use super::pack::{
-    Column, Expr, Output, Pack, Reach, Stage, StageKind, TableKind, point_stage_id, salt,
+    Column, Expr, Output, Pack, Profile, Reach, Stage, StageKind, TableKind, point_stage_id, salt,
 };
-use super::regions::{Attempt, Curve, RegionInput, RegionJob, region_of};
+use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownRequest, TownSolver};
@@ -210,6 +210,12 @@ pub enum StageError {
     NoFacts,
     #[error("the facts were made for another pack or seed than the runtime's")]
     OtherFacts,
+    #[error("stage {stage:?} cannot draw curve {curve:?}: {message}")]
+    Curve {
+        stage: String,
+        curve: CurveId,
+        message: String,
+    },
     #[error("the town solver's chunks are {solver:?} columns, the runtime's {runtime:?}")]
     ChunkMismatch { solver: [u32; 2], runtime: [u32; 2] },
     #[error("stage {stage:?} could not solve the town of {site:?}: {message}")]
@@ -368,8 +374,12 @@ impl Runtime {
         }
         let mut footprints = BTreeMap::new();
         for (index, stage) in self.pack.stages.iter().enumerate() {
-            if let StageKind::TableSites { .. } = stage.kind {
-                footprints.insert(index, self.footprints_of(stage, &facts)?);
+            match stage.kind {
+                StageKind::TableSites { .. } => {
+                    footprints.insert(index, self.footprints_of(stage, &facts)?);
+                }
+                StageKind::TableCurves { .. } => self.check_curves(index, &facts)?,
+                _ => {}
             }
         }
         let mut focused = BTreeMap::new();
@@ -391,6 +401,7 @@ impl Runtime {
                 StageKind::TableSites { .. } => {
                     self.moved_sites(index, &facts, &footprints[&index])
                 }
+                StageKind::TableCurves { .. } => self.moved_curves(index, &facts),
                 _ if stage
                     .tables
                     .iter()
@@ -406,6 +417,128 @@ impl Runtime {
         self.focused = focused;
         self.footprints = footprints;
         Ok(self.invalidate(stale))
+    }
+
+    /// Whether every row of TableCurves stage `index` makes a curve: a finite start and end, and a
+    /// radius from 0 to the `max_radius` of every Apply stage that draws it.
+    fn check_curves(&self, index: usize, facts: &Facts) -> Result<(), StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::TableCurves { table, .. } = &stage.kind else {
+            unreachable!("called for TableCurves stages")
+        };
+        let widest = self
+            .pack
+            .stages
+            .iter()
+            .filter_map(|reader| match reader.kind {
+                StageKind::Apply { max_radius, .. }
+                    if reader.inputs.iter().any(|&(input, _)| input == index) =>
+                {
+                    Some(max_radius)
+                }
+                _ => None,
+            })
+            .min();
+        let rows = facts.table(table).expect("linked when loaded");
+        for row in &rows.rows {
+            let curve = self.table_curve(index, rows, row);
+            let radius = curve.values[0];
+            let finite = curve.points.iter().flatten().all(|value| value.is_finite());
+            if !finite || !(0.0..=widest.map_or(f32::MAX, |widest| widest as f32)).contains(&radius)
+            {
+                return Err(StageError::Table {
+                    table: table.clone(),
+                    message: format!(
+                        "stage {:?}: row {:?} makes a curve through {:?} of radius {radius}; \
+                         points are finite and a radius is from 0 to {}",
+                        stage.name,
+                        row.id.0,
+                        curve.points,
+                        widest.map_or("any".to_owned(), |widest| widest.to_string())
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// The straight curve TableCurves stage `index` makes of `row` of `rows`.
+    fn table_curve(&self, index: usize, rows: &Table, row: &Row) -> Curve {
+        let StageKind::TableCurves {
+            from, to, radius, ..
+        } = &self.pack.stages[index].kind
+        else {
+            unreachable!("called for TableCurves stages")
+        };
+        let value = |column: &str| row.values[rows.column(column).expect("checked when loaded")];
+        let radius = value(radius);
+        Curve {
+            id: CurveId::Row(row.id.clone()),
+            points: vec![
+                [value(&from.0), value(&from.1)],
+                [value(&to.0), value(&to.1)],
+            ],
+            values: vec![radius, radius],
+        }
+    }
+
+    /// The chunks TableCurves stage `index` holds differently with `facts`: those every row added,
+    /// removed or changed passes through, where it was and where it is.
+    fn moved_curves(&self, index: usize, facts: &Facts) -> Stale {
+        let Some(old) = &self.facts else {
+            return Stale::All;
+        };
+        let StageKind::TableCurves { table, .. } = &self.pack.stages[index].kind else {
+            unreachable!("called for TableCurves stages")
+        };
+        let (before, after) = (
+            old.table(table).expect("linked when loaded"),
+            facts.table(table).expect("linked when loaded"),
+        );
+        let mut chunks = BTreeSet::new();
+        for (rows, others) in [(before, after), (after, before)] {
+            for row in &rows.rows {
+                if others.row(&row.id) == Some(row) {
+                    continue;
+                }
+                chunks.extend(self.chunks_touched(&self.table_curve(index, rows, row)));
+            }
+        }
+        Stale::Chunks(chunks)
+    }
+
+    /// The chunks whose columns a curve passes through, as a chunk's product counts them.
+    fn chunks_touched(&self, curve: &Curve) -> Vec<ChunkCoord> {
+        let [sx, sy] = self.size.map(|size| size as f32);
+        let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for point in &curve.points {
+            for axis in 0..2 {
+                low[axis] = low[axis].min(point[axis]);
+                high[axis] = high[axis].max(point[axis]);
+            }
+        }
+        let (x0, x1) = (
+            (low[0] / sx).floor() as i32 - 1,
+            (high[0] / sx).floor() as i32 + 1,
+        );
+        let (y0, y1) = (
+            (low[1] / sy).floor() as i32 - 1,
+            (high[1] / sy).floor() as i32 + 1,
+        );
+        (x0..=x1)
+            .flat_map(|x| (y0..=y1).map(move |y| ChunkCoord::new(x, y, 0)))
+            .filter(|&chunk| {
+                let (min, max) = self.chunk_rect(chunk);
+                curve.touches(min, max)
+            })
+            .collect()
+    }
+
+    /// A chunk's columns as `Curve::touches` takes them: from its lowest corner to its highest.
+    fn chunk_rect(&self, chunk: ChunkCoord) -> ([f32; 2], [f32; 2]) {
+        let [sx, sy] = self.size.map(|size| size as f32);
+        let min = [chunk.x as f32 * sx, chunk.y as f32 * sy];
+        (min, [min[0] + sx, min[1] + sy])
     }
 
     /// The chunks TableSites stage `index` holds differently with `facts`, whose sites are
@@ -932,6 +1065,8 @@ impl Runtime {
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
             StageKind::Sites { .. }
             | StageKind::TableSites { .. }
+            | StageKind::TableCurves { .. }
+            | StageKind::Apply { .. }
             | StageKind::Flatten { .. }
             | StageKind::Solve { .. }
             | StageKind::Scatter { .. }
@@ -1332,9 +1467,7 @@ impl Runtime {
         }
         if let StageKind::Region { region, .. } = &stage.kind {
             let curves = &self.regions[&(index, region_of(chunk, *region))];
-            let [sx, sy] = self.size.map(|size| size as f32);
-            let min = [chunk.x as f32 * sx, chunk.y as f32 * sy];
-            let max = [min[0] + sx, min[1] + sy];
+            let (min, max) = self.chunk_rect(chunk);
             return Ok(Product::Curves(
                 curves
                     .iter()
@@ -1342,6 +1475,25 @@ impl Runtime {
                     .cloned()
                     .collect(),
             ));
+        }
+        if let StageKind::TableCurves { table, .. } = &stage.kind {
+            let rows = self
+                .facts
+                .as_ref()
+                .ok_or(StageError::NoFacts)?
+                .table(table)
+                .expect("linked when loaded");
+            let (min, max) = self.chunk_rect(chunk);
+            return Ok(Product::Curves(
+                rows.rows
+                    .iter()
+                    .map(|row| self.table_curve(index, rows, row))
+                    .filter(|curve| curve.touches(min, max))
+                    .collect(),
+            ));
+        }
+        if let StageKind::Apply { .. } = &stage.kind {
+            return self.apply(index, chunk).map(Product::Field);
         }
         let views: BTreeMap<usize, FieldView<'_>> = stage
             .inputs
@@ -1412,6 +1564,8 @@ impl Runtime {
                     }
                     StageKind::Sites { .. }
                     | StageKind::TableSites { .. }
+                    | StageKind::TableCurves { .. }
+                    | StageKind::Apply { .. }
                     | StageKind::Solve { .. }
                     | StageKind::Scatter { .. }
                     | StageKind::Rules { .. }
@@ -1427,6 +1581,105 @@ impl Runtime {
             size: self.size,
             values,
         }))
+    }
+
+    /// Apply stage `index`'s field for `chunk`: its height with the curves near each column drawn
+    /// in.
+    fn apply(&self, index: usize, chunk: ChunkCoord) -> Result<Field, StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Apply {
+            max_radius,
+            blend,
+            profile,
+            ..
+        } = &stage.kind
+        else {
+            unreachable!("called for Apply stages")
+        };
+        let (height, reach) = stage.inputs[0];
+        let heights = self.view(index, chunk, height, reach);
+        let (input, reach) = stage.inputs[1];
+        // Every curve within reach once, in the order of their ids, so a tie always goes the same
+        // way.
+        let mut curves: BTreeMap<CurveId, &Curve> = BTreeMap::new();
+        for (_, product) in self.inputs_within(index, chunk, input, reach.cells(self.size)) {
+            let Product::Curves(near) = product else {
+                unreachable!("inputs are type checked when the pack loads")
+            };
+            for curve in near {
+                if let Some(wide) = curve
+                    .values
+                    .iter()
+                    .find(|&&r| !(0.0..=*max_radius as f32).contains(&r))
+                {
+                    return Err(StageError::Curve {
+                        stage: stage.name.clone(),
+                        curve: curve.id.clone(),
+                        message: format!("a radius of {wide}; 0 to {max_radius} are allowed"),
+                    });
+                }
+                curves.insert(curve.id.clone(), curve);
+            }
+        }
+        let blend = *blend as f32;
+        let [sx, sy] = self.size;
+        let mut values = Vec::with_capacity((sx * sy) as usize);
+        for y in 0..sy {
+            for x in 0..sx {
+                let column = [
+                    i64::from(chunk.x) * i64::from(sx) + i64::from(x),
+                    i64::from(chunk.y) * i64::from(sy) + i64::from(y),
+                ];
+                let base = heights.get(column[0], column[1])?;
+                let at = [column[0] as f32 + 0.5, column[1] as f32 + 0.5];
+                // The curve that weighs most here, and the point of its centre line nearest.
+                let mut best: Option<(f32, [f32; 2])> = None;
+                for curve in curves.values() {
+                    for (i, pair) in curve.points.windows(2).enumerate() {
+                        let (a, b) = (pair[0], pair[1]);
+                        let along = [b[0] - a[0], b[1] - a[1]];
+                        let length = along[0] * along[0] + along[1] * along[1];
+                        let t = if length == 0.0 {
+                            0.0
+                        } else {
+                            (((at[0] - a[0]) * along[0] + (at[1] - a[1]) * along[1]) / length)
+                                .clamp(0.0, 1.0)
+                        };
+                        let nearest = [a[0] + along[0] * t, a[1] + along[1] * t];
+                        let distance = (at[0] - nearest[0]).hypot(at[1] - nearest[1]);
+                        let radius = curve.values[i] + (curve.values[i + 1] - curve.values[i]) * t;
+                        let weight = if distance <= radius {
+                            1.0
+                        } else if distance < radius + blend {
+                            let s = (distance - radius) / blend;
+                            1.0 - s * s * (3.0 - 2.0 * s)
+                        } else {
+                            continue;
+                        };
+                        if best.is_none_or(|(known, _)| weight > known) {
+                            best = Some((weight, nearest));
+                        }
+                    }
+                }
+                values.push(match best {
+                    None => base,
+                    Some((weight, nearest)) => {
+                        let centre =
+                            heights.get(nearest[0].floor() as i64, nearest[1].floor() as i64)?;
+                        let target = match profile {
+                            Profile::Level => centre,
+                            Profile::Carve(depth) => centre - depth,
+                        };
+                        base + (target - base) * weight
+                    }
+                });
+            }
+        }
+        Ok(Field {
+            chunk,
+            size: self.size,
+            values,
+        })
     }
 
     /// The points of Scatter stage `index` whose column lies in `chunk`.

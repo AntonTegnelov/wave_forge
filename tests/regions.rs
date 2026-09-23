@@ -38,7 +38,7 @@ impl RegionJob for Rivers {
             }
         }
         Ok(Attempt::Accepted(vec![Curve {
-            id: CurveId {
+            id: CurveId::Region {
                 region: input.region(),
                 index: 0,
             },
@@ -110,7 +110,7 @@ fn rivers(requests: &[Vec<ChunkCoord>]) -> Vec<Curve> {
             }
         }
     }
-    curves.sort_by_key(|curve| curve.id);
+    curves.sort_by_key(|curve| curve.id.clone());
     curves
 }
 
@@ -128,7 +128,11 @@ fn a_river_meets_its_neighbour_exactly_at_every_region_border() {
     assert_eq!(curves.len(), 4, "one river per region");
     for pair in curves.windows(2) {
         let (west, east) = (&pair[0], &pair[1]);
-        assert_eq!(east.id.region.0, west.id.region.0 + 1);
+        let region = |curve: &Curve| match curve.id {
+            CurveId::Region { region, .. } => region,
+            CurveId::Row(_) => panic!("a region job's curve is named by its region"),
+        };
+        assert_eq!(region(east).0, region(west).0 + 1);
         assert_eq!(
             west.points.last(),
             east.points.first(),

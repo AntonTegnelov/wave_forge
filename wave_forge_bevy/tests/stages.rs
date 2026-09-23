@@ -344,7 +344,7 @@ impl wave_forge::stages::regions::RegionJob for Lines {
         let ([x0, y0], [x1, _]) = input.columns();
         let row = y0 as f32 + (input.edge_hash(Edge::West, 0) % 8) as f32;
         Ok(Attempt::Accepted(vec![Curve {
-            id: CurveId {
+            id: CurveId::Region {
                 region: input.region(),
                 index: 0,
             },

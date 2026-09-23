@@ -143,6 +143,8 @@ reads one type as another.
 | `Blur` | Field | one field, `radius` cells |
 | `Sites` | Sites | a height field, `region` chunks |
 | `TableSites` | Sites | a table's rows; a height field, `max_size` chunks |
+| `TableCurves` | Curves | a table's rows |
+| `Apply` | Field | a height field and a Region or TableCurves stage, `max_radius + blend` cells |
 | `Flatten` | Field | a height field, 0 cells; a Sites stage, `blend` cells |
 | `Solve` | Tiles | a Sites or TableSites stage, 0 cells |
 | `Scatter` | Points | a height field, `apart` cells (one more with `max_slope`); a Sites stage, `apart + margin` cells |
@@ -307,10 +309,37 @@ budget is spent, generation fails with `StageError::RegionRejected`, carrying ev
 missing job fails with `StageError::NoRegionJob`. A computed region is kept while any chunk of it
 is needed, so a finite world is one region computed once.
 
-A `Curve` has a positional id (its region and index), points in world columns and one value per
-point. There is no built-in job yet: rivers that carve the ground are
-[#98](https://github.com/AntonTegnelov/wave_forge/issues/98). Godot games reach Region stages
-once there are built-in jobs; a Bevy game registers its own in the runtime it builds.
+A `Curve` has a positional id, `CurveId::Region` with its region and index, points in world
+columns and one value per point, which an [Apply](#apply) stage reads as its radius. There is no
+built-in job yet. Godot games reach Region stages once there are built-in jobs; a Bevy game
+registers its own in the runtime it builds.
+
+### TableCurves
+
+`TableCurves(table: "roads", from: ("x0", "y0"), to: ("x1", "y1"), radius: "width")`: a straight
+curve for every row of a table ([Tables of facts](#tables-of-facts)), from the point the `from`
+columns give to the one the `to` columns give, in WFC cells, with the radius its `radius` column
+gives at both ends. A history lays its roads this way, a row per stretch between two villages. A
+curve's id is `CurveId::Row` with its row's id, and a chunk's product is the curves that pass
+through it. `Runtime::set_facts` refuses a row whose points are not finite, or whose radius is
+negative or beyond the `max_radius` of an Apply stage that draws it, naming the row.
+
+### Apply
+
+`Apply(height: "field", curves: "roads", max_radius: r, blend: b, profile: Level)`: the height field
+with the curves of a Region or TableCurves stage drawn into it. At each column, the curve segment
+that weighs most decides: within its radius, interpolated along it from the curve's values and at
+most `r` cells, it weighs 1, and it falls to 0 over `b` cells beyond (`blend`, default 0) with a
+smooth step. The column takes the profile's height by that weight:
+
+- `Level`: the field's height at the column of the nearest point of the curve's centre line, so a
+  road lies level across its width and follows the ground along it;
+- `Carve(depth)`: that height lowered by `depth`, a river's bed.
+
+Where curves overlap, the one that weighs most wins, and the first by id on a tie, so a column never
+depends on the order curves arrive in. A curve whose radius is beyond `r` fails generation with
+`StageError::Curve`; a table's rows are refused before that, when the facts are given. Apply works on
+the WFC lattice, at scale 1, like Flatten.
 
 ## The runtime
 
