@@ -22,6 +22,7 @@ const PACK: &str = r#"(
         (name: "villages", kind: TableSites(table: "villages", height: "height", at: ("x", "y"), size: "size", max_size: 3)),
         (name: "level", kind: Flatten(height: "height", sites: "villages", blend: 3)),
         (name: "buildings", kind: Solve(sites: "villages", rules: "blocks", by: Some(("fate", [("burned", "ruins")])))),
+        (name: "trees", kind: Scatter(kind: "tree", height: "level", spacing: 2, avoid: Some(("villages", 2)))),
     ],
 )"#;
 
@@ -264,4 +265,33 @@ fn a_changed_row_drops_only_the_chunks_its_site_reaches() {
         Some(&("ruins".to_owned(), (1, 1))),
         "{asked:?}"
     );
+}
+
+#[test]
+fn scatter_keeps_its_margin_from_a_tables_sites() {
+    let (mut runtime, _) = runtime(vec![
+        village(1, (10.0, 10.0), 3.0, "standing"),
+        village(2, (-20.0, 6.5), 1.0, "standing"),
+    ])
+    .expect("villages");
+
+    let sites = generate(&mut runtime, &["trees"]);
+
+    let points: Vec<[f32; 3]> = (-8..=8)
+        .flat_map(|y| (-8..=8).map(move |x| ChunkCoord::new(x, y, 0)))
+        .flat_map(|chunk| runtime.points("trees", chunk).expect("generated").to_vec())
+        .map(|point| point.position)
+        .collect();
+    assert_eq!(sites.len(), 2);
+    assert!(points.len() > 100, "only {} trees", points.len());
+    for [x, y, _] in points {
+        for site in &sites {
+            let distance = site.distance(x.floor() as i64, y.floor() as i64, [CHUNK.x, CHUNK.y]);
+            assert!(
+                distance >= 2.0,
+                "a tree at ({x}, {y}) is {distance} from {:?}",
+                site.id
+            );
+        }
+    }
 }
