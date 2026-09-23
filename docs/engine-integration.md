@@ -306,10 +306,11 @@ resource loader needs `experimental-threads`) are open. A spike saves a nested r
 editor, loads it with `load_threaded_request` and renders previews. If it fails, the recipe
 resources are written in GDScript over Rust classes, or kept flat.
 
-Small improvements available now: godot-rust's `register-docs` feature turns the existing doc
-comments into in-editor help and tooltips; an `[icons]` section in the `.gdextension`; grouped
-exports; rules as an exported resource with a start-on-ready option instead of `load_rules` and
-`start` calls; and a minimum Godot version of 4.7 in the `.gdextension` (it says 4.2 today).
+The extension already has the basics of that: godot-rust's `register-docs` feature turns the doc
+comments into Godot's own help and tooltips, the `.gdextension` gives the node an icon and asks for
+Godot 4.7, the inspector groups the node's properties into Rules, World, Streaming and Advanced,
+and a scene can name a rule file and let the node start on its own (`rules_file`,
+`start_on_ready`) instead of calling `load_rules` and `start` from a script.
 
 Distribution goes through the **Godot Asset Store**, which replaced the Asset Library on 2026-05-22
 and is integrated in 4.7; the Asset Library is deprecated and will become read-only
