@@ -1,212 +1,178 @@
-# Generation model: a pack of stages
+# Generation as a pack of stages
 
-How Phase 2 layers many kinds of generation (fields, scatter, sites, WFC, simulation passes) so a
-developer can build the kind of world the games in [user-stories.md](user-stories.md) generate, and
-still start in minutes. Every design choice here names the user stories it serves (G for replicating a
-game, N for newcomers, P for performance).
+How Wave Forge combines many kinds of generation (fields, sites, scatter, WFC, region-scale passes)
+so a developer can build the kind of world the games in
+[user-stories.md](../product/user-stories.md) generate, and a newcomer can still start in minutes.
+Design choices name the stories they serve (G for a game's generation, N for newcomers, P for
+performance).
 
-This refines the Phase 2 shape in [roadmap.md](roadmap.md#phase-2-generation-as-a-pack-of-stages):
-a unit of generation is a pure function of the seed and a key, with a declared reach and no cycles,
-and WFC is driven by a `Prior`. What changed is the scope. Research into how engines, libraries and
-eight games structure generation showed that WFC cannot be the centre of the design, that most games
-need whole-region computation, and that the generator's repairs as built today conflict with order
-independence (§5).
+This page is the design, and some of it is not built yet. A statement that describes the target
+rather than the code is marked **not built yet**, with its issue. What is built is in
+[reference/packs.md](../reference/packs.md), and the order of the remaining work is in
+[roadmap.md](../plan/roadmap.md). The research the design rests on (engines, libraries and eight
+games) is in [worldgen-survey.md](../research/worldgen-survey.md); its central finding is that every
+generation system that works is a directed acyclic graph of pure transforms over typed data, and
+that WFC cannot be the centre of such a design, because most of the studied games spend their
+generation on fields and scatter and need whole-region passes.
 
-## 1. What the research found
+The unit is called a **stage**, not a layer, because `Prior` already uses "layer" for its per-height
+masks ([solver.md](solver.md#the-prior)).
 
-Two studies fed this document: one of engines and libraries (Unreal PCG, LayerProcGen, Houdini,
-Gaea and World Machine, MapMagic, godot_voxel, ProtonScatter, WFC tools, CityEngine, Minecraft
-datapacks, FastNoise2), checked by an adversarial fact-check of 43 load-bearing claims (32
-confirmed, 9 corrected, 2 unverifiable, none refuted), and case studies of Minecraft, Dwarf
-Fortress, No Man's Sky, Noita, Caves of Qud, Elite Dangerous, Valheim and Deep Rock Galactic. The
-game-by-game findings are summarised with their sources in [user-stories.md](user-stories.md#g-replicate-a-games-generation).
-
-**Every system that works is a directed acyclic graph of pure transforms over typed data.** They
-differ in what a node is, what flows along an edge, and whether an edge declares how far it reads.
-
-- **LayerProcGen gets execution right.** Each layer has its own chunk size and declares a padding
-  per dependency; before a chunk is generated, every provider chunk inside that padding is generated
-  first ([Layer Dependencies](https://github.com/runevision/LayerProcGen/blob/main/Documentation/LayerDependencies.md),
-  `EnsureChunkProviders` in [ChunkBasedDataLayer.cs](https://github.com/runevision/LayerProcGen/blob/main/Src/LayerProcGen/ChunkBasedDataLayer.cs)).
-  A step that modifies data writes a new layer instead, which is what makes the result independent of
-  generation order ([Contextual Generation](https://runevision.github.io/LayerProcGen/md_ContextualGeneration.html),
-  [Internal Layer Levels](https://github.com/runevision/LayerProcGen/blob/main/Documentation/InternalLayerLevels.md)).
-  Its chunk data is opaque to the framework, so there are no generic previews and no data-driven
-  graphs; it is a library for programmers.
-- **Unreal PCG gets data and tooling right.** Its currency is points with fixed properties and open
-  attributes; samplers turn landscapes, splines and volumes into points, and filters and modifiers
-  work on them ([data types](https://dev.epicgames.com/documentation/en-us/unreal-engine/procedural-content-generation-framework-data-types-reference-in-unreal-engine)).
-  Scale is set per graph branch by grid size, and data only cascades from larger grids to smaller
-  ones ([hierarchical generation](https://dev.epicgames.com/documentation/unreal-engine/hierarchical-generation?lang=en-US)).
-  No node declares a reach, the docs leave duplicate points at cell borders to the author, and no
-  source shows that partitioned output equals unpartitioned output (unverified either way).
-- **Minecraft gets user extensibility right.** World generation is named JSON resources that
-  reference each other (density functions, noise settings, biome sources, placed features, structure
-  sets), run as a staged pipeline with bounded neighbour reach
-  ([World generation](https://minecraft.wiki/w/World_generation),
-  [Density function](https://minecraft.wiki/w/Density_function),
-  [Placed feature](https://minecraft.wiki/w/Placed_feature)). The community edits it through live
-  visualisers such as [misode's generators](https://misode.github.io/worldgen/).
-- **Offline terrain tools are raster graphs on a finite canvas.** Houdini, Gaea and World Machine
-  admit that erosion and other simulation nodes give different results when tiled
-  ([HeightField Tile Split](https://www.sidefx.com/docs/houdini/nodes/sop/heightfield_tilesplit.html)),
-  which is why their output reaches games as baked assets.
-
-**In the eight games,** every one needs points with attributes and persistent edits, seven need
-continuous fields, only Caves of Qud uses WFC (overlapping model, inside segmented regions), and
-Noita uses herringbone Wang tiles, which are constraint-matched but not a solver. Six of the eight
-need a whole-region or whole-world pass: Dwarf Fortress's erosion and history, Noita's Wang regions
-with path checks, Qud's zones, Elite's planets, Valheim's rivers and location table, and Deep Rock
-Galactic's mission level.
-
-**Failures the design has to rule out,** each seen in a shipped system:
-
-- A sequential random stream, so inserting one thing reshuffles everything after it (Minecraft's
-  feature seeds, Dwarf Fortress when one token changes, Valheim's draw order).
-- Ids that are ordinals, so they shift when content is inserted (Elite, when authored bodies were
-  added).
-- Generators writing into neighbouring chunks, so a world depends on the player's travel route
-  (Minecraft's features, MC-55596, cited on [World generation](https://minecraft.wiki/w/World_generation);
-  godot_voxel's multipass generator, whose [documentation](https://voxel-tools.readthedocs.io/en/latest/api/VoxelGeneratorMultipassCB/)
-  says so).
-- One global margin for every stage, which causes seams ([MapMagic, Tile Seams Reasons](https://gitlab.com/api/v4/projects/denispahunov%2Fmapmagic/wikis/Tile_Seams_Reasons)).
-- A graph too large to author by hand: the Overworld's terrain `offset` alone is a nested spline of
-  253 points ([overworld noise settings](https://raw.githubusercontent.com/misode/mcmeta/data/data/minecraft/worldgen/noise_settings/overworld.json)).
-
-## 2. The execution contract
-
-The unit is called a **stage**, not a layer: `Prior` already uses "layer" for its per-height masks
-([architecture.md §3.3](architecture.md)).
+## The execution contract
 
 - **Purity.** A stage's output for a key is a pure function of the world seed, the stage's id, the
-  key, and read-only outputs of its inputs within a declared reach. Reach is in world units and 3D
-  from the start; where parameters imply it (a blur radius, a spacing, a footprint), it is derived
-  from them. (G1 to G8, N9.)
+  key, and read-only outputs of its inputs within a declared reach. Where parameters imply the reach
+  (a blur radius, a spacing, a footprint), it is derived from them, and a pack never states one by
+  hand. (G1 to G8, N9.) Reach is in cells or whole chunks on a 2D lattice today; reach in world
+  units and in 3D is **not built yet** ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93),
+  [#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
 - **Bounded reads.** A stage reads its inputs through a view bounded by its declared reach. A read
   outside it is an error naming the stage and the reach it would need. The transitive reach, the
-  area each stage has to generate for a given request, is computed at load and shown to the user.
-  (N5, P2.)
+  area each stage has to be generated over for a request, is computed when the pack loads. (N5, P2.)
 - **Gather, never scatter.** A stage writes only its own key. Anything that straddles a border, such
   as a building or a spacing decision, has exactly one owner, chosen by a pure function of its
-  anchor; neighbours recompute the same anchor instead of receiving writes. Stages ask for their
-  inputs in one of two ways: *owned* (emit once, for things with stable ids) and *overlapping* (apply
-  everywhere it touches, for flatten masks and Prior bans).
+  anchor; neighbours recompute the same anchor instead of receiving writes. A consumer takes its
+  inputs in one of two ways: *owned* (emitted once, for things with stable ids, such as a site in
+  the chunks it covers) or *overlapping* (applied everywhere it touches, such as a flatten
+  footprint).
 - **No cycles, checked at load.** Terrain that structures adapt is split the way every studied game
-  splits it: a base field, then sites that read only the base field, then an adapted field (Minecraft's
-  beardifier, No Man's Sky's flatten points, Valheim's location levelling). (G1, G3, G7.)
-- **Named hash streams.** Every random decision is `hash(seed, stage id, key, purpose)`, built on the
-  stateless `pcg3d` the solver already uses (`wfc-core/src/hash.rs`), never a sequential generator.
-  Existence tests compare integers. Data crossing a stage boundary (site positions, spline control
-  points) is integer or fixed point, because equal floats are not guaranteed across GPU vendors.
-  (N9, G6.)
+  splits it: a base field, then sites that read only the base field, then an adapted field
+  (Minecraft's beardifier, No Man's Sky's flatten points, Valheim's location levelling). The valley
+  pack does exactly this with Sites and Flatten. (G1, G3, G7.)
+- **Named hash streams.** Every random decision is a hash of the seed, the stage's id, the key and a
+  purpose, built on the stateless `pcg3d` the solver uses, never a sequential generator, so adding,
+  removing or reordering stages changes no other stage. Existence tests compare integers. (N9, G6.)
+  A separate stream per noise node within one stage is **not built yet**
+  ([#90](https://github.com/AntonTegnelov/wave_forge/issues/90)).
+- **Integer data across stages.** Data crossing a stage boundary that decides existence or position
+  (site positions, spline control points) should be integer or fixed point, because equal floats are
+  not guaranteed across GPU vendors. Today fields, site heights and point positions are `f32`, which
+  is safe while the stages run on the CPU; fixed-point boundaries are **not built yet** and come
+  with GPU stages ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)).
 - **Levels and scales.** Each stage declares a cell size on a hierarchy of global, region, chunk and
-  cell. A stage may read its parent level (Elite's sector, system and body; No Man's Sky's region,
-  system and planet). A **region job** runs on a coarse region lattice: any bounded pure computation,
-  which may iterate, count and retry with a hashed retry index. A finite world is a single region
-  computed before streaming starts. Border agreement between region jobs comes from edge-keyed
-  hashes (a river's crossing point hashed from the shared edge), not from reading each other.
-  (G2, G4, G5, G6, G7, G8.)
-- **Scheduling.** Providers first, eagerly, with reference-counted lifetimes, following LayerProcGen.
-  Batches go stage-major and nearest-first so one GPU dispatch covers one stage and level. The
-  generator's schedule is already this pattern: parity 0 and parity 1 are two levels of the WFC
-  stage, and the closure rule in [architecture.md §6.2](architecture.md) is provider-first
-  generation written by hand. (P1, P3.)
+  cell, and may read its parent level (Elite's sector, system and body; No Man's Sky's region,
+  system and planet). A **region job** runs on a coarse region lattice: any bounded pure
+  computation, which may iterate, count and retry with a hashed retry index. A finite world is a
+  single region computed before streaming starts. Region jobs agree at their borders through
+  edge-keyed hashes (a river's crossing point hashed from the shared edge), not by reading each
+  other. (G2, G4, G5, G6, G7, G8.) Today every stage runs on the WFC chunk lattice; levels
+  and region jobs are **not built yet** ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93),
+  [#69](https://github.com/AntonTegnelov/wave_forge/issues/69),
+  [#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
+- **Scheduling.** Providers first, with lifetimes held by what needs them, following LayerProcGen.
+  The WFC generator's schedule is the same pattern written by hand: parity 0, parity 1 and the
+  repair classes are levels of one stage, and the closure rule is provider-first generation
+  ([world.md](world.md#the-schedule)). (P1, P3.) Batching one stage and level per GPU dispatch comes
+  with GPU stages.
 - **Persistence per stage.** A *pure* stage regenerates and replays edits; a *freeze on first emit*
   stage is snapshotted (as Minecraft, Noita, Qud and Valheim do with placed objects); an *ephemeral*
-  stage (Valheim's clutter) is never saved. Saves record the generator version. (G7, N8, P4.)
+  stage (Valheim's clutter) is never saved. Saves record the generator version. (G7, N8, P4.) Every
+  stage is pure today; edits and the other modes are **not built yet**
+  ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101),
+  [#102](https://github.com/AntonTegnelov/wave_forge/issues/102)).
 
-## 3. Data between stages
+## Data between stages
 
-| Type | Contents | Covers |
-|---|---|---|
-| **Field** | named `f32` channels on a 2D or 3D grid at the stage's cell size | height, climate, masks (a channel in 0..1), density and signed-distance volumes, categorical ids such as a biome |
-| **PointSet** | structure of arrays: fixed-point position, rotation, scale, stable id, kind, and attribute columns | sites, anchors, scatter candidates and placements, spawn points |
-| **CurveSet** | polylines with per-vertex attributes (radius, flow, profile) and optional connectivity | roads, rivers, tunnels, room and site graphs |
-| **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas |
-| **Record** | a typed struct keyed by a hierarchical address | planet or system parameters, a history log the user supplies, a location table |
-| **Prior** and **TileGrid** | the WFC stage's input and output, as today | tiles |
-| **Edits** | an operation log keyed by stable ids and cells | brushes, removed and moved placements, terrain deltas |
-
-PointSet is a structure of arrays from the start; Unreal PCG moved from an array of structs in 5.6
-at the cost of a breaking change ([Epic roadmap](https://portal.productboard.com/epicgames/1-unreal-engine-public-roadmap/c/1894-point-data-structure-of-array),
-[migration report](https://forums.unrealengine.com/t/pcg-problem-going-from-ue-5-5-to-5-6-get-point-data-not-working-anymore/2651694)). The products an engine consumes (instance sets, colliders,
-navigation source) are not an eighth type: an `Emit` stage derives them from PointSets and TileGrids
-([engine-integration.md §2](engine-integration.md#2-products)).
-
-## 4. Stage kinds
-
-| Kind | What it does | Reach | Serves |
+| Type | Contents | Covers | Today |
 |---|---|---|---|
-| **Field** | a fused pointwise expression graph: noise, splines, remap, math, first-match classifiers, image lookup; compiles to one kernel | 0 | G1, G3, G6, G7, N2, N7 |
-| **Filter** | stencils, blur, cellular automata, slope, distance transforms | declared per pass | G2, G5, G7 |
-| **Rules** | first-match rule trees (sequence, condition, result) producing a Prior or a categorical field, like Minecraft's surface rules | that of its conditions | G1, G7, N4 |
-| **Solve** | WFC over a Prior; Wang tiling later | the solver's halo | G5, G4, N6 |
-| **Sites** | owned region-scale points, one candidate per region cell (Minecraft's `random_spread`), with spacing and separation | a region cell | G1, G3, G7 |
-| **Scatter** | a generator and a chain of modifiers producing a PointSet (below) | its largest spacing or footprint | all G, N3, N5 |
-| **Network** | bounded paths between owned sites (roads, rivers, tunnels) | declared | G7, G8 |
-| **Assemble** | a jigsaw or room graph grown from one site into Stamps, with a bounded extent | the extent | G1, G7, G8 |
-| **Apply** | rasterises curves and stamps into fields or Priors in a stable order | the primitives' bounds | G1, G3, G8 |
-| **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4, G5, G6, G7, G8 |
-| **Record** | computed once per seed or per address | its parent | G2, G3, G6 |
-| **Emit** | products for an engine | 0 | N1, N3, P1 |
-| **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4 |
+| **Field** | named channels on a 2D or 3D grid at the stage's cell size | height, climate, masks, density and signed distance, categorical ids such as a biome | one `f32` per cell column ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91) adds categories) |
+| **PointSet** | structure of arrays: position, rotation, scale, stable id, kind, attribute columns | sites, anchors, scatter candidates and placements, spawn points | `Sites` and `Points` |
+| **CurveSet** | polylines with per-vertex attributes (radius, flow, profile) and optional connectivity | roads, rivers, tunnels, room and site graphs | not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
+| **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
+| **Record** | a typed struct keyed by a hierarchical address | planet or system parameters, a user-supplied history, a location table | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
+| **Prior** and **TileGrid** | the WFC stage's input and output | tiles | `Tiles`, a town's chunk |
+| **Edits** | an operation log keyed by stable ids and cells | brushes, removed and moved placements, terrain deltas | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 
-**Placement rules are Scatter stages.** A Scatter stage has:
+PointSet is a structure of arrays from the start: Unreal PCG moved from an array of structs in 5.6
+at the cost of a breaking change. The products an engine consumes (instance sets, colliders,
+navigation source) are not another type between stages: they are derived from PointSets and
+TileGrids for an engine ([engine-integration.md](engine-integration.md#products)).
 
-- generators: tile or face anchors from a TileGrid, a jittered grid hashed per cell, points from
+## Stage kinds
+
+| Kind | What it does | Reach | Serves | Today |
+|---|---|---|---|---|
+| **Field** | a fused pointwise expression graph: noise, splines, remap, math, first-match classifiers, image lookup | 0 | G1, G3, G6, G7, N2, N7 | constants, value noise, inputs, sums and products ([#90](https://github.com/AntonTegnelov/wave_forge/issues/90), [#45](https://github.com/AntonTegnelov/wave_forge/issues/45)) |
+| **Filter** | stencils, blur, cellular automata, slope, distance transforms | declared per pass | G2, G5, G7 | `Blur`, `Flatten` ([#94](https://github.com/AntonTegnelov/wave_forge/issues/94)) |
+| **Rules** | first-match rule trees producing a Prior or a categorical field, like Minecraft's surface rules | that of its conditions | G1, G7, N4 | not built yet ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91)) |
+| **Solve** | WFC over a Prior; Wang tiling later | the solver's halo | G4, G5, N6 | one bounded town per site (below) |
+| **Sites** | owned region-scale points, one candidate per region cell (Minecraft's `random_spread`), with spacing | a region | G1, G3, G7 | one footprint per region ([#97](https://github.com/AntonTegnelov/wave_forge/issues/97) adds a location table) |
+| **Scatter** | a generator and a chain of modifiers producing a PointSet (below) | its largest spacing or footprint | all G, N3, N5 | one kind per stage, four tests ([#95](https://github.com/AntonTegnelov/wave_forge/issues/95), [#96](https://github.com/AntonTegnelov/wave_forge/issues/96)) |
+| **Network** | bounded paths between owned sites (roads, rivers, tunnels) | declared | G7, G8 | not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
+| **Assemble** | a jigsaw or room graph grown from one site into Stamps, with a bounded extent | the extent | G1, G7, G8 | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
+| **Apply** | rasterises curves and stamps into fields or Priors in a stable order | the primitives' bounds | G1, G3, G8 | `Flatten` for site footprints ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
+| **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4 to G8 | not built yet ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) |
+| **Record** | computed once per seed or per address | its parent | G2, G3, G6 | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
+| **Emit** | products for an engine | 0 | N1, N3, P1 | done by the engine integrations today |
+| **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4 | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
+
+### Placement rules are Scatter stages
+
+A Scatter stage has:
+
+- **generators:** tile or face anchors from a TileGrid, a jittered grid hashed per cell, points from
   sites or along curves;
-- modifiers, in order: chance, height, slope, mask, levels, jitter and turn, all pointwise, and
+- **modifiers, in order:** chance, height, slope, mask, levels, jitter and turn, all pointwise, and
   spacing, whose reach is its radius. Spacing reads its neighbours' *candidates*, never their
   results, and breaks ties by priority, then hash, then id, so it agrees across seams;
-- overlap with other Scatter stages resolved by priority;
-- an `Emit` that binds each point's `kind` to an engine asset: a `PackedScene` in Godot, a scene
+- **overlap with other Scatter stages** resolved by priority;
+- **a binding** from each point's `kind` to an engine asset: a `PackedScene` in Godot, a scene
   handle in Bevy.
 
+Today a Scatter stage has the jittered-grid generator with chance, height, slope, a margin from
+sites and spacing. The full modifier chain, blocking across stages and the asset binding are **not
+built yet** ([#95](https://github.com/AntonTegnelov/wave_forge/issues/95),
+[#96](https://github.com/AntonTegnelov/wave_forge/issues/96),
+[#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
+
 A placement's id is `InstanceId { chunk, local }` (`src/products.rs`): the chunk coordinate and a
-64-bit local id packing the stage (15 bits), a slot (16 bits) and the cell's index (32 bits), so it
-is positional, never an ordinal, and fits an engine's signed 64-bit integer. The chunk is a
-coordinate rather than the 32-bit chunk hash, which two chunks can share. The tile placements of the
-WFC stage use stage 0. (N3, N5, G7.)
+64-bit local id packing the stage (15 bits), a slot (16 bits) and the cell's index (32 bits). It is
+positional, never an ordinal, so inserting content never shifts another id (Elite's authored bodies
+shifted procedural ids), and it fits an engine's signed 64-bit integer. The chunk is a coordinate
+rather than the 32-bit chunk hash, which two chunks can share. The tile placements of a WFC world
+use stage 0. (N3, N5, G7.)
 
-**The Godot side authors packs through GDScript resources** that hand their engine-neutral fields to
-the library's serde types and save RON; the Bevy side uses the same types with `Reflect` derived
-behind an optional feature. The decision and its reasons are in
-[#41](https://github.com/AntonTegnelov/wave_forge/issues/41).
+## How WFC joins: one bounded world per site
 
-## 5. Where the current generator does not fit yet
+A surface world's heights vary far more than a one-chunk-tall WFC lattice can span, and repairs are
+order-independent only in worlds one chunk tall ([world.md](world.md#what-determinism-means-here)).
+So the Solve stage solves each site as its own bounded WFC world, the size of its footprint in
+chunks, seeded from the world seed and the site's region, with the module set's boundary rules at its
+edges, and an engine places it at the site's levelled height. Sites are two chunks apart, so no WFC
+seam ever joins two towns, and a site's town is a pure function of the site: a small region job,
+the same in whatever order it is asked for.
 
-**Repairs.** When a chunk cannot be solved, a repair re-solves it together with its neighbours and
-may rewrite neighbours that were already solved, which on its own is a same-level mutation that
-makes tiles depend on generation order. A repair is now a pure level of the WFC stage: it waits
-until every chunk it can see has had its first attempt and the failed ones of lower repair classes
-around it are repaired, so it sees the same neighbourhood in any order
-([architecture.md §6.3](architecture.md)). The city comes out tile for tile the same generated at
-once or chunk by chunk in either direction, repairs included; the cost is a declared reach of
-`REPAIR_REACH` (3) chunks beyond a request and slower ticks at the 90th percentile
-([solver-fit.md](solver-fit.md)). Two limits stay: worlds more than one chunk tall, and a chunk
-evicted from a repaired neighbourhood, which comes back without the repair.
+The Solve stage reaches the solver through the `TownSolver` seam, because the stage runtime runs on
+the CPU while a town needs a GPU solver on the thread that owns its device.
 
-**Variable-length GPU output.** Atomic appends make the order of emitted points depend on thread
-timing. Points are compacted by prefix sums in a fixed order and checked against a CPU reference.
+WFC inside masks painted or computed by other stages (a Rules stage writing a Prior) is the general
+form, and is **not built yet** ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91)). The
+infinite city of the MVP keeps the streamed WFC world of [world.md](world.md).
 
-**Edits invalidation.** An edit dirties the keys it touches and every dependant within the summed
-reach. Neither LayerProcGen nor PCG has this, so it is new work.
+## What stays hard
 
-## 6. Four tiers over one pack
+- **Variable-length GPU output.** Atomic appends make the order of emitted points depend on thread
+  timing, so points on the GPU must be compacted by prefix sums in a fixed order and checked against
+  the CPU reference ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)).
+- **Edits invalidation.** An edit dirties the keys it touches and every dependant within the summed
+  reach. Neither LayerProcGen nor Unreal PCG has this, so it is new work
+  ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)).
+- **Inherently global nodes.** Normalising, auto-levelling and whole-map erosion cannot run on an
+  infinite world. A pack will refuse them there, naming the node, and finite imported heightmaps
+  are how such results come in. Today no stage kind is global, so there is nothing to refuse yet.
 
-A **pack** (`*.world.ron`) is a set of named stages that reference each other by id, the model
-Minecraft's datapacks use. It is validated at load: acyclic, every reach declared, no inherently
-global node in an infinite world (normalise, auto-level, whole-map erosion are refused with the
-node's name; finite imported heightmaps are how their results come in), and a schema version with
-migrations. The same pack runs in Godot and in Bevy.
+## Four tiers over one pack
+
+A **pack** (`*.world.ron`) is a set of named stages that reference each other by name, the model
+Minecraft's datapacks use. It is validated at load and runs the same in Godot and in Bevy. Migrations
+between pack versions are **not built yet**; a pack of another version is refused.
 
 - **Tier 0, presets.** A pack with three to six parameters exposed in the inspector. Brushes and
   splines write Edits. (N1, N2, N10.)
 - **Tier 1, stack.** An ordered list of stages. Each row shows its kind, cell size, reach and inputs,
   "the row above" by default; rows hold inline modifier chains, mask stacks and rule lists, which is
-  where MapMagic's layered nodes and ProtonScatter's modifier stack succeed
-  ([ProtonScatter modifiers](https://github.com/HungryProton/scatter/wiki/Modifiers)). The stack
-  compiles to the graph; it is a view of it, not a second engine. (N2, N3, N4, N7.)
+  where MapMagic's layered nodes and ProtonScatter's modifier stack succeed. The stack is a view of
+  the graph, not a second engine. (N2, N3, N4, N7.)
 - **Tier 2, graph.** The pack text is the graph. A read-only DAG view ships first; a graph editor
   follows only if the stack proves too limiting, because an editor costs twice (Bevy has no graph
   widget). (G1 to G8.)
@@ -214,18 +180,28 @@ migrations. The same pack runs in Godot and in Bevy.
   processor), for logic that is code in every studied game: Minecraft's feature types, Qud's zone
   builders, Deep Rock Galactic's cave graphs. (G2, G5, G8.)
 
+Only the pack text exists today. Presets, the stack and the viewers are
+[#48](https://github.com/AntonTegnelov/wave_forge/issues/48); the Godot side authors packs through
+GDScript resources that hand their engine-neutral fields to the library's serde types and save RON,
+and the Bevy side uses the same types with `Reflect` behind an optional feature
+([#41](https://github.com/AntonTegnelov/wave_forge/issues/41) records the decision).
+
 **Debugging is part of the product.** Per-stage viewers (a field heatmap with a value probe, a
 palette for categorical fields, mask overlays, point glyphs that show which modifier rejected each
 candidate, curve and graph overlays), a reach pyramid, the WFC stepper with a contradiction heatmap,
 per-stage timings, a rejection log for region jobs, `locate(kind)`, a contact sheet over many seeds,
-and an **order-diff test** that generates the same world in shuffled chunk orders and compares
-product hashes. (N5, P6, and the verification gate in [user-stories.md](user-stories.md#the-verification-gate).)
+and an **order-diff test** that generates the same world in different chunk orders and compares the
+results. (N5, P6, and the [verification gate](../product/user-stories.md#the-verification-gate).)
+The order-diff tests exist (`tests/stages.rs`, `wfc-devtools/tests/order_diff.rs`); per-stage
+timings are [#87](https://github.com/AntonTegnelov/wave_forge/issues/87), and the viewers come with
+authoring.
 
-## 7. Scope
+## Scope
 
 "Build any game's generation" means covering the techniques those games use, not reproducing any of
 them bit for bit; Valheim's floating-point quirks and Noita's float random numbers make exact
-reproduction impossible anyway.
+reproduction impossible anyway. The project's scope and non-goals are in
+[vision.md](../product/vision.md#non-goals); for stages specifically:
 
 - **Out of scope:** civilisation or history simulation (a Record slot the user fills), runtime
   simulation (falling sand, destruction, fluids, lighting), which belongs to the engine, blending
@@ -234,91 +210,8 @@ reproduction impossible anyway.
   portable `f64`).
 - **WFC stays the distinctive stage** but not the centre: fields and scatter are where most of the
   studied games spend their generation, so they are first-class.
-- A claim that a preset is "like" a game is made only after that game's story in
-  [user-stories.md](user-stories.md) is verified.
-
-## 8. Order of work
-
-1. Stable placement ids, `(chunk, local)`.
-2. The stage runtime on the CPU: pack loading and validation, bounded views, the provider-first
-   scheduler and the order-diff test, wrapping the existing WFC as a Solve stage.
-3. The repair-purity prototype and its measurement (§5).
-4. The first slice, a Valheim-like surface world with WFC inside masks: Field (height), Sites, Apply
-   (flatten), Rules (to a Prior), Solve, Scatter and Emit, verified by the order-diff test before the
-   Field stage moves to the GPU. The slice and its test pack are built here; the survival game on top
-   of it lives in its own repository ([roadmap.md](roadmap.md#games-packs-and-repositories)).
-5. Godot authoring resources and the viewers; the Bevy loader.
-6. Later slices, one stage kind each: region jobs (rivers, Qud zones, cave levels), Assemble (jigsaw,
-   room graphs), density volumes (Minecraft and Deep Rock caves), Records and hierarchy (Elite, No
-   Man's Sky).
-
-## 9. The runtime as built
-
-`wave_forge::stages` holds the first part of this design, on the CPU.
-
-- **Packs.** `Pack::parse` reads a RON pack (version 1): a list of named stages. Loading refuses
-  another version, duplicate names, a stage reading a name that does not exist, parameters out of
-  range and cycles, and each error names the stage. `Pack::reach(target)` reports, for every stage
-  `target` depends on, how many cells beyond a column of `target` it has to be generated: the
-  largest sum of reaches along any path.
-- **Stage kinds so far.** Nobody declares a reach by hand; each follows from the parameters.
-  - `Field`: an expression per cell column (constants, fractal value noise, other fields at the
-    same column, sums and products), with reach 0.
-  - `Blur`: another field averaged over a square, whose reach is its radius.
-  - `Sites`: settlement footprints, rectangles of whole chunks, at most one per square region of
-    chunks, placed by the stage's hash stream with an integer existence test and kept one chunk
-    inside their region, so two sites are always two chunks apart. Each site's height is the mean
-    of a height field over its footprint's centre and inner corners, which gives the stage a
-    reach of one region into the height field; reaches can be in chunks and become cells when the
-    runtime knows the chunk size. A chunk's product lists the sites that overlap it, owned by
-    their region.
-  - `Flatten`: a height field levelled to each nearby site's height inside its footprint and
-    blended back over a band of cells, a base field, then sites that read only the base, then an
-    adapted field (§2).
-  - `Solve`: a town on each site, a bounded WFC world of a named rule set the size of the site's
-    footprint, with a selector for its lowest and highest layers, solved whole from a seed of the
-    site's own; a chunk's product is its part of the town and the site's height, or nothing
-    outside every site.
-  - `Scatter`: points of a kind standing on a height field. One candidate per block of cells at a
-    hashed column, with a hashed priority; a candidate passes its own tests (a chance compared as
-    an integer, a height range, a slope limit, a margin from sites) and is kept unless a passing
-    candidate of higher priority lies closer than `apart`. Neighbours are judged by their own
-    tests, never by whether spacing kept them, so the reach is `apart` (plus one cell for the
-    slope) and points keep their distance across seams. Each point has a positional `InstanceId`:
-    its chunk, 15 bits of its stage's salt (checked distinct when the pack loads) and its column.
-    Writing it, the bounded view caught a candidate read a block beyond the declared reach; only
-    candidates within `apart` of the chunk can crowd a point in it, so the others are skipped.
-- **Typed products.** A stage produces a field, a list of sites, a chunk of a town or a list of
-  points, and loading refuses a stage that reads one as another.
-- **Towns behind a seam.** The runtime solves towns through the `TownSolver` trait
-  (`wave_forge::towns`). `WfcTowns` implements it over any `Solver`, one per rule set, handing the
-  solver from town to town; `town_prior` builds a bounded town's prior (a layer selector at the
-  bottom and top, and no tile facing a path out of its sides), which the city's own prior now uses
-  too. A town is solved once, when its first chunk is needed, and kept while a chunk of its region
-  is.
-- **Runtime.** `Runtime::request(focus, target)` works out, from the target backwards, which chunks
-  of every stage the request needs, and drops everything else it held. `run_until_idle` generates
-  what is missing, stage by stage with inputs first, nearest chunk first. A stage reads its inputs
-  only through a `FieldView` bounded by its reach, which returns `StageError::OutOfReach` naming the
-  stage and the reach it would have needed.
-- **Incremental, and on a thread.** `Runtime::request` takes several target stages and returns what
-  it dropped; `step(budget)` generates at most that many products, so a caller can take new
-  requests in between. `StageWorker` owns a runtime on a thread of its own, builds it there
-  (a town solver may own a device that belongs to its thread), steps eight products at a time,
-  and hands every product back shared, with `Generated` and `Dropped` events.
-- **Named hash streams.** Noise draws from `pcg3d` keyed by the world seed, an FNV-1a salt of the
-  stage's name and the octave, so adding, removing or reordering stages changes no other stage.
-- **Order independence**, checked by `tests/stages.rs`: a six-stage pack comes out bit for bit the
-  same over a 4×4-chunk area asked for all at once and one chunk at a time in either raster order.
-
-Fields are one value per cell column on the WFC chunk lattice for now; other lattices, 3D fields
-and the remaining stage kinds come with the slices that need them.
-
-**How WFC joins: one bounded world per site.** A surface world's heights vary far more than one
-chunk-tall WFC lattice can span, and pure repairs are guaranteed only for worlds one chunk tall
-(§5). So the Solve stage of the first slice ([#68](https://github.com/AntonTegnelov/wave_forge/issues/68)) solves each site as its own bounded WFC world, the
-size of its footprint in chunks, seeded from the world seed and the site's region, with the
-module set's boundary rules at its edges, and an engine places it at the site's levelled height.
-Sites are two chunks apart, so no WFC seam ever joins two towns. A site's city is then a pure
-function of the site, a small region job, whatever order it is asked for in. The infinite city of
-the MVP keeps the streaming WFC world it has today.
+- A claim that a preset is "like" a game is made only after that game's story is verified.
+- **The stage runtime runs on the CPU today.** That is a performance tier, not a fallback: the
+  project still requires a GPU ([vision.md](../product/vision.md#non-goals)), towns are solved on
+  one, and a Field stage moves to the GPU when per-stage timings show it should
+  ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)).

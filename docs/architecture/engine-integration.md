@@ -2,9 +2,11 @@
 
 How Wave Forge should fit into Godot and Bevy beyond handing out tile ids: what the library emits,
 where it runs, how each engine consumes it, which engine features it feeds, and how users configure
-it. This is the design the integration work in [roadmap.md](roadmap.md) builds towards. What exists
-today is described in [architecture.md §5](architecture.md#5-dispatch-async-and-threading) and
-[status.md](status.md).
+it. This is the design the integration work builds towards. What the Godot extension and the Bevy
+plugin do today is in [reference/godot.md](../reference/godot.md) and
+[reference/bevy.md](../reference/bevy.md), the order of the remaining work is in
+[roadmap.md](../plan/roadmap.md), and the measurements that shaped the Godot side (multimesh,
+collider and navigation costs) are in [measurements.md](../research/measurements.md).
 
 It was researched in September 2026 against Godot 4.7.2 (4.8 in development), godot-rust 0.5.5 and
 Bevy 0.20.0-rc.1, from the engines' documentation, class references and source at those tags,
@@ -18,7 +20,7 @@ checked a second time against primary sources. How claims are marked:
 Engine versions move quickly. Before building on a claim here, check it against the version you
 are building for.
 
-## 1. The boundary: products, not rendering
+## The boundary: products, not rendering
 
 Wave Forge does not render. It never owns a draw call, a render pass or an engine object. What it
 emits widens from "which tile goes where" to typed, engine-neutral **products**: instance sets,
@@ -42,12 +44,12 @@ What it costs:
 - The public API grows and has to stay stable for two engines.
 - Godot's Forward+ features (SDFGI, decals, fog volumes, texture streaming, compute) cannot be tested
   in the dev container, which only runs Godot's Compatibility renderer
-  ([roadmap.md](roadmap.md#what-stands-between-the-integrations-and-the-criterion)). They stay
+  ([environment.md](../guides/environment.md)). They stay
   unverified until someone runs them on a desktop.
 
-## 2. Products
+## Products
 
-### 2.1 What the library emits
+### What the library emits
 
 Every product is emitted per chunk, in **chunk-local coordinates** (an integer chunk coordinate plus
 local `f32` values), with a stable identity. Chunk-local output is what makes moving the world
@@ -64,12 +66,17 @@ has no built-in floating origin
 | **HeightTile, MaterialTile** (Phase 2) | 2^n+1 height samples with shared edges, minimum and maximum, coarser levels, `u8` material ids | CPU, and a GPU texture when a renderer consumes one |
 | **CoverMap** (Phase 2) | ground-cover type, density and variation per cell | CPU; expanded into blades on the GPU by an engine shader every frame |
 | **Colliders** | heightfield grids; a shape library per prototype (boxes or convex pieces) and the transforms that compose it per chunk; triangle meshes only as a last resort | CPU |
-| **NavSource** | walkable and blocking triangles from the neighbouring chunks as far as a border past the chunk's edges, with the bounds and border to bake with; not snapped, because Godot's map merges the border vertices of neighbouring bakes as they are (measured, §8 C; Bevy's navigation crates not yet) | CPU |
+| **NavSource** | walkable and blocking triangles from the neighbouring chunks as far as a border past the chunk's edges, with the bounds and border to bake with; not snapped, because Godot's map merges the border vertices of neighbouring bakes as they are (measured, see [measurements.md](../research/measurements.md); Bevy's navigation crates not yet) | CPU |
 | **Occluders** | conservative boxes or solid faces per chunk | CPU |
 | **RegionTags** | biome, indoor or outdoor, surface material per walkable face, interior volumes, audio emitter points, place names as translation keys with arguments | CPU |
 | **Splines** (Phase 2) | roads and rivers: control points, width, material | CPU |
-| **SpawnPoints** | kind id, transform, stable id (the chunk coordinate and a local id packing the stage, the cell and a slot, never an ordinal), custom data; produced by Scatter stages ([generation-model.md §4](generation-model.md#4-stage-kinds)) | CPU |
+| **SpawnPoints** | kind id, transform, stable id (the chunk coordinate and a local id packing the stage, the cell and a slot, never an ordinal), custom data; produced by Scatter stages ([stages.md](stages.md#placement-rules-are-scatter-stages)) | CPU |
 | **ChunkHash** | a hash over the products gameplay depends on | CPU |
+
+Built today: TileGrid, InstanceSet (`wave_forge::instance_sets`, for a streamed world and for towns),
+NavSource (`wave_forge::nav_source`), and SpawnPoints as the points of Scatter stages, without
+custom data yet. Colliders are built by the Godot node from a shape the game assigns per module. The
+other products are not built yet; [roadmap.md](../plan/roadmap.md) has their issues.
 
 Configuration that goes with the products rather than being emitted per chunk:
 
@@ -104,7 +111,7 @@ base colour texture and UVs, which every importer honours.
 own assets (a `PackedScene`, a glTF scene, a material, a `FastNoiseLite`). That keeps one model for
 both engines.
 
-### 2.2 How each engine takes them
+### How each engine takes them
 
 | Product | Godot 4.7 | Bevy 0.20 |
 |---|---|---|
@@ -122,9 +129,9 @@ both engines.
 | SpawnPoints | a user `PackedScene`, preloaded with `ResourceLoader.load_threaded_request` | an entity event to a user binding (a glTF scene or a scene function) |
 | ChunkHash | multiplayer agreement and golden checks | the same |
 
-## 3. Where the solver and product kernels run
+## Where the solver and product kernels run
 
-### 3.1 Godot: the solver stays on its own device
+### Godot: the solver stays on its own device
 
 | Option | Verdict |
 |---|---|
@@ -132,6 +139,15 @@ both engines.
 | Godot's main `RenderingDevice` | **Not for the solver.** In 4.7 graphics and compute share one queue (`main_queue`); there is a separate transfer queue for uploads but no compute queue. A batch dispatch that takes tens of milliseconds would serialise with frame rendering. It would also have to run through `RenderingServer.call_on_render_thread`, does not exist on Compatibility, and needs the WGSL kernel translated to SPIR-V by naga and checked against Godot's shader reflection. |
 | A local `RenderingDevice` | **Not for performance.** It creates its own logical device, and its documentation says it "cannot draw to the screen nor share data with the global RenderingDevice" ([RenderingServer.xml](https://raw.githubusercontent.com/godotengine/godot/4.7-stable/doc/classes/RenderingServer.xml)). `sync()` blocks, and driving it from a worker needs `experimental-threads`. Its one real benefit would be leaving wgpu out of the extension binary, which is worth measuring as a size question only. |
 | Wrapping Godot's Vulkan device in wgpu-hal | **No.** It would need external synchronisation of a queue Godot drives, is specific to one graphics API, and offers no way to import buffers. |
+
+A backend over a Godot `RenderingDevice` would save the second device and its allocator, which is
+why the `ComputeBackend` seam exists. It needs the kernel's WGSL translated to SPIR-V (naga can, at
+run time or as a build-time matrix) and Godot's compute API driven from a worker thread. It cannot
+be measured in the dev container: Godot refuses to create any `RenderingDevice` without
+`VK_KHR_swapchain`, which Mesa's dozen does not expose, and lavapipe can check correctness but says
+nothing about speed ([environment.md](../guides/environment.md)). The comparison belongs on a
+desktop Godot, and nothing is built for it before that measurement says it is worth it
+([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
 
 **Product kernels are a separate question.** Products that should stay on the GPU can only be
 shared with Godot's renderer through its **main** `RenderingDevice`, on Forward+ and Mobile:
@@ -156,10 +172,10 @@ needs `Callable::from_sync_fn`, which again needs `experimental-threads`. Which 
 per-chunk writes best (`call_on_render_thread`, the `frame_pre_draw` signal, or a
 `CompositorEffect`) was not settled.
 
-None of this is built before the vertex-shader path for ground cover (§4) has been measured and
+None of this is built before the vertex-shader path for ground cover ([content classes](#content-classes)) has been measured and
 found too slow.
 
-### 3.2 Bevy: shared device, with a risk to measure
+### Bevy: shared device, with a risk to measure
 
 The Bevy plugin builds the generator on Bevy's own `RenderDevice` and `RenderQueue` and polls it
 from systems, which is idiomatic and avoids a second device. The risk is that wgpu has one queue per
@@ -184,16 +200,16 @@ Other Bevy changes the research points to:
 - Keep any render-world kernel in a small, feature-gated module. The render graph was removed in
   0.19 and extraction changed in 0.20, so that API changes every release.
 
-### 3.3 Platforms
+### Platforms
 
 - **Web is out of scope.** Godot's web export is WebGL 2 only, and wgpu's WebGPU backend is not
   available under Emscripten, so there is no GPU compute path, and Wave Forge has no CPU fallback
-  ([vision.md](vision.md#non-goals)).
+  ([vision.md](../product/vision.md#non-goals)).
 - **Mobile needs measurement.** Godot's own documentation calls mobile compute performance
   generally poor, and Vulkan guarantees only 16 KiB of workgroup memory, against the 32 KiB the city
   uses today.
 
-## 4. Content classes
+## Content classes
 
 Each kind of content needs a different treatment. The detail of a house interior, the ground, tall
 grass and a forest cannot share one approach.
@@ -206,9 +222,9 @@ grass and a forest cannot share one approach.
 | **Modular buildings (WFC)** | Near: one shared mesh per prototype and rotation, one InstanceSet per chunk and prototype. Far: a merged ProxyMesh with its own level-of-detail lists, swapped by visibility range. The library emits conservative occluders from solid cells, and colliders from the per-prototype shape library. | instancing, `OccluderInstance3D`, Bevy multi-draw indirect and occlusion culling, SDFGI (`STATIC`) |
 | **Detailed interiors** | Nested SpawnPoints and InstanceSets gated to a near ring, with full physics only there. VoxelGI as an opt-in per bounded structure. | rigid bodies, VoxelGI (opt-in) |
 | **Interactables** | SpawnPoints promoted to user scenes inside a radius, pooled when their chunk is evicted, and persisted as changes keyed by stable id (the pattern of Unreal's Instanced Actors and godot_voxel's persistent items). | `ResourceLoader`, `MultiplayerSpawner` |
-| **Water, roads, decals** | Splines feed the layers below them (flattening, splat, keeping scatter off roads), and the engine draws meshes or splat. Decals need Forward+ or Mobile, so Compatibility gets a mesh or splat path. Water is a sea level plus water tiles, drawn by an engine shader. | decals (optional), fog volumes (Forward+) |
+| **Water, roads, decals** | Splines feed the stages that read them (flattening, splat, keeping scatter off roads), and the engine draws meshes or splat. Decals need Forward+ or Mobile, so Compatibility gets a mesh or splat path. Water is a sea level plus water tiles, drawn by an engine shader. | decals (optional), fog volumes (Forward+) |
 
-### 4.1 The Godot features that were asked about, with Bevy's counterparts
+### The Godot features that were asked about, with Bevy's counterparts
 
 | Feature | What exists | Verdict | Bevy |
 |---|---|---|---|
@@ -225,7 +241,7 @@ grass and a forest cannot share one approach.
 | Visibility ranges (HLOD) | on every `GeometryInstance3D`, with `visibility_parent` | **Use**; the most portable concept in this table | `VisibilityRange` |
 | `DrawableTexture2D` | GPU blits into a texture through texture-blit shaders (`blit_rect`, `blit_rect_multi`, `BlitMaterial`) ([docs](https://docs.godotengine.org/en/stable/tutorials/rendering/drawable_textures.html)) | **Use** for painting masks and splat maps in brushes | a render-to-texture pass |
 
-## 5. Systems other than rendering
+## Systems other than rendering
 
 | System | Godot | Bevy | The library provides |
 |---|---|---|---|
@@ -248,18 +264,19 @@ Multiplayer regeneration relies on the same world coming out on every GPU vendor
 ([#35](https://github.com/AntonTegnelov/wave_forge/issues/35)). If that fails, a server has to send
 tiles instead.
 
-## 6. How users configure it
+## How users configure it
 
-### 6.1 One model, three workflows
+### One model, three workflows
 
-The library owns a **Recipe**, a graph of layers, each a pure function of the seed and a chunk, and
-**Edits**, sparse overrides: height changes, painted masks, per-cell tile overrides, pinned or
-removed placements. Together they produce the products for any region. RON is the file format in
-both engines.
+The library owns the **pack** ([stages.md](stages.md)), a graph of stages, each a pure function of
+the seed and a key, and **Edits**, sparse overrides: height changes, painted masks, per-cell tile
+overrides, pinned or removed placements. Together they produce the products for any region. RON is
+the file format in both engines. Packs exist; Edits are not built yet
+([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)).
 
 - **Runtime generation** streams around focus points.
 - **Editor preview** is the same stream around the editor camera, with a smaller budget and a quick
-  draft first. Preview nodes are never saved; they are rebuilt from the recipe.
+  draft first. Preview nodes are never saved; they are rebuilt from the pack.
 - **Brushes** write Edits. Edits reach WFC as `Prior` overrides, so painted constraints survive
   regeneration.
 - **Bake** writes a bounded region out as ordinary engine content. It either keeps the link (baked
@@ -268,7 +285,9 @@ both engines.
   bake equals what runtime would have produced, which makes it a starting point for a handcrafted
   world.
 
-### 6.2 Godot: tiers of disclosure
+Preview, brushes and bake are [#48](https://github.com/AntonTegnelov/wave_forge/issues/48).
+
+### Godot: tiers of disclosure
 
 - **Tier 0, first run.** A gallery of presets at the top of the inspector, a seed with a reroll
   button (`@export_tool_button`, 4.4+), an instant preview, and configuration warnings that say what
@@ -278,74 +297,56 @@ both engines.
   folded Advanced group for `halo`, `evict_margin` and kernel warming. Fields that do not apply are
   hidden. Fields that force a kernel rebuild (chunk shape, halo, tile count) are marked as such,
   unlike fields that only regenerate.
-- **Tier 2, layers.** A reorderable list of layers in the inspector; a graph editor over the same
-  graph comes later, once real recipes branch.
-- **Tier 3, experts.** Signals and per-chunk product hooks in GDScript, a custom-WGSL layer, and the
-  Rust crate. GDScript is not offered as a generation layer: it would run on the main thread,
+- **Tier 2, stages.** A reorderable list of stages in the inspector; a graph editor over the same
+  graph comes later, once real packs branch.
+- **Tier 3, experts.** Signals and per-chunk product hooks in GDScript, a custom-WGSL stage, and the
+  Rust crate. GDScript is not offered as a generation stage: it would run on the main thread,
   outside the GPU path and outside the determinism guarantee.
 
-The shape of nodes and resources: a `WaveForgeWorld` node (following the current camera by default)
-holds a pack of stages ([generation-model.md](generation-model.md)): for example a height Field (a
+Today the extension has two nodes: `WaveForgeWorld` for a streamed WFC world and `WaveForgeStages`
+for a pack ([reference/godot.md](../reference/godot.md)). Their properties are grouped in the
+inspector, their doc comments become Godot's own help through godot-rust's `register-docs` feature,
+and a scene can name its files and let a node start on its own. The target shape is one node
+following the current camera by default and holding a pack: for example a height Field (a
 `FastNoiseLite` and a `Curve`), a Sites stage for settlements, a WFC Solve stage (modules authored as
-a `MeshLibrary`, which 4.7 gives a dedicated editor), and Scatter stages for placement. The pack is
-authored through GDScript resources that hand their engine-neutral fields to the library's types and
-save RON ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
+a `MeshLibrary`, which 4.7 gives a dedicated editor), and Scatter stages for placement.
 
-**Placing your own scenes by rule is the headline feature.** A placement rule is a Scatter stage:
-generators (tile or face anchors, a jittered grid, points from sites or curves) and an ordered chain
-of modifiers (chance, height, slope, mask, levels, jitter, turn, spacing), with an Emit that binds
-each point's kind to a `PackedScene` and a render mode: Auto, MultiMesh or Nodes. In Auto, a static
-single-mesh scene becomes chunked MultiMeshes, and a scene with scripts or bodies is instantiated as
-real nodes, optionally promoted from instance to node as the player approaches. Spacing reads its
-neighbours' candidates, so it agrees across chunk seams.
+**Placing your own scenes by rule is the headline feature.** A placement rule is a Scatter stage
+([stages.md](stages.md#placement-rules-are-scatter-stages)) whose points bind to a `PackedScene` and
+a render mode: Auto, MultiMesh or Nodes. In Auto, a static single-mesh scene becomes chunked
+MultiMeshes, and a scene with scripts or bodies is instantiated as real nodes, optionally promoted
+from instance to node as the player approaches. The binding is
+[#44](https://github.com/AntonTegnelov/wave_forge/issues/44).
 
 Brushes follow Terrain3D: a toolbar at the side of the 3D viewport, an `EditorDock` (4.6+), input
 through `_forward_3d_gui_input` with a decal cursor, one `EditorUndoRedoManager` action per stroke
 storing the Edits it changed, and the stroke logic in Rust. A scene brush mirrors 4.7's 2D scene
 painting in 3D.
 
-**Rust resource classes on Godot's loader threads.** A spike (Godot 4.7.2, godot-rust 0.5.5)
-defined a recipe resource holding layer resources, each layer holding a `FastNoiseLite`, saved one
-as `.tres` and loaded it back. On the main thread it loads correctly, sub-resources and noise
-settings included. Through `ResourceLoader.load_threaded_request`, godot-rust panics inside Godot's
-loader thread ("attempted to access binding from different thread than main thread") and the
-**whole process aborts**, because the panic cannot unwind across the engine. That is not about
-nesting (godot-rust issue #610 describes it that way): a flat Rust resource aborts the same way,
-with or without sub-threads. With godot-rust's `experimental-threads` feature every case loads
-correctly, and the node's own check runs as before (Godot's slowest frame 0.34 ms, no late
-frames; the check printed that figure as a 99th percentile, but Godot publishes its process time
-only as the slowest frame of each second, see §8 A). A game that loads scenes in the background, as the loading guidance recommends, would
-crash on any scene holding a Rust resource unless that feature is on. So the recipe resources are
-either GDScript resources the Rust side reads, which Godot's loader handles like any other script,
-or Rust classes with `experimental-threads`, whose soundness godot-rust does not yet promise. The
-choice is the owner's; GDScript resources are the conservative one.
-
-The extension already has the basics of that: godot-rust's `register-docs` feature turns the doc
-comments into Godot's own help and tooltips, the `.gdextension` gives the node an icon and asks for
-Godot 4.7, the inspector groups the node's properties into Rules, World, Streaming and Advanced,
-and a scene can name a rule file and let the node start on its own (`rules_file`,
-`start_on_ready`) instead of calling `load_rules` and `start` from a script.
+**Packs are authored through GDScript resources, not Rust resource classes.** A spike (Godot 4.7.2,
+godot-rust 0.5.5) defined a Rust resource holding stage resources, each holding a `FastNoiseLite`,
+saved one as `.tres` and loaded it back. On the main thread it loads correctly, sub-resources and
+noise settings included. Through `ResourceLoader.load_threaded_request`, godot-rust panics inside
+Godot's loader thread ("attempted to access binding from different thread than main thread") and the
+**whole process aborts**, because the panic cannot unwind across the engine. It is not about
+nesting (godot-rust issue #610 describes it that way): a flat Rust resource aborts the same way.
+With godot-rust's `experimental-threads` feature every case loads, but godot-rust does not yet
+promise that feature is sound, and a game that loads scenes in the background, as Godot's loading
+guidance recommends, would crash on any scene holding a Rust resource without it. So pack resources
+are GDScript resources that hand their engine-neutral fields to the library's serde types and save
+RON; Godot's loader handles them like any other script. Moving to Rust resource classes is recorded
+as an option once godot-rust makes threaded access stable
+([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
 
 Distribution goes through the **Godot Asset Store**, which replaced the Asset Library on 2026-05-22
 and is integrated in 4.7; the Asset Library is deprecated and will become read-only
-([announcement](https://godotengine.org/article/introducing-the-godot-asset-store/)).
+([announcement](https://godotengine.org/article/introducing-the-godot-asset-store/)). Publishing
+there is the owner's alone ([contributing.md](../guides/contributing.md)).
 
-**Packs of stages in Godot.** `WaveForgeStages` is the node for a pack
-([generation-model.md](generation-model.md)): `pack_file`, the rule files its Solve stages name,
-the stages to generate, a seed, a chunk shape and a cell size. `start()` runs the stages on a
-thread of its own, where a town solver's GPU device is built too, and `follow(position)` asks for
-the chunks around the player. It gives each product as Godot data: `field_values`, `sites`, `town`
-(tiles and the site's height), `town_instance_sets` (the same MultiMesh layout as `instance_sets`,
-raised to the site's height) and `point_sets` (MultiMesh buffers per kind, standing on the field),
-with `stage_ready`, `stage_dropped` and `generation_failed` signals. Turning a field into a terrain
-mesh and a collider is the game's for now. In the check (`verify_stages.gd`, headless Godot 4.7.2,
-release, dozen on an RTX 3070) the valley's 49 chunks around a town, towns included, arrive in
-about 16 s from a cold start and the node's own time per frame is 0.02 ms at the 99th percentile.
-
-### 6.3 Bevy
+### Bevy
 
 Bevy has no editor: `bevy_editor_prototypes` is archived, and a first-party inspector is in
-progress for 0.21. So in Bevy:
+progress for 0.21. So in Bevy, as a target:
 
 - a world is `commands.spawn(WaveForgeWorld(asset_server.load("city.world.ron")))`, with required
   components for its status (loading, compiling, ready, failed) and statistics;
@@ -354,22 +355,20 @@ progress for 0.21. So in Bevy:
   context, so hot reloading works (Bevy's own RON loader arrives in 0.21);
 - optional `inspector` and `tools` features add egui panels, and brushes through picking and gizmos.
 
+Today the plugins take their configuration in code: `WaveForgePlugin` for a streamed WFC world and
+`WaveForgeStagesPlugin` for a pack, with a closure that builds the stage runtime
+([reference/bevy.md](../reference/bevy.md)). A town solver builds a GPU device of its own on the
+stages' thread rather than sharing Bevy's; whether it should share is the same measurement as the
+solver's ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
+
 Brushes, bake and preview docks exist only in Godot, because Bevy has no editor to host them. That
 is a deliberate, temporary exception: the Edits format and the brush logic live in the library, so
 Bevy gets the same tools once its editor can host them.
 
-**Packs of stages in Bevy.** `WaveForgeStagesPlugin` (`wave_forge_bevy::stages`) takes the stages
-to generate, where chunks and cells sit in Bevy's world, and a closure that builds the runtime.
-It runs the stages on a thread of their own through the same `StageWorker` the Godot node uses,
-asks for the chunks around every `GenerationFocus`, and sends `StageReady`, `StageDropped` and
-`StagesFailed` messages; the `WaveForgeStages` resource reads the products and places points in
-Bevy's world. A town solver builds its GPU device on that thread, a device of its own rather than
-Bevy's; whether towns should share Bevy's device is the same measurement as the solver's
-([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
+### Noise that means the same in both engines
 
-### 6.4 Noise that means the same in both engines
-
-Godot's `FastNoiseLite` is the default noise source in Godot. Its `Noise` base class has no
+This is the design for [#45](https://github.com/AntonTegnelov/wave_forge/issues/45); none of it is
+built yet. Godot's `FastNoiseLite` is the default noise source in Godot. Its `Noise` base class has no
 overridable sampling, so a custom noise subclass cannot occur.
 
 The library defines a `NoiseConfig` that mirrors Godot's resource field for field: its enum order,
@@ -385,12 +384,12 @@ library offers `sample_height()` so gameplay code does not resample noise itself
 Modules and props for Bevy are authored in Blender and exported as glTF, with Wave Forge metadata in
 glTF extras, which Godot's importer reads as well.
 
-## 7. Where the engines have to differ
+## Where the engines have to differ
 
 Every concept above lives in the library, and integrations map it. These are the places where the
 engines make that impossible or pointless:
 
-1. **Editor tools exist only in Godot**, because Bevy has no editor (§6.3).
+1. **Editor tools exist only in Godot**, because Bevy has no editor ([Bevy](#bevy)).
 2. **Occluders are used only by Godot.** Bevy culls from the depth buffer.
 3. **GPU-resident products travel differently.** Godot needs its main `RenderingDevice` (Forward+ or
    Mobile; MultiMesh buffers from 4.4, meshes from 4.8); Bevy uses its render world. The product
@@ -404,108 +403,9 @@ engines make that impossible or pointless:
    target Bevy 0.19; Godot has them built in. The integration tracks Bevy 0.20 for device sharing,
    so the adapter crates wait until those crates move.
 
-## 8. Order of work
+## Open questions
 
-The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
-
-- **A, with the MVP walk** ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)). Only the products the walk needs: InstanceSet with stable ids, the
-  per-prototype collider library, level-of-detail lists for the exported module meshes, and a
-  collider ring smaller than the visual ring, applied in Godot through `RenderingServer` and
-  `PhysicsServer3D` in one call per chunk. Measured here, on Compatibility and Jolt: the main-thread
-  cost of creating a chunk's colliders (node path against server path, shapes added before or after
-  `body_set_space`), the node path against the server path for visuals, and whether Compatibility
-  applies supplied levels of detail.
-
-  InstanceSets exist (`wave_forge::instance_sets`, `WaveForgeWorld.instance_sets`), and the visual
-  paths are measured. Drawing a city chunk of 8×8×8 cells costs Godot's thread about 7 ms either way
-  (13 chunks, Compatibility renderer on the RTX 3070, `render_city.sh`): computing the placements is
-  0.09 ms in the library against a GDScript loop, and almost all the rest is
-  `RenderingServer.multimesh_allocate_data` at about 280 µs per multimesh, against about 6 µs for
-  creating one, setting its buffer or creating its instance. Reusing multimeshes does not help on
-  this stack: a pool of 25 multimeshes of 512 instances, refilled per chunk with padded buffers and
-  `multimesh_set_visible_instances`, cost 13.9 ms a chunk against 7.3 ms for fresh ones (20 chunks,
-  same renderer). Every write to a buffer costs a few hundred microseconds here, more for one a
-  draw has used, which points at the per-call cost of Compatibility on Mesa's OpenGL-on-Direct3D 12
-  translation rather than at allocation as such. The lever that holds on any driver is fewer calls:
-  one merged mesh per chunk instead of one multimesh per module, which Godot's own GPU
-  optimization guidance recommends for static geometry, traded against the memory that instancing
-  saves. Which wins, and whether Forward+ behaves differently, has to be measured on a desktop.
-
-  Colliders are built by the node itself (`set_collision_shape`, `collider_radius`): one static
-  body per chunk within the radius, a shape per instance, turned and centred as the models are
-  but unscaled, with a ray's hit mapped back to the instance's id (`collider_instance`). How they
-  are built was measured (headless Godot 4.7.2, 20 chunks of 200 boxes): through `PhysicsServer3D`
-  with every shape added before the body joins the space, 0.12 ms a chunk on Jolt and 0.16 ms on
-  Godot Physics; the body joining the space first, 3.1 ms on Jolt, which rebuilds the compound per
-  shape, and 0.08 ms on Godot Physics; as `StaticBody3D` and `CollisionShape3D` nodes, 1.0 ms and
-  0.68 ms. So the node adds every shape first. In the Godot check, with 512 boxes per chunk,
-  Godot's process time stays at 1.4 ms at worst.
-
-  Godot's `Performance.TIME_PROCESS` is the slowest frame of the last second, not the last frame's
-  time: `main.cpp` keeps the maximum and publishes it once a second (4.7.2). A percentile taken over
-  it per frame is the slowest frame. So the node times its own `process` every frame and reports the
-  median, 99th percentile and maximum in `stats()`, and the check bounds both: Godot's slowest frame
-  under 8 ms, and the node's own time under 2 ms at the 99th percentile.
-- **B, hardening.** The device measurement of §3.2 on desktops ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), InstanceSet and ChunkHash in the
-  golden worlds, the Godot improvements of §6.2 ([#40](https://github.com/AntonTegnelov/wave_forge/issues/40)), and the godot-rust resource spike ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
-- **C, systems.** NavSource with its halo and asynchronous baking, measuring bake time per chunk
-  ([#42](https://github.com/AntonTegnelov/wave_forge/issues/42)); RegionTags with the audio and localisation helpers ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)); SpawnPoints with
-  preloading, pooling and saved edits ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)); and the Bevy adapter crates once the ecosystem reaches Bevy 0.20.
-
-  Godot's navigation is built by the node itself (`navigation_radius`, `navigation_template`, the
-  `navigation_ready` signal): one region per chunk within the radius, baked from the same shapes as
-  the colliders. A chunk's source is the library's NavSource (`wave_forge::nav_source`): its own
-  shapes and its neighbours' as far as the border past its edges and a cell more, as plain arrays,
-  so Godot's thread only hands them over and the bake runs on the navigation server's threads. The
-  border is Recast's own padding for tiles, the agent's radius in whole cells and three more. The
-  library refuses a world more than one chunk tall, whose stacked chunks would bake floors that do
-  not agree, and a border wider than a chunk. Measured in the Godot check (headless Godot 4.7.2,
-  release, 8×8×8 chunks of 2-unit boxes, agent radius 0.5, height 1.5, the map's default 0.25
-  cell, so a border of 1.25): a bake takes 33 ms from asking to its mesh being in place, median and
-  maximum alike; preparing one costs Godot's thread 0.53 ms median and 2.0 ms at most, putting a
-  finished mesh in its region 0.002 ms; the 9 chunks around the player hold 8082 polygons, and a
-  path across two seams is as long as the straight line (32.0). A border of two cells, 4 units,
-  gave the same polygons with bakes up to 49 ms. Four things this settled:
-
-  - The source's indices go in Recast's winding, counter-clockwise, while Godot's faces are
-    clockwise; `NavigationMeshSourceGeometryData3D.add_faces` swaps each triangle's second and third
-    index for its callers, and `set_indices` and `append_arrays` take them as they are. Unswapped,
-    Recast takes the underside of each face for its top: the first bakes walked on the bottom of
-    the ground's top cell, 1.5 units under its surface, cut into islands at every chunk edge.
-  - The source is handed over with `set_vertices` and `set_indices`, which keep the arrays given;
-    `append_arrays` copies them again and rewrites every index, and preparing a bake with it cost
-    0.78 ms median.
-  - The regions merge by vertex without any snapping: the map joins the border vertices two
-    neighbouring bakes produce both at the default 0.25 cell and at 0.2, which binary floating point
-    cannot hold exactly. At 0.2 Godot warns that `border_size` loses precision although 4.0 is
-    exactly 20 cells; the warning's `fmod` test is what is inexact.
-  - At most one bake is prepared per frame, nearest first. When the player crosses into a chunk,
-    several become due at once, and preparing them together cost a 15 ms frame.
-
-  The shapes' triangles come from their filled debug meshes, the one triangle form every `Shape3D`
-  offers. A shape shown through a `CollisionShape3D` with `debug_fill` off has none, and the node
-  reports that as an error naming the module. Reading each shape type as Godot's own source parser
-  does would lift that limit.
-
-  With navigation on, Godot's slowest frame in the check is 3.4 ms, and the node's own time is
-  0.56 ms per frame at the 99th percentile.
-
-  `stats()` also breaks down the node's slowest frame since the start. In four runs of the check
-  it was 2.6 to 4.7 ms: bodies for 4 to 9 chunks at about 0.3 ms each (the collider radius of 1
-  bounds them at 9) and one bake prepared (1.5 to 1.9 ms), with the signals under 0.2 ms. Both parts
-  are bounded, so a slower frame than that points outside the node; one run in six before the
-  breakdown existed measured 12 ms.
-- **D, Phase 2 layers.** `NoiseConfig` with the FastNoiseLite port and golden tests ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45));
-  HeightTile, MaterialTile and CoverMap with reference grass and wind shaders in both engines
-  ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)); scatter from density with integer existence decisions; splines; merged far proxies and
-  generated occluders ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)).
-- **E, authoring** ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). The recipe resources and layer list, the brush plugin, bake (linked and
-  detached), and importing a `MeshLibrary` as WFC modules; a graph editor last.
-- **F, GPU-resident products**, only where a measurement demands them: product kernels on Godot's
-  main `RenderingDevice` (after checking naga's SPIR-V on lavapipe), 4.8 mesh buffers, Bevy
-  render-world writes.
-
-Open after this research: the cost of rebuilding occluders while streaming, the speed of
+These were left open by the research: the cost of rebuilding occluders while streaming, the speed of
 vertex-shader grass on Compatibility and Forward+, the best hook for writes on Godot's main
 `RenderingDevice`, Bevy's occlusion culling on Direct3D 12 and Metal in 0.20, and one key scheme for
 localisation catalogues shared by Godot's `.po`/`.csv` and Fluent's `.ftl`.
