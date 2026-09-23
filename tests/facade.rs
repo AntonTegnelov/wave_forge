@@ -268,6 +268,30 @@ fn every_batch_a_run_dispatches_has_a_kernel_to_warm() {
 }
 
 #[test]
+fn a_chunk_of_the_second_parity_is_solved_without_a_halo() {
+    let mut world = scripted();
+
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    world.run_until_idle().expect("the scripted solver");
+
+    // Its face neighbours are all fixed by then, so a halo would only add diagonal cells squeezed
+    // between two of them; the first parity keeps its halo, which leaves the second room to finish.
+    let solver = world.solver();
+    let (second_ids, _) = &solver.batches[1];
+    assert!(
+        second_ids.iter().all(|id| {
+            extent()
+                .chunks()
+                .into_iter()
+                .any(|chunk| chunk.id() == *id && chunk.parity() == 1)
+        }),
+        "the second batch is the second parity"
+    );
+    assert_eq!(solver.shapes[0].1, CHUNK.region(extent().halo(1)));
+    assert_eq!(solver.shapes[1].1, CHUNK.region(extent().halo(0)));
+}
+
+#[test]
 fn a_repair_reports_every_chunk_it_rewrote() {
     let mut world = scripted();
 

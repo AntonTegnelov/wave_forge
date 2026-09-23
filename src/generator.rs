@@ -122,7 +122,8 @@ impl<S: Solver> WorldGenerator<S> {
             self.solver.max_batch(),
         );
         if !batch.is_empty() {
-            return self.start(&batch, self.config.halo, false);
+            let halo = self.first_attempt_halo(batch[0].parity());
+            return self.start(&batch, halo, false);
         }
         // Nothing left to generate, so a chunk that failed gets its repair: the same region again
         // with its halo released, which lets it rewrite the neighbouring cells it covers.
@@ -319,15 +320,36 @@ impl<S: Solver> WorldGenerator<S> {
         let largest = scheduler::largest_batch(radius, &self.config.extent)
             .min(self.solver.max_batch())
             .next_power_of_two();
-        let first = self.region_shape(self.config.halo);
+        let mut firsts = vec![
+            self.region_shape(self.first_attempt_halo(0)),
+            self.region_shape(self.first_attempt_halo(1)),
+        ];
+        firsts.dedup();
         let first_attempts = std::iter::successors(Some(1u32), |&n| (n < largest).then_some(n * 2))
-            .map(|regions| (regions, first));
+            .flat_map(move |regions| {
+                firsts
+                    .clone()
+                    .into_iter()
+                    .map(move |shape| (regions, shape))
+            });
         let width = self.repair_width();
         let repairs = self
             .repair_halos()
             .into_iter()
             .map(|halo| (width, self.region_shape(halo)));
         first_attempts.chain(repairs).collect()
+    }
+
+    /// The halo a first attempt at a chunk of `parity` is solved with.
+    ///
+    /// A chunk of the first parity is solved before its neighbours, and its halo is what leaves
+    /// them room to complete its borders. A chunk of the second parity is solved after all its face
+    /// neighbours, whose cells a halo could only pin as they are; what a halo adds is its diagonal
+    /// corner cells, squeezed between two fixed neighbours, and those fail chunks that would
+    /// otherwise solve. Measured on the city over five worlds: 176 repairs instead of 280 and a
+    /// third less solver time (docs/solver-fit.md).
+    const fn first_attempt_halo(&self, parity: u8) -> u32 {
+        if parity == 1 { 0 } else { self.config.halo }
     }
 
     /// How many seeds one repair tries: as many as the policy asks for and the solver takes.
