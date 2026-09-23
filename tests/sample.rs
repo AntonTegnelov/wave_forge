@@ -172,8 +172,5 @@ fn a_world_map_of_256_by_256_tiles_is_quick_to_read() {
 
     println!("an atlas of 256 by 256 world tiles: {ms:.0} ms");
     assert_eq!(atlas.len(), 256 * 256);
-    assert!(
-        atlas.iter().any(|&c| c == 0.0) && atlas.iter().any(|&c| c == 1.0),
-        "sea and land"
-    );
+    assert!(atlas.contains(&0.0) && atlas.contains(&1.0), "sea and land");
 }
