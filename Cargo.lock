@@ -1376,6 +1376,8 @@ dependencies = [
 name = "wave_forge"
 version = "0.1.0"
 dependencies = [
+ "ron",
+ "serde",
  "thiserror",
  "wfc-core",
  "wfc-gpu",

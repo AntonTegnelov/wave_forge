@@ -1,0 +1,491 @@
+//! Generating a pack's stages around focus points, providers first.
+//!
+//! A stage's output for a chunk is a pure function of the world seed, the stage, the chunk and what
+//! its inputs hold within the stage's reach of that chunk (docs/generation-model.md §2). The runtime
+//! makes that hold by construction: before a stage runs for a chunk, every chunk of its inputs that
+//! the chunk's area grown by the reach overlaps is generated, and the stage reads them only through
+//! a view bounded by that area. Whatever order chunks are asked for in, each is computed from the
+//! same inputs and comes out the same.
+
+use super::pack::{Expr, Pack, StageKind};
+use crate::scheduler::FocusPoint;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+use wfc_core::ChunkCoord;
+use wfc_core::hash::pcg3d;
+
+/// A value per cell column of one chunk.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Field {
+    pub chunk: ChunkCoord,
+    /// Columns along the lattice's x and y.
+    pub size: [u32; 2],
+    /// Row by row, x fastest.
+    pub values: Vec<f32>,
+}
+
+impl Field {
+    /// The value of the column at `x`, `y` within the chunk.
+    ///
+    /// # Panics
+    /// If the column is outside the chunk.
+    #[must_use]
+    pub fn get(&self, x: u32, y: u32) -> f32 {
+        assert!(x < self.size[0] && y < self.size[1], "column ({x}, {y})");
+        self.values[(y * self.size[0] + x) as usize]
+    }
+}
+
+/// Why generating a stage failed.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum StageError {
+    #[error("no stage is named {0:?}")]
+    UnknownStage(String),
+    /// A stage read an input further from its chunk than its reach allows. That is a bug in the
+    /// stage: its reach has to be declared as large as what it reads.
+    #[error(
+        "stage {stage:?} read {input:?} {needed} cells beyond its chunk, but its reach is {reach}"
+    )]
+    OutOfReach {
+        stage: String,
+        input: String,
+        reach: u32,
+        needed: u32,
+    },
+}
+
+/// One input of a stage, readable only within the stage's reach of the chunk being generated.
+pub struct FieldView<'a> {
+    stage: &'a str,
+    input: &'a str,
+    reach: u32,
+    size: [u32; 2],
+    /// The columns the view may read, in world columns, inclusive.
+    min: [i64; 2],
+    max: [i64; 2],
+    chunks: BTreeMap<(i32, i32), &'a Field>,
+}
+
+impl FieldView<'_> {
+    /// The input's value at the world column `x`, `y`.
+    ///
+    /// # Errors
+    /// [`StageError::OutOfReach`] if the column is further from the chunk than the reach.
+    pub fn get(&self, x: i64, y: i64) -> Result<f32, StageError> {
+        let beyond =
+            |value: i64, axis: usize| (self.min[axis] - value).max(value - self.max[axis]).max(0);
+        let outside = beyond(x, 0).max(beyond(y, 1));
+        if outside > 0 {
+            return Err(StageError::OutOfReach {
+                stage: self.stage.to_owned(),
+                input: self.input.to_owned(),
+                reach: self.reach,
+                needed: self.reach + u32::try_from(outside).expect("a small distance"),
+            });
+        }
+        let (cx, cy) = (i64::from(self.size[0]), i64::from(self.size[1]));
+        let chunk = (
+            i32::try_from(x.div_euclid(cx)).expect("a chunk coordinate"),
+            i32::try_from(y.div_euclid(cy)).expect("a chunk coordinate"),
+        );
+        let field = self
+            .chunks
+            .get(&chunk)
+            .expect("the runtime generates every chunk within reach first");
+        Ok(field.get(x.rem_euclid(cx) as u32, y.rem_euclid(cy) as u32))
+    }
+}
+
+/// Generates a pack's stages for the chunks focus points ask for.
+pub struct Runtime {
+    pack: Arc<Pack>,
+    seed: u64,
+    /// Columns per chunk along the lattice's x and y.
+    size: [u32; 2],
+    /// Which chunks of each stage the current request needs.
+    needed: BTreeMap<usize, BTreeSet<ChunkCoord>>,
+    focus: Vec<FocusPoint>,
+    products: BTreeMap<(usize, ChunkCoord), Arc<Field>>,
+}
+
+impl Runtime {
+    /// A runtime for `pack`, with chunks of `size` columns.
+    #[must_use]
+    pub fn new(pack: Arc<Pack>, seed: u64, size: [u32; 2]) -> Self {
+        Self {
+            pack,
+            seed,
+            size,
+            needed: BTreeMap::new(),
+            focus: Vec::new(),
+            products: BTreeMap::new(),
+        }
+    }
+
+    /// Asks for `target` in the chunks around `focus`, replacing the previous request. What the
+    /// new request does not need is dropped.
+    ///
+    /// # Errors
+    /// [`StageError::UnknownStage`] if no stage is named `target`.
+    pub fn request(&mut self, focus: &[FocusPoint], target: &str) -> Result<(), StageError> {
+        let target = self
+            .pack
+            .index(target)
+            .ok_or_else(|| StageError::UnknownStage(target.to_owned()))?;
+        let asked: BTreeSet<ChunkCoord> = focus
+            .iter()
+            .flat_map(|focus| {
+                let radius = focus.radius as i32;
+                let centre = focus.chunk;
+                (-radius..=radius).flat_map(move |x| {
+                    (-radius..=radius).map(move |y| ChunkCoord::new(centre.x + x, centre.y + y, 0))
+                })
+            })
+            .collect();
+        let mut needed: BTreeMap<usize, BTreeSet<ChunkCoord>> = BTreeMap::from([(target, asked)]);
+        // Consumers come after their inputs in `order`, so walking it backwards reaches a stage
+        // only once everything that reads it has said which of its chunks it needs.
+        for &index in self.pack.order.iter().rev() {
+            let Some(chunks) = needed.get(&index).cloned() else {
+                continue;
+            };
+            for &(input, reach) in &self.pack.stages[index].inputs {
+                let covered: BTreeSet<ChunkCoord> = chunks
+                    .iter()
+                    .flat_map(|&chunk| self.chunks_within(chunk, reach))
+                    .collect();
+                needed.entry(input).or_default().extend(covered);
+            }
+        }
+        self.products.retain(|(stage, chunk), _| {
+            needed
+                .get(stage)
+                .is_some_and(|chunks| chunks.contains(chunk))
+        });
+        self.needed = needed;
+        self.focus = focus.to_vec();
+        Ok(())
+    }
+
+    /// Generates everything the request needs that is missing, inputs first and nearest first,
+    /// and returns what it generated as (stage, chunk).
+    ///
+    /// # Errors
+    /// A [`StageError`] from a stage, which is a bug in that stage.
+    pub fn run_until_idle(&mut self) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let mut generated = Vec::new();
+        for &index in &self.pack.order.clone() {
+            let Some(chunks) = self.needed.get(&index) else {
+                continue;
+            };
+            let mut missing: Vec<ChunkCoord> = chunks
+                .iter()
+                .copied()
+                .filter(|chunk| !self.products.contains_key(&(index, *chunk)))
+                .collect();
+            missing.sort_by_key(|chunk| {
+                let distance = self
+                    .focus
+                    .iter()
+                    .map(|focus| focus.distance(*chunk))
+                    .min()
+                    .unwrap_or(u32::MAX);
+                (distance, *chunk)
+            });
+            for chunk in missing {
+                let field = self.generate(index, chunk)?;
+                self.products.insert((index, chunk), Arc::new(field));
+                generated.push((self.pack.stages[index].name.clone(), chunk));
+            }
+        }
+        Ok(generated)
+    }
+
+    /// What `stage` holds for `chunk`, if it has been generated and is still needed.
+    #[must_use]
+    pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
+        let index = self.pack.index(stage)?;
+        self.products.get(&(index, chunk)).map(Arc::as_ref)
+    }
+
+    /// How many chunks the runtime holds, over all stages.
+    #[must_use]
+    pub fn held(&self) -> usize {
+        self.products.len()
+    }
+
+    /// The chunks whose columns lie within `reach` columns of `chunk`'s.
+    fn chunks_within(&self, chunk: ChunkCoord, reach: u32) -> Vec<ChunkCoord> {
+        let span = |axis: usize, at: i32| {
+            let size = i64::from(self.size[axis]);
+            let low = i64::from(at) * size - i64::from(reach);
+            let high = (i64::from(at) + 1) * size - 1 + i64::from(reach);
+            let chunk = |column: i64| i32::try_from(column.div_euclid(size)).expect("a chunk");
+            chunk(low)..=chunk(high)
+        };
+        span(0, chunk.x)
+            .flat_map(|x| span(1, chunk.y).map(move |y| ChunkCoord::new(x, y, 0)))
+            .collect()
+    }
+
+    fn view<'a>(
+        &'a self,
+        stage: usize,
+        chunk: ChunkCoord,
+        input: usize,
+        reach: u32,
+    ) -> FieldView<'a> {
+        let origin = [
+            i64::from(chunk.x) * i64::from(self.size[0]),
+            i64::from(chunk.y) * i64::from(self.size[1]),
+        ];
+        let chunks = self
+            .chunks_within(chunk, reach)
+            .into_iter()
+            .map(|at| {
+                let field = self
+                    .products
+                    .get(&(input, at))
+                    .expect("inputs are generated before the stages that read them");
+                ((at.x, at.y), field.as_ref())
+            })
+            .collect();
+        FieldView {
+            stage: &self.pack.stages[stage].name,
+            input: &self.pack.stages[input].name,
+            reach,
+            size: self.size,
+            min: [origin[0] - i64::from(reach), origin[1] - i64::from(reach)],
+            max: [
+                origin[0] + i64::from(self.size[0]) - 1 + i64::from(reach),
+                origin[1] + i64::from(self.size[1]) - 1 + i64::from(reach),
+            ],
+            chunks,
+        }
+    }
+
+    fn generate(&self, index: usize, chunk: ChunkCoord) -> Result<Field, StageError> {
+        let stage = &self.pack.stages[index];
+        let views: BTreeMap<usize, FieldView<'_>> = stage
+            .inputs
+            .iter()
+            .map(|&(input, reach)| (input, self.view(index, chunk, input, reach)))
+            .collect();
+        let [sx, sy] = self.size;
+        let mut values = Vec::with_capacity((sx * sy) as usize);
+        for y in 0..sy {
+            for x in 0..sx {
+                let column = [
+                    i64::from(chunk.x) * i64::from(sx) + i64::from(x),
+                    i64::from(chunk.y) * i64::from(sy) + i64::from(y),
+                ];
+                let value = match &stage.kind {
+                    StageKind::Field(expr) => self.evaluate(expr, stage.salt, column, &|name| {
+                        &views[&self.pack.index(name).expect("linked when loaded")]
+                    })?,
+                    StageKind::Blur { input, radius } => {
+                        let view = &views[&self.pack.index(input).expect("linked when loaded")];
+                        let r = i64::from(*radius);
+                        let mut sum = 0.0_f32;
+                        for dy in -r..=r {
+                            for dx in -r..=r {
+                                sum += view.get(column[0] + dx, column[1] + dy)?;
+                            }
+                        }
+                        sum / ((2 * r + 1) * (2 * r + 1)) as f32
+                    }
+                };
+                values.push(value);
+            }
+        }
+        Ok(Field {
+            chunk,
+            size: self.size,
+            values,
+        })
+    }
+
+    fn evaluate<'v>(
+        &self,
+        expr: &Expr,
+        salt: u32,
+        column: [i64; 2],
+        input: &dyn Fn(&str) -> &'v FieldView<'v>,
+    ) -> Result<f32, StageError> {
+        Ok(match expr {
+            Expr::Constant(value) => *value,
+            Expr::Noise { frequency, octaves } => {
+                value_noise(self.seed, salt, *frequency, *octaves, column)
+            }
+            Expr::Input(name) => input(name).get(column[0], column[1])?,
+            Expr::Add(a, b) => {
+                self.evaluate(a, salt, column, input)? + self.evaluate(b, salt, column, input)?
+            }
+            Expr::Mul(a, b) => {
+                self.evaluate(a, salt, column, input)? * self.evaluate(b, salt, column, input)?
+            }
+        })
+    }
+}
+
+/// A random number in 0..1 for one lattice point of one octave, from the world seed and the
+/// stage's salt: a named stream, so no other stage or octave shares it.
+fn lattice(seed: u64, salt: u32, octave: u32, x: i64, y: i64) -> f32 {
+    let world = (seed as u32) ^ ((seed >> 32) as u32);
+    let [a, ..] = pcg3d([world ^ salt, x as u32, y as u32]);
+    let [b, ..] = pcg3d([
+        a ^ octave.wrapping_mul(0x9E37_79B9),
+        (x >> 32) as u32,
+        (y >> 32) as u32,
+    ]);
+    (b >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// Fractal value noise at a world column, in 0..1: every column depends on its position alone,
+/// so chunks meet without seams.
+fn value_noise(seed: u64, salt: u32, frequency: f32, octaves: u32, column: [i64; 2]) -> f32 {
+    let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
+    let mut sum = 0.0;
+    let mut weight = 1.0;
+    let mut total = 0.0;
+    let mut scale = frequency;
+    for octave in 0..octaves {
+        let fx = (column[0] as f32 + 0.5) * scale;
+        let fy = (column[1] as f32 + 0.5) * scale;
+        let (x0, y0) = (fx.floor(), fy.floor());
+        let (tx, ty) = (smooth(fx - x0), smooth(fy - y0));
+        let (ix, iy) = (x0 as i64, y0 as i64);
+        let corner = |dx: i64, dy: i64| lattice(seed, salt, octave, ix + dx, iy + dy);
+        let bottom = corner(0, 0) + (corner(1, 0) - corner(0, 0)) * tx;
+        let top = corner(0, 1) + (corner(1, 1) - corner(0, 1)) * tx;
+        sum += (bottom + (top - bottom) * ty) * weight;
+        total += weight;
+        weight *= 0.5;
+        scale *= 2.0;
+    }
+    sum / total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runtime(pack: &str) -> Runtime {
+        Runtime::new(
+            Arc::new(Pack::parse(pack).expect("a valid pack")),
+            7,
+            [8, 8],
+        )
+    }
+
+    const PACK: &str = r#"(
+        version: 1,
+        stages: [
+            (name: "rough", kind: Field(Noise(frequency: 0.2, octaves: 3))),
+            (name: "smooth", kind: Blur(input: "rough", radius: 3)),
+            (name: "height", kind: Field(Mul(Input("smooth"), Constant(8.0)))),
+        ],
+    )"#;
+
+    #[test]
+    fn a_stage_is_generated_only_after_every_input_chunk_within_its_reach() {
+        let mut runtime = runtime(PACK);
+        runtime
+            .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], "height")
+            .expect("a stage");
+
+        let generated = runtime.run_until_idle().expect("the stages run");
+
+        // A blur of 3 columns around one chunk of 8 reaches into all eight neighbours.
+        let rough: Vec<_> = generated
+            .iter()
+            .filter(|(stage, _)| stage == "rough")
+            .collect();
+        assert_eq!(rough.len(), 9);
+        let first_smooth = generated.iter().position(|(stage, _)| stage == "smooth");
+        let last_rough = generated.iter().rposition(|(stage, _)| stage == "rough");
+        assert!(last_rough < first_smooth);
+    }
+
+    #[test]
+    fn a_blurred_field_is_the_mean_of_its_input_around_each_column() {
+        let mut runtime = runtime(PACK);
+        runtime
+            .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], "smooth")
+            .expect("a stage");
+        runtime.run_until_idle().expect("the stages run");
+
+        let rough = |x: i64, y: i64| {
+            let chunk = ChunkCoord::new(x.div_euclid(8) as i32, y.div_euclid(8) as i32, 0);
+            runtime
+                .field("rough", chunk)
+                .expect("generated")
+                .get(x.rem_euclid(8) as u32, y.rem_euclid(8) as u32)
+        };
+        let mut sum = 0.0_f32;
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                sum += rough(dx, dy);
+            }
+        }
+
+        let smooth = runtime
+            .field("smooth", ChunkCoord::new(0, 0, 0))
+            .expect("generated");
+        assert_eq!(smooth.get(0, 0), sum / 49.0);
+    }
+
+    #[test]
+    fn a_read_beyond_the_reach_is_an_error_naming_the_stage() {
+        let field = Field {
+            chunk: ChunkCoord::new(0, 0, 0),
+            size: [4, 4],
+            values: vec![0.0; 16],
+        };
+        let view = FieldView {
+            stage: "reader",
+            input: "source",
+            reach: 1,
+            size: [4, 4],
+            min: [-1, -1],
+            max: [4, 4],
+            chunks: BTreeMap::from([((0, 0), &field)]),
+        };
+
+        let result = view.get(6, 0);
+
+        assert_eq!(
+            result,
+            Err(StageError::OutOfReach {
+                stage: "reader".to_owned(),
+                input: "source".to_owned(),
+                reach: 1,
+                needed: 3
+            })
+        );
+    }
+
+    #[test]
+    fn what_a_new_request_does_not_need_is_dropped() {
+        let mut runtime = runtime(PACK);
+        runtime
+            .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], "height")
+            .expect("a stage");
+        runtime.run_until_idle().expect("the stages run");
+
+        runtime
+            .request(&[FocusPoint::new(ChunkCoord::new(10, 0, 0), 0)], "height")
+            .expect("a stage");
+
+        assert_eq!(runtime.held(), 0);
+    }
+
+    #[test]
+    fn noise_stays_in_the_unit_interval() {
+        let values: Vec<f32> = (0..2000)
+            .map(|i| value_noise(3, 11, 0.37, 4, [i * 7 - 5000, i * 13 - 9000]))
+            .collect();
+
+        assert!(values.iter().all(|v| (0.0..1.0).contains(v)), "{values:?}");
+    }
+}

@@ -15,6 +15,9 @@ wfc-core = { path = "wfc-core" }
 wfc-rules = { path = "wfc-rules" }
 wfc-gpu = { path = "wfc-gpu", default-features = false }
 thiserror = "2.0.20"
+# Packs are RON files read into serde types; the same versions wfc-rules reads rule files with.
+serde = { version = "1.0.229", features = ["derive"] }
+ron = "0.12.2"
 # Only for the types `build_on` takes from an engine; the backend itself lives in wfc-gpu.
 wgpu = { version = "30.0.1", optional = true }
 

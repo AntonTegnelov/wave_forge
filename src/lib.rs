@@ -50,6 +50,7 @@ pub mod generator;
 pub mod products;
 pub mod scheduler;
 pub mod space;
+pub mod stages;
 pub mod worker;
 
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
