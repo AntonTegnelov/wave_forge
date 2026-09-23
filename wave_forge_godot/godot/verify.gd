@@ -29,10 +29,11 @@ const READY_RADIUS := 1
 const PACE := 4.2
 ## The frame rate a game would cap its main loop at.
 const FPS := 60
-## How long Godot's own thread may spend processing a frame, including the extension and the signal
-## handlers: half a frame at the 99th percentile, leaving the rest to rendering, and never a whole one.
-const PROCESS_P99_MS := 8.0
-const PROCESS_MAX_MS := 1000.0 / FPS
+## How long Godot's own thread may spend processing any frame, including the extension, the signal
+## handlers and the navigation server's sync: half a frame, leaving the rest to rendering.
+const PROCESS_MAX_MS := 8.0
+## How long the node's own `process` may take on its busiest frames, the 99th percentile.
+const NODE_P99_MS := 2.0
 ## Building the device, compiling kernels and generating the first view is loading, not play.
 const LOAD_TIMEOUT_S := 180.0
 ## Tile indices, in the order `rules.ron` declares them.
@@ -55,13 +56,19 @@ var first_tiles: PackedInt32Array
 var started_usec := 0
 var walk_started_usec := -1
 var last_frame_usec := 0
-## Per frame of the walk: Godot's process time, and the time since the previous frame.
-var process_ms := PackedFloat64Array()
+## The slowest frame Godot's thread processed during the walk, and per frame the time since the
+## previous one. Godot publishes its process time once a second, as the slowest frame of that
+## second, so the slowest is all it tells; the node's own `stats` time every frame.
+var slowest_process_ms := 0.0
 var period_ms := PackedFloat64Array()
 ## Frames on which a chunk within the ready radius had no tiles, and the first of them.
 var late_frames := 0
 var first_late := ""
 var done := false
+## The chunks `navigation_ready` named, and when the walk's checks finished and the wait for the
+## last bakes began.
+var navigable := {}
+var navigation_wait_usec := -1
 ## A node set to start on its own from a rule file, checked on the first frame.
 var starting_on_ready: Node = null
 
@@ -89,6 +96,14 @@ func _initialize() -> void:
 	for material in 4:
 		world.set_collision_shape(["water", "sand", "grass", "forest"][material], box)
 	world.collider_radius = COLLIDER_RADIUS
+	# The same boxes are what agents walk on, in the chunks near the focus.
+	var agent := NavigationMesh.new()
+	agent.agent_radius = 0.5
+	agent.agent_height = 1.5
+	agent.agent_max_climb = 0.25
+	world.navigation_template = agent
+	world.navigation_radius = COLLIDER_RADIUS
+	world.navigation_ready.connect(func(chunk: Vector3i) -> void: navigable[chunk] = true)
 	for axis in 4:
 		world.ban_tiles_on_face(axis, PackedInt32Array([FOREST]))
 	world.chunk_updated.connect(_on_chunk_updated)
@@ -129,7 +144,7 @@ func _check_editor_setup() -> bool:
 		if property["usage"] & PROPERTY_USAGE_GROUP:
 			groups.append(property["name"])
 	# The node's own groups come first; Node's inherited ones follow.
-	if groups.slice(0, 5) != ["Rules", "World", "Streaming", "Physics", "Advanced"]:
+	if groups.slice(0, 6) != ["Rules", "World", "Streaming", "Physics", "Navigation", "Advanced"]:
 		node.free()
 		_fail("the inspector groups are %s" % [groups])
 		return false
@@ -233,7 +248,7 @@ func _check_models(city: Node) -> bool:
 ## generation is doing.
 func _process(_delta: float) -> bool:
 	if done:
-		return true
+		return navigation_wait_usec < 0 or _await_navigation()
 	if starting_on_ready != null and not _check_started_on_ready():
 		return true
 	if not world.is_generating():
@@ -252,15 +267,16 @@ func _process(_delta: float) -> bool:
 			last_frame_usec = now
 		return false
 
-	# The time Godot's own thread spent on the previous frame: the extension draining its worker
-	# and emitting signals, and this script's handlers.
-	process_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
+	# The slowest frame of Godot's thread in the last second: the extension draining its worker and
+	# emitting signals, this script's handlers, and the navigation server's sync.
+	slowest_process_ms = maxf(slowest_process_ms, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 	period_ms.append((now - last_frame_usec) / 1000.0)
 	last_frame_usec = now
 	var x := _x_at((now - walk_started_usec) / 1e6)
 	if is_nan(x):
+		# The loop goes on for the navigation check; a failed check has already quit.
 		_check()
-		return true
+		return false
 	world.follow(_position_at(x))
 	var chunk_x := int(floor(x / _chunk_units()))
 	if not _ready_around(chunk_x):
@@ -320,7 +336,61 @@ func _on_chunk_evicted(chunk: Vector3i) -> void:
 func _on_generation_failed(reason: String) -> void:
 	_fail("generation failed: " + reason)
 
-## Everything the extension promised a game, checked against what it can see from GDScript.
+## Once the chunks near the focus have their navigation meshes, a path runs from one side of them to
+## the other across two seams, as straight as the flat ground allows.
+func _await_navigation() -> bool:
+	var focus := Vector3i(WALK_FROM, 1, 0)
+	var waited := (Time.get_ticks_usec() - navigation_wait_usec) / 1e6
+	var baked := 0
+	for x in range(focus.x - COLLIDER_RADIUS, focus.x + COLLIDER_RADIUS + 1):
+		for y in range(focus.y - COLLIDER_RADIUS, focus.y + COLLIDER_RADIUS + 1):
+			var chunk := Vector3i(x, y, 0)
+			if x >= 0 and y >= 0 and y < CHUNKS_Y and navigable.has(chunk) and world.navigation_chunks().has(chunk):
+				baked += 1
+	if baked < 9:
+		if waited > 60.0:
+			_fail("%d of 9 chunks near the focus have navigation after %.0f s" % [baked, waited])
+		return waited > 60.0
+	# The map takes the new regions in on its next synchronisation.
+	if waited < 0.5:
+		return false
+	var top := func(chunk: Vector3i) -> Vector3:
+		var cell := (7 * CELLS + 4) * CELLS + 4
+		return world.cell_position(chunk, cell) + Vector3.UP * (CELL_SIZE / 2.0)
+	var from: Vector3 = top.call(Vector3i(focus.x - 1, 1, 0))
+	var to: Vector3 = top.call(Vector3i(focus.x + 1, 1, 0))
+	var map := root.get_world_3d().navigation_map
+	var path := NavigationServer3D.map_get_path(map, from, to, true)
+	if path.is_empty() or path[path.size() - 1].distance_to(to) > 0.5:
+		_describe_navigation(map, [from, to])
+		_fail("no path from %s to %s across the seams: %s" % [from, to, path])
+		return true
+	# Agents walk on the ground's top, not on a floor Recast found inside it.
+	for point: Vector3 in path:
+		if absf(point.y - from.y) > 0.5:
+			_describe_navigation(map, [from, to])
+			_fail("the path runs at height %.2f, the ground's top is %.2f: %s" % [point.y, from.y, path])
+			return true
+	var length := 0.0
+	for i in range(1, path.size()):
+		length += path[i - 1].distance_to(path[i])
+	if length > from.distance_to(to) * 1.05:
+		_fail("the path across flat ground is %.1f long for %.1f straight" % [length, from.distance_to(to)])
+		return true
+	var stats: Dictionary = world.stats()
+	print("verify: navigation on the 9 chunks near the focus, a path of %.1f across two seams for %.1f straight; %d bakes, median %.0f ms, max %.0f ms, %d polygons" % [
+		length, from.distance_to(to), stats["navigation_baked"], stats["navigation_bake_ms_median"], stats["navigation_bake_ms_max"], stats["navigation_polygons"]])
+	quit(0)
+	return true
+
+## What the navigation map holds, to explain a path that was not found: each region's bounds, and
+## the map's nearest point to each of `points` with the region it lies in.
+func _describe_navigation(map: RID, points: Array) -> void:
+	for region: RID in NavigationServer3D.map_get_regions(map):
+		printerr("verify: region %s bounds %s" % [region, NavigationServer3D.region_get_bounds(region)])
+	for point: Vector3 in points:
+		printerr("verify: nearest the map gets to %s is %s, in region %s" % [point, NavigationServer3D.map_get_closest_point(map, point), NavigationServer3D.map_get_closest_point_owner(map, point)])
+
 ## The chunks near the focus have colliders and no others do, and a ray down onto a cell hits that
 ## cell's instance.
 func _check_colliders() -> bool:
@@ -356,6 +426,7 @@ func _check_colliders() -> bool:
 	print("verify: colliders on the %d chunks near the focus, and a ray down hits the cell below it" % bodies.size())
 	return true
 
+## Everything the extension promised a game, checked against what it can see from GDScript.
 func _check() -> void:
 	done = true
 	var seconds := (Time.get_ticks_usec() - walk_started_usec) / 1e6
@@ -364,16 +435,20 @@ func _check() -> void:
 		if period > 1000.0 / FPS + 2.0:
 			slow_frames += 1
 	print("verify: ran to chunk %d and back at %.1f units/s in %.2f s over %d frames" % [WALK_TO, PACE, seconds, period_ms.size()])
-	print("verify: process time p50 %.3f ms, p99 %.3f ms, max %.3f ms; frame period p50 %.2f ms, p99 %.2f ms, max %.2f ms, %d frames over %.1f ms" % [
-		_quantile(process_ms, 0.5), _quantile(process_ms, 0.99), _quantile(process_ms, 1.0),
+	var stats: Dictionary = world.stats()
+	print("verify: Godot's slowest frame %.3f ms; the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms; frame period p50 %.2f ms, p99 %.2f ms, max %.2f ms, %d frames over %.1f ms" % [
+		slowest_process_ms, stats["process_ms_median"], stats["process_ms_p99"], stats["process_ms_max"],
 		_quantile(period_ms, 0.5), _quantile(period_ms, 0.99), _quantile(period_ms, 1.0),
 		slow_frames, 1000.0 / FPS + 2.0])
-	print("verify: %d chunks generated, %d dropped, %d late frames, stats %s" % [updated.size(), evicted.size(), late_frames, world.stats()])
+	print("verify: %d chunks generated, %d dropped, %d late frames, stats %s" % [updated.size(), evicted.size(), late_frames, stats])
 
 	# The point of the worker thread: building the device, compiling kernels and dispatching all
 	# happen off Godot's own thread, so the main loop keeps its frame time while a world appears.
-	if _quantile(process_ms, 0.99) > PROCESS_P99_MS or _quantile(process_ms, 1.0) > PROCESS_MAX_MS:
-		_fail("Godot's thread spent up to %.1f ms on a frame, %.1f ms at the 99th percentile" % [_quantile(process_ms, 1.0), _quantile(process_ms, 0.99)])
+	if slowest_process_ms > PROCESS_MAX_MS:
+		_fail("Godot's thread spent %.1f ms on its slowest frame" % slowest_process_ms)
+		return
+	if stats["process_ms_p99"] > NODE_P99_MS:
+		_fail("the node's own process took %.2f ms at the 99th percentile" % stats["process_ms_p99"])
 		return
 	# And generation keeps ahead of a running player, which it cannot fake by making them wait.
 	if late_frames > 0:
@@ -461,7 +536,8 @@ func _check() -> void:
 	print("verify: %d cells, every column one material, every neighbour legal, the prior obeyed, and the chunk walked back to is unchanged" % world_tiles.size())
 	if not _check_colliders():
 		return
-	quit(0)
+	# The chunks near the focus bake their navigation meshes after it arrives; the check waits.
+	navigation_wait_usec = Time.get_ticks_usec()
 
 func _fail(message: String) -> void:
 	printerr("verify: " + message)

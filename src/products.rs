@@ -5,11 +5,15 @@
 //! unscaled. [`instance_sets`] does that arithmetic once, in the library, so an integration only
 //! hands the result to its engine: Godot takes [`InstanceSet::transforms`] as a MultiMesh buffer
 //! in one call, and the same placements unscaled as the shapes of a chunk's body.
+//!
+//! The same placements, with each module's collision shape as triangles, are what an engine bakes
+//! a chunk's navigation mesh from: [`nav_source`] gathers them for one chunk and the edges of its
+//! neighbours, so every engine bakes chunks that meet.
 
 use crate::loader::RuleFile;
 use crate::space::YUpSpace;
 use std::collections::BTreeMap;
-use wfc_core::Chunk;
+use wfc_core::{Chunk, ChunkCoord, WorldExtent};
 
 /// Every placement of one module in one chunk.
 #[derive(Clone, Debug, PartialEq)]
@@ -101,10 +105,131 @@ pub fn instance_sets(
     sets.into_values().collect()
 }
 
+/// The triangles an engine bakes one chunk's navigation mesh from, and where to bake.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NavSource {
+    /// Nine floats per triangle: three corners, each x, y and z in a Y-up engine's world space, in
+    /// the winding the shape's faces were given in.
+    pub triangles: Vec<f32>,
+    /// The lowest corner and size of the box to bake within: the chunk grown by the border along
+    /// the engine's x and z, and by a chunk's height below and above.
+    pub bounds_origin: [f32; 3],
+    pub bounds_size: [f32; 3],
+    /// How far the bounds reach past the chunk along x and z. Baked with a border this wide, the
+    /// mesh ends on the chunk's edges, shaped by the neighbours' geometry as if there were no seam.
+    pub border: f32,
+}
+
+/// Why [`nav_source`] could not gather a chunk's source.
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum NavSourceError {
+    /// A neighbour inside the world is not generated yet; ask again once it is.
+    #[error("chunk {0:?} is not generated yet")]
+    Missing(ChunkCoord),
+    /// The world is more than one chunk tall, or unbounded upwards. A chunk's source covers its
+    /// column's neighbours only, so stacked chunks would bake floors that do not agree.
+    #[error("navigation needs a world one chunk tall")]
+    TallWorld,
+    /// The border reaches past the neighbouring chunks, whose geometry is all the source holds.
+    #[error("a border of {border} reaches past a neighbouring chunk {chunk} wide")]
+    BorderTooWide { border: f32, chunk: f32 },
+}
+
+/// The navigation source of the chunk at `coord`: the collision shape of every module `faces`
+/// gives triangles for, placed at each of its instances, in the chunk and in its neighbours as far
+/// as `border` past the chunk's edges plus a cell.
+///
+/// `chunks` looks up generated chunks, `extent` says which ones the world holds, and `faces` gives
+/// a module's collision shape as triangles around its cell's centre, unscaled, in the engine's
+/// axes, or `None` for a module agents neither walk on nor bump into.
+///
+/// # Errors
+/// [`NavSourceError::Missing`] until every neighbour the world holds is generated;
+/// [`NavSourceError::TallWorld`] for a world more than one chunk tall;
+/// [`NavSourceError::BorderTooWide`] when `border` is wider than a chunk.
+pub fn nav_source<'a, 'f>(
+    coord: ChunkCoord,
+    chunks: impl Fn(ChunkCoord) -> Option<&'a Chunk>,
+    extent: &WorldExtent,
+    rules: &RuleFile,
+    space: &YUpSpace,
+    faces: impl Fn(&str) -> Option<&'f [[f32; 3]]>,
+    border: f32,
+) -> Result<NavSource, NavSourceError> {
+    if extent
+        .chunks_along(2)
+        .is_none_or(|layers| layers.len() != 1)
+    {
+        return Err(NavSourceError::TallWorld);
+    }
+    let chunk_size = space.chunk_size();
+    let narrowest = chunk_size[0].min(chunk_size[2]);
+    if border > narrowest {
+        return Err(NavSourceError::BorderTooWide {
+            border,
+            chunk: narrowest,
+        });
+    }
+    let neighbours: Vec<ChunkCoord> = (-1..=1)
+        .flat_map(|dx| (-1..=1).map(move |dy| ChunkCoord::new(coord.x + dx, coord.y + dy, coord.z)))
+        .filter(|&neighbour| extent.contains_chunk(neighbour))
+        .collect();
+    let mut present = Vec::with_capacity(neighbours.len());
+    for &neighbour in &neighbours {
+        present.push(chunks(neighbour).ok_or(NavSourceError::Missing(neighbour))?);
+    }
+
+    let origin = space.chunk_origin(coord);
+    let bounds_origin = [
+        origin[0] - border,
+        origin[1] - chunk_size[1],
+        origin[2] - border,
+    ];
+    let bounds_size = [
+        chunk_size[0] + 2.0 * border,
+        3.0 * chunk_size[1],
+        chunk_size[2] + 2.0 * border,
+    ];
+    // A shape reaches at most about a cell from its cell's centre, so an instance whose centre is
+    // within a cell of the bounds may touch them.
+    let cell = space.cell_size();
+    let near = |at: &[f32; 3]| {
+        (0..3).all(|axis| {
+            at[axis] >= bounds_origin[axis] - cell[axis]
+                && at[axis] <= bounds_origin[axis] + bounds_size[axis] + cell[axis]
+        })
+    };
+    let mut triangles = Vec::new();
+    for chunk in present {
+        for set in instance_sets(chunk, rules, space, |name| faces(name).is_some()) {
+            let corners = faces(&set.name).expect("only modules with faces have sets");
+            let transforms = set.transforms([1.0; 3]);
+            for (row, origin) in transforms.chunks(12).zip(&set.origins) {
+                if !near(origin) {
+                    continue;
+                }
+                for corner in corners {
+                    for axis in 0..3 {
+                        let r = &row[axis * 4..axis * 4 + 4];
+                        triangles
+                            .push(r[0] * corner[0] + r[1] * corner[1] + r[2] * corner[2] + r[3]);
+                    }
+                }
+            }
+        }
+    }
+    Ok(NavSource {
+        triangles,
+        bounds_origin,
+        bounds_size,
+        border,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wfc_core::{ChunkCoord, ChunkShape};
+    use wfc_core::ChunkShape;
 
     const ROADS: &str = r#"(
         faces: {
@@ -193,6 +318,134 @@ mod tests {
             assert!((length - 1.0).abs() < 1e-6, "row {row}: {length}");
         }
         assert_eq!([t[3], t[7], t[11]], space.cell_center(chunk.coord, 0));
+    }
+
+    /// A world three chunks along x of 4x1x1 cells one unit wide, every cell an unturned road.
+    struct Strip {
+        rules: RuleFile,
+        space: YUpSpace,
+        extent: WorldExtent,
+        chunks: Vec<Chunk>,
+    }
+
+    impl Strip {
+        fn new() -> Self {
+            let rules = rules();
+            let road = rules
+                .tiles_named("road")
+                .into_iter()
+                .find(|&tile| rules.rotation(tile) == 0)
+                .expect("an unturned road");
+            let shape = ChunkShape { x: 4, y: 1, z: 1 };
+            let chunks = (0..3)
+                .map(|x| Chunk {
+                    coord: ChunkCoord::new(x, 0, 0),
+                    tiles: vec![road as u16; 4].into_boxed_slice(),
+                    version: 1,
+                })
+                .collect();
+            Self {
+                rules,
+                space: YUpSpace::new(shape, [1.0; 3]),
+                extent: WorldExtent::new(shape)
+                    .with_x(0..3)
+                    .with_y(0..1)
+                    .with_z(0..1),
+                chunks,
+            }
+        }
+
+        fn source(&self, x: i32, border: f32) -> Result<NavSource, NavSourceError> {
+            nav_source(
+                ChunkCoord::new(x, 0, 0),
+                |coord| self.chunks.iter().find(|chunk| chunk.coord == coord),
+                &self.extent,
+                &self.rules,
+                &self.space,
+                |name| (name == "road").then_some(&ROAD_TOP[..]),
+                border,
+            )
+        }
+    }
+
+    /// One triangle on top of a road's cell, from its centre along +x and +z.
+    const ROAD_TOP: [[f32; 3]; 3] = [[0.0, 0.5, 0.0], [0.5, 0.5, 0.0], [0.0, 0.5, 0.5]];
+
+    #[test]
+    fn a_nav_source_holds_the_chunk_and_its_neighbours_out_to_the_border_and_a_cell() {
+        let strip = Strip::new();
+
+        let source = strip.source(1, 0.25).expect("every chunk is there");
+
+        // The middle chunk spans x 4 to 8; its bounds 3.75 to 8.25; a cell further, the centres
+        // 3.5 and 8.5 of the neighbours' nearest cells are in, and 2.5 and 9.5 are out.
+        let mut centres: Vec<f32> = source.triangles.chunks(9).map(|t| t[0]).collect();
+        centres.sort_by(f32::total_cmp);
+        assert_eq!(centres, vec![3.5, 4.5, 5.5, 6.5, 7.5, 8.5]);
+        assert_eq!(
+            &source.triangles[..9],
+            &[3.5, 1.0, 0.5, 4.0, 1.0, 0.5, 3.5, 1.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn the_bounds_are_the_chunk_grown_by_the_border_along_the_ground() {
+        let strip = Strip::new();
+
+        let source = strip.source(1, 0.25).expect("every chunk is there");
+
+        assert_eq!(source.bounds_origin, [3.75, -1.0, -0.25]);
+        assert_eq!(source.bounds_size, [4.5, 3.0, 1.5]);
+        assert_eq!(source.border, 0.25);
+    }
+
+    #[test]
+    fn a_neighbour_not_generated_yet_is_named() {
+        let mut strip = Strip::new();
+        strip.chunks.retain(|chunk| chunk.coord.x != 2);
+
+        let result = strip.source(1, 0.25);
+
+        assert_eq!(
+            result,
+            Err(NavSourceError::Missing(ChunkCoord::new(2, 0, 0)))
+        );
+    }
+
+    #[test]
+    fn a_chunk_on_the_worlds_edge_needs_no_neighbour_beyond_it() {
+        let mut strip = Strip::new();
+        strip.chunks.retain(|chunk| chunk.coord.x != 2);
+
+        let source = strip
+            .source(0, 0.25)
+            .expect("chunk 1 is its only neighbour");
+
+        assert_eq!(source.triangles.len(), 9 * 5);
+    }
+
+    #[test]
+    fn a_world_more_than_one_chunk_tall_is_refused() {
+        let mut strip = Strip::new();
+        strip.extent = strip.extent.clone().with_z(0..2);
+
+        assert_eq!(strip.source(1, 0.25), Err(NavSourceError::TallWorld));
+    }
+
+    #[test]
+    fn a_border_wider_than_a_chunk_is_refused() {
+        let strip = Strip::new();
+
+        // The chunks are 4 along x but one cell, 1.0, along z.
+        let result = strip.source(1, 1.5);
+
+        assert_eq!(
+            result,
+            Err(NavSourceError::BorderTooWide {
+                border: 1.5,
+                chunk: 1.0
+            })
+        );
     }
 
     #[test]

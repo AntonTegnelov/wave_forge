@@ -64,7 +64,7 @@ has no built-in floating origin
 | **HeightTile, MaterialTile** (Phase 2) | 2^n+1 height samples with shared edges, minimum and maximum, coarser levels, `u8` material ids | CPU, and a GPU texture when a renderer consumes one |
 | **CoverMap** (Phase 2) | ground-cover type, density and variation per cell | CPU; expanded into blades on the GPU by an engine shader every frame |
 | **Colliders** | heightfield grids; a shape library per prototype (boxes or convex pieces) and the transforms that compose it per chunk; triangle meshes only as a last resort | CPU |
-| **NavSource** | walkable and blocking triangles with a one-chunk halo, snapped to the navigation cell grid | CPU |
+| **NavSource** | walkable and blocking triangles from the neighbouring chunks as far as a border past the chunk's edges, with the bounds and border to bake with; not snapped, because Godot's map merges the border vertices of neighbouring bakes as they are (measured, §8 C; Bevy's navigation crates not yet) | CPU |
 | **Occluders** | conservative boxes or solid faces per chunk | CPU |
 | **RegionTags** | biome, indoor or outdoor, surface material per walkable face, interior volumes, audio emitter points, place names as translation keys with arguments | CPU |
 | **Splines** (Phase 2) | roads and rivers: control points, width, material | CPU |
@@ -230,7 +230,7 @@ grass and a forest cannot share one approach.
 | System | Godot | Bevy | The library provides |
 |---|---|---|---|
 | **Physics** | Jolt is the default for projects created with 4.6 or later, but the `DEFAULT` setting still means Godot Physics, so the integration must not assume Jolt. Add every shape before `body_set_space`: Jolt rebuilds a compound shape on each `add_shape` while the body is in a space. One static body per chunk, not per object. Map a ray hit back to its object through the shape index and the stable instance id. | avian or rapier adapters in separate crates; shapes built on `AsyncComputeTaskPool` | shape library, compound transforms, heightfields |
-| **Navigation** | Bake from NavSource with `NavigationServer3D.bake_from_source_geometry_data_async`. Because the source is plain arrays, the whole bake runs off the main thread; parsing the scene tree is what makes navigation slow at runtime, and parsing visual meshes stalls the renderer ([performance](https://docs.godotengine.org/en/stable/tutorials/navigation/navigation_optimizing_performance.html)). One region per chunk, baked with `filter_baking_aabb` grown into the neighbours and `border_size` equal to that margin (xz only in 3D), edge connections off, and vertices snapped so chunks merge by vertex, which is cheap, instead of by edge connection, which checks distance and angle ([navigation meshes](https://docs.godotengine.org/en/stable/tutorials/navigation/navigation_using_navigationmeshes.html), the official [chunk demo](https://github.com/godotengine/godot-demo-projects/tree/master/3d/navigation_mesh_chunks)). A `navigation_ready(chunk)` signal fires once the region is in the map. | bevy_rerecast, or bevy_landmass | NavSource with its halo |
+| **Navigation** | Bake from NavSource with `NavigationServer3D.bake_from_source_geometry_data_async`. Because the source is plain arrays, the whole bake runs off the main thread; parsing the scene tree is what makes navigation slow at runtime, and parsing visual meshes stalls the renderer ([performance](https://docs.godotengine.org/en/stable/tutorials/navigation/navigation_optimizing_performance.html)). One region per chunk, baked with `filter_baking_aabb` grown into the neighbours and `border_size` equal to that margin (xz only in 3D), edge connections off, so chunks merge by vertex, which is cheap, instead of by edge connection, which checks distance and angle ([navigation meshes](https://docs.godotengine.org/en/stable/tutorials/navigation/navigation_using_navigationmeshes.html), the official [chunk demo](https://github.com/godotengine/godot-demo-projects/tree/master/3d/navigation_mesh_chunks)). A `navigation_ready(chunk)` signal fires once the region is in the map. | bevy_rerecast, or bevy_landmass | NavSource with its halo |
 | **Audio** | Godot has no built-in audio occlusion. `Area3D` reverb and bus zones, pooled `AudioStreamPlayer3D` with a `max_distance`, an ambience bed. | bevy_seedling or bevy_kira_audio | surface tags, interior volumes, emitter points, biome zones |
 | **Localisation** | `tr()` with a context such as `wave_forge.place`; a translation parser plugin for rule files; a separate translation domain for the plugin's own interface | bevy_fluent | keys and name tokens, never finished strings |
 | **Loading** | Preload every scene the rules reference, instantiate each once to compile its pipelines, instantiate off the tree, attach under a time budget | `AssetServer` | ring scheduling |
@@ -308,8 +308,9 @@ loader thread ("attempted to access binding from different thread than main thre
 **whole process aborts**, because the panic cannot unwind across the engine. That is not about
 nesting (godot-rust issue #610 describes it that way): a flat Rust resource aborts the same way,
 with or without sub-threads. With godot-rust's `experimental-threads` feature every case loads
-correctly, and the node's own check runs as before (Godot's process time p99 0.34 ms, no late
-frames). A game that loads scenes in the background, as the loading guidance recommends, would
+correctly, and the node's own check runs as before (Godot's slowest frame 0.34 ms, no late
+frames; the check printed that figure as a 99th percentile, but Godot publishes its process time
+only as the slowest frame of each second, see §8 A). A game that loads scenes in the background, as the loading guidance recommends, would
 crash on any scene holding a Rust resource unless that feature is on. So the recipe resources are
 either GDScript resources the Rust side reads, which Godot's loader handles like any other script,
 or Rust classes with `experimental-threads`, whose soundness godot-rust does not yet promise. The
@@ -414,11 +415,55 @@ The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
   shape, and 0.08 ms on Godot Physics; as `StaticBody3D` and `CollisionShape3D` nodes, 1.0 ms and
   0.68 ms. So the node adds every shape first. In the Godot check, with 512 boxes per chunk,
   Godot's process time stays at 1.4 ms at worst.
+
+  Godot's `Performance.TIME_PROCESS` is the slowest frame of the last second, not the last frame's
+  time: `main.cpp` keeps the maximum and publishes it once a second (4.7.2). A percentile taken over
+  it per frame is the slowest frame. So the node times its own `process` every frame and reports the
+  median, 99th percentile and maximum in `stats()`, and the check bounds both: Godot's slowest frame
+  under 8 ms, and the node's own time under 2 ms at the 99th percentile.
 - **B, hardening.** The device measurement of §3.2 on desktops ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), InstanceSet and ChunkHash in the
   golden worlds, the Godot improvements of §6.2 ([#40](https://github.com/AntonTegnelov/wave_forge/issues/40)), and the godot-rust resource spike ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
 - **C, systems.** NavSource with its halo and asynchronous baking, measuring bake time per chunk
   ([#42](https://github.com/AntonTegnelov/wave_forge/issues/42)); RegionTags with the audio and localisation helpers ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)); SpawnPoints with
   preloading, pooling and saved edits ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)); and the Bevy adapter crates once the ecosystem reaches Bevy 0.20.
+
+  Godot's navigation is built by the node itself (`navigation_radius`, `navigation_template`, the
+  `navigation_ready` signal): one region per chunk within the radius, baked from the same shapes as
+  the colliders. A chunk's source is the library's NavSource (`wave_forge::nav_source`): its own
+  shapes and its neighbours' as far as the border past its edges and a cell more, as plain arrays,
+  so Godot's thread only hands them over and the bake runs on the navigation server's threads. The
+  border is Recast's own padding for tiles, the agent's radius in whole cells and three more. The
+  library refuses a world more than one chunk tall, whose stacked chunks would bake floors that do
+  not agree, and a border wider than a chunk. Measured in the Godot check (headless Godot 4.7.2,
+  release, 8×8×8 chunks of 2-unit boxes, agent radius 0.5, height 1.5, the map's default 0.25
+  cell, so a border of 1.25): a bake takes 33 ms from asking to its mesh being in place, median and
+  maximum alike; preparing one costs Godot's thread 0.53 ms median and 2.0 ms at most, putting a
+  finished mesh in its region 0.002 ms; the 9 chunks around the player hold 8082 polygons, and a
+  path across two seams is as long as the straight line (32.0). A border of two cells, 4 units,
+  gave the same polygons with bakes up to 49 ms. Four things this settled:
+
+  - The source's indices go in Recast's winding, counter-clockwise, while Godot's faces are
+    clockwise; `NavigationMeshSourceGeometryData3D.add_faces` swaps each triangle's second and third
+    index for its callers, and `set_indices` and `append_arrays` take them as they are. Unswapped,
+    Recast takes the underside of each face for its top: the first bakes walked on the bottom of
+    the ground's top cell, 1.5 units under its surface, cut into islands at every chunk edge.
+  - The source is handed over with `set_vertices` and `set_indices`, which keep the arrays given;
+    `append_arrays` copies them again and rewrites every index, and preparing a bake with it cost
+    0.78 ms median.
+  - The regions merge by vertex without any snapping: the map joins the border vertices two
+    neighbouring bakes produce both at the default 0.25 cell and at 0.2, which binary floating point
+    cannot hold exactly. At 0.2 Godot warns that `border_size` loses precision although 4.0 is
+    exactly 20 cells; the warning's `fmod` test is what is inexact.
+  - At most one bake is prepared per frame, nearest first. When the player crosses into a chunk,
+    several become due at once, and preparing them together cost a 15 ms frame.
+
+  The shapes' triangles come from their filled debug meshes, the one triangle form every `Shape3D`
+  offers. A shape shown through a `CollisionShape3D` with `debug_fill` off has none, and the node
+  reports that as an error naming the module. Reading each shape type as Godot's own source parser
+  does would lift that limit.
+
+  With navigation on, Godot's slowest frame in the check is 3.4 ms, and the node's own time is
+  0.56 ms per frame at the 99th percentile.
 - **D, Phase 2 layers.** `NoiseConfig` with the FastNoiseLite port and golden tests ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45));
   HeightTile, MaterialTile and CoverMap with reference grass and wind shaders in both engines
   ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)); scatter from density with integer existence decisions; splines; merged far proxies and
