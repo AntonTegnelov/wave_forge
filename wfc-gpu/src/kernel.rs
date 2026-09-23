@@ -64,7 +64,9 @@ pub struct Params {
     pub radius: u32,
     /// 0 restarts a region on a contradiction; 1 restores the checkpoint before the failing round.
     pub undo: u32,
-    pub padding: [u32; 3],
+    /// 1 when the batch is one problem tried with different seeds; see `RegionBatch::portfolio`.
+    pub portfolio: u32,
+    pub padding: [u32; 2],
 }
 
 impl Params {
@@ -77,7 +79,8 @@ impl Params {
             max_attempts: config.max_attempts,
             radius: config.radius,
             undo: 1,
-            padding: [0; 3],
+            portfolio: 0,
+            padding: [0; 2],
         }
     }
 

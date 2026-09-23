@@ -435,7 +435,7 @@ impl WaveForgeWorld {
     }
 
     /// What generation has cost so far: `batches`, `solved`, `repaired`, `rewritten_by_repair`,
-    /// `failed` and `solver_ms`.
+    /// `failed`, `solver_ms`, `repair_batches` and `repair_ms`.
     #[func]
     fn stats(&self) -> Dictionary<GString, Variant> {
         let Some(worker) = &self.worker else {
@@ -449,6 +449,8 @@ impl WaveForgeWorld {
         out.set("rewritten_by_repair", stats.rewritten_by_repair);
         out.set("failed", stats.failed);
         out.set("solver_ms", stats.solver_ms);
+        out.set("repair_batches", stats.repair_batches);
+        out.set("repair_ms", stats.repair_ms);
         out
     }
 
@@ -565,5 +567,6 @@ const fn status_name(status: RegionStatus) -> &'static str {
         RegionStatus::Exhausted => "exhausted",
         RegionStatus::StepCap => "step_cap",
         RegionStatus::BorderContradiction => "border_contradiction",
+        RegionStatus::Superseded => "superseded",
     }
 }

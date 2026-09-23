@@ -157,7 +157,10 @@ impl<B: ComputeBackend> BlockSolver<B> {
             // A kernel's buffers outlive its batches, so a record left over from the last one would
             // pass for this one's if the device dropped the work. Every region writes a record with
             // at least one step, so a cleared record that stays cleared is a region never reported.
-            backend.write(&kernel.stats, 0, &vec![0; (STATS_WORDS * regions) as usize]);
+            // Word 0 is a portfolio's lowest solved region, none yet.
+            let mut cleared = vec![0; 1 + (STATS_WORDS * regions) as usize];
+            cleared[0] = u32::MAX;
+            backend.write(&kernel.stats, 0, &cleared);
             backend
                 .dispatch(
                     &kernel.pipeline,
@@ -229,7 +232,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
             .create_buffer(bytes(domains), BufferUsage::Output)?;
         let stats = self
             .backend
-            .create_buffer(bytes(STATS_WORDS * capacity), BufferUsage::Output)?;
+            .create_buffer(bytes(1 + STATS_WORDS * capacity), BufferUsage::Output)?;
         let params = self
             .backend
             .create_buffer(size_of::<Params>() as u64, BufferUsage::Uniform)?;
@@ -248,7 +251,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
             .create_buffer(bytes(domains), BufferUsage::Readback)?;
         let stats_readback = self
             .backend
-            .create_buffer(bytes(STATS_WORDS * capacity), BufferUsage::Readback)?;
+            .create_buffer(bytes(1 + STATS_WORDS * capacity), BufferUsage::Readback)?;
         // Binding order is the kernel's binding order.
         let binding = self.backend.create_binding(
             &pipeline,
@@ -278,7 +281,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
     /// Reads a finished dispatch back.
     fn collect(&mut self, running: InFlight<B>) -> Result<BatchResult, SolverError> {
         let kernel = &self.kernels[&running.key];
-        let mut stats = vec![0u32; (STATS_WORDS * kernel.capacity) as usize];
+        let mut stats = vec![0u32; 1 + (STATS_WORDS * kernel.capacity) as usize];
         let mut words = vec![0u32; (kernel.spec.domain_words() * kernel.capacity) as usize];
         let backend = &self.backend;
         backend
@@ -290,7 +293,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
         let mut statuses = Vec::with_capacity(running.regions as usize);
         let mut per_region = Vec::with_capacity(running.regions as usize);
         for region in 0..running.regions {
-            let record = &stats[(region * STATS_WORDS) as usize..][..STATS_WORDS as usize];
+            let record = &stats[1 + (region * STATS_WORDS) as usize..][..STATS_WORDS as usize];
             if record[STEPS] == 0 {
                 return Err(SolverError::NoReport { region });
             }
@@ -302,6 +305,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
                 // The kernel restored a checkpoint holding an empty cell, which the rules cannot
                 // cause: it is a bug in the checkpoint ring, so it fails the batch loudly.
                 4 => return Err(SolverError::BadCheckpoint { region }),
+                5 => RegionStatus::Superseded,
                 status => {
                     return Err(SolverError::Backend(format!(
                         "region {region} reported status {status}, which the kernel never writes"
@@ -348,6 +352,7 @@ impl<B: ComputeBackend> Solver for BlockSolver<B> {
             params.max_attempts = budget.max_attempts;
             params.max_steps = budget.max_steps;
         }
+        params.portfolio = u32::from(batch.portfolio);
         self.start_with(batch, params)
     }
 

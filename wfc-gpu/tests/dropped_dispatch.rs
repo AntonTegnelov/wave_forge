@@ -100,6 +100,7 @@ fn solver_and_batch() -> (BlockSolver<NothingRuns>, RegionBatch) {
         seeds: vec![7, 7],
         init: Domains::filled(region.cells() * 2, 2),
         budget: None,
+        portfolio: false,
     };
     let solver = BlockSolver::new(NothingRuns, Arc::new(ruleset), SolverConfig::default())
         .expect("the fake device is large enough");

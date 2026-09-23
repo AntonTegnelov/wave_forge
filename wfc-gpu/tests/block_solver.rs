@@ -9,7 +9,7 @@ use wfc_core::reference::ReferenceSolver;
 use wfc_core::rules::AXES;
 use wfc_core::{
     ChunkCoord, ChunkShape, ChunkStore, Domains, Prior, Region, RegionBatch, RegionShape,
-    RegionStatus, Ruleset, Solver, SolverError, TileMask, WorldExtent, region_init,
+    RegionStatus, Ruleset, SolveBudget, Solver, SolverError, TileMask, WorldExtent, region_init,
 };
 use wfc_devtools::city::{self, city_prior};
 use wfc_gpu::block_solver::BlockSolver;
@@ -67,6 +67,7 @@ impl OneChunk {
             seeds: runs.iter().map(|(_, seed)| *seed).collect(),
             init,
             budget: None,
+            portfolio: false,
         }
     }
 
@@ -187,6 +188,66 @@ fn the_result_does_not_depend_on_invocations_per_workgroup() {
 }
 
 #[test]
+fn a_portfolio_stops_seeds_above_the_winner_without_changing_the_winner() {
+    // One attempt each, so some seeds fail and the winner is not always the first.
+    let chunk = OneChunk::city(ChunkShape::cube(8));
+    let runs: Vec<(u32, u32)> = (0..32).map(|seed| (5, seed * 7919 + 3)).collect();
+    let budget = SolveBudget {
+        max_attempts: 1,
+        max_steps: 50_000,
+    };
+    let solve = |portfolio: bool| {
+        let mut solver = chunk.solver(SolverConfig::default());
+        let job = solver
+            .start(RegionBatch {
+                budget: Some(budget),
+                portfolio,
+                ..chunk.batch(&runs)
+            })
+            .expect("a well-formed batch");
+        solver.wait(job).expect("the dispatch finishes")
+    };
+
+    let all = solve(false);
+    let early = solve(true);
+
+    let winner = all
+        .statuses
+        .iter()
+        .position(|status| status.is_solved())
+        .expect("some seed solves");
+    assert_eq!(
+        early.statuses.iter().position(|status| status.is_solved()),
+        Some(winner),
+        "the same seed wins: {:?} against {:?}",
+        early.statuses,
+        all.statuses
+    );
+    let cells = chunk.shape().cells();
+    assert_eq!(early.region(winner, cells), all.region(winner, cells));
+    assert_eq!(
+        early.statuses[..winner],
+        all.statuses[..winner],
+        "every seed below the winner runs to its end"
+    );
+    for (index, (&stopped, &ran)) in early.statuses.iter().zip(&all.statuses).enumerate() {
+        assert!(
+            stopped == ran || (stopped == RegionStatus::Superseded && index > winner),
+            "seed {index}: {stopped:?} with the portfolio, {ran:?} without"
+        );
+    }
+    assert!(!all.statuses.contains(&RegionStatus::Superseded));
+    eprintln!(
+        "block_solver: portfolio winner {winner}, {} of 32 superseded",
+        early
+            .statuses
+            .iter()
+            .filter(|status| **status == RegionStatus::Superseded)
+            .count()
+    );
+}
+
+#[test]
 fn weights_bias_the_choice() {
     let shape = ChunkShape { x: 4, y: 4, z: 1 };
     let rules = AdjacencyRules::from_allowed_tuples(
@@ -302,6 +363,7 @@ fn an_impossible_border_is_reported_rather_than_searched() {
         seeds: vec![1],
         init,
         budget: None,
+        portfolio: false,
     };
     let mut solver = chunk.solver(SolverConfig::default());
 
@@ -409,6 +471,7 @@ fn a_malformed_batch_is_refused_before_the_device_sees_it() {
         seeds: Vec::new(),
         init: Domains::from_words(0, chunk.ruleset.words_per_cell(), Vec::new()).expect("empty"),
         budget: None,
+        portfolio: false,
     };
     assert!(matches!(
         solver.start(empty),
