@@ -46,7 +46,7 @@
 //! `xy`, and Godot's `y` is the lattice's `z`. `cell_size` says how large one cell is along each of
 //! Godot's axes, which is what turns a position into a chunk.
 
-use godot::classes::{INode, Node};
+use godot::classes::{FileAccess, INode, Node};
 use godot::prelude::*;
 use wave_forge::loader::RuleFile;
 use wave_forge::{
@@ -70,7 +70,19 @@ unsafe impl ExtensionLibrary for WaveForgeExtension {}
 pub struct WaveForgeWorld {
     base: Base<Node>,
 
+    /// The rule set to generate from: a Wave Forge rule file, tiles with their adjacency or
+    /// modules described by connectors. Read when the node starts on its own; a script can call
+    /// [`WaveForgeWorld::load_rules`] instead.
+    #[export_group(name = "Rules")]
+    #[export(file = "*.ron")]
+    rules_file: GString,
+    /// Whether to load `rules_file` and start generating as soon as the node enters the scene
+    /// tree. Leave it off to set the prior from a script first.
+    #[export]
+    start_on_ready: bool,
+
     /// Every choice in the world derives from this.
+    #[export_group(name = "World")]
     #[export]
     seed: i64,
     /// The cells of one chunk, along the lattice's own axes (x, y across the ground, z up).
@@ -79,20 +91,25 @@ pub struct WaveForgeWorld {
     /// How large one cell is in Godot's world units, along Godot's axes.
     #[export]
     cell_size: Vector3,
+    /// How many chunks the world is, along the lattice's axes. Zero on an axis means unbounded.
+    #[export]
+    world_chunks: Vector3i,
+
     /// How many chunks to keep generated around the followed position.
+    #[export_group(name = "Streaming")]
     #[export]
     view_radius: i32,
-    /// Cells solved around a chunk and thrown away, so its borders can be completed.
-    #[export]
-    halo: i32,
     /// Chunks further than `view_radius` plus this many are dropped. Below one, a chunk that is
     /// about to be asked for again would be dropped, because the chunks a focus needs reach one
     /// beyond its radius. Zero keeps everything.
     #[export]
     evict_margin: i32,
-    /// How many chunks the world is, along the lattice's axes. Zero on an axis means unbounded.
+
+    /// Cells solved around a chunk and thrown away, so its borders can be completed. Changing it
+    /// compiles other kernels.
+    #[export_group(name = "Advanced")]
     #[export]
-    world_chunks: Vector3i,
+    halo: i32,
     /// Whether to compile the kernels a run needs when generation starts, rather than at the first
     /// batch that needs one.
     ///
@@ -122,6 +139,8 @@ impl INode for WaveForgeWorld {
     fn init(base: Base<Node>) -> Self {
         Self {
             base,
+            rules_file: GString::new(),
+            start_on_ready: false,
             seed: 0,
             chunk_cells: Vector3i::new(8, 8, 8),
             cell_size: Vector3::ONE,
@@ -135,6 +154,25 @@ impl INode for WaveForgeWorld {
             rules: None,
             worker: None,
             followed: None,
+        }
+    }
+
+    /// Starts generating from `rules_file` if the node is set to start on its own.
+    fn ready(&mut self) {
+        if !self.start_on_ready {
+            return;
+        }
+        if self.rules_file.is_empty() {
+            godot_error!("wave forge: start_on_ready is set but rules_file is empty");
+            return;
+        }
+        let text = FileAccess::get_file_as_string(&self.rules_file);
+        if text.is_empty() {
+            godot_error!("wave forge: {} could not be read", self.rules_file);
+            return;
+        }
+        if self.load_rules(text) {
+            self.start();
         }
     }
 

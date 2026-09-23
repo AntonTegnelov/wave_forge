@@ -60,6 +60,8 @@ var period_ms := PackedFloat64Array()
 var late_frames := 0
 var first_late := ""
 var done := false
+## A node set to start on its own from a rule file, checked on the first frame.
+var starting_on_ready: Node = null
 
 func _initialize() -> void:
 	world = ClassDB.instantiate("WaveForgeWorld")
@@ -100,6 +102,8 @@ func _initialize() -> void:
 		return
 	if not _check_module_catalogue():
 		return
+	if not _check_editor_setup():
+		return
 	if not world.start():
 		_fail("generation did not start")
 		return
@@ -107,6 +111,38 @@ func _initialize() -> void:
 	started_usec = Time.get_ticks_usec()
 	world.follow(_position_at(_start_x()))
 	print("verify: starting in chunk ", world.chunk_at(_position_at(_start_x())))
+
+## What a scene sets in the editor: grouped properties, and a node that starts on its own from a
+## rule file.
+func _check_editor_setup() -> bool:
+	var node: Node = ClassDB.instantiate("WaveForgeWorld")
+	var groups := []
+	for property in node.get_property_list():
+		if property["usage"] & PROPERTY_USAGE_GROUP:
+			groups.append(property["name"])
+	# The node's own groups come first; Node's inherited ones follow.
+	if groups.slice(0, 4) != ["Rules", "World", "Streaming", "Advanced"]:
+		node.free()
+		_fail("the inspector groups are %s" % [groups])
+		return false
+	node.rules_file = "res://city.ron"
+	node.start_on_ready = true
+	# A node added now is readied on the first frame, which is where _process looks at it.
+	root.add_child(node)
+	starting_on_ready = node
+	print("verify: the inspector groups its properties")
+	return true
+
+## Whether the node set to start on ready did, once it has been readied.
+func _check_started_on_ready() -> bool:
+	var started: bool = starting_on_ready.is_generating()
+	starting_on_ready.queue_free()
+	starting_on_ready = null
+	if not started:
+		_fail("a node set to start on ready did not start from its rules_file")
+		return false
+	print("verify: a node set to start on ready started from its rules_file")
+	return true
 
 ## What a game needs to place a module set's models: names, rotations, tags, and where cells are.
 ## Loading the rules is enough, so this node is never started.
@@ -189,6 +225,8 @@ func _check_models(city: Node) -> bool:
 ## generation is doing.
 func _process(_delta: float) -> bool:
 	if done:
+		return true
+	if starting_on_ready != null and not _check_started_on_ready():
 		return true
 	if not world.is_generating():
 		_fail("generation stopped")
