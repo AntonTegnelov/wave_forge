@@ -261,9 +261,22 @@ reproduction impossible anyway.
   range and cycles, and each error names the stage. `Pack::reach(target)` reports, for every stage
   `target` depends on, how many cells beyond a column of `target` it has to be generated: the
   largest sum of reaches along any path.
-- **Stage kinds so far.** `Field`, an expression per cell column (constants, fractal value noise,
-  other fields at the same column, sums and products), with reach 0; and `Blur`, another field
-  averaged over a square, whose reach is its radius. Nobody declares a reach by hand.
+- **Stage kinds so far.** Nobody declares a reach by hand; each follows from the parameters.
+  - `Field`: an expression per cell column (constants, fractal value noise, other fields at the
+    same column, sums and products), with reach 0.
+  - `Blur`: another field averaged over a square, whose reach is its radius.
+  - `Sites`: settlement footprints, rectangles of whole chunks, at most one per square region of
+    chunks, placed by the stage's hash stream with an integer existence test and kept one chunk
+    inside their region, so two sites are always two chunks apart. Each site's height is the mean
+    of a height field over its footprint's centre and inner corners, which gives the stage a
+    reach of one region into the height field; reaches can be in chunks and become cells when the
+    runtime knows the chunk size. A chunk's product lists the sites that overlap it, owned by
+    their region.
+  - `Flatten`: a height field levelled to each nearby site's height inside its footprint and
+    blended back over a band of cells, a base field, then sites that read only the base, then an
+    adapted field (§2).
+- **Typed products.** A stage produces a field or a list of sites, and loading refuses a stage that
+  reads one as the other.
 - **Runtime.** `Runtime::request(focus, target)` works out, from the target backwards, which chunks
   of every stage the request needs, and drops everything else it held. `run_until_idle` generates
   what is missing, stage by stage with inputs first, nearest chunk first. A stage reads its inputs
@@ -275,5 +288,13 @@ reproduction impossible anyway.
   same over a 4×4-chunk area asked for all at once and one chunk at a time in either raster order.
 
 Fields are one value per cell column on the WFC chunk lattice for now; other lattices, 3D fields
-and the remaining stage kinds come with the slices that need them, and WFC joins as a Solve stage
-next ([#67](https://github.com/AntonTegnelov/wave_forge/issues/67)).
+and the remaining stage kinds come with the slices that need them.
+
+**How WFC joins: one bounded world per site.** A surface world's heights vary far more than one
+chunk-tall WFC lattice can span, and pure repairs are guaranteed only for worlds one chunk tall
+(§5). So the Solve stage of the first slice ([#68](https://github.com/AntonTegnelov/wave_forge/issues/68)) solves each site as its own bounded WFC world, the
+size of its footprint in chunks, seeded from the world seed and the site's region, with the
+module set's boundary rules at its edges, and an engine places it at the site's levelled height.
+Sites are two chunks apart, so no WFC seam ever joins two towns. A site's city is then a pure
+function of the site, a small region job, whatever order it is asked for in. The infinite city of
+the MVP keeps the streaming WFC world it has today.

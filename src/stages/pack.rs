@@ -35,6 +35,57 @@ pub enum StageKind {
     Field(Expr),
     /// Another field averaged over the square of `radius` cells around each column.
     Blur { input: String, radius: u32 },
+    /// Settlement sites: rectangles of whole chunks, at most one per square region of `region`
+    /// chunks, placed with `chance`, between `size.0` and `size.1` chunks on a side, and kept at
+    /// least one chunk inside their region, so two sites are always two chunks apart. Each site's
+    /// height is the mean of the `height` field over its footprint's centre and inner corners.
+    Sites {
+        height: String,
+        region: u32,
+        size: (u32, u32),
+        chance: f32,
+    },
+    /// The `height` field levelled to each of `sites`' heights inside its footprint and blended
+    /// back to the field over `blend` cells around it.
+    Flatten {
+        height: String,
+        sites: String,
+        blend: u32,
+    },
+}
+
+/// What a stage produces, which decides which stages may read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Output {
+    Field,
+    Sites,
+}
+
+impl StageKind {
+    pub(crate) const fn output(&self) -> Output {
+        match self {
+            Self::Field(_) | Self::Blur { .. } | Self::Flatten { .. } => Output::Field,
+            Self::Sites { .. } => Output::Sites,
+        }
+    }
+}
+
+/// How far beyond its chunk a stage reads an input: in cells, or in whole chunks, which the
+/// runtime turns into cells once it knows how large a chunk is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reach {
+    Cells(u32),
+    Chunks(u32),
+}
+
+impl Reach {
+    /// The reach in cells along each lattice axis, for chunks of `size` cells.
+    pub(crate) const fn cells(self, size: [u32; 2]) -> [u32; 2] {
+        match self {
+            Self::Cells(cells) => [cells, cells],
+            Self::Chunks(chunks) => [chunks * size[0], chunks * size[1]],
+        }
+    }
 }
 
 /// A field's value at one cell column.
@@ -107,8 +158,8 @@ pub enum PackError {
 pub(crate) struct Stage {
     pub(crate) name: String,
     pub(crate) kind: StageKind,
-    /// The stages it reads, by index, and how many cells beyond a column it reads each.
-    pub(crate) inputs: Vec<(usize, u32)>,
+    /// The stages it reads, by index, and how far beyond its chunk it reads each.
+    pub(crate) inputs: Vec<(usize, Reach)>,
     /// Mixed into every random decision the stage makes, so two stages never share a stream.
     pub(crate) salt: u32,
 }
@@ -150,26 +201,73 @@ impl Pack {
                 return Err(PackError::DuplicateName(stage.name.clone()));
             }
         }
+        let outputs: Vec<Output> = file.stages.iter().map(|def| def.kind.output()).collect();
         let mut stages = Vec::with_capacity(file.stages.len());
         for def in file.stages {
-            let reads: Vec<(&str, u32)> = match &def.kind {
+            let invalid = |message: String| PackError::Invalid {
+                stage: def.name.clone(),
+                message,
+            };
+            let reads: Vec<(&str, Reach, Output)> = match &def.kind {
                 StageKind::Field(expr) => {
-                    expr.check().map_err(|message| PackError::Invalid {
-                        stage: def.name.clone(),
-                        message,
-                    })?;
+                    expr.check().map_err(invalid)?;
                     let mut names = Vec::new();
                     expr.inputs(&mut names);
-                    names.into_iter().map(|name| (name, 0)).collect()
+                    names
+                        .into_iter()
+                        .map(|name| (name, Reach::Cells(0), Output::Field))
+                        .collect()
                 }
-                StageKind::Blur { input, radius } => vec![(input.as_str(), *radius)],
+                StageKind::Blur { input, radius } => {
+                    vec![(input.as_str(), Reach::Cells(*radius), Output::Field)]
+                }
+                StageKind::Sites {
+                    height,
+                    region,
+                    size,
+                    chance,
+                } => {
+                    if !(1 <= size.0 && size.0 <= size.1) {
+                        return Err(invalid(format!(
+                            "site sizes {} to {} chunks are not a range from 1",
+                            size.0, size.1
+                        )));
+                    }
+                    if *region < size.1 + 2 {
+                        return Err(invalid(format!(
+                            "a region of {region} chunks cannot keep a site of {} chunks one \
+                             chunk inside it",
+                            size.1
+                        )));
+                    }
+                    if !(0.0..=1.0).contains(chance) {
+                        return Err(invalid(format!("chance {chance} is not between 0 and 1")));
+                    }
+                    // A chunk's site lies within the chunk's region, so its footprint is at most
+                    // a region away.
+                    vec![(height.as_str(), Reach::Chunks(*region), Output::Field)]
+                }
+                StageKind::Flatten {
+                    height,
+                    sites,
+                    blend,
+                } => vec![
+                    (height.as_str(), Reach::Cells(0), Output::Field),
+                    (sites.as_str(), Reach::Cells(*blend), Output::Sites),
+                ],
             };
             let mut inputs = Vec::with_capacity(reads.len());
-            for (name, reach) in reads {
+            for (name, reach, expected) in reads {
                 let index = *by_name.get(name).ok_or_else(|| PackError::UnknownInput {
                     stage: def.name.clone(),
                     input: name.to_owned(),
                 })?;
+                if outputs[index] != expected {
+                    return Err(invalid(format!(
+                        "it reads {name:?} as {expected:?}, but that stage produces {:?}",
+                        outputs[index]
+                    )));
+                }
                 inputs.push((index, reach));
             }
             stages.push(Stage {
@@ -192,11 +290,12 @@ impl Pack {
         self.stages.iter().map(|stage| stage.name.as_str())
     }
 
-    /// How far beyond a column of `target` each stage it depends on has to be generated, in cells:
-    /// the largest sum of reaches along any path from `target` to it. `target` itself is included,
-    /// at 0. `None` if no stage is named `target`.
+    /// How far beyond a column of `target` each stage it depends on has to be generated, in cells
+    /// along the lattice's x, for chunks of `size` cells: the largest sum of reaches along any path
+    /// from `target` to it. `target` itself is included, at 0. `None` if no stage is named
+    /// `target`.
     #[must_use]
-    pub fn reach(&self, target: &str) -> Option<BTreeMap<String, u32>> {
+    pub fn reach(&self, target: &str, size: [u32; 2]) -> Option<BTreeMap<String, u32>> {
         let target = *self.by_name.get(target)?;
         let mut reach: BTreeMap<usize, u32> = BTreeMap::from([(target, 0)]);
         // Consumers come after their inputs in `order`, so walking it backwards visits every
@@ -205,9 +304,9 @@ impl Pack {
             let Some(&here) = reach.get(&index) else {
                 continue;
             };
-            for &(input, cells) in &self.stages[index].inputs {
+            for &(input, span) in &self.stages[index].inputs {
                 let there = reach.entry(input).or_insert(0);
-                *there = (*there).max(here + cells);
+                *there = (*there).max(here + span.cells(size)[0]);
             }
         }
         Some(
@@ -319,7 +418,7 @@ mod tests {
     fn reach_adds_up_along_the_longest_path() {
         let pack = Pack::parse(TERRAIN).expect("a valid pack");
 
-        let reach = pack.reach("softer").expect("a stage");
+        let reach = pack.reach("softer", [8, 8]).expect("a stage");
 
         assert_eq!(
             reach,
@@ -367,6 +466,48 @@ mod tests {
         );
 
         assert_eq!(result, Err(PackError::DuplicateName("a".to_owned())));
+    }
+
+    #[test]
+    fn a_stage_reading_sites_as_a_field_is_named() {
+        let result = pack_with(
+            r#"(name: "h", kind: Field(Constant(1.0))),
+               (name: "towns", kind: Sites(height: "h", region: 6, size: (1, 3), chance: 0.5)),
+               (name: "wrong", kind: Blur(input: "towns", radius: 1))"#,
+        );
+
+        assert!(
+            matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "wrong"),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_region_too_small_for_its_sites_is_refused() {
+        let result = pack_with(
+            r#"(name: "h", kind: Field(Constant(1.0))),
+               (name: "towns", kind: Sites(height: "h", region: 4, size: (1, 3), chance: 0.5))"#,
+        );
+
+        assert!(
+            matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "towns"),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_reach_in_chunks_counts_the_chunk_size() {
+        let pack = pack_with(
+            r#"(name: "h", kind: Field(Constant(1.0))),
+               (name: "towns", kind: Sites(height: "h", region: 6, size: (1, 3), chance: 0.5)),
+               (name: "level", kind: Flatten(height: "h", sites: "towns", blend: 4))"#,
+        )
+        .expect("valid");
+
+        let reach = pack.reach("level", [8, 8]).expect("a stage");
+
+        assert_eq!(reach["towns"], 4);
+        assert_eq!(reach["h"], 4 + 6 * 8);
     }
 
     #[test]
