@@ -18,7 +18,7 @@ use godot::classes::{
     FileAccess, INode, Material, Node, PhysicsServer3D, RenderingServer, Shape3D,
 };
 use godot::prelude::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use wave_forge::loader::{RuleFile, parse_rule_file};
 use wave_forge::stages::{Pack, Runtime, StageEvent, StageKind, StageWorker};
@@ -97,10 +97,17 @@ pub struct WaveForgeStages {
     grounds: HashMap<ChunkCoord, (GroundMesh, Rid, Rid)>,
     /// What the node's slowest frame since the start spent Godot's thread on.
     slowest_frame: FrameCost,
+    /// Signals not yet emitted, in the order their events arrived.
+    pending: VecDeque<StageEvent>,
     /// Each chunk's static body and its ground's height map shape, which the body does not own,
     /// and what it holds, to tell when it has to be built again.
     bodies: HashMap<ChunkCoord, (Rid, Option<Rid>, BodyContents)>,
 }
+
+/// The most `stage_ready` and `stage_dropped` signals one frame emits. A wide request can bring
+/// thousands of products at once, and emitting each costs a microsecond or two before any handler
+/// a game connected runs, so the rest wait for the next frames.
+const SIGNALS_PER_FRAME: usize = 256;
 
 /// What one frame of `process` cost Godot's thread, and what it spent it on.
 #[derive(Clone, Copy, Debug, Default)]
@@ -154,6 +161,7 @@ impl INode for WaveForgeStages {
             grounds: HashMap::new(),
             bodies: HashMap::new(),
             slowest_frame: FrameCost::default(),
+            pending: VecDeque::new(),
         }
     }
 
@@ -186,29 +194,32 @@ impl INode for WaveForgeStages {
         }
         let ground_stage = self.ground_stage.to_string();
         let (mut arrived, mut gone) = (Vec::new(), Vec::new());
+        for event in &events {
+            match event {
+                StageEvent::Generated { stage, chunk } if *stage == ground_stage => {
+                    arrived.push(*chunk);
+                }
+                StageEvent::Dropped { stage, chunk } if *stage == ground_stage => gone.push(*chunk),
+                StageEvent::Generated { .. } | StageEvent::Dropped { .. } => {}
+            }
+        }
+        self.pending.extend(events);
+        let emitted = self.pending.len().min(SIGNALS_PER_FRAME);
         let mut frame = FrameCost {
-            events: events.len(),
+            events: emitted,
             ..FrameCost::default()
         };
         let signalling = std::time::Instant::now();
-        for event in events {
+        for event in self.pending.drain(..emitted).collect::<Vec<_>>() {
             match event {
-                StageEvent::Generated { stage, chunk } => {
-                    if stage == ground_stage {
-                        arrived.push(chunk);
-                    }
-                    self.signals()
-                        .stage_ready()
-                        .emit(&GString::from(&stage), to_vector(chunk));
-                }
-                StageEvent::Dropped { stage, chunk } => {
-                    if stage == ground_stage {
-                        gone.push(chunk);
-                    }
-                    self.signals()
-                        .stage_dropped()
-                        .emit(&GString::from(&stage), to_vector(chunk));
-                }
+                StageEvent::Generated { stage, chunk } => self
+                    .signals()
+                    .stage_ready()
+                    .emit(&GString::from(&stage), to_vector(chunk)),
+                StageEvent::Dropped { stage, chunk } => self
+                    .signals()
+                    .stage_dropped()
+                    .emit(&GString::from(&stage), to_vector(chunk)),
             }
         }
         frame.signals_ms = elapsed_ms(signalling);
@@ -228,7 +239,10 @@ impl INode for WaveForgeStages {
 
 #[godot_api]
 impl WaveForgeStages {
-    /// A stage's product for a chunk is ready to read.
+    /// A stage's product for a chunk is ready to read. At most 256 of these and `stage_dropped`
+    /// together are emitted per frame, in the order the products arrived, so after a wide request
+    /// some come a few frames later; by then a product can have been dropped again, and its
+    /// `stage_dropped` follows.
     #[signal]
     fn stage_ready(stage: GString, chunk: Vector3i);
 
@@ -284,6 +298,7 @@ impl WaveForgeStages {
         self.rules = rules.clone();
         self.pack = Some(pack);
         self.followed = None;
+        self.pending.clear();
         self.clear_ground_and_bodies();
         // The towns' device is built on the stages' thread, which is where it is used.
         self.worker = Some(StageWorker::spawn(move || {
@@ -574,11 +589,12 @@ impl WaveForgeStages {
 
     /// What the node has cost Godot's thread: `process_ms_median`, `_p99` and `_max` over recent
     /// frames, once there are some; and what its slowest frame since the start spent the time on:
-    /// `slowest_frame_ms` in all, `slowest_frame_events` drained and `slowest_frame_signals_ms`
-    /// emitting them (the handlers connected to them included), `slowest_frame_grounds` chunks
-    /// given ground in `slowest_frame_grounds_ms`, and `slowest_frame_bodies` chunks given a body
-    /// in `slowest_frame_bodies_ms`. And `stages`: what each stage has cost on the stages' thread,
-    /// by name, as `products`, `ms` in all and `slowest_ms` for one product.
+    /// `slowest_frame_ms` in all, `slowest_frame_events` signals emitted in
+    /// `slowest_frame_signals_ms` (the handlers connected to them included),
+    /// `slowest_frame_grounds` chunks given ground in `slowest_frame_grounds_ms`, and
+    /// `slowest_frame_bodies` chunks given a body in `slowest_frame_bodies_ms`. And `stages`: what
+    /// each stage has cost on the stages' thread, by name, as `products`, `ms` in all and
+    /// `slowest_ms` for one product. And `pending_signals`, the signals waiting for a later frame.
     #[func]
     fn stats(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
@@ -594,6 +610,10 @@ impl WaveForgeStages {
             stages.set(&GString::from(name).to_variant(), &cost.to_variant());
         }
         out.set(&"stages".to_variant(), &stages.to_variant());
+        out.set(
+            &"pending_signals".to_variant(),
+            &(self.pending.len() as i64).to_variant(),
+        );
         let slowest = self.slowest_frame;
         for (key, value) in [
             ("slowest_frame_ms", slowest.ms),

@@ -112,7 +112,7 @@ second, published once a second, not the last frame's time.
   modules of a rule set that carry a tag, to assign shapes by tag.
 - `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body.
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
-  since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` drained in
+  since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` signals emitted in
   `slowest_frame_signals_ms`, `slowest_frame_grounds` built in `slowest_frame_grounds_ms`,
   `slowest_frame_bodies` built in `slowest_frame_bodies_ms`), and `stages`, each stage's cost on
   the stages' thread by name (`products`, `ms`, `slowest_ms`).
@@ -120,6 +120,11 @@ second, published once a second, not the last frame's time.
 ### Signals
 
 `stage_ready(stage, chunk)`, `stage_dropped(stage, chunk)`, `generation_failed(reason)`.
+
+At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, in the order the
+products arrived (nearest first), so after a wide request some come a few frames later; by then a
+product can have been dropped again, and its `stage_dropped` follows. `stats()` reports the
+signals still waiting as `pending_signals`.
 
 ### Ground and colliders
 
