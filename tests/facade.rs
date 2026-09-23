@@ -153,6 +153,30 @@ fn a_worker_generates_on_a_thread_of_its_own() {
     }
 }
 
+#[test]
+fn dropping_a_worker_does_not_wait_for_its_thread() {
+    // A generator that takes as long to build as the test lets it, as compiling kernels does.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let worker = Worker::spawn(move || {
+        held.recv().expect("the test releases the build");
+        Ok(world(false))
+    });
+    let (dropped, done) = std::sync::mpsc::channel::<()>();
+
+    // A game frees its node on its main thread; that must not wait out the build.
+    std::thread::spawn(move || {
+        drop(worker);
+        dropped.send(()).expect("the test is listening");
+    });
+    let finished = done.recv_timeout(Duration::from_secs(5));
+    release.send(()).expect("the build is still waiting");
+
+    assert!(
+        finished.is_ok(),
+        "dropping the worker waited for its thread to finish building"
+    );
+}
+
 /// The chunk the scripted solver refuses to place on its first attempt.
 const STUBBORN: ChunkCoord = ChunkCoord::new(1, 0, 0);
 

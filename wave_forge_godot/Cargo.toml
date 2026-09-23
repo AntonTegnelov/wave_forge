@@ -14,5 +14,6 @@ description = "Wave Forge as a Godot GDExtension: chunks generated around a focu
 crate-type = ["cdylib"]
 
 [dependencies]
-godot = "0.5.5"
+# register-docs turns the doc comments into Godot's own help and inspector tooltips.
+godot = { version = "0.5.5", features = ["register-docs"] }
 wave_forge = { path = ".." }

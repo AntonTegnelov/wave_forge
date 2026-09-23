@@ -1,6 +1,6 @@
 [configuration]
 entry_symbol = "gdext_rust_init"
-compatibility_minimum = 4.2
+compatibility_minimum = 4.7
 reloadable = false
 
 [libraries]
@@ -10,3 +10,6 @@ macos.debug = "res://bin/libwave_forge_godot.dylib"
 macos.release = "res://bin/libwave_forge_godot.dylib"
 windows.debug.x86_64 = "res://bin/wave_forge_godot.dll"
 windows.release.x86_64 = "res://bin/wave_forge_godot.dll"
+
+[icons]
+WaveForgeWorld = "res://wave_forge_world.svg"
