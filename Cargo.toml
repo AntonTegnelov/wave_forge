@@ -24,6 +24,9 @@ wgpu = { version = "30.0.1", optional = true }
 [dev-dependencies]
 # The CPU reference solver: the facade's tests run without a GPU.
 wfc-core = { path = "wfc-core", features = ["reference"] }
+# Reads Godot's golden noise values (tests/fixtures/fastnoise), which Godot writes as JSON; the
+# version wfc-rules already reads JSON with.
+serde_json = "1.0.151"
 
 [features]
 default = ["wgpu"]
