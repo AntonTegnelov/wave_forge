@@ -19,7 +19,7 @@ community port and are unverified from Iron Gate (see the story's sources).
 | Seed-derived offsets | named hash streams | available: per stage, and per named noise | |
 | Base height from products of Perlin octaves, with its own lacunarity and gain | Perlin or simplex noise, fBm parameters, a seed per noise, subtraction and absolute values | partial: value noise with fixed fBm; the formula itself is expressible (`tests/expressions.rs`) | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
 | Radial falloff to the edge, a flattened spawn area | distance to the origin, smoothstep, remap, clamp, min and max, curves | available (`tests/expressions.rs`) | |
-| Biomes by an ordered first-match list over distance, noise and height | categorical fields, a Rules stage | missing | [#91](https://github.com/AntonTegnelov/wave_forge/issues/91) |
+| Biomes by an ordered first-match list over distance, noise and height | categorical fields, a Rules stage | available (`examples/rings.world.ron`, `tests/rules.rs`) | |
 | Height per biome, blended where biomes meet | select by category, blending | missing | [#92](https://github.com/AntonTegnelov/wave_forge/issues/92) |
 | Cellular noise, quantised height in some biomes | cellular noise, floor | partial: `Floor` quantises; cellular noise is missing | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
 | Lakes from a world scan | a region job on a coarse lattice | missing | [#69](https://github.com/AntonTegnelov/wave_forge/issues/69) |
@@ -54,7 +54,7 @@ Stories not listed have nothing built towards them yet beyond the shared runtime
 
 | Story | What exists | What is missing |
 |---|---|---|
-| G1 Minecraft-like | fields, sites, scatter, the order-diff test | categories and Rules, 3D density volumes, Assemble (jigsaw), aquifers, carvers ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91), [#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
+| G1 Minecraft-like | fields, categories by rules, sites, scatter, the order-diff test | biomes by nearest point, 3D density volumes, Assemble (jigsaw), aquifers, carvers ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
 | G2 Dwarf Fortress-like | fields | region jobs with retries, curves, records, a world bound ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69), [#98](https://github.com/AntonTegnelov/wave_forge/issues/98), [#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#99](https://github.com/AntonTegnelov/wave_forge/issues/99)) |
 | G3 No Man's Sky-like | fields, sites that flatten the ground, scatter | records, density volumes, point queries (`locate`), edits ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#100](https://github.com/AntonTegnelov/wave_forge/issues/100), [#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 | G4 Noita-like | WFC, positional ids | image import, Wang tiles, region jobs with path checks, stamps |

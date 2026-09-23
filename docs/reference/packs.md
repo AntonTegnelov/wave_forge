@@ -52,12 +52,13 @@ beyond a column of `target` it has to be generated: the largest sum of reaches a
 ## Stages
 
 All stages work on one lattice for now: one value per cell column on the WFC chunk lattice, two
-dimensional, in cells. Every stage produces one of four types, and loading refuses a stage that
+dimensional, in cells. Every stage produces one of five types (a field, categories, sites, tiles or points), and loading refuses a stage that
 reads one type as another.
 
 | Kind | Produces | Reads, and how far |
 |---|---|---|
-| `Field` | Field | the fields named by `Input`, 0 cells |
+| `Field` | Field | the fields named by `Input` and the categories named by `Is`, 0 cells |
+| `Rules` | Categories | what its conditions read, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
 | `Sites` | Sites | a height field, `region` chunks |
 | `Flatten` | Field | a height field, 0 cells; a Sites stage, `blend` cells |
@@ -79,12 +80,13 @@ in cells, measured from the world's origin to the column's centre, along the lat
 | `Distance((x, y))` | the distance from a point to the column's centre |
 | `Angle((x, y))` | the direction from a point to the column's centre, as a fraction of a turn from +x towards +y, in 0..1 |
 | `Add(a, b)`, `Sub(a, b)`, `Mul(a, b)`, `Min(a, b)`, `Max(a, b)` | the arithmetic |
-| `Abs(a)`, `Floor(a)` | the absolute value, the largest whole number not above it |
+| `Abs(a)`, `Floor(a)`, `Sin(a)` | the absolute value, the largest whole number not above it, the sine of an angle in radians |
+| `Is("stage", ["name", ...])` | 1 where a Rules stage's category is one of the names, 0 elsewhere |
 | `Clamp(a, low, high)` | `a` held between the bounds |
 | `Smoothstep(low, high, a)` | 0 at or below `low`, 1 at or above `high`, and a smooth step between |
 | `Remap(a, (from_low, from_high), (to_low, to_high))` | `a` mapped linearly from one range onto the other, not clamped |
 | `Curve(a, [(x, y), ...])` | a piecewise-linear curve through points in increasing x, level beyond its ends |
-| `Select(when: Less(a, b), then: c, otherwise: d)` | `c` where `a < b`, else `d`; `Greater(a, b)` compares the other way |
+| `Select(when: Less(a, b), then: c, otherwise: d)` | `c` where `a < b`, else `d`; `Greater(a, b)` compares the other way, and `Between(a, low, high)` holds where `a` is in the range, both ends included |
 
 An unnamed `Noise` draws from its stage's own stream, keyed by the world seed, the stage's name and
 the octave, so every unnamed noise of one stage is the same function; name them to make them
@@ -92,9 +94,23 @@ independent. Loading refuses a curve of fewer than two points or with x not incr
 whose low bound is above its high one, a smoothstep with equal edges, a remap from a range of one
 value, and numbers that are not finite.
 
-A condensed Valheim base height, as `tests/expressions.rs` writes it in one stage: products of
-named noises, a ridge mask that flattens the land near the centre with a smoothstep over the
-distance from it, and a fall to -0.2 past the world's edge with a clamped remap of that distance.
+`examples/rings.world.ron` puts these together: an island's height from products of named noises,
+flattened near the centre with a smoothstep over the distance from it and a rim noise, and falling
+into the sea past its edge with a clamped remap of that distance.
+
+### Rules
+
+`Rules(rules: [(category: "sea", when: [Less(Input("height"), Constant(0.05))]), ...], otherwise:
+"grassland")`: a category per column, the first rule whose conditions all hold there, or
+`otherwise`. The conditions are the ones `Select` takes, over any expression. The stage's categories
+are the names its rules give in the order they first appear, then `otherwise`'s, at most
+`MAX_CATEGORIES` (256); `StageKind::categories` lists them, and a chunk's product (`Categories`) holds
+one index into them per column.
+
+A field reads categories only through `Is`, and a category test names categories of a Rules stage:
+loading refuses reading a category stage as a field, a field as categories, and a name the rules do
+not give. `examples/rings.world.ron` sorts an island into ten biomes by height, distance from the
+centre with a wobble around it, and noise.
 
 ### Blur
 
@@ -174,7 +190,7 @@ let trees = runtime.points("trees", chunk);
 - `run_until_idle` generates what is missing, stage by stage with inputs first, nearest chunk
   first; `step(budget)` generates at most `budget` products, so a caller can take new requests in
   between; `is_idle` says whether anything is left.
-- `product`, `field`, `sites`, `tiles` and `points` read what a stage holds for a chunk; `held`
+- `product`, `field`, `categories`, `sites`, `tiles` and `points` read what a stage holds for a chunk; `held`
   counts products held.
 - A stage reads its inputs only through a `FieldView` bounded by its reach. A read outside it
   returns `StageError::OutOfReach`, naming the stage and the reach it would have needed.

@@ -2,7 +2,7 @@
 //!
 //! Each test builds a pack, generates an area, and compares every column's value with the same
 //! formula computed directly from the column's coordinates or from other stages' values. The last
-//! test writes Valheim's base height (docs/product/user-stories.md, G7) as one Field stage and
+//! test writes the ring world's height (`examples/rings.world.ron`, for G7) as one Field stage and
 //! checks it against the formula computed from its noises.
 
 use std::sync::Arc;
@@ -276,92 +276,95 @@ fn a_select_reads_the_fields_its_branches_and_condition_name() {
     );
 }
 
-/// Valheim's base height, scaled so an area of a few hundred cells holds the flattened spawn and
-/// the world's edge: products of noises, a ridge mask that flattens the land near the centre, and
-/// a fall to -0.2 past the edge. After the community port of `WorldGenerator.GetBaseHeight`, with
-/// the game's Perlin noise replaced by the library's value noise and every distance divided by 100.
-fn valheim_base_height() -> Expr {
+/// The ring world's height (`examples/rings.world.ron`) in one expression: products of named noises,
+/// flattened towards a low plain within 6 to 9 cells of the centre where a rim noise is low, and
+/// falling to -0.3 past 90 to 96 cells.
+fn ring_world_height() -> Expr {
     let n = |frequency: f32, name: &str| b(noise(frequency, name));
     let mul = |a: Box<Expr>, c: Box<Expr>| b(Expr::Mul(a, c));
     let add = |a: Box<Expr>, c: Box<Expr>| b(Expr::Add(a, c));
-    let first = mul(n(0.05, "a1"), n(0.075, "a2"));
-    let second = add(
-        first.clone(),
+    let sub = |a: Box<Expr>, c: Box<Expr>| b(Expr::Sub(a, c));
+    let detail = b(Expr::Noise {
+        frequency: 0.2,
+        octaves: 2,
+        name: Some("detail".to_owned()),
+    });
+    let land = sub(
         mul(
-            mul(mul(n(0.1, "b1"), n(0.15, "b2")), first.clone()),
-            constant(0.9),
+            mul(n(0.04, "continent"), n(0.09, "hills")),
+            add(constant(1.0), mul(constant(0.8), detail)),
+        ),
+        constant(0.1),
+    );
+    let centre = b(Expr::Distance((0.0, 0.0)));
+    let flatten = mul(
+        sub(constant(1.0), b(Expr::Smoothstep(6.0, 9.0, centre.clone()))),
+        sub(
+            constant(1.0),
+            b(Expr::Smoothstep(0.55, 0.75, n(0.03, "rim"))),
         ),
     );
-    let third = add(
-        second.clone(),
-        mul(mul(mul(n(0.25, "c1"), n(0.5, "c2")), constant(0.5)), second),
+    let kept = add(
+        mul(land, sub(constant(1.0), flatten.clone())),
+        mul(constant(0.1), flatten),
     );
-    let land = b(Expr::Sub(third, constant(0.07)));
-    let ridge = b(Expr::Abs(b(Expr::Sub(n(0.025, "r1"), n(0.025, "r2")))));
-    let ridge_step = b(Expr::Clamp(
-        b(Expr::Remap(ridge, (0.02, 0.12), (0.0, 1.0))),
-        0.0,
-        1.0,
-    ));
-    let flatten = mul(
-        b(Expr::Sub(constant(1.0), ridge_step)),
-        b(Expr::Smoothstep(7.44, 10.0, b(Expr::Distance((0.0, 0.0))))),
-    );
-    let kept = mul(land, b(Expr::Sub(constant(1.0), flatten)));
     let edge = b(Expr::Clamp(
-        b(Expr::Remap(
-            b(Expr::Distance((0.0, 0.0))),
-            (100.0, 105.0),
-            (0.0, 1.0),
-        )),
+        b(Expr::Remap(centre, (90.0, 96.0), (0.0, 1.0))),
         0.0,
         1.0,
     ));
-    Expr::Add(kept.clone(), mul(b(Expr::Sub(constant(-0.2), kept)), edge))
+    Expr::Add(kept.clone(), mul(sub(constant(-0.3), kept), edge))
 }
 
 #[test]
-fn valheims_base_height_as_one_field_stage_matches_its_formula() {
-    let names = ["a1", "a2", "b1", "b2", "c1", "c2", "r1", "r2"];
-    let frequencies = [0.05, 0.075, 0.1, 0.15, 0.25, 0.5, 0.025, 0.025];
-    let mut stages = vec![field("height", valheim_base_height())];
-    for (name, frequency) in names.iter().zip(frequencies) {
-        stages.push(field(name, noise(frequency, name)));
+fn a_ring_worlds_height_as_one_field_stage_matches_its_formula() {
+    let mut stages = vec![field("height", ring_world_height())];
+    for (name, frequency, octaves) in [
+        ("continent", 0.04, 1),
+        ("hills", 0.09, 1),
+        ("detail", 0.2, 2),
+        ("rim", 0.03, 1),
+    ] {
+        stages.push(field(
+            name,
+            Expr::Noise {
+                frequency,
+                octaves,
+                name: Some(name.to_owned()),
+            },
+        ));
     }
-    let mut targets = vec!["height"];
-    targets.extend(names);
+    let targets = ["height", "continent", "hills", "detail", "rim"];
     let (runtime, columns) = generate(stages, &targets, ChunkCoord::new(6, 0, 0), 7);
 
-    let (mut near, mut beyond) = (0, 0);
+    let (mut flat, mut beyond) = (0, 0);
     for column in columns {
         let n = |name: &str| value(&runtime, name, column);
         let (x, y) = (column.0 as f32 + 0.5, column.1 as f32 + 0.5);
         let distance = x.hypot(y);
-        let first = n("a1") * n("a2");
-        let second = first + n("b1") * n("b2") * first * 0.9;
-        let third = second + n("c1") * n("c2") * 0.5 * second;
-        let land = third - 0.07;
-        let ridge = (n("r1") - n("r2")).abs();
-        let ridge_step = ((ridge - 0.02) / 0.1).clamp(0.0, 1.0);
-        let t = ((distance - 7.44) / (10.0 - 7.44)).clamp(0.0, 1.0);
-        let flatten = (1.0 - ridge_step) * (t * t * (3.0 - 2.0 * t));
-        let kept = land * (1.0 - flatten);
-        let edge = ((distance - 100.0) / 5.0).clamp(0.0, 1.0);
-        let expected = kept + (-0.2 - kept) * edge;
+        let smooth = |low: f32, high: f32, v: f32| {
+            let t = ((v - low) / (high - low)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let land = n("continent") * n("hills") * (1.0 + 0.8 * n("detail")) - 0.1;
+        let flatten = (1.0 - smooth(6.0, 9.0, distance)) * (1.0 - smooth(0.55, 0.75, n("rim")));
+        let kept = land * (1.0 - flatten) + 0.1 * flatten;
+        let edge = ((distance - 90.0) / 6.0).clamp(0.0, 1.0);
+        let expected = kept + (-0.3 - kept) * edge;
 
         let got = value(&runtime, "height", column);
 
         assert_close(got, expected, &format!("column {column:?}"));
-        if distance < 7.44 {
-            near += 1;
+        if flatten > 0.0 {
+            flat += 1;
         }
-        if distance > 105.0 {
+        if distance > 96.0 {
             beyond += 1;
-            assert_close(got, -0.2, &format!("past the edge at {column:?}"));
+            assert_close(got, -0.3, &format!("past the edge at {column:?}"));
         }
     }
     assert!(
-        near > 0 && beyond > 0,
-        "the area holds the spawn ({near}) and the edge ({beyond})"
+        flat > 0 && beyond > 0,
+        "the area holds flattened land ({flat}) and the edge ({beyond})"
     );
 }

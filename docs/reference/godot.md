@@ -98,6 +98,8 @@ second, published once a second, not the last frame's time.
 - `follow(position)` generates around a position in Godot's world space, asking again only when it
   enters another chunk.
 - `field_values(stage, chunk)`: a field's values, column by column, x fastest.
+- `categories(stage, chunk)`: a Rules stage's categories, a byte per column, as indices into
+  `category_names(stage)`.
 - `sites(stage, chunk)`: the sites overlapping a chunk, each with its `region`, footprint `min` and
   `max` in chunks, and levelled `height`.
 - `town(stage, chunk)`: a town's `region`, `height` and `tiles` in a chunk.
@@ -109,7 +111,10 @@ second, published once a second, not the last frame's time.
   chunks within `collider_radius`, for every Solve stage; `modules_tagged(rules, tag)` names the
   modules of a rule set that carry a tag, to assign shapes by tag.
 - `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body.
-- `stage_names()`, `stats()` (`process_ms_median`, `_p99` and `_max`).
+- `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
+  since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` drained in
+  `slowest_frame_signals_ms`, `slowest_frame_grounds` built in `slowest_frame_grounds_ms`,
+  `slowest_frame_bodies` built in `slowest_frame_bodies_ms`).
 
 ### Signals
 

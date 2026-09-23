@@ -39,7 +39,7 @@ so far:
   [#65](https://github.com/AntonTegnelov/wave_forge/issues/65));
 - repairs as a pure level of the WFC stage, so a city is the same in any order
   ([#66](https://github.com/AntonTegnelov/wave_forge/issues/66));
-- a first slice towards a Valheim-like world: height, towns on levelled sites, trees kept apart, and
+- a first slice towards G7's island world: height, towns on levelled sites, trees kept apart, and
   a Godot node and a Bevy plugin serving it ([#68](https://github.com/AntonTegnelov/wave_forge/issues/68),
   [#85](https://github.com/AntonTegnelov/wave_forge/pull/85),
   [#86](https://github.com/AntonTegnelov/wave_forge/pull/86)).
@@ -51,15 +51,13 @@ has the full gap, and [#104](https://github.com/AntonTegnelov/wave_forge/issues/
 
 ## Open work, in order
 
-Each step is a verified pull request that updates the stories it moves. The order puts the
-Valheim-equivalent world (G7) first, which the survival game grows into, then what the strategy
-game needs.
+Each step is a verified pull request that updates the stories it moves. The order puts G7's world
+first, which the survival game grows into, then what the strategy game needs.
 
-1. **The G7 foundations:** categorical fields and a Rules stage
-   ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91)), and per-biome height with
-   blending ([#92](https://github.com/AntonTegnelov/wave_forge/issues/92)), on the richer Field
-   expressions of [#90](https://github.com/AntonTegnelov/wave_forge/issues/90). The valley pack then
-   gets biome rings.
+1. **Per-biome height with blending**
+   ([#92](https://github.com/AntonTegnelov/wave_forge/issues/92)), on the Field expressions of
+   [#90](https://github.com/AntonTegnelov/wave_forge/issues/90) and the Rules stage of
+   [#91](https://github.com/AntonTegnelov/wave_forge/issues/91).
 2. **Per-stage timings**, then Field stages on the GPU if they call for it
    ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)).
 3. **Region jobs and records** ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69),
@@ -79,7 +77,7 @@ game needs.
    ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101),
    [#102](https://github.com/AntonTegnelov/wave_forge/issues/102)), scenes bound to points
    ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), and a radius per stage
-   ([#103](https://github.com/AntonTegnelov/wave_forge/issues/103)). A Valheim-like test pack then
+   ([#103](https://github.com/AntonTegnelov/wave_forge/issues/103)). A test pack of G7's world then
    verifies G7.
 5. **Engine depth, alongside:** ground cover, grass and wind
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), region tags for audio and
@@ -105,7 +103,7 @@ grow.
 | Game | Engine | What it needs from Wave Forge | Repository |
 |---|---|---|---|
 | Parkour hide-and-seek and tag in an infinite WFC city, in the style of marian42's city | Godot | the streamed city with colliders and navigation | possible now ([#76](https://github.com/AntonTegnelov/wave_forge/issues/76)) |
-| Survival and crafting in a Valheim-like surface world | Godot | the stages, with ground meshes and colliders; then G7 | possible for a first version ([#89](https://github.com/AntonTegnelov/wave_forge/issues/89)) |
+| Survival and crafting on a generated island with biome rings (G7) | Godot | the stages, with ground meshes and colliders; then G7 | possible for a first version ([#89](https://github.com/AntonTegnelov/wave_forge/issues/89)) |
 | Grand strategy inspired by Europa Universalis, on a world and history generated once per new game in the manner of Dwarf Fortress | Bevy | region jobs and records ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69), [#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); the history simulation is the game's | after step 3 above |
 
 **Each game lives in its own private repository.** They are not open source. They depend on Wave
