@@ -141,3 +141,43 @@ fn test_load_file_not_found() {
         _ => panic!("Expected Io error for non-existent file"),
     }
 }
+
+/// The example files at the repository root.
+#[cfg(feature = "serde")]
+fn example(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../examples")
+        .join(name)
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn a_module_set_file_loads_as_modules() {
+    let file = wfc_rules::loader::load_rule_file(&example("city.ron")).expect("the city loads");
+
+    let modules = file.modules().expect("the city is written as modules");
+    assert_eq!(modules.variants.len(), file.tileset().weights.len());
+    assert_eq!(modules.variants.len(), 81, "the city's rotated variants");
+    assert!(modules.connector("walkway").is_some());
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn a_tile_set_file_loads_as_tiles() {
+    let file = wfc_rules::loader::load_rule_file(&example("simple-pattern.ron"))
+        .expect("the example loads");
+
+    assert!(file.modules().is_none());
+    assert_eq!(file.tileset().weights.len(), 2);
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn a_file_of_neither_form_is_refused() {
+    let result = wfc_rules::loader::parse_rule_file("(colours: [\"red\"])");
+
+    assert!(
+        matches!(result, Err(LoadError::ParseError(_))),
+        "{result:?}"
+    );
+}

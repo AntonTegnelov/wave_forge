@@ -179,8 +179,9 @@ impl WaveForgeWorld {
     #[signal]
     fn generation_failed(reason: GString);
 
-    /// Starts generating from a rule set in Wave Forge's RON format, usually read with
-    /// `FileAccess.get_file_as_string`, so that it works inside an exported game.
+    /// Starts generating from a rule set in Wave Forge's RON format, either tiles with their
+    /// adjacency or modules described by connectors, usually read with
+    /// `FileAccess.get_file_as_string` so that it works inside an exported game.
     ///
     /// Returns whether the rule set could be used. The GPU device and the first kernels are built
     /// on the generating thread, so a failure there arrives as `generation_failed` rather than
@@ -188,14 +189,14 @@ impl WaveForgeWorld {
     #[func]
     fn start(&mut self, rules: GString) -> bool {
         let text = rules.to_string();
-        let (tileset, rules) = match wave_forge::loader::load_from_ron_string(&text) {
-            Ok(loaded) => loaded,
+        let file = match wave_forge::loader::parse_rule_file(&text) {
+            Ok(file) => file,
             Err(error) => {
                 godot_error!("wave forge: {error}");
                 return false;
             }
         };
-        let ruleset = match Ruleset::new(&rules, &tileset.weights) {
+        let ruleset = match Ruleset::new(file.rules(), &file.tileset().weights) {
             Ok(ruleset) => ruleset,
             Err(error) => {
                 godot_error!("wave forge: {error}");
