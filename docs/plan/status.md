@@ -103,7 +103,7 @@ Each is a gap between the code and the design or the stories, with where it is t
   find paths between sites; tables of facts reach stages through a focused row, sites, towns and
   roads
   ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); there are no edits, persistence modes, world
-  bounds or per-stage request radii; noise is value noise only; a Scatter stage has one kind and
+  bounds or per-stage request radii; noise is the library's value noise and Godot's FastNoiseLite in 2D; a Scatter stage has one kind and
   blocks no other stage's points. Each is an issue under
   [#104](https://github.com/AntonTegnelov/wave_forge/issues/104) ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, untextured and without levels of
@@ -115,11 +115,10 @@ Each is a gap between the code and the design or the stories, with where it is t
 - **No levels of detail** for the exported module meshes; they wait for authored models
   ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)).
 - **Scenes are not yet bound to points**, and there are no region tags, far proxies, occluders,
-  noise parity with Godot, or authoring tools
+  or authoring tools
   ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44),
   [#43](https://github.com/AntonTegnelov/wave_forge/issues/43),
   [#47](https://github.com/AntonTegnelov/wave_forge/issues/47),
-  [#45](https://github.com/AntonTegnelov/wave_forge/issues/45),
   [#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 - **Licences for a distributed build.** Everything in both integrations' dependency trees is MIT,
   Apache-2.0, Zlib or Unlicense except godot-rust (0.5.5), which is MPL-2.0: compatible, but a

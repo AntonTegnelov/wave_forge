@@ -17,11 +17,11 @@ community port and are unverified from Iron Gate (see the story's sources).
 | Valheim feature | What it needs | Today | Issue |
 |---|---|---|---|
 | Seed-derived offsets | named hash streams | available: per stage, and per named noise | |
-| Base height from products of Perlin octaves, with its own lacunarity and gain | Perlin or simplex noise, fBm parameters, a seed per noise, subtraction and absolute values | partial: value noise with fixed fBm; the formula itself is expressible (`tests/expressions.rs`) | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
+| Base height from products of Perlin octaves, with its own lacunarity and gain | Perlin or simplex noise, fBm parameters, a seed per noise, subtraction and absolute values | available: Godot's FastNoiseLite noises, Perlin and simplex among them, with every fractal parameter and a seed per noise (`tests/fastnoise.rs`); the formula itself is expressible (`tests/expressions.rs`) | |
 | Radial falloff to the edge, a flattened spawn area | distance to the origin, smoothstep, remap, clamp, min and max, curves | available (`tests/expressions.rs`) | |
 | Biomes by an ordered first-match list over distance, noise and height | categorical fields, a Rules stage | available (`examples/rings.world.ron`, `tests/rules.rs`) | |
 | Height per biome, blended where biomes meet | select by category, blending | available (`examples/rings.world.ron`, `tests/blend.rs`) | |
-| Cellular noise, quantised height in some biomes | cellular noise, floor | partial: `Floor` quantises; cellular noise is missing | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
+| Cellular noise, quantised height in some biomes | cellular noise, floor | available: FastNoiseLite's cellular noise and `Floor` | |
 | Lakes from a world scan | a region job on a coarse lattice | partial: region jobs and coarse levels exist; a lake job does not | |
 | Rivers and streams that carve the ground | curves, a network between sites, rasterising curves into height | partial: region jobs make curves and Apply carves them into the height field without seams (`tests/apply.rs`); no Network stage | [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | A water level, ocean depth, snapping to water | a world water level, depth as a field | partial: a height range can stand in for depth | [#95](https://github.com/AntonTegnelov/wave_forge/issues/95) |
@@ -63,7 +63,7 @@ Stories not listed have nothing built towards them yet beyond the shared runtime
 | G8 Deep Rock-like | region jobs, curves drawn into a height field | Assemble, tunnels through density volumes, edits ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70), [#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 | N1 Press play | nodes that start on their own, colliders, navigation, a ground mesh and collider | presets, lit and textured defaults, navigation over packs ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48), [#46](https://github.com/AntonTegnelov/wave_forge/issues/46)) |
 | N3 Place my own scene | Scatter with spacing across seams | binding scenes to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), rule resources ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)) |
-| N7 My own noise | | FastNoiseLite parity ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)) |
+| N7 My own noise | FastNoiseLite parity, exact against Godot, and `FastNoiseLite` resources assigned in the Godot node | nothing for its criterion; Bevy's `Reflect` and 3D noise are [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
 | N11 My own history | region jobs, curves, categories, levels, the atlas, tables given and read back from GDScript, villages as sites with towns by culture or ruins, roads levelled into the ground, the example project (`examples/history`) and its check | a person following the README from a clean checkout |
 | N9 Share a world by seed | identical tiles across GPUs and generation orders | product and chunk hashes |
 | P1 Live generation without hitches | the Godot check meets the bars for a streamed WFC world with colliders and navigation | Phase 2 stages under the same bars; desktop numbers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
