@@ -485,3 +485,18 @@ fn new_facts_drop_the_stages_that_read_them_and_regenerate_them() {
         assert!((high - low - 50.0).abs() < 1e-3, "{low} then {high}");
     }
 }
+
+#[test]
+fn a_target_with_a_radius_of_its_own_reaches_past_the_focus() {
+    let mut app = app_with(plugin().with_radius("height", 3));
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        stages.field("height", ChunkCoord::new(3, 0, 0)).is_some()
+            && stages.points("trees", ChunkCoord::new(1, 0, 0)).is_some()
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    assert!(stages.points("trees", ChunkCoord::new(2, 0, 0)).is_none());
+    assert!(stages.field("height", ChunkCoord::new(4, 0, 0)).is_none());
+}

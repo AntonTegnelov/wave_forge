@@ -68,7 +68,8 @@ pub struct StagesSettings {
 #[derive(Resource)]
 pub struct WaveForgeStages {
     worker: StageWorker,
-    targets: Vec<String>,
+    /// Each target and a radius of its own, if it has one.
+    targets: Vec<(String, Option<u32>)>,
     settings: StagesSettings,
     asked: Vec<FocusPoint>,
     /// The field stage the ground is built from, if any.
@@ -202,7 +203,8 @@ type Build = Box<dyn FnOnce() -> Result<Runtime, String> + Send>;
 /// Generates the `targets` stages of a pack around every [`GenerationFocus`].
 pub struct WaveForgeStagesPlugin {
     build: Mutex<Option<Build>>,
-    targets: Vec<String>,
+    /// Each target and a radius of its own, if it has one.
+    targets: Vec<(String, Option<u32>)>,
     settings: StagesSettings,
     ground_stage: Option<String>,
 }
@@ -217,10 +219,29 @@ impl WaveForgeStagesPlugin {
     ) -> Self {
         Self {
             build: Mutex::new(Some(Box::new(build))),
-            targets: targets.iter().map(|target| (*target).to_owned()).collect(),
+            targets: targets
+                .iter()
+                .map(|target| ((*target).to_owned(), None))
+                .collect(),
             settings,
             ground_stage: None,
         }
+    }
+
+    /// Generates the target `stage` within `radius` chunks of every focus, not the focus's own
+    /// radius: ground far out, locations nearer and clutter nearest, say.
+    ///
+    /// # Panics
+    /// If `stage` is not one of the plugin's targets.
+    #[must_use]
+    pub fn with_radius(mut self, stage: &str, radius: u32) -> Self {
+        let target = self
+            .targets
+            .iter_mut()
+            .find(|(target, _)| target == stage)
+            .unwrap_or_else(|| panic!("{stage:?} is not one of the plugin's targets"));
+        target.1 = Some(radius);
+        self
     }
 
     /// Builds each chunk's ground from the field stage `stage`, a height in cells per column,
@@ -287,9 +308,12 @@ fn follow_focus(
     if wanted == stages.asked {
         return;
     }
-    let targets: Vec<String> = stages.targets.clone();
-    let names: Vec<&str> = targets.iter().map(String::as_str).collect();
-    stages.worker.request(&wanted, &names);
+    let targets: Vec<(&str, Option<u32>)> = stages
+        .targets
+        .iter()
+        .map(|(target, radius)| (target.as_str(), *radius))
+        .collect();
+    stages.worker.request_each(&wanted, &targets);
     stages.asked = wanted;
 }
 
