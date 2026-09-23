@@ -54,7 +54,7 @@ fn towns(order: &[Vec<ChunkCoord>]) -> BTreeMap<(i32, i32), BTreeMap<ChunkCoord,
     let mut towns: BTreeMap<(i32, i32), BTreeMap<ChunkCoord, Vec<u16>>> = BTreeMap::new();
     for request in order {
         let focus: Vec<FocusPoint> = request.iter().map(|&c| FocusPoint::new(c, 0)).collect();
-        runtime.request(&focus, "city").expect("a stage");
+        runtime.request(&focus, &["city"]).expect("a stage");
         runtime.run_until_idle().expect("the stages run");
         for &chunk in request {
             if let Some(town) = runtime.tiles("city", chunk) {

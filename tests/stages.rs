@@ -46,7 +46,7 @@ fn generate(order: &[Vec<ChunkCoord>]) -> Values {
             .iter()
             .map(|&chunk| FocusPoint::new(chunk, 0))
             .collect();
-        runtime.request(&focus, "shore").expect("a stage");
+        runtime.request(&focus, &["shore"]).expect("a stage");
         runtime.run_until_idle().expect("the stages run");
         for &chunk in request {
             let field = runtime.field("shore", chunk).expect("generated");
@@ -103,7 +103,7 @@ fn sites_of_area() -> (Runtime, Vec<wave_forge::stages::Site>) {
         .iter()
         .map(|&chunk| FocusPoint::new(chunk, 0))
         .collect();
-    runtime.request(&focus, "level").expect("a stage");
+    runtime.request(&focus, &["level"]).expect("a stage");
     runtime.run_until_idle().expect("the stages run");
     let mut sites: BTreeMap<(i32, i32), wave_forge::stages::Site> = BTreeMap::new();
     for chunk in chunks {

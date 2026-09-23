@@ -244,16 +244,24 @@ impl Runtime {
         Ok(self)
     }
 
-    /// Asks for `target` in the chunks around `focus`, replacing the previous request. What the
-    /// new request does not need is dropped.
+    /// Asks for the `targets` stages in the chunks around `focus`, replacing the previous request,
+    /// and drops what the new request does not need, returning it as (stage, chunk).
     ///
     /// # Errors
-    /// [`StageError::UnknownStage`] if no stage is named `target`.
-    pub fn request(&mut self, focus: &[FocusPoint], target: &str) -> Result<(), StageError> {
-        let target = self
-            .pack
-            .index(target)
-            .ok_or_else(|| StageError::UnknownStage(target.to_owned()))?;
+    /// [`StageError::UnknownStage`] if no stage is named like one of `targets`.
+    pub fn request(
+        &mut self,
+        focus: &[FocusPoint],
+        targets: &[&str],
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let targets = targets
+            .iter()
+            .map(|target| {
+                self.pack
+                    .index(target)
+                    .ok_or_else(|| StageError::UnknownStage((*target).to_owned()))
+            })
+            .collect::<Result<Vec<usize>, StageError>>()?;
         let asked: BTreeSet<ChunkCoord> = focus
             .iter()
             .flat_map(|focus| {
@@ -264,7 +272,10 @@ impl Runtime {
                 })
             })
             .collect();
-        let mut needed: BTreeMap<usize, BTreeSet<ChunkCoord>> = BTreeMap::from([(target, asked)]);
+        let mut needed: BTreeMap<usize, BTreeSet<ChunkCoord>> = targets
+            .into_iter()
+            .map(|target| (target, asked.clone()))
+            .collect();
         // Consumers come after their inputs in `order`, so walking it backwards reaches a stage
         // only once everything that reads it has said which of its chunks it needs.
         for &index in self.pack.order.iter().rev() {
@@ -280,10 +291,15 @@ impl Runtime {
                 needed.entry(input).or_default().extend(covered);
             }
         }
-        self.products.retain(|(stage, chunk), _| {
-            needed
-                .get(stage)
-                .is_some_and(|chunks| chunks.contains(chunk))
+        let mut dropped = Vec::new();
+        self.products.retain(|&(stage, chunk), _| {
+            let keep = needed
+                .get(&stage)
+                .is_some_and(|chunks| chunks.contains(&chunk));
+            if !keep {
+                dropped.push((self.pack.stages[stage].name.clone(), chunk));
+            }
+            keep
         });
         let pack = Arc::clone(&self.pack);
         self.solved.retain(|&(stage, owner), _| {
@@ -305,7 +321,7 @@ impl Runtime {
         });
         self.needed = needed;
         self.focus = focus.to_vec();
-        Ok(())
+        Ok(dropped)
     }
 
     /// Generates everything the request needs that is missing, inputs first and nearest first,
@@ -314,8 +330,31 @@ impl Runtime {
     /// # Errors
     /// A [`StageError`] from a stage, which is a bug in that stage.
     pub fn run_until_idle(&mut self) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        self.step(usize::MAX)
+    }
+
+    /// Whether everything the request needs is generated.
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
+        self.needed.iter().all(|(&index, chunks)| {
+            chunks
+                .iter()
+                .all(|chunk| self.products.contains_key(&(index, *chunk)))
+        })
+    }
+
+    /// Generates at most `budget` of the missing products, stage by stage with inputs first and
+    /// each stage's chunks nearest first, and returns them as (stage, chunk). A worker calls this
+    /// between looking for new requests.
+    ///
+    /// # Errors
+    /// A [`StageError`] from a stage, which is a bug in that stage.
+    pub fn step(&mut self, budget: usize) -> Result<Vec<(String, ChunkCoord)>, StageError> {
         let mut generated = Vec::new();
         for &index in &self.pack.order.clone() {
+            if generated.len() >= budget {
+                break;
+            }
             let Some(chunks) = self.needed.get(&index) else {
                 continue;
             };
@@ -333,7 +372,7 @@ impl Runtime {
                     .unwrap_or(u32::MAX);
                 (distance, *chunk)
             });
-            for chunk in missing {
+            for chunk in missing.into_iter().take(budget - generated.len()) {
                 self.solve_town_of(index, chunk)?;
                 let product = self.generate(index, chunk)?;
                 self.products.insert((index, chunk), Arc::new(product));
@@ -346,8 +385,13 @@ impl Runtime {
     /// What `stage` holds for `chunk`, if it has been generated and is still needed.
     #[must_use]
     pub fn product(&self, stage: &str, chunk: ChunkCoord) -> Option<&Product> {
+        self.shared(stage, chunk).map(Arc::as_ref)
+    }
+
+    /// The same product, shared, so a worker can hand it to another thread without a copy.
+    pub(crate) fn shared(&self, stage: &str, chunk: ChunkCoord) -> Option<&Arc<Product>> {
         let index = self.pack.index(stage)?;
-        self.products.get(&(index, chunk)).map(Arc::as_ref)
+        self.products.get(&(index, chunk))
     }
 
     /// The field `stage` holds for `chunk`, if it is a field stage and the chunk is generated.
@@ -895,7 +939,7 @@ mod tests {
     fn a_stage_is_generated_only_after_every_input_chunk_within_its_reach() {
         let mut runtime = runtime(PACK);
         runtime
-            .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], "height")
+            .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], &["height"])
             .expect("a stage");
 
         let generated = runtime.run_until_idle().expect("the stages run");
@@ -915,7 +959,7 @@ mod tests {
     fn a_blurred_field_is_the_mean_of_its_input_around_each_column() {
         let mut runtime = runtime(PACK);
         runtime
-            .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], "smooth")
+            .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], &["smooth"])
             .expect("a stage");
         runtime.run_until_idle().expect("the stages run");
 
@@ -973,12 +1017,15 @@ mod tests {
     fn what_a_new_request_does_not_need_is_dropped() {
         let mut runtime = runtime(PACK);
         runtime
-            .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], "height")
+            .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 0)], &["height"])
             .expect("a stage");
         runtime.run_until_idle().expect("the stages run");
 
         runtime
-            .request(&[FocusPoint::new(ChunkCoord::new(10, 0, 0), 0)], "height")
+            .request(
+                &[FocusPoint::new(ChunkCoord::new(10, 0, 0), 0)],
+                &["height"],
+            )
             .expect("a stage");
 
         assert_eq!(runtime.held(), 0);
