@@ -47,6 +47,7 @@
 //!   needed, which makes partial eviction safe too.
 
 pub mod generator;
+pub mod ground;
 pub mod products;
 pub mod scheduler;
 pub mod space;
@@ -55,6 +56,7 @@ pub mod towns;
 pub mod worker;
 
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
+pub use ground::{GroundMesh, ground, ground_readers};
 pub use products::{InstanceId, InstanceSet, NavSource, NavSourceError, instance_sets, nav_source};
 pub use scheduler::FocusPoint;
 pub use space::YUpSpace;

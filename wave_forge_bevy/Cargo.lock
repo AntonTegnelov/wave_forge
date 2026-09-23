@@ -3474,8 +3474,10 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_app",
+ "bevy_asset",
  "bevy_ecs",
  "bevy_math",
+ "bevy_mesh",
  "bevy_render",
  "bevy_transform",
  "pollster",

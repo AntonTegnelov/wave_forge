@@ -14,8 +14,11 @@ description = "Wave Forge as a Bevy plugin: chunks generated around a focus, on 
 # The sub-crates the plugin needs, rather than the `bevy` facade, so a game that does not render
 # still builds it. They are released in lockstep, so a game on the same Bevy version matches.
 bevy_app = "0.20.0-rc.1"
+# The mesh type and its asset usages, for a chunk's ground; bevy_render already depends on both.
+bevy_asset = "0.20.0-rc.1"
 bevy_ecs = "0.20.0-rc.1"
 bevy_math = "0.20.0-rc.1"
+bevy_mesh = "0.20.0-rc.1"
 bevy_render = "0.20.0-rc.1"
 bevy_transform = "0.20.0-rc.1"
 wave_forge = { path = ".." }

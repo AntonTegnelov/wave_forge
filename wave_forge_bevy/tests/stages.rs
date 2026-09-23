@@ -1,5 +1,6 @@
 //! A pack of stages in a Bevy app: a focus entity makes the stages generate around it, what
 //! arrives is what the library's runtime generates, and moving away drops what was left behind.
+//! The same holds for each chunk's ground, built from the height field.
 
 use bevy_app::{App, Startup, Update};
 use bevy_ecs::message::MessageReader;
@@ -9,11 +10,11 @@ use bevy_transform::components::GlobalTransform;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wave_forge::stages::{Pack, Runtime};
-use wave_forge::{ChunkCoord, FocusPoint};
+use wave_forge::{ChunkCoord, FocusPoint, ground};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::stages::{
-    StageDropped, StageReady, StagesSettings, WaveForgeStages, WaveForgeStagesPlugin,
-    WaveForgeStagesSystems,
+    GroundDropped, GroundReady, StageDropped, StageReady, StagesSettings, WaveForgeStages,
+    WaveForgeStagesPlugin, WaveForgeStagesSystems, ground_mesh,
 };
 
 const PACK: &str = r#"(
@@ -41,31 +42,42 @@ fn runtime() -> Runtime {
 struct Seen {
     ready: Vec<(String, ChunkCoord)>,
     dropped: Vec<(String, ChunkCoord)>,
+    grounds: Vec<ChunkCoord>,
+    grounds_dropped: Vec<ChunkCoord>,
 }
 
 fn collect(
     mut seen: ResMut<Seen>,
     mut ready: MessageReader<StageReady>,
     mut dropped: MessageReader<StageDropped>,
+    mut grounds: MessageReader<GroundReady>,
+    mut grounds_dropped: MessageReader<GroundDropped>,
 ) {
     seen.ready
         .extend(ready.read().map(|m| (m.stage.clone(), m.chunk)));
     seen.dropped
         .extend(dropped.read().map(|m| (m.stage.clone(), m.chunk)));
+    seen.grounds.extend(grounds.read().map(|m| m.0));
+    seen.grounds_dropped
+        .extend(grounds_dropped.read().map(|m| m.0));
+}
+
+fn plugin() -> WaveForgeStagesPlugin {
+    WaveForgeStagesPlugin::new(&["height", "trees"], SETTINGS, || Ok(runtime()))
 }
 
 fn app() -> App {
+    app_with(plugin())
+}
+
+fn app_with(plugin: WaveForgeStagesPlugin) -> App {
     let mut app = App::new();
-    app.add_plugins(WaveForgeStagesPlugin::new(
-        &["height", "trees"],
-        SETTINGS,
-        || Ok(runtime()),
-    ))
-    .init_resource::<Seen>()
-    .add_systems(Update, collect.after(WaveForgeStagesSystems))
-    .add_systems(Startup, |mut commands: Commands| {
-        commands.spawn((GlobalTransform::default(), GenerationFocus::new(1)));
-    });
+    app.add_plugins(plugin)
+        .init_resource::<Seen>()
+        .add_systems(Update, collect.after(WaveForgeStagesSystems))
+        .add_systems(Startup, |mut commands: Commands| {
+            commands.spawn((GlobalTransform::default(), GenerationFocus::new(1)));
+        });
     app
 }
 
@@ -177,6 +189,95 @@ fn moving_away_drops_what_was_left_behind() {
         app.world()
             .resource::<WaveForgeStages>()
             .points("trees", ChunkCoord::new(0, 0, 0))
+            .is_none()
+    );
+}
+
+#[test]
+fn the_ground_that_arrives_is_the_librarys_ground_of_the_same_fields() {
+    let mut app = app_with(plugin().with_ground("height"));
+    let mut direct = runtime();
+    direct
+        .request(
+            &[FocusPoint::new(ChunkCoord::new(0, 0, 0), 1)],
+            &["height", "trees"],
+        )
+        .expect("stages");
+    direct.run_until_idle().expect("the stages run");
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        around_origin().iter().all(|&c| stages.ground(c).is_some())
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let cell = SETTINGS.cell_size.to_array();
+    for chunk in around_origin() {
+        let expected = ground(chunk, |at| direct.field("height", at), cell);
+        assert_eq!(stages.ground(chunk), expected.as_ref(), "chunk {chunk:?}");
+    }
+    let seen = app.world().resource::<Seen>();
+    for chunk in around_origin() {
+        assert_eq!(
+            seen.grounds.iter().filter(|&&c| c == chunk).count(),
+            1,
+            "{chunk:?} is announced once"
+        );
+    }
+}
+
+#[test]
+fn a_ground_mesh_has_a_vertex_per_column_and_its_neighbours_edge() {
+    let mut app = app_with(plugin().with_ground("height"));
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .ground(origin)
+            .is_some()
+    });
+    let ground = app
+        .world()
+        .resource::<WaveForgeStages>()
+        .ground(origin)
+        .expect("arrived");
+
+    let mesh = ground_mesh(ground);
+
+    assert_eq!(mesh.count_vertices(), 9 * 9);
+    assert_eq!(mesh.indices().expect("indexed").len(), 8 * 8 * 6);
+}
+
+#[test]
+fn moving_away_drops_the_ground() {
+    let mut app = app_with(plugin().with_ground("height"));
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .ground(origin)
+            .is_some()
+    });
+
+    app.add_systems(
+        Update,
+        |mut focus: Query<&mut GlobalTransform, With<GenerationFocus>>| {
+            for mut at in &mut focus {
+                *at = GlobalTransform::from_translation(Vec3::new(800.0, 0.0, 800.0));
+            }
+        },
+    );
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<Seen>()
+            .grounds_dropped
+            .contains(&origin)
+    });
+
+    assert!(
+        app.world()
+            .resource::<WaveForgeStages>()
+            .ground(origin)
             .is_none()
     );
 }

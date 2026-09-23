@@ -361,8 +361,12 @@ scripts:
   (9 chunks, 512 boxes each), Jolt physics, `Engine.max_fps` 60. Its bars: Godot's slowest frame
   under 8 ms, the node's own process under 2 ms at the 99th percentile.
 - `godot/verify_stages.gd` ("the stages check"): the valley pack `godot/valley.world.ron` with towns
-  from `godot/city.ron`, radius 3. Its bars: the node's own process under 2 ms at the 99th
-  percentile and 8 ms at worst.
+  from `godot/city.ron`, radius 3. Since [#88] it also builds the ground from `level` and bodies
+  within 2 chunks (the ground's height map, a floor slab under every street-level town cell and a
+  box for every town cell above), and walks a capsule (radius 0.4, height 1.5, gravity 20) at
+  4 units/s from open ground straight through a town. Its bars: the node's own process under 2 ms
+  at the 99th percentile and 8 ms at worst; the walker's feet never more than 0.3 below the ground's
+  surface, nor above it while standing.
 
 How frame time is read: Godot's `Performance.TIME_PROCESS` is the slowest frame of the last second,
 not the last frame's time (`main.cpp` keeps the maximum and publishes it once a second, 4.7.2). A
@@ -422,6 +426,14 @@ default cell of 0.25, one region baked per chunk within 1 chunk of the player.
 | E19 | The Godot check, six runs | 5 runs with the slowest frame at 2.6 to 4.1 ms; one run at 12.2 ms, inside the node's own process, unexplained | at [#78] |
 | E20 | The node's slowest frame broken down by `stats()`, four runs | 2.6 to 4.7 ms: bodies for 4 to 9 chunks at about 0.3 ms each (the collider radius of 1 bounds them at 9), one bake prepared at 1.5 to 1.9 ms, signals under 0.2 ms. Both parts are bounded, so a slower frame points outside the node | at [#79] |
 | E21 | The stages check | 49 chunks with towns arrived in 16 s; the node's own process p99 0.02 ms, max 4.8 ms | at [#85], the Godot check passing alongside |
+
+### Godot: ground and a walk through a town ([#88], 2026-09-23)
+
+| ID | Measurement | Result | Protocol |
+|---|---|---|---|
+| E24 | The stages check with ground and bodies, four runs | 49 chunks arrived in 16.7 to 18.4 s; 49 chunks with ground and 25 with bodies; the node's own process p99 0.09 to 0.17 ms, max 3.9 to 5.4 ms | the stages check at [#88]; the Godot check alongside: slowest frame 3.3 ms, node p99 0.61 ms |
+| E25 | The walk through the town of region (-2, -2), 56 units | crossed in 14.2 s; the feet at most 0.00 below the ground's surface and at most 0.05 above it while standing | same runs |
+| E26 | The same walk with every body removed | the walker sank through the ground in the first frames: feet at 53.39, the surface at 53.75 | a one-off change to the check, to show it detects falling through |
 
 ### Bevy ([#26], 2026-09-18)
 
@@ -498,3 +510,4 @@ Measurements the current code still waits for.
 [#79]: https://github.com/AntonTegnelov/wave_forge/pull/79
 [#82]: https://github.com/AntonTegnelov/wave_forge/pull/82
 [#85]: https://github.com/AntonTegnelov/wave_forge/pull/85
+[#88]: https://github.com/AntonTegnelov/wave_forge/issues/88

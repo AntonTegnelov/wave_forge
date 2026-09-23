@@ -5,8 +5,13 @@
 ## between them. The node runs the stages on its own thread. This first asks for the sites alone over
 ## a wide area and finds a town the way a game would, then asks for everything around it and waits
 ## until every chunk has arrived, then checks that towns stand on level ground at their height, that trees
-## stand on the ground and never on a town, that moving away drops what is no longer needed, and
-## that Godot's thread stayed free.
+## stand on the ground and never on a town, and that Godot's thread stayed free. Then a character with
+## gravity walks from the open ground straight through the town and out the other side, and must never
+## sink below the ground's surface. Last, moving away drops what is no longer needed.
+##
+## The town's modules get simple shapes here: a thin floor whose top is the bottom of every street-level cell, and
+## a full box for everything above street level, so buildings are hollow at street level, as in
+## marian42's city, and the walk can cross a town in a straight line.
 extends SceneTree
 
 const CELLS := 8
@@ -19,6 +24,16 @@ const LOAD_TIMEOUT_S := 180.0
 ## The node's own time on Godot's thread, at the 99th percentile and at worst.
 const NODE_P99_MS := 2.0
 const NODE_MAX_MS := 8.0
+const COLLIDER_RADIUS := 2
+## The walker: a capsule, how fast it walks, how long it may take, and how far its feet may be
+## below the ground's surface before that counts as falling through, or above it while standing
+## before that counts as a collider that does not match the mesh.
+const WALKER_RADIUS := 0.4
+const WALKER_HEIGHT := 1.5
+const WALK_SPEED := 4.0
+const WALK_TIMEOUT_S := 60.0
+const SINK_TOLERANCE := 0.3
+const GRAVITY := 20.0
 
 var world: Node
 ## The chunk the checks look around: a town's, once one is found.
@@ -28,6 +43,12 @@ var ready := {}
 var dropped := {}
 var started_usec := 0
 var moved := false
+var walker: CharacterBody3D
+var walking := false
+var walk_to_x := 0.0
+var lowest_clearance := INF
+var highest_standing := -INF
+var walk_started_usec := 0
 
 func _initialize() -> void:
 	world = ClassDB.instantiate("WaveForgeStages")
@@ -38,6 +59,8 @@ func _initialize() -> void:
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	world.cell_size = Vector3.ONE * CELL_SIZE
 	world.view_radius = SEARCH_RADIUS
+	world.ground_stage = "level"
+	world.collider_radius = COLLIDER_RADIUS
 	root.add_child(world)
 	world.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void: ready[[stage, chunk]] = true)
 	world.stage_dropped.connect(func(stage: String, chunk: Vector3i) -> void: dropped[[stage, chunk]] = true)
@@ -45,8 +68,30 @@ func _initialize() -> void:
 	if not world.start():
 		_fail("the stages did not start")
 		return
+	_give_town_shapes()
 	world.follow(_position_of(Vector3i.ZERO))
 	started_usec = Time.get_ticks_usec()
+
+## A floor slab at the bottom of every street-level cell, a full box for every other module but air.
+func _give_town_shapes() -> void:
+	var half := CELL_SIZE / 2.0
+	var box := BoxShape3D.new()
+	box.size = Vector3.ONE * CELL_SIZE
+	for tag in ["building", "roof", "walkway", "pillar", "stair"]:
+		for module in world.modules_tagged("city", tag):
+			world.set_collision_shape(module, box)
+	var slab := ConvexPolygonShape3D.new()
+	var points := PackedVector3Array()
+	for y in [-half - 0.2, -half]:
+		for x in [-half, half]:
+			for z in [-half, half]:
+				points.append(Vector3(x, y, z))
+	slab.points = points
+	var street: PackedStringArray = world.modules_tagged("city", "street_level")
+	if street.is_empty():
+		_fail("the city has no street-level modules")
+	for module in street:
+		world.set_collision_shape(module, slab)
 
 func _position_of(chunk: Vector3i) -> Vector3:
 	return Vector3((chunk.x + 0.5) * CELLS * CELL_SIZE, 0, (chunk.y + 0.5) * CELLS * CELL_SIZE)
@@ -90,6 +135,8 @@ func _process(_delta: float) -> bool:
 		return false
 	if moved:
 		return _check_dropped(waited)
+	if walking:
+		return false
 	for chunk in _view():
 		for stage: String in TARGETS:
 			if not ready.has([stage, chunk]):
@@ -106,10 +153,120 @@ func _process(_delta: float) -> bool:
 	if stats["process_ms_p99"] > NODE_P99_MS or stats["process_ms_max"] > NODE_MAX_MS:
 		_fail("the node's process took %.2f ms at the 99th percentile, %.2f ms at worst" % [stats["process_ms_p99"], stats["process_ms_max"]])
 		return true
-	world.follow(Vector3(40 * CELLS * CELL_SIZE, 0, 40 * CELLS * CELL_SIZE))
-	moved = true
-	started_usec = Time.get_ticks_usec()
+	if not _check_ground():
+		return true
+	_start_walk()
 	return false
+
+## A chunk has ground exactly when its height field and the eight around it are held, which the
+## trees' reach makes every chunk of the view; every chunk within the collider radius has a body.
+func _check_ground() -> bool:
+	var grounds: Array = world.ground_chunks()
+	var bodies: Array = world.collider_chunks()
+	for chunk in _view():
+		var complete := true
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				if world.field_values("level", chunk + Vector3i(dx, dy, 0)).is_empty():
+					complete = false
+		if grounds.has(chunk) != complete:
+			_fail("%s has ground: %s, and its fields and its neighbours' are held: %s" % [chunk, grounds.has(chunk), complete])
+			return false
+		if not complete:
+			_fail("the height field around %s is not all held, though the trees read it" % chunk)
+			return false
+		var near := maxi(absi(chunk.x - centre.x), absi(chunk.y - centre.y)) <= COLLIDER_RADIUS
+		if bodies.has(chunk) != near:
+			_fail("%s has a body: %s, within the collider radius: %s" % [chunk, bodies.has(chunk), near])
+			return false
+	print("verify_stages: %d chunks have ground, %d have bodies" % [grounds.size(), bodies.size()])
+	return true
+
+## Puts the walker on the ground a little west of the town, level with the town's middle.
+func _start_walk() -> void:
+	var site: Dictionary = world.sites("towns", centre)[0]
+	var chunk_size := CELLS * CELL_SIZE
+	var low: Vector2i = site["min"]
+	var high: Vector2i = site["max"]
+	var z := (low.y + high.y) * 0.5 * chunk_size
+	var from := Vector3(low.x * chunk_size - 12.0, 0.0, z)
+	walk_to_x = high.x * chunk_size + 12.0
+	from.y = _surface(from) + WALKER_HEIGHT / 2.0 + 0.5
+	walker = CharacterBody3D.new()
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = WALKER_RADIUS
+	capsule.height = WALKER_HEIGHT
+	var collision := CollisionShape3D.new()
+	collision.shape = capsule
+	walker.add_child(collision)
+	root.add_child(walker)
+	walker.global_position = from
+	walking = true
+	walk_started_usec = Time.get_ticks_usec()
+	print("verify_stages: walking from x %.1f to %.1f at z %.1f, through the town of chunks %s to %s" % [from.x, walk_to_x, z, site["min"], site["max"]])
+
+func _physics_process(delta: float) -> bool:
+	if not walking:
+		return false
+	world.follow(walker.global_position)
+	walker.velocity.x = WALK_SPEED
+	walker.velocity.z = 0.0
+	walker.velocity.y = 0.0 if walker.is_on_floor() else walker.velocity.y - GRAVITY * delta
+	walker.move_and_slide()
+	var at := walker.global_position
+	var surface := _surface(at)
+	if is_nan(surface):
+		return true
+	var feet := at.y - WALKER_HEIGHT / 2.0
+	lowest_clearance = minf(lowest_clearance, feet - surface)
+	if feet < surface - SINK_TOLERANCE:
+		_fail("the walker sank through the ground at %s: feet at %.2f, the surface at %.2f" % [at, feet, surface])
+		return true
+	if walker.is_on_floor():
+		highest_standing = maxf(highest_standing, feet - surface)
+		if feet > surface + SINK_TOLERANCE:
+			_fail("the walker stands at %s with its feet %.2f above the ground's surface" % [at, feet - surface])
+			return true
+	if at.x >= walk_to_x:
+		print("verify_stages: walked through the town in %.1f s; the feet were at most %.2f below the ground's surface, and at most %.2f above it while standing" % [(Time.get_ticks_usec() - walk_started_usec) / 1e6, maxf(0.0, -lowest_clearance), highest_standing])
+		walking = false
+		walker.queue_free()
+		world.follow(Vector3(40 * CELLS * CELL_SIZE, 0, 40 * CELLS * CELL_SIZE))
+		moved = true
+		started_usec = Time.get_ticks_usec()
+		return false
+	if (Time.get_ticks_usec() - walk_started_usec) / 1e6 > WALK_TIMEOUT_S:
+		_fail("the walker was stuck at %s after %.0f s" % [at, WALK_TIMEOUT_S])
+		return true
+	return false
+
+## The ground's surface under a point, as the ground mesh has it: the heights of the four column
+## centres around it, on the mesh's two triangles per square. NAN, after failing, where the height
+## field has not arrived.
+func _surface(at: Vector3) -> float:
+	var u := at.x / CELL_SIZE - 0.5
+	var v := at.z / CELL_SIZE - 0.5
+	var i := floori(u)
+	var j := floori(v)
+	var fu := u - i
+	var fv := v - j
+	var h00 := _column_height(i, j)
+	var h10 := _column_height(i + 1, j)
+	var h01 := _column_height(i, j + 1)
+	var h11 := _column_height(i + 1, j + 1)
+	if is_nan(h00 + h10 + h01 + h11):
+		return NAN
+	if fu + fv <= 1.0:
+		return h00 + fu * (h10 - h00) + fv * (h01 - h00)
+	return h11 + (1.0 - fu) * (h01 - h11) + (1.0 - fv) * (h10 - h11)
+
+func _column_height(x: int, y: int) -> float:
+	var chunk := Vector3i(floori(float(x) / CELLS), floori(float(y) / CELLS), 0)
+	var level: PackedFloat32Array = world.field_values("level", chunk)
+	if level.is_empty():
+		_fail("the ground's height field of %s has not arrived under the walker" % chunk)
+		return NAN
+	return level[(y - chunk.y * CELLS) * CELLS + (x - chunk.x * CELLS)] * CELL_SIZE
 
 ## Every town chunk holds a whole chunk of tiles, and the ground under it is level at its height.
 func _check_towns() -> bool:
@@ -178,7 +335,14 @@ func _check_dropped(waited: float) -> bool:
 				_fail("%s was not dropped after moving away" % chunk)
 				return true
 			return false
-	print("verify_stages: moving away dropped the first view")
+	var grounds: Array = world.ground_chunks()
+	for chunk in _view():
+		if grounds.has(chunk):
+			if waited > 30.0:
+				_fail("the ground of %s was not freed after moving away" % chunk)
+				return true
+			return false
+	print("verify_stages: moving away dropped the first view and its ground")
 	quit(0)
 	return true
 

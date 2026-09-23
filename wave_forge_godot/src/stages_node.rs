@@ -4,17 +4,29 @@
 //! rule sets its Solve stages name, runs the stages on a thread of their own around the position
 //! the game hands it, and gives each product to the game as Godot data: a field's values, a town
 //! chunk's tiles and height, points as MultiMesh buffers per kind.
+//!
+//! It also builds the ground a player walks on: a mesh per chunk from a height field stage, drawn
+//! through the `RenderingServer`, and near the player one static body per chunk holding the ground
+//! as a height map and the town's modules as the shapes the game assigned them, built through the
+//! `PhysicsServer3D` with every shape added before the body joins the space.
 
 use crate::timings::Timings;
 use crate::{RECENT_FRAMES, from_vector, local_id, to_vector};
-use godot::classes::{FileAccess, INode, Node};
+use godot::classes::physics_server_3d::BodyMode;
+use godot::classes::rendering_server::{ArrayType, PrimitiveType};
+use godot::classes::{
+    FileAccess, INode, Material, Node, PhysicsServer3D, RenderingServer, Shape3D,
+};
 use godot::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use wave_forge::loader::{RuleFile, parse_rule_file};
 use wave_forge::stages::{Pack, Runtime, StageEvent, StageKind, StageWorker};
 use wave_forge::towns::WfcTowns;
-use wave_forge::{Chunk, ChunkCoord, ChunkShape, FocusPoint, YUpSpace};
+use wave_forge::{
+    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, YUpSpace, ground,
+    ground_readers,
+};
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
 ///
@@ -57,12 +69,42 @@ pub struct WaveForgeStages {
     #[export]
     view_radius: i32,
 
+    /// The field stage the ground is built from, a height in cells per column; empty for no
+    /// ground. It has to be generated, as a target or as what a target reads. A chunk's ground
+    /// needs the fields of the chunks around it, so it reaches one chunk less than the view.
+    #[export_group(name = "Ground")]
+    #[export]
+    ground_stage: GString,
+    /// The material the ground is drawn with; none draws it with Godot's default.
+    #[export]
+    ground_material: Option<Gd<Material>>,
+
+    /// How many chunks around the followed position get colliders: the ground, and every town's
+    /// modules that have a shape (`set_collision_shape`). Below zero, none.
+    #[export_group(name = "Physics")]
+    #[export]
+    collider_radius: i32,
+
     pack: Option<Arc<Pack>>,
     /// The rule sets Solve stages name, kept here too, to say what a town's tiles are.
     rules: BTreeMap<String, RuleFile>,
     worker: Option<StageWorker>,
     followed: Option<ChunkCoord>,
     process_ms: Timings,
+    /// Each town module's collision shape, by module name, for every Solve stage.
+    collision_shapes: HashMap<String, Gd<Shape3D>>,
+    /// The chunks whose ground is built: its mesh, and its `RenderingServer` mesh and instance.
+    grounds: HashMap<ChunkCoord, (GroundMesh, Rid, Rid)>,
+    /// Each chunk's static body and its ground's height map shape, which the body does not own,
+    /// and what it holds, to tell when it has to be built again.
+    bodies: HashMap<ChunkCoord, (Rid, Option<Rid>, BodyContents)>,
+}
+
+/// What a chunk's body was built from: whether it has the ground, and which Solve stages' towns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BodyContents {
+    ground: bool,
+    towns: Vec<String>,
 }
 
 #[godot_api]
@@ -83,7 +125,19 @@ impl INode for WaveForgeStages {
             worker: None,
             followed: None,
             process_ms: Timings::new(RECENT_FRAMES),
+            ground_stage: GString::new(),
+            ground_material: None,
+            collider_radius: 1,
+            collision_shapes: HashMap::new(),
+            grounds: HashMap::new(),
+            bodies: HashMap::new(),
         }
+    }
+
+    /// Frees the ground's meshes and the bodies, which belong to the rendering and physics
+    /// servers rather than to the node.
+    fn exit_tree(&mut self) {
+        self.clear_ground_and_bodies();
     }
 
     fn ready(&mut self) {
@@ -107,18 +161,30 @@ impl INode for WaveForgeStages {
                 .emit(&GString::from(&reason));
             return;
         }
+        let ground_stage = self.ground_stage.to_string();
+        let (mut arrived, mut gone) = (Vec::new(), Vec::new());
         for event in events {
             match event {
-                StageEvent::Generated { stage, chunk } => self
-                    .signals()
-                    .stage_ready()
-                    .emit(&GString::from(&stage), to_vector(chunk)),
-                StageEvent::Dropped { stage, chunk } => self
-                    .signals()
-                    .stage_dropped()
-                    .emit(&GString::from(&stage), to_vector(chunk)),
+                StageEvent::Generated { stage, chunk } => {
+                    if stage == ground_stage {
+                        arrived.push(chunk);
+                    }
+                    self.signals()
+                        .stage_ready()
+                        .emit(&GString::from(&stage), to_vector(chunk));
+                }
+                StageEvent::Dropped { stage, chunk } => {
+                    if stage == ground_stage {
+                        gone.push(chunk);
+                    }
+                    self.signals()
+                        .stage_dropped()
+                        .emit(&GString::from(&stage), to_vector(chunk));
+                }
             }
         }
+        self.update_ground(&arrived, &gone);
+        self.update_colliders();
         self.process_ms
             .push(processing.elapsed().as_secs_f64() * 1000.0);
     }
@@ -182,6 +248,7 @@ impl WaveForgeStages {
         self.rules = rules.clone();
         self.pack = Some(pack);
         self.followed = None;
+        self.clear_ground_and_bodies();
         // The towns' device is built on the stages' thread, which is where it is used.
         self.worker = Some(StageWorker::spawn(move || {
             let runtime = Runtime::new(for_thread, seed, [shape.x, shape.y]);
@@ -281,36 +348,13 @@ impl WaveForgeStages {
         chunk: Vector3i,
         names: PackedStringArray,
     ) -> Array<VarDictionary> {
-        let stage = stage.to_string();
-        let (Some(pack), Some(worker)) = (&self.pack, &self.worker) else {
-            return Array::new();
-        };
-        let Some(StageKind::Solve { rules, .. }) = pack.kind(&stage) else {
-            return Array::new();
-        };
-        let (Some(file), Some(town)) = (
-            self.rules.get(rules),
-            worker.tiles(&stage, from_vector(chunk)),
-        ) else {
-            return Array::new();
-        };
-        let cells = self.chunk_cells;
-        let shape = ChunkShape {
-            x: cells.x.max(1) as u32,
-            y: cells.y.max(1) as u32,
-            z: cells.z.max(1) as u32,
-        };
-        let space = YUpSpace::new(shape, self.cell_size.to_array());
-        let tiles = Chunk {
-            coord: from_vector(chunk),
-            tiles: town.tiles.to_vec().into_boxed_slice(),
-            version: 1,
-        };
         let wanted: Vec<String> = names.as_slice().iter().map(ToString::to_string).collect();
         let drawn = |name: &str| wanted.is_empty() || wanted.iter().any(|w| w == name);
-        let lift = town.height * self.cell_size.y;
-        wave_forge::instance_sets(&tiles, file, &space, drawn)
-            .into_iter()
+        let Some((sets, lift)) = self.town_sets(&stage.to_string(), from_vector(chunk), drawn)
+        else {
+            return Array::new();
+        };
+        sets.into_iter()
             .map(|set| {
                 let mut transforms = set.transforms(self.cell_size.to_array());
                 for row in transforms.chunks_mut(12) {
@@ -327,6 +371,48 @@ impl WaveForgeStages {
                 out
             })
             .collect()
+    }
+
+    /// Gives every cell of a town's `module` a collider of `shape` in the chunks within
+    /// `collider_radius`, turned by the tile's rotation and centred on the cell, for every Solve
+    /// stage. The shape is sized for one cell in Godot's world units. Null takes it away.
+    #[func]
+    fn set_collision_shape(&mut self, module: GString, shape: Option<Gd<Shape3D>>) {
+        match shape {
+            Some(shape) => self.collision_shapes.insert(module.to_string(), shape),
+            None => self.collision_shapes.remove(&module.to_string()),
+        };
+        self.free_bodies();
+    }
+
+    /// The names of the modules in the rule set `rules` (as `rules_files` names it) that carry
+    /// `tag`, each once: what a game assigns shapes and scenes by. Empty for a tile set, which has
+    /// no tags, or a rule set the node has not loaded.
+    #[func]
+    fn modules_tagged(&self, rules: GString, tag: GString) -> PackedStringArray {
+        let Some(file) = self.rules.get(&rules.to_string()) else {
+            return PackedStringArray::new();
+        };
+        let mut names: Vec<&str> = file
+            .tiles_tagged(&tag.to_string())
+            .into_iter()
+            .map(|tile| file.name(tile))
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names.into_iter().map(GString::from).collect()
+    }
+
+    /// The chunks whose ground is built.
+    #[func]
+    fn ground_chunks(&self) -> Array<Vector3i> {
+        self.grounds.keys().map(|&chunk| to_vector(chunk)).collect()
+    }
+
+    /// The chunks that have a static body: their ground, and their towns' modules.
+    #[func]
+    fn collider_chunks(&self) -> Array<Vector3i> {
+        self.bodies.keys().map(|&chunk| to_vector(chunk)).collect()
     }
 
     /// A Sites stage's sites that overlap a chunk: each one's `region` (Vector2i) that names it,
@@ -437,5 +523,286 @@ impl WaveForgeStages {
             out.set(&"process_ms_max".to_variant(), &max.to_variant());
         }
         out
+    }
+}
+
+impl WaveForgeStages {
+    fn chunk_shape(&self) -> ChunkShape {
+        let cells = self.chunk_cells;
+        ChunkShape {
+            x: cells.x.max(1) as u32,
+            y: cells.y.max(1) as u32,
+            z: cells.z.max(1) as u32,
+        }
+    }
+
+    /// A town chunk's placements of the modules `wanted` names, unscaled, and how far to raise
+    /// them: the site's height in Godot's units. `None` for a stage that is not a Solve stage, or
+    /// a chunk outside every site or not yet arrived.
+    fn town_sets(
+        &self,
+        stage: &str,
+        chunk: ChunkCoord,
+        wanted: impl Fn(&str) -> bool,
+    ) -> Option<(Vec<InstanceSet>, f32)> {
+        let (pack, worker) = (self.pack.as_ref()?, self.worker.as_ref()?);
+        let Some(StageKind::Solve { rules, .. }) = pack.kind(stage) else {
+            return None;
+        };
+        let (file, town) = (self.rules.get(rules)?, worker.tiles(stage, chunk)?);
+        let space = YUpSpace::new(self.chunk_shape(), self.cell_size.to_array());
+        let tiles = Chunk {
+            coord: chunk,
+            tiles: town.tiles.to_vec().into_boxed_slice(),
+            version: 1,
+        };
+        let sets = wave_forge::instance_sets(&tiles, file, &space, wanted);
+        Some((sets, town.height * self.cell_size.y))
+    }
+
+    /// Where a chunk's corner sits on Godot's ground plane.
+    fn chunk_corner(&self, chunk: ChunkCoord) -> Vector3 {
+        let shape = self.chunk_shape();
+        Vector3::new(
+            chunk.x as f32 * shape.x as f32 * self.cell_size.x,
+            0.0,
+            chunk.y as f32 * shape.y as f32 * self.cell_size.z,
+        )
+    }
+
+    /// Builds the ground of every chunk a newly arrived field may have completed, and frees the
+    /// ground of chunks whose own field was dropped.
+    fn update_ground(&mut self, arrived: &[ChunkCoord], gone: &[ChunkCoord]) {
+        let mut rendering = RenderingServer::singleton();
+        for chunk in gone {
+            if let Some((_, mesh, instance)) = self.grounds.remove(chunk) {
+                rendering.free_rid(instance);
+                rendering.free_rid(mesh);
+            }
+        }
+        let Some(worker) = &self.worker else {
+            return;
+        };
+        let Some(scenario) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_scenario())
+        else {
+            return;
+        };
+        let stage = self.ground_stage.to_string();
+        let cell = self.cell_size.to_array();
+        let mut built = Vec::new();
+        for &field in arrived {
+            for chunk in ground_readers(field) {
+                if self.grounds.contains_key(&chunk) || built.iter().any(|(c, _)| *c == chunk) {
+                    continue;
+                }
+                if let Some(mesh) = ground(chunk, |at| worker.field(&stage, at), cell) {
+                    built.push((chunk, mesh));
+                }
+            }
+        }
+        for (chunk, mesh) in built {
+            let rid = rendering.mesh_create();
+            let mut arrays = VarArray::new();
+            arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
+            let vertices: PackedVector3Array = mesh
+                .positions
+                .iter()
+                .map(|&[x, y, z]| Vector3::new(x, y, z))
+                .collect();
+            let normals: PackedVector3Array = mesh
+                .normals
+                .iter()
+                .map(|&[x, y, z]| Vector3::new(x, y, z))
+                .collect();
+            // The library's triangles are counter-clockwise seen from above; Godot's front faces
+            // are clockwise.
+            let indices: PackedInt32Array = mesh
+                .indices
+                .chunks(3)
+                .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])
+                .map(|index| index as i32)
+                .collect();
+            arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
+            arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+            arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
+            rendering.mesh_add_surface_from_arrays(rid, PrimitiveType::TRIANGLES, &arrays);
+            if let Some(material) = &self.ground_material {
+                rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+            }
+            let instance = rendering.instance_create2(rid, scenario);
+            rendering.instance_set_transform(
+                instance,
+                Transform3D::new(Basis::IDENTITY, self.chunk_corner(chunk)),
+            );
+            self.grounds.insert(chunk, (mesh, rid, instance));
+        }
+    }
+
+    /// Keeps one static body on every chunk within `collider_radius` of the followed chunk that
+    /// has ground or a town with shapes, building it again when what it would hold changes, and
+    /// frees the others.
+    fn update_colliders(&mut self) {
+        let (Some(pack), Some(focus)) = (self.pack.clone(), self.followed) else {
+            return;
+        };
+        let radius = self.collider_radius;
+        let within = |chunk: ChunkCoord| {
+            radius >= 0 && (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()) <= radius
+        };
+        let solves: Vec<String> = pack
+            .stage_names()
+            .filter(|name| matches!(pack.kind(name), Some(StageKind::Solve { .. })))
+            .map(ToOwned::to_owned)
+            .collect();
+        let contents = |this: &Self, chunk: ChunkCoord| BodyContents {
+            ground: this.grounds.contains_key(&chunk),
+            towns: if this.collision_shapes.is_empty() {
+                Vec::new()
+            } else {
+                solves
+                    .iter()
+                    .filter(|stage| {
+                        this.worker
+                            .as_ref()
+                            .is_some_and(|worker| worker.tiles(stage, chunk).is_some())
+                    })
+                    .cloned()
+                    .collect()
+            },
+        };
+        let mut physics = PhysicsServer3D::singleton();
+        let stale: Vec<ChunkCoord> = self
+            .bodies
+            .iter()
+            .filter(|(chunk, (_, _, held))| !within(**chunk) || *held != contents(self, **chunk))
+            .map(|(chunk, _)| *chunk)
+            .collect();
+        for chunk in stale {
+            if let Some((body, shape, _)) = self.bodies.remove(&chunk) {
+                physics.free_rid(body);
+                shape.into_iter().for_each(|shape| physics.free_rid(shape));
+            }
+        }
+        let Some(space) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_space())
+        else {
+            return;
+        };
+        let range = focus.x - radius.max(0)..=focus.x + radius.max(0);
+        let wanted: Vec<(ChunkCoord, BodyContents)> = range
+            .flat_map(|x| {
+                (focus.y - radius.max(0)..=focus.y + radius.max(0))
+                    .map(move |y| ChunkCoord::new(x, y, 0))
+            })
+            .filter(|chunk| radius >= 0 && !self.bodies.contains_key(chunk))
+            .map(|chunk| (chunk, contents(self, chunk)))
+            .filter(|(_, held)| held.ground || !held.towns.is_empty())
+            .collect();
+        let owner = u64::from_ne_bytes(self.base().instance_id().to_i64().to_ne_bytes());
+        for (chunk, held) in wanted {
+            let body = physics.body_create();
+            physics.body_set_mode(body, BodyMode::STATIC);
+            let ground_shape = if held.ground {
+                self.add_ground_shape(&mut physics, body, chunk)
+            } else {
+                None
+            };
+            for stage in &held.towns {
+                let shapes = &self.collision_shapes;
+                let Some((sets, lift)) =
+                    self.town_sets(stage, chunk, |name| shapes.contains_key(name))
+                else {
+                    continue;
+                };
+                for set in sets {
+                    let shape = shapes[&set.name].get_rid();
+                    for row in set.transforms([1.0; 3]).chunks(12) {
+                        let basis = Basis::from_rows(
+                            Vector3::new(row[0], row[1], row[2]),
+                            Vector3::new(row[4], row[5], row[6]),
+                            Vector3::new(row[8], row[9], row[10]),
+                        );
+                        let at =
+                            Transform3D::new(basis, Vector3::new(row[3], row[7] + lift, row[11]));
+                        physics.body_add_shape_ex(body, shape).transform(at).done();
+                    }
+                }
+            }
+            physics.body_attach_object_instance_id(body, owner);
+            physics.body_set_space(body, space);
+            self.bodies.insert(chunk, (body, ground_shape, held));
+        }
+    }
+
+    /// Adds a chunk's ground to `body` as a height map and returns the shape, which the caller
+    /// frees with the body. A height map's samples are one unit apart, so the shape is scaled by
+    /// the cell's width, and its heights divided by it, which needs cells as wide as they are deep.
+    fn add_ground_shape(
+        &self,
+        physics: &mut Gd<PhysicsServer3D>,
+        body: Rid,
+        chunk: ChunkCoord,
+    ) -> Option<Rid> {
+        let (mesh, _, _) = &self.grounds[&chunk];
+        let width = self.cell_size.x;
+        if (self.cell_size.z - width).abs() > f32::EPSILON * width {
+            godot_error!(
+                "wave forge: a ground collider needs cells as wide as they are deep, not {}",
+                self.cell_size
+            );
+            return None;
+        }
+        let heights: PackedFloat32Array = mesh.heights.iter().map(|h| h / width).collect();
+        let (low, high) = heights
+            .as_slice()
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), &h| {
+                (low.min(h), high.max(h))
+            });
+        let mut data = VarDictionary::new();
+        data.set(&"width".to_variant(), &(mesh.size[0] as i32).to_variant());
+        data.set(&"depth".to_variant(), &(mesh.size[1] as i32).to_variant());
+        data.set(&"heights".to_variant(), &heights.to_variant());
+        data.set(&"min_height".to_variant(), &low.to_variant());
+        data.set(&"max_height".to_variant(), &high.to_variant());
+        let shape = physics.heightmap_shape_create();
+        physics.shape_set_data(shape, &data.to_variant());
+        // A height map is centred on its origin; the first vertex stands over the first column's
+        // centre.
+        let centre = Vector3::new(
+            (0.5 + (mesh.size[0] - 1) as f32 / 2.0) * width,
+            0.0,
+            (0.5 + (mesh.size[1] - 1) as f32 / 2.0) * width,
+        );
+        let at = Transform3D::new(
+            Basis::from_scale(Vector3::ONE * width),
+            self.chunk_corner(chunk) + centre,
+        );
+        physics.body_add_shape_ex(body, shape).transform(at).done();
+        Some(shape)
+    }
+
+    fn free_bodies(&mut self) {
+        let mut physics = PhysicsServer3D::singleton();
+        for (_, (body, shape, _)) in self.bodies.drain() {
+            physics.free_rid(body);
+            shape.into_iter().for_each(|shape| physics.free_rid(shape));
+        }
+    }
+
+    fn clear_ground_and_bodies(&mut self) {
+        let mut rendering = RenderingServer::singleton();
+        for (_, (_, mesh, instance)) in self.grounds.drain() {
+            rendering.free_rid(instance);
+            rendering.free_rid(mesh);
+        }
+        self.free_bodies();
     }
 }
