@@ -56,6 +56,8 @@ thread.
   given its first facts and focus there.
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
+- `WaveForgeStages::set_edits(edits)` hands the stages the player's edits
+  ([packs.md](packs.md#edits)).
 - `.with_radius(stage, radius)` generates one target within a radius of its own around every
   `GenerationFocus`, the others keeping each focus's radius.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it

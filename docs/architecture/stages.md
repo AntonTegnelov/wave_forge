@@ -67,9 +67,8 @@ masks ([solver.md](solver.md#the-prior)).
 - **Persistence per stage.** A *pure* stage regenerates and replays edits; a *freeze on first emit*
   stage is snapshotted (as Minecraft, Noita, Qud and Valheim do with placed objects); an *ephemeral*
   stage (Valheim's clutter) is never saved. Saves record the generator version. (G7, N8, P4.) Every
-  stage is pure today; edits and the other modes are **not built yet**
-  ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101),
-  [#102](https://github.com/AntonTegnelov/wave_forge/issues/102)).
+  stage is pure today, and replays the player's edits ([packs.md](../reference/packs.md#edits));
+  the other modes are **not built yet** ([#102](https://github.com/AntonTegnelov/wave_forge/issues/102)).
 
 ## Data between stages
 
@@ -81,7 +80,7 @@ masks ([solver.md](solver.md#the-prior)).
 | **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
 | **Table** | named rows of facts, each with an id and typed columns; given by the game or generated from a parent table | a history the game simulated, planet or system parameters, a location table | given and generated tables with number and name columns; a position is two columns; curves are [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Prior** and **TileGrid** | the WFC stage's input and output | tiles | `Tiles`, a town's chunk |
-| **Edits** | an operation log keyed by stable ids and cells | brushes, removed and moved placements, terrain deltas | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
+| **Edits** | an operation log keyed by stable ids and cells | brushes, removed and moved placements, terrain deltas | removed and moved points by id and raises of a field by column; painted masks and tile overrides are not built yet |
 
 PointSet is a structure of arrays from the start: Unreal PCG moved from an array of structs in 5.6
 at the cost of a breaking change. The products an engine consumes (instance sets, colliders,
@@ -104,7 +103,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 | **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4 to G8 | a Region stage running a `RegionJob` the game registers, producing curves |
 | **Table** | rows given by the game, or generated once per parent row by expressions | its parent table | G2, G3, G6 | built; stages read a focused row, a TableSites stage puts a site for every row, and a Solve stage chooses its rule set by a row's names; Apply reading a table's curves is [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Emit** | products for an engine | 0 | N1, N3, P1 | done by the engine integrations today |
-| **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4 | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
+| **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4 | the edits log is applied to every product as it is generated, not as a stage; imports are not built yet |
 
 ### Placement rules are Scatter stages
 
@@ -197,9 +196,10 @@ criterion.
 - **Variable-length GPU output.** Atomic appends make the order of emitted points depend on thread
   timing, so points on the GPU must be compacted by prefix sums in a fixed order and checked against
   the CPU reference, once a stage moves to the GPU.
-- **Edits invalidation.** An edit dirties the keys it touches and every dependant within the summed
-  reach. Neither LayerProcGen nor Unreal PCG has this, so it is new work
-  ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)).
+- **Edits invalidation.** An edit dirties the chunk it touches and every dependant within the
+  summed reach; neither LayerProcGen nor Unreal PCG has this. It is built per chunk
+  ([packs.md](../reference/packs.md#edits)); finer keys, a column rather than its chunk, would spare
+  a reader's neighbouring chunks.
 - **Inherently global nodes.** Normalising, auto-levelling and whole-map erosion cannot run on an
   infinite world. A pack will refuse them there, naming the node, and finite imported heightmaps
   are how such results come in. Today no stage kind is global, so there is nothing to refuse yet.

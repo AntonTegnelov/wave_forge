@@ -271,8 +271,9 @@ tiles instead.
 The library owns the **pack** ([stages.md](stages.md)), a graph of stages, each a pure function of
 the seed and a key, and **Edits**, sparse overrides: height changes, painted masks, per-cell tile
 overrides, pinned or removed placements. Together they produce the products for any region. RON is
-the file format in both engines. Packs exist; Edits are not built yet
-([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)).
+the file format in both engines. Packs exist, and Edits hold removed and moved placements and
+height changes ([packs.md](../reference/packs.md#edits)); painted masks and tile overrides are not
+built yet.
 
 - **Runtime generation** streams around focus points.
 - **Editor preview** is the same stream around the editor camera, with a smaller budget and a quick
