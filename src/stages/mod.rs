@@ -6,6 +6,6 @@ pub mod pack;
 pub mod runtime;
 pub mod worker;
 
-pub use pack::{Expr, PACK_VERSION, Pack, PackError, PackFile, StageDef, StageKind};
+pub use pack::{Condition, Expr, PACK_VERSION, Pack, PackError, PackFile, StageDef, StageKind};
 pub use runtime::{Field, FieldView, Point, Product, Runtime, Site, StageError, TownChunk};
 pub use worker::{StageEvent, StageWorker};

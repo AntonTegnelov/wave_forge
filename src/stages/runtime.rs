@@ -7,7 +7,7 @@
 //! and the stage reads them only through a view bounded by that area. Whatever order chunks are
 //! asked for in, each is computed from the same inputs and comes out the same.
 
-use super::pack::{Expr, Output, Pack, Reach, StageKind, point_stage_id};
+use super::pack::{Condition, Expr, Output, Pack, Reach, StageKind, point_stage_id, salt};
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownRequest, TownSolver};
@@ -850,20 +850,76 @@ impl Runtime {
         column: [i64; 2],
         input: &dyn Fn(&str) -> &'v FieldView<'v>,
     ) -> Result<f32, StageError> {
+        let value = |expr: &Expr| self.evaluate(expr, salt, column, input);
+        let centre = [column[0] as f32 + 0.5, column[1] as f32 + 0.5];
         Ok(match expr {
             Expr::Constant(value) => *value,
-            Expr::Noise { frequency, octaves } => {
-                value_noise(self.seed, salt, *frequency, *octaves, column)
+            Expr::Noise {
+                frequency,
+                octaves,
+                name,
+            } => {
+                let stream = name.as_deref().map_or(salt, noise_stream);
+                value_noise(self.seed, stream, *frequency, *octaves, column)
             }
             Expr::Input(name) => input(name).get(column[0], column[1])?,
-            Expr::Add(a, b) => {
-                self.evaluate(a, salt, column, input)? + self.evaluate(b, salt, column, input)?
+            Expr::X => centre[0],
+            Expr::Y => centre[1],
+            Expr::Distance((x, y)) => (centre[0] - x).hypot(centre[1] - y),
+            Expr::Angle((x, y)) => {
+                let turn = (centre[1] - y).atan2(centre[0] - x) / std::f32::consts::TAU;
+                turn.rem_euclid(1.0)
             }
-            Expr::Mul(a, b) => {
-                self.evaluate(a, salt, column, input)? * self.evaluate(b, salt, column, input)?
+            Expr::Add(a, b) => value(a)? + value(b)?,
+            Expr::Sub(a, b) => value(a)? - value(b)?,
+            Expr::Mul(a, b) => value(a)? * value(b)?,
+            Expr::Min(a, b) => value(a)?.min(value(b)?),
+            Expr::Max(a, b) => value(a)?.max(value(b)?),
+            Expr::Abs(a) => value(a)?.abs(),
+            Expr::Floor(a) => value(a)?.floor(),
+            Expr::Clamp(a, low, high) => value(a)?.clamp(*low, *high),
+            Expr::Smoothstep(low, high, a) => {
+                let t = ((value(a)? - low) / (high - low)).clamp(0.0, 1.0);
+                t * t * (3.0 - 2.0 * t)
+            }
+            Expr::Remap(a, (from_low, from_high), (to_low, to_high)) => {
+                to_low + (value(a)? - from_low) / (from_high - from_low) * (to_high - to_low)
+            }
+            Expr::Curve(a, points) => curve(points, value(a)?),
+            Expr::Select {
+                when,
+                then,
+                otherwise,
+            } => {
+                let holds = match when {
+                    Condition::Less(a, b) => value(a)? < value(b)?,
+                    Condition::Greater(a, b) => value(a)? > value(b)?,
+                };
+                value(if holds { then } else { otherwise })?
             }
         })
     }
+}
+
+/// The stream of a named noise: the same wherever the name appears, and apart from any stage's
+/// own stream, whose salt is the stage's name alone.
+fn noise_stream(name: &str) -> u32 {
+    salt(name) ^ 0x6E6F_6973
+}
+
+/// A piecewise-linear curve at `x`: level beyond its first and last points, linear between.
+/// The points are in increasing x and at least two, which loading checks.
+fn curve(points: &[(f32, f32)], x: f32) -> f32 {
+    let (first, last) = (points[0], points[points.len() - 1]);
+    if x <= first.0 {
+        return first.1;
+    }
+    if x >= last.0 {
+        return last.1;
+    }
+    let after = points.partition_point(|point| point.0 <= x);
+    let ((x0, y0), (x1, y1)) = (points[after - 1], points[after]);
+    y0 + (x - x0) / (x1 - x0) * (y1 - y0)
 }
 
 /// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the

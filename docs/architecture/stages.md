@@ -42,8 +42,8 @@ masks ([solver.md](solver.md#the-prior)).
 - **Named hash streams.** Every random decision is a hash of the seed, the stage's id, the key and a
   purpose, built on the stateless `pcg3d` the solver uses, never a sequential generator, so adding,
   removing or reordering stages changes no other stage. Existence tests compare integers. (N9, G6.)
-  A separate stream per noise node within one stage is **not built yet**
-  ([#90](https://github.com/AntonTegnelov/wave_forge/issues/90)).
+  A noise node can name its own stream, which is then the same function in every stage that names
+  it, as Minecraft's named noise parameters are.
 - **Integer data across stages.** Data crossing a stage boundary that decides existence or position
   (site positions, spline control points) should be integer or fixed point, because equal floats are
   not guaranteed across GPU vendors. Today fields, site heights and point positions are `f32`, which
@@ -92,7 +92,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 
 | Kind | What it does | Reach | Serves | Today |
 |---|---|---|---|---|
-| **Field** | a fused pointwise expression graph: noise, splines, remap, math, first-match classifiers, image lookup | 0 | G1, G3, G6, G7, N2, N7 | constants, value noise, inputs, sums and products ([#90](https://github.com/AntonTegnelov/wave_forge/issues/90), [#45](https://github.com/AntonTegnelov/wave_forge/issues/45)) |
+| **Field** | a fused pointwise expression graph: noise, splines, remap, math, first-match classifiers, image lookup | 0 | G1, G3, G6, G7, N2, N7 | value noise with named streams, coordinates and distances, arithmetic, clamps, smoothsteps, remaps, curves and selects; FastNoiseLite's noises are [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
 | **Filter** | stencils, blur, cellular automata, slope, distance transforms | declared per pass | G2, G5, G7 | `Blur`, `Flatten` ([#94](https://github.com/AntonTegnelov/wave_forge/issues/94)) |
 | **Rules** | first-match rule trees producing a Prior or a categorical field, like Minecraft's surface rules | that of its conditions | G1, G7, N4 | not built yet ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91)) |
 | **Solve** | WFC over a Prior; Wang tiling later | the solver's halo | G4, G5, N6 | one bounded town per site (below) |
