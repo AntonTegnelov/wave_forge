@@ -69,7 +69,7 @@ fn bevys_own_device_generates_a_city() {
         .add_plugins(
             WaveForgePlugin::from_rules(rules, city_prior(&city, CHUNK.z), settings)
                 .expect("the city's weights make a rule set")
-                .warm(&[1, 2]),
+                .warm(1),
         )
         .init_resource::<Built>()
         .add_systems(Update, build_chunks.after(WaveForgeSystems))
