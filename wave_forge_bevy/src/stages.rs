@@ -23,7 +23,7 @@ use bevy_transform::components::GlobalTransform;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use wave_forge::stages::{
-    Categories, Field, Point, Runtime, Site, StageEvent, StageWorker, TownChunk,
+    Categories, Field, Point, Runtime, Site, StageEvent, StageTiming, StageWorker, TownChunk,
 };
 use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, ground, ground_readers};
 
@@ -131,6 +131,13 @@ impl WaveForgeStages {
             0.0,
             chunk.y as f32 * settings.chunk[1] as f32 * cell.z,
         )
+    }
+
+    /// What each stage has cost on the stages' thread, as of the last frame, in the order the pack
+    /// lists them.
+    #[must_use]
+    pub fn timings(&self) -> &[(String, StageTiming)] {
+        self.worker.timings()
     }
 
     /// Why generation stopped, if it did.

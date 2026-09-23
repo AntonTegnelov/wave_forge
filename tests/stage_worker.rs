@@ -1,5 +1,6 @@
 //! A pack's stages on a thread of their own: what arrives is what a runtime on the same thread
-//! would have generated, a new request drops what it no longer needs, and failures are reported.
+//! would have generated, a new request drops what it no longer needs, failures are reported, and
+//! each stage's cost is counted as a runtime counts it.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -122,4 +123,46 @@ fn an_unknown_stage_is_reported() {
         "{:?}",
         worker.failure()
     );
+}
+
+#[test]
+fn each_stage_counts_the_products_it_generated_and_the_worker_reports_the_same() {
+    let centre = ChunkCoord::new(-2, 1, 0);
+    let focus = [FocusPoint::new(centre, 1)];
+    let mut direct = runtime();
+    direct.request(&focus, &["trees"]).expect("stages");
+    let generated = direct.run_until_idle().expect("the stages run");
+    let mut worker = StageWorker::spawn(|| Ok(runtime()));
+
+    worker.request(&focus, &["trees"]);
+    drain_until(&mut worker, |worker| {
+        worker
+            .timings()
+            .iter()
+            .map(|(_, t)| t.products)
+            .sum::<u64>()
+            == generated.len() as u64
+    });
+
+    let timings = direct.timings();
+    let names: Vec<&str> = timings.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["height", "trees"], "in the order of the pack");
+    for (name, timing) in &timings {
+        let count = generated.iter().filter(|(stage, _)| stage == name).count() as u64;
+        assert_eq!(timing.products, count, "{name}");
+        assert!(
+            timing.ms >= timing.slowest_ms && timing.slowest_ms >= 0.0,
+            "{name}: {timing:?}"
+        );
+    }
+    let reported: Vec<(&str, u64)> = worker
+        .timings()
+        .iter()
+        .map(|(name, timing)| (name.as_str(), timing.products))
+        .collect();
+    let counted: Vec<(&str, u64)> = timings
+        .iter()
+        .map(|(name, timing)| (name.as_str(), timing.products))
+        .collect();
+    assert_eq!(reported, counted);
 }

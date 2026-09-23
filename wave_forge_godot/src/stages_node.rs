@@ -577,10 +577,23 @@ impl WaveForgeStages {
     /// `slowest_frame_ms` in all, `slowest_frame_events` drained and `slowest_frame_signals_ms`
     /// emitting them (the handlers connected to them included), `slowest_frame_grounds` chunks
     /// given ground in `slowest_frame_grounds_ms`, and `slowest_frame_bodies` chunks given a body
-    /// in `slowest_frame_bodies_ms`.
+    /// in `slowest_frame_bodies_ms`. And `stages`: what each stage has cost on the stages' thread,
+    /// by name, as `products`, `ms` in all and `slowest_ms` for one product.
     #[func]
     fn stats(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
+        let mut stages = VarDictionary::new();
+        for (name, timing) in self.worker.iter().flat_map(|worker| worker.timings()) {
+            let mut cost = VarDictionary::new();
+            cost.set(
+                &"products".to_variant(),
+                &(timing.products as i64).to_variant(),
+            );
+            cost.set(&"ms".to_variant(), &timing.ms.to_variant());
+            cost.set(&"slowest_ms".to_variant(), &timing.slowest_ms.to_variant());
+            stages.set(&GString::from(name).to_variant(), &cost.to_variant());
+        }
+        out.set(&"stages".to_variant(), &stages.to_variant());
         let slowest = self.slowest_frame;
         for (key, value) in [
             ("slowest_frame_ms", slowest.ms),

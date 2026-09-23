@@ -436,6 +436,8 @@ default cell of 0.25, one region baked per chunk within 1 chunk of the player.
 | E26 | The same walk with every body removed | the walker sank through the ground in the first frames: feet at 53.39, the surface at 53.75 | a one-off change to the check, to show it detects falling through |
 | E27 | The stages check with a Rules stage (`cover`) and the slowest-frame breakdown, three runs | the node's own process p99 0.12 to 0.21 ms, max 4.7 to 5.2 ms; the slowest frame was always the one that emitted 2 745 to 2 841 `stage_ready` signals at once, in 3.3 to 3.8 ms, after the town search over 25×25 chunks; grounds and bodies under 0.01 ms in that frame | the stages check at [#91], radius 12 for the search |
 | E28 | The same check once before the breakdown existed | the node's own process max 9.64 ms, over the 8 ms bar; what the frame held was not recorded. Emitting every event of a drain in one frame is unbounded, which is the likeliest cause | at [#91]; the bound on signals per frame is [#108] |
+| E29 | Each stage of the valley pack on the stages' thread, three runs | per product: hills 0.023 ms, ground 0.019 ms, towns 0.007 ms, level 0.002 ms, trees 0.005 ms, cover 0.003 ms; city (towns solved with WFC on the GPU) 334 to 338 ms, 16.3 to 16.6 s for 49 products, the slowest 8.5 to 8.8 s. In all, the field, site and scatter stages took 72 ms of the 16.5 s | the stages check at [#87], release, dozen on the RTX 3070; the search and the view together generate 1 684 hills and 49 city products. The slowest city product is the first town, which most likely includes compiling its kernels ([#111]) |
+| E30 | The same runs' slowest frame | one of the three runs failed the 8 ms bar: its slowest frame emitted 2 833 signals in 6.65 ms (max 8.03 ms); the others were 4.4 and 4.7 ms | [#108] |
 
 ### Bevy ([#26], 2026-09-18)
 
@@ -512,6 +514,8 @@ Measurements the current code still waits for.
 [#79]: https://github.com/AntonTegnelov/wave_forge/pull/79
 [#82]: https://github.com/AntonTegnelov/wave_forge/pull/82
 [#85]: https://github.com/AntonTegnelov/wave_forge/pull/85
+[#87]: https://github.com/AntonTegnelov/wave_forge/issues/87
 [#88]: https://github.com/AntonTegnelov/wave_forge/issues/88
 [#91]: https://github.com/AntonTegnelov/wave_forge/issues/91
 [#108]: https://github.com/AntonTegnelov/wave_forge/issues/108
+[#111]: https://github.com/AntonTegnelov/wave_forge/issues/111

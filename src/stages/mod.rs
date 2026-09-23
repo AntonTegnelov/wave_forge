@@ -11,6 +11,6 @@ pub use pack::{
     StageDef, StageKind,
 };
 pub use runtime::{
-    Categories, Field, FieldView, Point, Product, Runtime, Site, StageError, TownChunk,
+    Categories, Field, FieldView, Point, Product, Runtime, Site, StageError, StageTiming, TownChunk,
 };
 pub use worker::{StageEvent, StageWorker};

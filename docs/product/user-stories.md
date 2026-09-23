@@ -379,7 +379,7 @@ per second, Godot's slowest frame under 8 ms, the node's own time under 2 ms at 
 and no frame with a chunk missing within the ready radius. **Status:** in progress (2026-09-23): the Godot check
 meets these for a streamed WFC world (a small band rule set) with colliders and navigation (slowest frame 3.4 ms, node p99 0.56 ms,
 [measurements.md](../research/measurements.md)), on the dev container's RTX 3070
-through dozen; not yet with Phase 2 stages or on a desktop.
+through dozen; not yet with Phase 2 stages or on a desktop. With the valley pack's stages, one run in three went over the 8 ms bar (8.03 ms) on a frame that emitted 2 833 signals at once ([#108](https://github.com/AntonTegnelov/wave_forge/issues/108)); the stages themselves run off Godot's thread.
 
 ### P2. Long view distance
 
@@ -389,7 +389,7 @@ detail.*
 **Acceptance criteria.** Coarse levels (fields and proxies) reach a view distance of at least 2 km
 on a mid-range desktop GPU at 60 frames per second, with the chunks per second each level generates
 recorded. **Needs.** Levels and scales, far proxies ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)).
-**Status:** not started (2026-09-23).
+**Status:** not started (2026-09-23). Measured so far: a field stage costs 0.02 ms per chunk of 64 columns on the CPU in release (valley pack, dozen on the RTX 3070, [measurements.md](../research/measurements.md) E29), so fields are not what limits view distance.
 
 ### P3. Fast into a new world
 
@@ -397,7 +397,7 @@ recorded. **Needs.** Levels and scales, far proxies ([#47](https://github.com/An
 
 **Acceptance criteria.** Time from pressing play to a playable area around the player under 5 s on a
 reference desktop with compiled kernels cached, and the first-run time recorded. Today it is about
-14 s in the dev container, most of it compiling kernels. **Status:** not started (2026-09-23).
+14 s in the dev container, most of it compiling kernels. **Status:** not started (2026-09-23). The valley pack's first town takes 8.5 to 8.8 s, most likely compiling its kernels, against 72 ms for every other stage together ([measurements.md](../research/measurements.md) E29, [#111](https://github.com/AntonTegnelov/wave_forge/issues/111)).
 
 ### P4. Memory that stays bounded
 
