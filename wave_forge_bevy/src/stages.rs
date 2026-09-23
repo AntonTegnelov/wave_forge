@@ -22,6 +22,7 @@ use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_transform::components::GlobalTransform;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
     Categories, Field, Point, Runtime, Site, StageEvent, StageTiming, StageWorker, TownChunk,
 };
@@ -86,6 +87,13 @@ impl WaveForgeStages {
     #[must_use]
     pub fn categories(&self, stage: &str, chunk: ChunkCoord) -> Option<&Categories> {
         self.worker.categories(stage, chunk)
+    }
+
+    /// A Region stage's curves that pass through a chunk, if they have arrived, in the lattice's
+    /// columns: the lattice's x and y are Bevy's x and z.
+    #[must_use]
+    pub fn curves(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Curve]> {
+        self.worker.curves(stage, chunk)
     }
 
     /// A Sites stage's sites overlapping a chunk, if they have arrived.

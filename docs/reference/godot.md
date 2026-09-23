@@ -111,6 +111,8 @@ second, published once a second, not the last frame's time.
 - `set_collision_shape(module, shape)` gives every cell of a town's module a collider in the
   chunks within `collider_radius`, for every Solve stage; `modules_tagged(rules, tag)` names the
   modules of a rule set that carry a tag, to assign shapes by tag.
+- `curves(stage, chunk)`: a Region stage's curves through a chunk, each with its `region`, `index`,
+  `points` on the ground plane in Godot's world space, and `values`.
 - `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body.
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
   since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` signals emitted in

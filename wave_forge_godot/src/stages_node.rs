@@ -395,6 +395,46 @@ impl WaveForgeStages {
             })
     }
 
+    /// A Region stage's curves that pass through a chunk: each one's `region` (Vector2i) and `index`
+    /// that name it, its `points` in Godot's world space on the ground plane (y is 0), and its
+    /// `values`. Empty if it is not a Region stage or the chunk has not arrived.
+    #[func]
+    fn curves(&self, stage: GString, chunk: Vector3i) -> Array<VarDictionary> {
+        let Some(curves) = self
+            .worker
+            .as_ref()
+            .and_then(|worker| worker.curves(&stage.to_string(), from_vector(chunk)))
+        else {
+            return Array::new();
+        };
+        let cell = self.cell_size;
+        curves
+            .iter()
+            .map(|curve| {
+                let points: PackedVector3Array = curve
+                    .points
+                    .iter()
+                    .map(|&[x, y]| Vector3::new(x * cell.x, 0.0, y * cell.z))
+                    .collect();
+                let mut out = VarDictionary::new();
+                out.set(
+                    &"region".to_variant(),
+                    &Vector2i::new(curve.id.region.0, curve.id.region.1).to_variant(),
+                );
+                out.set(
+                    &"index".to_variant(),
+                    &i64::from(curve.id.index).to_variant(),
+                );
+                out.set(&"points".to_variant(), &points.to_variant());
+                out.set(
+                    &"values".to_variant(),
+                    &PackedFloat32Array::from(curve.values.as_slice()).to_variant(),
+                );
+                out
+            })
+            .collect()
+    }
+
     /// The categories a Rules stage names, in the order of their indices; empty for another stage.
     #[func]
     fn category_names(&self, stage: GString) -> PackedStringArray {

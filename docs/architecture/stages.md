@@ -55,9 +55,9 @@ masks ([solver.md](solver.md#the-prior)).
   computation, which may iterate, count and retry with a hashed retry index. A finite world is a
   single region computed before streaming starts. Region jobs agree at their borders through
   edge-keyed hashes (a river's crossing point hashed from the shared edge), not by reading each
-  other. (G2, G4, G5, G6, G7, G8.) Today every stage runs on the WFC chunk lattice; levels
-  and region jobs are **not built yet** ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93),
-  [#69](https://github.com/AntonTegnelov/wave_forge/issues/69),
+  other. (G2, G4, G5, G6, G7, G8.) Region jobs exist as Region stages, whose job is Rust code a
+  game gives the runtime; every stage still runs on the WFC chunk lattice, and levels and records
+  are **not built yet** ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93),
   [#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
 - **Scheduling.** Providers first, with lifetimes held by what needs them, following LayerProcGen.
   The WFC generator's schedule is the same pattern written by hand: parity 0, parity 1 and the
@@ -77,7 +77,7 @@ masks ([solver.md](solver.md#the-prior)).
 |---|---|---|---|
 | **Field** | named channels on a 2D or 3D grid at the stage's cell size | height, climate, masks, density and signed distance, categorical ids such as a biome | one `f32` per cell column, or a category per column from a Rules stage |
 | **PointSet** | structure of arrays: position, rotation, scale, stable id, kind, attribute columns | sites, anchors, scatter candidates and placements, spawn points | `Sites` and `Points` |
-| **CurveSet** | polylines with per-vertex attributes (radius, flow, profile) and optional connectivity | roads, rivers, tunnels, room and site graphs | not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
+| **CurveSet** | polylines with per-vertex attributes (radius, flow, profile) and optional connectivity | roads, rivers, tunnels, room and site graphs | `Curves` from region jobs: points and one value per point; connectivity and rasterising are [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
 | **Record** | a typed struct keyed by a hierarchical address | planet or system parameters, a user-supplied history, a location table | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
 | **Prior** and **TileGrid** | the WFC stage's input and output | tiles | `Tiles`, a town's chunk |
@@ -101,7 +101,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 | **Network** | bounded paths between owned sites (roads, rivers, tunnels) | declared | G7, G8 | not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
 | **Assemble** | a jigsaw or room graph grown from one site into Stamps, with a bounded extent | the extent | G1, G7, G8 | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
 | **Apply** | rasterises curves and stamps into fields or Priors in a stable order | the primitives' bounds | G1, G3, G8 | `Flatten` for site footprints ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
-| **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4 to G8 | not built yet ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) |
+| **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4 to G8 | a Region stage running a `RegionJob` the game registers, producing curves |
 | **Record** | computed once per seed or per address | its parent | G2, G3, G6 | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
 | **Emit** | products for an engine | 0 | N1, N3, P1 | done by the engine integrations today |
 | **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4 | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |

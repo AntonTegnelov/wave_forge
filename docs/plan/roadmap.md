@@ -58,9 +58,9 @@ first, which the survival game grows into, then what the strategy game needs.
    ([#111](https://github.com/AntonTegnelov/wave_forge/issues/111)). Per-stage
    timings ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)) showed fields cost
    0.02 ms per chunk, so Field stages stay on the CPU.
-2. **Region jobs and records** ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69),
-   [#72](https://github.com/AntonTegnelov/wave_forge/issues/72)). With both, the strategy game becomes
-   possible, and an issue opens for its repository.
+2. **Records** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)), after region jobs
+   ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)). With both, the strategy game
+   becomes possible, and an issue opens for its repository.
 3. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104):
    FastNoiseLite-compatible noise ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)),
    stage lattices and coarse levels ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93)),

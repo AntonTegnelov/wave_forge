@@ -330,3 +330,69 @@ fn each_stage_reports_what_it_has_cost() {
         .collect();
     assert_eq!(names, ["height", "trees", "cover"]);
 }
+
+/// A straight line across each region, at a row hashed from its west edge.
+struct Lines;
+
+impl wave_forge::stages::regions::RegionJob for Lines {
+    fn run(
+        &self,
+        input: &wave_forge::stages::regions::RegionInput<'_>,
+    ) -> Result<wave_forge::stages::regions::Attempt, wave_forge::stages::StageError> {
+        use wave_forge::stages::regions::{Attempt, Curve, CurveId, Edge};
+        let ([x0, y0], [x1, _]) = input.columns();
+        let row = y0 as f32 + (input.edge_hash(Edge::West, 0) % 8) as f32;
+        Ok(Attempt::Accepted(vec![Curve {
+            id: CurveId {
+                region: input.region(),
+                index: 0,
+            },
+            points: vec![[x0 as f32, row], [x1 as f32 + 1.0, row]],
+            values: vec![0.0, 0.0],
+        }]))
+    }
+}
+
+const REGIONS: &str = r#"(
+    version: 1,
+    stages: [
+        (name: "lines", kind: Region(job: "lines", region: 2)),
+    ],
+)"#;
+
+fn lines_runtime() -> Runtime {
+    Runtime::new(
+        Arc::new(Pack::parse(REGIONS).expect("a valid pack")),
+        4,
+        SETTINGS.chunk,
+    )
+    .with_region_job("lines", Lines)
+}
+
+#[test]
+fn a_region_jobs_curves_arrive_as_the_runtime_makes_them() {
+    let mut app = app_with(WaveForgeStagesPlugin::new(&["lines"], SETTINGS, || {
+        Ok(lines_runtime())
+    }));
+    let mut direct = lines_runtime();
+    direct
+        .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 1)], &["lines"])
+        .expect("stages");
+    direct.run_until_idle().expect("the stages run");
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        around_origin()
+            .iter()
+            .all(|&c| stages.curves("lines", c).is_some())
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    for chunk in around_origin() {
+        assert_eq!(
+            stages.curves("lines", chunk),
+            direct.curves("lines", chunk),
+            "{chunk:?}"
+        );
+    }
+}

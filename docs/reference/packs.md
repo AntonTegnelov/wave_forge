@@ -185,6 +185,29 @@ A `Point` has a positional `InstanceId` (its chunk, 15 bits of the stage's salt 
 `kind`, a `position` in cells (x and y on the ground, z the field's value) and a `turn` about the
 vertical as a fraction of a whole turn. Loading checks that no two Scatter stages share a salt.
 
+### Region
+
+`Region(job: "rivers", region: 4, halo: 1, inputs: ["height"], budget: 8)`: curves computed once per
+square region of `region` chunks by a region job, Rust code the game gives the runtime with
+`Runtime::with_region_job(name, job)`. A chunk's product is the region's curves that pass through
+it. `halo` (default 0) and `budget` (default 1) are optional, and the stage reads its inputs as far
+as `region - 1 + halo` chunks from any of its chunks.
+
+A job implements `stages::regions::RegionJob`: `run(&RegionInput) -> Attempt`. Through the input it
+reads its fields (`field(stage, x, y)`, refused beyond the region and its halo), the region's
+columns, its own hash stream (`hash(purpose)`, which changes with the retry index), and
+`edge_hash(edge, purpose)`, which the neighbour across that edge computes too. That is how two
+regions agree on what crosses between them, a river's crossing point say, without reading each
+other. `Attempt::Rejected(reason)` makes the runtime try again with the next retry index; when the
+budget is spent, generation fails with `StageError::RegionRejected`, carrying every reason. A
+missing job fails with `StageError::NoRegionJob`. A computed region is kept while any chunk of it
+is needed, so a finite world is one region computed once.
+
+A `Curve` has a positional id (its region and index), points in world columns and one value per
+point. There is no built-in job yet: rivers that carve the ground are
+[#98](https://github.com/AntonTegnelov/wave_forge/issues/98). Godot games reach Region stages
+once there are built-in jobs; a Bevy game registers its own in the runtime it builds.
+
 ## The runtime
 
 ```rust
@@ -204,7 +227,7 @@ let trees = runtime.points("trees", chunk);
   between; `is_idle` says whether anything is left.
 - `timings()` reports what each stage has cost since the runtime was made, in the pack's order: a
   `StageTiming` of `products`, `ms` in all and `slowest_ms` (a Solve stage's includes its towns).
-- `product`, `field`, `categories`, `sites`, `tiles` and `points` read what a stage holds for a chunk; `held`
+- `product`, `field`, `categories`, `curves`, `sites`, `tiles` and `points` read what a stage holds for a chunk; `held`
   counts products held.
 - A stage reads its inputs only through a `FieldView` bounded by its reach. A read outside it
   returns `StageError::OutOfReach`, naming the stage and the reach it would have needed.
