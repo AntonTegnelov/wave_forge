@@ -114,7 +114,8 @@ second, published once a second, not the last frame's time.
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
   since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` drained in
   `slowest_frame_signals_ms`, `slowest_frame_grounds` built in `slowest_frame_grounds_ms`,
-  `slowest_frame_bodies` built in `slowest_frame_bodies_ms`).
+  `slowest_frame_bodies` built in `slowest_frame_bodies_ms`), and `stages`, each stage's cost on
+  the stages' thread by name (`products`, `ms`, `slowest_ms`).
 
 ### Signals
 

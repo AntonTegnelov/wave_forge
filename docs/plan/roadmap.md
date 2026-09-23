@@ -54,8 +54,11 @@ has the full gap, and [#104](https://github.com/AntonTegnelov/wave_forge/issues/
 Each step is a verified pull request that updates the stories it moves. The order puts G7's world
 first, which the survival game grows into, then what the strategy game needs.
 
-1. **Per-stage timings**, then Field stages on the GPU if they call for it
-   ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)).
+1. **The stages node's frame bound and the town kernels:** at most a bounded number of signals per
+   frame ([#108](https://github.com/AntonTegnelov/wave_forge/issues/108)), and town kernels compiled
+   before play and cached ([#111](https://github.com/AntonTegnelov/wave_forge/issues/111)). Per-stage
+   timings ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)) showed fields cost
+   0.02 ms per chunk, so Field stages stay on the CPU.
 2. **Region jobs and records** ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69),
    [#72](https://github.com/AntonTegnelov/wave_forge/issues/72)). With both, the strategy game becomes
    possible, and an issue opens for its repository.

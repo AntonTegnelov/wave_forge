@@ -200,6 +200,8 @@ let trees = runtime.points("trees", chunk);
 - `run_until_idle` generates what is missing, stage by stage with inputs first, nearest chunk
   first; `step(budget)` generates at most `budget` products, so a caller can take new requests in
   between; `is_idle` says whether anything is left.
+- `timings()` reports what each stage has cost since the runtime was made, in the pack's order: a
+  `StageTiming` of `products`, `ms` in all and `slowest_ms` (a Solve stage's includes its towns).
 - `product`, `field`, `categories`, `sites`, `tiles` and `points` read what a stage holds for a chunk; `held`
   counts products held.
 - A stage reads its inputs only through a `FieldView` bounded by its reach. A read outside it
@@ -207,7 +209,8 @@ let trees = runtime.points("trees", chunk);
 - `StageWorker::spawn(build)` runs a runtime on a thread of its own, built there by the closure
   (a town solver may own a device that belongs to its thread). `request` sends a new request;
   `drain` returns `StageEvent::Generated` and `StageEvent::Dropped` events and keeps every product
-  shared for reading; `failure` reports why the thread stopped, if it did.
+  shared for reading; `timings` reports each stage's cost as of the last drain; `failure` reports
+  why the thread stopped, if it did.
 
 **Named hash streams.** Every random decision draws from `pcg3d` keyed by the world seed and an
 FNV-1a salt of the stage's name, so adding, removing or reordering stages changes no other stage.

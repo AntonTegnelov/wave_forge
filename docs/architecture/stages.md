@@ -48,7 +48,7 @@ masks ([solver.md](solver.md#the-prior)).
   (site positions, spline control points) should be integer or fixed point, because equal floats are
   not guaranteed across GPU vendors. Today fields, site heights and point positions are `f32`, which
   is safe while the stages run on the CPU; fixed-point boundaries are **not built yet** and come
-  with GPU stages ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)).
+  with GPU stages.
 - **Levels and scales.** Each stage declares a cell size on a hierarchy of global, region, chunk and
   cell, and may read its parent level (Elite's sector, system and body; No Man's Sky's region,
   system and planet). A **region job** runs on a coarse region lattice: any bounded pure
@@ -153,7 +153,7 @@ infinite city of the MVP keeps the streamed WFC world of [world.md](world.md).
 
 - **Variable-length GPU output.** Atomic appends make the order of emitted points depend on thread
   timing, so points on the GPU must be compacted by prefix sums in a fixed order and checked against
-  the CPU reference ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)).
+  the CPU reference, once a stage moves to the GPU.
 - **Edits invalidation.** An edit dirties the keys it touches and every dependant within the summed
   reach. Neither LayerProcGen nor Unreal PCG has this, so it is new work
   ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)).
@@ -193,8 +193,7 @@ per-stage timings, a rejection log for region jobs, `locate(kind)`, a contact sh
 and an **order-diff test** that generates the same world in different chunk orders and compares the
 results. (N5, P6, and the [verification gate](../product/user-stories.md#the-verification-gate).)
 The order-diff tests exist (`tests/stages.rs`, `wfc-devtools/tests/order_diff.rs`); per-stage
-timings are [#87](https://github.com/AntonTegnelov/wave_forge/issues/87), and the viewers come with
-authoring.
+timings are in the runtime and both engines, and the viewers come with authoring.
 
 ## Scope
 
@@ -213,5 +212,5 @@ reproduction impossible anyway. The project's scope and non-goals are in
 - A claim that a preset is "like" a game is made only after that game's story is verified.
 - **The stage runtime runs on the CPU today.** That is a performance tier, not a fallback: the
   project still requires a GPU ([vision.md](../product/vision.md#non-goals)), towns are solved on
-  one, and a Field stage moves to the GPU when per-stage timings show it should
-  ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)).
+  one, and a Field stage moves to the GPU when per-stage timings show it should. They do not yet:
+  a field costs about 0.02 ms per chunk, while a town's first solve takes seconds ([measurements.md](../research/measurements.md) E29).

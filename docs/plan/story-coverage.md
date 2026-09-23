@@ -41,7 +41,7 @@ community port and are unverified from Iron Gate (see the story's sources).
 | Queries for the minimap and spawners | sampling a stage at a point without chunks | missing | [#100](https://github.com/AntonTegnelov/wave_forge/issues/100) |
 | A finite disk with ocean outside | a world bound for stages | missing | [#99](https://github.com/AntonTegnelov/wave_forge/issues/99) |
 | Creatures spawned by biome | spawn points and a biome query | partial: Scatter points, no biome | [#44](https://github.com/AntonTegnelov/wave_forge/issues/44), [#91](https://github.com/AntonTegnelov/wave_forge/issues/91) |
-| World-scale generation speed | per-stage timings, GPU Field stages | missing | [#87](https://github.com/AntonTegnelov/wave_forge/issues/87) |
+| World-scale generation speed | per-stage timings, GPU Field stages | timings available; fields cost 0.02 ms per chunk on the CPU, and the first town's seconds of kernel compilation dominate | [#111](https://github.com/AntonTegnelov/wave_forge/issues/111) |
 
 Not needed for G7: density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71);
 Valheim is a height field) and records ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
