@@ -1,0 +1,16 @@
+// What is left of a burned village: open ground, grass and paving, and the odd dry fountain, from
+// the city's street-level modules so the city's models draw it.
+(
+    faces: {
+        "air": Side(connector: "air"),
+        "ground": Side(connector: "ground", walkable: true),
+        "open": Top(connector: "open"),
+        "bedrock": Top(connector: "bedrock"),
+    },
+    modules: [
+        (name: "air", sides: ["air", "air", "air", "air"], up: "open", down: "open", weight: 4.0),
+        (name: "grass", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 3.0, tags: ["street_level"]),
+        (name: "plaza", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 0.8, tags: ["street_level"]),
+        (name: "plaza_fountain", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 0.05, tags: ["street_level"]),
+    ],
+)

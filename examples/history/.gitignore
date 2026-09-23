@@ -1,0 +1,5 @@
+# Built and copied in by prepare.sh, and Godot's own caches.
+bin/
+city.ron
+models/
+.godot/

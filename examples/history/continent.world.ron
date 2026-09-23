@@ -1,0 +1,42 @@
+// A continent for a history to happen on (docs/product/user-stories.md, N11): land that rises
+// inland and falls into the sea some 280 to 360 cells from the centre, as a world map of one column
+// per 8 cells that a history reads through the atlas, and the ground a player walks. The history
+// (history.gd) gives the rivers, villages and roads it made as tables; the stages carve the rivers,
+// level the roads, flatten a site for every village and build a town on it, or ruins where it
+// burned.
+(
+    version: 1,
+    tables: [
+        (name: "rivers", kind: Given(columns: [
+            ("x0", Number), ("y0", Number), ("x1", Number), ("y1", Number), ("width", Number),
+        ])),
+        (name: "roads", kind: Given(columns: [
+            ("x0", Number), ("y0", Number), ("x1", Number), ("y1", Number), ("width", Number),
+        ])),
+        (name: "villages", kind: Given(columns: [
+            ("x", Number), ("y", Number), ("size", Number), ("population", Number),
+            ("fate", Names(["standing", "burned"])),
+        ])),
+    ],
+    stages: [
+        // The world map: broad noise, lowered towards the coast so the land ends in sea. Above 0 is
+        // land, and it rises to about 1 inland.
+        (name: "land", scale: 8, kind: Field(Sub(
+            Mul(Noise(frequency: 0.01, octaves: 4, name: Some("land")), Constant(2.0)),
+            Add(Constant(0.55), Clamp(Remap(Distance((0.0, 0.0)), (240.0, 340.0), (0.0, 1.5)), 0.0, 1.5)),
+        ))),
+        // The ground in cells: the world map read between its columns, with small bumps on top.
+        (name: "height", kind: Field(Add(
+            Mul(Input("land"), Constant(24.0)),
+            Mul(Noise(frequency: 0.08, octaves: 2, name: Some("bumps")), Constant(1.5)),
+        ))),
+        (name: "rivers", kind: TableCurves(table: "rivers", from: ("x0", "y0"), to: ("x1", "y1"), radius: "width")),
+        (name: "carved", kind: Apply(height: "height", curves: "rivers", max_radius: 4, blend: 3, profile: Carve(2.0))),
+        (name: "roads", kind: TableCurves(table: "roads", from: ("x0", "y0"), to: ("x1", "y1"), radius: "width")),
+        (name: "paved", kind: Apply(height: "carved", curves: "roads", max_radius: 2, blend: 3, profile: Level)),
+        (name: "villages", kind: TableSites(table: "villages", height: "paved", at: ("x", "y"), size: "size", max_size: 2)),
+        (name: "level", kind: Flatten(height: "paved", sites: "villages", blend: 6)),
+        (name: "towns", kind: Solve(sites: "villages", rules: "city", by: Some(("fate", [("burned", "ruins")])),
+            bottom: Some(Tagged("street_level")), top: Some(Named("air")))),
+    ],
+)
