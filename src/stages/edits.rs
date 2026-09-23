@@ -6,6 +6,7 @@
 //! survives eviction and regeneration, and giving the runtime a new log regenerates only the chunks
 //! whose edits changed and what reads them ([`crate::stages::Runtime::set_edits`]).
 
+use super::runtime::StageError;
 use crate::products::InstanceId;
 use serde::{Deserialize, Serialize};
 use wfc_core::ChunkCoord;
@@ -67,5 +68,19 @@ impl Edits {
     /// Adds `edit` at the end of the log.
     pub fn push(&mut self, edit: Edit) {
         self.log.push(edit);
+    }
+
+    /// The log as RON text, for a save.
+    #[must_use]
+    pub fn to_ron(&self) -> String {
+        ron::to_string(self).expect("edits are plain data")
+    }
+
+    /// A log from the RON text a save holds.
+    ///
+    /// # Errors
+    /// [`StageError::Edit`] if the text is not an edits log.
+    pub fn from_ron(text: &str) -> Result<Self, StageError> {
+        ron::from_str(text).map_err(|error| StageError::Edit(format!("not an edits log: {error}")))
     }
 }
