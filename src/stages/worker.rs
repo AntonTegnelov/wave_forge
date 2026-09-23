@@ -5,6 +5,7 @@
 //! request never waits long, and hands every product back shared, so the engine's thread reads it
 //! without a copy and without asking.
 
+use super::facts::{Facts, RowId};
 use super::regions::Curve;
 use super::runtime::{Categories, Field, Point, Product, Runtime, Site, StageTiming, TownChunk};
 use crate::ChunkCoord;
@@ -20,6 +21,11 @@ enum Order {
     Request {
         focus: Vec<FocusPoint>,
         targets: Vec<String>,
+    },
+    Facts(Facts),
+    Focus {
+        table: String,
+        id: RowId,
     },
     Stop,
 }
@@ -87,6 +93,21 @@ impl StageWorker {
         let _ = self.orders.send(Order::Request {
             focus: focus.to_vec(),
             targets: targets.iter().map(|target| (*target).to_owned()).collect(),
+        });
+    }
+
+    /// Gives the runtime new facts, as [`Runtime::set_facts`] does: what they make stale arrives as
+    /// drops, and is generated again. An error stops the thread and arrives as a failure.
+    pub fn set_facts(&self, facts: Facts) {
+        let _ = self.orders.send(Order::Facts(facts));
+    }
+
+    /// Focuses the runtime on the row `id` of `table`, as [`Runtime::focus`] does, with what that
+    /// makes stale arriving as drops. An error stops the thread and arrives as a failure.
+    pub fn focus(&self, table: &str, id: RowId) {
+        let _ = self.orders.send(Order::Focus {
+            table: table.to_owned(),
+            id,
         });
     }
 
@@ -253,24 +274,28 @@ where
                 Err(TryRecvError::Disconnected) => return,
             }
         };
-        match order {
-            Some(Order::Stop) => return,
-            Some(Order::Request { focus, targets }) => {
-                let names: Vec<&str> = targets.iter().map(String::as_str).collect();
-                match runtime.request(&focus, &names) {
-                    Ok(dropped) if dropped.is_empty() => {}
-                    Ok(dropped) => {
-                        let _ = reports.send(Report::Dropped(dropped));
-                    }
-                    Err(error) => {
-                        let _ = reports.send(Report::Failed(error.to_string()));
-                        return;
-                    }
+        if let Some(order) = order {
+            let result = match order {
+                Order::Stop => return,
+                Order::Request { focus, targets } => {
+                    let names: Vec<&str> = targets.iter().map(String::as_str).collect();
+                    runtime.request(&focus, &names)
                 }
-                // Take every order already waiting before generating for this one.
-                continue;
+                Order::Facts(facts) => runtime.set_facts(facts),
+                Order::Focus { table, id } => runtime.focus(&table, id),
+            };
+            match result {
+                Ok(dropped) if dropped.is_empty() => {}
+                Ok(dropped) => {
+                    let _ = reports.send(Report::Dropped(dropped));
+                }
+                Err(error) => {
+                    let _ = reports.send(Report::Failed(error.to_string()));
+                    return;
+                }
             }
-            None => {}
+            // Take every order already waiting before generating for this one.
+            continue;
         }
         match runtime.step(STEP) {
             Ok(generated) if generated.is_empty() => {}
