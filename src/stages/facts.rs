@@ -383,6 +383,7 @@ impl Leaves for RowPlace<'_> {
             Expr::Count => self.count as f32,
             Expr::Share(column) => self.shares[column][self.index as usize],
             Expr::Noise { .. }
+            | Expr::FastNoise(_)
             | Expr::Input(_)
             | Expr::X
             | Expr::Y

@@ -6,6 +6,7 @@
 //! generating: the version, unknown and duplicate names, parameters out of range, what each
 //! expression may read where it is evaluated, and cycles, each error naming the stage or table.
 
+use crate::noise::NoiseConfig;
 use crate::towns::Selector;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -23,6 +24,10 @@ pub struct PackFile {
     /// Tables of facts: rows the game gives, and rows generated from a parent table's.
     #[serde(default)]
     pub tables: Vec<TableDef>,
+    /// Noises configured as Godot's `FastNoiseLite` is, by name, which Field expressions read with
+    /// [`Expr::FastNoise`]; an engine may replace one ([`crate::stages::Runtime::with_noise`]).
+    #[serde(default)]
+    pub noises: BTreeMap<String, NoiseConfig>,
 }
 
 /// A table of facts: rows the game gives, or rows generated from the pack, the seed and a parent
@@ -378,6 +383,9 @@ pub enum Expr {
         #[serde(default)]
         name: Option<String>,
     },
+    /// A noise the pack names in `noises`, as Godot's `FastNoiseLite.get_noise_2d` gives it at the
+    /// column's centre in cells. Its own seed decides it, as in Godot, not the world's.
+    FastNoise(String),
     /// Another field's value at the same column.
     Input(String),
     /// The column's x and y.
@@ -507,6 +515,7 @@ impl Expr {
         match self {
             Self::Constant(_)
             | Self::Noise { .. }
+            | Self::FastNoise(_)
             | Self::X
             | Self::Y
             | Self::Distance(_)
@@ -564,6 +573,7 @@ impl Expr {
         match self {
             Self::Constant(_)
             | Self::Noise { .. }
+            | Self::FastNoise(_)
             | Self::Input(_)
             | Self::X
             | Self::Y
@@ -616,6 +626,7 @@ impl Expr {
         match self {
             Self::Constant(_)
             | Self::Noise { .. }
+            | Self::FastNoise(_)
             | Self::Input(_)
             | Self::X
             | Self::Y
@@ -690,6 +701,7 @@ impl Expr {
                 }
             }
             Self::Input(_)
+            | Self::FastNoise(_)
             | Self::X
             | Self::Y
             | Self::Row(..)
@@ -873,6 +885,7 @@ fn leaf_allowed(
         | Expr::Curve(..)
         | Expr::Select { .. } => Ok(()),
         Expr::Noise { .. }
+        | Expr::FastNoise(_)
         | Expr::Input(_)
         | Expr::X
         | Expr::Y
@@ -1097,6 +1110,8 @@ pub struct Pack {
     pub(crate) table_by_name: BTreeMap<String, usize>,
     /// Table indices, each after its parent.
     pub(crate) table_order: Vec<usize>,
+    /// The noises Field expressions read by name.
+    pub(crate) noises: BTreeMap<String, NoiseConfig>,
 }
 
 impl Pack {
@@ -1122,6 +1137,33 @@ impl Pack {
             });
         }
         let (tables, table_by_name, table_order) = link_tables(file.tables)?;
+        for def in &file.stages {
+            let mut unknown = None;
+            let mut note = |node: &Expr| {
+                if let Expr::FastNoise(name) = node
+                    && !file.noises.contains_key(name)
+                {
+                    unknown.get_or_insert_with(|| name.clone());
+                }
+            };
+            match &def.kind {
+                StageKind::Field(expr) => expr.visit(&mut note),
+                StageKind::Rules { rules, .. } => {
+                    for condition in rules.iter().flat_map(|rule| &rule.when) {
+                        condition.visit(&mut note);
+                    }
+                }
+                _ => {}
+            }
+            if let Some(name) = unknown {
+                return Err(PackError::Invalid {
+                    stage: def.name.clone(),
+                    message: format!(
+                        "it reads the noise {name:?}, which the pack's noises do not name"
+                    ),
+                });
+            }
+        }
         let columns: BTreeMap<String, Vec<String>> = tables
             .iter()
             .map(|table| (table.name.clone(), table.columns.clone()))
@@ -1546,6 +1588,7 @@ impl Pack {
             tables,
             table_by_name,
             table_order,
+            noises: file.noises,
         })
     }
 

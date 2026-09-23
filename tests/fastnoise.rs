@@ -13,13 +13,17 @@
 //! file.
 //!
 //! The configuration is Godot's in a pack too: every property is written, and one left out takes
-//! Godot's default.
+//! Godot's default. A pack names its noises, a Field reads one at its columns' centres, and an
+//! engine may replace one, a Godot `FastNoiseLite` resource say.
 
 use serde_json::Value;
+use std::sync::Arc;
 use wave_forge::noise::{
     CellularDistanceFunction, CellularReturnType, DomainWarpFractalType, DomainWarpType,
     FractalType, NoiseConfig, NoiseType,
 };
+use wave_forge::stages::{Pack, PackError, Runtime, StageError};
+use wave_forge::{ChunkCoord, FocusPoint};
 
 /// Godot's enums in the order of their integers.
 const NOISE_TYPES: [NoiseType; 6] = [
@@ -218,4 +222,83 @@ fn a_misspelt_property_is_refused() {
     let result = ron::from_str::<NoiseConfig>("(fractal_octave: 3)");
 
     assert!(result.is_err(), "read as {result:?}");
+}
+
+const PACK: &str = r#"(
+    version: 1,
+    noises: {
+        "hills": (noise_type: Perlin, seed: 77, frequency: 0.03, fractal_octaves: 3),
+    },
+    stages: [
+        (name: "height", kind: Field(Mul(FastNoise("hills"), Constant(10.0)))),
+    ],
+)"#;
+
+/// The height stage's value at every column of the chunk at the origin.
+fn heights(runtime: &mut Runtime) -> Vec<f32> {
+    let chunk = ChunkCoord::new(0, 0, 0);
+    runtime
+        .request(&[FocusPoint::new(chunk, 0)], &["height"])
+        .expect("a stage");
+    runtime.run_until_idle().expect("the stages run");
+    runtime
+        .field("height", chunk)
+        .expect("generated")
+        .values
+        .clone()
+}
+
+#[test]
+fn a_field_reads_a_named_noise_at_its_columns_centres_in_cells() {
+    let pack = Arc::new(Pack::parse(PACK).expect("a valid pack"));
+    let noise = NoiseConfig {
+        noise_type: NoiseType::Perlin,
+        seed: 77,
+        frequency: 0.03,
+        fractal_octaves: 3,
+        ..NoiseConfig::default()
+    };
+
+    let values = heights(&mut Runtime::new(pack, 1234, [8, 8]));
+
+    for (i, value) in values.iter().enumerate() {
+        let (x, y) = ((i % 8) as f32 + 0.5, (i / 8) as f32 + 0.5);
+        assert_eq!(*value, noise.sample(x, y) * 10.0, "column {i}");
+    }
+}
+
+#[test]
+fn an_engine_replaces_a_named_noise_and_the_world_seed_leaves_it_alone() {
+    let pack = Arc::new(Pack::parse(PACK).expect("a valid pack"));
+    let replaced = NoiseConfig {
+        noise_type: NoiseType::Value,
+        seed: 5,
+        ..NoiseConfig::default()
+    };
+
+    let mut runtime = Runtime::new(Arc::clone(&pack), 1, [8, 8])
+        .with_noise("hills", replaced)
+        .expect("a named noise");
+    let values = heights(&mut runtime);
+    let other_world = heights(
+        &mut Runtime::new(Arc::clone(&pack), 2, [8, 8])
+            .with_noise("hills", replaced)
+            .expect("a named noise"),
+    );
+    let unknown = Runtime::new(pack, 1, [8, 8]).with_noise("valleys", replaced);
+
+    assert_eq!(values[0], replaced.sample(0.5, 0.5) * 10.0);
+    assert_eq!(values, other_world);
+    assert!(matches!(unknown, Err(StageError::UnknownNoise(name)) if name == "valleys"));
+}
+
+#[test]
+fn a_noise_the_pack_does_not_name_is_refused_by_stage() {
+    let result =
+        Pack::parse(r#"(version: 1, stages: [(name: "height", kind: Field(FastNoise("hills")))])"#);
+
+    assert!(
+        matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "height"),
+        "{result:?}"
+    );
 }

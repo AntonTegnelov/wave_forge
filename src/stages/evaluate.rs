@@ -50,6 +50,7 @@ pub(crate) fn evaluate(expr: &Expr, leaves: &impl Leaves) -> Result<f32, StageEr
             value(chosen)?
         }
         Expr::Noise { .. }
+        | Expr::FastNoise(_)
         | Expr::Input(_)
         | Expr::X
         | Expr::Y

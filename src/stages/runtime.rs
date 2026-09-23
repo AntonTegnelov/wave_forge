@@ -14,6 +14,7 @@ use super::pack::{
     point_stage_id, salt,
 };
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
+use crate::noise::NoiseConfig;
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownRequest, TownSolver};
@@ -249,6 +250,8 @@ pub enum StageError {
         region: (i32, i32),
         log: Vec<String>,
     },
+    #[error("the pack names no noise {0:?}")]
+    UnknownNoise(String),
     #[error("no table is named {0:?}")]
     UnknownTable(String),
     #[error("table {table:?}: {message}")]
@@ -364,6 +367,8 @@ pub struct Runtime {
     /// Regions computed, by Region stage and region, kept while a chunk of their region is needed.
     regions: BTreeMap<RegionKey, Arc<[Curve]>>,
     facts: Option<Facts>,
+    /// The noises Field expressions read by name: the pack's, with any the engine replaced.
+    noises: BTreeMap<String, NoiseConfig>,
     /// The focused row of each table that has one, by table index.
     focused: BTreeMap<usize, Row>,
     /// Each TableSites stage's sites, by stage index: the row each stands for and the chunks it
@@ -392,6 +397,7 @@ impl Runtime {
     pub fn new(pack: Arc<Pack>, seed: u64, size: [u32; 2]) -> Self {
         Self {
             timings: vec![StageTiming::default(); pack.stages.len()],
+            noises: pack.noises.clone(),
             region_jobs: BTreeMap::new(),
             regions: BTreeMap::new(),
             pack,
@@ -808,6 +814,20 @@ impl Runtime {
             }
         });
         dropped
+    }
+
+    /// Replaces the noise the pack names `name` with `noise`, a Godot `FastNoiseLite` resource's
+    /// configuration say, for every expression that reads it.
+    ///
+    /// # Errors
+    /// [`StageError::UnknownNoise`] if the pack names no such noise.
+    pub fn with_noise(mut self, name: &str, noise: NoiseConfig) -> Result<Self, StageError> {
+        let known = self
+            .noises
+            .get_mut(name)
+            .ok_or_else(|| StageError::UnknownNoise(name.to_owned()))?;
+        *known = noise;
+        Ok(self)
     }
 
     /// Gives Region stages that name `name` the job they run.
@@ -2087,6 +2107,7 @@ impl Leaves for ColumnPlace<'_, '_> {
                 let stream = name.as_deref().map_or(self.salt, noise_stream);
                 value_noise(self.runtime.seed, stream, *frequency, *octaves, centre)
             }
+            Expr::FastNoise(name) => self.runtime.noises[name].sample(centre[0], centre[1]),
             Expr::Input(name) => read(name, column[0], column[1])?,
             Expr::X => centre[0],
             Expr::Y => centre[1],
