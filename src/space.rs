@@ -27,6 +27,12 @@ impl YUpSpace {
         Self { chunk, cell_size }
     }
 
+    /// One cell's size along the engine's x, y and z.
+    #[must_use]
+    pub const fn cell_size(&self) -> [f32; 3] {
+        self.cell_size
+    }
+
     /// One chunk's size along the engine's x, y and z.
     #[must_use]
     pub fn chunk_size(&self) -> [f32; 3] {
