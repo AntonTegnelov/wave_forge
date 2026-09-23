@@ -56,8 +56,8 @@ use std::collections::HashMap;
 use timings::Timings;
 use wave_forge::loader::RuleFile;
 use wave_forge::{
-    Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, Prior, RegionStatus, Ruleset,
-    TileMask, Worker, WorldExtent, YUpSpace,
+    Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, NavSourceError, Prior, RegionStatus,
+    Ruleset, TileMask, Worker, WorldExtent, YUpSpace,
 };
 
 mod timings;
@@ -169,7 +169,7 @@ pub struct WaveForgeWorld {
     /// Each chunk's navigation region and the mesh being baked for it.
     navigation: HashMap<ChunkCoord, NavigationChunk>,
     /// The triangles of each module's collision shape, as the navigation bake reads them.
-    shape_faces: HashMap<String, Vec<Vector3>>,
+    shape_faces: HashMap<String, Vec<[f32; 3]>>,
     /// Milliseconds of Godot's thread that `process` took on each recent frame.
     process_ms: Timings,
     /// How many navigation bakes have finished, the milliseconds from asking for each recent one to
@@ -792,10 +792,10 @@ impl WaveForgeWorld {
     /// bakes the ones that have none, or whose tiles or neighbours changed, once all their
     /// neighbours are there; puts finished bakes into the map; frees the ones out of range.
     ///
-    /// A chunk's source is its own shapes and its neighbours' out to a margin, as plain triangles,
-    /// so the bake runs entirely on the navigation server's threads. It is baked with its bounds
-    /// grown by the margin and a border of the same size, so neighbouring chunks meet on edges
-    /// built from the same geometry, whose vertices the map merges without edge connections
+    /// A chunk's source is `wave_forge::nav_source`: its own shapes and its neighbours' out to a
+    /// border, as plain triangles, so the bake runs entirely on the navigation server's threads.
+    /// Baked within its bounds and with that border, neighbouring chunks meet on edges built from
+    /// the same geometry, whose vertices the map merges without edge connections
     /// (docs/engine-integration.md, from Godot's navigation chunk guidance). Finished bakes are
     /// found by asking the server each frame rather than through a callback, which the server calls
     /// from its own thread.
@@ -854,34 +854,60 @@ impl WaveForgeWorld {
         for coord in &ready {
             self.signals().navigation_ready().emit(to_vector(*coord));
         }
-        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
-            return;
-        };
         if self.collision_shapes.is_empty() || radius < 0 {
             return;
         }
+        for (name, shape) in &self.collision_shapes {
+            if self.shape_faces.contains_key(name) {
+                continue;
+            }
+            // A shape's filled debug mesh is the one triangle form every Shape3D offers; it has
+            // triangles unless a CollisionShape3D showing it turned `debug_fill` off.
+            let faces: Vec<[f32; 3]> = shape
+                .get_debug_mesh()
+                .map(|mesh| {
+                    mesh.get_faces()
+                        .as_slice()
+                        .iter()
+                        .map(|corner| corner.to_array())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if faces.is_empty() {
+                godot_error!(
+                    "wave forge: the collision shape of {name} has no faces to bake navigation \
+                     from; is its debug_fill off?"
+                );
+            }
+            self.shape_faces.insert(name.clone(), faces);
+        }
+        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+            return;
+        };
         server.map_set_use_edge_connections(map, false);
-        // Chunks that need a bake: in range, generated, with every neighbour there, and either
-        // without a mesh or changed since it was baked.
-        let neighbourhood = |chunk: ChunkCoord| {
-            (-1..=1).flat_map(move |dx| {
-                (-1..=1).map(move |dy| ChunkCoord::new(chunk.x + dx, chunk.y + dy, chunk.z))
+        let extent = self.extent();
+        let layout = self.space();
+        // Chunks that need a bake: in range, generated, and either without a mesh or changed,
+        // with their neighbours, since it was baked.
+        let touched = |chunk: ChunkCoord| {
+            (-1..=1).any(|dx| {
+                (-1..=1).any(|dy| {
+                    updated.contains(&ChunkCoord::new(chunk.x + dx, chunk.y + dy, chunk.z))
+                })
             })
         };
-        let extent = self.extent();
-        let complete = |chunk: ChunkCoord| {
-            neighbourhood(chunk).all(|n| !extent.contains_chunk(n) || worker.chunk(n).is_some())
-        };
-        let touched = |chunk: ChunkCoord| neighbourhood(chunk).any(|n| updated.contains(&n));
         let mut wanted: Vec<ChunkCoord> = worker
             .chunks()
             .map(|chunk| chunk.coord)
-            .filter(|&chunk| within(chunk) && complete(chunk))
+            .filter(|&chunk| within(chunk))
             .filter(|chunk| match self.navigation.get(chunk) {
                 None => true,
                 Some(existing) => touched(*chunk) || existing.stale,
             })
             .collect();
+        if wanted.is_empty() {
+            return;
+        }
         // One bake is prepared per frame, nearest first: preparing one costs Godot's thread up to
         // 3 ms, and a focus crossing into a chunk makes several due at once.
         wanted.sort_by_key(|chunk| {
@@ -890,6 +916,13 @@ impl WaveForgeWorld {
                 .max((chunk.y - focus.y).abs())
                 .max((chunk.z - focus.z).abs())
         });
+        let cell_height = server.map_get_cell_height(map);
+        let template = self
+            .navigation_template
+            .clone()
+            .unwrap_or_else(NavigationMesh::new_gd);
+        // Recast's own padding for tiles: the agent's radius in whole cells, and three more.
+        let border = ((template.get_agent_radius() / cell_size).ceil() + 3.0) * cell_size;
         let mut started = false;
         for coord in wanted {
             if let Some(existing) = self.navigation.get_mut(&coord)
@@ -906,83 +939,46 @@ impl WaveForgeWorld {
                 }
                 continue;
             }
-            started = true;
             let preparing = std::time::Instant::now();
-            let layout = self.space();
-            let chunk_size = Vector3::from_array(layout.chunk_size());
-            let origin = Vector3::from_array(layout.chunk_origin(coord));
-            // Two cells of neighbours on each side: enough for a border wider than an agent.
-            let margin = self.cell_size.x.max(self.cell_size.z) * 2.0;
-            let bounds = Aabb::new(
-                origin - Vector3::new(margin, chunk_size.y, margin),
-                chunk_size + Vector3::new(2.0 * margin, 2.0 * chunk_size.y, 2.0 * margin),
-            );
-            // Built in Rust and handed over in one copy each: a push into a packed array is a call
-            // into the engine, and a chunk's source has tens of thousands of floats. The setters
-            // keep the arrays they are given, where `append_arrays` copies them again and rewrites
-            // every index.
-            let mut vertices: Vec<f32> = Vec::new();
-            for neighbour in neighbourhood(coord) {
-                let Some(tiles) = worker.chunk(neighbour) else {
-                    continue;
-                };
-                let sets = wave_forge::instance_sets(tiles, rules, &layout, |name| {
-                    self.collision_shapes.contains_key(name)
-                });
-                for set in sets {
-                    let faces = self.shape_faces.entry(set.name.clone()).or_insert_with(|| {
-                        // A shape's filled debug mesh is the one triangle form every Shape3D
-                        // offers; it has triangles unless the game turned `debug_fill` off.
-                        let faces: Vec<Vector3> = self.collision_shapes[&set.name]
-                            .get_debug_mesh()
-                            .map(|mesh| mesh.get_faces().as_slice().to_vec())
-                            .unwrap_or_default();
-                        if faces.is_empty() {
-                            godot_error!(
-                                "wave forge: the collision shape of {} has no faces to bake \
-                                 navigation from; is its debug_fill off?",
-                                set.name
-                            );
-                        }
-                        faces
-                    });
-                    for row in set.transforms([1.0; 3]).chunks(12) {
-                        let at = Vector3::new(row[3], row[7], row[11]);
-                        if !bounds.grow(margin).contains_point(at) {
-                            continue;
-                        }
-                        for corner in faces.iter() {
-                            let x =
-                                row[0] * corner.x + row[1] * corner.y + row[2] * corner.z + row[3];
-                            let y =
-                                row[4] * corner.x + row[5] * corner.y + row[6] * corner.z + row[7];
-                            let z = row[8] * corner.x
-                                + row[9] * corner.y
-                                + row[10] * corner.z
-                                + row[11];
-                            vertices.extend([x, y, z]);
-                        }
-                    }
+            let faces = &self.shape_faces;
+            let nav = match wave_forge::nav_source(
+                coord,
+                |chunk| worker.chunk(chunk),
+                &extent,
+                rules,
+                &layout,
+                |name| faces.get(name).map(Vec::as_slice),
+                border,
+            ) {
+                Ok(nav) => nav,
+                Err(NavSourceError::Missing(_)) => continue,
+                Err(error) => {
+                    godot_error!("wave forge: navigation turned off: {error}");
+                    self.navigation_radius = -1;
+                    return;
                 }
-            }
-            // The source's indices are in Recast's winding, counter-clockwise, where Godot's faces
-            // are clockwise: the order that `add_faces` swaps for its callers. Unswapped, Recast
-            // takes the underside of every face for its top and walks inside the ground.
-            let triangles = i32::try_from(vertices.len() / 9).expect("a source fits i32");
+            };
+            started = true;
+            // Handed over in one copy each; the setters keep the arrays they are given, where
+            // `append_arrays` copies them again and rewrites every index.
+            // The indices are in Recast's winding, counter-clockwise, where Godot's faces are
+            // clockwise: the order that `add_faces` swaps for its callers. Unswapped, Recast takes
+            // the underside of every face for its top and walks inside the ground.
+            let triangles = i32::try_from(nav.triangles.len() / 9).expect("a source fits i32");
             let indices: Vec<i32> = (0..triangles)
                 .flat_map(|triangle| [3 * triangle, 3 * triangle + 2, 3 * triangle + 1])
                 .collect();
             let mut source = NavigationMeshSourceGeometryData3D::new_gd();
-            source.set_vertices(&PackedFloat32Array::from(vertices.as_slice()));
+            source.set_vertices(&PackedFloat32Array::from(nav.triangles.as_slice()));
             source.set_indices(&PackedInt32Array::from(indices.as_slice()));
-            let mut mesh = self
-                .navigation_template
-                .as_ref()
-                .map_or_else(NavigationMesh::new_gd, Gd::duplicate_resource);
+            let mut mesh = template.duplicate_resource();
             mesh.set_cell_size(cell_size);
-            mesh.set_cell_height(server.map_get_cell_height(map));
-            mesh.set_filter_baking_aabb(bounds);
-            mesh.set_border_size(margin);
+            mesh.set_cell_height(cell_height);
+            mesh.set_filter_baking_aabb(Aabb::new(
+                Vector3::from_array(nav.bounds_origin),
+                Vector3::from_array(nav.bounds_size),
+            ));
+            mesh.set_border_size(nav.border);
             server.bake_from_source_geometry_data_async(&mesh, &source);
             self.bake_start_ms
                 .push(preparing.elapsed().as_secs_f64() * 1000.0);

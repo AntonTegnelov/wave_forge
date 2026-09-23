@@ -64,7 +64,7 @@ has no built-in floating origin
 | **HeightTile, MaterialTile** (Phase 2) | 2^n+1 height samples with shared edges, minimum and maximum, coarser levels, `u8` material ids | CPU, and a GPU texture when a renderer consumes one |
 | **CoverMap** (Phase 2) | ground-cover type, density and variation per cell | CPU; expanded into blades on the GPU by an engine shader every frame |
 | **Colliders** | heightfield grids; a shape library per prototype (boxes or convex pieces) and the transforms that compose it per chunk; triangle meshes only as a last resort | CPU |
-| **NavSource** | walkable and blocking triangles with a one-chunk halo, snapped to the navigation cell grid | CPU |
+| **NavSource** | walkable and blocking triangles from the neighbouring chunks as far as a border past the chunk's edges, with the bounds and border to bake with; not snapped, because Godot's map merges the border vertices of neighbouring bakes as they are (measured, §8 C; Bevy's navigation crates not yet) | CPU |
 | **Occluders** | conservative boxes or solid faces per chunk | CPU |
 | **RegionTags** | biome, indoor or outdoor, surface material per walkable face, interior volumes, audio emitter points, place names as translation keys with arguments | CPU |
 | **Splines** (Phase 2) | roads and rivers: control points, width, material | CPU |
@@ -429,14 +429,18 @@ The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
 
   Godot's navigation is built by the node itself (`navigation_radius`, `navigation_template`, the
   `navigation_ready` signal): one region per chunk within the radius, baked from the same shapes as
-  the colliders. A chunk's source is its own shapes and its neighbours' out to two cells, as plain
-  arrays built in Rust, so Godot's thread only hands them over and the bake runs on the navigation
-  server's threads. Measured in the Godot check (headless Godot 4.7.2, release, 8×8×8 chunks of
-  2-unit boxes, agent radius 0.5, height 1.5, the map's default 0.25 cell): a bake takes 33 ms
-  median and 49 ms at most from asking to its mesh being in place; preparing one costs Godot's
-  thread 0.6 ms median and 2.6 ms at most, putting a finished mesh in its region 0.002 ms; the 9
-  chunks around the player hold 8082 polygons, and a path across two seams is as long as the
-  straight line (32.0). Four things this settled:
+  the colliders. A chunk's source is the library's NavSource (`wave_forge::nav_source`): its own
+  shapes and its neighbours' as far as the border past its edges and a cell more, as plain arrays,
+  so Godot's thread only hands them over and the bake runs on the navigation server's threads. The
+  border is Recast's own padding for tiles, the agent's radius in whole cells and three more. The
+  library refuses a world more than one chunk tall, whose stacked chunks would bake floors that do
+  not agree, and a border wider than a chunk. Measured in the Godot check (headless Godot 4.7.2,
+  release, 8×8×8 chunks of 2-unit boxes, agent radius 0.5, height 1.5, the map's default 0.25
+  cell, so a border of 1.25): a bake takes 33 ms from asking to its mesh being in place, median and
+  maximum alike; preparing one costs Godot's thread 0.53 ms median and 2.0 ms at most, putting a
+  finished mesh in its region 0.002 ms; the 9 chunks around the player hold 8082 polygons, and a
+  path across two seams is as long as the straight line (32.0). A border of two cells, 4 units,
+  gave the same polygons with bakes up to 49 ms. Four things this settled:
 
   - The source's indices go in Recast's winding, counter-clockwise, while Godot's faces are
     clockwise; `NavigationMeshSourceGeometryData3D.add_faces` swaps each triangle's second and third
@@ -458,9 +462,8 @@ The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
   reports that as an error naming the module. Reading each shape type as Godot's own source parser
   does would lift that limit.
 
-  With navigation on, Godot's slowest frame in the check is 5.3 ms, the frame where the first bake
-  and the first colliders are prepared together, and the node's own time is 0.64 ms per frame at the
-  99th percentile.
+  With navigation on, Godot's slowest frame in the check is 3.4 ms, and the node's own time is
+  0.56 ms per frame at the 99th percentile.
 - **D, Phase 2 layers.** `NoiseConfig` with the FastNoiseLite port and golden tests ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45));
   HeightTile, MaterialTile and CoverMap with reference grass and wind shaders in both engines
   ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)); scatter from density with integer existence decisions; splines; merged far proxies and
