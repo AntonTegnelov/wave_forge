@@ -357,3 +357,26 @@ fn tables_whose_parents_lead_back_to_them_are_refused() {
 
     assert!(matches!(error, PackError::InvalidTable { .. }), "{error}");
 }
+
+#[test]
+fn new_facts_that_leave_the_focused_row_as_it_was_drop_nothing_that_reads_it() {
+    let pack = pack();
+    let mut facts = Facts::new(Arc::clone(&pack), 5).expect("facts");
+    facts
+        .give("villages", vec![village(1, 20.0, "river")])
+        .expect("villages");
+    let mut runtime = Runtime::new(Arc::clone(&pack), 5, [8, 8]);
+    runtime.set_facts(facts.clone()).expect("facts");
+    runtime.focus("villages", RowId(vec![1])).expect("a row");
+    generated(&mut runtime, "wealth");
+
+    facts
+        .give(
+            "villages",
+            vec![village(1, 20.0, "river"), village(2, 70.0, "hill")],
+        )
+        .expect("villages");
+    let dropped = runtime.set_facts(facts).expect("facts");
+
+    assert_eq!(dropped, Vec::new());
+}

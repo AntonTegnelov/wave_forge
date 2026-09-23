@@ -316,6 +316,12 @@ pub struct Runtime {
     footprints: BTreeMap<usize, Arc<[Footprint]>>,
 }
 
+/// Which chunks of a stage no longer hold what they would be generated as now.
+enum Stale {
+    All,
+    Chunks(BTreeSet<ChunkCoord>),
+}
+
 /// Where a table's row puts its site: the row, and the chunks from `min` up to but not including
 /// `max`.
 #[derive(Clone, Debug, PartialEq)]
@@ -379,17 +385,53 @@ impl Runtime {
                 })?;
             focused.insert(table, now.clone());
         }
-        let changed: Vec<usize> = (0..self.pack.tables.len())
-            .filter(|&table| {
-                self.facts
-                    .as_ref()
-                    .is_none_or(|old| !Arc::ptr_eq(&old.tables()[table], &facts.tables()[table]))
-            })
-            .collect();
+        let mut stale = BTreeMap::new();
+        for (index, stage) in self.pack.stages.iter().enumerate() {
+            let chunks = match &stage.kind {
+                StageKind::TableSites { .. } => {
+                    self.moved_sites(index, &facts, &footprints[&index])
+                }
+                _ if stage
+                    .tables
+                    .iter()
+                    .any(|table| self.focused.get(table) != focused.get(table)) =>
+                {
+                    Stale::All
+                }
+                _ => continue,
+            };
+            stale.insert(index, chunks);
+        }
         self.facts = Some(facts);
         self.focused = focused;
         self.footprints = footprints;
-        Ok(self.invalidate(&changed))
+        Ok(self.invalidate(stale))
+    }
+
+    /// The chunks TableSites stage `index` holds differently with `facts`, whose sites are
+    /// `footprints`: those of every row added, removed or changed, where it was and where it is.
+    fn moved_sites(&self, index: usize, facts: &Facts, footprints: &[Footprint]) -> Stale {
+        let (Some(old), Some(was)) = (&self.facts, self.footprints.get(&index)) else {
+            return Stale::All;
+        };
+        let StageKind::TableSites { table, .. } = &self.pack.stages[index].kind else {
+            unreachable!("called for TableSites stages")
+        };
+        let (before, after) = (
+            old.table(table).expect("linked when loaded"),
+            facts.table(table).expect("linked when loaded"),
+        );
+        let mut chunks = BTreeSet::new();
+        for footprint in was.iter().chain(footprints) {
+            if before.row(&footprint.row) != after.row(&footprint.row) {
+                for x in footprint.min.0..footprint.max.0 {
+                    for y in footprint.min.1..footprint.max.1 {
+                        chunks.insert(ChunkCoord::new(x, y, 0));
+                    }
+                }
+            }
+        }
+        Stale::Chunks(chunks)
     }
 
     /// The sites a TableSites stage's rows put down, checked: every position finite, every size a
@@ -481,28 +523,108 @@ impl Runtime {
             return Ok(Vec::new());
         }
         self.focused.insert(index, row.clone());
-        Ok(self.invalidate(&[index]))
+        let stale = self
+            .pack
+            .stages
+            .iter()
+            .enumerate()
+            .filter(|(_, stage)| {
+                stage.tables.contains(&index) && !matches!(stage.kind, StageKind::TableSites { .. })
+            })
+            .map(|(reader, _)| (reader, Stale::All))
+            .collect();
+        Ok(self.invalidate(stale))
     }
 
-    /// Drops the products, towns and regions of every stage that reads one of `tables`, and of
-    /// every stage that reads one of those, returning the products as (stage, chunk).
-    fn invalidate(&mut self, tables: &[usize]) -> Vec<(String, ChunkCoord)> {
-        let mut stale = vec![false; self.pack.stages.len()];
+    /// Drops what `stale` names and everything generated from it, returning the products as
+    /// (stage, chunk). A chunk of a stage is stale when its reach covers a stale chunk of one of
+    /// its inputs, and a town or a region goes with any stale chunk it covers; what is still asked
+    /// for is generated again.
+    fn invalidate(&mut self, mut stale: BTreeMap<usize, Stale>) -> Vec<(String, ChunkCoord)> {
         // Inputs come first in `order`, so a stage's inputs are judged before it.
         for &index in &self.pack.order {
+            if matches!(stale.get(&index), Some(Stale::All)) {
+                continue;
+            }
             let stage = &self.pack.stages[index];
-            stale[index] = stage.tables.iter().any(|table| tables.contains(table))
-                || stage.inputs.iter().any(|&(input, _)| stale[input]);
+            // A chunk asked for may already have a town or a region behind it, so those count
+            // with the chunks held.
+            let candidates: BTreeSet<ChunkCoord> = self
+                .needed
+                .get(&index)
+                .into_iter()
+                .flatten()
+                .copied()
+                .chain(
+                    self.products
+                        .keys()
+                        .filter(|(held, _)| *held == index)
+                        .map(|&(_, chunk)| chunk),
+                )
+                .collect();
+            let mut chunks = match stale.remove(&index) {
+                Some(Stale::Chunks(chunks)) => chunks,
+                Some(Stale::All) => unreachable!("skipped above"),
+                None => BTreeSet::new(),
+            };
+            let mut all = false;
+            for &(input, reach) in &stage.inputs {
+                match stale.get(&input) {
+                    None => {}
+                    Some(Stale::All) => all = true,
+                    Some(Stale::Chunks(inputs)) => {
+                        let cells = reach.cells(self.size);
+                        for &chunk in &candidates {
+                            let (min, max) = self.reader_box(chunk, cells);
+                            if self
+                                .covering(stage.scale, input, min, max)
+                                .iter()
+                                .any(|covered| inputs.contains(covered))
+                            {
+                                chunks.insert(chunk);
+                            }
+                        }
+                    }
+                }
+            }
+            if all {
+                stale.insert(index, Stale::All);
+            } else if !chunks.is_empty() {
+                stale.insert(index, Stale::Chunks(chunks));
+            }
         }
+        let is_stale = |stage: usize, chunk: ChunkCoord| match stale.get(&stage) {
+            None => false,
+            Some(Stale::All) => true,
+            Some(Stale::Chunks(chunks)) => chunks.contains(&chunk),
+        };
         let mut dropped = Vec::new();
         self.products.retain(|&(stage, chunk), _| {
-            if stale[stage] {
+            let gone = is_stale(stage, chunk);
+            if gone {
                 dropped.push((self.pack.stages[stage].name.clone(), chunk));
             }
-            !stale[stage]
+            !gone
         });
-        self.solved.retain(|&(stage, _), _| !stale[stage]);
-        self.regions.retain(|&(stage, _), _| !stale[stage]);
+        self.solved
+            .retain(|&(stage, _), (site, _)| match stale.get(&stage) {
+                None => true,
+                Some(Stale::All) => false,
+                Some(Stale::Chunks(chunks)) => !chunks.iter().any(|&chunk| site.overlaps(chunk)),
+            });
+        let pack = Arc::clone(&self.pack);
+        self.regions.retain(|&(stage, region), _| {
+            let StageKind::Region { region: size, .. } = pack.stages[stage].kind else {
+                unreachable!("only Region stages compute regions")
+            };
+            match stale.get(&stage) {
+                None => true,
+                Some(Stale::All) => false,
+                Some(Stale::Chunks(chunks)) => {
+                    !chunks.iter().any(|&chunk| region_of(chunk, size) == region)
+                }
+            }
+        });
         dropped
     }
 

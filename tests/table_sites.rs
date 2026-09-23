@@ -222,3 +222,46 @@ fn a_solve_choosing_by_a_column_needs_a_tables_names() {
         );
     }
 }
+
+#[test]
+fn a_changed_row_drops_only_the_chunks_its_site_reaches() {
+    let pack = Arc::new(Pack::parse(PACK).expect("a valid pack"));
+    let recorder = Recorder::default();
+    let mut runtime = Runtime::new(Arc::clone(&pack), 3, [CHUNK.x, CHUNK.y])
+        .with_towns(Box::new(recorder.clone()))
+        .expect("matching chunks");
+    let mut facts = Facts::new(pack, 3).expect("facts");
+    let standing = village(1, (10.0, 10.0), 3.0, "standing");
+    facts
+        .give(
+            "villages",
+            vec![standing.clone(), village(2, (-20.0, 6.5), 1.0, "standing")],
+        )
+        .expect("villages");
+    runtime.set_facts(facts.clone()).expect("facts");
+    generate(&mut runtime, &["buildings", "level"]);
+
+    facts
+        .give(
+            "villages",
+            vec![standing, village(2, (-20.0, 6.5), 1.0, "burned")],
+        )
+        .expect("villages");
+    let dropped = runtime.set_facts(facts).expect("facts");
+    generate(&mut runtime, &["buildings", "level"]);
+
+    // Village 2's site covers chunk (-5, 1); Flatten blends 3 cells around it, into the chunks
+    // beside it, and nothing reads further.
+    let near = |chunk: &ChunkCoord| (-6..=-4).contains(&chunk.x) && (0..=2).contains(&chunk.y);
+    assert!(!dropped.is_empty());
+    assert!(dropped.iter().all(|(_, chunk)| near(chunk)), "{dropped:?}");
+    assert!(dropped.contains(&("buildings".to_owned(), ChunkCoord::new(-5, 1, 0))));
+    let asked = recorder.0.lock().expect("one test thread").clone();
+    let untouched = asked.iter().filter(|(_, size)| *size == (3, 3)).count();
+    assert_eq!(untouched, 1, "village 1's town is solved once: {asked:?}");
+    assert_eq!(
+        asked.last(),
+        Some(&("ruins".to_owned(), (1, 1))),
+        "{asked:?}"
+    );
+}
