@@ -40,7 +40,17 @@ export CARGO_TARGET_DIR="$HOME/.cache/cargo-target/wave_forge"
 1. Branch from `develop` (in a worktree if you work on several things at once).
 2. Commit atomically: one logical change per commit, and every commit builds.
 3. Open a pull request against `develop`, never `main`, referencing the issue it resolves.
-4. Merge when review (and CI, once it exists) is green, then close the issue and delete the branch.
+4. Merge when review and CI are green, then close the issue and delete the branch.
+
+Two rules hold for people and agents alike:
+
+- **The user stories are the done gate.** Nothing is considered done or published until every story
+  in [user-stories.md](user-stories.md) is verified by repeated, recorded checks with the evidence
+  linked from it. Design and implementation name the stories they serve, and a change that affects a
+  story updates its status and evidence.
+- **Publishing is human-only.** Releasing to the Godot Asset Store or crates.io, creating a release
+  or a release tag, announcing, and promoting `develop` to `main` are done by the owner. Agents
+  prepare builds, notes and checklists, and stop there.
 
 ## Documentation and comments
 
