@@ -2,8 +2,8 @@
 ##
 ## Run by `../verify.sh` after `verify_stages.gd`. This is the seam a history the game simulates
 ## uses (story N11): rows are Dictionaries, a village's `wealth` field reads the focused village's
-## population, houses are generated under every village, sharing out its population, and every
-## village has a site. The check gives villages, reads back both tables, focuses a village before
+## population, houses are generated under every village, sharing out its population, every
+## village has a site, and a road between the villages is levelled into the hills. The check gives villages, reads back both tables, focuses a village before
 ## asking for any chunk, and waits for its field and its site; then it gives the villages again with
 ## a new population, and only the stages that read them must be dropped and generated again. Rows
 ## that break the table's columns, or whose sites would crowd each other, are refused.
@@ -24,7 +24,7 @@ var regiven := false
 func _initialize() -> void:
 	world = ClassDB.instantiate("WaveForgeStages")
 	world.pack_file = "res://facts.world.ron"
-	world.targets = PackedStringArray(["wealth", "places"])
+	world.targets = PackedStringArray(["wealth", "places", "paved"])
 	world.seed = 5
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	world.view_radius = 1
@@ -38,6 +38,9 @@ func _initialize() -> void:
 		return
 	if not world.give_table("villages", [_village(3, 4, 400, "river"), _village(9, 40, 250.0, "hill")]):
 		_fail("the villages were refused")
+		return
+	if not world.give_table("roads", [{"id": 1, "x0": 4, "y0": 4, "x1": 40, "y1": 4, "width": 1}]):
+		_fail("the road was refused")
 		return
 	if not _check_tables() or not _check_refusals():
 		return
@@ -103,8 +106,9 @@ func _process(_delta: float) -> bool:
 	if waited > TIMEOUT_S:
 		_fail("the wealth of %s at population %.0f had not arrived after %.0f s" % [CENTRE, expected, waited])
 		return true
-	if not ready.has(["wealth", CENTRE]) or not ready.has(["places", CENTRE]):
-		return false
+	for stage in ["wealth", "places", "paved"]:
+		if not ready.has([stage, CENTRE]):
+			return false
 	var wealth: PackedFloat32Array = world.field_values("wealth", CENTRE)
 	var hills: PackedFloat32Array = world.field_values("hills", CENTRE)
 	if wealth.is_empty() or hills.is_empty() or absf(wealth[0] - hills[0] - expected) > 1e-3:
@@ -119,21 +123,42 @@ func _process(_delta: float) -> bool:
 		_fail("the sites of %s are %s; village 3's should stand there" % [CENTRE, sites])
 		return true
 	print("verify_tables: village 3 has its site, named by its row")
+	if not _check_road():
+		return true
 	if regiven:
-		if dropped.has(["hills", CENTRE]) or not dropped.has(["places", CENTRE]):
-			_fail("new villages dropped %s; the stages that read them, and not the hills, should go" % [dropped.keys()])
+		if dropped.has(["hills", CENTRE]) or dropped.has(["paved", CENTRE]) or not dropped.has(["places", CENTRE]):
+			_fail("new villages dropped %s; the stages that read them, and not the hills or the road, should go" % [dropped.keys()])
 			return true
 		print("verify_tables: new villages dropped and regenerated only the stages that read them")
 		quit(0)
 		return true
 	regiven = true
-	ready.clear()
+	# The road reads no village, so only the stages that do are waited for again.
+	ready.erase(["wealth", CENTRE])
+	ready.erase(["places", CENTRE])
 	expected = 1000.0
 	if not world.give_table("villages", [_village(3, 4, 1000, "river"), _village(9, 40, 250, "hill")]):
 		_fail("the new villages were refused")
 		return true
 	started_usec = Time.get_ticks_usec()
 	return false
+
+## The road runs along row 4 of the centre chunk: its curve is named by its row, and every column
+## of that row takes the hills' height there, as does the row either side, within its radius.
+func _check_road() -> bool:
+	var curves: Array = world.curves("roads", CENTRE)
+	if curves.size() != 1 or curves[0]["row"] != PackedInt64Array([1]):
+		_fail("the curves of %s are %s; road 1 should pass there" % [CENTRE, curves])
+		return false
+	var paved: PackedFloat32Array = world.field_values("paved", CENTRE)
+	var hills: PackedFloat32Array = world.field_values("hills", CENTRE)
+	for x in range(4, CELLS):
+		for y in [3, 4]:
+			if paved[y * CELLS + x] != hills[4 * CELLS + x]:
+				_fail("paved column (%d, %d) is %.3f; the road's centre there is %.3f" % [x, y, paved[y * CELLS + x], hills[4 * CELLS + x]])
+				return false
+	print("verify_tables: the road is named by its row and levels the hills across it")
+	return true
 
 func _fail(message: String) -> void:
 	printerr("verify_tables: " + message)
