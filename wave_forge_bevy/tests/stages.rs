@@ -160,6 +160,13 @@ fn a_point_stands_where_the_lattice_puts_it_in_bevys_world() {
     assert_eq!(at.x, point.position[0] * 2.0);
     assert_eq!(at.y, point.position[2]);
     assert_eq!(at.z, point.position[1] * 2.0);
+    let standing = stages.transform_of(point);
+    assert_eq!(standing.translation, at);
+    assert!(
+        (standing.rotation * Vec3::Y - Vec3::Y).length() < 1e-5,
+        "an upright tree"
+    );
+    assert_eq!(standing.scale, Vec3::ONE);
 }
 
 #[test]

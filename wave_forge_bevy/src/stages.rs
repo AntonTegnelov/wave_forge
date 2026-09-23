@@ -17,9 +17,9 @@ use bevy_app::{App, Plugin, Update};
 use bevy_asset::RenderAssetUsages;
 use bevy_ecs::message::{Message, MessageWriter};
 use bevy_ecs::prelude::{IntoScheduleConfigs, Query, ResMut, Resource};
-use bevy_math::Vec3;
+use bevy_math::{Mat3, Quat, Vec3};
 use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
-use bevy_transform::components::GlobalTransform;
+use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use wave_forge::stages::regions::Curve;
@@ -122,6 +122,19 @@ impl WaveForgeStages {
         let [x, y, height] = point.position;
         let cell = self.settings.cell_size;
         Vec3::new(x * cell.x, height * cell.y, y * cell.z)
+    }
+
+    /// How a point stands in Bevy's world: where [`WaveForgeStages::translation_of`] puts it,
+    /// turned, leant and scaled as its stage made it.
+    #[must_use]
+    pub fn transform_of(&self, point: &Point) -> Transform {
+        let rows = point.y_up_basis();
+        let column = |c: usize| Vec3::new(rows[0][c], rows[1][c], rows[2][c]) / point.scale;
+        Transform {
+            translation: self.translation_of(point),
+            rotation: Quat::from_mat3(&Mat3::from_cols(column(0), column(1), column(2))),
+            scale: Vec3::splat(point.scale),
+        }
     }
 
     /// A chunk's ground, once its height field and the eight around it have arrived: a mesh in
