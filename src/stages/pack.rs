@@ -96,6 +96,13 @@ pub enum StageKind {
     Rules { rules: Vec<Rule>, otherwise: String },
     /// Another field averaged over the square of `radius` cells around each column.
     Blur { input: String, radius: u32 },
+    /// The highest value of another field less its lowest over the square of `radius` cells around
+    /// each column: how uneven the ground is there, what Valheim calls terrain delta.
+    Delta { input: String, radius: u32 },
+    /// Where each column lies in its category of a Rules stage: `edge` where any of the eight
+    /// columns `distance` cells away, along the axes and the diagonals, has another category, and
+    /// `median` elsewhere, as Valheim's biome area tells the two apart.
+    Area { input: String, distance: u32 },
     /// Settlement sites: rectangles of whole chunks, at most one per square region of `region`
     /// chunks, placed with `chance`, between `size.0` and `size.1` chunks on a side, and kept at
     /// least one chunk inside their region, so two sites are always two chunks apart. Each site's
@@ -244,11 +251,14 @@ pub(crate) enum Output {
 }
 
 impl StageKind {
-    /// The categories a Rules stage names, in the order of their indices; none for other kinds.
+    /// The categories a Rules or Area stage names, in the order of their indices; none for other
+    /// kinds.
     #[must_use]
     pub fn categories(&self) -> Vec<&str> {
-        let Self::Rules { rules, otherwise } = self else {
-            return Vec::new();
+        let (rules, otherwise) = match self {
+            Self::Rules { rules, otherwise } => (rules, otherwise),
+            Self::Area { .. } => return vec!["median", "edge"],
+            _ => return Vec::new(),
         };
         let mut names: Vec<&str> = Vec::new();
         for name in rules
@@ -265,10 +275,12 @@ impl StageKind {
 
     pub(crate) const fn output(&self) -> Output {
         match self {
-            Self::Field(_) | Self::Blur { .. } | Self::Flatten { .. } | Self::Apply { .. } => {
-                Output::Field
-            }
-            Self::Rules { .. } => Output::Categories,
+            Self::Field(_)
+            | Self::Blur { .. }
+            | Self::Delta { .. }
+            | Self::Flatten { .. }
+            | Self::Apply { .. } => Output::Field,
+            Self::Rules { .. } | Self::Area { .. } => Output::Categories,
             Self::Region { .. } | Self::TableCurves { .. } => Output::Curves,
             Self::Sites { .. } | Self::TableSites { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
@@ -1148,8 +1160,14 @@ impl Pack {
                     check_categories(&categories, &by_name, &tests).map_err(invalid)?;
                     widest_reads(names)
                 }
-                StageKind::Blur { input, radius } => {
+                StageKind::Blur { input, radius } | StageKind::Delta { input, radius } => {
                     vec![(input.as_str(), Reach::Cells(*radius), Output::Field)]
+                }
+                StageKind::Area { input, distance } => {
+                    if *distance == 0 {
+                        return Err(invalid("an area measured 0 cells out".to_owned()));
+                    }
+                    vec![(input.as_str(), Reach::Cells(*distance), Output::Categories)]
                 }
                 StageKind::Sites {
                     height,
@@ -1357,6 +1375,8 @@ impl Pack {
                     read_tables.push(table_by_name[table]);
                 }
                 StageKind::Blur { .. }
+                | StageKind::Delta { .. }
+                | StageKind::Area { .. }
                 | StageKind::Sites { .. }
                 | StageKind::Apply { .. }
                 | StageKind::Flatten { .. }
