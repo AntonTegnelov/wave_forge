@@ -96,7 +96,7 @@ fn report(name: &str, city: &City, world: &CityWorld) -> (usize, usize) {
 #[ignore = "needs a compute device; run with --ignored in release mode"]
 fn a_world_asked_for_at_once_comes_out_seamless() {
     let (city, mut world) = city_world(8, 8);
-    kernels::warm(&mut world, &[1, 8, 32]);
+    kernels::warm(&mut world, 4);
 
     let started = Instant::now();
     world.request(&[FocusPoint::new(ChunkCoord::new(4, 4, 0), 4)]);
@@ -142,7 +142,7 @@ fn live_streaming_keeps_ahead_of_a_walking_player() {
 
     let (chunks_x, chunks_y) = (24, 8);
     let (city, mut world) = city_world(chunks_x, chunks_y);
-    kernels::warm(&mut world, &[1, 4, 8, 16, 32]);
+    kernels::warm(&mut world, VIEW);
     let chunk_m = CELL_M * f64::from(CHUNK.x);
     let focus_y = chunks_y / 2;
 

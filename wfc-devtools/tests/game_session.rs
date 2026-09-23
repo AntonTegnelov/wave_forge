@@ -53,10 +53,6 @@ const RUN_M_S: f64 = 3.0 * WALK_M_S;
 const FRAME: Duration = Duration::from_micros(16_667);
 /// Building the device, compiling every kernel and generating the first view is loading, not play.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(180);
-/// Every batch size a session can dispatch, rounded up to a power of two as kernels are
-/// specialised: the first view is about 65 chunks, half of them in one parity.
-const CAPACITIES: [u32; 7] = [1, 2, 4, 8, 16, 32, 64];
-
 /// Where the player starts: the middle of chunk (0, 0).
 const START: (f64, f64) = (8.0, 8.0);
 /// The route, as legs to a point at a pace. It walks, runs, turns by 45 and 90 degrees, runs a
@@ -350,7 +346,7 @@ fn play() -> Result<Session, String> {
             .extent(WorldExtent::new(CHUNK).with_z(0..1))
             .halo(1)
             .build()?;
-        kernels::warm(&mut world, &CAPACITIES);
+        kernels::warm(&mut world, GENERATE_RADIUS);
         Ok(world)
     });
     let mut tracker = Tracker::new(&city);

@@ -26,6 +26,9 @@ use wfc_devtools::city::{self, city_prior};
 
 const CHUNK: ChunkShape = ChunkShape::cube(8);
 
+/// The worlds generated, by seed.
+const WORLD_SEEDS: [u64; 5] = [11, 23, 47, 101, 977];
+
 /// Seeds each problem is tried with. A border that fails for every one of them is very likely one
 /// no arrangement satisfies.
 const SEEDS: u32 = 32;
@@ -37,34 +40,48 @@ fn census_of_the_chunks_a_city_gives_up_on() {
     let ruleset = Ruleset::from_modules(&city.modules).expect("the city compiles");
     let prior = city_prior(&city, CHUNK.z);
     let extent = WorldExtent::new(CHUNK).with_z(0..1);
-    let mut world = Builder::new(ruleset.clone(), prior.clone())
-        .seed(11)
-        .extent(extent.clone())
-        .halo(1)
-        .build()
-        .expect("a compute device");
-    kernels::warm(&mut world, &[1, 64, 128]);
-
-    world.request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 8)]);
-    let events = world.run_until_idle().expect("the solver runs");
-    let failed: Vec<(ChunkCoord, RegionStatus)> = events
-        .iter()
-        .filter_map(|event| match event {
-            ChunkEvent::Failed { chunk, status } => Some((*chunk, *status)),
-            _ => None,
-        })
-        .collect();
-    eprintln!(
-        "census: {} chunks generated, {} given up on, {:?}",
-        world.store().len(),
-        failed.len(),
-        world.stats()
-    );
+    // Several worlds, so a claim about how often chunks fail rests on more than one sample. The
+    // chunks the last one gave up on are the ones solved again below.
+    let mut failed: Vec<(ChunkCoord, RegionStatus)> = Vec::new();
+    let mut world = None;
+    for seed in WORLD_SEEDS {
+        let mut generator = Builder::new(ruleset.clone(), prior.clone())
+            .seed(seed)
+            .extent(extent.clone())
+            .halo(1)
+            .build()
+            .expect("a compute device");
+        kernels::warm(&mut generator, 8);
+        generator.request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 8)]);
+        let events = generator.run_until_idle().expect("the solver runs");
+        let given_up: Vec<(ChunkCoord, RegionStatus)> = events
+            .iter()
+            .filter_map(|event| match event {
+                ChunkEvent::Failed { chunk, status } => Some((*chunk, *status)),
+                _ => None,
+            })
+            .collect();
+        eprintln!(
+            "census: world seed {seed}: {} chunks generated, {} given up on, {:?}",
+            generator.store().len(),
+            given_up.len(),
+            generator.stats()
+        );
+        if !given_up.is_empty() || world.is_none() {
+            failed = given_up;
+            world = Some(generator);
+        }
+    }
+    let world = world.expect("at least one world");
     let mut by_status: BTreeMap<String, u32> = BTreeMap::new();
     for (_, status) in &failed {
         *by_status.entry(format!("{status:?}")).or_default() += 1;
     }
     eprintln!("census: the generator's last word on them: {by_status:?}");
+    if failed.is_empty() {
+        eprintln!("census: every chunk was placed, so there is nothing to solve again");
+        return;
+    }
 
     let mut solver = BlockSolver::new(
         WgpuBackend::from_env().expect("a compute device"),
