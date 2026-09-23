@@ -190,6 +190,7 @@ reads one type as another.
 | `TableSites` | Sites | a table's rows; a height field, `max_size` chunks |
 | `Locations` | Sites | a height field, and what its kinds' conditions read, `region` chunks |
 | `TableCurves` | Curves | a table's rows |
+| `Rivers` | Curves | a height field, `region - 1` chunks |
 | `Apply` | Field | a height field and a Region or TableCurves stage, `max_radius + blend` cells |
 | `Flatten` | Field | a height field, 0 cells; a Sites stage, `blend` cells |
 | `Solve` | Tiles | a Sites or TableSites stage, 0 cells |
@@ -463,9 +464,22 @@ missing job fails with `StageError::NoRegionJob`. A computed region is kept whil
 is needed, so a finite world is one region computed once.
 
 A `Curve` has a positional id, `CurveId::Region` with its region and index, points in world
-columns and one value per point, which an [Apply](#apply) stage reads as its radius. There is no
-built-in job yet. Godot games reach Region stages once there are built-in jobs; a Bevy game
-registers its own in the runtime it builds.
+columns and one value per point, which an [Apply](#apply) stage reads as its radius. A Bevy game
+registers its own jobs in the runtime it builds; a Godot game, which cannot, uses the built-in
+[Rivers](#rivers) stage.
+
+### Rivers
+
+`Rivers(height: "terrain", region: 16, sources: 3, sea: 0.05, width: (0.6, 2.0), step: 2)`: rivers
+down a height field, a region job built into the library, so a pack names it without Rust. In every
+square region of `region` chunks, each of `sources` rivers (1 to `MAX_SOURCES`, 64) starts at the
+highest of a few hashed columns of the region and steps `step` cells (default 1) at a time to the
+lowest of the eight columns around it, until it reaches a height below `sea`, a hollow where no step
+goes lower, or the region's edge. Its values, the radius an Apply stage carves by, grow from
+`width.0` at its source to `width.1` at its mouth (default 1 to 3). A river never leaves its region,
+so regions never read each other, and rivers are the same in any order; a river that reaches its
+region's edge stops there, so large regions suit an island whose rivers run to its coast. The ring
+world's rivers run from its high ground to the sea and are carved into its `ground`.
 
 ### TableCurves
 
