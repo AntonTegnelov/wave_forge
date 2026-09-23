@@ -1,51 +1,116 @@
-# Current status
+# Status
 
-Where the project actually is, as of September 2026, and what has to change to match [vision.md](vision.md) and [architecture.md](architecture.md). Keep this file honest: update it in the same PR that changes the status.
+Where Wave Forge stands, area by area, as of 2026-09-23. Where it is heading is in
+[roadmap.md](roadmap.md), and how far each user story has got is in
+[story-coverage.md](story-coverage.md). Update this page in the pull request that changes what it
+says.
 
-## What works
+Nothing is published. Phase 0 (reviving the project) and Phase 1 (the standalone WFC library) are
+done, the MVP's engine integrations work and are verified in real engines, and Phase 2 (packs of
+stages) has its runtime and a first slice.
 
-- The workspace builds on Rust 1.98.1 (edition 2024) with up-to-date dependencies (wgpu 30). No library crate needs an async runtime.
-- **The library generates a world in chunks, on the GPU, around moving focus points.** `wave_forge::Builder` builds a `WorldGenerator` on its own device, on a device an engine owns, or on a solver of your own; `request`, `tick` and `poll` drive it without blocking, and `Worker` runs it on a thread for an engine that cannot poll its compute API ([architecture.md §5](architecture.md#5-dispatch-async-and-threading)).
-- **One workgroup solves one region per dispatch**, with the region's domains in workgroup memory for the whole solve: propagation, selection, collapse and recovery never leave the device ([solver-redesign.md](solver-redesign.md)). 0.18 ms per chunk at 256 chunks in one dispatch, against 3.9 ms for the same chunk on one CPU thread.
-- **Live streaming works.** A 24×8-chunk city (192×64×8 cells) generated in front of a focus walking at 1.4 m/s: median 47 ms per 0.5 s tick, p90 61 ms, no seam violations ([solver-fit.md](solver-fit.md)).
-- **Generation keeps ahead of a running player.** Played in wall-clock time through a `Worker`, a 776 m route through an unbounded city at 1.4 and 4.2 m/s never had a chunk within 30 m of the player still generating; the main thread spent at most 0.18 ms of a frame on the library, rule checks at 1197 seams found nothing, memory stayed at 70 chunks or fewer, and 23 chunks walked back to came back identical ([testing.md](testing.md#the-game-session)).
-- **Generation is reproducible.** Every choice is a hash of the world seed, the chunk's coordinate and where the solve had got to, so the same requests give the same world on any backend, thread count or invocation count, and the facade's tests compare whole worlds cell for cell ([architecture.md §6.3](architecture.md#63-what-determinism-means-here)). A 4×4-chunk city, repairs included, is tile for tile the same on an NVIDIA RTX 3070 through dozen and on Mesa's lavapipe; CI checks it on every pull request (`golden_world.rs`).
-- Chunks are stitched with a halo around the first parity that is solved and discarded, and a chunk that fixed borders left unsolvable is repaired with its halo released, 32 seeds side by side, which is reported.
-- Constraints enter as a `Prior` on starting domains: masks per layer, bans per world face, overrides per cell. The city's boundary conditions are expressed that way.
-- Up to 256 tile variants, weights quantised to integers, and rule sets wider than one possibility word (the city's 81 variants need three).
-- End-to-end tests generate a 2D coastline and a small marian42-style 3D city through the library, check them against their rules and render them to PNG; `wave-forge` generates one chunk from a rule file and `wfc-render` draws it ([testing.md](testing.md)).
-- **A Godot extension generates a streamed world while the game runs.** `wave_forge_godot` adds a `WaveForgeWorld` node, with its properties grouped in the inspector, in-editor help and an icon: a `rules_file` it can start from on its own, or `load_rules(rules)` and `start()`, `follow(position)`, `tiles_at(chunk)`, `set_layer_tiles` and `ban_tiles_on_face` for the prior, what each tile is (`tile_name`, `tile_rotation`, `tile_basis`, `tiles_named`, `tiles_tagged`), where each cell is (`cell_position`), each chunk's placements as MultiMesh buffers (`instance_sets`), colliders for the chunks near the player (`set_collision_shape`, `collider_radius`, `collider_instance`), navigation meshes baked from the same shapes off Godot's thread (`navigation_radius`, `navigation_template`, `navigation_ready`), and `chunk_updated` / `chunk_evicted` / `chunk_failed` signals. Generation, the GPU device and kernel compilation all live on a worker thread. Verified in Godot 4.7.2: a focus runs across a strip of chunks and back at 4.2 units/s without waiting for generation, the chunks beside it there on every frame, Godot's slowest frame 3.4 ms and the node's own time 0.56 ms per frame at the 99th percentile, with the main loop capped at 60 frames per second, every cell legal across seams, the prior obeyed, and the chunk it returns to comes back identical; an agent's path runs across two chunk seams on top of the ground.
-- **A Bevy plugin generates on Bevy's own device.** `wave_forge_bevy` adds `WaveForgePlugin`, a `GenerationFocus` component, `ChunkUpdated` messages, and with `WaveForgePlugin::from_rules` a `WaveForgeTiles` resource that says what each tile is; it hands Bevy's `RenderDevice` and `RenderQueue` to `Builder::build_on`, so there is no second adapter. It tracks Bevy 0.20, the first release on wgpu 30. A headless app with the real `DefaultPlugins` generates a city on that device, and the tiles match what the library generates on a device of its own.
-- In the dev container it runs on the host's NVIDIA RTX 3070 through Mesa's dozen driver (Vulkan on Direct3D 12); timings carry translation overhead. Without a GPU, a software Vulkan device (Mesa llvmpipe) is enough for correctness tests but not for performance work.
+## By area
 
-## Known limitations
+**Build.** The workspace builds on Rust 1.98.1 (edition 2024) with wgpu 30. No library crate needs
+an async runtime. Continuous integration on GitHub Actions runs formatting, clippy with warnings as
+errors, every test including the GPU tests on Mesa's lavapipe, the per-crate feature builds, the
+Godot checks in a real Godot and the Bevy tests, on every pull request
+([environment.md](../guides/environment.md)).
 
-- **Godot generates on a device of its own, not on Godot's.** The extension runs the generator on a worker thread with its own wgpu device, which works and keeps Godot's frame loop free. A backend over Godot's own `RenderingDevice` would avoid the second device, and the `ComputeBackend` seam is there for it, but it does not exist yet: it needs WGSL translated to SPIR-V and Godot's compute API driven from a worker, and neither can be measured in this dev container ([roadmap.md](roadmap.md#still-open-generating-on-godots-own-renderingdevice)).
-- **3D only**, with 6 fixed axes; 2D means a world one cell deep (A-2).
-- **A region must fit the device's workgroup memory.** At 81 tiles, an 8×8×8 chunk fits with a halo of 1 or 2 but not 3 (38 288 B against 32 768 B), so a repair ladder stops there. Bigger chunks or more tiles need a kernel that keeps domains in a storage buffer instead, which nothing needs yet.
-- **About one city chunk in nine needs a repair**, which rewrites cells of its neighbours, so those chunks depend on the order the world was generated in (the city is not *streaming-clean*). Every chunk is placed: 0 of 1 605 over five worlds, 0 holes in the game session ([solver-fit.md](solver-fit.md)).
-- **No GPU timestamp queries and no spans.** Host wall-clock around a dispatch, plus the statistics a solve reports, are all the observability there is (A-15).
-- **Golden worlds cover tiles, not images.** A 4×4-chunk city is compared tile for tile across devices (A-16, [testing.md](testing.md)); rendered images are not compared.
+**Solver.** One workgroup solves one region per dispatch with the region resident in workgroup
+memory: gather propagation, every local minimum collapsed per round, checkpoint undo and restarts,
+all on the device ([solver.md](../architecture/solver.md)). Up to 256 tiles, integer weights, rule
+sets wider than one mask word (the city's 81 tiles need three). The CPU reference solver is the
+oracle and the yardstick.
 
-## Alignment tasks
+**World.** `WorldGenerator` streams chunks around focus points with a parity schedule, a halo on the
+first parity, and repairs of 32 seeds side by side that go by class, so the world is the same in any
+generation order and on any device ([world.md](../architecture/world.md)). Every chunk of the
+reference worlds is placed. `Worker` runs it on a thread.
 
-Each task is referenced from the matching callout in [architecture.md](architecture.md). Order within a phase is decided in [roadmap.md](roadmap.md), informed by measurements where noted.
+**Rules.** Tile sets and module sets in RON; module sets derive rotations and adjacency from
+connectors, and the city (`examples/city.ron`) is one. A `Prior` carries masks per layer, bans per
+world face and per-cell overrides.
 
-| ID | Task | Architecture |
+**Stages.** `wave_forge::stages` loads a pack (Field, Blur, Sites, Flatten, Solve, Scatter), checks
+it, and generates any stage around focus points, providers first, through reads bounded by each
+stage's reach, the same in any order. Towns are bounded WFC worlds per site behind the `TownSolver`
+seam, solved on the GPU. `StageWorker` runs it on a thread. The valley test pack
+(`examples/valley.world.ron`) generates rolling ground, towns on levelled sites and trees kept apart
+([reference/packs.md](../reference/packs.md)). The stage runtime runs on the CPU.
+
+**Products.** Instance sets in Godot's MultiMesh layout with positional `InstanceId`s, for streamed
+worlds and towns; navigation source geometry with a border into the neighbours; `YUpSpace` for
+where a cell is in a Y-up engine ([engine-integration.md](../architecture/engine-integration.md#products)).
+
+**Godot.** `WaveForgeWorld` streams the city with multimesh buffers, colliders on a ring near the
+player and navigation baked off Godot's thread; `WaveForgeStages` serves a pack's fields, sites,
+towns and points. Both are checked in headless Godot 4.7.2 by `verify.sh`
+([reference/godot.md](../reference/godot.md)).
+
+**Bevy.** `WaveForgePlugin` generates on Bevy's own device; `WaveForgeStagesPlugin` serves a pack.
+Headless apps with the real `DefaultPlugins` test both ([reference/bevy.md](../reference/bevy.md)).
+
+**Tooling.** The `wave-forge` CLI, PNG and isometric renderers, glTF model export for the city's
+modules, an invariant checker, the streaming, game-session, order-diff and golden-world tests
+([testing.md](../guides/testing.md)).
+
+## Headline numbers
+
+All from the dev container's NVIDIA RTX 3070 through Mesa's dozen (Vulkan on Direct3D 12), release
+builds, the city rule set unless a row says otherwise; protocols and history in [measurements.md](../research/measurements.md).
+
+| What | Result | Test |
 |---|---|---|
-| A-1 | ~~Restructure the workspace: model, solver, backends, public `wave_forge` library facade; move the CLI to a dev-tool binary crate.~~ **Done** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)). | [§2](architecture.md#2-component-overview) |
-| A-2 | Introduce a topology abstraction with 4-direction 2D and 6-direction 3D grids; make rule-file direction names depend on topology. | [§3.1](architecture.md#31-topology-2d-and-3d) |
-| A-3 | ~~Support symmetry variants in rule files.~~ **Done** ([#30](https://github.com/AntonTegnelov/wave_forge/issues/30)): a rule file can describe modules by their connectors, rotations are derived, and the city is `examples/city.ron`. Tile-form files keep identity variants only; a set with rotated pieces is written as modules. | [§3.2](architecture.md#32-tiles-and-compiled-rules) |
-| A-4 | ~~Store possibilities as one contiguous word array shared by CPU and GPU layouts.~~ **Done** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)): `Domains`, in the layout the shader reads. | [§3.3](architecture.md#33-possibility-storage) |
-| A-5 | ~~Support more than 32 tiles per cell in all GPU kernels.~~ **Done** ([#13](https://github.com/AntonTegnelov/wave_forge/issues/13)), up to 256 variants; the city E2E test covers it. | [§3.3](architecture.md#33-possibility-storage) |
-| A-6 | ~~Seeded RNG for the collapse choice; deterministic tie-breaking.~~ **Done** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)): every choice is a stateless hash of the world seed, the chunk id, the attempt and the step, so nothing depends on scheduling. | [§3.4](architecture.md#34-seeds-and-randomness) |
-| A-7 | ~~Weighted Shannon entropy with deterministic noise; stop scanline-order tie-breaking.~~ **Superseded**: the kernel selects every local minimum of the possibility count and breaks ties by the choice hash, so scan order plays no part. Shannon entropy was not worth the extra work at the measured difference. | [§4.1](architecture.md#41-the-algorithm) |
-| A-8 | ~~Propagate pre-constrained cells before the first observation.~~ **Done** ([#6](https://github.com/AntonTegnelov/wave_forge/issues/6)). | [§4.1](architecture.md#41-the-algorithm) |
-| A-9 | ~~Bounded backtracking.~~ **Done** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)): the kernel restores a checkpoint from a ring buffer, doubles how far back it goes on a repeated failure, restarts the region when the ring is exhausted, and reports a status when the budget is. The generic recovery framework is deleted. | [§4.2](architecture.md#42-contradictions) |
-| A-10 | ~~Keep solver state on the device; batch collapses of non-interacting cells; read back only results.~~ **Done** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)): a region's domains stay in workgroup memory for the whole solve, every local minimum within a radius collapses per round, and a batch costs one dispatch and one readback. | [§4.3](architecture.md#43-where-each-step-runs) |
-| A-11 | ~~Make the propagation kernel race-free and drop the per-collapse full-grid verification pass.~~ **Done** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)): propagation gathers into an invocation's own cells, so no invocation writes a neighbour's mask and there is nothing to verify. | [§4.3](architecture.md#43-where-each-step-runs) |
-| A-12 | ~~Replace `Box<dyn …>`/`async_trait` strategies with static dispatch; remove the Tokio dependency from library crates; expose runtime-agnostic non-blocking APIs.~~ **Done** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)): the solver and the generator are generic, the `Solver` seam is job-based, and no library crate depends on an async runtime. | [§5](architecture.md#5-dispatch-async-and-threading) |
-| A-13 | ~~Region/chunk solving with constrained borders and a streaming scheduler; remove the disabled subgrid strategy.~~ **Done** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)): a chunk lattice with parity batches, a halo that is discarded, repairs for what fixed borders leave unsolvable, and a scheduler around focus points. | [§6](architecture.md#6-scaling-to-large-worlds-chunks-and-streaming) |
-| A-14 | ~~Embed shaders in the binary; remove the runtime shader registry/variant scaffolding.~~ **Done** ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)): one WGSL file with `include_str!` and constants substituted per specialisation. | [§8](architecture.md#8-gpu-specifics) |
-| A-15 | GPU timestamp queries, and spans around the host's side of a batch if they turn out to be worth it. One typed error enum per crate, the unused debug visualiser and the duplicate error hierarchies are done ([#7](https://github.com/AntonTegnelov/wave_forge/issues/7)). | [§9](architecture.md#9-errors-and-observability) |
-| A-16 | Unit tests for the kernel's internals. Golden worlds are done ([#35](https://github.com/AntonTegnelov/wave_forge/issues/35)): a city compared tile for tile across two vendors' Vulkan. (E2E tests, invariant checks and image tools were added in [#6](https://github.com/AntonTegnelov/wave_forge/issues/6); the realistic city in [#13](https://github.com/AntonTegnelov/wave_forge/issues/13); the facade's determinism tests and the streaming suite in [#7](https://github.com/AntonTegnelov/wave_forge/issues/7).) | [§10](architecture.md#10-testing-and-developer-tooling) |
+| A batch of 256 city chunks (8×8×8, halo 1) | 0.18 ms per chunk, against 3.9 ms on one CPU thread | `wfc-gpu/tests/block_solver_bench.rs` |
+| Streaming 24×8 chunks in front of a focus walking 1.4 m/s, 0.5 s ticks | median tick 53 to 54 ms, p90 128 to 130 ms, 0 of 192 chunks unplaced | `wfc-devtools/tests/streaming.rs` |
+| A 230 s walk and run through an unbounded city, in wall-clock time | 0 frames with a chunk near the player missing; main thread p99 0.005 ms; at most 94 chunks held; 42 chunks walked back to, all identical; 0 violations in 2 454 seam checks | `wfc-devtools/tests/game_session.rs` |
+| Five census worlds | 0 of 1 772 chunks given up on, 181 repairs, 4.0 s in the solver | `wfc-devtools/tests/hole_census.rs` |
+| Order independence, 4×4-chunk city, seeds 8 and 11 | tile for tile the same all at once and chunk by chunk in either raster order, repairs included | `wfc-devtools/tests/order_diff.rs` |
+| The same city on two GPUs | tile for tile the same on the RTX 3070 and on lavapipe | `wfc-devtools/tests/golden_world.rs` |
+| Godot, a focus running at 4.2 units/s over a small band rule set, with colliders and navigation | Godot's slowest frame 3.4 ms, the node's own time 0.56 ms per frame at p99 | `wave_forge_godot/godot/verify.gd` |
+| Godot, the valley pack's 49 chunks around a town from a cold start | about 16 s, towns included; the node's own time 0.02 ms per frame at p99 | `wave_forge_godot/godot/verify_stages.gd` |
+
+## Known limits
+
+Each is a gap between the code and the design or the stories, with where it is tracked.
+
+- **Godot generates on a device of its own**, not on Godot's `RenderingDevice`. It works and keeps
+  Godot's frame loop free; a backend over Godot's device needs a desktop measurement first
+  ([engine-integration.md](../architecture/engine-integration.md#godot-the-solver-stays-on-its-own-device),
+  [#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
+- **No desktop numbers.** Every timing comes from the dev container's translated driver or from
+  lavapipe ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
+- **Order independence has two limits:** worlds more than one chunk tall, and partial eviction of a
+  repaired neighbourhood ([world.md](../architecture/world.md#what-determinism-means-here)). The city
+  needs a repair in about one chunk in ten.
+- **A region must fit the device's workgroup memory.** At 81 tiles an 8×8×8 chunk fits a halo of 1
+  or 2, not 3 (38 288 B against 32 768 B), so a repair's halo stops at 2. Bigger regions would need
+  domains in a storage buffer, which nothing needs yet.
+- **3D only, six fixed axes.** 2D is a world one cell deep; other topologies wait for a game that
+  needs one.
+- **No GPU timestamp queries and no `tracing` spans.** Host wall-clock time and the counters a solve
+  reports are all the observability there is.
+- **Kernel internals have no unit tests.** The kernel is checked through whole-region results, the
+  CPU oracle and the golden world; its generated source and workgroup budget are unit tested.
+- **Golden worlds cover tiles, not images or products.** Instance sets and chunk hashes are not in
+  them yet.
+- **The stage runtime is a first slice.** Fields are one `f32` per cell column on the WFC lattice;
+  there are no categorical fields, Rules, curves, region jobs, edits, persistence modes, world
+  bounds or per-stage request radii; Field expressions are minimal and every noise in one stage
+  shares a stream; Scatter has four tests and one kind per stage. Each is an issue under
+  [#104](https://github.com/AntonTegnelov/wave_forge/issues/104) ([story-coverage.md](story-coverage.md)).
+- **No ground mesh or ground collider from a field** in either engine
+  ([#88](https://github.com/AntonTegnelov/wave_forge/issues/88)).
+- **No levels of detail** for the exported module meshes; they wait for authored models
+  ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)).
+- **Scenes are not yet bound to points**, and there are no region tags, far proxies, occluders,
+  noise parity with Godot, or authoring tools
+  ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44),
+  [#43](https://github.com/AntonTegnelov/wave_forge/issues/43),
+  [#47](https://github.com/AntonTegnelov/wave_forge/issues/47),
+  [#45](https://github.com/AntonTegnelov/wave_forge/issues/45),
+  [#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
+- **Licences for a distributed build.** Everything in both integrations' dependency trees is MIT,
+  Apache-2.0, Zlib or Unlicense except godot-rust (0.5.5), which is MPL-2.0: compatible, but a
+  distributed extension binary has to say where the MPL-covered source can be obtained.
