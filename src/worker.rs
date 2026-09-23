@@ -10,7 +10,6 @@ use crate::scheduler::FocusPoint;
 use crate::{Chunk, ChunkCoord, Error, Solver};
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
-use std::thread::JoinHandle;
 
 /// What the worker's thread is asked to do.
 enum Command {
@@ -39,10 +38,14 @@ enum Report {
 /// The worker keeps the chunks it has reported, so [`Worker::chunk`] reads tiles without waiting
 /// for the generating thread. [`Worker::drain`] is what moves both forward: it takes the events and
 /// the tiles that came with them.
+///
+/// Dropping a worker asks its thread to stop and does not wait for it. A thread still building the
+/// generator (creating a device, compiling kernels) takes seconds, and a game drops its worker on
+/// its main thread; the thread finishes what it is doing, sees the request, and exits, freeing the
+/// generator and its device there.
 pub struct Worker {
     commands: Sender<Command>,
     reports: Receiver<Report>,
-    thread: Option<JoinHandle<()>>,
     chunks: HashMap<ChunkCoord, Chunk>,
     stats: GeneratorStats,
     failure: Option<String>,
@@ -67,14 +70,14 @@ impl Worker {
     {
         let (commands, orders) = channel::<Command>();
         let (reports, results) = channel::<Report>();
-        let thread = std::thread::Builder::new()
+        // Not joined: see the type's documentation.
+        std::thread::Builder::new()
             .name("wave forge".to_owned())
             .spawn(move || run(build, &orders, &reports))
             .expect("a thread");
         Self {
             commands,
             reports: results,
-            thread: Some(thread),
             chunks: HashMap::new(),
             stats: GeneratorStats::default(),
             failure: None,
@@ -166,9 +169,6 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         self.send(Command::Stop);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
     }
 }
 
