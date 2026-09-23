@@ -34,14 +34,15 @@ use bevy_app::{App, Plugin, Update};
 use bevy_ecs::error::Result;
 use bevy_ecs::message::{Message, MessageWriter};
 use bevy_ecs::prelude::{Component, IntoScheduleConfigs, Query, ResMut, Resource};
-use bevy_math::Vec3;
+use bevy_math::{Quat, Vec3};
 use bevy_render::renderer::{RenderDevice, RenderQueue};
 use bevy_transform::components::GlobalTransform;
 use std::sync::Mutex;
+use wave_forge::loader::RuleFile;
 use wave_forge::{
     BlockSolver, Builder, Chunk, ChunkCoord, ChunkEvent, ChunkShape, ChunkStore, FocusPoint,
-    GeneratorStats, Prior, RegionShape, RegionStatus, RepairPolicy, Ruleset, Solver, WgpuBackend,
-    WorldExtent, WorldGenerator,
+    GeneratorStats, ModelError, Prior, RegionShape, RegionStatus, RepairPolicy, Ruleset, Solver,
+    WgpuBackend, WorldExtent, WorldGenerator, YUpSpace,
 };
 
 /// An entity that generation follows, usually the player or the camera.
@@ -122,36 +123,61 @@ impl WaveForgeSettings {
     /// The size of one chunk in Bevy's world units.
     #[must_use]
     pub fn chunk_size(&self) -> Vec3 {
-        let chunk = self.chunk();
-        // Bevy's y is the lattice's z, and Bevy's z is the lattice's y.
-        Vec3::new(
-            self.cell_size.x * chunk.x as f32,
-            self.cell_size.y * chunk.z as f32,
-            self.cell_size.z * chunk.y as f32,
-        )
+        Vec3::from_array(self.space().chunk_size())
     }
 
     /// The chunk a point in Bevy's world space falls in.
     #[must_use]
     pub fn chunk_at(&self, translation: Vec3) -> ChunkCoord {
-        let size = self.chunk_size();
-        let at = translation / size;
-        ChunkCoord::new(
-            at.x.floor() as i32,
-            at.z.floor() as i32,
-            at.y.floor() as i32,
-        )
+        self.space().chunk_at(translation.to_array())
     }
 
     /// Where a chunk's lowest corner sits in Bevy's world space.
     #[must_use]
     pub fn translation_of(&self, chunk: ChunkCoord) -> Vec3 {
-        let size = self.chunk_size();
-        Vec3::new(
-            chunk.x as f32 * size.x,
-            chunk.z as f32 * size.y,
-            chunk.y as f32 * size.z,
-        )
+        Vec3::from_array(self.space().chunk_origin(chunk))
+    }
+
+    /// The centre of one cell of a chunk in Bevy's world space. `cell` is an index into the
+    /// chunk's tiles.
+    ///
+    /// # Panics
+    /// If `cell` is not a cell of the chunk.
+    #[must_use]
+    pub fn cell_translation(&self, chunk: ChunkCoord, cell: u32) -> Vec3 {
+        Vec3::from_array(self.space().cell_center(chunk, cell))
+    }
+
+    /// The lattice in Bevy's Y-up world space.
+    fn space(&self) -> YUpSpace {
+        YUpSpace::new(self.chunk(), self.cell_size.to_array())
+    }
+}
+
+/// What each tile of the rule set is, for a game placing one model per tile: its name, its
+/// rotation, and the tiles a name or a tag picks out.
+///
+/// [`WaveForgePlugin::from_rules`] inserts it. It dereferences to the [`RuleFile`] it was built
+/// from.
+#[derive(Resource, Clone, Debug)]
+pub struct WaveForgeTiles(pub RuleFile);
+
+impl WaveForgeTiles {
+    /// The rotation to place a tile's model with: its turn from its module, about Bevy's up axis.
+    ///
+    /// # Panics
+    /// If `tile` is not a tile of the rule set.
+    #[must_use]
+    pub fn rotation_of(&self, tile: usize) -> Quat {
+        Quat::from_rotation_y(YUpSpace::yaw(self.0.rotation(tile)))
+    }
+}
+
+impl std::ops::Deref for WaveForgeTiles {
+    type Target = RuleFile;
+
+    fn deref(&self) -> &RuleFile {
+        &self.0
     }
 }
 
@@ -222,6 +248,8 @@ pub struct WaveForgePlugin {
     settings: WaveForgeSettings,
     own_device: bool,
     warm: Vec<u32>,
+    /// The rule file the rule set came from, inserted as [`WaveForgeTiles`].
+    tiles: Option<RuleFile>,
 }
 
 impl WaveForgePlugin {
@@ -234,7 +262,25 @@ impl WaveForgePlugin {
             settings,
             own_device: false,
             warm: Vec::new(),
+            tiles: None,
         }
+    }
+
+    /// A plugin for the rule set in `file`, which also inserts [`WaveForgeTiles`] so systems can
+    /// ask what each tile is.
+    ///
+    /// # Errors
+    /// If the file's weights do not make a rule set.
+    pub fn from_rules(
+        file: RuleFile,
+        prior: Prior,
+        settings: WaveForgeSettings,
+    ) -> std::result::Result<Self, ModelError> {
+        let ruleset = Ruleset::new(file.rules(), &file.tileset().weights)?;
+        Ok(Self {
+            tiles: Some(file),
+            ..Self::new(ruleset, prior, settings)
+        })
     }
 
     /// Compiles the kernels a run will need while the plugin is built, rather than at the first
@@ -265,6 +311,9 @@ impl WaveForgePlugin {
 impl Plugin for WaveForgePlugin {
     fn build(&self, app: &mut App) {
         register::<BlockSolver<WgpuBackend>>(app);
+        if let Some(file) = &self.tiles {
+            app.insert_resource(WaveForgeTiles(file.clone()));
+        }
     }
 
     /// Builds the generator once every other plugin has built, which is when Bevy's device exists.
