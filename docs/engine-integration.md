@@ -94,6 +94,12 @@ Horizon Zero Dawn copies its GPU placement results back to the CPU
 ([Guerrilla](https://www.guerrilla-games.com/read/gpu-based-procedural-placement-in-horizon-zero-dawn)),
 and Unreal's GPU-only PCG instances get no collision, navigation or saving.
 
+**Colour comes from textures, not vertex colours.** Godot 4.7's glTF importer reads a primitive's
+material before it parses that primitive's `COLOR_0`, so the flag that uses vertex colours as albedo
+is only ever set for a later primitive, never for a mesh of one (`modules/gltf/gltf_document.cpp`,
+4.7-stable). Meshes Wave Forge writes (`wfc-export-models`, and MeshProducts later) colour through a
+base colour texture and UVs, which every importer honours.
+
 **Engine assets never enter the product model.** Rules emit ids; each integration binds ids to its
 own assets (a `PackedScene`, a glTF scene, a material, a `FastNoiseLite`). That keeps one model for
 both engines.

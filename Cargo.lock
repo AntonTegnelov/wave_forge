@@ -1420,6 +1420,7 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "serde_json",
  "wave_forge",
  "wfc-core",
  "wfc-rules",

@@ -8,6 +8,7 @@
 pub mod city;
 pub mod fixtures;
 pub mod invariants;
+pub mod models;
 pub mod render;
 
 pub use invariants::{BoundaryCondition, TileGrid, Violation, adjacency_violations};

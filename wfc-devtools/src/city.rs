@@ -103,6 +103,25 @@ pub fn city() -> City {
 }
 
 impl City {
+    /// Each module's unrotated voxel model, by module name, in the order the rule file lists the
+    /// modules: what a game places, turned by each tile's rotation.
+    pub fn prototype_models(&self) -> Vec<(&str, &VoxelModel)> {
+        self.modules
+            .prototypes
+            .iter()
+            .enumerate()
+            .map(|(prototype, module)| {
+                let tile = self
+                    .modules
+                    .variants
+                    .iter()
+                    .position(|v| v.prototype == prototype && v.rotation == 0)
+                    .expect("every module keeps its unrotated variant");
+                (module.name.as_str(), &self.voxels[tile])
+            })
+            .collect()
+    }
+
     /// One colour per tile for flat maps: the most common colour of the model's topmost voxel
     /// layer, which is what you would see looking straight down at a lone module.
     pub fn map_palette(&self) -> Vec<Color> {

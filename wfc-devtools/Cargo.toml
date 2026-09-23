@@ -11,6 +11,8 @@ description = "Developer-only tools for testing and inspecting Wave Forge output
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+# The JSON chunk of the glTF files wfc-export-models writes.
+serde_json = "1.0.151"
 wfc-core = { path = "../wfc-core" }
 wfc-rules = { path = "../wfc-rules" }
 # The library the CLI and the end-to-end tests drive.

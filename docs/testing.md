@@ -138,10 +138,18 @@ engine. Run them explicitly:
 cargo test --manifest-path wave_forge_bevy/Cargo.toml                       # no device needed
 cargo test --manifest-path wave_forge_bevy/Cargo.toml --release -- --ignored --nocapture
 GODOT=/path/to/godot wave_forge_godot/verify.sh release                     # needs a Godot 4 binary
+GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_city.sh           # a picture of the city
 ```
 
-`verify.sh` builds the extension, copies it into `wave_forge_godot/godot`, writes the extension list
-Godot would otherwise only write from the editor, and runs `verify.gd` headless. It exits non-zero on
+`prepare.sh`, which both scripts run first, builds the extension, copies it into
+`wave_forge_godot/godot` with `examples/city.ron`, exports the city's module models into
+`godot/models` with `wfc-export-models`, and writes the extension list Godot would otherwise only
+write from the editor. `verify.sh` then runs `verify.gd` headless. Besides the walk, it checks that
+every module model loads as glTF, coloured by a texture, inside its cell. `render_city.sh` renders a
+generated city with those models through the Compatibility renderer and saves the picture: the
+check to look at after a change to the models, the tile catalogue or the coordinate mapping.
+
+`verify.gd` runs headless. It exits non-zero on
 any failure and prints what it generated and how long frames took. Headless, Godot's renderer is a
 dummy, so the frame time it checks is Godot's own thread (the extension and the script), not drawing.
 It uses a four-tile rule set because it tests the extension's contract; the city reaches Godot as a
