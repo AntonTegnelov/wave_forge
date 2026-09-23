@@ -302,8 +302,8 @@ resources are written in GDScript over Rust classes, or kept flat.
 
 Small improvements available now: godot-rust's `register-docs` feature turns the existing doc
 comments into in-editor help and tooltips; an `[icons]` section in the `.gdextension`; grouped
-exports; rules as an exported resource with a start-on-ready option instead of a `start(rules)`
-call; and a minimum Godot version of 4.7 in the `.gdextension` (it says 4.2 today).
+exports; rules as an exported resource with a start-on-ready option instead of `load_rules` and
+`start` calls; and a minimum Godot version of 4.7 in the `.gdextension` (it says 4.2 today).
 
 Distribution goes through the **Godot Asset Store**, which replaced the Asset Library on 2026-05-22
 and is integrated in 4.7; the Asset Library is deprecated and will become read-only

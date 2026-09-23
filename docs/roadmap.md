@@ -61,8 +61,9 @@ through. In order:
 1. ~~**The city has to reach Godot as data**~~ ([#30](https://github.com/AntonTegnelov/wave_forge/issues/30)). Done: a rule file can describe modules
    by their connectors, with rotated variants derived, and the city is `examples/city.ron`, which the
    tests, the CLI and the Godot extension load.
-2. **A game has to know what to draw** ([#33](https://github.com/AntonTegnelov/wave_forge/issues/33)). Each tile is a variant of a prototype at a rotation; the
-   facade and both integrations expose that mapping, so a game can place one model per prototype.
+2. ~~**A game has to know what to draw**~~ ([#33](https://github.com/AntonTegnelov/wave_forge/issues/33)). Done: a loaded rule file names every tile,
+   its rotation and its tags; `YUpSpace` in the library says where a cell is and how a model turns
+   in a Y-up engine; the Godot node and the Bevy `WaveForgeTiles` resource expose both.
 3. **No chunk may be left unplaced** ([#31](https://github.com/AntonTegnelov/wave_forge/issues/31)). 3.2% of city chunks cannot be placed in the streaming test,
    after repairs, and a walker would see every one of them as a hole. The target is zero. The
    approach is to measure first (which border patterns fail, from the contradiction cell each solve
