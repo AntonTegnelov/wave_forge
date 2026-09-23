@@ -23,7 +23,11 @@ fn field(name: &str, expr: Expr) -> StageDef {
 }
 
 fn pack(stages: Vec<StageDef>) -> Result<Pack, PackError> {
-    Pack::from_file(PackFile { version: 1, stages })
+    Pack::from_file(PackFile {
+        version: 1,
+        stages,
+        tables: Vec::new(),
+    })
 }
 
 /// Generates `targets` over the chunks within `radius` of `centre`, and returns the runtime with

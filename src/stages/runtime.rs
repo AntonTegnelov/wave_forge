@@ -7,7 +7,9 @@
 //! and the stage reads them only through a view bounded by that area. Whatever order chunks are
 //! asked for in, each is computed from the same inputs and comes out the same.
 
-use super::pack::{Condition, Expr, Output, Pack, Reach, StageKind, point_stage_id, salt};
+use super::evaluate::{Leaves, evaluate, holds};
+use super::facts::{Facts, Row, RowId};
+use super::pack::{Expr, Output, Pack, Reach, StageKind, point_stage_id, salt};
 use super::regions::{Attempt, Curve, RegionInput, RegionJob, region_of};
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
@@ -188,6 +190,16 @@ pub enum StageError {
         region: (i32, i32),
         log: Vec<String>,
     },
+    #[error("no table is named {0:?}")]
+    UnknownTable(String),
+    #[error("table {table:?}: {message}")]
+    Table { table: String, message: String },
+    #[error("a stage reads the focused row of table {0:?}, but no row of it is focused")]
+    NoFocus(String),
+    #[error("the runtime was given no facts to focus a row of")]
+    NoFacts,
+    #[error("the facts were made for another pack or seed than the runtime's")]
+    OtherFacts,
     #[error("the town solver's chunks are {solver:?} columns, the runtime's {runtime:?}")]
     ChunkMismatch { solver: [u32; 2], runtime: [u32; 2] },
     #[error("stage {stage:?} could not solve the town of region {region:?}: {message}")]
@@ -285,6 +297,9 @@ pub struct Runtime {
     region_jobs: BTreeMap<String, Box<dyn RegionJob>>,
     /// Regions computed, by Region stage and region, kept while a chunk of their region is needed.
     regions: BTreeMap<RegionKey, Arc<[Curve]>>,
+    facts: Option<Facts>,
+    /// The focused row of each table that has one, by table index.
+    focused: BTreeMap<usize, Row>,
 }
 
 impl Runtime {
@@ -303,7 +318,98 @@ impl Runtime {
             products: BTreeMap::new(),
             towns: None,
             solved: BTreeMap::new(),
+            facts: None,
+            focused: BTreeMap::new(),
         }
+    }
+
+    /// Gives the runtime the facts its stages read, replacing any it had, and drops every product
+    /// that read a table that changed, returning them as (stage, chunk) as
+    /// [`Runtime::request`] does; the request regenerates them. On an error nothing changes.
+    ///
+    /// # Errors
+    /// [`StageError::OtherFacts`] if the facts were made for another pack or seed, and
+    /// [`StageError::Table`] if a focused row is not in its table any more.
+    pub fn set_facts(&mut self, facts: Facts) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        if !facts.made_for(&self.pack, self.seed) {
+            return Err(StageError::OtherFacts);
+        }
+        let mut focused = BTreeMap::new();
+        for (&table, row) in &self.focused {
+            let now = facts.tables()[table]
+                .row(&row.id)
+                .ok_or_else(|| StageError::Table {
+                    table: self.pack.tables[table].name.clone(),
+                    message: format!(
+                        "the focused row {:?} is not in the table any more",
+                        row.id.0
+                    ),
+                })?;
+            focused.insert(table, now.clone());
+        }
+        let changed: Vec<usize> = (0..self.pack.tables.len())
+            .filter(|&table| {
+                self.facts
+                    .as_ref()
+                    .is_none_or(|old| !Arc::ptr_eq(&old.tables()[table], &facts.tables()[table]))
+            })
+            .collect();
+        self.facts = Some(facts);
+        self.focused = focused;
+        Ok(self.invalidate(&changed))
+    }
+
+    /// Focuses the runtime on the row `id` of `table`, which stages read through
+    /// [`crate::stages::Expr::Row`], and drops every product that read another row of it,
+    /// returning them as [`Runtime::set_facts`] does.
+    ///
+    /// # Errors
+    /// [`StageError::NoFacts`] before [`Runtime::set_facts`], [`StageError::UnknownTable`] for a
+    /// table the pack does not name, and [`StageError::Table`] for a row it does not hold.
+    pub fn focus(
+        &mut self,
+        table: &str,
+        id: RowId,
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let facts = self.facts.as_ref().ok_or(StageError::NoFacts)?;
+        let index = *self
+            .pack
+            .table_by_name
+            .get(table)
+            .ok_or_else(|| StageError::UnknownTable(table.to_owned()))?;
+        let row = facts.tables()[index]
+            .row(&id)
+            .ok_or_else(|| StageError::Table {
+                table: table.to_owned(),
+                message: format!("it has no row {:?}", id.0),
+            })?;
+        if self.focused.get(&index) == Some(row) {
+            return Ok(Vec::new());
+        }
+        self.focused.insert(index, row.clone());
+        Ok(self.invalidate(&[index]))
+    }
+
+    /// Drops the products, towns and regions of every stage that reads one of `tables`, and of
+    /// every stage that reads one of those, returning the products as (stage, chunk).
+    fn invalidate(&mut self, tables: &[usize]) -> Vec<(String, ChunkCoord)> {
+        let mut stale = vec![false; self.pack.stages.len()];
+        // Inputs come first in `order`, so a stage's inputs are judged before it.
+        for &index in &self.pack.order {
+            let stage = &self.pack.stages[index];
+            stale[index] = stage.tables.iter().any(|table| tables.contains(table))
+                || stage.inputs.iter().any(|&(input, _)| stale[input]);
+        }
+        let mut dropped = Vec::new();
+        self.products.retain(|&(stage, chunk), _| {
+            if stale[stage] {
+                dropped.push((self.pack.stages[stage].name.clone(), chunk));
+            }
+            !stale[stage]
+        });
+        self.solved.retain(|&(stage, _), _| !stale[stage]);
+        self.regions.retain(|&(stage, _), _| !stale[stage]);
+        dropped
     }
 
     /// Gives Region stages that name `name` the job they run.
@@ -617,9 +723,7 @@ impl Runtime {
             })
         };
         let value = match &stage.kind {
-            StageKind::Field(expr) => {
-                self.evaluate(expr, stage.salt, stage.scale, column, &read)?
-            }
+            StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
             StageKind::Rules { .. } => f32::from(self.categorise(index, column, &read)?),
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
             StageKind::Sites { .. }
@@ -1015,9 +1119,7 @@ impl Runtime {
                     i64::from(chunk.y) * i64::from(sy) + i64::from(y),
                 ];
                 let value = match &stage.kind {
-                    StageKind::Field(expr) => {
-                        self.evaluate(expr, stage.salt, stage.scale, column, &read)?
-                    }
+                    StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
                     StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
                     StageKind::Flatten { height, blend, .. } => {
                         let view = &views[&self.pack.index(height).expect("linked when loaded")];
@@ -1234,29 +1336,49 @@ impl Runtime {
         }))
     }
 
-    fn evaluate(
-        &self,
-        expr: &Expr,
-        salt: u32,
-        scale: u32,
+    /// Where stage `index`'s expressions are evaluated at `column`, reading inputs through `read`.
+    fn place<'p, 'r>(
+        &'p self,
+        index: usize,
         column: [i64; 2],
-        read: &Read<'_>,
-    ) -> Result<f32, StageError> {
-        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, read);
+        read: &'p Read<'r>,
+    ) -> ColumnPlace<'p, 'r> {
+        let stage = &self.pack.stages[index];
+        ColumnPlace {
+            runtime: self,
+            salt: stage.salt,
+            scale: stage.scale,
+            column,
+            read,
+        }
+    }
+}
+
+/// One column of a stage, where its expressions' leaves read noise, inputs and the position.
+struct ColumnPlace<'p, 'r> {
+    runtime: &'p Runtime,
+    salt: u32,
+    scale: u32,
+    column: [i64; 2],
+    read: &'p Read<'r>,
+}
+
+impl Leaves for ColumnPlace<'_, '_> {
+    fn leaf(&self, expr: &Expr) -> Result<f32, StageError> {
+        let (column, read, pack) = (self.column, self.read, &self.runtime.pack);
         // The column's centre in WFC cells, so a formula means the same at every scale.
         let centre = [
-            (column[0] as f32 + 0.5) * scale as f32,
-            (column[1] as f32 + 0.5) * scale as f32,
+            (column[0] as f32 + 0.5) * self.scale as f32,
+            (column[1] as f32 + 0.5) * self.scale as f32,
         ];
         Ok(match expr {
-            Expr::Constant(value) => *value,
             Expr::Noise {
                 frequency,
                 octaves,
                 name,
             } => {
-                let stream = name.as_deref().map_or(salt, noise_stream);
-                value_noise(self.seed, stream, *frequency, *octaves, centre)
+                let stream = name.as_deref().map_or(self.salt, noise_stream);
+                value_noise(self.runtime.seed, stream, *frequency, *octaves, centre)
             }
             Expr::Input(name) => read(name, column[0], column[1])?,
             Expr::X => centre[0],
@@ -1266,37 +1388,20 @@ impl Runtime {
                 let turn = (centre[1] - y).atan2(centre[0] - x) / std::f32::consts::TAU;
                 turn.rem_euclid(1.0)
             }
-            Expr::Add(a, b) => value(a)? + value(b)?,
-            Expr::Sub(a, b) => value(a)? - value(b)?,
-            Expr::Mul(a, b) => value(a)? * value(b)?,
-            Expr::Min(a, b) => value(a)?.min(value(b)?),
-            Expr::Max(a, b) => value(a)?.max(value(b)?),
-            Expr::Abs(a) => value(a)?.abs(),
-            Expr::Floor(a) => value(a)?.floor(),
-            Expr::Sin(a) => value(a)?.sin(),
             Expr::Is(stage, names) => {
-                let index = self.pack.index(stage).expect("linked when loaded");
-                let known = self.pack.stages[index].kind.categories();
+                let index = pack.index(stage).expect("linked when loaded");
+                let known = pack.stages[index].kind.categories();
                 let here = read(stage, column[0], column[1])? as usize;
                 f32::from(u8::from(names.iter().any(|name| name == known[here])))
             }
-            Expr::Clamp(a, low, high) => value(a)?.clamp(*low, *high),
-            Expr::Smoothstep(low, high, a) => {
-                let t = ((value(a)? - low) / (high - low)).clamp(0.0, 1.0);
-                t * t * (3.0 - 2.0 * t)
-            }
-            Expr::Remap(a, (from_low, from_high), (to_low, to_high)) => {
-                to_low + (value(a)? - from_low) / (from_high - from_low) * (to_high - to_low)
-            }
-            Expr::Curve(a, points) => curve(points, value(a)?),
             Expr::Match {
                 input: stage,
                 cases,
                 otherwise,
                 blend,
             } => {
-                let index = self.pack.index(stage).expect("linked when loaded");
-                let names = self.pack.stages[index].kind.categories();
+                let index = pack.index(stage).expect("linked when loaded");
+                let names = pack.stages[index].kind.categories();
                 let reach = i64::from(*blend);
                 // A tent in each direction, so a category's weight falls off smoothly with its
                 // distance from the column and the blend moves by a small step per column.
@@ -1318,40 +1423,43 @@ impl Runtime {
                         .iter()
                         .find(|(name, _)| name == names[category])
                         .map_or(otherwise.as_ref(), |(_, expr)| expr);
-                    blended += weight / total * value(case)?;
+                    blended += weight / total * evaluate(case, self)?;
                 }
                 blended
             }
-            Expr::Select {
-                when,
-                then,
-                otherwise,
-            } => {
-                let holds = self.holds(when, salt, scale, column, read)?;
-                value(if holds { then } else { otherwise })?
+            Expr::Row(table, column) => {
+                let index = pack.table_by_name[table];
+                let row = self
+                    .runtime
+                    .focused
+                    .get(&index)
+                    .ok_or_else(|| StageError::NoFocus(table.clone()))?;
+                row.values[pack.tables[index]
+                    .column(column)
+                    .expect("checked when loaded")]
             }
+            Expr::Parent(_) | Expr::Random(..) | Expr::Index | Expr::Count | Expr::Share(_) => {
+                unreachable!("a stage's expressions are checked when loaded")
+            }
+            Expr::Constant(_)
+            | Expr::Add(..)
+            | Expr::Sub(..)
+            | Expr::Mul(..)
+            | Expr::Min(..)
+            | Expr::Max(..)
+            | Expr::Abs(_)
+            | Expr::Floor(_)
+            | Expr::Sin(_)
+            | Expr::Clamp(..)
+            | Expr::Smoothstep(..)
+            | Expr::Remap(..)
+            | Expr::Curve(..)
+            | Expr::Select { .. } => unreachable!("evaluate combines these itself"),
         })
     }
 }
 
 impl Runtime {
-    /// Whether `condition` holds at `column`.
-    fn holds(
-        &self,
-        condition: &Condition,
-        salt: u32,
-        scale: u32,
-        column: [i64; 2],
-        read: &Read<'_>,
-    ) -> Result<bool, StageError> {
-        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, read);
-        Ok(match condition {
-            Condition::Less(a, b) => value(a)? < value(b)?,
-            Condition::Greater(a, b) => value(a)? > value(b)?,
-            Condition::Between(a, low, high) => (*low..=*high).contains(&value(a)?),
-        })
-    }
-
     /// The category Rules stage `index` gives `column`: the first rule whose conditions all hold,
     /// or its fallback.
     fn categorise(
@@ -1371,10 +1479,11 @@ impl Runtime {
                 .position(|known| *known == name)
                 .expect("every category is named") as u8
         };
+        let place = self.place(index, column, read);
         for rule in rules {
             let mut all = true;
             for condition in &rule.when {
-                if !self.holds(condition, stage.salt, stage.scale, column, read)? {
+                if !holds(condition, &place)? {
                     all = false;
                     break;
                 }
@@ -1429,21 +1538,6 @@ fn between(
 /// own stream, whose salt is the stage's name alone.
 fn noise_stream(name: &str) -> u32 {
     salt(name) ^ 0x6E6F_6973
-}
-
-/// A piecewise-linear curve at `x`: level beyond its first and last points, linear between.
-/// The points are in increasing x and at least two, which loading checks.
-fn curve(points: &[(f32, f32)], x: f32) -> f32 {
-    let (first, last) = (points[0], points[points.len() - 1]);
-    if x <= first.0 {
-        return first.1;
-    }
-    if x >= last.0 {
-        return last.1;
-    }
-    let after = points.partition_point(|point| point.0 <= x);
-    let ((x0, y0), (x1, y1)) = (points[after - 1], points[after]);
-    y0 + (x - x0) / (x1 - x0) * (y1 - y0)
 }
 
 /// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the

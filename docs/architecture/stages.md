@@ -57,8 +57,8 @@ masks ([solver.md](solver.md#the-prior)).
   edge-keyed hashes (a river's crossing point hashed from the shared edge), not by reading each
   other. (G2, G4, G5, G6, G7, G8.) Region jobs exist as Region stages, whose job is Rust code a
   game gives the runtime. Levels exist as a scale per stage, with data flowing only from coarse to
-  fine, as in Unreal PCG's hierarchical generation; reading a parent's record is part of tables of
-  facts, **not built yet** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
+  fine, as in Unreal PCG's hierarchical generation; a generated table reads its parent row, and a
+  runtime focused on one row reads its columns ([packs.md](../reference/packs.md#tables-of-facts)).
 - **Scheduling.** Providers first, with lifetimes held by what needs them, following LayerProcGen.
   The WFC generator's schedule is the same pattern written by hand: parity 0, parity 1 and the
   repair classes are levels of one stage, and the closure rule is provider-first generation
@@ -79,7 +79,7 @@ masks ([solver.md](solver.md#the-prior)).
 | **PointSet** | structure of arrays: position, rotation, scale, stable id, kind, attribute columns | sites, anchors, scatter candidates and placements, spawn points | `Sites` and `Points` |
 | **CurveSet** | polylines with per-vertex attributes (radius, flow, profile) and optional connectivity | roads, rivers, tunnels, room and site graphs | `Curves` from region jobs: points and one value per point; connectivity and rasterising are [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
-| **Table** | named rows of facts, each with an id, a position or a curve, and typed columns; given by the game or generated from a parent table | a history the game simulated, planet or system parameters, a location table | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
+| **Table** | named rows of facts, each with an id and typed columns; given by the game or generated from a parent table | a history the game simulated, planet or system parameters, a location table | given and generated tables with number and name columns; a position is two columns; curves are [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Prior** and **TileGrid** | the WFC stage's input and output | tiles | `Tiles`, a town's chunk |
 | **Edits** | an operation log keyed by stable ids and cells | brushes, removed and moved placements, terrain deltas | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 
@@ -102,7 +102,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 | **Assemble** | a jigsaw or room graph grown from one site into Stamps, with a bounded extent | the extent | G1, G7, G8 | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
 | **Apply** | rasterises curves and stamps into fields or Priors in a stable order | the primitives' bounds | G1, G3, G8 | `Flatten` for site footprints ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
 | **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4 to G8 | a Region stage running a `RegionJob` the game registers, producing curves |
-| **Table** | rows given by the game, or generated once per parent row by expressions | its parent table | G2, G3, G6 | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
+| **Table** | rows given by the game, or generated once per parent row by expressions | its parent table | G2, G3, G6 | built; stages read a focused row, and Sites, Solve, Scatter and Apply reading tables are [#72](https://github.com/AntonTegnelov/wave_forge/issues/72) |
 | **Emit** | products for an engine | 0 | N1, N3, P1 | done by the engine integrations today |
 | **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4 | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 
@@ -163,8 +163,10 @@ not host it. Such a world comes together in three phases, and Wave Forge owns th
 3. **Realisation,** pure: stages turn the facts into what the player sees where the player goes. A
    site becomes a town of its culture's rule set, or ruins; a road is carved into the ground.
 
-The seam is **tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): named tables of rows, each with an id, a position or a
-curve, and typed columns. A game gives a table at run time, from Rust or from GDScript. A history is
+The seam is **tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): named tables of rows, each with an id and typed columns.
+A position is two of the columns, and a curve will be a column of its own
+([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)); keeping positions as ordinary columns lets a generated table compute them
+with the same expressions as any other value. A game gives a table at run time, from Rust or from GDScript. A history is
 only data, so it can be written in any language and run anywhere, unlike a stage, which runs on the
 stages' thread and must stay pure. Stages read tables as they read fields: Sites from a table, a
 Solve choosing its rule set by a column, Apply carving roads from curves. The world is then a
@@ -177,7 +179,9 @@ that row's columns, so one surface pack serves every planet. Generated rows have
 and given rows keep the game's ids, so neither ever shifts the other.
 
 A fact that changes regenerates only what depended on it, through the same invalidation as the edits
-log ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)). A history is an edits log
+log ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)). Today the unit is the stage: new facts drop every chunk of the stages that
+read a changed table, and of the stages below them. Chunks are the finer unit once stages read
+rows by position. A history is an edits log
 written before play, and a town the player burns during play is one more fact.
 
 The limits are deliberate. History needs a finite world, as Dwarf Fortress's does. Its cost and its

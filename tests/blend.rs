@@ -33,7 +33,11 @@ fn stage(name: &str, kind: StageKind) -> StageDef {
 }
 
 fn pack(stages: Vec<StageDef>) -> Result<Pack, PackError> {
-    Pack::from_file(PackFile { version: 1, stages })
+    Pack::from_file(PackFile {
+        version: 1,
+        stages,
+        tables: Vec::new(),
+    })
 }
 
 /// Columns west of x = 0 are "low", the rest "high".

@@ -81,7 +81,11 @@ fn height() -> StageDef {
 }
 
 fn pack(stages: Vec<StageDef>) -> Result<Pack, PackError> {
-    Pack::from_file(PackFile { version: 1, stages })
+    Pack::from_file(PackFile {
+        version: 1,
+        stages,
+        tables: Vec::new(),
+    })
 }
 
 fn runtime(stages: Vec<StageDef>) -> Runtime {

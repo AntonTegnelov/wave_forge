@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wave_forge::stages::{Pack, Runtime, StageEvent, StageWorker};
+use wave_forge::stages::{Facts, Pack, RowId, Runtime, StageEvent, StageWorker};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 const PACK: &str = r#"(
@@ -165,4 +165,46 @@ fn each_stage_counts_the_products_it_generated_and_the_worker_reports_the_same()
         .map(|(name, timing)| (name.as_str(), timing.products))
         .collect();
     assert_eq!(reported, counted);
+}
+
+#[test]
+fn a_new_focus_drops_what_read_the_old_row_and_generates_it_again() {
+    const FACTS: &str = r#"(
+        version: 1,
+        tables: [(name: "worlds", kind: Generated(count: Constant(4.0), columns: [("sea", Random(0.0, 10.0))]))],
+        stages: [(name: "height", kind: Field(Sub(Mul(Noise(frequency: 0.04, octaves: 3), Constant(20.0)), Row("worlds", "sea"))))],
+    )"#;
+    let pack = Arc::new(Pack::parse(FACTS).expect("a valid pack"));
+    let facts = Facts::new(Arc::clone(&pack), 4).expect("facts");
+    let focused = |row: u64| {
+        let mut runtime = Runtime::new(Arc::clone(&pack), 4, SIZE);
+        runtime.set_facts(facts.clone()).expect("facts");
+        runtime.focus("worlds", RowId(vec![row])).expect("a row");
+        runtime
+    };
+    let chunk = ChunkCoord::new(0, 0, 0);
+    let mut direct = focused(2);
+    direct
+        .request(&[FocusPoint::new(chunk, 0)], &["height"])
+        .expect("a stage");
+    direct.run_until_idle().expect("the stages run");
+    let first = focused(1);
+    let mut worker = StageWorker::spawn(move || Ok(first));
+    worker.request(&[FocusPoint::new(chunk, 0)], &["height"]);
+    drain_until(&mut worker, |worker| {
+        worker.field("height", chunk).is_some()
+    });
+
+    worker.focus("worlds", RowId(vec![2]));
+    let events = drain_until(&mut worker, |worker| {
+        worker.field("height", chunk) == direct.field("height", chunk)
+    });
+
+    assert_eq!(
+        events.first(),
+        Some(&StageEvent::Dropped {
+            stage: "height".to_owned(),
+            chunk
+        })
+    );
 }

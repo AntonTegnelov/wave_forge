@@ -7,7 +7,8 @@ describes.
 
 ## A pack file
 
-A pack is RON, conventionally `*.world.ron`: a version and a list of named stages. A stage reads
+A pack is RON, conventionally `*.world.ron`: a version, a list of named stages and, optionally, a
+list of named tables of facts ([below](#tables-of-facts)). A stage reads
 other stages by name, and how far it reads follows from its parameters, so a pack never states a
 reach by hand. The order of the list is the order a stack view shows; a stage may read any other,
 earlier or later.
@@ -44,6 +45,8 @@ refuses, each time with a `PackError` that names the stage:
 | `UnknownInput` | a stage reads a name no stage has |
 | `Invalid` | a parameter is out of range, or a stage reads an input of the wrong type (a field where it needs sites, say) |
 | `Cycle` | stages read each other in a cycle |
+| `DuplicateTable` | two tables share a name |
+| `InvalidTable` | a table's parameter or expression is wrong, or its parents lead back to it |
 
 `Pack::reach(target, chunk_size)` reports, for every stage `target` depends on, how many WFC cells
 beyond a column of `target` it has to be generated: the largest sum of reaches along any path, each
@@ -66,6 +69,61 @@ lies in. Positions in expressions (`X`, `Y`, `Distance`, `Angle`, and noise) are
 every scale, so a formula means the same at any scale. Field, Blur, Rules and Region stages can be
 coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
 fields.
+
+## Stages
+
+## Tables of facts
+
+A table holds rows, each with an id and a value per column. Stages read tables; tables never read
+stages. A **given** table's rows come from the game at run time, a history it simulated say. A
+**generated** table's rows are computed from the seed, once per row of its parent table or once in
+all, which describes hierarchies like a galaxy's sectors, systems and bodies.
+
+```ron
+tables: [
+    (name: "villages", kind: Given(columns: [("population", Number), ("culture", Names(["river", "hill"]))])),
+    (name: "sectors", kind: Generated(count: Constant(64.0), columns: [("mass", Floor(Random(0.0, 100000.0)))])),
+    (name: "systems", kind: Generated(parent: Some("sectors"), count: Floor(Random(1.0, 12.0)), columns: [
+        ("mass", Share("mass")),
+        ("radius", Random(4.0, 40.0)),
+    ])),
+],
+```
+
+- A given column holds a `Number` or one of a list of `Names`, which expressions read as its index.
+- A generated table's `count` and columns are expressions. They read what a stage's expressions
+  cannot, and nothing a stage's can:
+
+| Expression | Value | Where |
+|---|---|---|
+| `Parent("column")` | the parent row's value | count and columns |
+| `Random(low, high)` | a number from `low` up to `high`, from the row's hash stream and its column's; every `Random` of one column draws the same number, spread over its own range | count and columns |
+| `Index`, `Count` | the row's place among its parent's children, from 0, and how many there are | columns |
+| `Share("column")` | the row's part of the parent's whole-number value, split by hashed weights into whole numbers that add up to it exactly | columns |
+
+- The count is rounded down and must lie from 0 to `MAX_CHILDREN` (65 536), and a shared value
+  must be a whole number from 0 to `MAX_SHARED` (2^24, where every whole number is exact in an
+  `f32`). Either failing is a `StageError::Table` naming the table and the parent row.
+- **Ids.** A given row's `RowId` is the game's own id; a generated row's is its parent's id followed
+  by its index, or its index alone without a parent. Adding a given row, or changing one parent's
+  children, never changes another row's id or values.
+- A position is two number columns, and a stage that reads positions names them. Curves in tables
+  are not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)).
+
+`Facts::new(pack, seed)` computes every generated table, with the given ones empty.
+`facts.give(table, rows)` replaces a given table's rows, each a `GivenRow` of the game's id and a
+`Value` per column, and recomputes every table below it; it refuses a missing or unknown column, a
+number that is not finite, a name not in its column's list, two rows of one id and a generated
+table, and changes nothing when it does. `facts.table(name)` reads a table's rows in the order of
+their ids. `Facts` is cheap to clone: a game keeps its own and hands a copy to each runtime.
+
+A stage reads a table through the row its runtime is focused on: `Row("systems", "radius")` in a
+Field expression or a Rules condition is that row's value. `runtime.set_facts(facts)` gives a
+runtime its facts, and `runtime.focus("systems", id)` focuses it on a row, which is how one surface
+pack serves every planet. Both drop every product of the stages that read a changed table, and of
+the stages that read those, and return them as `request` does; the request generates them again.
+A stage reading a row with none focused fails with `StageError::NoFocus`. Sites, Solve, Scatter and
+Apply reading tables are not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
 
 ## Stages
 
@@ -104,6 +162,7 @@ in cells, measured from the world's origin to the column's centre, along the lat
 | `Smoothstep(low, high, a)` | 0 at or below `low`, 1 at or above `high`, and a smooth step between |
 | `Remap(a, (from_low, from_high), (to_low, to_high))` | `a` mapped linearly from one range onto the other, not clamped |
 | `Curve(a, [(x, y), ...])` | a piecewise-linear curve through points in increasing x, level beyond its ends |
+| `Row("table", "column")` | a column of the row the runtime is focused on in a table ([Tables of facts](#tables-of-facts)) |
 | `Select(when: Less(a, b), then: c, otherwise: d)` | `c` where `a < b`, else `d`; `Greater(a, b)` compares the other way, and `Between(a, low, high)` holds where `a` is in the range, both ends included |
 
 An unnamed `Noise` draws from its stage's own stream, keyed by the world seed, the stage's name and
@@ -259,7 +318,8 @@ let trees = runtime.points("trees", chunk);
   (a town solver may own a device that belongs to its thread). `request` sends a new request;
   `drain` returns `StageEvent::Generated` and `StageEvent::Dropped` events and keeps every product
   shared for reading; `timings` reports each stage's cost as of the last drain; `failure` reports
-  why the thread stopped, if it did.
+  why the thread stopped, if it did. `set_facts` and `focus` send a runtime's facts and focus to
+  the thread; what they make stale arrives as drops.
 
 **Named hash streams.** Every random decision draws from `pcg3d` keyed by the world seed and an
 FNV-1a salt of the stage's name, so adding, removing or reordering stages changes no other stage.
