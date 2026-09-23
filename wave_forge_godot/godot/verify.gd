@@ -445,7 +445,9 @@ func _check() -> void:
 	# The point of the worker thread: building the device, compiling kernels and dispatching all
 	# happen off Godot's own thread, so the main loop keeps its frame time while a world appears.
 	if slowest_process_ms > PROCESS_MAX_MS:
-		_fail("Godot's thread spent %.1f ms on its slowest frame" % slowest_process_ms)
+		_fail("Godot's thread spent %.1f ms on its slowest frame; the node's slowest took %.1f ms: %d events and their signals %.1f ms, %d chunks' colliders %.1f ms, navigation %.1f ms" % [
+			slowest_process_ms, stats["slowest_frame_ms"], stats["slowest_frame_events"], stats["slowest_frame_signals_ms"],
+			stats["slowest_frame_colliders"], stats["slowest_frame_colliders_ms"], stats["slowest_frame_navigation_ms"]])
 		return
 	if stats["process_ms_p99"] > NODE_P99_MS:
 		_fail("the node's own process took %.2f ms at the 99th percentile" % stats["process_ms_p99"])

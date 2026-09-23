@@ -171,8 +171,10 @@ pub struct WaveForgeWorld {
     navigation: HashMap<ChunkCoord, NavigationChunk>,
     /// The triangles of each module's collision shape, as the navigation bake reads them.
     shape_faces: HashMap<String, Vec<[f32; 3]>>,
-    /// Milliseconds of Godot's thread that `process` took on each recent frame.
+    /// Milliseconds of Godot's thread that `process` took on each recent frame, and what the
+    /// slowest frame since the start spent its time on.
     process_ms: Timings,
+    slowest_frame: FrameCost,
     /// How many navigation bakes have finished, the milliseconds from asking for each recent one to
     /// its mesh being in place, and the milliseconds of Godot's thread each took to prepare and
     /// hand over, and to put in its region once baked.
@@ -180,6 +182,24 @@ pub struct WaveForgeWorld {
     bake_ms: Timings,
     bake_start_ms: Timings,
     bake_finish_ms: Timings,
+}
+
+/// What one frame of `process` cost Godot's thread, and what it spent it on.
+#[derive(Clone, Copy, Default)]
+struct FrameCost {
+    ms: f64,
+    /// Events drained from the worker, and the milliseconds spent emitting them as signals,
+    /// which includes the handlers a game connected to them.
+    events: usize,
+    signals_ms: f64,
+    /// Chunks whose bodies were built, and the milliseconds that took.
+    colliders: usize,
+    colliders_ms: f64,
+    navigation_ms: f64,
+}
+
+fn elapsed_ms(since: std::time::Instant) -> f64 {
+    since.elapsed().as_secs_f64() * 1000.0
 }
 
 /// A chunk's navigation region and the mesh baked for it.
@@ -220,6 +240,7 @@ impl INode for WaveForgeWorld {
             navigation: HashMap::new(),
             shape_faces: HashMap::new(),
             process_ms: Timings::new(RECENT_FRAMES),
+            slowest_frame: FrameCost::default(),
             baked: 0,
             bake_ms: Timings::new(RECENT_BAKES),
             bake_start_ms: Timings::new(RECENT_BAKES),
@@ -274,6 +295,10 @@ impl INode for WaveForgeWorld {
                 .emit(&GString::from(&reason));
             return;
         }
+        let mut frame = FrameCost {
+            events: events.len(),
+            ..FrameCost::default()
+        };
         let mut updated = Vec::new();
         for event in events {
             match event {
@@ -291,10 +316,18 @@ impl INode for WaveForgeWorld {
                 }
             }
         }
-        self.update_colliders(&updated);
+        frame.signals_ms = elapsed_ms(processing);
+        let colliding = std::time::Instant::now();
+        frame.colliders = self.update_colliders(&updated);
+        frame.colliders_ms = elapsed_ms(colliding);
+        let navigating = std::time::Instant::now();
         self.update_navigation(&updated);
-        self.process_ms
-            .push(processing.elapsed().as_secs_f64() * 1000.0);
+        frame.navigation_ms = elapsed_ms(navigating);
+        frame.ms = elapsed_ms(processing);
+        self.process_ms.push(frame.ms);
+        if frame.ms > self.slowest_frame.ms {
+            self.slowest_frame = frame;
+        }
     }
 }
 
@@ -667,6 +700,11 @@ impl WaveForgeWorld {
     /// finished (`navigation_baked`) and the polygons of the meshes in place
     /// (`navigation_polygons`).
     ///
+    /// What the node's slowest frame since the start spent Godot's thread on: `slowest_frame_ms`
+    /// in all, `slowest_frame_events` drained and `slowest_frame_signals_ms` emitting them (the
+    /// handlers connected to them included), `slowest_frame_colliders` chunks given bodies in
+    /// `slowest_frame_colliders_ms`, and `slowest_frame_navigation_ms`.
+    ///
     /// And the `_median`, `_p99` and `_max` of recent timings in milliseconds, once there are
     /// some: `process_ms`, the node's own time on Godot's thread per frame; `navigation_bake_ms`,
     /// from asking for a chunk's bake to its mesh being in place; `navigation_start_ms` and
@@ -694,6 +732,13 @@ impl WaveForgeWorld {
             .map(|chunk| i64::from(chunk.mesh.get_polygon_count()))
             .sum();
         out.set("navigation_polygons", polygons);
+        let slowest = self.slowest_frame;
+        out.set("slowest_frame_ms", slowest.ms);
+        out.set("slowest_frame_events", slowest.events as i64);
+        out.set("slowest_frame_signals_ms", slowest.signals_ms);
+        out.set("slowest_frame_colliders", slowest.colliders as i64);
+        out.set("slowest_frame_colliders_ms", slowest.colliders_ms);
+        out.set("slowest_frame_navigation_ms", slowest.navigation_ms);
         for (name, timings) in [
             ("process", &self.process_ms),
             ("navigation_bake", &self.bake_ms),
@@ -721,10 +766,12 @@ impl WaveForgeWorld {
     /// A chunk is one static body with a shape per instance. Every shape is added before the body
     /// joins the space: Jolt rebuilds a body's compound shape on each shape added once it is in a
     /// space, which made a chunk of 200 boxes cost 3.1 ms instead of 0.12 (docs/engine-integration.md).
-    fn update_colliders(&mut self, updated: &[ChunkCoord]) {
+    ///
+    /// Returns how many chunks got a body.
+    fn update_colliders(&mut self, updated: &[ChunkCoord]) -> usize {
         let (Some(worker), Some(rules), Some(focus)) = (&self.worker, &self.rules, self.followed)
         else {
-            return;
+            return 0;
         };
         let radius = self.collider_radius;
         let within = |chunk: ChunkCoord| {
@@ -748,7 +795,7 @@ impl WaveForgeWorld {
             }
         }
         if self.collision_shapes.is_empty() {
-            return;
+            return 0;
         }
         let Some(space) = self
             .base()
@@ -756,7 +803,7 @@ impl WaveForgeWorld {
             .and_then(|viewport| viewport.find_world_3d())
             .map(|world| world.get_space())
         else {
-            return;
+            return 0;
         };
         let owner = u64::from_ne_bytes(self.base().instance_id().to_i64().to_ne_bytes());
         let layout = self.space();
@@ -766,6 +813,7 @@ impl WaveForgeWorld {
             .filter(|&chunk| within(chunk))
             .filter(|chunk| !self.bodies.contains_key(chunk) || updated.contains(chunk))
             .collect();
+        let built = wanted.len();
         for coord in wanted {
             let chunk = worker
                 .chunk(coord)
@@ -795,6 +843,7 @@ impl WaveForgeWorld {
                 physics.free_rid(old);
             }
         }
+        built
     }
 
     /// Keeps a navigation mesh on every chunk within `navigation_radius` of the followed chunk:

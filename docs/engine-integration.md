@@ -468,6 +468,12 @@ The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
 
   With navigation on, Godot's slowest frame in the check is 3.4 ms, and the node's own time is
   0.56 ms per frame at the 99th percentile.
+
+  `stats()` also breaks down the node's slowest frame since the start. In four runs of the check
+  it was 2.6 to 4.7 ms: bodies for 4 to 9 chunks at about 0.3 ms each (the collider radius of 1
+  bounds them at 9) and one bake prepared (1.5 to 1.9 ms), with the signals under 0.2 ms. Both parts
+  are bounded, so a slower frame than that points outside the node; one run in six before the
+  breakdown existed measured 12 ms.
 - **D, Phase 2 layers.** `NoiseConfig` with the FastNoiseLite port and golden tests ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45));
   HeightTile, MaterialTile and CoverMap with reference grass and wind shaders in both engines
   ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)); scatter from density with integer existence decisions; splines; merged far proxies and
