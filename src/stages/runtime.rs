@@ -190,9 +190,12 @@ pub enum StageError {
     NoTownSolver(String),
     #[error("stage {0:?} names a region job the runtime was not given")]
     NoRegionJob(String),
-    /// Only stages computed column by column from what they read, fields, rules and blurs of such
-    /// stages, can be sampled without chunks.
-    #[error("stage {0:?} cannot be sampled without chunks: it is not a field, rules or blur stage")]
+    /// Only stages computed column by column from what they read (Field, Rules, Blur, Delta and
+    /// Area stages over such stages) can be sampled without chunks.
+    #[error(
+        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, blur, delta or area \
+         stage"
+    )]
     NotSampled(String),
     #[error("stage {stage:?} gave up on region {region:?} after {} attempts: {}", log.len(), log.join("; "))]
     RegionRejected {
@@ -993,8 +996,8 @@ impl Runtime {
 
     /// A stage's value at a point in WFC cells without generating any chunk: a field's value, or a
     /// category's index, at the column of the stage the point lies in. It equals what the chunk
-    /// holding that column would hold. Only field, rules and blur stages whose inputs are too can
-    /// be sampled; the pack's other kinds need neighbouring chunks. A runtime made only to sample
+    /// holding that column would hold. Only Field, Rules, Blur, Delta and Area stages whose inputs
+    /// are too can be sampled; the pack's other kinds need neighbouring chunks. A runtime made only to sample
     /// never holds a product, so a game can keep one on any thread.
     ///
     /// # Errors
@@ -1063,6 +1066,10 @@ impl Runtime {
             StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
             StageKind::Rules { .. } => f32::from(self.categorise(index, column, &read)?),
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
+            StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
+            StageKind::Area { input, distance } => {
+                f32::from(area(input, *distance, column, &read)?)
+            }
             StageKind::Sites { .. }
             | StageKind::TableSites { .. }
             | StageKind::TableCurves { .. }
@@ -1509,7 +1516,7 @@ impl Runtime {
         let read = |name: &str, x: i64, y: i64| {
             views[&self.pack.index(name).expect("linked when loaded")].get(x, y)
         };
-        if let StageKind::Rules { .. } = &stage.kind {
+        if let StageKind::Rules { .. } | StageKind::Area { .. } = &stage.kind {
             let [sx, sy] = self.size;
             let mut values = Vec::with_capacity((sx * sy) as usize);
             for y in 0..sy {
@@ -1518,7 +1525,12 @@ impl Runtime {
                         i64::from(chunk.x) * i64::from(sx) + i64::from(x),
                         i64::from(chunk.y) * i64::from(sy) + i64::from(y),
                     ];
-                    values.push(self.categorise(index, column, &read)?);
+                    values.push(match &stage.kind {
+                        StageKind::Area { input, distance } => {
+                            area(input, *distance, column, &read)?
+                        }
+                        _ => self.categorise(index, column, &read)?,
+                    });
                 }
             }
             return Ok(Product::Categories(Categories {
@@ -1545,6 +1557,7 @@ impl Runtime {
                 let value = match &stage.kind {
                     StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
                     StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
+                    StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
                     StageKind::Flatten { height, blend, .. } => {
                         let view = &views[&self.pack.index(height).expect("linked when loaded")];
                         let base = view.get(column[0], column[1])?;
@@ -1563,6 +1576,7 @@ impl Runtime {
                         }
                     }
                     StageKind::Sites { .. }
+                    | StageKind::Area { .. }
                     | StageKind::TableSites { .. }
                     | StageKind::TableCurves { .. }
                     | StageKind::Apply { .. }
@@ -2043,6 +2057,43 @@ fn blur(input: &str, radius: u32, column: [i64; 2], read: &Read<'_>) -> Result<f
         }
     }
     Ok(sum / ((2 * r + 1) * (2 * r + 1)) as f32)
+}
+
+/// The highest value of `input` less its lowest over the square of `radius` columns around
+/// `column`.
+fn delta(input: &str, radius: u32, column: [i64; 2], read: &Read<'_>) -> Result<f32, StageError> {
+    let r = i64::from(radius);
+    let (mut low, mut high) = (f32::INFINITY, f32::NEG_INFINITY);
+    for dy in -r..=r {
+        for dx in -r..=r {
+            let value = read(input, column[0] + dx, column[1] + dy)?;
+            low = low.min(value);
+            high = high.max(value);
+        }
+    }
+    Ok(high - low)
+}
+
+/// 1, `edge`, where one of the eight columns `distance` columns from `column` along the axes and
+/// the diagonals has another category of `input` than `column`; 0, `median`, where none has.
+fn area(input: &str, distance: u32, column: [i64; 2], read: &Read<'_>) -> Result<u8, StageError> {
+    let d = i64::from(distance);
+    let here = read(input, column[0], column[1])?;
+    for (dx, dy) in [
+        (-d, -d),
+        (0, -d),
+        (d, -d),
+        (-d, 0),
+        (d, 0),
+        (-d, d),
+        (0, d),
+        (d, d),
+    ] {
+        if read(input, column[0] + dx, column[1] + dy)? != here {
+            return Ok(1);
+        }
+    }
+    Ok(0)
 }
 
 /// A reading stage's column `x`, `y` in an input `ratio` times coarser, from the input's own

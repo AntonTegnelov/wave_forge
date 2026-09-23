@@ -133,7 +133,7 @@ its row ([Solve](#solve)). Roads from a table's curves are not built yet
 
 ## Stages
 
-Every stage works on a two-dimensional lattice of cell columns at its scale. Every stage produces one of five types (a field, categories, sites, tiles or points), and loading refuses a stage that
+Every stage works on a two-dimensional lattice of cell columns at its scale. Every stage produces one of six types (a field, categories, sites, tiles, points or curves), and loading refuses a stage that
 reads one type as another.
 
 | Kind | Produces | Reads, and how far |
@@ -141,6 +141,8 @@ reads one type as another.
 | `Field` | Field | the fields named by `Input` and the categories named by `Is`, 0 cells; the categories a `Match` names, `blend` cells |
 | `Rules` | Categories | what its conditions read, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
+| `Delta` | Field | one field, `radius` cells |
+| `Area` | Categories | one Rules stage, `distance` cells |
 | `Sites` | Sites | a height field, `region` chunks |
 | `TableSites` | Sites | a table's rows; a height field, `max_size` chunks |
 | `TableCurves` | Curves | a table's rows |
@@ -211,6 +213,21 @@ centre with a wobble around it, and noise.
 
 `Blur(input: "field", radius: r)`: the input averaged over the square of `r` cells around each
 column.
+
+### Delta
+
+`Delta(input: "field", radius: r)`: the highest value of the input less its lowest over the square
+of `r` cells around each column: how uneven the ground is there, what Valheim's location table calls
+terrain delta. A Rules condition or a Select over it keeps a location or a plant off steep ground.
+
+### Area
+
+`Area(input: "biome", distance: d)`: where each column lies in its category of a Rules stage. Its
+own categories are `median` and `edge`, in that order: `edge` where any of the eight columns `d`
+cells away, along the axes and the diagonals, has another category than the column, `median`
+elsewhere. That is Valheim's biome area, which keeps some locations to a biome's middle and puts
+others on its border. A field reads it as any Rules stage's categories, `Is("area", ["edge"])`, and
+loading refuses a distance of 0.
 
 ### Sites
 
@@ -360,8 +377,8 @@ let trees = runtime.points("trees", chunk);
   between; `is_idle` says whether anything is left.
 - `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
   its values over an area of its own columns, row by row with x fastest, without generating any
-  chunk: exactly what the chunks would hold. Field, Rules and Blur stages whose inputs are too can
-  be sampled; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
+  chunk: exactly what the chunks would hold. Field, Rules, Blur, Delta and Area stages whose
+  inputs are too can be sampled; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
   takes `&self` and holds no products, so a game can build a runtime just to sample, on any thread:
   an atlas of 256 by 256 world tiles takes 50 ms in release on the dev container. This is how a
   history the game simulates reads the world before play.
