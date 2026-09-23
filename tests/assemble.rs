@@ -325,3 +325,47 @@ fn pieces_that_cannot_grow_are_refused_by_stage() {
         );
     }
 }
+
+#[test]
+fn a_piece_placed_by_its_turn_and_position_opens_its_door_onto_what_it_joined() {
+    let mut runtime = runtime(VILLAGE);
+    let focus: Vec<FocusPoint> = area().into_iter().map(|c| FocusPoint::new(c, 0)).collect();
+    runtime.request(&focus, &["village"]).expect("stages");
+    runtime.run_until_idle().expect("the stages run");
+    let mut stamps: BTreeMap<InstanceId, Stamp> = BTreeMap::new();
+    for chunk in area() {
+        for stamp in runtime.stamps("village", chunk).expect("generated") {
+            stamps.insert(stamp.id, stamp.clone());
+        }
+    }
+    let inside = |stamp: &Stamp, (x, y): (f32, f32)| {
+        (stamp.min[0] as f32..stamp.max[0] as f32).contains(&x)
+            && (stamp.min[1] as f32..stamp.max[1] as f32).contains(&y)
+    };
+    // A house is 3 by 3 with its door in the middle of its south side, so as authored, centred on
+    // its origin, the door's cell centre is at (0, -1) and it faces (0, -1).
+    let turned = |stamp: &Stamp, (x, y): (f32, f32)| {
+        let [row_x, _, row_y] = stamp.y_up_basis();
+        (row_x[0] * x + row_x[2] * y, row_y[0] * x + row_y[2] * y)
+    };
+
+    let houses: Vec<&Stamp> = stamps.values().filter(|s| &*s.piece == "house").collect();
+
+    assert!(houses.len() > 5, "{} houses", houses.len());
+    for house in houses {
+        let (dx, dy) = turned(house, (0.0, -1.0));
+        let door = (house.position[0] + dx, house.position[1] + dy);
+        let outside = (door.0 + dx, door.1 + dy);
+        assert!(inside(house, door), "{house:?}: door at {door:?}");
+        // Pieces outside the area were not asked for.
+        if !(-64.0..64.0).contains(&outside.0) || !(-64.0..64.0).contains(&outside.1) {
+            continue;
+        }
+        assert!(
+            stamps
+                .values()
+                .any(|other| &*other.piece == "street" && inside(other, outside)),
+            "{house:?}: its door at {door:?} opens onto no street"
+        );
+    }
+}

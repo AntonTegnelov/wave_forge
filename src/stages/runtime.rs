@@ -128,6 +128,23 @@ pub struct Stamp {
     pub max: [i64; 2],
 }
 
+impl Stamp {
+    /// Its turn in a Y-up engine's axes (the lattice's x, the height, the lattice's y), as the rows
+    /// of a 3x3 matrix, exact for each quarter turn: a quarter turn takes the piece's +x to the
+    /// lattice's +y.
+    #[must_use]
+    pub fn y_up_basis(&self) -> [[f32; 3]; 3] {
+        let quarter = (self.turn * 4.0).round() as i32;
+        let (sin, cos) = match quarter.rem_euclid(4) {
+            0 => (0.0, 1.0),
+            1 => (1.0, 0.0),
+            2 => (0.0, -1.0),
+            _ => (-1.0, 0.0),
+        };
+        [[cos, 0.0, -sin], [0.0, 1.0, 0.0], [sin, 0.0, cos]]
+    }
+}
+
 /// A point a Scatter stage placed.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Point {
