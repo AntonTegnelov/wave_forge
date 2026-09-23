@@ -19,6 +19,8 @@ esac
 target="$(cargo metadata --no-deps --format-version 1 --manifest-path "$here/Cargo.toml" | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
 mkdir -p "$here/godot/bin"
 cp "$target/$profile/libwave_forge_godot.so" "$here/godot/bin/"
+# The city the library's own tests load, so the check reads the same file.
+cp "$here/../examples/city.ron" "$here/godot/city.ron"
 
 # Godot only scans for .gdextension files when the editor opens a project, so a headless run needs
 # the list it would have written.

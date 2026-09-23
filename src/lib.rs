@@ -43,10 +43,12 @@
 
 pub mod generator;
 pub mod scheduler;
+pub mod space;
 pub mod worker;
 
 pub use generator::{ChunkEvent, GeneratorStats, WorldGenerator};
 pub use scheduler::FocusPoint;
+pub use space::YUpSpace;
 pub use worker::Worker;
 
 pub use wfc_core::{

@@ -91,13 +91,62 @@ func _initialize() -> void:
 	if rules.is_empty():
 		_fail("res://rules.ron is missing")
 		return
-	if not world.start(rules):
+	if not world.load_rules(rules):
 		_fail("the rule set was refused")
+		return
+	# A tile set's tiles keep the names the file gives them, and have no rotations.
+	if world.tile_name(GRASS) != "grass" or world.tiles_named("forest") != PackedInt32Array([FOREST]) or world.tile_rotation(SAND) != 0:
+		_fail("the tile set's names are not the file's: %s" % world.tile_name(GRASS))
+		return
+	if not _check_module_catalogue():
+		return
+	if not world.start():
+		_fail("generation did not start")
 		return
 	Engine.max_fps = FPS
 	started_usec = Time.get_ticks_usec()
 	world.follow(_position_at(_start_x()))
 	print("verify: starting in chunk ", world.chunk_at(_position_at(_start_x())))
+
+## What a game needs to place a module set's models: names, rotations, tags, and where cells are.
+## Loading the rules is enough, so this node is never started.
+func _check_module_catalogue() -> bool:
+	var city: Node = ClassDB.instantiate("WaveForgeWorld")
+	var text := FileAccess.get_file_as_string("res://city.ron")
+	var ok := _check_city(city, text)
+	city.free()
+	return ok
+
+func _check_city(city: Node, text: String) -> bool:
+	if text.is_empty() or not city.load_rules(text):
+		_fail("res://city.ron could not be loaded")
+		return false
+	if city.tile_count() != 81:
+		_fail("the city has %d tiles, expected 81" % city.tile_count())
+		return false
+	var roads: PackedInt32Array = city.tiles_named("road_straight")
+	if roads.size() != 2 or city.tile_rotation(roads[1]) != 1 or city.tile_name(roads[1]) != "road_straight":
+		_fail("a straight road's turns are wrong: %s" % roads)
+		return false
+	# A quarter turn takes the lattice's +x to its +y, which is Godot's +z.
+	var turned: Vector3 = city.tile_basis(roads[1]) * Vector3.RIGHT
+	if not turned.is_equal_approx(Vector3.BACK):
+		_fail("a quarter turn takes +x to %s, expected +z" % turned)
+		return false
+	var street_level: PackedInt32Array = city.tiles_tagged("street_level")
+	if not street_level.has(city.tiles_named("grass")[0]) or street_level.has(city.tiles_named("air")[0]):
+		_fail("street level is %s" % street_level)
+		return false
+	# Cells run along x first, then the lattice's y (Godot's z), then up.
+	var origin := Vector3i(0, 0, 0)
+	var expected := {0: Vector3(0.5, 0.5, 0.5), 1: Vector3(1.5, 0.5, 0.5), 8: Vector3(0.5, 0.5, 1.5), 64: Vector3(0.5, 1.5, 0.5)}
+	for cell: int in expected:
+		var at: Vector3 = city.cell_position(origin, cell)
+		if not at.is_equal_approx(expected[cell]):
+			_fail("cell %d is at %s, expected %s" % [cell, at, expected[cell]])
+			return false
+	print("verify: the city's 81 tiles are named, turned and tagged as a game needs to place them")
+	return true
 
 ## Loads until the chunks around the start are there, then runs the route by the clock, whatever
 ## generation is doing.

@@ -11,10 +11,11 @@ use bevy_ecs::prelude::{Commands, IntoScheduleConfigs, Res, ResMut, Resource};
 use bevy_math::Vec3;
 use bevy_transform::components::GlobalTransform;
 use std::sync::Arc;
+use wave_forge::loader::load_rule_file;
 use wave_forge::{ChunkCoord, ChunkShape, Prior, Ruleset, WorldExtent};
 use wave_forge_bevy::{
     ChunkEvicted, ChunkFailed, ChunkUpdated, GenerationFocus, WaveForgeSettings,
-    WaveForgeSolverPlugin, WaveForgeSystems, WaveForgeWorld,
+    WaveForgeSolverPlugin, WaveForgeSystems, WaveForgeTiles, WaveForgeWorld,
 };
 use wfc_core::reference::ReferenceSolver;
 
@@ -186,6 +187,50 @@ fn a_chunk_sits_where_bevys_world_space_says_it_does() {
         settings.chunk_at(Vec3::new(-0.5, -0.5, -0.5)),
         ChunkCoord::new(-1, -1, -1)
     );
+}
+
+#[test]
+fn a_cell_sits_inside_its_chunk_in_bevys_world_space() {
+    let settings = settings(None);
+    let chunk = ChunkCoord::new(1, 2, 0);
+
+    // Cells run along x, then the lattice's y (Bevy's z), then up (Bevy's y).
+    assert_eq!(
+        settings.cell_translation(chunk, 0),
+        Vec3::new(9.0, 0.5, 17.0)
+    );
+    assert_eq!(
+        settings.cell_translation(chunk, 1),
+        Vec3::new(11.0, 0.5, 17.0)
+    );
+    assert_eq!(
+        settings.cell_translation(chunk, 4),
+        Vec3::new(9.0, 0.5, 19.0)
+    );
+    assert_eq!(
+        settings.cell_translation(chunk, 16),
+        Vec3::new(9.0, 1.5, 17.0)
+    );
+    for cell in 0..CHUNK.cells() {
+        assert_eq!(
+            settings.chunk_at(settings.cell_translation(chunk, cell)),
+            chunk
+        );
+    }
+}
+
+#[test]
+fn a_tile_turned_a_quarter_turns_its_model_from_x_to_the_lattice_y() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/city.ron");
+    let tiles = WaveForgeTiles(load_rule_file(&path).expect("the city loads"));
+    let roads = tiles.tiles_named("road_straight");
+
+    let turned = tiles.rotation_of(roads[1]) * Vec3::X;
+
+    // The lattice's +y is Bevy's +z.
+    assert_eq!(tiles.rotation(roads[1]), 1);
+    assert!(turned.abs_diff_eq(Vec3::Z, 1e-6), "{turned}");
+    assert!((tiles.rotation_of(roads[0]) * Vec3::X).abs_diff_eq(Vec3::X, 1e-6));
 }
 
 #[test]

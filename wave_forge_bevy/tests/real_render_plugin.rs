@@ -16,9 +16,11 @@ use bevy::app::PluginsState;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 use std::time::{Duration, Instant};
-use wave_forge::{BlockSolver, ChunkCoord, ChunkShape, Ruleset, WgpuBackend, WorldExtent};
+use wave_forge::loader::parse_rule_file;
+use wave_forge::{BlockSolver, ChunkCoord, ChunkShape, WgpuBackend, WorldExtent};
 use wave_forge_bevy::{
-    GenerationFocus, WaveForgePlugin, WaveForgeSettings, WaveForgeSystems, WaveForgeWorld,
+    GenerationFocus, WaveForgePlugin, WaveForgeSettings, WaveForgeSystems, WaveForgeTiles,
+    WaveForgeWorld,
 };
 use wfc_devtools::city::{self, city_prior};
 
@@ -49,7 +51,7 @@ fn build_chunks(
 #[ignore = "needs a compute device; run with --ignored in release mode"]
 fn bevys_own_device_generates_a_city() {
     let city = city::city();
-    let ruleset = Ruleset::from_modules(&city.modules).expect("the city compiles");
+    let rules = parse_rule_file(city::CITY_RON).expect("the city's rule file loads");
     let settings = WaveForgeSettings {
         seed: 11,
         extent: WorldExtent::new(CHUNK)
@@ -65,7 +67,9 @@ fn bevys_own_device_generates_a_city() {
     app.add_plugins(DefaultPlugins)
         // After Bevy's own plugins, so the device exists by the time this one finishes.
         .add_plugins(
-            WaveForgePlugin::new(ruleset, city_prior(&city, CHUNK.z), settings).warm(&[1, 2]),
+            WaveForgePlugin::from_rules(rules, city_prior(&city, CHUNK.z), settings)
+                .expect("the city's weights make a rule set")
+                .warm(&[1, 2]),
         )
         .init_resource::<Built>()
         .add_systems(Update, build_chunks.after(WaveForgeSystems))
@@ -126,4 +130,6 @@ fn bevys_own_device_generates_a_city() {
         "a game's system saw the chunks it would build"
     );
     assert!(built.0.contains(&ChunkCoord::new(0, 0, 0)), "{:?}", built.0);
+    let tiles = app.world().resource::<WaveForgeTiles>();
+    assert_eq!(tiles.num_tiles(), city.modules.variants.len());
 }

@@ -181,3 +181,44 @@ fn a_file_of_neither_form_is_refused() {
         "{result:?}"
     );
 }
+
+#[test]
+#[cfg(feature = "serde")]
+fn every_rotation_of_a_module_shares_its_name() {
+    let file = wfc_rules::loader::load_rule_file(&example("city.ron")).expect("the city loads");
+
+    let roads = file.tiles_named("road_straight");
+
+    assert_eq!(roads.len(), 2, "a straight road has two distinct turns");
+    let turns: Vec<u8> = roads.iter().map(|&tile| file.rotation(tile)).collect();
+    assert_eq!(turns, vec![0, 1]);
+    assert!(roads.iter().all(|&tile| file.name(tile) == "road_straight"));
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn tags_pick_every_rotation_of_every_tagged_module() {
+    let file = wfc_rules::loader::load_rule_file(&example("city.ron")).expect("the city loads");
+
+    let street_level = file.tiles_tagged("street_level");
+
+    assert!(street_level.contains(&file.tiles_named("grass")[0]));
+    assert!(
+        file.tiles_named("road_corner")
+            .iter()
+            .all(|t| street_level.contains(t))
+    );
+    assert!(!street_level.contains(&file.tiles_named("air")[0]));
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn a_tile_set_keeps_its_names_and_has_no_rotations() {
+    let file = wfc_rules::loader::load_rule_file(&example("simple-pattern.ron"))
+        .expect("the example loads");
+
+    assert_eq!(file.name(0), "Empty");
+    assert_eq!(file.tiles_named("Block"), vec![1]);
+    assert_eq!(file.rotation(1), 0);
+    assert!(file.tiles_tagged("anything").is_empty());
+}
