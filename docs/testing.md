@@ -19,6 +19,7 @@ Wave Forge is a parallel program whose main work happens on the GPU. Its bugs ra
 | Library contract | `tests/facade.rs` | What the facade promises: the same requests give the same world, the order they are asked in does not matter, no batch holds two chunks that share a face, a repair reports every chunk it rewrote, a worker generates the same world on a thread | No, it runs on the CPU reference |
 | End to end | `wfc-devtools/tests/` | Whole runs on reference rule sets: a 2D coastline and a small 3D city, with invariants checked and images written | Yes |
 | Streaming (opt-in) | `wfc-devtools/tests/streaming.rs` | A whole world asked for at once, and a city generated in front of a walking player against a 500 ms tick budget; `#[ignore]`d | Yes |
+| Hole census (opt-in) | `wfc-devtools/tests/hole_census.rs` | Five city worlds streamed; every chunk given up on solved again with more seeds, budgets and halos, and where each failed solve contradicted; `#[ignore]`d | Yes |
 | Game session (opt-in) | `wfc-devtools/tests/game_session.rs` | A player walks and runs through an unbounded city in wall-clock time, driving a `Worker` the way an engine does: nothing in view is ever missing or a hole, no rule breaks across seams, the main thread's cost per frame, bounded memory, chunks walked back to, paths across seams; `#[ignore]`d | Yes |
 | Bevy plugin | `wave_forge_bevy/tests/` | `wiring.rs` on the CPU reference: a focus entity generates around itself, messages arrive, eviction is reported, chunks and cells sit where Bevy's Y-up space says, and a tile's rotation turns its model the way the lattice turns it. `shared_device.rs` and `real_render_plugin.rs` (`#[ignore]`d) generate a city on a device Bevy created | Only the two ignored ones |
 | Godot extension | `wave_forge_godot/godot/verify.gd` | The city's tiles are named, turned and tagged the way a game needs to place them, and a focus runs a strip of chunks and back inside a real Godot, by the clock and without waiting for generation: the chunks beside it are there on every frame, chunks behind are dropped, tiles obey the rules across seams, a chunk returned to is unchanged, and Godot's process time stays under 8 ms at the 99th percentile | Yes, and a Godot binary |
@@ -119,9 +120,14 @@ parity); that is the determinism the library promises, and anything else is coun
 comparable. The share of walkable cells in the largest network at the end is printed, not
 asserted: it is a property of the module set ([constraints.md](constraints.md)).
 
-`no_chunk_in_view_is_a_hole` fails today. It is the bar of
-[#31](https://github.com/AntonTegnelov/wave_forge/issues/31), held rather than loosened so that the
-suite says when it is met.
+`no_chunk_in_view_is_a_hole` holds the bar that no chunk is left unplaced, and so do both
+streaming tests. When one fails, `hole_census.rs` says why: it streams five city worlds and solves
+every chunk given up on again with more seeds, more budget and every halo, and reports where each
+failed solve contradicted.
+
+```bash
+cargo test -p wfc-devtools --release --test hole_census -- --ignored --nocapture --test-threads=1
+```
 
 ## The engine integrations
 
@@ -152,5 +158,4 @@ not expose `VK_KHR_swapchain`; that only limits the backend discussed in
 
 - **Golden images are still missing.** Generation through the facade is reproducible, and `tests/facade.rs` compares whole worlds cell for cell, but the tests that render (the end-to-end pair) still assert invariants rather than comparing against a stored image.
 - **Kernel internals are tested through whole-region results** (A-16). A wrong sweep or a bad checkpoint shows up as an invalid or unsolved region, which is a coarse signal; the checkpoint-ring bug that `every_reported_success_is_a_valid_chunk` caught is the kind of thing a unit test would have caught sooner.
-- **The city leaves holes.** `game_session::no_chunk_in_view_is_a_hole` fails: 13 chunks in view could not be placed on the 776 m route, 18 of 432 generated. The streaming suite still tolerates up to 5%. Both are a property of the module set ([constraints.md](constraints.md)) and are [#31](https://github.com/AntonTegnelov/wave_forge/issues/31).
 - **What a game draws is not tested here.** Meshes, colliders, draw cost, and the city inside Godot come with [#30](https://github.com/AntonTegnelov/wave_forge/issues/30), [#34](https://github.com/AntonTegnelov/wave_forge/issues/34) and the walk demo ([roadmap.md](roadmap.md#mvp-engine-integrations-and-a-walkable-city)).
