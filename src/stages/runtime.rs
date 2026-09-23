@@ -7,6 +7,7 @@
 //! and the stage reads them only through a view bounded by that area. Whatever order chunks are
 //! asked for in, each is computed from the same inputs and comes out the same.
 
+use super::edits::{Edit, Edits};
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId, Table};
 use super::pack::{
@@ -257,6 +258,8 @@ pub enum StageError {
     },
     #[error("the pack names no noise {0:?}")]
     UnknownNoise(String),
+    #[error("an edit cannot be applied: {0}")]
+    Edit(String),
     #[error("the pack gives the world no bound")]
     Unbounded,
     #[error("no table is named {0:?}")]
@@ -377,6 +380,8 @@ pub struct Runtime {
     /// is needed.
     placed: BTreeMap<RegionKey, Arc<Placed>>,
     facts: Option<Facts>,
+    /// The player's edits, folded from their log, applied to every product as it is generated.
+    edits: Folded,
     /// The noises Field expressions read by name: the pack's, with any the engine replaced.
     noises: BTreeMap<String, NoiseConfig>,
     /// The focused row of each table that has one, by table index.
@@ -391,6 +396,18 @@ pub struct Runtime {
 struct Placed {
     sites: Vec<Site>,
     log: Vec<String>,
+}
+
+/// A log of edits folded into what generation looks up.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Folded {
+    removed: BTreeSet<InstanceId>,
+    /// Where each moved point stands now, and its turn.
+    moved: BTreeMap<InstanceId, ([f32; 3], f32)>,
+    /// What each field stage's column has been raised by in all, by stage index and column.
+    raised: BTreeMap<(usize, (i64, i64)), f32>,
+    /// Where each removed or moved point stood when it was generated.
+    stood: BTreeMap<InstanceId, [f32; 2]>,
 }
 
 /// Which chunks of a stage no longer hold what they would be generated as now.
@@ -427,6 +444,7 @@ impl Runtime {
             towns: None,
             solved: BTreeMap::new(),
             facts: None,
+            edits: Folded::default(),
             focused: BTreeMap::new(),
             footprints: BTreeMap::new(),
         }
@@ -860,6 +878,161 @@ impl Runtime {
         Ok(self)
     }
 
+    /// Gives the runtime the player's edits, replacing any it had, and drops every product the
+    /// change reaches, returning them as [`Runtime::request`] does; the request generates them
+    /// again, with the edits. Only the chunks whose edits changed, and what reads them within its
+    /// reach, are dropped. On an error nothing changes.
+    ///
+    /// # Errors
+    /// [`StageError::Edit`] if an edit raises a stage that is not a field or names a point of no
+    /// Scatter stage of the pack.
+    pub fn set_edits(&mut self, edits: &Edits) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let folded = self.fold(edits)?;
+        let mut stale: BTreeMap<usize, BTreeSet<ChunkCoord>> = BTreeMap::new();
+        let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+        let keys: BTreeSet<(usize, (i64, i64))> = self
+            .edits
+            .raised
+            .keys()
+            .chain(folded.raised.keys())
+            .copied()
+            .collect();
+        for key in keys {
+            if self.edits.raised.get(&key) != folded.raised.get(&key) {
+                let (stage, (x, y)) = key;
+                let chunk = ChunkCoord::new(
+                    i32::try_from(x.div_euclid(sx)).expect("a chunk coordinate"),
+                    i32::try_from(y.div_euclid(sy)).expect("a chunk coordinate"),
+                    0,
+                );
+                stale.entry(stage).or_default().insert(chunk);
+            }
+        }
+        let points: BTreeSet<InstanceId> = self
+            .edits
+            .stood
+            .keys()
+            .chain(folded.stood.keys())
+            .copied()
+            .collect();
+        for id in points {
+            let before = (self.edits.removed.contains(&id), self.edits.moved.get(&id));
+            let after = (folded.removed.contains(&id), folded.moved.get(&id));
+            if before != after {
+                let at = folded.stood.get(&id).or_else(|| self.edits.stood.get(&id));
+                let at = at.expect("a point edit knows where its point stood");
+                let chunk = ChunkCoord::new(
+                    (at[0] / sx as f32).floor() as i32,
+                    (at[1] / sy as f32).floor() as i32,
+                    0,
+                );
+                stale
+                    .entry(
+                        self.point_stage(id)
+                            .expect("folded edits name a Scatter stage"),
+                    )
+                    .or_default()
+                    .insert(chunk);
+            }
+        }
+        self.edits = folded;
+        Ok(self.invalidate(
+            stale
+                .into_iter()
+                .map(|(stage, chunks)| (stage, Stale::Chunks(chunks)))
+                .collect(),
+        ))
+    }
+
+    /// The edits of `log` as lookups, checked against the pack.
+    fn fold(&self, edits: &Edits) -> Result<Folded, StageError> {
+        let mut folded = Folded::default();
+        for edit in &edits.log {
+            match edit {
+                Edit::Remove { point, at } => {
+                    let id = InstanceId::from(*point);
+                    self.point_stage(id)?;
+                    folded.moved.remove(&id);
+                    folded.removed.insert(id);
+                    folded.stood.entry(id).or_insert(*at);
+                }
+                Edit::Move {
+                    point,
+                    from,
+                    to,
+                    turn,
+                } => {
+                    let id = InstanceId::from(*point);
+                    self.point_stage(id)?;
+                    folded.removed.remove(&id);
+                    folded.moved.insert(id, (*to, *turn));
+                    folded.stood.entry(id).or_insert(*from);
+                }
+                Edit::Raise { stage, column, by } => {
+                    let index = self
+                        .pack
+                        .index(stage)
+                        .filter(|&index| self.pack.stages[index].kind.output() == Output::Field)
+                        .ok_or_else(|| {
+                            StageError::Edit(format!("{stage:?} is no field stage to raise"))
+                        })?;
+                    *folded.raised.entry((index, *column)).or_default() += by;
+                }
+            }
+        }
+        Ok(folded)
+    }
+
+    /// The Scatter stage that placed the point `id`.
+    fn point_stage(&self, id: InstanceId) -> Result<usize, StageError> {
+        self.pack
+            .stages
+            .iter()
+            .position(|stage| {
+                matches!(stage.kind, StageKind::Scatter { .. })
+                    && point_stage_id(stage.salt) == id.stage()
+            })
+            .ok_or_else(|| StageError::Edit(format!("no Scatter stage placed the point {id:?}")))
+    }
+
+    /// `product` of stage `index` with the player's edits applied: raises added to a field, and a
+    /// Scatter stage's points removed or moved.
+    fn edited(&self, index: usize, product: Product) -> Product {
+        match product {
+            Product::Field(mut field) => {
+                let [sx, sy] = [i64::from(field.size[0]), i64::from(field.size[1])];
+                let (x0, y0) = (i64::from(field.chunk.x) * sx, i64::from(field.chunk.y) * sy);
+                for (&(_, (x, y)), by) in self
+                    .edits
+                    .raised
+                    .range((index, (i64::MIN, i64::MIN))..=(index, (i64::MAX, i64::MAX)))
+                {
+                    if (x0..x0 + sx).contains(&x) && (y0..y0 + sy).contains(&y) {
+                        field.values[((y - y0) * sx + (x - x0)) as usize] += by;
+                    }
+                }
+                Product::Field(field)
+            }
+            Product::Points(points) => Product::Points(
+                points
+                    .into_iter()
+                    .filter(|point| !self.edits.removed.contains(&point.id))
+                    .map(|mut point| {
+                        if let Some(&(to, turn)) = self.edits.moved.get(&point.id) {
+                            point.position = to;
+                            point.turn = turn;
+                        }
+                        point
+                    })
+                    .collect(),
+            ),
+            other @ (Product::Categories(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Curves(_)) => other,
+        }
+    }
+
     /// Gives Region stages that name `name` the job they run.
     #[must_use]
     pub fn with_region_job(mut self, name: &str, job: impl RegionJob + 'static) -> Self {
@@ -1111,7 +1284,7 @@ impl Runtime {
                 self.solve_town_of(index, chunk)?;
                 self.run_region_of(index, chunk)?;
                 self.place_locations_of(index, chunk)?;
-                let product = self.generate(index, chunk)?;
+                let product = self.edited(index, self.generate(index, chunk)?);
                 let ms = started.elapsed().as_secs_f64() * 1000.0;
                 let timing = &mut self.timings[index];
                 timing.products += 1;
@@ -1260,6 +1433,14 @@ impl Runtime {
             | StageKind::Scatter { .. }
             | StageKind::Region { .. } => return Err(StageError::NotSampled(stage.name.clone())),
         };
+        // A sample is what the chunk holds, raises included.
+        let value = value
+            + self
+                .edits
+                .raised
+                .get(&(index, (column[0], column[1])))
+                .copied()
+                .unwrap_or(0.0);
         memo.borrow_mut().insert((index, column), value);
         Ok(value)
     }
