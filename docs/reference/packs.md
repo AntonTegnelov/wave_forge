@@ -334,7 +334,10 @@ field, made by a chain of modifiers applied in this order. Every field after `sp
      field, a terrain delta, a biome area;
    - with `water: Some((level: w, depth: (low, high)))`, the ground between `low` and `high` cells
      below `w`;
-   - at least `margin` cells from every site, with `avoid: Some(("sites", margin))`.
+   - at least `margin` cells from every site, with `avoid: Some(("sites", margin))`;
+   - at least a clearance from every point of the Scatter stages `block` names, with
+     `block: [("rocks", 2.5)]`. Those stages are placed first, so where two kinds would overlap
+     the one blocked gives way, the same whatever order chunks are asked for in.
 3. **Spacing.** A candidate that passes its tests is kept unless a passing candidate of higher
    priority lies closer than `apart` cells. Candidates are judged by their own tests, never by
    whether spacing kept them, so the decision agrees across chunk seams. A kept candidate's group

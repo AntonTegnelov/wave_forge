@@ -103,8 +103,7 @@ Each is a gap between the code and the design or the stories, with where it is t
   find paths between sites; tables of facts reach stages through a focused row, sites, towns and
   roads
   ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); there are no edits, persistence modes, world
-  bounds or per-stage request radii; noise is the library's value noise and Godot's FastNoiseLite in 2D; a Scatter stage has one kind and
-  blocks no other stage's points. Each is an issue under
+  bounds or per-stage request radii; noise is the library's value noise and Godot's FastNoiseLite in 2D; a Scatter stage has one kind. Each is an issue under
   [#104](https://github.com/AntonTegnelov/wave_forge/issues/104) ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, untextured and without levels of
   detail; materials, ground cover and far levels are
