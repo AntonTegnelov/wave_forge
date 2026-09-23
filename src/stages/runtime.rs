@@ -7,7 +7,8 @@
 //! a view bounded by that area. Whatever order chunks are asked for in, each is computed from the
 //! same inputs and comes out the same.
 
-use super::pack::{Expr, Output, Pack, Reach, StageKind};
+use super::pack::{Expr, Output, Pack, Reach, StageKind, point_stage_id};
+use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownRequest, TownSolver};
 use std::collections::{BTreeMap, BTreeSet};
@@ -80,6 +81,19 @@ pub struct TownChunk {
     pub tiles: Arc<[u16]>,
 }
 
+/// A point a Scatter stage placed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Point {
+    /// Positional: the chunk, the stage and the column, so it never changes when other points do.
+    pub id: InstanceId,
+    /// What an engine binds a scene or a model to.
+    pub kind: Arc<str>,
+    /// Where it stands, in cells: x and y along the lattice's ground, z the height field's value.
+    pub position: [f32; 3],
+    /// Its turn about the vertical, as a fraction of a whole turn.
+    pub turn: f32,
+}
+
 /// What a stage holds for one chunk.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Product {
@@ -88,13 +102,15 @@ pub enum Product {
     Sites(Vec<Site>),
     /// The chunk's part of a town, or nothing for a chunk outside every site.
     Tiles(Option<TownChunk>),
+    /// The points whose column lies in the chunk.
+    Points(Vec<Point>),
 }
 
 impl Product {
     fn field(&self) -> &Field {
         match self {
             Self::Field(field) => field,
-            Self::Sites(_) | Self::Tiles(_) => {
+            Self::Sites(_) | Self::Tiles(_) | Self::Points(_) => {
                 unreachable!("inputs are type checked when the pack loads")
             }
         }
@@ -103,7 +119,7 @@ impl Product {
     fn sites(&self) -> &[Site] {
         match self {
             Self::Sites(sites) => sites,
-            Self::Field(_) | Self::Tiles(_) => {
+            Self::Field(_) | Self::Tiles(_) | Self::Points(_) => {
                 unreachable!("inputs are type checked when the pack loads")
             }
         }
@@ -339,7 +355,7 @@ impl Runtime {
     pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
         match self.product(stage, chunk)? {
             Product::Field(field) => Some(field),
-            Product::Sites(_) | Product::Tiles(_) => None,
+            Product::Sites(_) | Product::Tiles(_) | Product::Points(_) => None,
         }
     }
 
@@ -348,7 +364,7 @@ impl Runtime {
     pub fn sites(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Site]> {
         match self.product(stage, chunk)? {
             Product::Sites(sites) => Some(sites),
-            Product::Field(_) | Product::Tiles(_) => None,
+            Product::Field(_) | Product::Tiles(_) | Product::Points(_) => None,
         }
     }
 
@@ -358,7 +374,16 @@ impl Runtime {
     pub fn tiles(&self, stage: &str, chunk: ChunkCoord) -> Option<&TownChunk> {
         match self.product(stage, chunk)? {
             Product::Tiles(town) => town.as_ref(),
-            Product::Field(_) | Product::Sites(_) => None,
+            Product::Field(_) | Product::Sites(_) | Product::Points(_) => None,
+        }
+    }
+
+    /// The points `stage` placed in `chunk`, if it is a Scatter stage and the chunk is generated.
+    #[must_use]
+    pub fn points(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Point]> {
+        match self.product(stage, chunk)? {
+            Product::Points(points) => Some(points),
+            Product::Field(_) | Product::Sites(_) | Product::Tiles(_) => None,
         }
     }
 
@@ -522,6 +547,9 @@ impl Runtime {
                     .collect(),
             ));
         }
+        if let StageKind::Scatter { .. } = &stage.kind {
+            return self.scatter(index, chunk).map(Product::Points);
+        }
         let views: BTreeMap<usize, FieldView<'_>> = stage
             .inputs
             .iter()
@@ -575,7 +603,9 @@ impl Runtime {
                             _ => base,
                         }
                     }
-                    StageKind::Sites { .. } | StageKind::Solve { .. } => {
+                    StageKind::Sites { .. }
+                    | StageKind::Solve { .. }
+                    | StageKind::Scatter { .. } => {
                         unreachable!("handled above")
                     }
                 };
@@ -587,6 +617,135 @@ impl Runtime {
             size: self.size,
             values,
         }))
+    }
+
+    /// The points of Scatter stage `index` whose column lies in `chunk`.
+    ///
+    /// Every block of `spacing` columns has one candidate at a hashed column, with a hashed
+    /// priority. A candidate passes its own tests (chance, height, slope, sites) from what lies
+    /// at and around its column, and is kept if it passes and no candidate that also passes, of
+    /// higher priority, lies closer than `apart`. Everything a decision reads is within the
+    /// stage's reach, so a chunk's points are the same whatever else has been generated.
+    fn scatter(&self, index: usize, chunk: ChunkCoord) -> Result<Vec<Point>, StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Scatter {
+            kind,
+            spacing,
+            chance,
+            between,
+            max_slope,
+            avoid,
+            apart,
+            ..
+        } = &stage.kind
+        else {
+            unreachable!("called for Scatter stages")
+        };
+        let (height, reach) = stage.inputs[0];
+        let heights = self.view(index, chunk, height, reach);
+        let sites = match avoid {
+            Some(_) => {
+                let (sites, reach) = stage.inputs[1];
+                self.sites_near(chunk, sites, reach)
+            }
+            None => Vec::new(),
+        };
+        let margin = avoid.as_ref().map_or(0, |(_, margin)| *margin);
+        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+        let spacing = i64::from(*spacing);
+        let threshold = (f64::from(*chance) * 4_294_967_296.0) as u64;
+        let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+        let (x0, y0) = (i64::from(chunk.x) * sx, i64::from(chunk.y) * sy);
+        let apart = i64::from(*apart);
+        // The blocks that can hold a candidate within `apart` of the chunk's columns.
+        let blocks = |low: i64, high: i64| low.div_euclid(spacing)..=high.div_euclid(spacing);
+        let mut candidates: Vec<Candidate> = Vec::new();
+        for by in blocks(y0 - apart, y0 + sy - 1 + apart) {
+            for bx in blocks(x0 - apart, x0 + sx - 1 + apart) {
+                let [place, rank, turn] =
+                    pcg3d([world ^ stage.salt, bx as u32, (by as u32) ^ 0x5bd1_e995]);
+                let column = (
+                    bx * spacing + i64::from(place) % spacing,
+                    by * spacing + i64::from(place >> 16) % spacing,
+                );
+                // Only a candidate within `apart` columns of the chunk can crowd one inside it: a
+                // point stands within its column, so one further out is more than `apart` away.
+                let near = (x0 - apart..=x0 + sx - 1 + apart).contains(&column.0)
+                    && (y0 - apart..=y0 + sy - 1 + apart).contains(&column.1);
+                if !near {
+                    continue;
+                }
+                let fraction = (
+                    f32::from((rank & 0xFF) as u8) / 256.0,
+                    f32::from(((rank >> 8) & 0xFF) as u8) / 256.0,
+                );
+                candidates.push(Candidate {
+                    column,
+                    at: (column.0 as f32 + fraction.0, column.1 as f32 + fraction.1),
+                    priority: (rank, bx, by),
+                    turn: (turn >> 8) as f32 / (1u32 << 24) as f32,
+                    exists: u64::from(turn) < threshold,
+                });
+            }
+        }
+        let passes = |candidate: &Candidate| -> Result<Option<f32>, StageError> {
+            if !candidate.exists {
+                return Ok(None);
+            }
+            let (x, y) = candidate.column;
+            let here = heights.get(x, y)?;
+            if between.is_some_and(|(low, high)| !(low..=high).contains(&here)) {
+                return Ok(None);
+            }
+            if let Some(limit) = max_slope {
+                let along_x = (heights.get(x + 1, y)? - heights.get(x - 1, y)?).abs() / 2.0;
+                let along_y = (heights.get(x, y + 1)? - heights.get(x, y - 1)?).abs() / 2.0;
+                if along_x.max(along_y) > *limit {
+                    return Ok(None);
+                }
+            }
+            if sites
+                .iter()
+                .any(|site| site.distance(x, y, self.size) < margin as f32)
+            {
+                return Ok(None);
+            }
+            Ok(Some(here))
+        };
+        let mut heights_of: Vec<Option<f32>> = Vec::with_capacity(candidates.len());
+        for candidate in &candidates {
+            heights_of.push(passes(candidate)?);
+        }
+        let point_stage = point_stage_id(stage.salt);
+        let kind: Arc<str> = Arc::from(kind.as_str());
+        let mut points = Vec::new();
+        for (i, candidate) in candidates.iter().enumerate() {
+            let (x, y) = candidate.column;
+            let inside = (x0..x0 + sx).contains(&x) && (y0..y0 + sy).contains(&y);
+            let Some(z) = heights_of[i].filter(|_| inside) else {
+                continue;
+            };
+            let crowded = candidates.iter().enumerate().any(|(j, other)| {
+                j != i
+                    && heights_of[j].is_some()
+                    && other.priority > candidate.priority
+                    && ((other.at.0 - candidate.at.0).powi(2)
+                        + (other.at.1 - candidate.at.1).powi(2))
+                    .sqrt()
+                        < apart as f32
+            });
+            if crowded {
+                continue;
+            }
+            let cell = ((y - y0) * sx + (x - x0)) as u32;
+            points.push(Point {
+                id: InstanceId::new(chunk, point_stage, cell, 0),
+                kind: Arc::clone(&kind),
+                position: [candidate.at.0, candidate.at.1, z],
+                turn: candidate.turn,
+            });
+        }
+        Ok(points)
     }
 
     /// The site of `owner`'s region, if it has one, from the stage's own hash stream: whether it
@@ -661,6 +820,16 @@ impl Runtime {
             }
         })
     }
+}
+
+/// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the
+/// block breaking ties), its turn, and whether the chance test lets it exist at all.
+struct Candidate {
+    column: (i64, i64),
+    at: (f32, f32),
+    priority: (u32, i64, i64),
+    turn: f32,
+    exists: bool,
 }
 
 /// A random number in 0..1 for one lattice point of one octave, from the world seed and the

@@ -64,6 +64,31 @@ pub enum StageKind {
         #[serde(default)]
         top: Option<Selector>,
     },
+    /// Points of `kind` standing on the `height` field: one candidate per square block of
+    /// `spacing` cells at a hashed column inside it, kept with probability `chance`, if the height
+    /// there is within `between`, the slope at most `max_slope` (height per cell), the column at
+    /// least `margin` cells from every site of `avoid`, and no kept candidate of higher priority is
+    /// closer than `apart` cells. That last test reads neighbours' candidates, never their
+    /// results, so points keep their distance across chunk seams.
+    Scatter {
+        kind: String,
+        height: String,
+        spacing: u32,
+        #[serde(default = "always")]
+        chance: f32,
+        #[serde(default)]
+        between: Option<(f32, f32)>,
+        #[serde(default)]
+        max_slope: Option<f32>,
+        #[serde(default)]
+        avoid: Option<(String, u32)>,
+        #[serde(default)]
+        apart: u32,
+    },
+}
+
+const fn always() -> f32 {
+    1.0
 }
 
 /// What a stage produces, which decides which stages may read it.
@@ -72,6 +97,7 @@ pub(crate) enum Output {
     Field,
     Sites,
     Tiles,
+    Points,
 }
 
 impl StageKind {
@@ -80,6 +106,7 @@ impl StageKind {
             Self::Field(_) | Self::Blur { .. } | Self::Flatten { .. } => Output::Field,
             Self::Sites { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
+            Self::Scatter { .. } => Output::Points,
         }
     }
 }
@@ -272,6 +299,40 @@ impl Pack {
                 StageKind::Solve { sites, .. } => {
                     vec![(sites.as_str(), Reach::Cells(0), Output::Sites)]
                 }
+                StageKind::Scatter {
+                    height,
+                    spacing,
+                    chance,
+                    between,
+                    max_slope,
+                    avoid,
+                    apart,
+                    ..
+                } => {
+                    if *spacing == 0 {
+                        return Err(invalid("a spacing of 0 cells".to_owned()));
+                    }
+                    if !(0.0..=1.0).contains(chance) {
+                        return Err(invalid(format!("chance {chance} is not between 0 and 1")));
+                    }
+                    if between
+                        .is_some_and(|(low, high)| low.is_nan() || high.is_nan() || low > high)
+                    {
+                        return Err(invalid(format!("the height range {between:?} is empty")));
+                    }
+                    if max_slope.is_some_and(|slope| slope.is_nan() || slope < 0.0) {
+                        return Err(invalid(format!("a slope limit of {max_slope:?}")));
+                    }
+                    // Candidates within `apart` are judged by their own tests, which read the
+                    // height one cell around them for the slope.
+                    let slope = u32::from(max_slope.is_some());
+                    let mut reads =
+                        vec![(height.as_str(), Reach::Cells(apart + slope), Output::Field)];
+                    if let Some((sites, margin)) = avoid {
+                        reads.push((sites.as_str(), Reach::Cells(apart + margin), Output::Sites));
+                    }
+                    reads
+                }
             };
             let mut inputs = Vec::with_capacity(reads.len());
             for (name, reach, expected) in reads {
@@ -293,6 +354,19 @@ impl Pack {
                 kind: def.kind,
                 inputs,
             });
+        }
+        let mut point_ids: BTreeMap<u16, &str> = BTreeMap::new();
+        for stage in &stages {
+            if let StageKind::Scatter { .. } = stage.kind
+                && let Some(other) = point_ids.insert(point_stage_id(stage.salt), &stage.name)
+            {
+                return Err(PackError::Invalid {
+                    stage: stage.name.clone(),
+                    message: format!(
+                        "its points' ids would share a stage number with {other:?}; rename one"
+                    ),
+                });
+            }
         }
         let order = topological_order(&stages)?;
         Ok(Self {
@@ -337,6 +411,12 @@ impl Pack {
     pub(crate) fn index(&self, name: &str) -> Option<usize> {
         self.by_name.get(name).copied()
     }
+}
+
+/// The stage number a Scatter stage's points carry in their ids: 15 bits of its salt, never 0,
+/// which is the tiles'.
+pub(crate) const fn point_stage_id(salt: u32) -> u16 {
+    (salt % 0x7FFF) as u16 + 1
 }
 
 /// FNV-1a of a stage's name: the same for a stage wherever it sits in the pack, so adding or
@@ -525,6 +605,33 @@ mod tests {
 
         assert_eq!(reach["towns"], 4);
         assert_eq!(reach["h"], 4 + 6 * 8);
+    }
+
+    #[test]
+    fn two_scatter_stages_whose_point_ids_would_collide_are_refused() {
+        let names: Vec<String> = (0..2000).map(|i| format!("s{i}")).collect();
+        let mut seen: BTreeMap<u16, &str> = BTreeMap::new();
+        let (first, second) = names
+            .iter()
+            .find_map(|name| {
+                seen.insert(point_stage_id(salt(name)), name)
+                    .map(|other| (other.to_owned(), name.clone()))
+            })
+            .expect("15 bits collide within 2000 names");
+        let scatter = |name: &str| {
+            format!(r#"(name: "{name}", kind: Scatter(kind: "tree", height: "h", spacing: 4))"#)
+        };
+
+        let result = pack_with(&format!(
+            r#"(name: "h", kind: Field(Constant(1.0))), {}, {}"#,
+            scatter(&first),
+            scatter(&second)
+        ));
+
+        assert!(
+            matches!(&result, Err(PackError::Invalid { stage, .. }) if *stage == second),
+            "{result:?}"
+        );
     }
 
     #[test]
