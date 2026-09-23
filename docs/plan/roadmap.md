@@ -58,10 +58,10 @@ first, which the survival game grows into, then what the strategy game needs.
    ([#111](https://github.com/AntonTegnelov/wave_forge/issues/111)). Per-stage
    timings ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)) showed fields cost
    0.02 ms per chunk, so Field stages stay on the CPU.
-2. **Levels and the atlas:** stage lattices and coarse levels
-   ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93)), then point queries and an atlas
-   of a finite world ([#100](https://github.com/AntonTegnelov/wave_forge/issues/100)). A history the
-   game simulates reads the world through these.
+2. **The atlas:** point queries and an atlas of a finite world
+   ([#100](https://github.com/AntonTegnelov/wave_forge/issues/100)), on the coarse levels of
+   [#93](https://github.com/AntonTegnelov/wave_forge/issues/93). A history the game simulates reads
+   the world through these.
 3. **Tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows the game
    gives, a simulated history say, or rows generated from a parent table, read by stages; with N11's
    example project, a toy history in GDScript. With region jobs
