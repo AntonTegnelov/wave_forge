@@ -7,9 +7,10 @@ use bevy_ecs::message::MessageReader;
 use bevy_ecs::prelude::{Commands, IntoScheduleConfigs, Query, ResMut, Resource, With};
 use bevy_math::Vec3;
 use bevy_transform::components::GlobalTransform;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wave_forge::stages::{Pack, Runtime};
+use wave_forge::stages::{Facts, GivenRow, Pack, RowId, Runtime, Value};
 use wave_forge::{ChunkCoord, FocusPoint, ground};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::stages::{
@@ -394,5 +395,86 @@ fn a_region_jobs_curves_arrive_as_the_runtime_makes_them() {
             direct.curves("lines", chunk),
             "{chunk:?}"
         );
+    }
+}
+
+const FACTS: &str = r#"(
+    version: 1,
+    tables: [(name: "villages", kind: Given(columns: [("population", Number)]))],
+    stages: [(name: "wealth", kind: Field(Add(Noise(frequency: 0.05, octaves: 2), Row("villages", "population"))))],
+)"#;
+
+/// Facts for `pack`, the pack the runtime was made with, with one village of `population`.
+fn villages(pack: &Arc<Pack>, population: f32) -> Facts {
+    let mut facts = Facts::new(Arc::clone(pack), 4).expect("facts");
+    facts
+        .give(
+            "villages",
+            vec![GivenRow {
+                id: 1,
+                values: BTreeMap::from([("population".to_owned(), Value::Number(population))]),
+            }],
+        )
+        .expect("villages");
+    facts
+}
+
+#[test]
+fn new_facts_drop_the_stages_that_read_them_and_regenerate_them() {
+    let pack = Arc::new(Pack::parse(FACTS).expect("a valid pack"));
+    let (for_thread, facts) = (Arc::clone(&pack), villages(&pack, 10.0));
+    let mut app = app_with(WaveForgeStagesPlugin::new(
+        &["wealth"],
+        SETTINGS,
+        move || {
+            let mut runtime = Runtime::new(for_thread, 4, SETTINGS.chunk);
+            runtime
+                .set_facts(facts)
+                .map_err(|error| error.to_string())?;
+            runtime
+                .focus("villages", RowId(vec![1]))
+                .map_err(|error| error.to_string())?;
+            Ok(runtime)
+        },
+    ));
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .field("wealth", origin)
+            .is_some()
+    });
+    let before = app
+        .world()
+        .resource::<WaveForgeStages>()
+        .field("wealth", origin)
+        .expect("arrived")
+        .values
+        .clone();
+
+    app.world()
+        .resource::<WaveForgeStages>()
+        .set_facts(villages(&pack, 60.0));
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .field("wealth", origin)
+            .is_some_and(|field| field.values != before)
+    });
+
+    let after = &app
+        .world()
+        .resource::<WaveForgeStages>()
+        .field("wealth", origin)
+        .expect("arrived")
+        .values;
+    assert!(
+        app.world()
+            .resource::<Seen>()
+            .dropped
+            .contains(&("wealth".to_owned(), origin))
+    );
+    for (low, high) in before.iter().zip(after) {
+        assert!((high - low - 50.0).abs() < 1e-3, "{low} then {high}");
     }
 }
