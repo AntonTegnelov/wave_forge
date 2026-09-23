@@ -163,3 +163,25 @@ fn the_ground_inside_a_site_is_level_at_its_height() {
         }
     }
 }
+
+#[test]
+fn each_target_is_generated_within_its_own_radius() {
+    let pack = Pack::parse(
+        r#"(version: 1, stages: [
+            (name: "ground", kind: Field(Noise(frequency: 0.1, octaves: 1))),
+            (name: "trees", kind: Scatter(kind: "tree", height: "ground", spacing: 3)),
+        ])"#,
+    )
+    .expect("a valid pack");
+    let mut runtime = Runtime::new(Arc::new(pack), 2, [8, 8]);
+    let focus = FocusPoint::new(ChunkCoord::new(0, 0, 0), 2);
+
+    runtime
+        .request_each(&[focus], &[("ground", Some(3)), ("trees", None)])
+        .expect("stages");
+    runtime.run_until_idle().expect("the stages run");
+
+    let held = |stage: &str, x: i32| runtime.product(stage, ChunkCoord::new(x, 0, 0)).is_some();
+    assert!(held("ground", 3) && !held("ground", 4));
+    assert!(held("trees", 2) && !held("trees", 3));
+}
