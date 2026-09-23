@@ -300,11 +300,20 @@ through `_forward_3d_gui_input` with a decal cursor, one `EditorUndoRedoManager`
 storing the Edits it changed, and the stroke logic in Rust. A scene brush mirrors 4.7's 2D scene
 painting in 3D.
 
-**Before the resource model is fixed**, one risk has to be ruled out: godot-rust issues #610 (a
-nested Rust resource panics when loaded on a thread other than the main one) and #597 (a Rust
-resource loader needs `experimental-threads`) are open. A spike saves a nested recipe, reopens the
-editor, loads it with `load_threaded_request` and renders previews. If it fails, the recipe
-resources are written in GDScript over Rust classes, or kept flat.
+**Rust resource classes on Godot's loader threads.** A spike (Godot 4.7.2, godot-rust 0.5.5)
+defined a recipe resource holding layer resources, each layer holding a `FastNoiseLite`, saved one
+as `.tres` and loaded it back. On the main thread it loads correctly, sub-resources and noise
+settings included. Through `ResourceLoader.load_threaded_request`, godot-rust panics inside Godot's
+loader thread ("attempted to access binding from different thread than main thread") and the
+**whole process aborts**, because the panic cannot unwind across the engine. That is not about
+nesting (godot-rust issue #610 describes it that way): a flat Rust resource aborts the same way,
+with or without sub-threads. With godot-rust's `experimental-threads` feature every case loads
+correctly, and the node's own check runs as before (Godot's process time p99 0.34 ms, no late
+frames). A game that loads scenes in the background, as the loading guidance recommends, would
+crash on any scene holding a Rust resource unless that feature is on. So the recipe resources are
+either GDScript resources the Rust side reads, which Godot's loader handles like any other script,
+or Rust classes with `experimental-threads`, whose soundness godot-rust does not yet promise. The
+choice is the owner's; GDScript resources are the conservative one.
 
 The extension already has the basics of that: godot-rust's `register-docs` feature turns the doc
 comments into Godot's own help and tooltips, the `.gdextension` gives the node an icon and asks for
