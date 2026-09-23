@@ -62,7 +62,7 @@ fn generate(order: &[Vec<ChunkCoord>]) -> BTreeMap<ChunkCoord, Option<Vec<u16>>>
     let mut out = BTreeMap::new();
     for request in order {
         let focus: Vec<FocusPoint> = request.iter().map(|&c| FocusPoint::new(c, 0)).collect();
-        runtime.request(&focus, "buildings").expect("a stage");
+        runtime.request(&focus, &["buildings"]).expect("a stage");
         runtime.run_until_idle().expect("the stages run");
         for &chunk in request {
             out.insert(
@@ -129,7 +129,10 @@ fn a_solve_stage_without_a_town_solver_says_so() {
         [CHUNK.x, CHUNK.y],
     );
     runtime
-        .request(&[FocusPoint::new(ChunkCoord::new(2, 2, 0), 3)], "buildings")
+        .request(
+            &[FocusPoint::new(ChunkCoord::new(2, 2, 0), 3)],
+            &["buildings"],
+        )
         .expect("a stage");
 
     let result = runtime.run_until_idle();
@@ -154,7 +157,10 @@ fn a_rule_set_the_solver_was_not_given_is_named() {
     .with_towns(Box::new(towns))
     .expect("matching chunks");
     runtime
-        .request(&[FocusPoint::new(ChunkCoord::new(2, 2, 0), 3)], "buildings")
+        .request(
+            &[FocusPoint::new(ChunkCoord::new(2, 2, 0), 3)],
+            &["buildings"],
+        )
         .expect("a stage");
 
     let result = runtime.run_until_idle();

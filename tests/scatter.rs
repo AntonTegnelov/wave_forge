@@ -34,7 +34,7 @@ fn scatter(order: &[Vec<ChunkCoord>]) -> (Runtime, BTreeMap<ChunkCoord, Vec<Poin
     let mut points = BTreeMap::new();
     for request in order {
         let focus: Vec<FocusPoint> = request.iter().map(|&c| FocusPoint::new(c, 0)).collect();
-        runtime.request(&focus, "trees").expect("a stage");
+        runtime.request(&focus, &["trees"]).expect("a stage");
         runtime.run_until_idle().expect("the stages run");
         for &chunk in request {
             points.insert(

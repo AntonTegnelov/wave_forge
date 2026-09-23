@@ -301,6 +301,11 @@ reproduction impossible anyway.
   what is missing, stage by stage with inputs first, nearest chunk first. A stage reads its inputs
   only through a `FieldView` bounded by its reach, which returns `StageError::OutOfReach` naming the
   stage and the reach it would have needed.
+- **Incremental, and on a thread.** `Runtime::request` takes several target stages and returns what
+  it dropped; `step(budget)` generates at most that many products, so a caller can take new
+  requests in between. `StageWorker` owns a runtime on a thread of its own, builds it there
+  (a town solver may own a device that belongs to its thread), steps eight products at a time,
+  and hands every product back shared, with `Generated` and `Dropped` events.
 - **Named hash streams.** Noise draws from `pcg3d` keyed by the world seed, an FNV-1a salt of the
   stage's name and the octave, so adding, removing or reordering stages changes no other stage.
 - **Order independence**, checked by `tests/stages.rs`: a six-stage pack comes out bit for bit the
