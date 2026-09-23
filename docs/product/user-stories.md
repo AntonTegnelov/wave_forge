@@ -113,7 +113,9 @@ named parameter sets ([World generation](https://dwarffortresswiki.org/index.php
 **Needs.** Region jobs with hashed retries, Field and Filter at coarse scale, CurveSet, an atlas and
 point queries, tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)), a local level reading its parent. History simulation is the
 game's; tables of facts are the seam, and N11 is the check that the seam is approachable.
-**Status:** not started (2026-09-23).
+**Status:** not started (2026-09-23). The history seam this story's second criterion needs is built
+and checked by N11's example (`examples/history`): sites with their culture and fate, roads as
+curves, towns of each fate's rule set and ruins, and roads levelled into the ground.
 
 ### G3. A No Man's Sky-like planet
 
