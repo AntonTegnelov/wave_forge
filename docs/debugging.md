@@ -37,8 +37,8 @@ There are no spans and no logging inside a solve; a shader cannot log, and a hos
 | Where | What it says |
 |---|---|
 | `RegionStats`, one per region | sweeps, collapses, restarts, backtracks, steps, attempts, and the cell index where the last contradiction emptied a cell |
-| `RegionStatus`, one per region | `Solved`, `Exhausted`, `StepCap` or `BorderContradiction` |
-| `GeneratorStats`, per world | batches dispatched, chunks solved, repaired, rewritten by repairs, given up on, and milliseconds waiting for the solver |
+| `RegionStatus`, one per region | `Solved`, `Exhausted`, `StepCap` or `BorderContradiction`, or `Superseded` for a seed of a repair that stopped because a lower seed had already solved |
+| `GeneratorStats`, per world | batches dispatched, chunks solved, repaired, rewritten by repairs, given up on, milliseconds waiting for the solver, and how many of the batches and milliseconds were repairs |
 
 How to read them:
 
@@ -46,6 +46,7 @@ How to read them:
 - **Restarts and backtracks** say whether the region is being searched or solved. High restarts with a low radius means recovery is not keeping up; that is how the selection radius was chosen ([solver-fit.md](solver-fit.md)).
 - **`steps` of the slowest region** divided by the dispatch's wall time gives microseconds per step, which is the number to compare kernels with. A dispatch lasts as long as its slowest region, so the maximum matters more than the mean.
 - **`contradiction_cell`** is an index into the region, halo included, so it maps back to a world cell through `Region::cells`. Whether the failure sat inside the chunk or in its halo is usually the whole answer.
+- **`repair_ms` against `solver_ms`** says how much of generation is spent recovering rather than generating. A repair dispatch lasts as long as the seeds below its winner, so a rising average per repair means repairs are finding their chunk later in the portfolio.
 - **`rewritten_by_repair`** above zero means the rule set is not streaming-clean, so a chunk's tiles depend on generation order ([architecture.md §6.3](architecture.md#63-what-determinism-means-here)).
 
 ### 4. Time the host side, coarsely
