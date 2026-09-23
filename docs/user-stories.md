@@ -232,7 +232,7 @@ and are unverified from Iron Gate).
 
 **Needs.** Field, Rules, Region jobs (rivers, the location table), Network, Sites, Apply, Scatter,
 Assemble, Edits, per-stage persistence. This is the first slice's target
-([generation-model.md §8](generation-model.md#8-order-of-work)). **Status:** in progress (2026-09-23): the stage runtime generates biome-free height fields, sites with levelled ground and a WFC city on each site, the same in any order ([testing.md](testing.md)); biomes, rivers, locations, vegetation, dungeons and edits are to come.
+([generation-model.md §8](generation-model.md#8-order-of-work)). **Status:** in progress (2026-09-23): the valley test pack (`examples/valley.world.ron`) generates height, towns on levelled sites built with WFC, and trees kept apart, the same in any order, and a Godot node serves it to a game ([testing.md](testing.md)); biomes, rivers, a location table, dungeons, edits and terrain meshes are to come.
 
 ### G8. A Deep Rock Galactic-like cave level
 

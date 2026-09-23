@@ -60,6 +60,7 @@ use wave_forge::{
     Ruleset, TileMask, Worker, WorldExtent, YUpSpace,
 };
 
+mod stages_node;
 mod timings;
 
 /// How many recent frames and navigation bakes `stats` summarises: a minute at 60 frames per
