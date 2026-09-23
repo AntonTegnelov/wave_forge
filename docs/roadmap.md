@@ -68,8 +68,10 @@ through. In order:
    placeable, and a repair now tries 32 seeds side by side; with the second parity solved without a
    halo, five worlds place all 1 605 chunks and the game session shows no holes
    ([solver-fit.md](solver-fit.md)).
-4. **Models to draw** ([#34](https://github.com/AntonTegnelov/wave_forge/issues/34)). A devtools command exports each prototype's voxel model as a mesh (glTF, which
-   both engines import). Authored models can replace them later without touching the library.
+4. ~~**Models to draw**~~ ([#34](https://github.com/AntonTegnelov/wave_forge/issues/34)). Done: `wfc-export-models` writes each module's voxel model as
+   binary glTF in a Y-up engine's frame, coloured by a palette texture; Godot loads all of them,
+   and `render_city.sh` draws a generated city with them. Authored models can replace them without
+   touching the library.
 5. **The walk itself**, with the products it needs from the library: instance sets, a collider
    library and mesh levels of detail ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38),
    [engine-integration.md](engine-integration.md)). A game that places the models per chunk, builds
