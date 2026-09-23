@@ -155,6 +155,28 @@ pub enum StageKind {
         #[serde(default = "one_attempt")]
         budget: u32,
     },
+    /// A straight curve for every row of the table `table`, from the point the columns `from` give
+    /// to the one `to` give, in WFC cells, with the radius its `radius` column gives at both ends:
+    /// a road a history laid between two villages, say. A chunk's product is the curves that pass
+    /// through it.
+    TableCurves {
+        table: String,
+        from: (String, String),
+        to: (String, String),
+        radius: String,
+    },
+    /// The `height` field with the curves of `curves` drawn into it: within a curve's radius, the
+    /// value each of its values gives, of at most `max_radius` cells, the ground takes the
+    /// `profile`'s height, and it blends back to the field over `blend` cells beyond. Where curves
+    /// overlap, the one that weighs most at the column wins, the first by id on a tie.
+    Apply {
+        height: String,
+        curves: String,
+        max_radius: u32,
+        #[serde(default)]
+        blend: u32,
+        profile: Profile,
+    },
     /// Points of `kind` standing on the `height` field: one candidate per square block of
     /// `spacing` cells at a hashed column inside it, kept with probability `chance`, if the height
     /// there is within `between`, the slope at most `max_slope` (height per cell), the column at
@@ -176,6 +198,15 @@ pub enum StageKind {
         #[serde(default)]
         apart: u32,
     },
+}
+
+/// The height an Apply stage gives the ground under a curve.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+pub enum Profile {
+    /// The field's height at the nearest point of the curve's centre line: a road, level across.
+    Level,
+    /// That height lowered by a depth: a river's bed.
+    Carve(f32),
 }
 
 /// One rule of a Rules stage: a category, and the conditions that all have to hold for a column to
@@ -234,9 +265,11 @@ impl StageKind {
 
     pub(crate) const fn output(&self) -> Output {
         match self {
-            Self::Field(_) | Self::Blur { .. } | Self::Flatten { .. } => Output::Field,
+            Self::Field(_) | Self::Blur { .. } | Self::Flatten { .. } | Self::Apply { .. } => {
+                Output::Field
+            }
             Self::Rules { .. } => Output::Categories,
-            Self::Region { .. } => Output::Curves,
+            Self::Region { .. } | Self::TableCurves { .. } => Output::Curves,
             Self::Sites { .. } | Self::TableSites { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
             Self::Scatter { .. } => Output::Points,
@@ -1070,6 +1103,8 @@ impl Pack {
                     def.kind,
                     StageKind::Sites { .. }
                         | StageKind::TableSites { .. }
+                        | StageKind::TableCurves { .. }
+                        | StageKind::Apply { .. }
                         | StageKind::Flatten { .. }
                         | StageKind::Solve { .. }
                         | StageKind::Scatter { .. }
@@ -1164,6 +1199,44 @@ impl Pack {
                     }
                     // A site overlapping the chunk reaches at most `max_size` chunks from it.
                     vec![(height.as_str(), Reach::Chunks(*max_size), Output::Field)]
+                }
+                StageKind::TableCurves {
+                    table,
+                    from,
+                    to,
+                    radius,
+                } => {
+                    let names = columns.get(table).ok_or_else(|| {
+                        invalid(format!("it reads {table:?}, which no table is named"))
+                    })?;
+                    for column in [&from.0, &from.1, &to.0, &to.1, radius] {
+                        if !names.contains(column) {
+                            return Err(invalid(format!(
+                                "table {table:?} has no column {column:?}"
+                            )));
+                        }
+                    }
+                    Vec::new()
+                }
+                StageKind::Apply {
+                    height,
+                    curves,
+                    max_radius,
+                    blend,
+                    profile,
+                } => {
+                    if let Profile::Carve(depth) = profile
+                        && !depth.is_finite()
+                    {
+                        return Err(invalid(format!("a carve {depth} deep")));
+                    }
+                    // A column is changed by any curve within its radius and blend, and reads the
+                    // height at the nearest point of the curve's centre line.
+                    let reach = Reach::Cells(max_radius + blend);
+                    vec![
+                        (height.as_str(), reach, Output::Field),
+                        (curves.as_str(), reach, Output::Curves),
+                    ]
                 }
                 StageKind::Flatten {
                     height,
@@ -1280,9 +1353,12 @@ impl Pack {
                         condition.visit(&mut note);
                     }
                 }
-                StageKind::TableSites { table, .. } => read_tables.push(table_by_name[table]),
+                StageKind::TableSites { table, .. } | StageKind::TableCurves { table, .. } => {
+                    read_tables.push(table_by_name[table]);
+                }
                 StageKind::Blur { .. }
                 | StageKind::Sites { .. }
+                | StageKind::Apply { .. }
                 | StageKind::Flatten { .. }
                 | StageKind::Solve { .. }
                 | StageKind::Region { .. }

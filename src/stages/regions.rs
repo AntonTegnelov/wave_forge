@@ -13,6 +13,7 @@
 //! with the next retry index, which changes [`RegionInput::hash`] but never the edge hashes, and
 //! gives up with every reason once the stage's budget is spent.
 
+use super::facts::RowId;
 use super::runtime::{FieldView, StageError};
 use std::collections::BTreeMap;
 use wfc_core::hash::pcg3d;
@@ -26,12 +27,14 @@ pub struct Curve {
     pub values: Vec<f32>,
 }
 
-/// Which curve it is: the region that made it and its place in that region's list. Positional, so
-/// the same in every run and whatever order regions are computed in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CurveId {
-    pub region: (i32, i32),
-    pub index: u32,
+/// Which curve it is. Positional, so the same in every run and whatever order curves are computed
+/// in.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CurveId {
+    /// A region job's curve: the region that made it and its place in that region's list.
+    Region { region: (i32, i32), index: u32 },
+    /// A TableCurves stage's curve: the row it stands for.
+    Row(RowId),
 }
 
 impl Curve {
