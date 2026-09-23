@@ -216,14 +216,14 @@ fn the_ring_worlds_shrines_stand_in_their_rings_within_their_quotas() {
     let chunks: Vec<ChunkCoord> = (-13..13)
         .flat_map(|y| (-13..13).map(move |x| ChunkCoord::new(x, y, 0)))
         .collect();
-    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
     runtime
-        .request(&focus, &["shrines", "biome"])
-        .expect("stages");
+        .request_bound(&["shrines", "biome"])
+        .expect("a bounded island");
     runtime.run_until_idle().expect("the stages run");
     let mut sites: BTreeMap<SiteId, Site> = BTreeMap::new();
+    // Only the chunks that meet the island's bound are generated.
     for &chunk in &chunks {
-        for site in runtime.sites("shrines", chunk).expect("generated") {
+        for site in runtime.sites("shrines", chunk).into_iter().flatten() {
             sites.insert(site.id.clone(), site.clone());
         }
     }

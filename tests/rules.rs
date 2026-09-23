@@ -44,6 +44,7 @@ fn pack(stages: Vec<StageDef>) -> Result<Pack, PackError> {
         stages,
         tables: Vec::new(),
         noises: std::collections::BTreeMap::new(),
+        bound: None,
     })
 }
 
@@ -334,6 +335,14 @@ fn the_ring_worlds_biomes_follow_its_rules() {
 
     let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
     for column in columns(centre, 7) {
+        // The island's bound leaves out chunks wholly beyond 110 cells from its centre.
+        if runtime.categories("biome", chunk_of(column).0).is_none() {
+            assert!(
+                (column.0 as f32).hypot(column.1 as f32) > 100.0,
+                "{column:?}"
+            );
+            continue;
+        }
         let expected = ring_biome(&runtime, column);
 
         let got = &names[usize::from(category(&runtime, "biome", column))];

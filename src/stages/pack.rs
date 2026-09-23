@@ -24,10 +24,73 @@ pub struct PackFile {
     /// Tables of facts: rows the game gives, and rows generated from a parent table's.
     #[serde(default)]
     pub tables: Vec<TableDef>,
+    /// Where the world ends: the runtime generates no chunk of a target stage wholly outside it,
+    /// so a finite world costs nothing beyond its edge, and an engine draws its own sea there.
+    #[serde(default)]
+    pub bound: Option<Bound>,
     /// Noises configured as Godot's `FastNoiseLite` is, by name, which Field expressions read with
     /// [`Expr::FastNoise`]; an engine may replace one ([`crate::stages::Runtime::with_noise`]).
     #[serde(default)]
     pub noises: BTreeMap<String, NoiseConfig>,
+}
+
+/// The edge of a finite world, in WFC cells along the lattice's x and y.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+pub enum Bound {
+    /// Within `radius` of `centre`.
+    Disk { centre: (f32, f32), radius: f32 },
+    /// From `min` to `max`.
+    Rect { min: (f32, f32), max: (f32, f32) },
+}
+
+impl Bound {
+    /// Whether any of the area from `min` up to but not including `max`, in cells, lies inside the
+    /// bound: a chunk's area, say, which ends where the next chunk begins.
+    #[must_use]
+    pub fn meets(&self, min: [f32; 2], max: [f32; 2]) -> bool {
+        match *self {
+            Self::Disk { centre, radius } => {
+                let nearest = [
+                    centre.0.clamp(min[0], max[0]),
+                    centre.1.clamp(min[1], max[1]),
+                ];
+                (nearest[0] - centre.0).hypot(nearest[1] - centre.1) <= radius
+            }
+            Self::Rect {
+                min: low,
+                max: high,
+            } => min[0] <= high.0 && low.0 < max[0] && min[1] <= high.1 && low.1 < max[1],
+        }
+    }
+
+    /// The cells from the lowest corner to the highest that hold the whole bound.
+    #[must_use]
+    pub fn extent(&self) -> ([f32; 2], [f32; 2]) {
+        match *self {
+            Self::Disk { centre, radius } => (
+                [centre.0 - radius, centre.1 - radius],
+                [centre.0 + radius, centre.1 + radius],
+            ),
+            Self::Rect { min, max } => ([min.0, min.1], [max.0, max.1]),
+        }
+    }
+
+    fn check(&self) -> Result<(), String> {
+        let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
+        match *self {
+            Self::Disk { centre, radius }
+                if finite(&[centre.0, centre.1, radius]) && radius > 0.0 =>
+            {
+                Ok(())
+            }
+            Self::Rect { min, max }
+                if finite(&[min.0, min.1, max.0, max.1]) && min.0 < max.0 && min.1 < max.1 =>
+            {
+                Ok(())
+            }
+            bound => Err(format!("a world bound of {bound:?} holds nothing")),
+        }
+    }
 }
 
 /// A table of facts: rows the game gives, or rows generated from the pack, the seed and a parent
@@ -868,6 +931,8 @@ pub enum PackError {
     Invalid { stage: String, message: String },
     #[error("these stages read each other in a cycle: {0:?}")]
     Cycle(Vec<String>),
+    #[error("{0}")]
+    Bound(String),
     #[error("two tables are named {0:?}")]
     DuplicateTable(String),
     #[error("table {table:?}: {message}")]
@@ -1168,6 +1233,7 @@ pub struct Pack {
     pub(crate) table_order: Vec<usize>,
     /// The noises Field expressions read by name.
     pub(crate) noises: BTreeMap<String, NoiseConfig>,
+    pub(crate) bound: Option<Bound>,
 }
 
 impl Pack {
@@ -1191,6 +1257,9 @@ impl Pack {
                 found: file.version,
                 supported: PACK_VERSION,
             });
+        }
+        if let Some(bound) = &file.bound {
+            bound.check().map_err(PackError::Bound)?;
         }
         let (tables, table_by_name, table_order) = link_tables(file.tables)?;
         for def in &file.stages {
@@ -1725,6 +1794,7 @@ impl Pack {
             table_by_name,
             table_order,
             noises: file.noises,
+            bound: file.bound,
         })
     }
 
@@ -1777,6 +1847,12 @@ impl Pack {
                 .map(|(index, cells)| (self.stages[index].name.clone(), cells))
                 .collect(),
         )
+    }
+
+    /// Where the world ends, if the pack gives it an edge.
+    #[must_use]
+    pub const fn bound(&self) -> Option<&Bound> {
+        self.bound.as_ref()
     }
 
     /// The scale `stage` works at, in WFC cells per column.
