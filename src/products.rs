@@ -1,9 +1,10 @@
 //! What a chunk hands an engine: its tiles grouped into instances of the models to draw.
 //!
 //! A game draws one model per module name, at every cell holding one of that module's tiles,
-//! turned by the tile's rotation and scaled to the cell. [`instance_sets`] does that arithmetic
-//! once, in the library, so an integration only hands the result to its engine: Godot takes a set's
-//! [`InstanceSet::transforms`] as a MultiMesh buffer in one call.
+//! turned by the tile's rotation and scaled to the cell, and gives it a collider the same way,
+//! unscaled. [`instance_sets`] does that arithmetic once, in the library, so an integration only
+//! hands the result to its engine: Godot takes [`InstanceSet::transforms`] as a MultiMesh buffer
+//! in one call, and the same placements unscaled as the shapes of a chunk's body.
 
 use crate::loader::RuleFile;
 use crate::space::YUpSpace;
@@ -15,16 +16,47 @@ use wfc_core::Chunk;
 pub struct InstanceSet {
     /// The module's name, which names its model.
     pub name: String,
-    /// Twelve floats per instance, the rows of a 3×4 transform in a Y-up engine's world space:
-    /// `basis.x.x, basis.y.x, basis.z.x, origin.x`, then the same for y and z. That is Godot's
-    /// MultiMesh buffer layout for 3D transforms without colours or custom data.
-    pub transforms: Vec<f32>,
     /// Which cell each instance stands in, stable across runs: the chunk's id in the high 32 bits
     /// and the cell's index in the low ones. A game keys what it attaches to an instance by it.
     pub ids: Vec<u64>,
+    /// Each instance's turn from its module, in quarter turns about the lattice's +z.
+    pub turns: Vec<u8>,
+    /// Each instance's cell centre in a Y-up engine's world space.
+    pub origins: Vec<[f32; 3]>,
 }
 
 impl InstanceSet {
+    /// Twelve floats per instance, the rows of a 3×4 transform in a Y-up engine's world space:
+    /// `basis.x.x, basis.y.x, basis.z.x, origin.x`, then the same for y and z. That is Godot's
+    /// MultiMesh buffer layout for 3D transforms without colours or custom data.
+    ///
+    /// The basis turns about +Y by the instance's rotation, then scales the engine's axes by
+    /// `scale`: the cell's size to draw a unit model, one for a collider shaped for the cell.
+    #[must_use]
+    pub fn transforms(&self, scale: [f32; 3]) -> Vec<f32> {
+        self.turns
+            .iter()
+            .zip(&self.origins)
+            .flat_map(|(&turns, origin)| {
+                let (sin, cos) = YUpSpace::yaw(turns).sin_cos();
+                [
+                    cos * scale[0],
+                    0.0,
+                    sin * scale[0],
+                    origin[0],
+                    0.0,
+                    scale[1],
+                    0.0,
+                    origin[1],
+                    -sin * scale[2],
+                    0.0,
+                    cos * scale[2],
+                    origin[2],
+                ]
+            })
+            .collect()
+    }
+
     /// How many instances the set holds.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -38,43 +70,33 @@ impl InstanceSet {
     }
 }
 
-/// The placements of every module with something to draw in `chunk`, one set per module name in
-/// name order. `drawn` says which names have a model; a module without one (air) gets no set.
-///
-/// Each instance's transform turns the module's unit model by its tile's rotation, scales it to the
-/// cell, and puts it at the cell's centre.
+/// The placements of every module `wanted` names in `chunk`, one set per module name in name order:
+/// a module without a model or a collider (air) gets no set.
 #[must_use]
 pub fn instance_sets(
     chunk: &Chunk,
     rules: &RuleFile,
     space: &YUpSpace,
-    drawn: impl Fn(&str) -> bool,
+    wanted: impl Fn(&str) -> bool,
 ) -> Vec<InstanceSet> {
-    let scale = space.cell_size();
     let mut sets: BTreeMap<&str, InstanceSet> = BTreeMap::new();
     for (cell, &tile) in chunk.tiles.iter().enumerate() {
         let tile = usize::from(tile);
         let name = rules.name(tile);
-        if !drawn(name) {
+        if !wanted(name) {
             continue;
         }
         let cell = u32::try_from(cell).expect("a chunk has fewer than 2^32 cells");
-        let (sin, cos) = YUpSpace::yaw(rules.rotation(tile)).sin_cos();
-        let origin = space.cell_center(chunk.coord, cell);
-        // The basis turns about +Y, then scales each of the engine's axes to the cell.
-        let rows = [
-            [cos * scale[0], 0.0, sin * scale[0], origin[0]],
-            [0.0, scale[1], 0.0, origin[1]],
-            [-sin * scale[2], 0.0, cos * scale[2], origin[2]],
-        ];
         let set = sets.entry(name).or_insert_with(|| InstanceSet {
             name: name.to_owned(),
-            transforms: Vec::new(),
             ids: Vec::new(),
+            turns: Vec::new(),
+            origins: Vec::new(),
         });
-        set.transforms.extend(rows.iter().flatten());
         set.ids
             .push((u64::from(chunk.coord.id()) << 32) | u64::from(cell));
+        set.turns.push(rules.rotation(tile));
+        set.origins.push(space.cell_center(chunk.coord, cell));
     }
     sets.into_values().collect()
 }
@@ -128,7 +150,7 @@ mod tests {
         assert_eq!(sets.len(), 1);
         assert_eq!(sets[0].name, "road");
         assert_eq!(sets[0].len(), 1);
-        assert_eq!(sets[0].transforms.len(), 12);
+        assert_eq!(sets[0].transforms([1.0; 3]).len(), 12);
     }
 
     #[test]
@@ -139,7 +161,7 @@ mod tests {
 
         let set = &instance_sets(&chunk, &rules, &space, |name| name != "air")[0];
 
-        let t = &set.transforms;
+        let t = &set.transforms(space.cell_size());
         // Transform the model's corner (0.5, 0, 0): turned a quarter it points along +z, scaled by
         // the cell's 2 along z, and placed at the cell's centre.
         let point = |x: f32, y: f32, z: f32| {
@@ -153,6 +175,24 @@ mod tests {
             (point(0.0, 0.5, 0.0)[1] - (centre[1] + 1.5)).abs() < 1e-5,
             "up scales by 3"
         );
+    }
+
+    #[test]
+    fn at_a_scale_of_one_an_instance_is_only_turned_and_placed() {
+        let rules = rules();
+        let space = space();
+        let chunk = chunk(&rules);
+
+        let set = &instance_sets(&chunk, &rules, &space, |name| name != "air")[0];
+        let t = set.transforms([1.0; 3]);
+
+        // Each row of the basis is a unit vector: a collider keeps the size it was shaped with.
+        for row in [0, 4, 8] {
+            let length =
+                (t[row] * t[row] + t[row + 1] * t[row + 1] + t[row + 2] * t[row + 2]).sqrt();
+            assert!((length - 1.0).abs() < 1e-6, "row {row}: {length}");
+        }
+        assert_eq!([t[3], t[7], t[11]], space.cell_center(chunk.coord, 0));
     }
 
     #[test]
