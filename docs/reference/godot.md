@@ -98,6 +98,11 @@ second, published once a second, not the last frame's time.
 - `noises`: a Dictionary of a pack's noise names to `FastNoiseLite` resources; each replaces the
   pack's noise of that name, so a Field reading `FastNoise(name)` holds exactly what the
   resource's `get_noise_2d` gives at each column's centre in cells.
+- `remove_point(stage, chunk, id)` takes away a Scatter stage's point by the id `point_sets` gave
+  it, and `raise(stage, position, by)` raises a field stage at the column under a position in
+  Godot's world space ([packs.md](packs.md#edits)). `edits_log()` gives the player's edits as text
+  for a save, and `set_edits_log(text)` restores them. A refused edit is reported as an error,
+  returns false and changes nothing.
 - `target_radii`: a Dictionary of target stage names to a radius in chunks of their own; the
   other targets keep `view_radius`.
 - `start()` loads the pack and the rule sets and starts the stages' thread, where a town solver
@@ -167,6 +172,7 @@ are deep. Ground and bodies go when their chunk's field is dropped or the player
 `wave_forge_godot/verify.sh` builds the extension and runs `godot/verify.gd` (the WFC world, with
 colliders and navigation), `godot/verify_stages.gd` (the valley pack, its ground, and a walk
 through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) and
-`godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack) in a real headless Godot.
+`godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack) and `godot/verify_edits.gd`
+(a felled tree and raised ground through a save) in a real headless Godot.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).

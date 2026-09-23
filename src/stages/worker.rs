@@ -5,6 +5,7 @@
 //! request never waits long, and hands every product back shared, so the engine's thread reads it
 //! without a copy and without asking.
 
+use super::edits::Edits;
 use super::facts::{Facts, RowId};
 use super::regions::Curve;
 use super::runtime::{Categories, Field, Point, Product, Runtime, Site, StageTiming, TownChunk};
@@ -24,6 +25,7 @@ enum Order {
         targets: Vec<(String, Option<u32>)>,
     },
     Facts(Facts),
+    Edits(Edits),
     Focus {
         table: String,
         id: RowId,
@@ -112,6 +114,13 @@ impl StageWorker {
     /// drops, and is generated again. An error stops the thread and arrives as a failure.
     pub fn set_facts(&self, facts: Facts) {
         let _ = self.orders.send(Order::Facts(facts));
+    }
+
+    /// Gives the runtime the player's edits, as [`Runtime::set_edits`] does: what the change
+    /// reaches arrives as drops, and is generated again with the edits. An error stops the thread
+    /// and arrives as a failure.
+    pub fn set_edits(&self, edits: Edits) {
+        let _ = self.orders.send(Order::Edits(edits));
     }
 
     /// Focuses the runtime on the row `id` of `table`, as [`Runtime::focus`] does, with what that
@@ -297,6 +306,7 @@ where
                     runtime.request_each(&focus, &targets)
                 }
                 Order::Facts(facts) => runtime.set_facts(facts),
+                Order::Edits(edits) => runtime.set_edits(&edits),
                 Order::Focus { table, id } => runtime.focus(&table, id),
             };
             match result {

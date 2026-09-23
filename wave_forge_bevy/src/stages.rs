@@ -24,8 +24,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
-    Categories, Facts, Field, Point, RowId, Runtime, Site, StageEvent, StageTiming, StageWorker,
-    TownChunk,
+    Categories, Edits, Facts, Field, Point, RowId, Runtime, Site, StageEvent, StageTiming,
+    StageWorker, TownChunk,
 };
 use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, ground, ground_readers};
 
@@ -174,6 +174,13 @@ impl WaveForgeStages {
     /// [`StageReady`] again. An error stops generation and arrives as [`StagesFailed`].
     pub fn set_facts(&self, facts: Facts) {
         self.worker.set_facts(facts);
+    }
+
+    /// Gives the stages the player's edits, a log a game keeps and saves: what the change reaches
+    /// arrives as [`StageDropped`], then as [`StageReady`] again with the edits applied. An error
+    /// stops generation and arrives as [`StagesFailed`].
+    pub fn set_edits(&self, edits: Edits) {
+        self.worker.set_edits(edits);
     }
 
     /// Focuses the stages on the row `id` of `table`, whose columns stages read through

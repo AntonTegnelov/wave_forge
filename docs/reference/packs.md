@@ -74,6 +74,29 @@ world computes its region jobs and location tables before play. A bounded world 
 and location table it has computed, since it has few; without a bound it fails with
 `StageError::Unbounded`. `Pack::bound` gives the bound to an engine.
 
+## Edits
+
+What a player changes in a world is a log, `Edits`, which a game keeps and saves beside its facts:
+a world is a function of the pack, the seed, the facts and the edits.
+
+- `Edit::Remove { point, at }` takes away a Scatter stage's point, a felled tree say, by its
+  positional id (`PointId`, from its `InstanceId`) and where it stood.
+- `Edit::Move { point, from, to, turn }` stands it at `to`, turned to `turn`. It stays in the chunk
+  it was generated in, so an engine finds it there wherever it now stands.
+- `Edit::Raise { stage, column, by }` adds `by` to a field stage's value at one of its columns:
+  ground raised or dug. Raises of one column add up, and a column is shared by the chunks on either
+  side of a border, so they never disagree.
+
+`Runtime::set_edits(&edits)` gives a runtime the log, and every product is edited as it is
+generated: a field's columns raised, a Scatter stage's points removed or moved. So an edit survives
+eviction and regeneration, and a sample holds a raise as its chunk does. A new log dirties only the
+chunks whose edits changed, a raise its column's chunk and a point the chunk it stood in, and
+everything that reads them within its reach, then returns the drops as `request` does. Staleness is
+kept per chunk, so a raise regenerates a reader's neighbouring chunks when their reach covers the
+raised chunk, even where it does not cover the column. An edit that raises a stage that is no
+field, or names a point no Scatter stage placed, fails with `StageError::Edit` and changes nothing.
+`Edits::to_ron` and `from_ron` save and load the log.
+
 ## Levels
 
 A stage may declare a `scale`: how many WFC cells one of its columns spans along each axis, 1 by

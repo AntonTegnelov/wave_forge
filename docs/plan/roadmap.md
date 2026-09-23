@@ -71,20 +71,13 @@ first, which the survival game grows into, then what the strategy game needs.
    ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) and these, the strategy game is
    possible; [#129](https://github.com/AntonTegnelov/wave_forge/issues/129) asks for its
    repository.
-3. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104):
-   FastNoiseLite-compatible noise ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)),
-   neighbourhood filters ([#94](https://github.com/AntonTegnelov/wave_forge/issues/94)), a Scatter
-   modifier chain ([#95](https://github.com/AntonTegnelov/wave_forge/issues/95)), blocking across
-   Scatter stages ([#96](https://github.com/AntonTegnelov/wave_forge/issues/96)), a location table
-   ([#97](https://github.com/AntonTegnelov/wave_forge/issues/97)), rivers that carve the ground
-   ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)), a world bound
-   ([#99](https://github.com/AntonTegnelov/wave_forge/issues/99)), dungeons through Assemble
-   ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)), edits and persistence modes
-   ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101),
-   [#102](https://github.com/AntonTegnelov/wave_forge/issues/102)), scenes bound to points
-   ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), and a radius per stage
-   ([#103](https://github.com/AntonTegnelov/wave_forge/issues/103)). A test pack of G7's world then
-   verifies G7.
+3. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104). Built: Godot's FastNoiseLite
+   noise in 2D ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)), neighbourhood filters, a Scatter modifier chain, blocking
+   across Scatter stages, a location table, curves drawn into the ground, a world bound, an edits
+   log and a radius per target stage. Left: a Network stage for paths between sites
+   ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)), dungeons through Assemble
+   ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)), persistence modes ([#102](https://github.com/AntonTegnelov/wave_forge/issues/102)) and
+   scenes bound to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)). A test pack of G7's world then verifies G7.
 4. **Engine depth, alongside:** ground cover, grass and wind
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), region tags for audio and
    localisation ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)), far proxies and
