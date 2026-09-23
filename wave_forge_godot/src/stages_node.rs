@@ -11,7 +11,7 @@
 //! `PhysicsServer3D` with every shape added before the body joins the space.
 
 use crate::timings::Timings;
-use crate::{RECENT_FRAMES, from_vector, local_id, to_vector};
+use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::{ArrayType, PrimitiveType};
 use godot::classes::{
@@ -113,6 +113,8 @@ pub struct WaveForgeStages {
     /// Each chunk's static body and its ground's height map shape, which the body does not own,
     /// and what it holds, to tell when it has to be built again.
     bodies: HashMap<ChunkCoord, (Rid, Option<Rid>, BodyContents)>,
+    /// Chunks within `collider_radius` still waiting for a body after the last frame.
+    bodies_pending: usize,
 }
 
 /// The most `stage_ready` and `stage_dropped` signals one frame emits. A wide request can bring
@@ -179,6 +181,7 @@ impl INode for WaveForgeStages {
             grounds: HashMap::new(),
             ground_due: std::collections::BTreeSet::new(),
             bodies: HashMap::new(),
+            bodies_pending: 0,
             slowest_frame: FrameCost::default(),
             pending: VecDeque::new(),
         }
@@ -710,8 +713,8 @@ impl WaveForgeStages {
     /// `slowest_frame_grounds` chunks given ground in `slowest_frame_grounds_ms`, and
     /// `slowest_frame_bodies` chunks given a body in `slowest_frame_bodies_ms`. And `stages`: what
     /// each stage has cost on the stages' thread, by name, as `products`, `ms` in all and
-    /// `slowest_ms` for one product. And `pending_signals` and `pending_grounds`, the signals and the
-    /// chunks' ground waiting for a later frame.
+    /// `slowest_ms` for one product. And `pending_signals`, `pending_grounds` and
+    /// `pending_colliders`: the signals, grounds and bodies waiting for a later frame.
     #[func]
     fn stats(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
@@ -734,6 +737,10 @@ impl WaveForgeStages {
         out.set(
             &"pending_grounds".to_variant(),
             &(self.ground_due.len() as i64).to_variant(),
+        );
+        out.set(
+            &"pending_colliders".to_variant(),
+            &(self.bodies_pending as i64).to_variant(),
         );
         let slowest = self.slowest_frame;
         for (key, value) in [
@@ -954,7 +961,7 @@ impl WaveForgeStages {
             return 0;
         };
         let range = focus.x - radius.max(0)..=focus.x + radius.max(0);
-        let wanted: Vec<(ChunkCoord, BodyContents)> = range
+        let mut wanted: Vec<(ChunkCoord, BodyContents)> = range
             .flat_map(|x| {
                 (focus.y - radius.max(0)..=focus.y + radius.max(0))
                     .map(move |y| ChunkCoord::new(x, y, 0))
@@ -963,6 +970,15 @@ impl WaveForgeStages {
             .map(|chunk| (chunk, contents(self, chunk)))
             .filter(|(_, held)| held.ground || !held.towns.is_empty())
             .collect();
+        // Nearest first, and a few a frame, as the city node does.
+        wanted.sort_by_key(|(chunk, _)| {
+            (
+                (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()),
+                *chunk,
+            )
+        });
+        self.bodies_pending = wanted.len().saturating_sub(BODIES_PER_FRAME);
+        wanted.truncate(BODIES_PER_FRAME);
         let owner = u64::from_ne_bytes(self.base().instance_id().to_i64().to_ne_bytes());
         let count = wanted.len();
         for (chunk, held) in wanted {

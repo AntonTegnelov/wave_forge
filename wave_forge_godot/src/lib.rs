@@ -169,6 +169,10 @@ pub struct WaveForgeWorld {
     /// Each chunk's static body and the local id of the instance each of its shapes stands for, in
     /// shape order.
     bodies: HashMap<ChunkCoord, (Rid, Vec<u64>)>,
+    /// Chunks whose tiles changed since their body was built, to build again.
+    bodies_due: std::collections::BTreeSet<ChunkCoord>,
+    /// Chunks within `collider_radius` still waiting for a body after the last frame.
+    bodies_pending: usize,
     /// Each chunk's navigation region and the mesh being baked for it.
     navigation: HashMap<ChunkCoord, NavigationChunk>,
     /// The triangles of each module's collision shape, as the navigation bake reads them.
@@ -199,6 +203,10 @@ struct FrameCost {
     colliders_ms: f64,
     navigation_ms: f64,
 }
+
+/// The most chunks one frame gives a collider body, in either node. A body costs Godot's thread
+/// about 0.3 ms for a chunk of 512 boxes on the dev container, so three stay near a millisecond.
+pub(crate) const BODIES_PER_FRAME: usize = 3;
 
 fn elapsed_ms(since: std::time::Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.0
@@ -237,6 +245,8 @@ impl INode for WaveForgeWorld {
             collider_radius: 1,
             collision_shapes: HashMap::new(),
             bodies: HashMap::new(),
+            bodies_due: std::collections::BTreeSet::new(),
+            bodies_pending: 0,
             navigation_radius: -1,
             navigation_template: None,
             navigation: HashMap::new(),
@@ -700,7 +710,8 @@ impl WaveForgeWorld {
     /// What generation has cost so far: `batches`, `solved`, `repaired`, `rewritten_by_repair`,
     /// `failed`, `solver_ms`, `repair_batches` and `repair_ms`; how many navigation bakes have
     /// finished (`navigation_baked`) and the polygons of the meshes in place
-    /// (`navigation_polygons`).
+    /// (`navigation_polygons`); and the chunks within `collider_radius` still waiting for a body
+    /// (`pending_colliders`), since at most three are given one per frame.
     ///
     /// What the node's slowest frame since the start spent Godot's thread on: `slowest_frame_ms`
     /// in all, `slowest_frame_events` drained and `slowest_frame_signals_ms` emitting them (the
@@ -719,6 +730,7 @@ impl WaveForgeWorld {
         let stats = worker.stats();
         let mut out: Dictionary<GString, Variant> = Dictionary::new();
         out.set("batches", stats.batches);
+        out.set("pending_colliders", self.bodies_pending as i64);
         out.set("solved", stats.solved);
         out.set("repaired", stats.repaired);
         out.set("rewritten_by_repair", stats.rewritten_by_repair);
@@ -797,6 +809,9 @@ impl WaveForgeWorld {
                 physics.free_rid(body);
             }
         }
+        self.bodies_due
+            .extend(updated.iter().copied().filter(|&chunk| within(chunk)));
+        self.bodies_due.retain(|&chunk| within(chunk));
         if self.collision_shapes.is_empty() {
             return 0;
         }
@@ -810,14 +825,26 @@ impl WaveForgeWorld {
         };
         let owner = u64::from_ne_bytes(self.base().instance_id().to_i64().to_ne_bytes());
         let layout = self.space();
-        let wanted: Vec<ChunkCoord> = worker
+        let mut wanted: Vec<ChunkCoord> = worker
             .chunks()
             .map(|chunk| chunk.coord)
             .filter(|&chunk| within(chunk))
-            .filter(|chunk| !self.bodies.contains_key(chunk) || updated.contains(chunk))
+            .filter(|chunk| !self.bodies.contains_key(chunk) || self.bodies_due.contains(chunk))
             .collect();
+        // Nearest first, and a few a frame: each body costs Godot's thread a fraction of a
+        // millisecond, and a turn of the player can make a whole ring of chunks due at once.
+        wanted.sort_by_key(|chunk| {
+            let distance = (chunk.x - focus.x)
+                .abs()
+                .max((chunk.y - focus.y).abs())
+                .max((chunk.z - focus.z).abs());
+            (distance, *chunk)
+        });
+        self.bodies_pending = wanted.len().saturating_sub(BODIES_PER_FRAME);
+        wanted.truncate(BODIES_PER_FRAME);
         let built = wanted.len();
         for coord in wanted {
+            self.bodies_due.remove(&coord);
             let chunk = worker
                 .chunk(coord)
                 .expect("chosen from the worker's chunks");

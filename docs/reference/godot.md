@@ -44,7 +44,7 @@ extension needs none of godot-rust's thread-safety features.
   `RenderingServer.multimesh_set_buffer` on a `TRANSFORM_3D` multimesh), and each instance's stable
   `ids`. An instance is known by its chunk and its id, the same in every run and session.
 - **Colliders:** `set_collision_shape(module, shape)` gives every cell of a module a collider, in
-  the chunks within `collider_radius`; `collider_chunks()`; `collider_instance(rid, shape)` maps a
+  the chunks within `collider_radius`, at most three chunks' bodies per frame, nearest first; `collider_chunks()`; `collider_instance(rid, shape)` maps a
   ray or shape query's hit back to `{chunk, id}`.
 - **Navigation:** `navigation_chunks()` lists the chunks whose mesh is in the map. The node bakes
   one region per chunk from the collider shapes and the library's navigation source, off Godot's
@@ -60,6 +60,7 @@ extension needs none of godot-rust's thread-safety features.
 
 - **Generation:** `batches`, `solved`, `repaired`, `rewritten_by_repair`, `failed`, `solver_ms`,
   `repair_batches`, `repair_ms`.
+- **Waiting:** `pending_colliders`, the chunks within `collider_radius` still waiting for a body.
 - **Navigation:** `navigation_baked`, `navigation_polygons`.
 - **The slowest frame since the start:** `slowest_frame_ms` in all, `slowest_frame_events` drained
   and `slowest_frame_signals_ms` emitting them (connected handlers included),
@@ -130,8 +131,8 @@ second, published once a second, not the last frame's time.
 At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, in the order the
 products arrived (nearest first), so after a wide request some come a few frames later; by then a
 product can have been dropped again, and its `stage_dropped` follows. Ground is built for at most
-8 chunks per frame, nearest the player first. `stats()` reports what waits as `pending_signals`
-and `pending_grounds`.
+8 chunks per frame, and bodies for at most 3, nearest the player first. `stats()` reports what
+waits as `pending_signals`, `pending_grounds` and `pending_colliders`.
 
 ### Ground and colliders
 
