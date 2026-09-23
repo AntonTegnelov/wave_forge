@@ -309,9 +309,21 @@ pub struct CompiledModules {
     /// Faces for which no variant in the set fits, as `(variant, axis)`. Usually an authoring
     /// mistake, but expected at grid boundaries (for example the underside of the ground).
     pub unmatched_faces: Vec<(usize, usize)>,
+    /// Connector names by id, for a set whose connectors were named (every set read from a file);
+    /// empty for one built in code with bare ids.
+    pub connector_names: Vec<String>,
 }
 
 impl CompiledModules {
+    /// The id of the connector named `name`, if the set named its connectors and has this one.
+    #[must_use]
+    pub fn connector(&self, name: &str) -> Option<u32> {
+        self.connector_names
+            .iter()
+            .position(|known| known == name)
+            .map(|index| u32::try_from(index).expect("fewer than 2^32 connectors"))
+    }
+
     /// Tile ids of all variants of the prototype named `name`.
     #[must_use]
     pub fn variants_of(&self, name: &str) -> Vec<usize> {
@@ -387,6 +399,8 @@ pub struct ModuleSet {
     prototypes: Vec<ModulePrototype>,
     /// Pairs of different connectors that may face each other, stored in both orders.
     compatible: BTreeSet<(u32, u32)>,
+    /// Connector names by id, when the set has them.
+    connector_names: Vec<String>,
 }
 
 impl ModuleSet {
@@ -415,6 +429,13 @@ impl ModuleSet {
         );
         self.compatible.insert((a, b));
         self.compatible.insert((b, a));
+        self
+    }
+
+    /// Names the connectors, by id, so tools can refer to them by name.
+    #[must_use]
+    pub fn with_connector_names(mut self, names: Vec<String>) -> Self {
+        self.connector_names = names;
         self
     }
 
@@ -501,6 +522,7 @@ impl ModuleSet {
             tileset,
             rules,
             unmatched_faces,
+            connector_names: self.connector_names.clone(),
         })
     }
 
