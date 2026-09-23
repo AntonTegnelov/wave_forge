@@ -254,11 +254,18 @@ fn noise_config(noise: &Gd<FastNoiseLite>) -> Result<NoiseConfig, String> {
 }
 
 /// Puts what names a site in `out`: its `region` for a Sites stage's, its `row` for a TableSites
-/// stage's.
+/// stage's, its `region` and `index` for a Locations stage's.
 fn name_site(out: &mut VarDictionary, site: &SiteId) {
     match site {
         SiteId::Region(x, y) => {
             out.set(&"region".to_variant(), &Vector2i::new(*x, *y).to_variant())
+        }
+        SiteId::Location { region, index } => {
+            out.set(
+                &"region".to_variant(),
+                &Vector2i::new(region.0, region.1).to_variant(),
+            );
+            out.set(&"index".to_variant(), &i64::from(*index).to_variant());
         }
         SiteId::Row(row) => {
             let row: PackedInt64Array = row.0.iter().map(|&part| part as i64).collect();
@@ -935,10 +942,11 @@ impl WaveForgeStages {
         self.bodies.keys().map(|&chunk| to_vector(chunk)).collect()
     }
 
-    /// A Sites or TableSites stage's sites that overlap a chunk: what names each one, its `region`
-    /// (Vector2i) or the `row` (PackedInt64Array) of its table it stands for, the chunks it covers from `min` up to but not including `max` (Vector2i, along the lattice's
-    /// x and y), and its levelled `height` in cells. Empty if there are none or the chunk has not
-    /// arrived.
+    /// A Sites, TableSites or Locations stage's sites that overlap a chunk: what names each one,
+    /// its `region` (Vector2i), the `row` (PackedInt64Array) of its table it stands for, or its
+    /// `region` and `index` in a location table along with its `kind`; the chunks it covers from
+    /// `min` up to but not including `max` (Vector2i, along the lattice's x and y); and its
+    /// levelled `height` in cells. Empty if there are none or the chunk has not arrived.
     #[func]
     fn sites(&self, stage: GString, chunk: Vector3i) -> Array<VarDictionary> {
         let Some(sites) = self
@@ -953,6 +961,9 @@ impl WaveForgeStages {
             .map(|site| {
                 let mut out = VarDictionary::new();
                 name_site(&mut out, &site.id);
+                if let Some(kind) = &site.kind {
+                    out.set(&"kind".to_variant(), &GString::from(&**kind).to_variant());
+                }
                 out.set(
                     &"min".to_variant(),
                     &Vector2i::new(site.min.0, site.min.1).to_variant(),
