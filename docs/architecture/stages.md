@@ -75,7 +75,7 @@ masks ([solver.md](solver.md#the-prior)).
 
 | Type | Contents | Covers | Today |
 |---|---|---|---|
-| **Field** | named channels on a 2D or 3D grid at the stage's cell size | height, climate, masks, density and signed distance, categorical ids such as a biome | one `f32` per cell column ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91) adds categories) |
+| **Field** | named channels on a 2D or 3D grid at the stage's cell size | height, climate, masks, density and signed distance, categorical ids such as a biome | one `f32` per cell column, or a category per column from a Rules stage |
 | **PointSet** | structure of arrays: position, rotation, scale, stable id, kind, attribute columns | sites, anchors, scatter candidates and placements, spawn points | `Sites` and `Points` |
 | **CurveSet** | polylines with per-vertex attributes (radius, flow, profile) and optional connectivity | roads, rivers, tunnels, room and site graphs | not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
 | **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
@@ -94,7 +94,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 |---|---|---|---|---|
 | **Field** | a fused pointwise expression graph: noise, splines, remap, math, first-match classifiers, image lookup | 0 | G1, G3, G6, G7, N2, N7 | value noise with named streams, coordinates and distances, arithmetic, clamps, smoothsteps, remaps, curves and selects; FastNoiseLite's noises are [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
 | **Filter** | stencils, blur, cellular automata, slope, distance transforms | declared per pass | G2, G5, G7 | `Blur`, `Flatten` ([#94](https://github.com/AntonTegnelov/wave_forge/issues/94)) |
-| **Rules** | first-match rule trees producing a Prior or a categorical field, like Minecraft's surface rules | that of its conditions | G1, G7, N4 | not built yet ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91)) |
+| **Rules** | first-match rule trees producing a Prior or a categorical field, like Minecraft's surface rules | that of its conditions | G1, G7, N4 | a categorical field; a Prior is not built yet |
 | **Solve** | WFC over a Prior; Wang tiling later | the solver's halo | G4, G5, N6 | one bounded town per site (below) |
 | **Sites** | owned region-scale points, one candidate per region cell (Minecraft's `random_spread`), with spacing | a region | G1, G3, G7 | one footprint per region ([#97](https://github.com/AntonTegnelov/wave_forge/issues/97) adds a location table) |
 | **Scatter** | a generator and a chain of modifiers producing a PointSet (below) | its largest spacing or footprint | all G, N3, N5 | one kind per stage, four tests ([#95](https://github.com/AntonTegnelov/wave_forge/issues/95), [#96](https://github.com/AntonTegnelov/wave_forge/issues/96)) |

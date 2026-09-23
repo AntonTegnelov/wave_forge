@@ -434,6 +434,8 @@ default cell of 0.25, one region baked per chunk within 1 chunk of the player.
 | E24 | The stages check with ground and bodies, four runs | 49 chunks arrived in 16.7 to 18.4 s; 49 chunks with ground and 25 with bodies; the node's own process p99 0.09 to 0.17 ms, max 3.9 to 5.4 ms | the stages check at [#88]; the Godot check alongside: slowest frame 3.3 ms, node p99 0.61 ms |
 | E25 | The walk through the town of region (-2, -2), 56 units | crossed in 14.2 s; the feet at most 0.00 below the ground's surface and at most 0.05 above it while standing | same runs |
 | E26 | The same walk with every body removed | the walker sank through the ground in the first frames: feet at 53.39, the surface at 53.75 | a one-off change to the check, to show it detects falling through |
+| E27 | The stages check with a Rules stage (`cover`) and the slowest-frame breakdown, three runs | the node's own process p99 0.12 to 0.21 ms, max 4.7 to 5.2 ms; the slowest frame was always the one that emitted 2 745 to 2 841 `stage_ready` signals at once, in 3.3 to 3.8 ms, after the town search over 25×25 chunks; grounds and bodies under 0.01 ms in that frame | the stages check at [#91], radius 12 for the search |
+| E28 | The same check once before the breakdown existed | the node's own process max 9.64 ms, over the 8 ms bar; what the frame held was not recorded. Emitting every event of a drain in one frame is unbounded, which is the likeliest cause | at [#91]; the bound on signals per frame is [#108] |
 
 ### Bevy ([#26], 2026-09-18)
 
@@ -511,3 +513,5 @@ Measurements the current code still waits for.
 [#82]: https://github.com/AntonTegnelov/wave_forge/pull/82
 [#85]: https://github.com/AntonTegnelov/wave_forge/pull/85
 [#88]: https://github.com/AntonTegnelov/wave_forge/issues/88
+[#91]: https://github.com/AntonTegnelov/wave_forge/issues/91
+[#108]: https://github.com/AntonTegnelov/wave_forge/issues/108

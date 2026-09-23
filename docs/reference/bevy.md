@@ -45,7 +45,7 @@ Bevy's. Whether towns should share Bevy's device is the same measurement as the 
 ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
 
 - `StagesSettings`: `chunk`, columns per chunk as the runtime was built with, and `cell_size`.
-- `WaveForgeStages`, a resource: `field`, `sites`, `tiles` and `points` per stage and chunk,
+- `WaveForgeStages`, a resource: `field`, `categories`, `sites`, `tiles` and `points` per stage and chunk,
   `translation_of(point)` in Bevy's world, and `failure()`.
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.

@@ -32,7 +32,7 @@ reference worlds is placed. `Worker` runs it on a thread.
 connectors, and the city (`examples/city.ron`) is one. A `Prior` carries masks per layer, bans per
 world face and per-cell overrides.
 
-**Stages.** `wave_forge::stages` loads a pack (Field, Blur, Sites, Flatten, Solve, Scatter), checks
+**Stages.** `wave_forge::stages` loads a pack (Field, Rules, Blur, Sites, Flatten, Solve, Scatter), checks
 it, and generates any stage around focus points, providers first, through reads bounded by each
 stage's reach, the same in any order. Towns are bounded WFC worlds per site behind the `TownSolver`
 seam, solved on the GPU. `StageWorker` runs it on a thread. The valley test pack
@@ -99,7 +99,7 @@ Each is a gap between the code and the design or the stories, with where it is t
 - **Golden worlds cover tiles, not images or products.** Instance sets and chunk hashes are not in
   them yet.
 - **The stage runtime is a first slice.** Fields are one `f32` per cell column on the WFC lattice;
-  there are no categorical fields, Rules, curves, region jobs, edits, persistence modes, world
+  there are no curves, region jobs, edits, persistence modes, world
   bounds or per-stage request radii; noise is value noise only; Scatter has four tests and one kind
   per stage. Each is an issue under
   [#104](https://github.com/AntonTegnelov/wave_forge/issues/104) ([story-coverage.md](story-coverage.md)).
