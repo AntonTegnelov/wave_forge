@@ -68,7 +68,7 @@ has no built-in floating origin
 | **Occluders** | conservative boxes or solid faces per chunk | CPU |
 | **RegionTags** | biome, indoor or outdoor, surface material per walkable face, interior volumes, audio emitter points, place names as translation keys with arguments | CPU |
 | **Splines** (Phase 2) | roads and rivers: control points, width, material | CPU |
-| **SpawnPoints** | kind id, transform, stable id (seed, chunk, layer, index), custom data | CPU |
+| **SpawnPoints** | kind id, transform, stable id (the chunk coordinate and a local id packing the stage, the cell and a slot, never an ordinal), custom data; produced by Scatter stages ([generation-model.md §4](generation-model.md#4-stage-kinds)) | CPU |
 | **ChunkHash** | a hash over the products gameplay depends on | CPU |
 
 Configuration that goes with the products rather than being emitted per chunk:
@@ -285,15 +285,19 @@ both engines.
   outside the GPU path and outside the determinism guarantee.
 
 The shape of nodes and resources: a `WaveForgeWorld` node (following the current camera by default)
-holds a `WaveForgeRecipe` resource, which holds layers: a height layer (a `FastNoiseLite` and a
-`Curve`), a settlement layer, a WFC layer (modules authored as a `MeshLibrary`, which 4.7 gives a
-dedicated editor), and placement layers made of placement rules.
+holds a pack of stages ([generation-model.md](generation-model.md)): for example a height Field (a
+`FastNoiseLite` and a `Curve`), a Sites stage for settlements, a WFC Solve stage (modules authored as
+a `MeshLibrary`, which 4.7 gives a dedicated editor), and Scatter stages for placement. The pack is
+authored through GDScript resources that hand their engine-neutral fields to the library's types and
+save RON ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
 
-**Placing your own scenes by rule is the headline feature.** A placement rule holds a
-`PackedScene`, what it attaches to (a layer, a tile, a face or a mask), filters (density, slope,
-height, spacing) and a render mode: Auto, MultiMesh or Nodes. In Auto, a static single-mesh scene
-becomes chunked MultiMeshes, and a scene with scripts or bodies is instantiated as real nodes,
-optionally promoted from instance to node as the player approaches.
+**Placing your own scenes by rule is the headline feature.** A placement rule is a Scatter stage:
+generators (tile or face anchors, a jittered grid, points from sites or curves) and an ordered chain
+of modifiers (chance, height, slope, mask, levels, jitter, turn, spacing), with an Emit that binds
+each point's kind to a `PackedScene` and a render mode: Auto, MultiMesh or Nodes. In Auto, a static
+single-mesh scene becomes chunked MultiMeshes, and a scene with scripts or bodies is instantiated as
+real nodes, optionally promoted from instance to node as the player approaches. Spacing reads its
+neighbours' candidates, so it agrees across chunk seams.
 
 Brushes follow Terrain3D: a toolbar at the side of the 3D viewport, an `EditorDock` (4.6+), input
 through `_forward_3d_gui_input` with a decal cursor, one `EditorUndoRedoManager` action per stroke

@@ -107,20 +107,27 @@ Godot, and nothing gets built for it before that measurement says it is worth it
 
 Work that publishing would require, and that pays for itself before then:
 
-- **Continuous integration on free, standard GitHub-hosted runners** ([#32](https://github.com/AntonTegnelov/wave_forge/issues/32); the repository is public).
-  Formatting, clippy with warnings as errors, the tests that need no GPU (units, the facade on the
-  CPU reference, the Bevy wiring tests), and the per-crate feature builds from
-  [testing.md](testing.md#test-layers). GPU tests run on Mesa's software Vulkan device if they stay
-  fast there; that is measured before it is added. Heavy engine builds run only when their
-  directories change.
+- ~~**Continuous integration on free, standard GitHub-hosted runners** ([#32](https://github.com/AntonTegnelov/wave_forge/issues/32)).~~ Done: every pull
+  request runs formatting, clippy with warnings as errors, the workspace tests including the GPU
+  tests on Mesa's lavapipe, the per-crate feature builds, the Godot extension's check in a real
+  Godot and the Bevy plugin's tests ([testing.md](testing.md)).
 - ~~**Golden worlds (A-16, [#35](https://github.com/AntonTegnelov/wave_forge/issues/35)).**~~ Done: a 4×4-chunk city recorded on the RTX 3070 is tile for
   tile the same on Mesa's lavapipe, which CI checks on every pull request.
 - **Licences.** Everything in both integrations' dependency trees is MIT, Apache-2.0, Zlib or
   Unlicense, except godot-rust (`godot` and its `godot-*` crates, 0.5.5), which is MPL-2.0. That is
   compatible with shipping our MIT code, but a distributed extension binary has to say where the
   MPL-covered source can be obtained.
-- **Builds for every desktop platform** the Godot Asset Store expects (Windows, macOS, Linux). Whether
-  and when anything is published is the owner's decision.
+- **Builds for every desktop platform** the Godot Asset Store expects (Windows, macOS, Linux),
+  prepared for the release gate below.
+
+## Release gate and publishing
+
+- **The user stories are the release gate.** Nothing is done or published until every story in
+  [user-stories.md](user-stories.md) is verified by repeated, recorded checks, with the evidence
+  linked from the story ([user-stories.md, the verification gate](user-stories.md#the-verification-gate)).
+- **Publishing is a human-only task,** and so is anything like it: releasing to the Godot Asset
+  Store or crates.io, creating a release or a release tag, announcing, and promoting `develop` to
+  `main`. Agents prepare builds, notes and checklists; the owner decides and does the rest.
 
 ## Deeper engine integration
 
@@ -134,8 +141,8 @@ shaders and authoring tools. The design, with the reasoning and the evidence for
 - with hardening: the measurement that decides where the solver runs in both engines ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)),
   Godot editor polish and the Godot 4.7 minimum ([#40](https://github.com/AntonTegnelov/wave_forge/issues/40)), and a spike on Rust resources loaded off
   the main thread ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41));
-- after the MVP: navigation ([#42](https://github.com/AntonTegnelov/wave_forge/issues/42)), audio and localisation tags ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)), and placing users'
-  own scenes by rule ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44));
+- after the MVP: navigation ([#42](https://github.com/AntonTegnelov/wave_forge/issues/42), done), audio and localisation tags ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)), and placing users'
+  own scenes by rule ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), which becomes the Scatter and Emit stages of Phase 2's first slice;
 - with Phase 2: noise that means the same in both engines ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)), ground, grass and wind
   ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), far proxies and occluders ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47));
 - then authoring: recipes, brushes and bake, in Godot first because Bevy has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
@@ -143,34 +150,41 @@ shaders and authoring tools. The design, with the reasoning and the evidence for
 Products that stay on the GPU are built only where a measurement shows the read-back path is too
 slow.
 
-## Phase 2: layered world generation
+## Phase 2: generation as a pack of stages
 
-**Goal:** LayerProcGen-style layers combining techniques: noise landscapes, Fractal Jittered Voronoi
-Partition coastlines and WFC cities, with layering, blending and multiple passes. The first step is
-two layers: a landscape from noise, with villages, towns and cities placed in it and built with WFC.
-See [architecture.md §7](architecture.md#7-phase-2-layered-generation-design-constraints-to-keep-in-mind-now)
-for the constraints Phase 1 had to respect.
+**Goal:** a developer can build the kind of world the games in [user-stories.md](user-stories.md)
+generate (Minecraft, Dwarf Fortress, No Man's Sky, Noita, Caves of Qud, Elite Dangerous, Valheim,
+Deep Rock Galactic), combining fields, scatter, sites, WFC and region-scale passes, and a newcomer
+still reaches a walkable world of their own in minutes. The design, and the research behind it, is
+[generation-model.md](generation-model.md).
 
-Detailed planning waits for the walk, which will show what a game actually asks for. The
-big-picture shape is decided now, because it is what later work must not contradict:
+The shape, which later work must not contradict:
 
-- **A layer is a pure function of the world seed and a chunk coordinate, with a declared reach into
-  the layers below it**, on the same chunk lattice and the same per-chunk seeds the WFC generator
-  uses. Layers form a graph with no cycles, and a layer only reads layers at its own scale or a
-  coarser one. That is what makes any chunk generable in any order with the same result, which the
-  generator already guarantees for WFC.
-- **WFC is one layer, driven by the layers below it.** Its `Prior` (layer masks, face bans, per-cell
-  overrides) is computed from lower layers instead of being set by hand; that is "driven WFC", and
-  the `Prior` was built to carry it.
-- **The first graph:** a noise heightfield; settlement sites as a Poisson process per region, with
-  footprints that cannot overlap (Boris the Brave's Poisson-rect process); a final height that
-  flattens the terrain under each footprint, which keeps sites and height free of a cycle; and WFC
-  inside the footprints.
-- **The hard part is a city on uneven ground.** The prior pins street level to the terrain height
-  per column, so the module set needs fill below the street and has to meet the landscape at a
-  footprint's edge.
-- **The integrations change little.** They hand out "tiles of a chunk" today and will hand out "the
-  outputs of the layers a game asked for"; both are thin, so that change is cheap when it comes.
+- **A stage is a pure function of the seed, its id and a key, with a declared reach into its
+  inputs**, generated provider-first in any order with the same result. Reads outside the declared
+  reach are errors; cycles are refused when a pack loads. This generalises what the WFC generator
+  already guarantees.
+- **Typed data flows between stages**: fields, point sets, curve sets, stamps, records, Priors and
+  tile grids, and an edits log. Engines receive products derived from them.
+- **WFC is one stage kind among several**, driven by a Prior that Rules stages compute; fields and
+  scatter are first-class, because most of the studied games spend their generation there.
+- **Region jobs** cover what one chunk cannot see: rivers, zones, cave levels and finite worlds, on
+  a coarse lattice, with hashed retries.
+- **One pack format, four tiers**: presets, a stack, the pack as a graph, and Rust stages, with the
+  debugging views as part of the product.
+
+Order, each step verified before the next ([generation-model.md §8](generation-model.md#8-order-of-work)):
+
+1. Positional placement ids.
+2. The stage runtime on the CPU with the order-diff test, wrapping today's WFC.
+3. Making repairs a pure level of the WFC stage, or labelling rule sets that are not
+   streaming-clean, decided by a measurement.
+4. The first slice, a Valheim-like surface world with WFC inside masks (G7), then the GPU Field stage.
+5. Godot authoring and viewers, the Bevy loader.
+6. One slice per stage kind: region jobs, Assemble, density volumes, records and hierarchy.
+
+The integrations change little: they hand out the products of the stages a game asked for, as they
+hand out a chunk's tiles today.
 
 ## Deferred
 
