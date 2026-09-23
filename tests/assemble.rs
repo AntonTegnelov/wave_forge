@@ -369,3 +369,50 @@ fn a_piece_placed_by_its_turn_and_position_opens_its_door_onto_what_it_joined() 
         );
     }
 }
+
+#[test]
+fn the_ring_world_grows_a_dungeon_above_every_crypt() {
+    let text = std::fs::read_to_string(format!(
+        "{}/examples/rings.world.ron",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("the ring world");
+    let mut runtime = Runtime::new(Arc::new(Pack::parse(&text).expect("a valid pack")), 7, SIZE);
+    runtime
+        .request_bound(&["dungeon", "locations"])
+        .expect("a bounded island");
+    runtime.run_until_idle().expect("the stages run");
+    let mut crypts = BTreeMap::new();
+    let mut dungeons: BTreeMap<String, Vec<Stamp>> = BTreeMap::new();
+
+    for y in -14..14 {
+        for x in -14..14 {
+            let chunk = ChunkCoord::new(x, y, 0);
+            for site in runtime.sites("locations", chunk).into_iter().flatten() {
+                if site.kind.as_deref() == Some("crypt") {
+                    crypts.insert(format!("{:?}", site.id), site.clone());
+                }
+            }
+            for stamp in runtime.stamps("dungeon", chunk).into_iter().flatten() {
+                let pieces = dungeons.entry(format!("{:?}", stamp.site)).or_default();
+                if !pieces.contains(stamp) {
+                    pieces.push(stamp.clone());
+                }
+            }
+        }
+    }
+
+    assert!(!crypts.is_empty());
+    assert_eq!(
+        dungeons.keys().collect::<Vec<_>>(),
+        crypts.keys().collect::<Vec<_>>()
+    );
+    for (id, pieces) in &dungeons {
+        let crypt = &crypts[id];
+        let rooms = pieces.iter().filter(|piece| &*piece.piece != "cap").count();
+        assert!(rooms >= 8, "{id}: {rooms} pieces");
+        for piece in pieces {
+            assert_eq!(piece.position[2], crypt.height + 40.0, "{piece:?}");
+        }
+    }
+}
