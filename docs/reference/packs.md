@@ -172,6 +172,21 @@ FNV-1a salt of the stage's name, so adding, removing or reordering stages change
 **Order independence** is checked by `tests/stages.rs`: a six-stage pack comes out bit for bit the
 same over a 4×4-chunk area asked for all at once and one chunk at a time in either raster order.
 
+## Ground
+
+`wave_forge::ground(chunk, field, cell_size)` builds a chunk's ground from a height field stage:
+a `GroundMesh` with a vertex above every column's centre plus the first column of the +x and +y
+neighbours, so neighbouring chunks share their edge vertices exactly. Normals come from central
+differences, which at an edge read the neighbour, so shading is continuous across chunks.
+Triangles face up (counter-clockwise seen from +y), positions are relative to the chunk's corner
+on the ground plane with heights absolute, and `heights` holds the same grid for a height-field
+collider. All of it is in a Y-up engine's axes.
+
+A chunk's ground reads the fields of the eight chunks around it, so `ground` returns `None` until
+all nine have arrived, and the ground of a view reaches one chunk less than its fields.
+`ground_readers(chunk)` lists the chunks whose ground may have become buildable when that chunk's
+field arrives.
+
 ## In the engines
 
 - Godot: the `WaveForgeStages` node ([godot.md](godot.md#waveforgestages)).
