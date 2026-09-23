@@ -70,6 +70,21 @@ pub(crate) fn wanted(focus: &[FocusPoint], extent: &WorldExtent) -> BTreeSet<Chu
     asked.union(&neighbours).copied().collect()
 }
 
+/// The most chunks one batch can hold for a single focus of `radius`: one parity of the chunks it
+/// asks for and the neighbours they read, a box two chunks wider than its view where the world
+/// allows. What a run dispatches never exceeds it, which is what kernels are compiled for.
+pub(crate) fn largest_batch(radius: u32, extent: &WorldExtent) -> u32 {
+    let across = 2 * radius + 3;
+    let chunks: u32 = (0..3)
+        .map(|axis| {
+            extent
+                .chunks_along(axis)
+                .map_or(across, |range| across.min(range.len() as u32))
+        })
+        .product();
+    chunks.div_ceil(2)
+}
+
 /// The wanted chunks still to generate, nearest focus first and stable on ties.
 ///
 /// `skip` holds the chunks a dispatch would be wasted on: the ones given up on, and the ones
@@ -288,5 +303,32 @@ mod tests {
         failed.insert(ChunkCoord::new(0, 0, 0));
 
         assert!(eligible(odd, &store, &failed, &extent()));
+    }
+
+    #[test]
+    fn no_parity_of_what_a_focus_asks_for_exceeds_the_largest_batch() {
+        let worlds = [
+            WorldExtent::new(ChunkShape::cube(4)).with_z(0..1),
+            WorldExtent::new(ChunkShape::cube(4)),
+            extent(),
+        ];
+        for world in &worlds {
+            for radius in 0..5 {
+                for centre in [ChunkCoord::new(0, 0, 0), ChunkCoord::new(1, 2, 0)] {
+                    let asked = wanted(&[FocusPoint::new(centre, radius)], world);
+
+                    let largest = largest_batch(radius, world);
+
+                    for parity in 0..2 {
+                        let batch = asked.iter().filter(|c| c.parity() == parity).count() as u32;
+                        assert!(
+                            batch <= largest,
+                            "radius {radius} at {centre:?}: {batch} chunks of parity {parity}, \
+                             bound {largest}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

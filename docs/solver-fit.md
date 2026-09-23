@@ -112,6 +112,13 @@ Release builds, RTX 3070 via dozen, city rule set (81 module variants) unless st
 | A player walking and running an unbounded city in real time through a `Worker`, 776 m in 230 s | **0 chunk-frames late** within 30 m of the player at 1.4 and 4.2 m/s, generating 3 chunks out; main thread per frame p50 0.001 ms, p99 0.006 ms, max 0.18 ms; 432 chunks solved in 167 batches, 6.2 s in the solver; at most 70 held at once | `wfc-devtools/tests/game_session.rs`, release, dozen on an RTX 3070, world seed 11, halo 1, radius 1 with undo, 14 kernels compiled in 60 s before play, 60 Hz frame loop in wall-clock time |
 | Same session, what the player saw | **13 holes in view**; 18 of 432 chunks unplaceable (4.2%), 33 repaired, 181 rewritten by repairs; 0 rule violations inside chunks and across 1197 seam checks; 23 chunks walked back to compared, all identical, 44 not comparable (a repair or a failed neighbour touched them); walkable faces continued 0.810 inside chunks, 0.794 across seams; largest network 0.40 of the walkable cells held at the end | same run; two holes are within 30 m of the start, so the player sees them on the first frame |
 | Giving a repair a stream of its own (the batch seed keyed by the repair's halo) | 8 of 184 unplaceable → **6 of 186**; repairs 17 → 19 | same test, two runs either side of the change; a chunk whose first attempt exhausted every restart gains little from repeating the same choices with one more row of freedom |
+| Chunks a streamed city gave up on, each solved again from its neighbours' final tiles | 20 of 301 given up on, **all exhausted**; with the halo released and a first attempt's budget (64 attempts, 50 000 steps), **20 of 20** solve with some of 16 seeds; with neighbours fixed, 11 of 20 at halo 0 and 6 of 20 at halo 1, where 9 and 14 contradict before any choice, mostly in a corner column or a diagonal halo cell | `wfc-devtools/tests/hole_census.rs`, release, dozen on an RTX 3070, world seed 11, one focus of radius 8, halo 1, radius 1 with undo, 16 seeds per problem |
+| Those 20 as a repair of 32 seeds side by side, per budget | 8 attempts / 5 000 steps: 19 of 20, at most 15 seeds needed; **16 / 10 000: 20 of 20**, dispatch median 21 ms, max 37 ms; 32 / 20 000: 20 of 20, median 29 ms, max 50 ms; 64 / 50 000: 20 of 20, median 42 ms, max 79 ms | same run; every seed of a dispatch runs to its own end, so the slowest sets the time |
+| Repairs of 32 seeds at 32 attempts / 20 000 steps, five worlds | **0 of 1 605 chunks given up on** (seeds 11, 23, 47, 101, 977); 280 repairs, 1 874 chunks rewritten by them, 10.0 s in the solver | same census, the generator's own repairs |
+| Same, the second parity solved without a halo | **176 repairs** (−37%), 1 265 rewritten, **6.5 s** in the solver (−35%), 0 given up on; first parity without a halo instead: about 690 repairs and 2 chunks given up on; first parity at halo 2: 175 repairs, 6.8 s | same census; the second parity's face neighbours are fixed, so its halo only added diagonal cells squeezed between two of them |
+| Live streaming with both, 24×8 chunks, view radius 4 | **0 of 192** could not be placed, 20 repaired; median tick **56 ms**, p90 **141 ms**, busiest 216 to 451 ms over three runs, inside a 500 ms budget | `streaming.rs::live_streaming_keeps_ahead_of_a_walking_player`, same build and stack as the rows above; the p90 rose from 61 ms because a repair dispatch waits for its slowest seed |
+| The game session with both | **0 holes in view**, 0 of 455 chunks given up on, 45 repaired, 266 rewritten; 0 chunk-frames late; main thread p99 0.004 ms; 10.8 s in the solver over the 230 s walk; 27 chunks walked back to, all identical; 0 violations across 1 592 seam checks | `game_session.rs`, same build and stack |
+| Stitching an 8×8-chunk world with both | **0 of 64** given up on, 5 repaired, 0.37 s of dispatches | `streaming.rs::a_world_asked_for_at_once_comes_out_seamless` |
 | Stitching an 8×8-chunk world through the facade, asked for at once | 61 of 64 chunks in **0.31 s of dispatches** over 14 batches, 5 repaired, 30 rewritten by repairs, 3 unplaceable, 0 seam violations | `streaming.rs::a_world_asked_for_at_once_comes_out_seamless`, same build and stack |
 | Stitching an 8×8-chunk world on the library solver | checkerboard without a halo leaves 30 of 64 chunks; with halo 1 and repair both the checkerboard (14 repairs) and the diagonal order (2 repairs) complete it, 0 violations | `block_solver_bench` schedule tests |
 | CPU reference after the model move (u32 words, pcg3d choice, integer weights) | 8×8×8: **128–164k cells/s** (was 120–190k on `[u64; 2]`); 24×24×8: 23–29k (was 29–35k); the naive undo now thrashes on 1 of 8 seeds at 8×8×8 and 2 of 8 at 24×24×8 | `cpu_reference` at the model commit, release, Ryzen 9 5900X, one run per seed; trajectories differ from the old reference because the choice rule changed, so the tail is not comparable |
@@ -346,13 +353,15 @@ Each of these is an inference. The reasoning is given so a future pass can check
    registers, so each word touches scratch memory. The kernel now generates its mask type and
    operations with every word written out, which restored the figure exactly. Measured on one stack;
    the mechanism is general but the factor is not.
-17. **About one chunk in sixty of the city cannot be placed against fixed borders.**
-   *Reasoning:* 3 of 192 chunks in the live run, and 30 of 64 without a halo, end with borders no
-   arrangement satisfies; repairs at halo 1 and 2 fix all but those three, and halo 3 does not fit
-   the device. Since a solve is a function of the chunk and its neighbours, asking again is pointless,
-   which is why the scheduler reports such a chunk once instead of retrying it. The remedy is
-   module-set design, not solver work: a set is streaming-clean when the repair count is zero. One
-   world, one seed.
+17. **A chunk of the city that will not solve against its neighbours can nearly always be repaired;
+   what it needs is more tries, not a different rule set.**
+   *Reasoning:* this item used to conclude the opposite, that such chunks had borders no arrangement
+   satisfies and needed module-set design, from one world and one seed per repair. A census of every
+   chunk a streamed world gave up on (`hole_census.rs`) solved each one's exact problem again: with
+   its halo released, every one of them has arrangements that some seeds find. A repair now tries 32
+   seeds side by side and keeps the lowest that solves, which placed every chunk of five worlds, and
+   the second parity is solved without a halo, which removed a third of the repairs. Repairs still
+   rewrite their neighbours, so the city is not streaming-clean; one chunk in nine needs one.
 
 ## Unknowns
 

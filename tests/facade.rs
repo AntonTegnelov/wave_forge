@@ -169,6 +169,8 @@ struct Scripted {
     finished: Option<(JobId, BatchResult)>,
     /// The chunk ids of every batch, in order, with whether the batch was a repair.
     batches: Vec<(Vec<u32>, bool)>,
+    /// How many regions of which shape every batch held.
+    shapes: Vec<(u32, RegionShape)>,
 }
 
 impl Solver for Scripted {
@@ -180,6 +182,7 @@ impl Solver for Scripted {
         assert!(self.finished.is_none(), "one batch at a time");
         let repairing = batch.budget.is_some();
         self.batches.push((batch.ids.clone(), repairing));
+        self.shapes.push((batch.len() as u32, batch.region));
         // A repair releases the halo, so this is what paints over a neighbour's cells.
         if repairing {
             self.tile += 1;
@@ -227,15 +230,70 @@ impl Solver for Scripted {
     }
 }
 
-#[test]
-fn a_repair_reports_every_chunk_it_rewrote() {
-    let mut world = generator(ruleset(), true).build_with(Scripted {
+fn scripted() -> WorldGenerator<Scripted> {
+    generator(ruleset(), true).build_with(Scripted {
         tile: 0,
         seen_stubborn: false,
         next_job: 1,
         finished: None,
         batches: Vec::new(),
-    });
+        shapes: Vec::new(),
+    })
+}
+
+#[test]
+fn every_batch_a_run_dispatches_has_a_kernel_to_warm() {
+    let mut world = scripted();
+    let radius = 1;
+    let warmed = world.kernel_shapes(radius);
+
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), radius)]);
+    world.run_until_idle().expect("the scripted solver");
+
+    // A kernel is specialised per shape and per batch size rounded up to a power of two.
+    let capacity = |regions: u32| regions.next_power_of_two();
+    for &(regions, shape) in &world.solver().shapes {
+        assert!(
+            warmed
+                .iter()
+                .any(|&(warm, warm_shape)| warm_shape == shape
+                    && capacity(warm) == capacity(regions)),
+            "a batch of {regions} regions of {shape:?} was not in {warmed:?}"
+        );
+    }
+    assert!(
+        world.solver().batches.iter().any(|(_, repair)| *repair),
+        "the run included a repair"
+    );
+}
+
+#[test]
+fn a_chunk_of_the_second_parity_is_solved_without_a_halo() {
+    let mut world = scripted();
+
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    world.run_until_idle().expect("the scripted solver");
+
+    // Its face neighbours are all fixed by then, so a halo would only add diagonal cells squeezed
+    // between two of them; the first parity keeps its halo, which leaves the second room to finish.
+    let solver = world.solver();
+    let (second_ids, _) = &solver.batches[1];
+    assert!(
+        second_ids.iter().all(|id| {
+            extent()
+                .chunks()
+                .into_iter()
+                .any(|chunk| chunk.id() == *id && chunk.parity() == 1)
+        }),
+        "the second batch is the second parity"
+    );
+    assert_eq!(solver.shapes[0].1, CHUNK.region(extent().halo(1)));
+    assert_eq!(solver.shapes[1].1, CHUNK.region(extent().halo(0)));
+}
+
+#[test]
+fn a_repair_reports_every_chunk_it_rewrote() {
+    let mut world = scripted();
 
     world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
     let events = world.run_until_idle().expect("the scripted solver");
@@ -277,15 +335,155 @@ fn a_repair_reports_every_chunk_it_rewrote() {
     // dispatched again in between, because solving it again would fail the same way.
     let batches = &world.solver().batches;
     assert_eq!(batches.len(), 3, "{batches:?}");
-    assert_eq!(
-        batches[2],
-        (vec![STUBBORN.id()], true),
-        "the repair is the chunk alone, with its halo released"
+    let (repair_ids, repairing) = &batches[2];
+    assert!(
+        *repairing,
+        "the third batch is the repair, with its halo released"
+    );
+    assert!(
+        !repair_ids.is_empty() && repair_ids.iter().all(|&id| id == STUBBORN.id()),
+        "the repair is the chunk alone, tried with several seeds: {repair_ids:?}"
     );
     // The repair painted its halo, so the cells its neighbours gave up carry its tile.
     let origin = STUBBORN.origin(CHUNK);
     let border = [origin[0] - 1, origin[1], origin[2]];
     assert_eq!(world.store().tile(border), Some(1));
+}
+
+/// A solver whose repairs only succeed for some seeds, and which paints each region of a batch with
+/// the tile of its index, so the committed tiles say which seed won.
+///
+/// The first attempt at [`STUBBORN`] fails; in a repair batch, the regions whose index is in
+/// `solving` solve and the others exhaust their attempts.
+struct Picky {
+    solving: Vec<usize>,
+    next_job: u64,
+    finished: Option<(JobId, BatchResult)>,
+    /// The seeds of every repair batch.
+    repair_seeds: Vec<Vec<u32>>,
+}
+
+impl Solver for Picky {
+    fn max_batch(&self) -> u32 {
+        64
+    }
+
+    fn start(&mut self, batch: RegionBatch) -> Result<JobId, SolverError> {
+        let repairing = batch.budget.is_some();
+        if repairing {
+            self.repair_seeds.push(batch.seeds.clone());
+        }
+        let mut statuses = Vec::new();
+        let mut domains =
+            Domains::from_words(0, batch.init.words_per_cell(), Vec::new()).expect("empty");
+        for (index, &id) in batch.ids.iter().enumerate() {
+            let solves = if repairing {
+                self.solving.contains(&index)
+            } else {
+                id != STUBBORN.id()
+            };
+            statuses.push(if solves {
+                RegionStatus::Solved
+            } else {
+                RegionStatus::Exhausted
+            });
+            let tile = (index % TILES as usize) as u32;
+            let painted = (0..batch.region.cells()).map(|_| TileMask::single(tile));
+            domains.append(&Domains::from_masks(batch.init.words_per_cell(), painted));
+        }
+        let job = JobId(self.next_job);
+        self.next_job += 1;
+        self.finished = Some((
+            job,
+            BatchResult {
+                statuses,
+                stats: vec![RegionStats::default(); batch.len()],
+                domains,
+            },
+        ));
+        Ok(job)
+    }
+
+    fn poll(&mut self, job: JobId) -> Result<Option<BatchResult>, SolverError> {
+        match self.finished.take() {
+            Some((finished, result)) if finished == job => Ok(Some(result)),
+            other => {
+                self.finished = other;
+                Err(SolverError::UnknownJob(job))
+            }
+        }
+    }
+
+    fn wait(&mut self, job: JobId) -> Result<BatchResult, SolverError> {
+        self.poll(job)?.ok_or(SolverError::UnknownJob(job))
+    }
+}
+
+fn picky(solving: Vec<usize>) -> WorldGenerator<Picky> {
+    generator(ruleset(), true).build_with(Picky {
+        solving,
+        next_job: 1,
+        finished: None,
+        repair_seeds: Vec::new(),
+    })
+}
+
+#[test]
+fn a_repair_tries_several_seeds_and_keeps_the_lowest_that_solves() {
+    // Only the sixth and the tenth seed of a repair solve, and the tenth paints a different tile.
+    let mut world = picky(vec![5, 9]);
+
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    world.run_until_idle().expect("the picky solver");
+
+    assert!(world.failed().is_empty(), "a later seed placed the chunk");
+    let tile = world
+        .store()
+        .tile(STUBBORN.origin(CHUNK))
+        .expect("the chunk was placed");
+    assert_eq!(
+        u32::from(tile),
+        5 % TILES,
+        "the lowest seed that solved won"
+    );
+    let seeds = &world.solver().repair_seeds[0];
+    let distinct: BTreeSet<u32> = seeds.iter().copied().collect();
+    assert_eq!(
+        distinct.len(),
+        seeds.len(),
+        "every seed of a repair differs: {seeds:?}"
+    );
+}
+
+#[test]
+fn a_repair_tries_the_same_seeds_in_the_same_world() {
+    let mut first = picky(vec![3]);
+    let mut second = picky(vec![3]);
+
+    for world in [&mut first, &mut second] {
+        world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+        world.run_until_idle().expect("the picky solver");
+    }
+
+    assert_eq!(first.solver().repair_seeds, second.solver().repair_seeds);
+    assert_eq!(tiles(&first), tiles(&second));
+}
+
+#[test]
+fn a_repair_no_seed_solves_gives_the_chunk_up() {
+    let mut world = picky(Vec::new());
+
+    world.request(&[FocusPoint::new(ChunkCoord::new(1, 1, 0), 1)]);
+    let events = world.run_until_idle().expect("the picky solver");
+
+    assert_eq!(
+        world.failed().iter().copied().collect::<Vec<_>>(),
+        vec![STUBBORN]
+    );
+    assert!(events.contains(&ChunkEvent::Failed {
+        chunk: STUBBORN,
+        status: RegionStatus::Exhausted
+    }));
 }
 
 #[test]
@@ -362,6 +560,7 @@ fn a_repair_budget_does_not_limit_a_first_attempt() {
                 max_attempts: 1,
                 max_steps: 1,
             },
+            seeds: 1,
         })
         .build_with(solver);
 

@@ -64,16 +64,10 @@ through. In order:
 2. ~~**A game has to know what to draw**~~ ([#33](https://github.com/AntonTegnelov/wave_forge/issues/33)). Done: a loaded rule file names every tile,
    its rotation and its tags; `YUpSpace` in the library says where a cell is and how a model turns
    in a Y-up engine; the Godot node and the Bevy `WaveForgeTiles` resource expose both.
-3. **No chunk may be left unplaced** ([#31](https://github.com/AntonTegnelov/wave_forge/issues/31)). 3.2% of city chunks cannot be placed in the streaming test,
-   after repairs, and a walker would see every one of them as a hole. The target is zero. The
-   approach is to measure first (which border patterns fail, from the contradiction cell each solve
-   reports), then fix it in the module set, so that every border it can produce has a completion, or
-   with a larger repair. A larger repair is bounded by workgroup memory: a halo of 3 needs 38 288 B
-   against 32 768 B at 81 tiles. A third candidate, from the alternate architecture linked in
-   [#5](https://github.com/AntonTegnelov/wave_forge/issues/5), is a coarse pass that decides chunk
-   boundary faces before any interior is solved.
-   The game session's `no_chunk_in_view_is_a_hole` holds this bar and fails until it is met: 13
-   holes in view on a 776 m walk ([testing.md](testing.md#the-game-session)).
+3. ~~**No chunk may be left unplaced**~~ ([#31](https://github.com/AntonTegnelov/wave_forge/issues/31)). Done: the chunks the city gave up on were
+   placeable, and a repair now tries 32 seeds side by side; with the second parity solved without a
+   halo, five worlds place all 1 605 chunks and the game session shows no holes
+   ([solver-fit.md](solver-fit.md)).
 4. **Models to draw** ([#34](https://github.com/AntonTegnelov/wave_forge/issues/34)). A devtools command exports each prototype's voxel model as a mesh (glTF, which
    both engines import). Authored models can replace them later without touching the library.
 5. **The walk itself**, with the products it needs from the library: instance sets, a collider

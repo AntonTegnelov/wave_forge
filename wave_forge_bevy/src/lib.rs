@@ -41,8 +41,8 @@ use std::sync::Mutex;
 use wave_forge::loader::RuleFile;
 use wave_forge::{
     BlockSolver, Builder, Chunk, ChunkCoord, ChunkEvent, ChunkShape, ChunkStore, FocusPoint,
-    GeneratorStats, ModelError, Prior, RegionShape, RegionStatus, RepairPolicy, Ruleset, Solver,
-    WgpuBackend, WorldExtent, WorldGenerator, YUpSpace,
+    GeneratorStats, ModelError, Prior, RegionStatus, RepairPolicy, Ruleset, Solver, WgpuBackend,
+    WorldExtent, WorldGenerator, YUpSpace,
 };
 
 /// An entity that generation follows, usually the player or the camera.
@@ -247,7 +247,8 @@ pub struct WaveForgePlugin {
     prior: Prior,
     settings: WaveForgeSettings,
     own_device: bool,
-    warm: Vec<u32>,
+    /// The focus radius to compile kernels for while the plugin is built.
+    warm: Option<u32>,
     /// The rule file the rule set came from, inserted as [`WaveForgeTiles`].
     tiles: Option<RuleFile>,
 }
@@ -261,7 +262,7 @@ impl WaveForgePlugin {
             prior,
             settings,
             own_device: false,
-            warm: Vec::new(),
+            warm: None,
             tiles: None,
         }
     }
@@ -288,12 +289,12 @@ impl WaveForgePlugin {
     ///
     /// A kernel is specialised per region shape and per batch size rounded up to a power of two,
     /// and compiling one takes seconds on some drivers, which a game would feel as a freeze in the
-    /// middle of play. `batches` are the batch sizes to compile for; each is rounded up the same
-    /// way, and every halo a repair may use is compiled alongside. Leave it empty and the first
-    /// dispatch of each shape pays for it instead.
+    /// middle of play. `radius` is the largest [`GenerationFocus::radius`] the game uses; every
+    /// batch such a focus can dispatch, repairs included, is compiled. Without it the first
+    /// dispatch of each shape pays for its kernel instead.
     #[must_use]
-    pub fn warm(mut self, batches: &[u32]) -> Self {
-        self.warm = batches.to_vec();
+    pub const fn warm(mut self, radius: u32) -> Self {
+        self.warm = Some(radius);
         self
     }
 
@@ -326,8 +327,8 @@ impl Plugin for WaveForgePlugin {
             builder.build_on(device, queue)
         }
         .expect("a device for Wave Forge, and a rule set that fits it");
-        if !self.warm.is_empty() {
-            let shapes = shapes_to_warm(&self.settings, &self.warm, generator.solver());
+        if let Some(radius) = self.warm {
+            let shapes = generator.kernel_shapes(radius);
             generator
                 .solver_mut()
                 .warm(&shapes)
@@ -374,29 +375,6 @@ impl<S: Solver + Send + Sync + 'static> Plugin for WaveForgeSolverPlugin<S> {
         let generator = builder(&self.ruleset, &self.prior, &self.settings).build_with(solver);
         insert(app, generator, self.settings.clone());
     }
-}
-
-/// Every (batch size, region shape) pair a run may dispatch: the halo a first attempt uses and the
-/// halos a repair may widen to, for each batch size, minus the shapes the device cannot hold.
-fn shapes_to_warm(
-    settings: &WaveForgeSettings,
-    batches: &[u32],
-    solver: &BlockSolver<WgpuBackend>,
-) -> Vec<(u32, RegionShape)> {
-    let halos = std::iter::once(settings.halo).chain(1..=settings.repair.max_halo);
-    let mut shapes: Vec<(u32, RegionShape)> = Vec::new();
-    for halo in halos {
-        let region = settings.chunk().region(settings.extent.halo(halo));
-        if !solver.fits(region) {
-            continue;
-        }
-        for &batch in batches {
-            if !shapes.contains(&(batch, region)) {
-                shapes.push((batch, region));
-            }
-        }
-    }
-    shapes
 }
 
 fn builder(ruleset: &Ruleset, prior: &Prior, settings: &WaveForgeSettings) -> Builder {

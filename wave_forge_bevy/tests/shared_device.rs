@@ -95,8 +95,7 @@ fn a_city_generates_on_the_device_bevy_renders_with() {
         .insert_resource(RenderQueue::new(queue))
         // Sixteen chunks means batches of eight per parity, and a repair is one chunk.
         .add_plugins(
-            WaveForgePlugin::new(ruleset, city_prior(&city, CHUNK.z), settings.clone())
-                .warm(&[1, 8]),
+            WaveForgePlugin::new(ruleset, city_prior(&city, CHUNK.z), settings.clone()).warm(2),
         )
         .init_resource::<Seen>()
         .add_systems(Update, collect.after(WaveForgeSystems))

@@ -103,7 +103,9 @@ A region is solved by repeating: propagate to a fixpoint, pick cells, collapse t
 
 A contradiction is normal for WFC, not an exceptional error. Inside the kernel it is recovered from as above. When the recovery budget runs out, the region comes back with a **status** rather than an error: `Exhausted` (attempts used up), `StepCap` (the hard step limit, which exists so a shader cannot hang a device), or `BorderContradiction` (propagating the starting domains alone empties a cell, so no arrangement satisfies the borders).
 
-The world's answer to a status is a **repair**: solve the chunk alone with its halo released, which lets it rewrite the neighbouring cells the halo covers, and widen the halo if that is not enough. A chunk that still will not solve is reported once and left alone, because solving it again would fail the same way.
+The world's answer to a status is a **repair**: solve the chunk alone with its halo released, which lets it rewrite the neighbouring cells the halo covers, and widen the halo if that is not enough. A repair solves the region once per seed of `RepairPolicy::seeds` (32 by default) in one dispatch and keeps the lowest seed that solved, so the outcome depends on nothing but the configuration. A chunk that still will not solve is reported once and left alone, because solving it again would fail the same way.
+
+**Why many seeds:** a chunk that exhausted its first attempt almost always has an arrangement; it just was not found from that sequence of choices. A census of every chunk five streamed city worlds gave up on with one seed per repair placed every one of them with 32 seeds side by side, and the seeds run in parallel, so a repair costs about one region's solve ([solver-fit.md](solver-fit.md)).
 
 **Why not report an error:** a game cannot show a dialog because a chunk failed. A status says which chunk and why, and the world decides.
 
@@ -164,7 +166,9 @@ Two rules shape every batch, and between them they are the whole scheduler:
 - **Chunks that share a face never ride in one dispatch.** Each would read the other's cells, so a batch takes one parity of the lattice: `(x + y + z) & 1`.
 - **A chunk waits for the face neighbours it reads.** Parity 0 goes first and reads nothing; parity 1 follows and reads all four or six of its neighbours.
 
-The set of wanted chunks is **closed** under the face neighbours of its parity-1 members. Without that, a chunk at the edge of the view would be solved against fewer fixed faces than the same chunk in the middle of it, and its tiles would depend on where the player happened to be. The closure is what makes the next section true, and it has a measured cost: it leaves 3.2% of city chunks unplaceable against 1.6% when the frontier is left free.
+The set of wanted chunks is **closed** under the face neighbours of its parity-1 members. Without that, a chunk at the edge of the view would be solved against fewer fixed faces than the same chunk in the middle of it, and its tiles would depend on where the player happened to be. The closure is what makes the next section true.
+
+Only the first parity is solved with a halo. Its halo is what leaves the neighbours room to complete its borders. A chunk of the second parity is solved after all its face neighbours, so a halo could only pin their cells as they are; what it would add is the diagonal corner cells, squeezed between two fixed neighbours, which fail chunks that would otherwise solve. Solving the second parity without a halo cut repairs on the city from 280 to 176 over five worlds, and solver time by a third; dropping the first parity's halo instead multiplied repairs by four and left chunks unplaced ([solver-fit.md](solver-fit.md)).
 
 ### 6.3 What determinism means here
 
@@ -172,7 +176,7 @@ For a fixed rule set, prior and configuration:
 
 - The same sequence of requests gives an identical world on any backend, on any number of threads, and whatever a solver's invocation count is. Every choice is a hash of the world seed, the chunk's coordinate and where the solve had got to ([§3.4](#34-seeds-and-randomness)).
 - A chunk is solved against its face neighbours and nothing else, so without repairs its tiles are a function of its coordinate: a neighbourhood evicted and asked for again comes back the same. Evicting *part* of one does not. A chunk regenerated beside a neighbour that stayed is solved against that neighbour, which is what keeps the seam invisible, and need not give the tiles it had.
-- A repair rewrites cells of the neighbours its halo covers, which makes those chunks depend on the order the world was generated in. Every chunk a repair rewrote is reported as an `Updated` event and counted. A rule set is **streaming-clean** when that count stays zero; the city module set is not, and until a set is, the generated tiles are the source of truth rather than a promise about them.
+- A repair rewrites cells of the neighbours its halo covers, which makes those chunks depend on the order the world was generated in. Every chunk a repair rewrote is reported as an `Updated` event and counted. A rule set is **streaming-clean** when that count stays zero; the city module set is not (about one chunk in nine is repaired), and until a set is, the generated tiles are the source of truth rather than a promise about them.
 
 ### 6.4 Streaming
 

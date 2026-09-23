@@ -96,7 +96,7 @@ fn report(name: &str, city: &City, world: &CityWorld) -> (usize, usize) {
 #[ignore = "needs a compute device; run with --ignored in release mode"]
 fn a_world_asked_for_at_once_comes_out_seamless() {
     let (city, mut world) = city_world(8, 8);
-    kernels::warm(&mut world, &[1, 8, 32]);
+    kernels::warm(&mut world, 4);
 
     let started = Instant::now();
     world.request(&[FocusPoint::new(ChunkCoord::new(4, 4, 0), 4)]);
@@ -117,10 +117,10 @@ fn a_world_asked_for_at_once_comes_out_seamless() {
 
     assert_eq!(violations, 0, "decided cells never violate the rules");
     assert_eq!(undecided, failed.len(), "only what was reported is missing");
-    // A chunk whose borders no arrangement satisfies is a property of the module set, not of the
-    // solver: the city's is not streaming-clean (docs/solver-fit.md). It stays rare.
+    // Every chunk the city gave up on was placeable: a repair of 32 seeds places it
+    // (docs/solver-fit.md), so a chunk given up on is a regression, not a property of the rules.
     assert!(
-        failed.len() * 10 < 64,
+        failed.is_empty(),
         "{} of 64 chunks: {failed:?}",
         failed.len()
     );
@@ -142,7 +142,7 @@ fn live_streaming_keeps_ahead_of_a_walking_player() {
 
     let (chunks_x, chunks_y) = (24, 8);
     let (city, mut world) = city_world(chunks_x, chunks_y);
-    kernels::warm(&mut world, &[1, 4, 8, 16, 32]);
+    kernels::warm(&mut world, VIEW);
     let chunk_m = CELL_M * f64::from(CHUNK.x);
     let focus_y = chunks_y / 2;
 
@@ -197,12 +197,9 @@ fn live_streaming_keeps_ahead_of_a_walking_player() {
     );
     let (_, violations) = report("live", &city, &world);
     assert_eq!(violations, 0, "what is generated is always valid");
-    // A chunk whose borders no arrangement satisfies is a property of the module set, not of the
-    // solver: the city's is not streaming-clean, and every chunk of the second parity is solved
-    // against four fixed faces so that its tiles do not depend on where the player came from. That
-    // costs placements; 3.2% of chunks on this build (docs/solver-fit.md).
+    // A walker sees every chunk that could not be placed as a hole, so there may be none.
     assert!(
-        failed.len() * 20 < stats.solved as usize,
+        failed.is_empty(),
         "{} of {} chunks could not be placed: {failed:?}",
         failed.len(),
         stats.solved
