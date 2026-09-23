@@ -3,8 +3,9 @@
 // past the island's edge, 90 to 96 cells out. Biomes are first-match rules over height, distance
 // from the centre and noise, with a wobble that keeps the rings from being perfect circles; ore and
 // groves of birches are scattered by biome, height and how uneven the ground is, and shrines are
-// placed per ring from a location table. The test pack for G7's biome rules, per-biome height,
-// placement rules and location table; heights run from about -0.3 to 1 before the
+// placed per ring from a location table; rivers run from the high ground to the sea and are carved
+// into the ground. The test pack for G7's biome rules, per-biome height, rivers, placement rules and
+// location table; heights run from about -0.3 to 1 before the
 // biomes shape them.
 (
     version: 1,
@@ -71,6 +72,12 @@
             otherwise: Input("height"),
             blend: 3,
         ))),
+        // Rivers from the high ground to the sea, three in every region of 16 chunks, carved into
+        // the terrain as the ground a player walks.
+        (name: "rivers", kind: Rivers(height: "terrain", region: 16, sources: 3, sea: 0.05,
+            width: (0.6, 2.0), step: 2)),
+        (name: "ground", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
+            profile: Carve(0.1))),
         // How uneven the ground is within two cells, and where each biome ends: ore and trees keep
         // off steep ground, and ore off the edge of its biome.
         (name: "roughness", kind: Delta(input: "terrain", radius: 2)),

@@ -7,6 +7,7 @@ mod evaluate;
 pub mod facts;
 pub mod pack;
 pub mod regions;
+mod rivers;
 pub mod runtime;
 pub mod worker;
 

@@ -243,6 +243,22 @@ pub enum StageKind {
         #[serde(default = "one_attempt")]
         budget: u32,
     },
+    /// Rivers down the `height` field: in every square region of `region` chunks, `sources` of
+    /// them, each from the highest of a few hashed columns stepping `step` cells at a time to the
+    /// lowest column around it, until it reaches `sea`, a hollow it cannot leave or the region's
+    /// edge. A river's values, its radius for an Apply stage, grow from `width.0` at its source
+    /// to `width.1` at its mouth. A river never leaves its region, so regions never read each
+    /// other. A chunk's product is the rivers of its region that pass through it.
+    Rivers {
+        height: String,
+        region: u32,
+        sources: u32,
+        sea: f32,
+        #[serde(default = "narrow_to_wide")]
+        width: (f32, f32),
+        #[serde(default = "one_cell")]
+        step: u32,
+    },
     /// A straight curve for every row of the table `table`, from the point the columns `from` give
     /// to the one `to` give, in WFC cells, with the radius its `radius` column gives at both ends:
     /// a road a history laid between two villages, say. A chunk's product is the curves that pass
@@ -336,6 +352,17 @@ pub struct LocationKind {
     #[serde(default = "twenty_tries")]
     pub tries: u32,
 }
+
+const fn narrow_to_wide() -> (f32, f32) {
+    (1.0, 3.0)
+}
+
+const fn one_cell() -> u32 {
+    1
+}
+
+/// The most rivers a Rivers stage may send from one region.
+pub const MAX_SOURCES: u32 = 64;
 
 const fn one_chunk() -> u32 {
     1
@@ -453,7 +480,7 @@ impl StageKind {
             | Self::Flatten { .. }
             | Self::Apply { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } => Output::Categories,
-            Self::Region { .. } | Self::TableCurves { .. } => Output::Curves,
+            Self::Region { .. } | Self::Rivers { .. } | Self::TableCurves { .. } => Output::Curves,
             Self::Sites { .. } | Self::TableSites { .. } | Self::Locations { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
             Self::Scatter { .. } => Output::Points,
@@ -1503,6 +1530,36 @@ impl Pack {
                     // A site overlapping the chunk reaches at most `max_size` chunks from it.
                     vec![(height.as_str(), Reach::Chunks(*max_size), Output::Field)]
                 }
+                StageKind::Rivers {
+                    height,
+                    region,
+                    sources,
+                    sea,
+                    width,
+                    step,
+                } => {
+                    if *region == 0 || *step == 0 {
+                        return Err(invalid(format!(
+                            "a region of {region} chunks and steps of {step} cells"
+                        )));
+                    }
+                    if !(1..=MAX_SOURCES).contains(sources) {
+                        return Err(invalid(format!(
+                            "{sources} sources a region; 1 to {MAX_SOURCES} are allowed"
+                        )));
+                    }
+                    if !(sea.is_finite()
+                        && width.0.is_finite()
+                        && width.1.is_finite()
+                        && width.0 >= 0.0
+                        && width.1 >= 0.0)
+                    {
+                        return Err(invalid(format!("sea at {sea} and widths {width:?}")));
+                    }
+                    // A chunk may lie anywhere in its region, and the rivers read the whole
+                    // region's height.
+                    vec![(height.as_str(), Reach::Chunks(region - 1), Output::Field)]
+                }
                 StageKind::TableCurves {
                     table,
                     from,
@@ -1761,7 +1818,8 @@ impl Pack {
                 | StageKind::Apply { .. }
                 | StageKind::Flatten { .. }
                 | StageKind::Solve { .. }
-                | StageKind::Region { .. } => {}
+                | StageKind::Region { .. }
+                | StageKind::Rivers { .. } => {}
             }
             stages.push(Stage {
                 tables: read_tables,
