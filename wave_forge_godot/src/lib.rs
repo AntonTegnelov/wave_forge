@@ -46,8 +46,10 @@
 //! `xy`, and Godot's `y` is the lattice's `z`. `cell_size` says how large one cell is along each of
 //! Godot's axes, which is what turns a position into a chunk.
 
-use godot::classes::{FileAccess, INode, Node};
+use godot::classes::physics_server_3d::BodyMode;
+use godot::classes::{FileAccess, INode, Node, PhysicsServer3D, Shape3D};
 use godot::prelude::*;
+use std::collections::HashMap;
 use wave_forge::loader::RuleFile;
 use wave_forge::{
     Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, Prior, RegionStatus, Ruleset,
@@ -105,6 +107,13 @@ pub struct WaveForgeWorld {
     #[export]
     evict_margin: i32,
 
+    /// Chunks within this many of the followed chunk get colliders, from the shapes given with
+    /// [`WaveForgeWorld::set_collision_shape`]. Keep it below `view_radius`: physics only matters
+    /// near the player. Below zero, no chunk gets colliders.
+    #[export_group(name = "Physics")]
+    #[export]
+    collider_radius: i32,
+
     /// Cells solved around a chunk and thrown away, so its borders can be completed. Changing it
     /// compiles other kernels.
     #[export_group(name = "Advanced")]
@@ -132,6 +141,10 @@ pub struct WaveForgeWorld {
     worker: Option<Worker>,
     /// The chunk the last [`WaveForgeWorld::follow`] landed in, so an unmoved player asks nothing.
     followed: Option<ChunkCoord>,
+    /// The collision shape of each module that has one, by module name.
+    collision_shapes: HashMap<String, Gd<Shape3D>>,
+    /// Each chunk's static body and the instance each of its shapes stands for, in shape order.
+    bodies: HashMap<ChunkCoord, (Rid, Vec<u64>)>,
 }
 
 #[godot_api]
@@ -154,6 +167,17 @@ impl INode for WaveForgeWorld {
             rules: None,
             worker: None,
             followed: None,
+            collider_radius: 1,
+            collision_shapes: HashMap::new(),
+            bodies: HashMap::new(),
+        }
+    }
+
+    /// Frees the chunks' bodies, which belong to the physics server rather than to the tree.
+    fn exit_tree(&mut self) {
+        let mut physics = PhysicsServer3D::singleton();
+        for (_, (body, _)) in self.bodies.drain() {
+            physics.free_rid(body);
         }
     }
 
@@ -190,9 +214,11 @@ impl INode for WaveForgeWorld {
                 .emit(&GString::from(&reason));
             return;
         }
+        let mut updated = Vec::new();
         for event in events {
             match event {
                 ChunkEvent::Updated(chunk) => {
+                    updated.push(chunk);
                     self.signals().chunk_updated().emit(to_vector(chunk));
                 }
                 ChunkEvent::Evicted(chunk) => {
@@ -205,6 +231,7 @@ impl INode for WaveForgeWorld {
                 }
             }
         }
+        self.update_colliders(&updated);
     }
 }
 
@@ -431,12 +458,47 @@ impl WaveForgeWorld {
                 out.set(&"name".to_variant(), &GString::from(&set.name).to_variant());
                 out.set(
                     &"transforms".to_variant(),
-                    &PackedFloat32Array::from(set.transforms.as_slice()).to_variant(),
+                    &PackedFloat32Array::from(set.transforms(self.cell_size.to_array()).as_slice())
+                        .to_variant(),
                 );
                 out.set(&"ids".to_variant(), &ids.to_variant());
                 out
             })
             .collect()
+    }
+
+    /// Gives every cell of `module` a collider of `shape`, turned by the tile's rotation and centred
+    /// on the cell, in the chunks within `collider_radius`. The shape is sized for one cell in
+    /// Godot's world units. Null takes the module's colliders away.
+    #[func]
+    fn set_collision_shape(&mut self, module: GString, shape: Option<Gd<Shape3D>>) {
+        match shape {
+            Some(shape) => self.collision_shapes.insert(module.to_string(), shape),
+            None => self.collision_shapes.remove(&module.to_string()),
+        };
+        // Bodies are rebuilt with the new shapes on the next frame.
+        let mut physics = PhysicsServer3D::singleton();
+        for (_, (body, _)) in self.bodies.drain() {
+            physics.free_rid(body);
+        }
+    }
+
+    /// The stable id of the instance a collision hit, from the `rid` and `shape` a ray or shape
+    /// query reports: the chunk's id in the high 32 bits and the cell's index in the low ones, as
+    /// [`WaveForgeWorld::instance_sets`] gives them. -1 for a body that is not one of this node's.
+    #[func]
+    fn collider_instance(&self, body: Rid, shape: i32) -> i64 {
+        self.bodies
+            .values()
+            .find(|(rid, _)| *rid == body)
+            .and_then(|(_, ids)| usize::try_from(shape).ok().and_then(|i| ids.get(i)))
+            .map_or(-1, |&id| i64::from_ne_bytes(id.to_ne_bytes()))
+    }
+
+    /// The chunks that have colliders now.
+    #[func]
+    fn collider_chunks(&self) -> Array<Vector3i> {
+        self.bodies.keys().map(|&chunk| to_vector(chunk)).collect()
     }
 
     /// How large one chunk is in Godot's world units.
@@ -532,6 +594,88 @@ impl WaveForgeWorld {
     #[func]
     fn is_generating(&self) -> bool {
         self.worker.is_some()
+    }
+
+    /// Gives the chunks within `collider_radius` of the followed chunk their bodies, rebuilding the
+    /// ones whose tiles changed, and frees the bodies of chunks that are out of range or gone.
+    ///
+    /// A chunk is one static body with a shape per instance. Every shape is added before the body
+    /// joins the space: Jolt rebuilds a body's compound shape on each shape added once it is in a
+    /// space, which made a chunk of 200 boxes cost 3.1 ms instead of 0.12 (docs/engine-integration.md).
+    fn update_colliders(&mut self, updated: &[ChunkCoord]) {
+        let (Some(worker), Some(rules), Some(focus)) = (&self.worker, &self.rules, self.followed)
+        else {
+            return;
+        };
+        let radius = self.collider_radius;
+        let within = |chunk: ChunkCoord| {
+            radius >= 0
+                && (chunk.x - focus.x)
+                    .abs()
+                    .max((chunk.y - focus.y).abs())
+                    .max((chunk.z - focus.z).abs())
+                    <= radius
+        };
+        let mut physics = PhysicsServer3D::singleton();
+        let gone: Vec<ChunkCoord> = self
+            .bodies
+            .keys()
+            .copied()
+            .filter(|&chunk| !within(chunk) || worker.chunk(chunk).is_none())
+            .collect();
+        for chunk in gone {
+            if let Some((body, _)) = self.bodies.remove(&chunk) {
+                physics.free_rid(body);
+            }
+        }
+        if self.collision_shapes.is_empty() {
+            return;
+        }
+        let Some(space) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_space())
+        else {
+            return;
+        };
+        let owner = u64::from_ne_bytes(self.base().instance_id().to_i64().to_ne_bytes());
+        let layout = self.space();
+        let wanted: Vec<ChunkCoord> = worker
+            .chunks()
+            .map(|chunk| chunk.coord)
+            .filter(|&chunk| within(chunk))
+            .filter(|chunk| !self.bodies.contains_key(chunk) || updated.contains(chunk))
+            .collect();
+        for coord in wanted {
+            let chunk = worker
+                .chunk(coord)
+                .expect("chosen from the worker's chunks");
+            let body = physics.body_create();
+            physics.body_set_mode(body, BodyMode::STATIC);
+            let mut ids = Vec::new();
+            let sets = wave_forge::instance_sets(chunk, rules, &layout, |name| {
+                self.collision_shapes.contains_key(name)
+            });
+            for set in sets {
+                let shape = self.collision_shapes[&set.name].get_rid();
+                for (row, &id) in set.transforms([1.0; 3]).chunks(12).zip(&set.ids) {
+                    let basis = Basis::from_rows(
+                        Vector3::new(row[0], row[1], row[2]),
+                        Vector3::new(row[4], row[5], row[6]),
+                        Vector3::new(row[8], row[9], row[10]),
+                    );
+                    let at = Transform3D::new(basis, Vector3::new(row[3], row[7], row[11]));
+                    physics.body_add_shape_ex(body, shape).transform(at).done();
+                    ids.push(id);
+                }
+            }
+            physics.body_attach_object_instance_id(body, owner);
+            physics.body_set_space(body, space);
+            if let Some((old, _)) = self.bodies.insert(coord, (body, ids)) {
+                physics.free_rid(old);
+            }
+        }
     }
 
     /// The lattice in Godot's Y-up world space.

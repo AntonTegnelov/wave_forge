@@ -2,5 +2,9 @@ config_version=5
 
 [application]
 config/name="wave_forge_verify"
-config/features=PackedStringArray("4.2")
+config/features=PackedStringArray("4.7")
 run/main_scene=""
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
