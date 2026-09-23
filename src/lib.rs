@@ -91,8 +91,10 @@ pub struct RepairPolicy {
     /// The widest halo a repair may use. Wider needs more of the device's workgroup memory than it
     /// has at some point, and the solver is asked before each step.
     pub max_halo: u32,
-    /// How hard a repair tries before a wider halo is the better move.
+    /// How hard each seed of a repair tries before a wider halo is the better move.
     pub budget: SolveBudget,
+    /// How many seeds a repair tries side by side, in one dispatch. The lowest that solves is kept.
+    pub seeds: u32,
 }
 
 impl Default for RepairPolicy {
@@ -100,10 +102,13 @@ impl Default for RepairPolicy {
         Self {
             enabled: true,
             max_halo: 3,
+            // Measured on the city (docs/solver-fit.md): every chunk a streamed world gave up on
+            // was placed by 32 seeds of this budget, in a dispatch of 50 ms at most.
             budget: SolveBudget {
-                max_attempts: 8,
-                max_steps: 5_000,
+                max_attempts: 32,
+                max_steps: 20_000,
             },
+            seeds: 32,
         }
     }
 }

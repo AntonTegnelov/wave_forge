@@ -76,6 +76,16 @@ impl WorldExtent {
             .map_or(0, |range| range.start * self.shape.z as i32)
     }
 
+    /// The chunks the world spans along `axis` (0 for x, 1 for y, 2 for z), or `None` if it is
+    /// unbounded along it.
+    ///
+    /// # Panics
+    /// If `axis` is not 0, 1 or 2.
+    #[must_use]
+    pub fn chunks_along(&self, axis: usize) -> Option<Range<i32>> {
+        self.chunks[axis].clone()
+    }
+
     /// Halo widths for a region, `halo` cells on every axis that has neighbouring chunks. An axis
     /// only one chunk wide gets none: there is nothing on the other side to agree with.
     #[must_use]

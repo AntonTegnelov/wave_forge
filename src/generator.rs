@@ -127,7 +127,7 @@ impl<S: Solver> WorldGenerator<S> {
         // Nothing left to generate, so a chunk that failed gets its repair: the same region again
         // with its halo released, which lets it rewrite the neighbouring cells it covers.
         if let Some((chunk, halo)) = self.repairs.pop_front() {
-            return self.start(&[chunk], halo, true);
+            return self.start_repair(chunk, halo);
         }
         Ok(())
     }
@@ -279,15 +279,75 @@ impl<S: Solver> WorldGenerator<S> {
             region: shape,
             ids: chunks.iter().map(|chunk| chunk.id()).collect(),
             // A chunk's own identity salts the choice, so every region of a batch shares the seed.
-            seeds: vec![batch_seed(self.config.seed, halo, release); chunks.len()],
+            seeds: vec![batch_seed(self.config.seed); chunks.len()],
             init,
-            budget: release.then_some(self.config.repair.budget),
+            budget: None,
         };
+        self.dispatch(batch, chunks.to_vec(), regions, halo, false)
+    }
+
+    /// Repairs one chunk: its region with the halo released, solved once per seed of the repair
+    /// policy in one dispatch. A chunk that exhausted a first attempt usually has an arrangement
+    /// that another seed finds (docs/solver-fit.md), and the seeds run side by side, so trying many
+    /// costs about as much as trying one.
+    fn start_repair(&mut self, chunk: ChunkCoord, halo: u32) -> Result<(), Error> {
+        let shape = self.region_shape(halo);
+        let region = Region::new(chunk, shape);
+        let domains = region_init(&self.store, &self.prior, &self.ruleset, &region, true);
+        let seeds = repair_seeds(self.config.seed, halo, self.repair_width());
+        let mut init = Domains::from_words(0, self.ruleset.words_per_cell(), Vec::new())
+            .expect("an empty batch");
+        for _ in &seeds {
+            init.append(&domains);
+        }
+        let batch = RegionBatch {
+            region: shape,
+            ids: vec![chunk.id(); seeds.len()],
+            seeds,
+            init,
+            budget: Some(self.config.repair.budget),
+        };
+        self.dispatch(batch, vec![chunk], vec![region], halo, true)
+    }
+
+    /// Every (regions, region shape) pair a run can dispatch for focus points of up to `radius`:
+    /// first attempts of every batch size up to the largest such a focus produces, and every repair
+    /// the solver accepts. A solver that compiles per shape, as the GPU solver does, is warmed with
+    /// these while a game loads, because compiling one mid-play is a stall of seconds.
+    #[must_use]
+    pub fn kernel_shapes(&self, radius: u32) -> Vec<(u32, RegionShape)> {
+        let largest = scheduler::largest_batch(radius, &self.config.extent)
+            .min(self.solver.max_batch())
+            .next_power_of_two();
+        let first = self.region_shape(self.config.halo);
+        let first_attempts = std::iter::successors(Some(1u32), |&n| (n < largest).then_some(n * 2))
+            .map(|regions| (regions, first));
+        let width = self.repair_width();
+        let repairs = self
+            .repair_halos()
+            .into_iter()
+            .map(|halo| (width, self.region_shape(halo)));
+        first_attempts.chain(repairs).collect()
+    }
+
+    /// How many seeds one repair tries: as many as the policy asks for and the solver takes.
+    fn repair_width(&self) -> u32 {
+        self.config.repair.seeds.clamp(1, self.solver.max_batch())
+    }
+
+    fn dispatch(
+        &mut self,
+        batch: RegionBatch,
+        chunks: Vec<ChunkCoord>,
+        regions: Vec<Region>,
+        halo: u32,
+        release: bool,
+    ) -> Result<(), Error> {
         let job = self.solver.start(batch)?;
         self.stats.batches += 1;
         self.pending = Some(Pending {
             job,
-            chunks: chunks.to_vec(),
+            chunks,
             regions,
             release,
             halo,
@@ -301,12 +361,23 @@ impl<S: Solver> WorldGenerator<S> {
         self.stats.solver_ms += pending.started.elapsed().as_secs_f64() * 1000.0;
         let cells = pending.regions[0].shape().cells();
         for (index, (&chunk, region)) in pending.chunks.iter().zip(&pending.regions).enumerate() {
-            let status = result.statuses[index];
-            if !status.is_solved() {
-                self.give_up_or_repair(chunk, status, pending.halo, pending.release);
+            // A repair is one chunk tried with many seeds; the lowest seed that solved is the one
+            // kept, so the outcome does not depend on anything but the configuration.
+            let solved = if pending.release {
+                result.statuses.iter().position(|status| status.is_solved())
+            } else {
+                Some(index).filter(|&index| result.statuses[index].is_solved())
+            };
+            let Some(solved) = solved else {
+                self.give_up_or_repair(
+                    chunk,
+                    result.statuses[index],
+                    pending.halo,
+                    pending.release,
+                );
                 continue;
-            }
-            let domains = result.region(index, cells);
+            };
+            let domains = result.region(solved, cells);
             let touched = self.store.commit(region, &domains, pending.release)?;
             self.stats.solved += 1;
             if pending.release {
@@ -361,16 +432,19 @@ impl<S: Solver> WorldGenerator<S> {
 /// The seed a batch's choices derive from, as the solver's hash takes it. A chunk's own identity is
 /// mixed in there, so folding the high half in here only has to keep both halves of the seed
 /// meaningful.
-///
-/// A repair gets a stream of its own, keyed by how wide it is: its chunk exhausted every restart the
-/// first attempt had, so trying the same sequence of choices again with one more row of freedom is
-/// the weakest thing a repair could do. The stream still depends on nothing but the world seed and
-/// the halo, so the world stays a function of its configuration.
-fn batch_seed(seed: u64, halo: u32, repair: bool) -> u32 {
-    let world = (seed as u32) ^ ((seed >> 32) as u32);
-    if repair {
-        world ^ 0x9E37_79B9_u32.wrapping_mul(halo + 1)
-    } else {
-        world
-    }
+fn batch_seed(seed: u64) -> u32 {
+    (seed as u32) ^ ((seed >> 32) as u32)
+}
+
+/// The seeds one repair tries, `width` of them, all different from each other and from the first
+/// attempt's: the chunk exhausted every restart the first attempt had, so trying that sequence of
+/// choices again is the weakest thing a repair could do. They depend on nothing but the world seed,
+/// the halo and their position, so the world stays a function of its configuration.
+fn repair_seeds(seed: u64, halo: u32, width: u32) -> Vec<u32> {
+    let world = batch_seed(seed);
+    (0..width)
+        .map(|index| {
+            world ^ 0x9E37_79B9_u32.wrapping_mul(halo + 1) ^ 0x85EB_CA6B_u32.wrapping_mul(index)
+        })
+        .collect()
 }
