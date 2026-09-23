@@ -279,8 +279,17 @@ reproduction impossible anyway.
     footprint, with a selector for its lowest and highest layers, solved whole from a seed of the
     site's own; a chunk's product is its part of the town and the site's height, or nothing
     outside every site.
-- **Typed products.** A stage produces a field, a list of sites or a chunk of a town, and loading
-  refuses a stage that reads one as another.
+  - `Scatter`: points of a kind standing on a height field. One candidate per block of cells at a
+    hashed column, with a hashed priority; a candidate passes its own tests (a chance compared as
+    an integer, a height range, a slope limit, a margin from sites) and is kept unless a passing
+    candidate of higher priority lies closer than `apart`. Neighbours are judged by their own
+    tests, never by whether spacing kept them, so the reach is `apart` (plus one cell for the
+    slope) and points keep their distance across seams. Each point has a positional `InstanceId`:
+    its chunk, 15 bits of its stage's salt (checked distinct when the pack loads) and its column.
+    Writing it, the bounded view caught a candidate read a block beyond the declared reach; only
+    candidates within `apart` of the chunk can crowd a point in it, so the others are skipped.
+- **Typed products.** A stage produces a field, a list of sites, a chunk of a town or a list of
+  points, and loading refuses a stage that reads one as another.
 - **Towns behind a seam.** The runtime solves towns through the `TownSolver` trait
   (`wave_forge::towns`). `WfcTowns` implements it over any `Solver`, one per rule set, handing the
   solver from town to town; `town_prior` builds a bounded town's prior (a layer selector at the
