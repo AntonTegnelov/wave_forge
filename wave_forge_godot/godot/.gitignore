@@ -1,5 +1,6 @@
 # The built extension and the city rule set are copied in by verify.sh; Godot's own caches.
 bin/
 city.ron
+valley.world.ron
 models/
 .godot/

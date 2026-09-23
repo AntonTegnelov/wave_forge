@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the extension and puts everything the Godot project in ./godot loads next to it: the
-# extension library, the city rule set, and the city's module models.
+# extension library, the city rule set, the valley pack, and the city's module models.
 #
 # Usage: prepare.sh [debug|release]. Build in release when timing: that is what a game ships.
 set -euo pipefail
@@ -19,6 +19,7 @@ mkdir -p "$here/godot/bin"
 cp "$target/$profile/libwave_forge_godot.so" "$here/godot/bin/"
 # The city the library's own tests load, so the project reads the same file, and its models.
 cp "$here/../examples/city.ron" "$here/godot/city.ron"
+cp "$here/../examples/valley.world.ron" "$here/godot/valley.world.ron"
 cargo run --quiet --manifest-path "$here/../Cargo.toml" -p wfc-devtools --bin wfc-export-models -- \
 	--out "$here/godot/models"
 

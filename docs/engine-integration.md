@@ -330,6 +330,18 @@ Distribution goes through the **Godot Asset Store**, which replaced the Asset Li
 and is integrated in 4.7; the Asset Library is deprecated and will become read-only
 ([announcement](https://godotengine.org/article/introducing-the-godot-asset-store/)).
 
+**Packs of stages in Godot.** `WaveForgeStages` is the node for a pack
+([generation-model.md](generation-model.md)): `pack_file`, the rule files its Solve stages name,
+the stages to generate, a seed, a chunk shape and a cell size. `start()` runs the stages on a
+thread of its own, where a town solver's GPU device is built too, and `follow(position)` asks for
+the chunks around the player. It gives each product as Godot data: `field_values`, `sites`, `town`
+(tiles and the site's height), `town_instance_sets` (the same MultiMesh layout as `instance_sets`,
+raised to the site's height) and `point_sets` (MultiMesh buffers per kind, standing on the field),
+with `stage_ready`, `stage_dropped` and `generation_failed` signals. Turning a field into a terrain
+mesh and a collider is the game's for now. In the check (`verify_stages.gd`, headless Godot 4.7.2,
+release, dozen on an RTX 3070) the valley's 49 chunks around a town, towns included, arrive in
+about 16 s from a cold start and the node's own time per frame is 0.02 ms at the 99th percentile.
+
 ### 6.3 Bevy
 
 Bevy has no editor: `bevy_editor_prototypes` is archived, and a first-party inspector is in

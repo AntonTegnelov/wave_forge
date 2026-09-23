@@ -5,9 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::towns::WfcTowns;
-use wave_forge::{
-    BlockSolver, Chunk, ChunkCoord, ChunkShape, FocusPoint, SolverConfig, WgpuBackend,
-};
+use wave_forge::{Chunk, ChunkCoord, ChunkShape, FocusPoint};
 use wfc_devtools::city;
 use wfc_devtools::invariants::{BoundaryCondition, TileGrid, adjacency_violations};
 
@@ -25,13 +23,7 @@ const PACK: &str = r#"(
 fn runtime() -> Runtime {
     let city = wave_forge::loader::RuleFile::Modules(city::city().modules);
     let towns = WfcTowns::new(CHUNK)
-        .with_rules("city", city, |ruleset| {
-            Ok(BlockSolver::new(
-                WgpuBackend::from_env().expect("a compute device"),
-                ruleset,
-                SolverConfig::default(),
-            )?)
-        })
+        .with_rules("city", city, wave_forge::towns::gpu_solver)
         .expect("the city compiles");
     Runtime::new(
         Arc::new(Pack::parse(PACK).expect("a valid pack")),

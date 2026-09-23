@@ -128,6 +128,23 @@ pub trait TownSolver: Send {
     fn solve(&mut self, request: &TownRequest<'_>) -> Result<Town, TownError>;
 }
 
+/// A solver on a GPU device of its own for `ruleset`, as [`crate::Builder::build`] makes one: what
+/// [`WfcTowns::with_rules`] takes when towns are solved on a GPU.
+///
+/// # Errors
+/// If no device is available or the rule set does not fit one.
+#[cfg(feature = "wgpu")]
+pub fn gpu_solver(
+    ruleset: Arc<Ruleset>,
+) -> Result<crate::BlockSolver<crate::WgpuBackend>, crate::Error> {
+    let backend = crate::WgpuBackend::from_env().map_err(wfc_gpu::error::GpuError::from)?;
+    Ok(crate::BlockSolver::new(
+        backend,
+        ruleset,
+        crate::SolverConfig::default(),
+    )?)
+}
+
 struct RuleSet<S> {
     file: RuleFile,
     ruleset: Ruleset,
