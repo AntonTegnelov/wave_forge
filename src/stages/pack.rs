@@ -34,6 +34,10 @@ pub struct StageDef {
 pub enum StageKind {
     /// A value per cell column, computed from an expression at that column alone.
     Field(Expr),
+    /// A category per cell column: the first of `rules` whose conditions all hold there, or
+    /// `otherwise`. The categories are the names the rules give, in the order they first appear,
+    /// then `otherwise`'s.
+    Rules { rules: Vec<Rule>, otherwise: String },
     /// Another field averaged over the square of `radius` cells around each column.
     Blur { input: String, radius: u32 },
     /// Settlement sites: rectangles of whole chunks, at most one per square region of `region`
@@ -87,6 +91,18 @@ pub enum StageKind {
     },
 }
 
+/// One rule of a Rules stage: a category, and the conditions that all have to hold for a column to
+/// take it.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Rule {
+    pub category: String,
+    pub when: Vec<Condition>,
+}
+
+/// The most categories one Rules stage can name: a category is a byte per column.
+pub const MAX_CATEGORIES: usize = 256;
+
 const fn always() -> f32 {
     1.0
 }
@@ -95,15 +111,36 @@ const fn always() -> f32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
     Field,
+    Categories,
     Sites,
     Tiles,
     Points,
 }
 
 impl StageKind {
+    /// The categories a Rules stage names, in the order of their indices; none for other kinds.
+    #[must_use]
+    pub fn categories(&self) -> Vec<&str> {
+        let Self::Rules { rules, otherwise } = self else {
+            return Vec::new();
+        };
+        let mut names: Vec<&str> = Vec::new();
+        for name in rules
+            .iter()
+            .map(|rule| rule.category.as_str())
+            .chain([otherwise.as_str()])
+        {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
+    }
+
     pub(crate) const fn output(&self) -> Output {
         match self {
             Self::Field(_) | Self::Blur { .. } | Self::Flatten { .. } => Output::Field,
+            Self::Rules { .. } => Output::Categories,
             Self::Sites { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
             Self::Scatter { .. } => Output::Points,
@@ -164,6 +201,10 @@ pub enum Expr {
     Max(Box<Expr>, Box<Expr>),
     Abs(Box<Expr>),
     Floor(Box<Expr>),
+    /// The sine of an angle in radians.
+    Sin(Box<Expr>),
+    /// 1 where a Rules stage's category at the column is one of the names, 0 elsewhere.
+    Is(String, Vec<String>),
     /// The value, held between a low and a high bound.
     Clamp(Box<Expr>, f32, f32),
     /// 0 at or below the first edge, 1 at or above the second, and a smooth step between.
@@ -185,10 +226,48 @@ pub enum Expr {
 pub enum Condition {
     Less(Box<Expr>, Box<Expr>),
     Greater(Box<Expr>, Box<Expr>),
+    /// The value lies between a low and a high bound, both included.
+    Between(Box<Expr>, f32, f32),
+}
+
+impl Condition {
+    fn inputs<'a>(&'a self, into: &mut Vec<(&'a str, Output)>) {
+        match self {
+            Self::Less(a, b) | Self::Greater(a, b) => {
+                a.inputs(into);
+                b.inputs(into);
+            }
+            Self::Between(a, ..) => a.inputs(into),
+        }
+    }
+
+    fn check(&self) -> Result<(), String> {
+        match self {
+            Self::Less(a, b) | Self::Greater(a, b) => a.check().and_then(|()| b.check()),
+            Self::Between(a, low, high) => {
+                if !(low.is_finite() && high.is_finite() && low <= high) {
+                    return Err(format!("between {low} and {high} is not a range"));
+                }
+                a.check()
+            }
+        }
+    }
+
+    /// The categories this condition reads, with the names it expects of them.
+    fn categories<'a>(&'a self, into: &mut Vec<(&'a str, &'a [String])>) {
+        match self {
+            Self::Less(a, b) | Self::Greater(a, b) => {
+                a.categories(into);
+                b.categories(into);
+            }
+            Self::Between(a, ..) => a.categories(into),
+        }
+    }
 }
 
 impl Expr {
-    fn inputs<'a>(&'a self, into: &mut Vec<&'a str>) {
+    /// The stages this expression reads, with what it reads each as.
+    fn inputs<'a>(&'a self, into: &mut Vec<(&'a str, Output)>) {
         match self {
             Self::Constant(_)
             | Self::Noise { .. }
@@ -196,7 +275,8 @@ impl Expr {
             | Self::Y
             | Self::Distance(_)
             | Self::Angle(_) => {}
-            Self::Input(name) => into.push(name),
+            Self::Input(name) => into.push((name, Output::Field)),
+            Self::Is(name, _) => into.push((name, Output::Categories)),
             Self::Add(a, b)
             | Self::Sub(a, b)
             | Self::Mul(a, b)
@@ -207,18 +287,57 @@ impl Expr {
             }
             Self::Abs(a)
             | Self::Floor(a)
+            | Self::Sin(a)
             | Self::Clamp(a, ..)
             | Self::Smoothstep(_, _, a)
             | Self::Remap(a, ..)
             | Self::Curve(a, _) => a.inputs(into),
             Self::Select {
-                when: Condition::Less(a, b) | Condition::Greater(a, b),
+                when,
                 then,
                 otherwise,
             } => {
-                for expr in [a, b, then, otherwise] {
-                    expr.inputs(into);
-                }
+                when.inputs(into);
+                then.inputs(into);
+                otherwise.inputs(into);
+            }
+        }
+    }
+
+    /// The categories this expression reads, with the names it expects of them.
+    fn categories<'a>(&'a self, into: &mut Vec<(&'a str, &'a [String])>) {
+        match self {
+            Self::Constant(_)
+            | Self::Noise { .. }
+            | Self::Input(_)
+            | Self::X
+            | Self::Y
+            | Self::Distance(_)
+            | Self::Angle(_) => {}
+            Self::Is(name, names) => into.push((name, names)),
+            Self::Add(a, b)
+            | Self::Sub(a, b)
+            | Self::Mul(a, b)
+            | Self::Min(a, b)
+            | Self::Max(a, b) => {
+                a.categories(into);
+                b.categories(into);
+            }
+            Self::Abs(a)
+            | Self::Floor(a)
+            | Self::Sin(a)
+            | Self::Clamp(a, ..)
+            | Self::Smoothstep(_, _, a)
+            | Self::Remap(a, ..)
+            | Self::Curve(a, _) => a.categories(into),
+            Self::Select {
+                when,
+                then,
+                otherwise,
+            } => {
+                when.categories(into);
+                then.categories(into);
+                otherwise.categories(into);
             }
         }
     }
@@ -246,13 +365,15 @@ impl Expr {
                 }
             }
             Self::Input(_) | Self::X | Self::Y => Ok(()),
+            Self::Is(_, names) if names.is_empty() => Err("a category test of no names".to_owned()),
+            Self::Is(..) => Ok(()),
             Self::Distance((x, y)) | Self::Angle((x, y)) => finite(&[*x, *y]),
             Self::Add(a, b)
             | Self::Sub(a, b)
             | Self::Mul(a, b)
             | Self::Min(a, b)
             | Self::Max(a, b) => a.check().and_then(|()| b.check()),
-            Self::Abs(a) | Self::Floor(a) => a.check(),
+            Self::Abs(a) | Self::Floor(a) | Self::Sin(a) => a.check(),
             Self::Clamp(a, low, high) => {
                 finite(&[*low, *high])?;
                 if low > high {
@@ -293,12 +414,11 @@ impl Expr {
                 a.check()
             }
             Self::Select {
-                when: Condition::Less(a, b) | Condition::Greater(a, b),
+                when,
                 then,
                 otherwise,
-            } => a
+            } => when
                 .check()
-                .and_then(|()| b.check())
                 .and_then(|()| then.check())
                 .and_then(|()| otherwise.check()),
         }
@@ -371,6 +491,17 @@ impl Pack {
             }
         }
         let outputs: Vec<Output> = file.stages.iter().map(|def| def.kind.output()).collect();
+        let categories: Vec<Vec<String>> = file
+            .stages
+            .iter()
+            .map(|def| {
+                def.kind
+                    .categories()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .collect();
         let mut stages = Vec::with_capacity(file.stages.len());
         for def in file.stages {
             let invalid = |message: String| PackError::Invalid {
@@ -380,11 +511,36 @@ impl Pack {
             let reads: Vec<(&str, Reach, Output)> = match &def.kind {
                 StageKind::Field(expr) => {
                     expr.check().map_err(invalid)?;
+                    let mut tests = Vec::new();
+                    expr.categories(&mut tests);
+                    check_categories(&categories, &by_name, &tests).map_err(invalid)?;
                     let mut names = Vec::new();
                     expr.inputs(&mut names);
                     names
                         .into_iter()
-                        .map(|name| (name, Reach::Cells(0), Output::Field))
+                        .map(|(name, output)| (name, Reach::Cells(0), output))
+                        .collect()
+                }
+                StageKind::Rules { rules, .. } => {
+                    let count = def.kind.categories().len();
+                    if count > MAX_CATEGORIES {
+                        return Err(invalid(format!(
+                            "{count} categories; at most {MAX_CATEGORIES} are allowed"
+                        )));
+                    }
+                    let mut names = Vec::new();
+                    let mut tests = Vec::new();
+                    for rule in rules {
+                        for condition in &rule.when {
+                            condition.check().map_err(invalid)?;
+                            condition.inputs(&mut names);
+                            condition.categories(&mut tests);
+                        }
+                    }
+                    check_categories(&categories, &by_name, &tests).map_err(invalid)?;
+                    names
+                        .into_iter()
+                        .map(|(name, output)| (name, Reach::Cells(0), output))
                         .collect()
                 }
                 StageKind::Blur { input, radius } => {
@@ -555,6 +711,28 @@ pub(crate) const fn point_stage_id(salt: u32) -> u16 {
 
 /// FNV-1a of a stage's name: the same for a stage wherever it sits in the pack, so adding or
 /// reordering stages changes no other stage's random decisions.
+/// Whether every category test names categories its Rules stage has. A test of a stage that is not
+/// a Rules stage, or of no stage, is left to the check of what each stage reads.
+fn check_categories(
+    categories: &[Vec<String>],
+    by_name: &BTreeMap<String, usize>,
+    tests: &[(&str, &[String])],
+) -> Result<(), String> {
+    for (input, names) in tests {
+        let Some(&index) = by_name.get(*input) else {
+            continue;
+        };
+        let known = &categories[index];
+        if known.is_empty() {
+            continue;
+        }
+        if let Some(missing) = names.iter().find(|name| !known.contains(name)) {
+            return Err(format!("{input:?} has no category {missing:?}"));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn salt(name: &str) -> u32 {
     name.bytes().fold(0x811C_9DC5_u32, |hash, byte| {
         (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)

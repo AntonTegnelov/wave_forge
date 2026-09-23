@@ -1,0 +1,58 @@
+// A round island whose biomes lie in rings (docs/product/user-stories.md, G7): the land rises from
+// products of noises, is flattened around the centre where a player starts, and falls into the sea
+// past the island's edge, 90 to 96 cells out. Biomes are first-match rules over height, distance
+// from the centre and noise, with a wobble that keeps the rings from being perfect circles. The
+// test pack for G7's biome rules; heights run from about -0.3 to 1, before any biome shapes them.
+(
+    version: 1,
+    stages: [
+        // Broad continents times rolling hills, with detail added where there is land.
+        (name: "land", kind: Field(Sub(
+            Mul(
+                Mul(Noise(frequency: 0.04, octaves: 1, name: Some("continent")), Noise(frequency: 0.09, octaves: 1, name: Some("hills"))),
+                Add(Constant(1.0), Mul(Constant(0.8), Noise(frequency: 0.2, octaves: 2, name: Some("detail")))),
+            ),
+            Constant(0.1),
+        ))),
+        // How much of the land is flattened: all of it within 6 cells of the centre, fading out by 9,
+        // and only where a smoothing noise is low, so the flat start area has an irregular rim.
+        (name: "flatten", kind: Field(Mul(
+            Sub(Constant(1.0), Smoothstep(6.0, 9.0, Distance((0.0, 0.0)))),
+            Sub(Constant(1.0), Smoothstep(0.55, 0.75, Noise(frequency: 0.03, octaves: 1, name: Some("rim")))),
+        ))),
+        // The land, flattened towards a low plain near the centre, and falling to -0.3 past the edge.
+        (name: "height", kind: Field(Add(
+            Add(Mul(Input("land"), Sub(Constant(1.0), Input("flatten"))), Mul(Constant(0.1), Input("flatten"))),
+            Mul(
+                Sub(Constant(-0.3), Add(Mul(Input("land"), Sub(Constant(1.0), Input("flatten"))), Mul(Constant(0.1), Input("flatten")))),
+                Clamp(Remap(Distance((0.0, 0.0)), (90.0, 96.0), (0.0, 1.0)), 0.0, 1.0),
+            ),
+        ))),
+        // A wobble of one and a half cells, seven times around the island.
+        (name: "wobble", kind: Field(Mul(Constant(1.5), Sin(Mul(Angle((0.0, 0.0)), Constant(43.982297)))))),
+        (name: "biome", kind: Rules(
+            rules: [
+                (category: "sea", when: [Less(Input("height"), Constant(0.05))]),
+                (category: "glacier", when: [Greater(Distance((0.0, -35.0)), Add(Constant(110.0), Input("wobble")))]),
+                (category: "volcanic", when: [Greater(Distance((0.0, 35.0)), Add(Constant(110.0), Input("wobble")))]),
+                (category: "peaks", when: [Greater(Input("height"), Constant(0.45))]),
+                (category: "marsh", when: [
+                    Greater(Noise(frequency: 0.08, octaves: 1, name: Some("wet")), Constant(0.62)),
+                    Between(Distance((0.0, 0.0)), 15.0, 70.0),
+                    Between(Input("height"), 0.06, 0.2),
+                ]),
+                (category: "moor", when: [
+                    Greater(Noise(frequency: 0.08, octaves: 1, name: Some("moor")), Constant(0.55)),
+                    Greater(Distance((0.0, 0.0)), Add(Constant(55.0), Input("wobble"))),
+                ]),
+                (category: "steppe", when: [
+                    Greater(Noise(frequency: 0.08, octaves: 1, name: Some("dry")), Constant(0.45)),
+                    Greater(Distance((0.0, 0.0)), Add(Constant(25.0), Input("wobble"))),
+                    Less(Distance((0.0, 0.0)), Constant(75.0)),
+                ]),
+                (category: "woods", when: [Greater(Distance((0.0, 0.0)), Add(Constant(40.0), Input("wobble")))]),
+            ],
+            otherwise: "grassland",
+        )),
+    ],
+)

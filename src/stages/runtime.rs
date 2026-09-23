@@ -94,10 +94,34 @@ pub struct Point {
     pub turn: f32,
 }
 
+/// A category per cell column of one chunk: an index into the categories its Rules stage names
+/// ([`crate::stages::StageKind::categories`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Categories {
+    pub chunk: ChunkCoord,
+    /// Columns along the lattice's x and y.
+    pub size: [u32; 2],
+    /// Row by row, x fastest.
+    pub values: Vec<u8>,
+}
+
+impl Categories {
+    /// The category of the column at `x`, `y` within the chunk.
+    ///
+    /// # Panics
+    /// If the column is outside the chunk.
+    #[must_use]
+    pub fn get(&self, x: u32, y: u32) -> u8 {
+        assert!(x < self.size[0] && y < self.size[1], "column ({x}, {y})");
+        self.values[(y * self.size[0] + x) as usize]
+    }
+}
+
 /// What a stage holds for one chunk.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Product {
     Field(Field),
+    Categories(Categories),
     /// The sites whose footprint overlaps the chunk.
     Sites(Vec<Site>),
     /// The chunk's part of a town, or nothing for a chunk outside every site.
@@ -107,19 +131,10 @@ pub enum Product {
 }
 
 impl Product {
-    fn field(&self) -> &Field {
-        match self {
-            Self::Field(field) => field,
-            Self::Sites(_) | Self::Tiles(_) | Self::Points(_) => {
-                unreachable!("inputs are type checked when the pack loads")
-            }
-        }
-    }
-
     fn sites(&self) -> &[Site] {
         match self {
             Self::Sites(sites) => sites,
-            Self::Field(_) | Self::Tiles(_) | Self::Points(_) => {
+            Self::Field(_) | Self::Categories(_) | Self::Tiles(_) | Self::Points(_) => {
                 unreachable!("inputs are type checked when the pack loads")
             }
         }
@@ -154,7 +169,8 @@ pub enum StageError {
     },
 }
 
-/// One input of a stage, readable only within the stage's reach of the chunk being generated.
+/// One input of a stage, readable only within the stage's reach of the chunk being generated: a
+/// field's values, or a Rules stage's category indices.
 pub struct FieldView<'a> {
     stage: &'a str,
     input: &'a str,
@@ -164,11 +180,12 @@ pub struct FieldView<'a> {
     /// The columns the view may read, in world columns, inclusive.
     min: [i64; 2],
     max: [i64; 2],
-    chunks: BTreeMap<(i32, i32), &'a Field>,
+    chunks: BTreeMap<(i32, i32), &'a Product>,
 }
 
 impl FieldView<'_> {
-    /// The input's value at the world column `x`, `y`.
+    /// The input's value at the world column `x`, `y`: a field's value, or the index of a
+    /// category.
     ///
     /// # Errors
     /// [`StageError::OutOfReach`] if the column is further from the chunk than the reach.
@@ -189,11 +206,18 @@ impl FieldView<'_> {
             i32::try_from(x.div_euclid(cx)).expect("a chunk coordinate"),
             i32::try_from(y.div_euclid(cy)).expect("a chunk coordinate"),
         );
-        let field = self
+        let product = self
             .chunks
             .get(&chunk)
             .expect("the runtime generates every chunk within reach first");
-        Ok(field.get(x.rem_euclid(cx) as u32, y.rem_euclid(cy) as u32))
+        let (x, y) = (x.rem_euclid(cx) as u32, y.rem_euclid(cy) as u32);
+        Ok(match product {
+            Product::Field(field) => field.get(x, y),
+            Product::Categories(categories) => f32::from(categories.get(x, y)),
+            Product::Sites(_) | Product::Tiles(_) | Product::Points(_) => {
+                unreachable!("inputs are type checked when the pack loads")
+            }
+        })
     }
 }
 
@@ -399,7 +423,19 @@ impl Runtime {
     pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
         match self.product(stage, chunk)? {
             Product::Field(field) => Some(field),
-            Product::Sites(_) | Product::Tiles(_) | Product::Points(_) => None,
+            Product::Sites(_) | Product::Tiles(_) | Product::Points(_) | Product::Categories(_) => {
+                None
+            }
+        }
+    }
+
+    /// The categories `stage` holds for `chunk`, if it is a Rules stage and the chunk is
+    /// generated.
+    #[must_use]
+    pub fn categories(&self, stage: &str, chunk: ChunkCoord) -> Option<&Categories> {
+        match self.product(stage, chunk)? {
+            Product::Categories(categories) => Some(categories),
+            Product::Field(_) | Product::Sites(_) | Product::Tiles(_) | Product::Points(_) => None,
         }
     }
 
@@ -408,7 +444,9 @@ impl Runtime {
     pub fn sites(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Site]> {
         match self.product(stage, chunk)? {
             Product::Sites(sites) => Some(sites),
-            Product::Field(_) | Product::Tiles(_) | Product::Points(_) => None,
+            Product::Field(_) | Product::Tiles(_) | Product::Points(_) | Product::Categories(_) => {
+                None
+            }
         }
     }
 
@@ -418,7 +456,9 @@ impl Runtime {
     pub fn tiles(&self, stage: &str, chunk: ChunkCoord) -> Option<&TownChunk> {
         match self.product(stage, chunk)? {
             Product::Tiles(town) => town.as_ref(),
-            Product::Field(_) | Product::Sites(_) | Product::Points(_) => None,
+            Product::Field(_) | Product::Sites(_) | Product::Points(_) | Product::Categories(_) => {
+                None
+            }
         }
     }
 
@@ -427,7 +467,9 @@ impl Runtime {
     pub fn points(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Point]> {
         match self.product(stage, chunk)? {
             Product::Points(points) => Some(points),
-            Product::Field(_) | Product::Sites(_) | Product::Tiles(_) => None,
+            Product::Field(_) | Product::Sites(_) | Product::Tiles(_) | Product::Categories(_) => {
+                None
+            }
         }
     }
 
@@ -528,7 +570,7 @@ impl Runtime {
         ];
         let chunks = self
             .inputs_within(chunk, input, reach)
-            .map(|(at, product)| ((at.x, at.y), product.field()))
+            .map(|(at, product)| ((at.x, at.y), product))
             .collect();
         FieldView {
             stage: &self.pack.stages[stage].name,
@@ -597,9 +639,56 @@ impl Runtime {
         let views: BTreeMap<usize, FieldView<'_>> = stage
             .inputs
             .iter()
-            .filter(|&&(input, _)| self.pack.stages[input].kind.output() == Output::Field)
+            .filter(|&&(input, _)| {
+                matches!(
+                    self.pack.stages[input].kind.output(),
+                    Output::Field | Output::Categories
+                )
+            })
             .map(|&(input, reach)| (input, self.view(index, chunk, input, reach)))
             .collect();
+        let input = |name: &str| &views[&self.pack.index(name).expect("linked when loaded")];
+        if let StageKind::Rules { rules, otherwise } = &stage.kind {
+            let names = stage.kind.categories();
+            let index_of = |name: &str| {
+                names
+                    .iter()
+                    .position(|known| *known == name)
+                    .expect("every category is named") as u8
+            };
+            let taken: Vec<u8> = rules.iter().map(|rule| index_of(&rule.category)).collect();
+            let fallback = index_of(otherwise);
+            let [sx, sy] = self.size;
+            let mut values = Vec::with_capacity((sx * sy) as usize);
+            for y in 0..sy {
+                for x in 0..sx {
+                    let column = [
+                        i64::from(chunk.x) * i64::from(sx) + i64::from(x),
+                        i64::from(chunk.y) * i64::from(sy) + i64::from(y),
+                    ];
+                    let mut category = fallback;
+                    for (rule, index) in rules.iter().zip(&taken) {
+                        let mut all = true;
+                        for condition in &rule.when {
+                            if !self.holds(condition, stage.salt, column, &input)? {
+                                all = false;
+                                break;
+                            }
+                        }
+                        if all {
+                            category = *index;
+                            break;
+                        }
+                    }
+                    values.push(category);
+                }
+            }
+            return Ok(Product::Categories(Categories {
+                chunk,
+                size: self.size,
+                values,
+            }));
+        }
         let near: Vec<Site> = match &stage.kind {
             StageKind::Flatten { .. } => {
                 let (sites, reach) = stage.inputs[1];
@@ -616,9 +705,7 @@ impl Runtime {
                     i64::from(chunk.y) * i64::from(sy) + i64::from(y),
                 ];
                 let value = match &stage.kind {
-                    StageKind::Field(expr) => self.evaluate(expr, stage.salt, column, &|name| {
-                        &views[&self.pack.index(name).expect("linked when loaded")]
-                    })?,
+                    StageKind::Field(expr) => self.evaluate(expr, stage.salt, column, &input)?,
                     StageKind::Blur { input, radius } => {
                         let view = &views[&self.pack.index(input).expect("linked when loaded")];
                         let r = i64::from(*radius);
@@ -649,7 +736,8 @@ impl Runtime {
                     }
                     StageKind::Sites { .. }
                     | StageKind::Solve { .. }
-                    | StageKind::Scatter { .. } => {
+                    | StageKind::Scatter { .. }
+                    | StageKind::Rules { .. } => {
                         unreachable!("handled above")
                     }
                 };
@@ -877,6 +965,13 @@ impl Runtime {
             Expr::Max(a, b) => value(a)?.max(value(b)?),
             Expr::Abs(a) => value(a)?.abs(),
             Expr::Floor(a) => value(a)?.floor(),
+            Expr::Sin(a) => value(a)?.sin(),
+            Expr::Is(stage, names) => {
+                let index = self.pack.index(stage).expect("linked when loaded");
+                let known = self.pack.stages[index].kind.categories();
+                let here = input(stage).get(column[0], column[1])? as usize;
+                f32::from(u8::from(names.iter().any(|name| name == known[here])))
+            }
             Expr::Clamp(a, low, high) => value(a)?.clamp(*low, *high),
             Expr::Smoothstep(low, high, a) => {
                 let t = ((value(a)? - low) / (high - low)).clamp(0.0, 1.0);
@@ -891,12 +986,27 @@ impl Runtime {
                 then,
                 otherwise,
             } => {
-                let holds = match when {
-                    Condition::Less(a, b) => value(a)? < value(b)?,
-                    Condition::Greater(a, b) => value(a)? > value(b)?,
-                };
+                let holds = self.holds(when, salt, column, input)?;
                 value(if holds { then } else { otherwise })?
             }
+        })
+    }
+}
+
+impl Runtime {
+    /// Whether `condition` holds at `column`.
+    fn holds<'v>(
+        &self,
+        condition: &Condition,
+        salt: u32,
+        column: [i64; 2],
+        input: &dyn Fn(&str) -> &'v FieldView<'v>,
+    ) -> Result<bool, StageError> {
+        let value = |expr: &Expr| self.evaluate(expr, salt, column, input);
+        Ok(match condition {
+            Condition::Less(a, b) => value(a)? < value(b)?,
+            Condition::Greater(a, b) => value(a)? > value(b)?,
+            Condition::Between(a, low, high) => (*low..=*high).contains(&value(a)?),
         })
     }
 }
@@ -1041,11 +1151,11 @@ mod tests {
 
     #[test]
     fn a_read_beyond_the_reach_is_an_error_naming_the_stage() {
-        let field = Field {
+        let field = Product::Field(Field {
             chunk: ChunkCoord::new(0, 0, 0),
             size: [4, 4],
             values: vec![0.0; 16],
-        };
+        });
         let view = FieldView {
             stage: "reader",
             input: "source",
