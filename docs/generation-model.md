@@ -251,3 +251,29 @@ reproduction impossible anyway.
 6. Later slices, one stage kind each: region jobs (rivers, Qud zones, cave levels), Assemble (jigsaw,
    room graphs), density volumes (Minecraft and Deep Rock caves), Records and hierarchy (Elite, No
    Man's Sky).
+
+## 9. The runtime as built
+
+`wave_forge::stages` holds the first part of this design, on the CPU.
+
+- **Packs.** `Pack::parse` reads a RON pack (version 1): a list of named stages. Loading refuses
+  another version, duplicate names, a stage reading a name that does not exist, parameters out of
+  range and cycles, and each error names the stage. `Pack::reach(target)` reports, for every stage
+  `target` depends on, how many cells beyond a column of `target` it has to be generated: the
+  largest sum of reaches along any path.
+- **Stage kinds so far.** `Field`, an expression per cell column (constants, fractal value noise,
+  other fields at the same column, sums and products), with reach 0; and `Blur`, another field
+  averaged over a square, whose reach is its radius. Nobody declares a reach by hand.
+- **Runtime.** `Runtime::request(focus, target)` works out, from the target backwards, which chunks
+  of every stage the request needs, and drops everything else it held. `run_until_idle` generates
+  what is missing, stage by stage with inputs first, nearest chunk first. A stage reads its inputs
+  only through a `FieldView` bounded by its reach, which returns `StageError::OutOfReach` naming the
+  stage and the reach it would have needed.
+- **Named hash streams.** Noise draws from `pcg3d` keyed by the world seed, an FNV-1a salt of the
+  stage's name and the octave, so adding, removing or reordering stages changes no other stage.
+- **Order independence**, checked by `tests/stages.rs`: a six-stage pack comes out bit for bit the
+  same over a 4×4-chunk area asked for all at once and one chunk at a time in either raster order.
+
+Fields are one value per cell column on the WFC chunk lattice for now; other lattices, 3D fields
+and the remaining stage kinds come with the slices that need them, and WFC joins as a Solve stage
+next ([#67](https://github.com/AntonTegnelov/wave_forge/issues/67)).
