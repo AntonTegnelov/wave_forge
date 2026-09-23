@@ -1,7 +1,7 @@
 //! A pack of stages in a Bevy app: a focus entity makes the stages generate around it, what
 //! arrives is what the library's runtime generates, and moving away drops what was left behind.
 //! The same holds for each chunk's ground, built from the height field, and a save made in one app
-//! brings a player's edits back in another.
+//! brings a player's edits back in another. An assembled piece stands where its stage grew it.
 
 use bevy_app::{App, Startup, Update};
 use bevy_ecs::message::MessageReader;
@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wave_forge::stages::{
-    Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, Value,
+    Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, Stamp, Value,
 };
 use wave_forge::{ChunkCoord, FocusPoint, ground};
 use wave_forge_bevy::GenerationFocus;
@@ -551,4 +551,82 @@ fn a_save_made_in_one_app_brings_a_felled_tree_back_felled_in_another() {
 
     assert_eq!(save.edits, edits);
     assert!(trees.iter().all(|tree| tree.id != felled.id), "{trees:?}");
+}
+
+const VILLAGE: &str = r#"(
+    version: 1,
+    stages: [
+        (name: "ground", kind: Field(Mul(Noise(frequency: 0.03, octaves: 2), Constant(12.0)))),
+        (name: "villages", kind: Sites(height: "ground", region: 6, size: (2, 3), chance: 1.0)),
+        (name: "village", kind: Assemble(sites: "villages", start: "square", max: 14, min: 5, pieces: [
+            (name: "square", size: (4, 4, 1), doors: [
+                (at: (3, 1, 0), facing: East, kind: "street"),
+                (at: (0, 2, 0), facing: West, kind: "street"),
+            ]),
+            (name: "street", size: (1, 4, 1), weight: 3, doors: [
+                (at: (0, 0, 0), facing: South, kind: "street"),
+                (at: (0, 3, 0), facing: North, kind: "street"),
+                (at: (0, 1, 0), facing: East, kind: "house"),
+                (at: (0, 2, 0), facing: West, kind: "house"),
+            ]),
+            (name: "house", size: (3, 3, 1), weight: 2, doors: [(at: (1, 0, 0), facing: South, kind: "house")]),
+        ])),
+    ],
+)"#;
+
+#[test]
+fn an_assembled_house_placed_by_its_transform_opens_its_door_onto_a_street() {
+    let pack = Arc::new(Pack::parse(VILLAGE).expect("a valid pack"));
+    let for_thread = Arc::clone(&pack);
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["village"], SETTINGS, move || {
+            Ok(Runtime::new(for_thread, 21, SETTINGS.chunk))
+        })
+        .with_radius("village", 4),
+    );
+    let area: Vec<ChunkCoord> = (-4..=4)
+        .flat_map(|y| (-4..=4).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        area.iter()
+            .all(|&chunk| stages.stamps("village", chunk).is_some())
+    });
+    let stages = app.world().resource::<WaveForgeStages>();
+    let mut stamps: Vec<Stamp> = Vec::new();
+    for &chunk in &area {
+        for stamp in stages.stamps("village", chunk).expect("arrived") {
+            if !stamps.contains(stamp) {
+                stamps.push(stamp.clone());
+            }
+        }
+    }
+    let column = |at: Vec3| {
+        (
+            (at.x / SETTINGS.cell_size.x).floor() as i64,
+            (at.z / SETTINGS.cell_size.z).floor() as i64,
+        )
+    };
+    let covers = |stamp: &Stamp, (x, y): (i64, i64)| {
+        (stamp.min[0]..stamp.max[0]).contains(&x) && (stamp.min[1]..stamp.max[1]).contains(&y)
+    };
+
+    let mut checked = 0;
+    for house in stamps.iter().filter(|stamp| &*stamp.piece == "house") {
+        let transform = stages.stamp_transform(house);
+        let door = column(transform.transform_point(Vec3::new(0.0, 0.0, -SETTINGS.cell_size.z)));
+        let outside =
+            column(transform.transform_point(Vec3::new(0.0, 0.0, -2.0 * SETTINGS.cell_size.z)));
+        assert!(covers(house, door), "{house:?}: door at {door:?}");
+        if (-32..40).contains(&outside.0) && (-32..40).contains(&outside.1) {
+            assert!(
+                stamps
+                    .iter()
+                    .any(|other| &*other.piece == "street" && covers(other, outside)),
+                "{house:?}: its door at {door:?} opens onto no street"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 3, "{checked} houses checked");
 }
