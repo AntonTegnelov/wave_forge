@@ -48,6 +48,11 @@ Two rules hold for people and agents alike:
   in [user-stories.md](user-stories.md) is verified by repeated, recorded checks with the evidence
   linked from it. Design and implementation name the stories they serve, and a change that affects a
   story updates its status and evidence.
+- **Nothing from a private game repository enters this one.** The proof-of-concept games are
+  closed source ([roadmap.md](roadmap.md#games-packs-and-repositories)); their code, assets, design
+  text and packs are never copied into this repository, its issues or its commits. A bug found in a
+  game is reported with a reproduction in Wave Forge's own terms, using the
+  [issue template](../.github/ISSUE_TEMPLATE/from-a-game.md).
 - **Publishing is human-only.** Releasing to the Godot Asset Store or crates.io, creating a release
   or a release tag, announcing, and promoting `develop` to `main` are done by the owner. Agents
   prepare builds, notes and checklists, and stop there.

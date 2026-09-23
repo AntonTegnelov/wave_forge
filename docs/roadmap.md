@@ -79,11 +79,10 @@ through. In order:
    scripted walk: frame rate while walking, no holes, the player never falls through, and a chunk
    walked back to comes back identical. The same city then gets a Bevy walk.
 
-Items 1 to 4 are library work and happen here. The games in item 5 live in **their own
-repository**: they are consumers of the library, they carry art that has no place in a library
-repository, and building them against the public API alone is the test of whether that API is
-enough. The extension's own verification project (`wave_forge_godot/godot`) stays here, because it
-tests the extension rather than showing it off.
+Items 1 to 4 are library work and happen here. The walk in item 5 is the first of the
+proof-of-concept games, which live in repositories of their own
+([below](#games-packs-and-repositories)). The extension's own verification project
+(`wave_forge_godot/godot`) stays here, because it tests the extension rather than showing it off.
 
 Godot's compatibility renderer runs in this dev container on the host GPU through Mesa's D3D12
 OpenGL driver under `xvfb` ("OpenGL API 4.2 (Core Profile) Mesa 22.3.6 - Compatibility - Using
@@ -102,6 +101,43 @@ Godot refuses to create any `RenderingDevice` without it. Godot does run on the 
 device (lavapipe), which is enough to check that such a backend produces correct worlds but says
 nothing about whether it is faster than a device of its own. The comparison belongs on a desktop
 Godot, and nothing gets built for it before that measurement says it is worth it.
+
+## Games, packs and repositories
+
+Three proof-of-concept games consume Wave Forge, each kept simple at first; any of them that
+proves fun can grow into more:
+
+| Game | What it needs from Wave Forge | Order |
+|---|---|---|
+| Parkour hide-and-seek and tag in an infinite WFC city, in the style of marian42's city | the city, walk products, colliders and navigation: the MVP walk ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)) | first |
+| A classic survival and crafting game in a Valheim-like surface world with WFC inside masks | Phase 2's first slice ([#68](https://github.com/AntonTegnelov/wave_forge/issues/68)) | second |
+| A grand strategy game inspired by Europa Universalis, on a world and a history generated once per new game in the manner of Dwarf Fortress | region jobs ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) and records ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); the history simulation belongs to the game | third |
+
+**Each game lives in its own private repository.** They are not open source. They depend on Wave
+Forge by a pinned commit, and moving the pin is a deliberate change in the game's repository, which
+is also the best test of whether the public API is enough.
+
+**This repository keeps** the library, the integrations, their verification projects, tests and
+manual experiments in Godot and Bevy, and two kinds of packs:
+
+| Kind | Where | Purpose |
+|---|---|---|
+| **Game packs** | each game's repository | the game's world, tuned for play; smoke tests for Wave Forge |
+| **Test packs** | here | edge cases, stress tests, and one pack per user story exercising its techniques; the evidence for the [verification gate](user-stories.md#the-verification-gate) |
+| **Presets** | here | the product's out-of-the-box worlds (N1, N2, N10) |
+
+**Smoke tests run downstream.** Each game's continuous integration builds it against Wave Forge's
+latest `develop` every night and on every change of its pin, and runs its packs, so nothing here
+needs access to a private repository and no private pack reaches a public log. A failure comes back
+as an issue here with a public reproduction ([template](../.github/ISSUE_TEMPLATE/from-a-game.md)):
+the game's pack is reduced to a test pack in this repository, which then stays as a regression
+test.
+
+**Access.** This repository is public, so the games read it without a token. A game's environment
+may open issues here (a token with issue access only), and this repository's environment may read
+the games' repositories (read-only). Nothing from a private game (code, assets, design text, pack
+contents) is ever copied into this repository, its issues or its commits; a report reproduces the
+problem in Wave Forge's own terms.
 
 ## Hardening
 

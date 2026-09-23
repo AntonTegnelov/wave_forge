@@ -23,7 +23,10 @@ verification:
   touch the story.
 
 A story counts as **verified** only when every acceptance criterion passes on the reference stacks
-and the evidence is linked from the story. Each story carries a status (not started, in progress,
+and the evidence is linked from the story. The evidence comes from this repository's test packs,
+presets and examples, so it can be linked and rerun by anyone; the proof-of-concept games in their
+private repositories are downstream smoke tests that find problems, not evidence
+([roadmap.md](roadmap.md#games-packs-and-repositories)). Each story carries a status (not started, in progress,
 verified), the date it last changed and a link to its evidence. A story that regresses goes back to
 in progress.
 
@@ -68,7 +71,7 @@ with bounded neighbour requirements. Everything is exposed as datapack JSON
 world depend on the travel route, a flaw Wave Forge must not copy.
 
 **Acceptance criteria.**
-- A sample pack generates an unbounded voxel world with climate-driven biomes, 3D density terrain
+- A test pack in this repository generates an unbounded voxel world with climate-driven biomes, 3D density terrain
   with overhangs and caves, aquifers, surface materials by rule, ores, trees and a jigsaw village.
 - Changing one number in the pack (a noise amplitude, a feature's rarity) changes only what depends
   on it, shown by the order-diff test and a diff of product hashes.
@@ -96,7 +99,7 @@ named parameter sets ([World generation](https://dwarffortresswiki.org/index.php
 [Simulation principles, Game AI Pro 2](https://www.gameaipro.com/GameAIPro2/GameAIPro2_Chapter41_Simulation_Principles_from_Dwarf_Fortress.pdf)).
 
 **Acceptance criteria.**
-- A sample pack generates a finite world as one region job on a coarse grid: fields, eroded rivers
+- A test pack in this repository generates a finite world as one region job on a coarse grid: fields, eroded rivers
   as curves, biomes and connected regions, geology strata, with a rejection log when a retry is
   needed.
 - A Record slot receives a user-supplied history, whose sites the local stages then realise.
@@ -123,7 +126,7 @@ kept as a capped log in the save
 [Building Worlds Using Math(s), GDC 2017](https://www.gdcvault.com/play/1024514/Building-Worlds-Using)).
 
 **Acceptance criteria.**
-- A sample pack generates a planet section from a planet Record: 3D density with overhangs, sites
+- A test pack in this repository generates a planet section from a planet Record: 3D density with overhangs, sites
   on an offset grid that flatten the ground under them, and props scattered by biome.
 - `locate(kind)` finds the nearest site from any position without generating the chunks between.
 - Terrain edits are kept in the edits log and survive leaving and returning.
@@ -148,7 +151,7 @@ flip. Hand-painted pixel scenes are stamped in, and marker colours call spawn fu
 order and the reroll are known from community reverse engineering (unverified from Nolla).
 
 **Acceptance criteria.**
-- A sample pack takes a painted biome map and painted tiles, and generates a 2D world in which every
+- A test pack in this repository takes a painted biome map and painted tiles, and generates a 2D world in which every
   biome region is passable from its entry to its exit, checked by a path search in the test.
 - Marker colours in tiles become spawn points with stable ids; pixel scenes are stamped at their
   places.
@@ -171,7 +174,7 @@ connects every open area, then populations from weighted XML tables and hand-mad
 [Zones and worlds](https://wiki.cavesofqud.com/wiki/Modding:Intro_-_Zones_and_Worlds)).
 
 **Acceptance criteria.**
-- A sample pack generates zones from an authored map: segments, WFC per segment with its own
+- A test pack in this repository generates zones from an authored map: segments, WFC per segment with its own
   template, every open cell reachable (checked), populations from weighted tables.
 - Stairs and paths between neighbouring zones line up, from edge-keyed hashes.
 - A zone visited, left and revisited is identical, or restored from its snapshot when set to freeze
@@ -195,7 +198,7 @@ zones since Odyssey, scatter through noise graphs, and hand-built settlements pl
 Inserting authored bodies shifted procedural ids, which is why ids here are positional.
 
 **Acceptance criteria.**
-- A sample pack produces a hierarchy of Records (sector, system, body) where each level reads only
+- A test pack in this repository produces a hierarchy of Records (sector, system, body) where each level reads only
   its parent and its budget, with authored entries that do not shift any procedural id.
 - A body's Record drives a surface section: fields, zones, scatter with spacing, and an authored
   site placed on flattened ground.
@@ -221,7 +224,7 @@ room graphs of prefabs, clutter is never saved, and player terrain edits are sto
 and are unverified from Iron Gate).
 
 **Acceptance criteria.**
-- A sample pack generates a disk world with biomes by distance and noise, per-biome height, rivers,
+- A test pack in this repository generates a disk world with biomes by distance and noise, per-biome height, rivers,
   a location table honouring quotas and spacing, vegetation rules and a prefab-room dungeon.
 - Placements have stable ids; removing one or editing terrain persists across eviction and
   regeneration.
@@ -245,7 +248,7 @@ counts and difficulty budgets per room, and the terrain stays destructible durin
 names from community header dumps, unverified).
 
 **Acceptance criteria.**
-- A sample pack generates a cave level as one region job: a room graph from authored patterns,
+- A test pack in this repository generates a cave level as one region job: a room graph from authored patterns,
   rooms expanded into stamps, tunnels as curves, carved into a density volume.
 - Resource totals meet the level's quota exactly; enemy budgets hold per room.
 - Carving at runtime goes through the edits log and survives reload.
@@ -349,11 +352,11 @@ identical on NVIDIA through dozen and on Mesa's lavapipe ([testing.md](testing.m
 *A developer preparing a trailer wants a sample world with wind in the grass, a day and night cycle,
 buildings and agents walking between them, running in under an hour.*
 
-**Acceptance criteria.** A sample project in the demo repository opens and runs with grass and
-wind, lighting that changes over a day, a generated town, and navigation agents walking its streets,
-at the P1 frame rate on a reference desktop. Needs a person: the trailer checklist in the sample's
-README is followed from a clean checkout within an hour. **Needs.** Grass and wind
-([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), navigation, the demo repository.
+**Acceptance criteria.** An example project in this repository, built on a preset, opens and runs
+with grass and wind, lighting that changes over a day, a generated town, and navigation agents
+walking its streets, at the P1 frame rate on a reference desktop. Needs a person: the trailer
+checklist in the example's README is followed from a clean checkout within an hour. **Needs.** Grass
+and wind ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), navigation, presets.
 **Status:** not started (2026-09-23).
 
 ## P: performance
