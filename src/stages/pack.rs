@@ -807,8 +807,6 @@ pub(crate) const fn point_stage_id(salt: u32) -> u16 {
     (salt % 0x7FFF) as u16 + 1
 }
 
-/// FNV-1a of a stage's name: the same for a stage wherever it sits in the pack, so adding or
-/// reordering stages changes no other stage's random decisions.
 /// Each stage an expression reads, once for each kind it reads it as, at the widest reach any part
 /// of it reads that stage at: the runtime gives a stage one view of each input. A stage read as two
 /// kinds stays two reads, so the check of what each stage produces refuses the wrong one.
@@ -852,6 +850,8 @@ fn check_categories(
     Ok(())
 }
 
+/// FNV-1a of a stage's name: the same for a stage wherever it sits in the pack, so adding or
+/// reordering stages changes no other stage's random decisions.
 pub(crate) fn salt(name: &str) -> u32 {
     name.bytes().fold(0x811C_9DC5_u32, |hash, byte| {
         (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
