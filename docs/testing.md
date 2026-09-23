@@ -130,6 +130,35 @@ failed solve contradicted.
 cargo test -p wfc-devtools --release --test hole_census -- --ignored --nocapture --test-threads=1
 ```
 
+## Rendering tools
+
+`wfc-devtools` is a developer-only crate and is never part of the shipped library. Its `wave-forge`
+binary generates one chunk from a rule file and writes it as a text grid (`--output`, `output.txt`
+by default). `wfc-render` draws that grid to a PNG:
+
+```bash
+cargo run -p wfc-devtools --release --bin wave-forge -- --rule-file examples/simple-pattern.ron --width 12 --height 12 --depth 6 --output grid.txt
+cargo run -p wfc-devtools --bin wfc-render -- grid.txt --out grid.png --empty-tile 0
+cargo run -p wfc-devtools --bin wfc-render -- grid.txt --view layer --z 0 --out layer0.png
+```
+
+The four-view sheet (`--view four-view`, the default) shows the whole grid with `+z` up:
+
+| | |
+|---|---|
+| **Top**: looking down, `+x` right, `+y` up | **Isometric**: seen from `+x`, `+y`, `+z` |
+| **Front**: from `-y`, `+x` right | **Side**: from `+x`, `+y` right |
+
+The orthographic views show exact positions, and the isometric view shows how they fit together.
+Nearer surfaces are brighter, and tiles marked empty with `--empty-tile` are see-through. Each tile
+index gets a fixed colour, so the same tile has the same colour in every picture.
+
+The end-to-end tests draw their artifacts with the same code (`wfc_devtools::render`). It is a small
+CPU rasteriser rather than an engine because the images are made inside tests and containers
+without a display, have to be pixel-for-pixel reproducible, and must be cheap enough to write after
+every run. For a picture through a real engine, `render_city.sh` renders a city in Godot (next
+section).
+
 ## The engine integrations
 
 Both live in their own workspaces, so the library's `cargo test --workspace` does not compile an
