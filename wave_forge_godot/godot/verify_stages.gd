@@ -165,7 +165,7 @@ func _process(_delta: float) -> bool:
 					return true
 				return false
 	var queued: Dictionary = world.stats()
-	if queued["pending_signals"] > 0 or queued["pending_grounds"] > 0:
+	if queued["pending_signals"] > 0 or queued["pending_grounds"] > 0 or queued["pending_colliders"] > 0:
 		return false
 	print("verify_stages: %d chunks of %s arrived in %.1f s" % [_view().size(), TARGETS, waited])
 	if not _check_towns() or not _check_trees() or not _check_cover():

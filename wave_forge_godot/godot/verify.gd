@@ -274,6 +274,9 @@ func _process(_delta: float) -> bool:
 	last_frame_usec = now
 	var x := _x_at((now - walk_started_usec) / 1e6)
 	if is_nan(x):
+		# Colliders are built a few chunks a frame; the check waits for the last of them.
+		if world.stats()["pending_colliders"] > 0:
+			return false
 		# The loop goes on for the navigation check; a failed check has already quit.
 		_check()
 		return false
