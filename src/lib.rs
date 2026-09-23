@@ -48,6 +48,7 @@
 
 pub mod generator;
 pub mod ground;
+pub mod noise;
 pub mod products;
 pub mod scheduler;
 pub mod space;
