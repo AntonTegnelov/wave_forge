@@ -49,13 +49,16 @@ pub enum BackendError {
     Dispatch(String),
     #[error("reading a buffer back failed: {0}")]
     Readback(String),
+    #[error("the pipeline cache at {path} could not be read or written: {reason}")]
+    Cache { path: String, reason: String },
 }
 
 /// A compute API the block solver can run on.
 ///
-/// The solver creates one pipeline per region shape and batch capacity, writes the inputs, and
-/// dispatches one workgroup per region. Implementations are free to be as simple as they like:
-/// there is no pipeline cache, no bind group management and no queue here.
+/// The solver creates one pipeline per region shape, buffers per batch capacity, writes the inputs,
+/// and dispatches one workgroup per region. Implementations are free to be as simple as they like:
+/// there is no bind group management and no queue here, and caching compiled pipelines across runs
+/// is the implementation's own business.
 pub trait ComputeBackend {
     /// A compiled kernel.
     type Pipeline;

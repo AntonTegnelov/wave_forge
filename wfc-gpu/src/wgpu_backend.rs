@@ -3,8 +3,13 @@
 //! A Bevy plugin passes Bevy's device and queue to [`WgpuBackend::from_device`], so the solver
 //! shares the engine's device instead of competing with it for the GPU. A standalone program or a
 //! test uses [`WgpuBackend::from_env`].
+//!
+//! Compiling a kernel takes seconds on some drivers, so a backend can keep compiled pipelines in a
+//! file with [`WgpuBackend::cache_pipelines_in`]: a later run on the same adapter and driver starts
+//! from them.
 
 use crate::backend::{BackendError, BackendLimits, BufferUsage, ComputeBackend};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -24,6 +29,8 @@ pub struct WgpuBackend {
     limits: BackendLimits,
     /// The adapter behind the device, when this backend chose it.
     adapter: Option<wgpu::AdapterInfo>,
+    /// Compiled pipelines kept across runs, and the file they are kept in.
+    cache: Option<(wgpu::PipelineCache, PathBuf)>,
 }
 
 /// Work submitted to wgpu, and how many of its readbacks have been mapped.
@@ -73,9 +80,11 @@ impl WgpuBackend {
                 .max(STORAGE_BUFFERS),
             ..wgpu::Limits::default()
         };
+        // Asked for where offered, so pipelines can be cached across runs.
+        let features = adapter.features() & wgpu::Features::PIPELINE_CACHE;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("wave forge block solver"),
-            required_features: wgpu::Features::empty(),
+            required_features: features,
             required_limits: limits,
             ..Default::default()
         }))
@@ -100,7 +109,61 @@ impl WgpuBackend {
             queue,
             limits,
             adapter: None,
+            cache: None,
         }
+    }
+
+    /// Keeps compiled pipelines in a file in `dir`, named for the adapter and driver, loading what
+    /// an earlier run on them left there and writing it again after every compile. A backend that
+    /// cannot cache (an engine's device, whose adapter it does not know, a device without the
+    /// feature, or a graphics API wgpu does not cache on) is returned as it is;
+    /// [`WgpuBackend::caches_pipelines`] says which.
+    ///
+    /// # Errors
+    /// [`BackendError::Cache`] if the directory cannot be made or an existing file cannot be read.
+    pub fn cache_pipelines_in(mut self, dir: &Path) -> Result<Self, BackendError> {
+        let Some(key) = self
+            .adapter
+            .as_ref()
+            .filter(|_| {
+                self.device
+                    .features()
+                    .contains(wgpu::Features::PIPELINE_CACHE)
+            })
+            .and_then(wgpu::util::pipeline_cache_key)
+        else {
+            return Ok(self);
+        };
+        let path = dir.join(key);
+        let cache_error = |reason: std::io::Error| BackendError::Cache {
+            path: path.display().to_string(),
+            reason: reason.to_string(),
+        };
+        std::fs::create_dir_all(dir).map_err(cache_error)?;
+        let data = match std::fs::read(&path) {
+            Ok(data) => Some(data),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(cache_error(error)),
+        };
+        // SAFETY: wgpu requires the data to come from an earlier cache of this adapter and driver.
+        // The file is named by `pipeline_cache_key`, which is derived from exactly those, so only
+        // such a cache is ever loaded; `fallback` makes wgpu start empty if the data is stale.
+        let cache = unsafe {
+            self.device
+                .create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+                    label: Some("block solver"),
+                    data: data.as_deref(),
+                    fallback: true,
+                })
+        };
+        self.cache = Some((cache, path));
+        Ok(self)
+    }
+
+    /// Whether compiled pipelines are kept in a file across runs.
+    #[must_use]
+    pub const fn caches_pipelines(&self) -> bool {
+        self.cache.is_some()
     }
 
     /// The device it runs on, for a caller that also renders with it.
@@ -180,12 +243,24 @@ impl ComputeBackend for WgpuBackend {
                 module: &module,
                 entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
+                cache: self.cache.as_ref().map(|(cache, _)| cache),
             });
-        match pollster::block_on(scope.pop()) {
-            Some(error) => Err(BackendError::Kernel(error.to_string())),
-            None => Ok(pipeline),
+        if let Some(error) = pollster::block_on(scope.pop()) {
+            return Err(BackendError::Kernel(error.to_string()));
         }
+        if let Some((cache, path)) = &self.cache
+            && let Some(data) = cache.get_data()
+        {
+            // Written beside the file and renamed over it, so a crash never leaves half a cache.
+            let partial = path.with_extension("partial");
+            std::fs::write(&partial, data)
+                .and_then(|()| std::fs::rename(&partial, path))
+                .map_err(|reason| BackendError::Cache {
+                    path: path.display().to_string(),
+                    reason: reason.to_string(),
+                })?;
+        }
+        Ok(pipeline)
     }
 
     fn create_buffer(&self, bytes: u64, usage: BufferUsage) -> Result<Self::Buffer, BackendError> {
