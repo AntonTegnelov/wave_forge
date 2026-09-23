@@ -120,8 +120,12 @@ their ids. `Facts` is cheap to clone: a game keeps its own and hands a copy to e
 A stage reads a table through the row its runtime is focused on: `Row("systems", "radius")` in a
 Field expression or a Rules condition is that row's value. `runtime.set_facts(facts)` gives a
 runtime its facts, and `runtime.focus("systems", id)` focuses it on a row, which is how one surface
-pack serves every planet. Both drop every product of the stages that read a changed table, and of
-the stages that read those, and return them as `request` does; the request generates them again.
+pack serves every planet. Both drop what the change makes stale and return it as `request` does,
+and the request generates it again. A row added, removed or changed stales the chunks its site
+covers, before and after, in a TableSites stage; a focused row whose values changed stales every
+chunk of the stages that read it. A reader's chunk is stale when its reach covers a stale chunk of
+an input, and a town or a region goes with any stale chunk it covers, so burning one village
+solves its town again and nothing else.
 A stage reading a row with none focused fails with `StageError::NoFocus`. A table's rows become
 sites through a [TableSites](#tablesites) stage, and a town's rule set can follow a names column of
 its row ([Solve](#solve)). Roads from a table's curves are not built yet
