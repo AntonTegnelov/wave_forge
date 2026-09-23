@@ -48,7 +48,7 @@ pub mod space;
 pub mod worker;
 
 pub use generator::{ChunkEvent, GeneratorStats, WorldGenerator};
-pub use products::{InstanceSet, instance_sets};
+pub use products::{InstanceSet, NavSource, NavSourceError, instance_sets, nav_source};
 pub use scheduler::FocusPoint;
 pub use space::YUpSpace;
 pub use worker::Worker;
