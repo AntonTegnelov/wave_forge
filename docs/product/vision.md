@@ -1,6 +1,6 @@
 # Vision
 
-Wave Forge is a procedural world generator built to run **inside games, at runtime**, and to scale to massive and complex worlds. Everything else in the project follows from that sentence, so this document explains what it means and why it forces the design choices described in [architecture.md](architecture.md).
+Wave Forge is a procedural world generator built to run **inside games, at runtime**, and to scale to massive and complex worlds. Everything else in the project follows from that sentence, so this document explains what it means and why it forces the design choices described in [the architecture](../architecture/overview.md).
 
 ## What we are building
 
@@ -49,24 +49,24 @@ On-demand generation only works if regenerating a region produces the same resul
 
 ## Phases
 
-### Phase 1: standalone 2D and 3D wave function collapse
+### Phase 1: standalone 2D and 3D wave function collapse (done)
 
-A pure WFC terrain generator for square (2D) and cubic (3D) grids, usable as a Rust library, fast enough for runtime use, with the testing and inspection tooling needed to develop it (see [roadmap.md](roadmap.md)). Inspiration for the kind of output we want to reach: Marian Kleineberg's infinite WFC city ([article](https://marian42.de/article/wfc/), [code](https://github.com/marian42/wavefunctioncollapse)).
+A pure WFC terrain generator for square (2D) and cubic (3D) grids, usable as a Rust library, fast enough for runtime use, with the testing and inspection tooling needed to develop it. Inspiration for the kind of output we want to reach: Marian Kleineberg's infinite WFC city ([article](https://marian42.de/article/wfc/), [code](https://github.com/marian42/wavefunctioncollapse)).
 
 ### Phase 2: generation as a pack of stages
 
 WFC is excellent for structured, locally-constrained content (cities, buildings, dungeons) and poor at large-scale natural shapes. Real worlds need several techniques combined, in the spirit of [LayerProcGen](https://github.com/runevision/LayerProcGen): generation organised into **stages**, where each stage works on bounded regions and reads the results of the stages it depends on, within a declared reach. Fields (noise, climate, height), scatter, sites and paths, WFC, and region-scale passes such as rivers are all stages; WFC accepts constraints produced by the others (pre-decided cells, masks, border conditions) rather than only starting from a blank grid.
 
-**The coverage goal:** a developer can build the kind of world that Minecraft, Dwarf Fortress, No Man's Sky, Noita, Caves of Qud, Elite Dangerous, Valheim or Deep Rock Galactic generate, and a newcomer still reaches a walkable world of their own in minutes. The goal is the techniques, not bit-for-bit copies of those games. History simulation, runtime simulation (falling sand, destruction, fluids) and spheres or galaxies at full scale are outside it. The design is [generation-model.md](generation-model.md), and [user-stories.md](user-stories.md) states the goal as stories whose verification is the release gate.
+**The coverage goal:** a developer can build the kind of world that Minecraft, Dwarf Fortress, No Man's Sky, Noita, Caves of Qud, Elite Dangerous, Valheim or Deep Rock Galactic generate, and a newcomer still reaches a walkable world of their own in minutes. The goal is the techniques, not bit-for-bit copies of those games. History simulation, runtime simulation (falling sand, destruction, fluids) and spheres or galaxies at full scale are outside it. The design is [stages.md](../architecture/stages.md), and [user-stories.md](user-stories.md) states the goal as stories whose verification is the release gate.
 
 ### Engine packaging
 
-The Bevy plugin and Godot GDExtension wrap the library. Both exist; what is left before they count as delivered, and what publishing needs, is in [roadmap.md](roadmap.md).
+The Bevy plugin and Godot GDExtension wrap the library. Both exist; what is left before they count as delivered, and what publishing needs, is in [roadmap.md](../plan/roadmap.md).
 
 ## Non-goals
 
-- **No CPU fallback.** A GPU (Vulkan, Metal or DirectX 12) is a hard requirement. The games this is built for always have one, and maintaining a second, CPU-only solver would double the work while hiding GPU performance problems behind a slower path that still "works". CPU threads and SIMD remain *performance tiers* for work that is faster on the CPU, not substitutes for a missing GPU.
-- **Not a game engine or renderer.** Wave Forge never draws anything or owns an engine object. The library produces render-, physics-, navigation- and gameplay-ready data (instance sets, meshes with levels of detail, colliders, navigation source geometry, spawn points); the integrations map that data onto each engine's own systems and ship reference materials and shaders ([engine-integration.md](engine-integration.md)). Any rendering in this repository itself (PNG exports, orthographic views) is **developer tooling** to inspect results.
+- **No CPU fallback.** A GPU (Vulkan, Metal or DirectX 12) is a hard requirement. The games this is built for always have one, and maintaining a second, CPU-only solver would double the work while hiding GPU performance problems behind a slower path that still "works". CPU threads and SIMD remain *performance tiers* for work that is faster on the CPU, not substitutes for a missing GPU. The stage runtime runs its fields and scatter on the CPU today for exactly that reason: it is where they are fast enough so far, while WFC, the part that needs it, runs on the GPU.
+- **Not a game engine or renderer.** Wave Forge never draws anything or owns an engine object. The library produces render-, physics-, navigation- and gameplay-ready data (instance sets, meshes with levels of detail, colliders, navigation source geometry, spawn points); the integrations map that data onto each engine's own systems and ship reference materials and shaders ([engine-integration.md](../architecture/engine-integration.md)). Any rendering in this repository itself (PNG exports, orthographic views) is **developer tooling** to inspect results.
 - **Not a standalone editor.** Authoring tools (preview, brushes, baking a region as a starting point for handcrafted work) live inside the engines' own editors, and their logic lives in the library. The product is still the runtime generator.
 - **No web target.** Web exports have no GPU compute path (Godot's is WebGL 2 only), and there is no CPU fallback.
 - **No unbounded generation.** We design for bounded regions around a focus, not whole universes.

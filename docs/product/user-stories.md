@@ -1,7 +1,7 @@
 # User stories
 
 What people want to do with Wave Forge, written so a check can decide whether they can. The stories
-guide the design ([generation-model.md](generation-model.md)), which guides the architecture, which
+guide the design ([stages.md](../architecture/stages.md)), which guides the architecture, which
 guides the implementation: a design choice names the stories it serves, and a story that no design
 serves is a gap.
 
@@ -26,15 +26,17 @@ A story counts as **verified** only when every acceptance criterion passes on th
 and the evidence is linked from the story. The evidence comes from this repository's test packs,
 presets and examples, so it can be linked and rerun by anyone; the proof-of-concept games in their
 private repositories are downstream smoke tests that find problems, not evidence
-([roadmap.md](roadmap.md#games-packs-and-repositories)). Each story carries a status (not started, in progress,
+([roadmap.md](../plan/roadmap.md#games-packs-and-repositories)). Each story carries a status (not started, in progress,
 verified), the date it last changed and a link to its evidence. A story that regresses goes back to
 in progress.
 
 **Publishing is a human-only task,** and so is anything like it: releasing to the Godot Asset Store
 or crates.io, creating a release or a release tag, announcing, and promoting `develop` to `main`. An
-agent prepares all of it and never does any of it. This rule is also in
-[roadmap.md](roadmap.md#release-gate-and-publishing) and in the repository's agent rules
-(`.claude/CLAUDE.md`).
+agent prepares all of it and never does any of it
+([contributing.md](../guides/contributing.md#publishing-is-human-only)).
+
+Where each story stands against the code, with the issues that close its gaps, is in
+[story-coverage.md](../plan/story-coverage.md).
 
 ## How a story is written
 
@@ -43,11 +45,11 @@ agent prepares all of it and never does any of it. This rule is also in
   the person already knows and expects.
 - **Acceptance criteria** a check can decide, and the one that needs a person, if any.
 - **Needs**: the stages, tools and measurements it implies, linked to
-  [generation-model.md](generation-model.md).
+  [stages.md](../architecture/stages.md).
 - **Status**.
 
 A G story asks for the techniques a game uses, not a bit-for-bit copy of its worlds
-([generation-model.md §7](generation-model.md#7-scope)).
+([stages.md](../architecture/stages.md#scope)).
 
 ## G: replicate a game's generation
 
@@ -133,7 +135,7 @@ kept as a capped log in the save
 
 **Needs.** Records, Field with derivatives, density volumes, Sites with point queries, Apply
 (flatten), Scatter, Edits. The spherical domain and the universe scale are deferred
-([generation-model.md §7](generation-model.md#7-scope)). **Status:** not started (2026-09-23).
+([stages.md](../architecture/stages.md#scope)). **Status:** not started (2026-09-23).
 
 ### G4. A Noita-like cave world from painted tiles
 
@@ -231,8 +233,9 @@ and are unverified from Iron Gate).
 - Clutter is regenerated, never saved.
 
 **Needs.** Field, Rules, Region jobs (rivers, the location table), Network, Sites, Apply, Scatter,
-Assemble, Edits, per-stage persistence. This is the first slice's target
-([generation-model.md §8](generation-model.md#8-order-of-work)). **Status:** in progress (2026-09-23): the valley test pack (`examples/valley.world.ron`) generates height, towns on levelled sites built with WFC, and trees kept apart, the same in any order, and a Godot node serves it to a game ([testing.md](testing.md)); biomes, rivers, a location table, dungeons, edits and terrain meshes are to come.
+Assemble, Edits, per-stage persistence. The gap, feature by feature, is in
+[story-coverage.md](../plan/story-coverage.md#g7-a-valheim-like-island-world) and tracked by
+[#104](https://github.com/AntonTegnelov/wave_forge/issues/104). **Status:** in progress (2026-09-23): the valley test pack (`examples/valley.world.ron`) generates height, towns on levelled sites built with WFC, and trees kept apart, the same in any order, and a Godot node and a Bevy plugin serve it to a game ([testing.md](../guides/testing.md)); biomes, rivers, a location table, dungeons, edits and terrain meshes are to come.
 
 ### G8. A Deep Rock Galactic-like cave level
 
@@ -346,7 +349,7 @@ plugin; a linked bake can be regenerated with the designer's edits kept. **Needs
 GPUs from different vendors; a chunk hash lets peers confirm they agree. **Needs.** Determinism
 across GPUs (the golden world test), chunk hashes. **Status:** in progress (2026-09-23): the golden world is
 identical on NVIDIA through dozen and on Mesa's lavapipe, and a city is the same whatever order its
-chunks are generated in, repairs included ([testing.md](testing.md)), for tiles only; chunk hashes
+chunks are generated in, repairs included ([testing.md](../guides/testing.md)), for tiles only; chunk hashes
 do not exist yet.
 
 ### N10. Something impressive in an hour
@@ -374,8 +377,8 @@ recorded.
 **Acceptance criteria.** At 4.2 m/s through the reference world with every enabled stage: 60 frames
 per second, Godot's slowest frame under 8 ms, the node's own time under 2 ms at the 99th percentile,
 and no frame with a chunk missing within the ready radius. **Status:** in progress (2026-09-23): the Godot check
-meets these for the WFC city with colliders and navigation (slowest frame 3.4 ms, node p99 0.56 ms,
-[engine-integration.md §8](engine-integration.md#8-order-of-work)), on the dev container's RTX 3070
+meets these for a streamed WFC world (a small band rule set) with colliders and navigation (slowest frame 3.4 ms, node p99 0.56 ms,
+[measurements.md](../research/measurements.md)), on the dev container's RTX 3070
 through dozen; not yet with Phase 2 stages or on a desktop.
 
 ### P2. Long view distance
