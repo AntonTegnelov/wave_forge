@@ -1,7 +1,7 @@
 # wave_forge dev container
 
 An SSH-reachable Linux dev box for wave_forge, following the house pattern in
-`E:\Programmering\Code\DEVCONTAINER_TEMPLATE.md` — **this one uses host
+`E:\Programmering\Code\DEVCONTAINER_TEMPLATE.md`. **This one uses host
 port 2239** (see the template's port table for the full allocation).
 
 ## What's inside
@@ -9,16 +9,16 @@ port 2239** (see the template's port table for the full allocation).
 | Tool | Version / notes |
 |---|---|
 | Rust | 1.98.1 via rustup (`rust:1.98.1-bookworm` base, matches `rust-toolchain.toml`) + clippy, rustfmt, rust-analyzer |
-| Native deps | X11/Wayland/xkbcommon headers (minifb), clang/libclang (bindgen), cmake, pkg-config |
-| Vulkan | **the host RTX 3070** via Mesa dozen (Vulkan on D3D12, built from source in the image) plus lavapipe (CPU) as fallback — see "GPU access" |
-| Node.js | 22 (NodeSource) — only for Claude Code |
+| Native deps | X11, Wayland and xkbcommon headers, clang and libclang (bindgen), cmake, pkg-config |
+| Vulkan | **the host RTX 3070** via Mesa dozen (Vulkan on D3D12, built from source in the image), plus Debian's lavapipe (a CPU device); see "GPU access" |
+| Node.js | 22 (NodeSource), only for Claude Code |
 | Claude Code | latest, installed globally via npm |
 | gh | GitHub CLI (authenticate with the repo-scoped PAT: `gh auth login --with-token`) |
 | sshd | hardened: pubkey-only, no root, `dev` user only, host port **2239** |
 
 The repo is bind-mounted at `/workspaces/wave_forge`, so edits sync both ways.
 
-**`target/` is a named volume inside the container** — it masks the Windows
+**`target/` is a named volume inside the container.** It masks the Windows
 `target/` from the bind mount (wrong-platform artifacts, and a bind-mounted
 build dir is slow) and survives container recreates. Host and container each
 keep their own build output.
@@ -29,69 +29,21 @@ binaries), `~/.cache` (out-of-repo build caches such as a worktree's
 `CARGO_TARGET_DIR`), `~/.claude`, `~/.ssh` (incl. the PAT store), and the
 sshd host keys. The toolchain itself (`/usr/local/rustup`) is on the image
 layer and owned by `dev`, so `rustup update` works but is undone by a
-rebuild — bump the toolchain in both the Dockerfile and
+rebuild. Bump the toolchain in both the Dockerfile and
 `rust-toolchain.toml`.
+
+Only the main checkout's `target/` is on a volume. A git worktree (for
+example under `.claude/worktrees/`) builds into its own `target/` on the host
+drive unless `CARGO_TARGET_DIR` points under `~/.cache`; see
+[docs/guides/environment.md](../docs/guides/environment.md).
 
 ## GPU access
 
-The container can run wgpu work on the host's NVIDIA GPU without changing
-the sandbox boundary:
-
-- `gpus: all` in `docker-compose.yml` uses Docker's standard GPU support
-  (Docker Desktop on WSL2). It adds the WSL virtual GPU device `/dev/dxg`
-  and the CUDA/dxcore user-space libraries. No privileged mode, no extra
-  capabilities, no Docker socket, no host drives.
-- Two read-only bind mounts from the Docker Desktop VM (not the Windows
-  host): `/usr/lib/wsl/lib` (`libd3d12.so`, `libd3d12core.so`,
-  `libdxcore.so`) and `/usr/lib/wsl/drivers` (the driver store, where D3D12
-  loads NVIDIA's user-mode driver `libnvwgf2umx.so`). `gpus: all` alone
-  mounts only the CUDA pieces, which is not enough for Vulkan-on-D3D12.
-- The NVIDIA Windows driver offers D3D12 and CUDA inside WSL, not Vulkan, so
-  the image builds Mesa's **dozen** driver (Vulkan -> D3D12) from source in a
-  separate build stage and installs only its ICD. The entrypoint runs
-  `ldconfig` so the WSL libraries are found.
-
-Check: `vulkaninfo --summary` lists
-`Microsoft Direct3D12 (NVIDIA GeForce RTX 3070)` (driver Dozen, discrete
-GPU) and `llvmpipe` (CPU).
-
-**wgpu needs two things to see it.** Mesa marks dozen non-conformant, and
-wgpu hides non-conformant adapters ("Adapter is not Vulkan compliant, hiding
-adapter" at `RUST_LOG=wgpu_hal=warn`). The container sets
-`WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER=1`, but wgpu only reads it for
-instances built from the environment:
-
-```rust
-// wgpu 30: `from_env_or_default()` exists only on `InstanceFlags`, and
-// `Instance::new` takes the descriptor by value.
-let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-```
-
-`wgpu::Instance::default()` and a hand-built `InstanceDescriptor { .. }`
-ignore the environment and will keep selecting llvmpipe. With the env-built
-instance, both the default and the `HighPerformance` adapter requests
-return the RTX 3070 (verified 2026-09-15 with a small standalone crate:
-enumerate, request, create device, submit an upload). Force a specific
-adapter with `WGPU_ADAPTER_NAME=llvmpipe` or `WGPU_ADAPTER_NAME=3070`.
-
-Caveats: dozen is a translation layer, so absolute timings carry extra
-dispatch/transfer overhead; comparisons within the container are meaningful,
-conclusions about GPU-vs-CPU crossover should be confirmed natively. A
-runaway shader can hang the GPU and make Windows reset the graphics driver
-(desktop flicker, possibly crashed apps), so keep GPU tests bounded with
-timeouts and small default grid sizes. dozen is marked non-conformant by
-Mesa; if a feature misbehaves, compare against lavapipe first.
-
-**Known issue: crash at thread exit.** When a wgpu instance on dozen is
-dropped, WSL's `libd3d12core.so` is unloaded while other threads still have
-its thread-local destructors registered, so multi-threaded binaries such as
-test runners die with `SIGSEGV` after their work is done (a backtrace ends
-in `__nptl_deallocate_tsd`). Preloading the library keeps it mapped:
-`LD_PRELOAD=/usr/lib/wsl/lib/libd3d12core.so`. The image sets it as a Cargo
-runner (`CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER`), so it applies to
-binaries run by `cargo test` / `cargo run` only, not to every process (a
-global preload adds roughly 13 ms to each process start). Set it by hand
-when running a test binary directly.
+The container runs wgpu work on the host's NVIDIA GPU through Mesa's dozen driver (Vulkan on
+Direct3D 12), using Docker's standard `gpus: all` and two read-only mounts of WSL's GPU libraries,
+without widening the sandbox. How that is wired, the adapters it gives, the `libd3d12core.so`
+preload, the lavapipe caveats and what to do when the GPU is missing are in
+[docs/guides/environment.md](../docs/guides/environment.md).
 
 ## One-time setup
 
@@ -103,7 +55,7 @@ type %USERPROFILE%\.ssh\id_ed25519.pub >> %USERPROFILE%\.ssh\authorized_keys
 ```
 
 The entrypoint installs this file into the container on every start, so key
-changes only need `docker compose restart` — no rebuild.
+changes only need `docker compose restart`, not a rebuild.
 
 ## Build and start
 
@@ -130,7 +82,7 @@ Host wave-forge-dev
 
 Then `ssh wave-forge-dev`, or point Claude Code / Cursor / JetBrains Gateway
 at it. Zed: `zed ssh://dev@localhost:2239/workspaces/wave_forge`, or "Reopen
-in Dev Container" (recreates once on first attach — state is on volumes, so
+in Dev Container" (it recreates once on first attach; state is on volumes, so
 it survives). VS Code: "Dev Containers: Reopen in Container", which runs
 `cargo fetch` via `postCreateCommand`.
 
@@ -139,18 +91,19 @@ it survives). VS Code: "Dev Containers: Reopen in Container", which runs
 ```bash
 cd /workspaces/wave_forge
 cargo build --workspace
-cargo clippy --workspace
-cargo test --workspace      # GPU-path tests run on the RTX 3070 via dozen
+cargo clippy --workspace --all-targets
+cargo test --workspace      # GPU tests run on the RTX 3070 via dozen
 ```
 
-The binary opens a minifb window when visualization is on; there is no
-display in the container, so run headless modes (`--benchmark-mode`, etc.)
-or build here and run on the host.
+The engine integrations are separate workspaces, and the Godot checks need a
+Godot binary; the commands are in
+[docs/guides/environment.md](../docs/guides/environment.md) and
+[docs/guides/testing.md](../docs/guides/testing.md).
 
 ## Git identity / push
 
 Commit identity and the credential helper are baked into the image's system
-gitconfig — nothing to configure. Pushing uses a **fine-grained per-repo
+gitconfig, so there is nothing to configure. Pushing uses a **fine-grained per-repo
 PAT** over https, **never an SSH key**: GitHub SSH keys can't be scoped to
 one repo, and this container must not reach beyond its own repo (see
 DEVCONTAINER_TEMPLATE.md).
@@ -164,8 +117,8 @@ printf 'https://AntonTegnelov:%s@github.com\n' '<the PAT>' > ~/.ssh/git-credenti
 chmod 600 ~/.ssh/git-credentials
 ```
 
-(Or just `git push` once and answer the prompt — username `AntonTegnelov`,
-password = the PAT; the credential helper writes the same file.) The store
+(Or just `git push` once and answer the prompt with username `AntonTegnelov`
+and the PAT as password; the credential helper writes the same file.) The store
 lives on the `ssh-config` named volume, so the login survives container
 recreates and rebuilds.
 
@@ -176,22 +129,11 @@ credentials live on the `claude-config` named volume and survive rebuilds.
 
 ## Troubleshooting
 
-- **`Permission denied (publickey)`** — check `%USERPROFILE%\.ssh\authorized_keys`
+- **`Permission denied (publickey)`:** check that `%USERPROFILE%\.ssh\authorized_keys`
   contains your pubkey, then `docker compose -f .devcontainer/docker-compose.yml restart`.
-- **Host key changed after `down -v`** — the host-key volume was wiped; run
+- **Host key changed after `down -v`:** the host-key volume was wiped; run
   `ssh-keygen -R "[localhost]:2239"` on the host and reconnect.
-- **wgpu finds no adapter** — check `vulkaninfo --summary` lists `llvmpipe`;
-  set `WGPU_BACKEND=vulkan` if another backend is being probed first.
-- **`vulkaninfo` shows only llvmpipe, or dzn reports
-  `ID3D12DeviceFactory::CreateDevice failed`** — the GPU mounts are missing.
-  Inside the container check `ls /dev/dxg /usr/lib/wsl/lib/libd3d12.so
-  /usr/lib/wsl/drivers/nv_dispig*/libnvwgf2umx.so`; on the host make sure
-  Docker Desktop's WSL2 backend is in use and the NVIDIA driver is current,
-  then `docker compose -f .devcontainer/docker-compose.yml up -d`. After a
-  Windows driver update, restart the container (the driver-store path
-  changes and `ldconfig` runs at start).
-- **`vulkaninfo` errors with `vkEnumeratePhysicalDevices failed`** — the
-  loader aborts when dzn loads but cannot create a D3D12 device; same fix as
-  above. To bypass temporarily: `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json`.
-- **A build dir looks empty / stale** — you're seeing the `target` volume,
+- **The GPU is missing, or wgpu picks the wrong adapter:** see "When the GPU is
+  missing" in [docs/guides/environment.md](../docs/guides/environment.md).
+- **A build dir looks empty or stale:** you are seeing the `target` volume,
   not the Windows build; just `cargo build`.

@@ -3,7 +3,7 @@
 //! The solver runs one kernel over a batch of regions and reads two buffers back. That is the whole
 //! surface, so a backend is small enough for an engine to supply its own: a Bevy plugin hands over
 //! the device Bevy already owns, and a Godot extension can implement this over `RenderingDevice`
-//! without the solver knowing (docs/architecture.md §5).
+//! without the solver knowing (docs/architecture/solver.md, "The backend seam").
 //!
 //! Nothing here is async. A submission is started, polled and waited on, so an engine decides where
 //! blocking happens: on a frame, or on a worker thread.

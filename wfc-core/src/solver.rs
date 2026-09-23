@@ -4,7 +4,7 @@
 //! result per region. It is job-based rather than blocking so that an engine can start work and
 //! come back for it on a later frame: Bevy polls on its own thread, Godot polls a task it handed to
 //! a worker. Nothing here is async, because a library that needs a runtime forces one into every
-//! game (docs/architecture.md §5).
+//! game (docs/architecture/solver.md, "The solver seam").
 
 use crate::chunk::RegionShape;
 use crate::domains::Domains;
@@ -38,7 +38,8 @@ pub struct RegionBatch {
     pub budget: Option<SolveBudget>,
     /// Whether the regions are one problem tried with different seeds, of which only the lowest
     /// that solves is wanted. A solver may then stop a region as soon as a lower one has solved,
-    /// and report it [`RegionStatus::Superseded`]; the lowest solving region is the same either way.
+    /// and report it [`RegionStatus::Superseded`]; the lowest solving region is the same either
+    /// way.
     pub portfolio: bool,
 }
 

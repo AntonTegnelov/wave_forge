@@ -7,7 +7,8 @@
 //! decided is a [`ChunkStore`]. [`Solver`] is what turns a batch of regions into tiles, on a GPU or
 //! on the CPU reference behind the `reference` feature.
 //!
-//! Nothing here allocates per cell, is async, or knows about a device: see docs/architecture.md §3.
+//! Nothing here allocates per cell, is async, or knows about a device: see
+//! docs/architecture/solver.md, "The model".
 
 pub mod chunk;
 pub mod domains;

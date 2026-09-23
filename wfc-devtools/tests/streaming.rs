@@ -5,9 +5,9 @@
 //! ```
 //!
 //! Both tests are `#[ignore]`d: they need a compute device and they are measurements, not unit
-//! tests. A timing describes one build on one machine and driver stack; docs/solver-fit.md records
-//! what each number means. Validity is asserted here too, because a measurement of a wrong world
-//! is worthless.
+//! tests. A timing describes one build on one machine and driver stack;
+//! docs/research/measurements.md records what each number means. Validity is asserted here too,
+//! because a measurement of a wrong world is worthless.
 
 mod kernels;
 
@@ -118,7 +118,8 @@ fn a_world_asked_for_at_once_comes_out_seamless() {
     assert_eq!(violations, 0, "decided cells never violate the rules");
     assert_eq!(undecided, failed.len(), "only what was reported is missing");
     // Every chunk the city gave up on was placeable: a repair of 32 seeds places it
-    // (docs/solver-fit.md), so a chunk given up on is a regression, not a property of the rules.
+    // (docs/research/measurements.md), so a chunk given up on is a regression, not a property of
+    // the rules.
     assert!(
         failed.is_empty(),
         "{} of 64 chunks: {failed:?}",

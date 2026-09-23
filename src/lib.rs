@@ -89,9 +89,9 @@ pub enum Error {
 
 /// When a chunk will not solve, how hard to try again.
 ///
-/// A repair solves the failed chunk alone with its halo released, so it may rewrite the neighbouring
-/// cells the halo covers. That is what lets a world finish where fixed borders had painted a chunk
-/// into a corner, and it is why a repair reports every chunk it touched.
+/// A repair solves the failed chunk alone with its halo released, so it may rewrite the
+/// neighbouring cells the halo covers. That is what lets a world finish where fixed borders had
+/// painted a chunk into a corner, and it is why a repair reports every chunk it touched.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RepairPolicy {
     /// Whether a chunk that will not solve is repaired at all. With this off, it is reported as
@@ -111,8 +111,8 @@ impl Default for RepairPolicy {
         Self {
             enabled: true,
             max_halo: 3,
-            // Measured on the city (docs/solver-fit.md): every chunk a streamed world gave up on
-            // was placed by 32 seeds of this budget, in a dispatch of 50 ms at most.
+            // Measured on the city (docs/research/measurements.md): every chunk a streamed world
+            // gave up on was placed by 32 seeds of this budget, in a dispatch of 50 ms at most.
             budget: SolveBudget {
                 max_attempts: 32,
                 max_steps: 20_000,
@@ -132,7 +132,8 @@ pub struct WorldConfig {
     /// How far the world reaches.
     pub extent: WorldExtent,
     /// Cells solved around a chunk and then discarded. Without one, a chunk with free faces can
-    /// leave border tiles that no row of neighbours can complete (docs/solver-fit.md).
+    /// leave border tiles that no row of neighbours can complete (docs/architecture/world.md,
+    /// "Chunks and the halo").
     pub halo: u32,
     pub repair: RepairPolicy,
 }

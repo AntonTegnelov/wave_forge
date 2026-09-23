@@ -1,10 +1,11 @@
 //! A dispatch the device reports as finished but never ran must not read as solved regions.
 //!
 //! A driver can end a workgroup early without reporting an error (Mesa 22.3's lavapipe does, see
-//! docs/testing.md). What the host then reads back is whatever the buffers held before: zeros on a
-//! fresh kernel, the previous batch on a reused one. These tests run the solver on a backend that
-//! performs the copies but never the kernel, with buffers that start out holding a plausible
-//! result, which is both cases at once. No GPU is needed.
+//! docs/guides/environment.md, "Software Vulkan (lavapipe)"). What the host then reads back is
+//! whatever the buffers held before: zeros on a fresh kernel, the previous batch on a reused one.
+//! These tests run the solver on a backend that performs the copies but never the kernel, with
+//! buffers that start out holding a plausible result, which is both cases at once. No GPU is
+//! needed.
 
 use std::cell::RefCell;
 use std::rc::Rc;

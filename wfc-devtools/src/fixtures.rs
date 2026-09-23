@@ -86,8 +86,8 @@ pub mod coast {
 /// A 2D coastline: water only touches sand, sand touches grass, grass touches forest. Any valid
 /// result therefore shows smooth bands, so broken propagation is obvious in the rendered PNG.
 ///
-/// Meant for grids with depth 1 and finite borders (see docs/status.md A-2 for why 2D is still a
-/// one-layer 3D grid).
+/// Meant for grids with depth 1 and finite borders (see docs/architecture/solver.md, "Topology",
+/// for why 2D is a one-layer 3D grid).
 pub fn coast_2d() -> Fixture {
     use coast::*;
     let mut rules = RuleBuilder::default();

@@ -2,10 +2,10 @@
 //! device.
 //!
 //! A world is a function of its configuration, independent of backend, vendor and thread count
-//! (docs/architecture.md §6.3). The fixture was recorded on an NVIDIA RTX 3070 through Mesa's dozen
-//! driver; CI runs this test on Mesa's lavapipe, a CPU implementation of Vulkan, which is a second
-//! vendor's view of every integer the kernel computes. A mismatch names the first cell that
-//! differs, with both tiles.
+//! (docs/architecture/world.md, "What determinism means here"). The fixture was recorded on an
+//! NVIDIA RTX 3070 through Mesa's dozen driver; CI runs this test on Mesa's lavapipe, a CPU
+//! implementation of Vulkan, which is a second vendor's view of every integer the kernel computes.
+//! A mismatch names the first cell that differs, with both tiles.
 //!
 //! To record the fixture again after a change that is meant to change worlds, run
 //!

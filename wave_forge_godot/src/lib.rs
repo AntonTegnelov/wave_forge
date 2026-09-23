@@ -24,7 +24,8 @@
 //!     for cell in tiles.size():
 //!         var tile := tiles[cell]
 //!         # One model per name, placed at the cell's centre and turned by the tile's rotation.
-//!         place(world.tile_name(tile), Transform3D(world.tile_basis(tile), world.cell_position(chunk, cell)))
+//! place(world.tile_name(tile), Transform3D(world.tile_basis(tile), world.cell_position(chunk,
+//! cell)))
 //! ```
 //!
 //! # Where the work happens
@@ -37,8 +38,8 @@
 //! A device of its own is not the only option the library offers: `ComputeBackend` in `wfc-gpu` is
 //! there so that a backend over Godot's own `RenderingDevice` can replace it, which would put
 //! generation on the device Godot already has. That backend does not exist yet; see
-//! `docs/architecture.md` §8.2 and the Godot section of `docs/roadmap.md` for what it needs and
-//! what has to be measured to choose between the two.
+//! `docs/architecture/engine-integration.md`, "Godot: the solver stays on its own device", for what
+//! it needs and what has to be measured to choose between the two.
 //!
 //! # Coordinates
 //!
@@ -516,8 +517,8 @@ impl WaveForgeWorld {
         Vector3::from_array(self.space().chunk_origin(from_vector(chunk)))
     }
 
-    /// The centre of one cell of a chunk in Godot's world space. `cell` is an index into the chunk's
-    /// [`WaveForgeWorld::tiles_at`].
+    /// The centre of one cell of a chunk in Godot's world space. `cell` is an index into the
+    /// chunk's [`WaveForgeWorld::tiles_at`].
     #[func]
     fn cell_position(&self, chunk: Vector3i, cell: i32) -> Vector3 {
         let cells = self.extent().shape().cells();
@@ -568,9 +569,9 @@ impl WaveForgeWorld {
             .collect()
     }
 
-    /// Gives every cell of `module` a collider of `shape`, turned by the tile's rotation and centred
-    /// on the cell, in the chunks within `collider_radius`. The shape is sized for one cell in
-    /// Godot's world units. Null takes the module's colliders away.
+    /// Gives every cell of `module` a collider of `shape`, turned by the tile's rotation and
+    /// centred on the cell, in the chunks within `collider_radius`. The shape is sized for one cell
+    /// in Godot's world units. Null takes the module's colliders away.
     #[func]
     fn set_collision_shape(&mut self, module: GString, shape: Option<Gd<Shape3D>>) {
         match shape {
@@ -766,7 +767,8 @@ impl WaveForgeWorld {
     ///
     /// A chunk is one static body with a shape per instance. Every shape is added before the body
     /// joins the space: Jolt rebuilds a body's compound shape on each shape added once it is in a
-    /// space, which made a chunk of 200 boxes cost 3.1 ms instead of 0.12 (docs/engine-integration.md).
+    /// space, which made a chunk of 200 boxes cost 3.1 ms instead of 0.12
+    /// (docs/research/measurements.md).
     ///
     /// Returns how many chunks got a body.
     fn update_colliders(&mut self, updated: &[ChunkCoord]) -> usize {
@@ -855,9 +857,9 @@ impl WaveForgeWorld {
     /// border, as plain triangles, so the bake runs entirely on the navigation server's threads.
     /// Baked within its bounds and with that border, neighbouring chunks meet on edges built from
     /// the same geometry, whose vertices the map merges without edge connections
-    /// (docs/engine-integration.md, from Godot's navigation chunk guidance). Finished bakes are
-    /// found by asking the server each frame rather than through a callback, which the server calls
-    /// from its own thread.
+    /// (docs/architecture/engine-integration.md, "Systems other than rendering", from Godot's
+    /// navigation chunk guidance). Finished bakes are found by asking the server each frame rather
+    /// than through a callback, which the server calls from its own thread.
     fn update_navigation(&mut self, updated: &[ChunkCoord]) {
         let (Some(worker), Some(focus)) = (&self.worker, self.followed) else {
             return;

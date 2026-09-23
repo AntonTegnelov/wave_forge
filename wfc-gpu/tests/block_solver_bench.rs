@@ -1,13 +1,14 @@
 //! What one chunk costs the block kernel, against what it costs a CPU.
 //!
 //! ```text
-//! cargo test -p wfc-gpu --release --test block_solver_bench -- --ignored --nocapture --test-threads=1
+//! cargo test -p wfc-gpu --release --test block_solver_bench -- --ignored --nocapture
+//! --test-threads=1
 //! ```
 //!
 //! Every test is `#[ignore]`d. A timing describes one build on one machine and driver stack; see
-//! docs/solver-fit.md for what each number means. Correctness is asserted here too, because a
-//! measurement of a wrong solver is worthless. Whole worlds are measured through the library
-//! instead, in `wfc-devtools/tests/streaming.rs`.
+//! docs/research/measurements.md for what each number means. Correctness is asserted here too,
+//! because a measurement of a wrong solver is worthless. Whole worlds are measured through the
+//! library instead, in `wfc-devtools/tests/streaming.rs`.
 
 use std::sync::Arc;
 use std::time::Instant;
