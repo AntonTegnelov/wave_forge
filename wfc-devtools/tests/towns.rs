@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use wave_forge::stages::{Pack, Runtime};
+use wave_forge::stages::{Pack, Runtime, SiteId};
 use wave_forge::towns::WfcTowns;
 use wave_forge::{Chunk, ChunkCoord, ChunkShape, FocusPoint};
 use wfc_devtools::city;
@@ -40,10 +40,10 @@ fn area() -> Vec<ChunkCoord> {
         .collect()
 }
 
-/// Each town's chunks, by region, as the runtime hands them out.
-fn towns(order: &[Vec<ChunkCoord>]) -> BTreeMap<(i32, i32), BTreeMap<ChunkCoord, Vec<u16>>> {
+/// Each town's chunks, by the site it stands on, as the runtime hands them out.
+fn towns(order: &[Vec<ChunkCoord>]) -> BTreeMap<SiteId, BTreeMap<ChunkCoord, Vec<u16>>> {
     let mut runtime = runtime();
-    let mut towns: BTreeMap<(i32, i32), BTreeMap<ChunkCoord, Vec<u16>>> = BTreeMap::new();
+    let mut towns: BTreeMap<SiteId, BTreeMap<ChunkCoord, Vec<u16>>> = BTreeMap::new();
     for request in order {
         let focus: Vec<FocusPoint> = request.iter().map(|&c| FocusPoint::new(c, 0)).collect();
         runtime.request(&focus, &["city"]).expect("a stage");
@@ -51,7 +51,7 @@ fn towns(order: &[Vec<ChunkCoord>]) -> BTreeMap<(i32, i32), BTreeMap<ChunkCoord,
         for &chunk in request {
             if let Some(town) = runtime.tiles("city", chunk) {
                 towns
-                    .entry(town.region)
+                    .entry(town.site.clone())
                     .or_default()
                     .insert(chunk, town.tiles.to_vec());
             }
@@ -75,7 +75,10 @@ fn every_town_is_valid_across_its_seams_and_the_same_in_any_order() {
 
     assert_eq!(at_once.len(), 4, "one town per region of the 2×2 regions");
     assert_eq!(at_once, one_by_one, "the same towns in any order");
-    for (region, chunks) in &at_once {
+    for (site, chunks) in &at_once {
+        let SiteId::Region(x, y) = site else {
+            panic!("a Sites stage's town is named by its region: {site:?}")
+        };
         let chunks: Vec<Chunk> = chunks
             .iter()
             .map(|(&coord, tiles)| Chunk {
@@ -88,16 +91,16 @@ fn every_town_is_valid_across_its_seams_and_the_same_in_any_order() {
         let violations =
             adjacency_violations(&grid, &city.modules.rules, BoundaryCondition::Finite);
         eprintln!(
-            "towns: region {region:?}, {} chunks, {}x{}x{} cells, {} violations",
+            "towns: region ({x}, {y}), {} chunks, {}x{}x{} cells, {} violations",
             chunks.len(),
             grid.width,
             grid.height,
             grid.depth,
             violations.len()
         );
-        assert!(violations.is_empty(), "{region:?}: {violations:?}");
-        let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("town_{}_{}.png", region.0, region.1));
+        assert!(violations.is_empty(), "{site:?}: {violations:?}");
+        let path =
+            std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("town_{x}_{y}.png"));
         wfc_devtools::render::render_voxel_isometric(&grid, &city.voxels, 2)
             .save(&path)
             .expect("write PNG");

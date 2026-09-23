@@ -99,8 +99,9 @@ Each is a gap between the code and the design or the stories, with where it is t
 - **Golden worlds cover tiles, not images or products.** Instance sets and chunk hashes are not in
   them yet.
 - **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage;
-  region jobs produce curves but nothing rasterises them yet; tables of facts reach stages only
-  through a focused row, and a changed table drops whole stages rather than the chunks that read it
+  region jobs produce curves but nothing rasterises them yet; tables of facts reach stages through
+  a focused row, sites and towns, not yet as roads, and a changed table drops whole stages rather
+  than the chunks that read it
   ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); there are no edits, persistence modes, world
   bounds or per-stage request radii; noise is value noise only; Scatter has four tests and one kind
   per stage. Each is an issue under

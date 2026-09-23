@@ -1,9 +1,13 @@
 // The pack of the tables check (verify_tables.gd): a given table of villages, houses generated
-// under each village sharing its population, and a field that reads the focused village.
+// under each village sharing its population, a field that reads the focused village, and a site
+// for every village.
 (
     version: 1,
     tables: [
         (name: "villages", kind: Given(columns: [
+            ("x", Number),
+            ("y", Number),
+            ("size", Number),
             ("population", Number),
             ("culture", Names(["river", "hill"])),
         ])),
@@ -14,5 +18,6 @@
     stages: [
         (name: "hills", kind: Field(Mul(Noise(frequency: 0.05, octaves: 3), Constant(10.0)))),
         (name: "wealth", kind: Field(Add(Input("hills"), Row("villages", "population")))),
+        (name: "places", kind: TableSites(table: "villages", height: "hills", at: ("x", "y"), size: "size", max_size: 2)),
     ],
 )

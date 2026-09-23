@@ -107,8 +107,8 @@ tables: [
 - **Ids.** A given row's `RowId` is the game's own id; a generated row's is its parent's id followed
   by its index, or its index alone without a parent. Adding a given row, or changing one parent's
   children, never changes another row's id or values.
-- A position is two number columns, and a stage that reads positions names them. Curves in tables
-  are not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)).
+- A position is two number columns, and a stage that reads positions names them (TableSites'
+  `at`). Curves in tables are not built yet ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)).
 
 `Facts::new(pack, seed)` computes every generated table, with the given ones empty.
 `facts.give(table, rows)` replaces a given table's rows, each a `GivenRow` of the game's id and a
@@ -122,8 +122,10 @@ Field expression or a Rules condition is that row's value. `runtime.set_facts(fa
 runtime its facts, and `runtime.focus("systems", id)` focuses it on a row, which is how one surface
 pack serves every planet. Both drop every product of the stages that read a changed table, and of
 the stages that read those, and return them as `request` does; the request generates them again.
-A stage reading a row with none focused fails with `StageError::NoFocus`. Sites, Solve, Scatter and
-Apply reading tables are not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
+A stage reading a row with none focused fails with `StageError::NoFocus`. A table's rows become
+sites through a [TableSites](#tablesites) stage, and a town's rule set can follow a names column of
+its row ([Solve](#solve)). Roads from a table's curves are not built yet
+([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)).
 
 ## Stages
 
@@ -136,8 +138,9 @@ reads one type as another.
 | `Rules` | Categories | what its conditions read, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
 | `Sites` | Sites | a height field, `region` chunks |
+| `TableSites` | Sites | a table's rows; a height field, `max_size` chunks |
 | `Flatten` | Field | a height field, 0 cells; a Sites stage, `blend` cells |
-| `Solve` | Tiles | a Sites stage, 0 cells |
+| `Solve` | Tiles | a Sites or TableSites stage, 0 cells |
 | `Scatter` | Points | a height field, `apart` cells (one more with `max_slope`); a Sites stage, `apart + margin` cells |
 
 ### Field
@@ -212,8 +215,23 @@ stage's hash stream, and the site is kept at least one chunk inside its region, 
 always two chunks apart. Each site's height is the mean of the height field over its footprint's
 centre and inner corners.
 
-A chunk's product lists the sites that overlap it. A `Site` has its `region` (which names it), its
-footprint `min..max` in chunks, and its `height`.
+A chunk's product lists the sites that overlap it. A `Site` has its `id`, `SiteId::Region` with
+the region that owns it, its footprint `min..max` in chunks, and its `height`.
+
+### TableSites
+
+`TableSites(table: "villages", height: "field", at: ("x", "y"), size: "size", max_size: m)`: a site
+for every row of a table ([Tables of facts](#tables-of-facts)), where a history put its villages
+say. A row's site is a square of whole chunks around the chunk holding its position, which the
+columns `at` give in WFC cells, as many chunks on a side as its `size` column says, a whole number
+from 1 to `m`; for an even size the extra chunk lies towards +x and +y. Its height is found as a
+Sites stage finds it, and its `id` is `SiteId::Row` with the row's id.
+
+`Runtime::set_facts` refuses rows whose position is not finite, whose size is not a whole number
+from 1 to `m`, or whose site comes within a chunk of another row's, naming both rows: Flatten and
+Solve rely on sites keeping a chunk apart, as a Sites stage's do. A stage reading a TableSites stage
+before the runtime has facts fails with `StageError::NoFacts`. Loading refuses a table or a column
+the pack does not have.
 
 ### Flatten
 
@@ -231,9 +249,15 @@ and `top` restrict its lowest and highest layers:
 - `Tagged("tag")`: tiles carrying that tag;
 - `Named("tile")`: tiles of that name.
 
-A chunk's product is its part of the town (`TownChunk`: the site's region, its levelled height, and
+Over a TableSites stage, `by: Some(("fate", [("burned", "ruins"), ...]))` chooses each town's rule
+set by a names column of its site's row: a row whose `fate` is `burned` gets a town of `ruins`, and a
+name the list does not give gets `rules`. Loading refuses `by` over a Sites stage, over a column that
+does not hold names, and a name the column does not list. A row that changes its name is a new fact,
+so its town is solved again with the other rule set.
+
+A chunk's product is its part of the town (`TownChunk`: the site's id, its levelled height, and
 the chunk's tiles, x fastest, then y, then z), or nothing outside every site. A town is solved once,
-when its first chunk is needed, and kept while a chunk of its region is.
+when its first chunk is needed, and kept while a chunk it covers is.
 
 The runtime solves towns through the `TownSolver` trait. `WfcTowns::new(chunk).with_rules(name,
 rule_file, build_solver)` is the implementation over any `Solver`, one per rule set;

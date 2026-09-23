@@ -102,7 +102,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 | **Assemble** | a jigsaw or room graph grown from one site into Stamps, with a bounded extent | the extent | G1, G7, G8 | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
 | **Apply** | rasterises curves and stamps into fields or Priors in a stable order | the primitives' bounds | G1, G3, G8 | `Flatten` for site footprints ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
 | **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4 to G8 | a Region stage running a `RegionJob` the game registers, producing curves |
-| **Table** | rows given by the game, or generated once per parent row by expressions | its parent table | G2, G3, G6 | built; stages read a focused row, and Sites, Solve, Scatter and Apply reading tables are [#72](https://github.com/AntonTegnelov/wave_forge/issues/72) |
+| **Table** | rows given by the game, or generated once per parent row by expressions | its parent table | G2, G3, G6 | built; stages read a focused row, a TableSites stage puts a site for every row, and a Solve stage chooses its rule set by a row's names; Apply reading a table's curves is [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Emit** | products for an engine | 0 | N1, N3, P1 | done by the engine integrations today |
 | **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4 | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 

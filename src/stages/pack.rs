@@ -106,6 +106,19 @@ pub enum StageKind {
         size: (u32, u32),
         chance: f32,
     },
+    /// A settlement site for every row of the table `table`: a square of whole chunks around the
+    /// chunk that holds the row's position, which the columns `at` give in WFC cells, as many
+    /// chunks on a side as its `size` column says, a whole number from 1 to `max_size`. Each
+    /// site's height is found as a Sites stage finds it. Giving the runtime facts
+    /// ([`crate::stages::Runtime::set_facts`]) refuses rows whose sites would come within a chunk
+    /// of each other, as a Sites stage's never do.
+    TableSites {
+        table: String,
+        height: String,
+        at: (String, String),
+        size: String,
+        max_size: u32,
+    },
     /// The `height` field levelled to each of `sites`' heights inside its footprint and blended
     /// back to the field over `blend` cells around it.
     Flatten {
@@ -115,10 +128,13 @@ pub enum StageKind {
     },
     /// A town on each of `sites`: a bounded WFC world of the rule set named `rules`, the size of
     /// the site's footprint, solved whole, with `bottom` on its lowest layer and `top` on its
-    /// highest.
+    /// highest. With `by`, sites from a table choose their rule set by a names column of their
+    /// row: `(column, [(name, rules), ...])`, and a name the list does not give takes `rules`.
     Solve {
         sites: String,
         rules: String,
+        #[serde(default)]
+        by: Option<(String, Vec<(String, String)>)>,
         #[serde(default)]
         bottom: Option<Selector>,
         #[serde(default)]
@@ -221,7 +237,7 @@ impl StageKind {
             Self::Field(_) | Self::Blur { .. } | Self::Flatten { .. } => Output::Field,
             Self::Rules { .. } => Output::Categories,
             Self::Region { .. } => Output::Curves,
-            Self::Sites { .. } => Output::Sites,
+            Self::Sites { .. } | Self::TableSites { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
             Self::Scatter { .. } => Output::Points,
         }
@@ -1032,6 +1048,15 @@ impl Pack {
             })
             .collect();
         let mut stages = Vec::with_capacity(file.stages.len());
+        // Which table each TableSites stage reads, for the Solve stages that choose by its rows.
+        let site_tables: BTreeMap<String, String> = file
+            .stages
+            .iter()
+            .filter_map(|def| match &def.kind {
+                StageKind::TableSites { table, .. } => Some((def.name.clone(), table.clone())),
+                _ => None,
+            })
+            .collect();
         for def in file.stages {
             let invalid = |message: String| PackError::Invalid {
                 stage: def.name.clone(),
@@ -1044,6 +1069,7 @@ impl Pack {
                 && matches!(
                     def.kind,
                     StageKind::Sites { .. }
+                        | StageKind::TableSites { .. }
                         | StageKind::Flatten { .. }
                         | StageKind::Solve { .. }
                         | StageKind::Scatter { .. }
@@ -1115,6 +1141,29 @@ impl Pack {
                     // A chunk's site lies within the chunk's region, so its footprint is at most
                     // a region away.
                     vec![(height.as_str(), Reach::Chunks(*region), Output::Field)]
+                }
+                StageKind::TableSites {
+                    table,
+                    height,
+                    at,
+                    size,
+                    max_size,
+                } => {
+                    if *max_size == 0 {
+                        return Err(invalid("sites of at most 0 chunks".to_owned()));
+                    }
+                    let names = columns.get(table).ok_or_else(|| {
+                        invalid(format!("it reads {table:?}, which no table is named"))
+                    })?;
+                    for column in [&at.0, &at.1, size] {
+                        if !names.contains(column) {
+                            return Err(invalid(format!(
+                                "table {table:?} has no column {column:?}"
+                            )));
+                        }
+                    }
+                    // A site overlapping the chunk reaches at most `max_size` chunks from it.
+                    vec![(height.as_str(), Reach::Chunks(*max_size), Output::Field)]
                 }
                 StageKind::Flatten {
                     height,
@@ -1206,6 +1255,15 @@ impl Pack {
                 }
                 inputs.push((index, reach));
             }
+            if let StageKind::Solve {
+                sites,
+                by: Some((column, cases)),
+                ..
+            } = &def.kind
+            {
+                check_solve_by(&site_tables, &tables, &table_by_name, sites, column, cases)
+                    .map_err(invalid)?;
+            }
             let mut read_tables: Vec<usize> = Vec::new();
             let mut note = |node: &Expr| {
                 if let Expr::Row(table, _) = node {
@@ -1222,6 +1280,7 @@ impl Pack {
                         condition.visit(&mut note);
                     }
                 }
+                StageKind::TableSites { table, .. } => read_tables.push(table_by_name[table]),
                 StageKind::Blur { .. }
                 | StageKind::Sites { .. }
                 | StageKind::Flatten { .. }
@@ -1368,6 +1427,39 @@ fn check_categories(
             .find(|name| !known.iter().any(|known| known == *name))
         {
             return Err(format!("{input:?} has no category {missing:?}"));
+        }
+    }
+    Ok(())
+}
+
+/// Whether a Solve stage over `sites` may choose its rule set by `column`: the sites come from a
+/// given table whose `column` holds names, and `cases` name each of them at most once.
+fn check_solve_by(
+    site_tables: &BTreeMap<String, String>,
+    tables: &[Schema],
+    table_by_name: &BTreeMap<String, usize>,
+    sites: &str,
+    column: &str,
+    cases: &[(String, String)],
+) -> Result<(), String> {
+    let table = site_tables.get(sites).ok_or_else(|| {
+        format!("it chooses its rule set by a column, but {sites:?} is no TableSites stage")
+    })?;
+    let TableKind::Given { columns } = &tables[table_by_name[table]].kind else {
+        return Err(format!(
+            "it chooses its rule set by a column of {table:?}, which is a generated table; only a \
+             given table has names"
+        ));
+    };
+    let Some((_, Column::Names(names))) = columns.iter().find(|(name, _)| name == column) else {
+        return Err(format!("table {table:?} has no column of names {column:?}"));
+    };
+    for (index, (name, _)) in cases.iter().enumerate() {
+        if !names.contains(name) {
+            return Err(format!("{column:?} has no name {name:?}"));
+        }
+        if cases[..index].iter().any(|(earlier, _)| earlier == name) {
+            return Err(format!("two rule sets for {name:?}"));
         }
     }
     Ok(())

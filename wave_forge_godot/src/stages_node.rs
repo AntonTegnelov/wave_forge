@@ -22,8 +22,8 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use wave_forge::loader::{RuleFile, parse_rule_file};
 use wave_forge::stages::{
-    Column, Facts, GivenRow, Pack, RowId, Runtime, StageEvent, StageKind, StageWorker, TableKind,
-    Value,
+    Column, Facts, GivenRow, Pack, RowId, Runtime, SiteId, StageEvent, StageKind, StageWorker,
+    TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -147,6 +147,20 @@ struct FrameCost {
     /// Chunks whose body was built, and the milliseconds that took.
     bodies: usize,
     bodies_ms: f64,
+}
+
+/// Puts what names a site in `out`: its `region` for a Sites stage's, its `row` for a TableSites
+/// stage's.
+fn name_site(out: &mut VarDictionary, site: &SiteId) {
+    match site {
+        SiteId::Region(x, y) => {
+            out.set(&"region".to_variant(), &Vector2i::new(*x, *y).to_variant())
+        }
+        SiteId::Row(row) => {
+            let row: PackedInt64Array = row.0.iter().map(|&part| part as i64).collect();
+            out.set(&"row".to_variant(), &row.to_variant());
+        }
+    }
 }
 
 /// A row a game gives from GDScript, checked into the library's form: an `id` from 0, and every
@@ -674,7 +688,8 @@ impl WaveForgeStages {
             })
     }
 
-    /// A Solve stage's town in a chunk: its `region` (Vector2i), the site's levelled `height`, in
+    /// A Solve stage's town in a chunk: its site's `region` (Vector2i) or `row` (PackedInt64Array)
+    /// as `sites` gives them, the site's levelled `height`, in
     /// cells, and the chunk's `tiles` as the rule set's tile indices, x fastest, then y, then z.
     /// Empty outside every site or before the chunk arrives.
     #[func]
@@ -688,10 +703,7 @@ impl WaveForgeStages {
             return out;
         };
         let tiles: PackedInt32Array = town.tiles.iter().map(|&tile| i32::from(tile)).collect();
-        out.set(
-            &"region".to_variant(),
-            &Vector2i::new(town.region.0, town.region.1).to_variant(),
-        );
+        name_site(&mut out, &town.site);
         out.set(&"height".to_variant(), &town.height.to_variant());
         out.set(&"tiles".to_variant(), &tiles.to_variant());
         out
@@ -776,8 +788,8 @@ impl WaveForgeStages {
         self.bodies.keys().map(|&chunk| to_vector(chunk)).collect()
     }
 
-    /// A Sites stage's sites that overlap a chunk: each one's `region` (Vector2i) that names it,
-    /// the chunks it covers from `min` up to but not including `max` (Vector2i, along the lattice's
+    /// A Sites or TableSites stage's sites that overlap a chunk: what names each one, its `region`
+    /// (Vector2i) or the `row` (PackedInt64Array) of its table it stands for, the chunks it covers from `min` up to but not including `max` (Vector2i, along the lattice's
     /// x and y), and its levelled `height` in cells. Empty if there are none or the chunk has not
     /// arrived.
     #[func]
@@ -793,10 +805,7 @@ impl WaveForgeStages {
             .iter()
             .map(|site| {
                 let mut out = VarDictionary::new();
-                out.set(
-                    &"region".to_variant(),
-                    &Vector2i::new(site.region.0, site.region.1).to_variant(),
-                );
+                name_site(&mut out, &site.id);
                 out.set(
                     &"min".to_variant(),
                     &Vector2i::new(site.min.0, site.min.1).to_variant(),
