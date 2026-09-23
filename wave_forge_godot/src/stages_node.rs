@@ -21,6 +21,7 @@ use godot::prelude::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use wave_forge::loader::{RuleFile, parse_rule_file};
+use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
     Column, Facts, GivenRow, Pack, RowId, Runtime, SiteId, StageEvent, StageKind, StageWorker,
     TableKind, Value,
@@ -481,9 +482,10 @@ impl WaveForgeStages {
             })
     }
 
-    /// A Region stage's curves that pass through a chunk: each one's `region` (Vector2i) and `index`
-    /// that name it, its `points` in Godot's world space on the ground plane (y is 0), and its
-    /// `values`. Empty if it is not a Region stage or the chunk has not arrived.
+    /// A Region or TableCurves stage's curves that pass through a chunk: what names each one, its
+    /// `region` (Vector2i) and `index` for a region job's, its `row` (PackedInt64Array) for a
+    /// table's, its `points` in Godot's world space on the ground plane (y is 0), and its
+    /// `values`. Empty if it is neither or the chunk has not arrived.
     #[func]
     fn curves(&self, stage: GString, chunk: Vector3i) -> Array<VarDictionary> {
         let Some(curves) = self
@@ -503,14 +505,19 @@ impl WaveForgeStages {
                     .map(|&[x, y]| Vector3::new(x * cell.x, 0.0, y * cell.z))
                     .collect();
                 let mut out = VarDictionary::new();
-                out.set(
-                    &"region".to_variant(),
-                    &Vector2i::new(curve.id.region.0, curve.id.region.1).to_variant(),
-                );
-                out.set(
-                    &"index".to_variant(),
-                    &i64::from(curve.id.index).to_variant(),
-                );
+                match &curve.id {
+                    CurveId::Region { region, index } => {
+                        out.set(
+                            &"region".to_variant(),
+                            &Vector2i::new(region.0, region.1).to_variant(),
+                        );
+                        out.set(&"index".to_variant(), &i64::from(*index).to_variant());
+                    }
+                    CurveId::Row(row) => {
+                        let row: PackedInt64Array = row.0.iter().map(|&part| part as i64).collect();
+                        out.set(&"row".to_variant(), &row.to_variant());
+                    }
+                }
                 out.set(&"points".to_variant(), &points.to_variant());
                 out.set(
                     &"values".to_variant(),
