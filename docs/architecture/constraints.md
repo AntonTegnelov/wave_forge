@@ -145,7 +145,7 @@ is no "between propagation steps" for a host pass to run in. Two shapes fit the 
 
 Either way the property is only global within a chunk. Connectivity *across* chunks is a different
 problem, and the honest answer for a streamed world is a skeleton laid out before WFC runs (see
-"Alternatives we did not need" below, and Phase 2 in [architecture.md](architecture.md#7-phase-2-layered-generation-design-constraints-to-keep-in-mind-now)).
+"Alternatives we did not need" below, and the stage model in [stages.md](stages.md)).
 
 **When to reach for one:** a property that must hold every time (a guaranteed path from spawn to
 exit), or one that design alone cannot approximate. For "usually connected", designing the module set
@@ -171,7 +171,78 @@ the table per cell as its neighbours are decided, which is a scan per collapse i
 hot loop, so the shape that fits is **a weight table per chunk**, computed on the host from what the
 neighbours already hold and uploaded with the batch. That expresses "more shops in this part of town"
 at chunk granularity, which is the granularity a streamed world thinks in anyway, and it keeps the
-kernel's inner loop untouched. Weights must stay integers ([architecture.md §3.2](architecture.md#32-tiles-and-compiled-rules)).
+kernel's inner loop untouched. Weights must stay integers (see the model in [solver.md](solver.md)).
+
+## What a rule costs the search
+
+A rule has two costs: what it costs to check, and what it costs the search. They are different
+things, and the second is the one that decides whether a rule set is usable. Everything below was
+measured on the per-collapse solver ([per-collapse-solver.md](../research/per-collapse-solver.md)),
+but it is about rule sets rather than that solver, so it carries over to the block kernel. The kernel
+recovers from a contradiction by undoing to a checkpoint and choosing again with a fresh hash, or by
+restarting the region; it records no nogoods, so it has no memory of why a choice failed.
+
+The instrument was the 12×12×6 city (864 cells), seeds 1 to 8, with the grid, the rules, the weights
+and the seeds held fixed and only one extra rule added. A run was capped at 3456 iterations
+(`cells × 4`). Release, RTX 3070 through dozen.
+
+| Rule added | Seeds finished | Backtracks | Failures the rule declared |
+|---|---|---|---|
+| None (adjacency only, the control) | 8 of 8 | 0 to 8 | none |
+| Range exclusion: a tile forbidden at a fixed offset from another | 2 of 8 | 80 and 494 | 80 and 494, equal to the backtracks |
+| Counting: three roads within one cell of a door | 8 of 8 | 1 to 48, worse than the control on 6 | 0 to 12; backtracks rise with them |
+| Surrounding: no walkway or stair within one cell of a road, diagonals included | 7 of 8 | 3 to 40 | 3 to 40, nearly equal to the backtracks |
+
+What that table and the runs around it teach:
+
+- **Adjacency barely searches.** A contradiction between neighbours surfaces as a cell whose domain
+  empties, at the place the kernel's undo acts on, and adjacency-only runs need few backtracks (the
+  control above; Karth and Smith saw zero conflicts at 48×48, see
+  [literature.md](../research/literature.md)). Connectors, the walkable-neighbour rule, the prior and
+  weights are the cheap tools. Say as much as possible with them.
+- **A rule costs the search in proportion to how often it declares failure.** Not its reach: counting,
+  surrounding and range exclusion are all bounded and non-local, and range exclusion alone wrecks the
+  search. Not how much it prunes either: surrounding pruned 9 to 301 cells per run with no relation to
+  cost (145 prunes gave 3 backtracks, 9 prunes gave 6), and counting pruned 5 to 51 cells per run and
+  still cost more than no rule at all. When a rule is proposed, estimate how often a partial layout
+  will violate it, not how cheap it is to evaluate.
+- **A rule that fails often thrashes without nogoods.** Range exclusion is satisfiable (seed 5 finished
+  at 12.5 times the budget, in 98.8 s and 4962 backtracks), but one cell failed 3160 times, because
+  the search kept walking back into states it had already failed in. The block kernel has the same
+  gap: its remedies are restarts with a cutoff (attempts and a step budget) and seeds in parallel (a
+  repair runs 32), which bound a heavy tail but do not stop a failure from being re-derived.
+- **Forbid a small category rather than demand one.** A neighbourhood large enough for a requirement
+  to be satisfiable is large enough that the requirement rarely binds, while a prohibition in the same
+  neighbourhood binds at once and stays satisfiable, because the forbidden thing can go elsewhere. The
+  surrounding rule worked on its first configuration, while counting needed four. It is not a
+  guarantee: seed 8 of the surrounding rule did not finish.
+- **A counting rule works only in a narrow band.** It prunes only when the candidates in its
+  neighbourhood exactly equal the required count. Above that boundary it is sound but silent (a road
+  within two cells of a door, or within three cells of a building, never pruned once). Below it, it is
+  impossible: three roads within one cell of every building cannot hold for buildings above street
+  level, since roads exist only at street level, and the run ended after 1911 backtracks with 174 of
+  864 cells collapsed. Choosing a configuration inside the band needs a fact about the rule set, such
+  as which tiles exist only at street level.
+- **A silent rule and a satisfied rule produce the same numbers.** An identical search line can mean
+  the rule never ran. Count what a rule did (cells pruned, failures declared) before concluding it is
+  harmless.
+- **Recovery has to fit the failure source.** Undoing further each time the same cell fails is right
+  when that cell is where a domain emptied, and wrong when it is wherever a global constraint first
+  tripped: applied to range exclusion, it discarded good collapses faster than the search replaced
+  them and the run stopped finishing. A global constraint brought into the kernel needs a recovery
+  policy of its own, not the one propagation uses.
+- **Biasing the choice costs nothing measurable.** The statistical rule (roads likelier near roads)
+  removes no tile, so it cannot fail; over eight seeds it moved total backtracks from 15 to 7 with run
+  times unchanged at 2.7 to 3.3 s. The control's runs were all easy, so this shows the bias did not
+  hurt, not that it helps. It is the cheap way to shape a layout when a hard rule is not needed.
+- **Judge a rule on many seeds, never against the control's worst seed.** On seed 8 alone, where the
+  control is at its worst, counting looked like it made the search easier and range exclusion looked
+  ten times harder rather than usually unfinishable. The eight-seed sweep reversed both.
+
+In short, the cheap tools are weights, cell-aware weights, the prior and adjacency through
+connectors. Bounded rules that rarely declare failure, such as the surrounding and counting rules
+above, cost a moderate amount. Rules that fail often, such as range exclusion, are expensive, and so
+are global constraints such as connectivity, which was by far the heaviest workload we ran.
 
 ## Alternatives we did not need
 
@@ -185,8 +256,10 @@ kernel's inner loop untouched. Weights must stay integers ([architecture.md §3.
 
 ## See also
 
-- [architecture.md](architecture.md) for where rules, weights and the solver live.
-- [testing.md](testing.md) for the city test and its connectivity report.
-- [thrashing.md](thrashing.md) for the measurements behind the recovery this page keeps referring to.
+- [overview.md](overview.md) for where rules, weights and the solver live, and [solver.md](solver.md)
+  for how the kernel propagates, chooses and recovers.
+- [testing.md](../guides/testing.md) for the city test and its connectivity report.
+- [per-collapse-solver.md](../research/per-collapse-solver.md) for the measurements behind the
+  recovery this page keeps referring to.
 - marian42, ["Infinite procedurally generated city with the Wave Function Collapse algorithm"](https://marian42.de/article/wfc/).
 - Boris the Brave, "Path constraints" and the [DeBroglie](https://github.com/BorisTheBrave/DeBroglie) constraint set.

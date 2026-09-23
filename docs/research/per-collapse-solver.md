@@ -1,322 +1,199 @@
-# Solver redesign (#7): what the measurements say, and the plan
+# The per-collapse solver
 
-This is the reasoning behind the performance work in
-[#7](https://github.com/AntonTegnelov/wave_forge/issues/7). It records what we measured, what the
-literature says, and which changes followed from both, in that order, because the measurement
-overturned the assumption we started with.
+Wave Forge's first solver kept one grid on the GPU and ran the search on the CPU: for every collapse
+it computed entropy, selected a cell, collapsed it and propagated, each step a dispatch followed by a
+readback. It was replaced by the block kernel described in [solver.md](../architecture/solver.md) and
+deleted in commit `98cc144`. This page keeps what it taught: a short timeline, the claims we made and
+then refuted, and the diagnosis, fix and result of its two investigations (speed in
+[#7](https://github.com/AntonTegnelov/wave_forge/issues/7), and thrashing).
 
-See [performance.md](performance.md) for the priorities and method, and [constraints.md](constraints.md)
-for the constraint machinery, including the two kinds the chunk solver does not host yet.
+The full working logs stay in git history, at the last commit that had them:
 
-## What we measured
+- [solver-redesign.md](https://github.com/AntonTegnelov/wave_forge/blob/4ad523491a429c1641dc0b61ea593f2ecacf4a67/docs/solver-redesign.md):
+  the profile, the micro-benchmarks, the round-trip audit and the leads that became the block kernel.
+- [thrashing.md](https://github.com/AntonTegnelov/wave_forge/blob/4ad523491a429c1641dc0b61ea593f2ecacf4a67/docs/thrashing.md):
+  the thrashing study, seven rounds of data, and the rule-set zoo.
+- [solver-fit.md at 318693e](https://github.com/AntonTegnelov/wave_forge/blob/318693ed5483cefd2ec672aefc72f3da64e2cd81/docs/solver-fit.md):
+  the design analysis of CDCL, ghost cells, blocks and parallelism that preceded the block kernel.
 
-Baseline on the realistic workload (RTX 3070 through the container's translation layer, release):
+The sources quoted here are in [literature.md](literature.md), and the measurement tables in
+[measurements.md](measurements.md).
 
-| Workload | Cells | Tiles | Run | Cells/s |
-|---|---|---|---|---|
-| Permissive 2-tile 24³ | 13824 | 2 | 96.0 s | 144 |
-| City 24×24×8 | 4608 | 81 | 45.3 s | 102 |
-| City 48×48×10 | 23040 | 81 | 403.8 s | 57 |
+**Protocol, unless a row says otherwise.** Release builds on an RTX 3070 through dozen (Vulkan on
+D3D12) in the dev container, the city rule set (81 module variants), and the CPU reference on a
+Ryzen 9 5900X. The stress suite ran the 24×24×8 city (4608 cells), the 48×48×10 city and a permissive
+2-tile 24³ grid. The thrashing instrument was the 12×12×6 end-to-end city (864 cells), batch 1, one
+attempt per seed, with `WFC_SWEEP` capping a run at `cells × 4` iterations (3456).
 
-Span breakdown of the city run: **propagation is 76%** (36.9 s over 15284 passes, 2.36 ms each),
-grid transfers 6.7 s, entropy and selection 3.1 s together.
+## Timeline
 
-The obvious reading is "propagation is expensive, make the shader faster". That is wrong. A
-micro-benchmark (`wfc-gpu/tests/propagation_bench.rs`) dispatches the same propagation kernel with
-the per-pass readbacks removed:
-
-| Variant | Per pass |
-|---|---|
-| 1-cell worklist, one submit per pass, no readbacks | 2.69 ms |
-| 1-cell worklist, all 200 passes in one submit | 3.81 ms |
-| **4608-cell worklist** (the whole grid), no readbacks | **3.13 ms** |
-
-Three conclusions, in order of importance:
-
-1. **A pass costs the same whether it processes 1 cell or 4608.** Sixteen percent more time for
-   4608× the work. The cost is a fixed per-dispatch overhead, not the propagation itself.
-2. **It is not the readbacks, and not submit overhead.** Removing both readbacks changed nothing
-   (2.69 ms vs the 2.36 ms traced mean), and batching every dispatch into one command buffer made it
-   *worse*. Kernel launches cost microseconds elsewhere; through dozen→D3D12 each compute pass costs
-   milliseconds.
-3. **We pay that fixed cost on nearly empty work.** In the traced run, 70% of passes carried ≤8
-   cells and 23% were full-grid sweeps forced by the non-atomic shader's fixpoint confirmation.
-
-So the solver spends its time setting up work rather than doing it. The transfer overhead that
-dominates the toy two-tile benchmark is a second-order problem by comparison.
-
-## What the literature says
-
-Researched before designing (see [performance.md](performance.md) for why that is the rule here).
-The sources agree with the measurement and warn about the obvious fixes:
-
-- **Fixed costs dominate small frontiers.** Atos ([arXiv:2112.00132](https://arxiv.org/abs/2112.00132)):
-  "fixed costs (the cost of the global synchronization barrier plus the kernel launch cost) dominate
-  the overall processing cost; the GPU is spending a significant amount of time setting up or waiting
-  for computation rather than performing it." Their fix — persistent kernels pulling from a device
-  queue — gives 3.44× geomean on BFS.
-- **A 3D grid is the worst case for frontier parallelism.** Gunrock reports 122516 MTEPS on a scale-free
-  graph but 85 MTEPS on a road network; a voxel grid is mesh-like and high-diameter, so frontiers stay
-  tiny and iterations stay many.
-- **Device-resident CP solvers deliberately drop event-based propagation.** Turbo, a fully GPU-resident
-  constraint solver (AAAI-26), uses "a propagation loop similar to AC1" and full recomputation instead
-  of a worklist, because view-based propagators cause "uncoalesced memory accesses, load imbalance,
-  thread divergence". RTAC ([arXiv:2407.11388](https://arxiv.org/abs/2407.11388)) measures the fixpoint
-  needing only ~3.5–4.8 whole-network sweeps even at density 1.0, against tens of thousands of AC-3
-  revisions.
-- **Every published GPU WFC lost to the CPU.** cuWaveFunctionCollapse is 26–104× *slower* than its CPU
-  baseline; a CMU parallel WFC found "the sequential queue-based algorithm outperformed all parallel
-  implementations". Neither is a reason to avoid the GPU, but both are reasons not to expect a free win.
-- **Temper the expectation.** Turbo, on an H100, is worse than OR-Tools on 58% of instances. Gent et al.:
-  "GPUs are not a silver bullet, and direct ports of existing algorithms to a GPU architecture often
-  perform poorly."
-- **WGSL cannot express a persistent kernel.** The spec has only workgroup-scoped barriers and no
-  device-side enqueue, and offers no forward-progress guarantee between workgroups. Hand-rolled global
-  barriers are fragile even in CUDA (Xiao & Feng regress past ~18 blocks). So the achievable design is a
-  *pre-recorded chain of dispatches* per submit, sized by `dispatch_workgroups_indirect` from a
-  device-side counter — not one resident kernel.
-- **Failures may matter as much as throughput.** Merrell measures WFC failing 98–100% of attempts at
-  200², with lowest-entropy ordering implicated as the cause, while model synthesis succeeds in seconds.
-  Our own constrained city ranges from 5 s to 136 s for the same input, and one 48×48×10 run burned
-  ~11000 undos. Search cost is part of the performance problem, not separate from it.
-
-## The plan
-
-Ranked by expected win per unit of risk. Each step is measured against the stress suite before the
-next is started; nothing here is committed to on theory alone.
-
-1. ~~**Stop paying the fixed cost per tiny pass** by sweeping the whole grid instead.~~ **Tried, and it
-   made the realistic workload slower** — see "What sweeping actually did" below. The dispatch cost is
-   real, but enlarging each pass is the wrong way to amortise it.
-2. **Keep the loop on the device between collapses.** Record K iterations of
-   (entropy → select → collapse → propagate) into one command buffer, with an early-out flag so
-   finished dispatches become no-ops, and read back only every K iterations or on a contradiction. This
-   needs on-device selection and a stateless hash RNG (pcg3d) for the weighted choice. Expected: removes
-   most of the remaining per-collapse round-trips. Risk: medium; needs the indirect-args ordering rules
-   verified against our wgpu version.
-3. **Make the shader's work cheaper only once the above lands.** Today's kernel recomputes
-   `allowed_neighbour_mask` by looping over all tile pairs; AC-4 support counters (fast-wfc, marian42,
-   DeBroglie) or bitplane/SoA possibility layout would cut that. The evidence is that SoA matters for
-   memory-bound neighbour sweeps (5× on LBM propagate), but our passes are not yet memory-bound — they
-   are dispatch-bound. Deferred deliberately.
-4. **Attack search cost with the same rigour.** Measure how much of a run is redone work, then try, in
-   order: nogood recording across restarts (Lecoutre et al.), weighting cells that repeatedly fail
-   (wdeg), and Merrell's finding that scanline ordering can beat lowest-entropy at scale. Our
-   conflict-directed backjumping already matches DeBroglie's `PatienceBackjumpPolicy` in spirit.
-5. **Chunked streaming for the infinite-city milestone.** N-WFC's overlapping sub-grids with diagonal
-   order, or Boris the Brave's "infinite modifying in blocks", give constant work per chunk and a
-   fallback to known-good tiles on failure — which is how marian42 shipped an infinite city after
-   abandoning exactly our history-undo scheme. The catch, stated by every block-based source: a
-   constraint larger than a block (our connectivity constraint) cannot be enforced across blocks. That
-   tension needs a decision before the streaming work, not during it.
-
-**Explicitly not doing yet:** persistent kernels (not expressible in WGSL), Morton/space-filling
-layouts (the one study that searched the space found no win on stencils), and SIMD micro-optimisation
-(layout and dispatch dominate; the CPU-side bitset scan already captures most of the available win).
-
-## What sweeping actually did
-
-The first change followed straight from the micro-benchmark: if a pass costs the same for 1 cell as
-for 4608, then dispatch the whole grid whenever the worklist is small. Measured on the stress suite:
-
-| Sweep rule | City 24×24×8 | Permissive 24³ |
+| When | Step | Commit |
 |---|---|---|
-| None (baseline) | 45.3 s (102 cells/s) | 96.0 s (144 cells/s) |
-| Worklist < ¼ of the grid | 53.0 s (87) | 81.3 s (170) |
-| Tile-visit budget (sweep under ~400 cells at 81 variants) | 57.6 s (80) | 76.9 s (180) |
+| 2026-09-16 | Baseline: city 24×24×8 in 45.3 s (102 cells/s), 48×48×10 in 403.8 s, propagation 76% of the run | `db5d8f0` |
+| 2026-09-16 | Sweeping the whole grid on small worklists: measured slower on the city, reverted | `02a3c00` |
+| 2026-09-16 | Warm re-measurement: the cost is per-cell work, not the dispatch | `55cf072` |
+| 2026-09-16 | Union rule rows instead of testing tile pairs: 45.3 s to 37.0 s | `a20aae0` |
+| 2026-09-16 | Restrict neighbours with `atomicAnd`, drop the confirmation sweep: 37.0 s to 25.9 s | `6dc14a3` |
+| 2026-09-16 | Deterministic selection (one packed `atomicMin` key) and a seeded choice | `38bb61d`, `70444bd` |
+| 2026-09-16 | Thrashing diagnosed; undo escalation fixed: worst of 48 seeds 197 to 11 backtracks | `2c1229c` |
+| 2026-09-16 | Rule-set zoo: range exclusion, counting, surrounding and statistical rules | `c788a11` to `ddcbbc7` |
+| 2026-09-17 | Round-trip audit and a CPU reference: the GPU loop about 150 times slower than one CPU thread | `dfe5890` |
+| 2026-09-17 | Block kernel measured: 0.17 ms per chunk at 256 chunks, 15 times one CPU thread | `e035586` to `5a73162` |
+| 2026-09-18 | The per-collapse solver deleted, along with its stress suite, traces and zoo | `98cc144` |
 
-**It helps the two-tile grid by 15–20% and costs the 81-variant city 17–27%.** Correctness was
-unaffected throughout. The reason the micro-benchmark misled us: it measured a freshly constrained
-grid, where most cells hold few possibilities. A swept cell is not free once tile count is high,
-because the shader unions the allowed neighbours of *every tile still possible* in that cell — a
-4608-cell sweep is about 373000 tile-visits at 81 variants against 9000 at two. Lowering the threshold
-did not rescue it, because the city's cheap passes (70% carry ≤8 cells) are exactly the ones that then
-trigger a sweep.
+## Refuted claims
 
-Reverted. The lesson is kept: **the fixed cost per dispatch is real, but it must be amortised over more
-*collapses*, not over more cells per pass.** That is step 2, and it is now the first thing to build.
-Note also that the city baseline itself varies (45.3 s and 48.7 s on two runs) because backtracking
-counts differ, so any future change on this workload needs repeated runs, not one sample.
+Kept visible because each one was believed, written down and acted on. One line each: the claim,
+then what refuted it.
 
-## Correction: it is the shader's per-cell work, not the dispatch
+1. **"A dispatch costs a fixed 2.5 ms."** A cold-clock artifact: warmed up, interleaved and taken as
+   medians, a trivial dispatch costs 0.099 ms (`dispatch_cost_bench`).
+2. **"A pass costs the same for 1 cell or 4608, so sweep the whole grid when the worklist is small."**
+   Sweeping made the 2-tile grid 15 to 20% faster and the city 17 to 27% slower; the benchmark had
+   measured a freshly constrained grid, while a swept city cell unions the rows of every tile it
+   still holds (about 373 000 tile visits per sweep at 81 variants against 9000 at two).
+3. **"Propagation only clears bits, so racing threads converge and the atomics can go."** True of an
+   atomic AND, false of the shader's load, modify and store, which lost restrictions; that race is
+   why the host re-ran propagation over every cell after each collapse.
+4. **"Batching causes thrashing."** Batch 1 thrashed on 2 of 5 samples of the 24×24×8 city. The whole
+   first batch table was later void anyway: it was taken through the two bugs in items 5 and 6.
+5. **"Seeding the choice makes a run reproducible."** Selection itself tore: the entropy shader stored
+   the minimum and its cell index as two operations, so the winner depended on which workgroup
+   reached the atomic first.
+6. **"Widening the culprit radius makes the undo deeper."** Taking the most recent choice within a
+   larger radius can only return an equally or more recent choice; across 48 seeds the deepest undo
+   was 2, including the seed that backtracked 197 times.
+7. **"Aiming the backjump at the true conflict cell will fix thrashing."** The conflict cell (10, 6, 4)
+   sat at Chebyshev distance 1 from the collapse site (9, 5, 4); what was missing was accumulation
+   across failures, not a better-placed target.
+8. **"`MAX_UNDO_STEPS` (64) will be the next binding limit at larger sizes."** At 4608 cells the
+   deepest undo was 12, and the constant never bounded the conflict-directed jump at all: a
+   constrained run later undid 99 steps.
+9. **"Deeper undos will cost wall time."** At 4608 cells, eight seeds ran in 20.2 to 23.5 s against
+   23.1 to 30.2 s for the three samples that finished before the fix.
+10. **"Thrashing concentrates on one cell."** True of seed 8 at 864 cells (195 of 197 failures); at
+    4608 cells failures spread over 3 to 20 cells with at most 18 repeats on any one.
+11. **"Escalating on a global constraint's reported cell is the same fix one branch over."** Range
+    exclusion, which had finished seed 8 in 80 backtracks, stopped finishing; reverting restored it
+    exactly.
+12. **"What makes a rule hard to search is non-locality."** Counting and surrounding rules are just
+    as non-local and cost far less than range exclusion; the variable that tracked cost was how often
+    a rule declared failure (see [constraints.md](../architecture/constraints.md#what-a-rule-costs-the-search)).
+13. **"Counting makes the search easier."** Worse than the control on 6 of 8 seeds; seed 8 was the
+    control's worst seed and counting's best.
+14. **"Range exclusion costs ten times the backtracks."** It left 6 of 8 seeds unfinished within the
+    budget; seed 8 was the lucky case.
+15. **"A counting rule with an identical search line is harmless."** It never fired: `prunes=0` on
+    two configurations, because a radius-3 ball almost always holds more candidates than the count.
+16. **"Persisting every ban is worth 331× and lands at control speed."** From one seed; over eight
+    seeds backtracks ranged 15 to 437, and seed 8 got worse (80 to 97).
+17. **"Restart with a cutoff can wait, the tail has collapsed."** Measured on adjacency rules only; on
+    range exclusion one seed took 98.8 s and another did not finish at 12.5 times the budget.
+18. **"Backjumping pays least in WFC's regime, so perfecting ours is worth little"** (our reading of
+    Chen and van Beek). Fixing the escalation was worth 24 times on the bad seed (197 to 8 backtracks).
+19. **"Seed 8 takes 189 s."** The timing included the release compile of `wfc-devtools`; the same seed
+    on the compiled binary takes 4.4 s.
+20. **"Possibility counts that rise after a restore show lost bans."** Any restore returns what
+    propagation had removed since, so the first detector measured undo itself; the corrected one
+    tracks named `(cell, tile)` bans.
+21. **"Every block-kernel step pays a barrier across 256 invocations."** One invocation per workgroup
+    is 30 times slower, so per-cell sweep work dominates the step.
 
-The section above (and an earlier commit) claimed the cost was a fixed ~2.5 ms per dispatch. **That was
-a measurement artifact.** The GPU boosts its clocks under load, and the first measurement in each
-benchmark ran cold. Re-measured with a warm-up, interleaved variants and medians:
+## Speed: diagnosis, fix, result
 
-| Measurement (warm) | Cost |
-|---|---|
-| Trivial dispatch (one workgroup, no real work) | 0.099 ms |
-| 256 trivial steps as 256 dispatches vs one looping dispatch | 18x cheaper in one dispatch |
-| Same, with storage reads per step | 13x cheaper in one dispatch |
-| Propagation pass, **1-cell** worklist | 2.271 ms |
-| Propagation pass, **4608-cell** worklist (fresh grid) | 3.094 ms |
-| Propagation pass, **4608-cell** worklist, every cell collapsed | **0.605 ms** |
+**Diagnosis.** Warm, a propagation pass cost 2.271 ms for a 1-cell worklist, 3.094 ms for 4608 cells
+of a fresh grid and 0.605 ms for 4608 collapsed cells (`propagation_bench`). A pass costs what its
+cells cost, and one cell costs nearly as much as the grid because it is one thread doing the work
+the grid spreads across thousands. The work was `compute_allowed_neighbor_mask`: for every tile still
+possible it tested every tile with `check_rule`, about 81 × 81 × 6 ≈ 39 000 bit tests with a division
+and a modulo each, for one uncollapsed cell.
 
-Read together these say something quite different from "dispatches are expensive":
+**Fix.** Store the rule table row-aligned, one `ceil(num_tiles / 32)`-word mask per `(axis, tile)`,
+and union rows: 45.3 s to 37.0 s (124 cells/s). Then replace the read-modify-write with `atomicAnd`,
+which made the full-grid confirmation sweeps unnecessary: 37.0 s to 25.9 s (178 cells/s), zero
+adjacency violations in the end-to-end test.
 
-1. **A dispatch costs 0.099 ms**, so the 22332 dispatches of a city solve are ~2 s of the ~48 s run,
-   not all of it.
-2. **A pass costs what its cells cost.** The same full-grid pass is 5x cheaper when every cell is
-   collapsed (0.605 ms vs 3.094 ms). The work, not the launch, is the price.
-3. **One cell can cost as much as the whole grid** (2.271 ms vs 3.094 ms) because the grid's cells run
-   in parallel while a single cell is one thread. So tiny worklists are slow not because the dispatch
-   is expensive but because they leave the GPU idle while one thread grinds.
+**Result, and why it was not enough.** The round-trip audit at `e28ab9d` counted 2 + 2·P blocking
+queue drains per collapse (P ≈ 1.8 passes on the city) and three full grid clones. One traced
+24×24×8 run (seed 1, cold device, one run) spent 16.2 s propagating, 4.3 s downloading and 3.0 s in
+entropy and selection out of 25.8 s, about 7.4 ms per collapse. The CPU reference, a plain
+single-threaded solver on the same rules, solved the same grid in 0.14 to 0.16 s on six of eight seeds
+and an 8×8×8 chunk in 2.8 to 4.6 ms (same commit, one run per seed). The GPU loop was about 150 times slower than one CPU thread,
+waiting on per-collapse synchronisation rather than computing.
 
-The grinding is `compute_allowed_neighbor_mask`: for every tile still possible in a cell it loops over
-*every* tile testing `check_rule`, i.e. about `num_tiles^2` bit tests per axis — 81 x 81 x 6 ~ 39000
-for one uncollapsed cell of the city set, each with a division and a modulo. The adjacency table is
-already a bitset; it is simply not stored so that a row can be read as words.
+The lead that replaced it was a **block-local chunk solver**: one workgroup solves a whole chunk in
+workgroup memory inside one dispatch, and parallelism is spent across chunks rather than inside one
+propagation (arc consistency is P-complete). The support was our own measurement that 256 dependent
+steps are 13 to 18 times cheaper inside one dispatch than as separate dispatches. Measured first at
+29.7 ms for one chunk and 0.91 ms per chunk at 256 chunks; with every local minimum within radius 1
+collapsing per round and undo to a checkpoint, 0.17 ms per chunk at 256 chunks, about 15 times one
+CPU thread in the same run, none failing (`block_solver_bench`, seed 7, 3 warm-ups, median of 5).
+The rows are in [measurements.md](measurements.md).
 
-**The fix is algorithmic and small:** store the table row-aligned, one `ceil(num_tiles/32)`-word mask
-per `(axis, tile)`, and union those masks for the tiles still possible. That replaces `num_tiles` bit
-tests per possible tile with 3 word-ORs — roughly 27x less inner-loop work at 81 variants, more at 256.
+## Thrashing: diagnosis, fix, result
 
-Block-local solving (one workgroup looping over a block in workgroup memory) remains interesting for
-*streaming*, and the 13-18x result shows it is viable, but it is no longer the performance fix.
+Some seeds finished in seconds and others ground until their budget, with and without batching and
+with and without the connectivity constraint.
 
-Two consequences worth stating, because they reverse earlier conclusions:
+**Diagnosis.** On 48 seeds of the 864-cell city, 47 finished with 0 to 4 backtracks in 4.4 to 5.7 s
+and seed 8 took 197 backtracks in 7.5 s, identically on three replays. Its progress series showed a
+plateau: for 190 backtracks and 184 iterations the collapsed count stayed between 529 and 534, then
+the search escaped and finished within about 57 iterations. 195 of its 197 contradictions were at one
+cell, (10, 6, 4), and 97 of them came from re-propagation inside the recovery itself: restore, ban a
+tile, re-propagate and fail at the same cell. Undoing one or two choices never reached the cause,
+for two reasons read from the code. The doubling counter was reset after every successful
+propagation (the reset Prosser warns makes backjumping incomplete), and widening the culprit radius
+could only make the undo shallower.
 
-- **There is no meaningful "dispatch floor".** At 0.099 ms, the three dispatches per collapse across
-  4608 cells cost about 1.4 s of a ~48 s run. Restructuring the loop to fit more collapses per
-  dispatch is a streaming feature, not a performance fix.
-- **The atomics on the possibility array turned out to be load-bearing, and this passage was wrong.**
-  It argued that because propagation only clears bits, racing threads converge and the atomics could be
-  dropped. That is true of an atomic AND, but the shader was doing a *load, modify, store*: between the
-  load and the store another thread's restriction can be read, overwritten and lost. That is precisely
-  why the host re-ran propagation over every cell after each collapse. Replacing the sequence with
-  `atomicAnd` made those sweeps unnecessary and took the city run from 37.0 s to 25.9 s. Kept here as a
-  correction rather than deleted, because the faulty step was "monotone writes converge" — true for the
-  values, false for a read-modify-write.
+**Fix.** Undo at least as many steps as the true conflict cell has failed, keep that count across
+successful propagations, and drop the radius widening (`2c1229c`).
 
-It is also worth recording the architecture that the literature actually proves out, as a named
-alternative rather than an assumption: the one system in this survey that beat a competition-winning
-parallel SAT baseline (GPUShareSat) keeps **every dependent decision on the CPU** and uses the GPU as
-an asynchronous bulk service the CPU never blocks on. Our solver instead blocks on the device at every
-dependent step. Given that every published GPU WFC lost to its CPU baseline, "CPU owns the search, GPU
-does batched off-critical-path work" deserves to be costed rather than dismissed.
+**Result.**
 
-## Where the round-trips go, and the leads for a GPU-shaped solver
+| Protocol | Before | After |
+|---|---|---|
+| 864-cell city, seed 8 | 197 backtracks, deepest undo 2 | 8 backtracks, deepest undo 8 |
+| 864-cell city, worst of 48 seeds | 197 backtracks | 11 backtracks |
+| 864-cell city, corpus wall time | 4.4 to 5.7 s | 4.2 to 5.4 s |
+| 24×24×8 city, batch 1 | 3 of 5 finished within 180 s; 22, 361, 514 backtracks (before the selection fix) | 8 of 8 finished; 5 to 79 backtracks, deepest undo 2 to 12 |
 
-### The round-trip audit
+The fix held for adjacency rules. The rule-set zoo then held the 864-cell grid, rules, weights and
+seeds 1 to 8 fixed and varied only the kind of extra rule; its lessons about rule cost are in
+[constraints.md](../architecture/constraints.md#what-a-rule-costs-the-search). Two findings are about
+the solver rather than the rules:
 
-Read from the code at commit e28ab9d (the run loop in `wfc-gpu/src/gpu/accelerator.rs`, with the
-default coordinator and `DirectPropagationStrategy`). Every blocking point is a
-`device.poll(wait_indefinitely)`, which drains the whole queue rather than waiting for one submission.
+- **Bans did not survive undo.** Each history entry snapshotted the grid before its collapse, so
+  undoing several steps discarded bans recorded after it. On range exclusion, seed 5, 4955 of 4962
+  backtracks revived a ban, 226 314 revivals over 417 distinct bans, and one cell failed 3160 times.
+  The usual argument that backtracking WFC terminates (every backtrack removes a tile) did not hold.
+- **Perfect ban persistence was an upper bound worth building toward.** `WFC_PERSIST_BANS`, a
+  deliberately unsound probe that re-applied every ban after each restore, took range exclusion from
+  2 of 8 seeds finishing to 8 of 8 (15 to 437 backtracks, 4.0 to 23.2 s). Conditional nogood
+  recording was the planned next step when the solver was deleted.
 
-| Site | Blocking drains | Read back | Needed on every collapse? |
-|---|---|---|---|
-| Entropy pass (`entropy/calculator.rs`) | 0 (submit only) | nothing | no: it could be fused with the last propagation sweep |
-| Cell selection (`calculator.rs`, `buffers/mod.rs`) | 1 | 8 bytes (packed min key) | no: the choice can be made on the device |
-| Each propagation pass (`propagator/direct_strategy.rs`) | 2, plus 2 new staging buffers | contradiction flag and worklist count, 4 bytes each | no: `worklist_count_buf` already has `INDIRECT` usage but nothing dispatches from it |
-| Grid download (`gpu/sync.rs`) | 1 | the whole grid, unpacked one bit at a time | no: only needed at the end or on a contradiction |
-| History, progress and download copies of `PossibilityGrid` | CPU | one heap allocation per cell, three times | no: a decision log with periodic checkpoints carries the same information |
+## What carried over into the block kernel
 
-That is **2 + 2·P drains per collapse**, where P is the number of propagation passes (about 1.8 on the
-city, so about 5.7 drains), and three full grid clones. None of them is required by the algorithm: the
-CPU only needs to hear "finished" or "contradiction at cell c". A 24x24x8 city trace at the same
-commit (seed 1, release, RTX 3070 through dozen, one run, cold device, so indicative rather than a
-median) spent 16.2 s propagating, 4.3 s downloading and 3.0 s in entropy and selection out of 25.8 s,
-about 7.4 ms per collapse.
+- **Gather propagation.** Each invocation writes only its own cells, so the fixpoint is race-free
+  without atomics per word, the lesson of refuted claim 3.
+- **Rule rows as unions.** The compiled `RuleTable` stores one mask row per `(axis, tile)`.
+- **Choices that do not depend on scheduling.** Selection breaks ties by a stateless hash rather than
+  by which lane wins an atomic, and every choice is `pcg3d(seed, chunk, tries, step)`.
+- **Undo that accumulates.** A contradiction at or before the round of the last failure doubles the
+  undo; only getting past that round starts again from one.
+- **Restarts with a cutoff, and seeds in parallel.** Attempts and a step budget bound a region, and a
+  repair runs 32 seeds side by side and keeps the lowest that solves.
+- **Search statistics as data.** `RegionStats` reports sweeps, collapses, restarts and backtracks per
+  region, so "slow" and "stuck" can be told apart.
 
-### The CPU reference
+Not carried over: global constraints, statistical rules and ban recording. The kernel has no
+nogoods; what hosting the first two would take is in [constraints.md](../architecture/constraints.md).
 
-The reference solver (now `wfc-core`, feature `reference`, timed by `wfc-devtools/tests/cpu_reference.rs`)
-is a deliberately plain single-threaded solver on the same rules: a stack for propagation, a full scan
-for selection, marian42's undo-doubling. It held two `u64` words per cell when these numbers were
-taken and holds `u32` words in the layout the shader reads now, which moved its throughput; both
-numbers are in [solver-fit.md](solver-fit.md) with their builds.
-It is a yardstick, not a product: a GPU design that cannot beat one CPU thread at chunk latency is not
-worth shipping. At e28ab9d on a Ryzen 9 5900X (release, eight seeds, one run each, no warm-up beyond
-the previous seed) it solves an 8x8x8 chunk in 2.8 to 4.6 ms and a 24x24x8 grid in 0.14 to 0.16 s on
-the six seeds that finish; see [solver-fit.md](solver-fit.md) for the table. Its naive undo thrashes on
-two of eight 24x24x8 seeds and four of eight 48x48x10 seeds, which is a statement about that undo
-policy, not about CPUs.
+## Left open when the solver was deleted
 
-So on this build the GPU loop is roughly 150 times slower than one CPU thread on the same grid. The
-audit says why: the GPU spends its time waiting on per-collapse synchronisation, not computing.
-
-### The leads
-
-Ranked by how directly each makes the work GPU-shaped, and by the least work to live chunk generation.
-
-1. **Block-local chunk solver (chosen first).** One workgroup solves one whole chunk in workgroup
-   memory within one dispatch: min-count reduction, hash-RNG weighted choice, sweep propagation to a
-   fixpoint, restart on contradiction. The parallelism is spent across chunks (and seeds), where WFC
-   is embarrassingly parallel, instead of inside one propagation, where it is not (arc consistency is
-   P-complete). An 8x8x8 chunk at 81 tiles is 6 KiB of domains plus a 5.8 KiB copy of the rule table,
-   inside the 16 KiB WebGPU default; dozen offers 32 KiB. The support for it is our own measurement
-   that 256 dependent steps are 13 to 18 times cheaper inside one dispatch than as separate
-   dispatches. Falsified if one 512-cell chunk takes more than about 150 ms, if 64 chunks in one
-   dispatch take more than about 8 times one chunk, or if restarts explode.
-2. **Device-resident loop for the monolithic grid (fallback).** Keep one big grid but record K
-   collapses per submit: on-device selection and choice, propagation as a chain of indirect dispatches
-   with an early-out flag, a decision log instead of grid clones, readback every K collapses or on a
-   contradiction. It removes every drain listed above but stays sequential in collapses.
-3. **Sweep propagation with change epochs.** Each cell intersects the unions of its six neighbours'
-   rows, skipping neighbours unchanged since the previous sweep; a shared changed flag ends the loop.
-   No worklist append, no per-pass readback, and the fixpoint does not depend on thread order because
-   propagation is confluent. It is the propagation inside lead 1 and applies to lead 2.
-4. **Speculation.** (a) Portfolio restarts: the same chunk under several seeds in several workgroups,
-   keeping the first to finish; parallel Luby restarts report super-linear speedups on heavy-tailed
-   instances for solvers without nogood learning, which describes ours. (b) Lookahead probing:
-   propagate every candidate tile of the chosen cell in parallel and discard those that contradict.
-   Probably low value on adjacency-only rules, where the city backtracks rarely, so it gets a cheap
-   CPU-side count of avoidable backtracks before any shader work.
-   **First measurement** (one build, RTX 3070 through dozen, see [solver-fit.md](solver-fit.md)):
-   none of the falsifiers hit, but the shape differs from the prediction. One chunk alone takes
-   29.7 ms, ten times one CPU thread, at about 13 µs per workgroup step. 64 chunks cost 3.7 times one
-   chunk rather than 1 to 2 times, and 256 chunks reach 0.91 ms per chunk, three times one CPU thread
-   but below a 12-core CPU. Varying the invocations per workgroup then refuted the first explanation
-   (that every step pays a barrier across 256 invocations): one invocation is 30 times *slower*, so
-   the sweep's per-cell work dominates. Chunks do run in parallel, and a dispatch lasts as long as
-   its slowest chunk, which the restart tail makes 3.8 times the mean. The next levers are fewer steps
-   per chunk and less work per step (guess 12 in [solver-fit.md](solver-fit.md)).
-   Two changes then paid off together. Collapsing every local minimum within a radius per round
-   (the selection rule of Luby's parallel maximal independent set, applied to (count, index) keys)
-   cuts sweeps per collapse by up to five times but multiplies contradictions; restoring a
-   checkpoint from before the failing round, instead of restarting the chunk, makes each
-   contradiction cost a few rounds. Combined at radius 1, 256 chunks take 0.17 ms each, about 15
-   times one CPU thread in the same run, with no chunk failing.
-   Stitching those chunks into a world is where the approach meets its known weakness, the one every
-   block-based source warns about. With faces fixed to already solved neighbours, 28 of 63 chunks
-   under N-WFC's diagonal order have unsatisfiable borders (29 of 32 under a checkerboard).
-   Solving each chunk with a one-cell halo that is discarded afterwards brings the diagonal order down
-   to 3 of 63, and never produced a seam violation. The rest need a repair that may change committed
-   cells, which is what modifying in blocks and marian42's clearing both do: re-solving a failed chunk
-   alone with its halo released completed the world under both orders. The checkerboard then needs
-   only two dispatches of 32 chunks plus about ten single-chunk repairs.
-   Put together, that is live generation on this build: walking a player across a 192×64×8 world at
-   1.4 m/s with a four-chunk view radius costs a median of 43 ms of dispatch time per half-second
-   tick, and the world comes out complete and seamless. Only the first tick, which fills the whole
-   view at once, exceeds the budget.
-
-   **Now in the library** (`wfc-gpu`: `backend.rs`, `kernel.rs`, `kernel/block.wgsl`,
-   `block_solver.rs`, `wgpu_backend.rs`). `BlockSolver` takes a batch of regions and returns one
-   result each through the `Solver` seam in `wfc-core`; a `ComputeBackend` is all it needs from a
-   compute API, so an engine can supply its own. Two things the move taught us. A mask has to be
-   generated with its words written out: a loop over the words per cell put it in scratch memory and
-   cost 2.5 times as much per step. And one kernel specialisation takes about four seconds to
-   compile through dozen, so a game compiles the ones it needs when it loads, and a benchmark that
-   does not warm them measures the compiler instead of the solver.
-
-   **And in the library's own hands** (`wave_forge`: `generator.rs`, `scheduler.rs`, `worker.rs`).
-   The schedule the benchmark arranged by hand is what `WorldGenerator` does: parity batches, a halo
-   that is discarded, repairs for what fixed borders leave unsolvable, and events for every chunk a
-   repair rewrote. Driven that way the same walk costs a median of 47 ms per tick, and 3.2% of chunks
-   cannot be placed rather than 1.6%, because the library closes its wanted set over face neighbours
-   so that a chunk's tiles do not depend on where the player came from
-   ([architecture.md §6.2](architecture.md#62-the-schedule)).
-5. **CPU threads own the search (yardstick).** The reference above, times the number of cores.
-
-## How we knew it worked
-
-It worked: the numbers are in [solver-fit.md](solver-fit.md) and the summary is in
-[performance.md](performance.md#where-it-stands). The yardstick is now `block_solver_bench` for one
-chunk's cost, `streaming` for whole worlds through the library, and `cpu_reference` for the CPU
-thread everything is printed against; a change is kept when it moves the 81-variant city, not a toy
-two-tile grid, and when the end-to-end and facade tests still pass. The numbers in this document were
-taken before that, from the stress suite, the Chrome traces and the propagation benchmark that the
-per-collapse solver came with, all of which went with it. A number is
-evidence about one build on one machine and stack; it is quoted with that context, and it becomes a
-design conclusion only after it has been reproduced with a warm-up and medians over interleaved samples.
+- Why cell (10, 6, 4) of seed 8 was unsatisfiable in the first place; the fix changed how the search
+  escapes, not what it escapes from.
+- Whether the run-time distribution is heavy-tailed: one seed in 48 about fifty times worse than the
+  next is suggestive, but a tail needs a survival-function plot over many more seeds.
+- Whether the city rule set is tightest at `z = 4`, between forced air above and buildings below. The
+  sample (the top five failure cells per failing seed) was biased.
+- Whether every number above holds on native Vulkan rather than through dozen.
