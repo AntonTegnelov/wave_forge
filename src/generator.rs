@@ -2,7 +2,7 @@
 
 use crate::scheduler::{self, FocusPoint};
 use crate::{Error, WorldConfig};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 use wfc_core::{
@@ -62,6 +62,13 @@ struct Pending {
     started: Instant,
 }
 
+/// How many chunks beyond the ones a request asks for its repairs may need generated, in a world
+/// one chunk tall: a second-parity chunk at the edge of the request waits for its diagonal
+/// neighbours' first attempts and for their face neighbours, one of which may itself wait for a
+/// repair that has to see its own diagonals. Those chunks are kept while they are needed, whatever
+/// margin [`WorldGenerator::evict_outside`] is given.
+pub const REPAIR_REACH: u32 = 3;
+
 /// Generates a world around focus points, in chunks, on any [`Solver`].
 ///
 /// Nothing here blocks unless you ask it to: [`WorldGenerator::tick`] starts work and
@@ -77,7 +84,8 @@ pub struct WorldGenerator<S: Solver> {
     focus: Vec<FocusPoint>,
     /// Chunks no repair could place. They stay out of the way until something around them changes.
     failed: BTreeSet<ChunkCoord>,
-    repairs: VecDeque<(ChunkCoord, u32)>,
+    /// Chunks whose first attempt failed, and the halo their next repair uses.
+    repairs: BTreeMap<ChunkCoord, u32>,
     pending: Option<Pending>,
     events: Vec<ChunkEvent>,
     stats: GeneratorStats,
@@ -96,7 +104,7 @@ impl<S: Solver> WorldGenerator<S> {
             wanted: BTreeSet::new(),
             focus: Vec::new(),
             failed: BTreeSet::new(),
-            repairs: VecDeque::new(),
+            repairs: BTreeMap::new(),
             pending: None,
             events: Vec::new(),
             stats: GeneratorStats::default(),
@@ -117,7 +125,8 @@ impl<S: Solver> WorldGenerator<S> {
         if self.pending.is_some() {
             return Ok(());
         }
-        let missing = scheduler::missing(&self.wanted, &self.store, &self.deferred(), &self.focus);
+        let missing =
+            scheduler::missing(&self.needed(), &self.store, &self.deferred(), &self.focus);
         let batch = scheduler::next_batch(
             &missing,
             &self.store,
@@ -130,11 +139,104 @@ impl<S: Solver> WorldGenerator<S> {
             return self.start(&batch, halo, false);
         }
         // Nothing left to generate, so a chunk that failed gets its repair: the same region again
-        // with its halo released, which lets it rewrite the neighbouring cells it covers.
-        if let Some((chunk, halo)) = self.repairs.pop_front() {
+        // with its halo released, which lets it rewrite the neighbouring cells it covers. Only a
+        // repair whose neighbourhood is complete may run (`repair_ready`), and among those the
+        // lowest class first; with nothing ready, what `needed` added is still being generated.
+        let ready = self
+            .active_repairs()
+            .into_iter()
+            .filter(|chunk| self.repair_ready(*chunk))
+            .min_by_key(|chunk| (scheduler::repair_class(*chunk), *chunk));
+        if let Some(chunk) = ready {
+            let halo = self
+                .repairs
+                .remove(&chunk)
+                .expect("chosen from the queued repairs");
             return self.start_repair(chunk, halo);
         }
+        // A repair waits only for first attempts, and for repairs of lower classes, none of which
+        // wait for it: a first-parity repair never waits for a second-parity chunk. So with active
+        // repairs queued, a batch or a ready repair always exists.
+        let active = self.active_repairs();
+        assert!(
+            active.is_empty(),
+            "queued repairs wait for chunks nothing can generate: {active:?}"
+        );
         Ok(())
+    }
+
+    /// Whether a queued repair of `chunk` may run: every chunk it can see has had its first
+    /// attempt, and every failed one of a lower class has been repaired or given up on. Its result
+    /// is then the same whatever order the world was generated in.
+    fn repair_ready(&self, chunk: ChunkCoord) -> bool {
+        let class = scheduler::repair_class(chunk);
+        scheduler::repair_neighbourhood(chunk, &self.config.extent)
+            .into_iter()
+            .all(|neighbour| {
+                if self.repairs.contains_key(&neighbour) {
+                    scheduler::repair_class(neighbour) > class
+                } else {
+                    self.store.contains(neighbour) || self.failed.contains(&neighbour)
+                }
+            })
+    }
+
+    /// The chunks to generate: those asked for, and those the active repairs have to see first,
+    /// with the neighbours both are solved against.
+    fn needed(&self) -> BTreeSet<ChunkCoord> {
+        let mut needed = self.repair_needs(&self.active_repairs());
+        needed.extend(self.wanted.iter().copied());
+        needed
+    }
+
+    /// The chunks `repairs` have to see, with the neighbours those are solved against.
+    fn repair_needs(&self, repairs: &BTreeSet<ChunkCoord>) -> BTreeSet<ChunkCoord> {
+        let seen: BTreeSet<ChunkCoord> = repairs
+            .iter()
+            .flat_map(|chunk| scheduler::repair_neighbourhood(*chunk, &self.config.extent))
+            .collect();
+        scheduler::with_read_neighbours(&seen, &self.config.extent)
+    }
+
+    /// The queued repairs that matter to what is asked for now: those of wanted chunks, and those
+    /// they wait for, which are the failed neighbours of a lower class and the failed first-parity
+    /// chunks that a neighbour they have to see is solved against. In a world one chunk tall a
+    /// wait goes at most one class down within each parity, so nothing an active repair needs lies
+    /// more than [`REPAIR_REACH`] chunks beyond what was asked for.
+    ///
+    /// The other queued repairs stay queued, remembered as failed first attempts, rather than being
+    /// dropped: attempting such a chunk again later could see neighbours a repair has rewritten
+    /// since, and so depend on the order.
+    fn active_repairs(&self) -> BTreeSet<ChunkCoord> {
+        let extent = &self.config.extent;
+        let mut active: BTreeSet<ChunkCoord> = self
+            .repairs
+            .keys()
+            .copied()
+            .filter(|chunk| self.wanted.contains(chunk))
+            .collect();
+        let mut frontier: Vec<ChunkCoord> = active.iter().copied().collect();
+        while let Some(chunk) = frontier.pop() {
+            let class = scheduler::repair_class(chunk);
+            for neighbour in scheduler::repair_neighbourhood(chunk, extent) {
+                let lower = self.repairs.contains_key(&neighbour)
+                    && scheduler::repair_class(neighbour) < class;
+                let unattempted = !self.store.contains(neighbour)
+                    && !self.failed.contains(&neighbour)
+                    && !self.repairs.contains_key(&neighbour);
+                let blockers = (unattempted && neighbour.parity() == 1)
+                    .then(|| neighbour.face_neighbours())
+                    .into_iter()
+                    .flatten()
+                    .filter(|face| self.repairs.contains_key(face));
+                for waited_for in lower.then_some(neighbour).into_iter().chain(blockers) {
+                    if active.insert(waited_for) {
+                        frontier.push(waited_for);
+                    }
+                }
+            }
+        }
+        active
     }
 
     /// Takes whatever the solver has finished, without blocking.
@@ -184,11 +286,12 @@ impl<S: Solver> WorldGenerator<S> {
         self.pending.is_none() && self.pending_chunks() == 0
     }
 
-    /// How many wanted chunks are still to generate, including any being worked on.
+    /// How many chunks are still to generate for what is asked for, including those its repairs
+    /// have to see and the repairs themselves.
     #[must_use]
     pub fn pending_chunks(&self) -> usize {
-        scheduler::missing(&self.wanted, &self.store, &self.deferred(), &self.focus).len()
-            + self.repairs.len()
+        scheduler::missing(&self.needed(), &self.store, &self.deferred(), &self.focus).len()
+            + self.active_repairs().len()
     }
 
     /// The chunks a batch must leave alone: those given up on, and those a repair is queued for.
@@ -196,7 +299,7 @@ impl<S: Solver> WorldGenerator<S> {
         self.failed
             .iter()
             .copied()
-            .chain(self.repairs.iter().map(|(chunk, _)| *chunk))
+            .chain(self.repairs.keys().copied())
             .collect()
     }
 
@@ -244,12 +347,15 @@ impl<S: Solver> WorldGenerator<S> {
 
     /// Drops the chunks further than `margin` beyond every focus point and hands them back, so a
     /// game can persist them. Regenerating one gives the same tiles unless a repair has rewritten
-    /// its neighbours since (see the determinism contract in the crate documentation).
+    /// its neighbours since (see the determinism contract in the crate documentation). Chunks a
+    /// queued repair still has to see stay, or they would be generated again at once.
     pub fn evict_outside(&mut self, focus: &[FocusPoint], margin: u32) -> Vec<Chunk> {
+        let needed = self.repair_needs(&self.active_repairs());
         let far: Vec<ChunkCoord> = self
             .store
             .iter()
             .map(|chunk| chunk.coord)
+            .filter(|coord| !needed.contains(coord))
             .filter(|coord| {
                 focus
                     .iter()
@@ -442,7 +548,9 @@ impl<S: Solver> WorldGenerator<S> {
             .into_iter()
             .find(|wider| if was_repair { *wider > halo } else { true });
         match next.filter(|_| self.config.repair.enabled) {
-            Some(wider) => self.repairs.push_back((chunk, wider)),
+            Some(wider) => {
+                self.repairs.insert(chunk, wider);
+            }
             None => {
                 self.failed.insert(chunk);
                 self.stats.failed += 1;
@@ -451,9 +559,19 @@ impl<S: Solver> WorldGenerator<S> {
         }
     }
 
-    /// The halos a repair may use, widest last: past some width a region no longer fits the device.
+    /// The halos a repair may use, widest last: past some width a region no longer fits the device,
+    /// and one reaching half a chunk would let two repairs of one class meet, which
+    /// [`scheduler::repair_class`] relies on them never doing.
     fn repair_halos(&self) -> Vec<u32> {
+        let chunk = self.config.chunk;
         (1..=self.config.repair.max_halo)
+            .filter(|&halo| {
+                let halos = self.config.extent.halo(halo);
+                [chunk.x, chunk.y, chunk.z]
+                    .iter()
+                    .zip(halos)
+                    .all(|(&size, reach)| reach == 0 || 2 * reach + 2 <= size)
+            })
             .filter(|halo| self.solver.accepts(self.region_shape(*halo)))
             .collect()
     }
