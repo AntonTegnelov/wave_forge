@@ -26,7 +26,17 @@ pub struct PackFile {
 #[serde(deny_unknown_fields)]
 pub struct StageDef {
     pub name: String,
+    /// How many of the WFC lattice's cells one of the stage's columns spans along each axis: 1, the
+    /// default, for the finest level, more for a coarse one, a world map's say. A stage's chunks
+    /// have the same number of columns at every scale, so a coarse stage's chunk covers more
+    /// ground. Stages read only stages as coarse as themselves or coarser.
+    #[serde(default = "base_scale")]
+    pub scale: u32,
     pub kind: StageKind,
+}
+
+const fn base_scale() -> u32 {
+    1
 }
 
 /// What a stage does.
@@ -532,6 +542,8 @@ pub(crate) struct Stage {
     pub(crate) inputs: Vec<(usize, Reach)>,
     /// Mixed into every random decision the stage makes, so two stages never share a stream.
     pub(crate) salt: u32,
+    /// WFC cells per column along each axis.
+    pub(crate) scale: u32,
 }
 
 /// A pack that loaded: every stage linked to its inputs, in an order where inputs come first.
@@ -572,6 +584,7 @@ impl Pack {
             }
         }
         let outputs: Vec<Output> = file.stages.iter().map(|def| def.kind.output()).collect();
+        let scales: Vec<u32> = file.stages.iter().map(|def| def.scale).collect();
         let categories: Vec<Vec<String>> = file
             .stages
             .iter()
@@ -589,6 +602,24 @@ impl Pack {
                 stage: def.name.clone(),
                 message,
             };
+            if def.scale == 0 {
+                return Err(invalid("a scale of 0 cells".to_owned()));
+            }
+            if def.scale != 1
+                && matches!(
+                    def.kind,
+                    StageKind::Sites { .. }
+                        | StageKind::Flatten { .. }
+                        | StageKind::Solve { .. }
+                        | StageKind::Scatter { .. }
+                )
+            {
+                return Err(invalid(format!(
+                    "a scale of {}; sites, flattening, towns and scatter work on the WFC lattice, \
+                     scale 1",
+                    def.scale
+                )));
+            }
             let reads: Vec<(&str, Reach, Output)> = match &def.kind {
                 StageKind::Field(expr) => {
                     expr.check().map_err(invalid)?;
@@ -722,6 +753,13 @@ impl Pack {
                     stage: def.name.clone(),
                     input: name.to_owned(),
                 })?;
+                if scales[index] < def.scale || !scales[index].is_multiple_of(def.scale) {
+                    return Err(invalid(format!(
+                        "it reads {name:?}, of scale {}, from scale {}; a stage reads only stages \
+                         as coarse as itself or coarser, by a whole factor",
+                        scales[index], def.scale
+                    )));
+                }
                 if outputs[index] != expected {
                     return Err(invalid(format!(
                         "it reads {name:?} as {expected:?}, but that stage produces {:?}",
@@ -732,6 +770,7 @@ impl Pack {
             }
             stages.push(Stage {
                 salt: salt(&def.name),
+                scale: def.scale,
                 name: def.name,
                 kind: def.kind,
                 inputs,
@@ -769,10 +808,11 @@ impl Pack {
         self.stages.iter().map(|stage| stage.name.as_str())
     }
 
-    /// How far beyond a column of `target` each stage it depends on has to be generated, in cells
-    /// along the lattice's x, for chunks of `size` cells: the largest sum of reaches along any path
-    /// from `target` to it. `target` itself is included, at 0. `None` if no stage is named
-    /// `target`.
+    /// How far beyond a column of `target` each stage it depends on has to be generated, in WFC
+    /// cells along the lattice's x, for chunks of `size` columns: the largest sum of reaches along
+    /// any path from `target` to it, each in its reader's columns times the reader's scale, and one
+    /// column more of an input coarser than its reader, which is read between its columns.
+    /// `target` itself is included, at 0. `None` if no stage is named `target`.
     #[must_use]
     pub fn reach(&self, target: &str, size: [u32; 2]) -> Option<BTreeMap<String, u32>> {
         let target = *self.by_name.get(target)?;
@@ -783,9 +823,13 @@ impl Pack {
             let Some(&here) = reach.get(&index) else {
                 continue;
             };
+            let scale = self.stages[index].scale;
             for &(input, span) in &self.stages[index].inputs {
+                let coarser = self.stages[input].scale;
+                // A coarser input is read between its columns, so one more of them either side.
+                let between = if coarser > scale { coarser } else { 0 };
                 let there = reach.entry(input).or_insert(0);
-                *there = (*there).max(here + span.cells(size)[0]);
+                *there = (*there).max(here + span.cells(size)[0] * scale + between);
             }
         }
         Some(
@@ -794,6 +838,12 @@ impl Pack {
                 .map(|(index, cells)| (self.stages[index].name.clone(), cells))
                 .collect(),
         )
+    }
+
+    /// The scale `stage` works at, in WFC cells per column.
+    #[must_use]
+    pub fn scale(&self, stage: &str) -> Option<u32> {
+        Some(self.stages[*self.by_name.get(stage)?].scale)
     }
 
     pub(crate) fn index(&self, name: &str) -> Option<usize> {

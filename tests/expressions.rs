@@ -17,6 +17,7 @@ const SEED: u64 = 7;
 fn field(name: &str, expr: Expr) -> StageDef {
     StageDef {
         name: name.to_owned(),
+        scale: 1,
         kind: StageKind::Field(expr),
     }
 }

@@ -51,6 +51,7 @@ impl RegionJob for Rivers {
 fn stage(name: &str, kind: StageKind) -> StageDef {
     StageDef {
         name: name.to_owned(),
+        scale: 1,
         kind,
     }
 }

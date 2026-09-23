@@ -201,9 +201,12 @@ pub struct FieldView<'a> {
     /// The reach along the lattice's x, which is what errors report.
     reach: u32,
     size: [u32; 2],
-    /// The columns the view may read, in world columns, inclusive.
+    /// The columns the view may read, in world columns of the reading stage, inclusive.
     min: [i64; 2],
     max: [i64; 2],
+    /// The input's columns per column of the reading stage: 1 at the same scale, more for a coarser
+    /// input, which a field is read from between its columns and a category from the one it covers.
+    ratio: u32,
     chunks: BTreeMap<(i32, i32), &'a Product>,
 }
 
@@ -225,6 +228,26 @@ impl FieldView<'_> {
                 needed: self.reach + u32::try_from(outside).expect("a small distance"),
             });
         }
+        if self.ratio == 1 {
+            return Ok(self.at(x, y));
+        }
+        let ratio = i64::from(self.ratio);
+        let categorical = matches!(self.chunks.values().next(), Some(Product::Categories(_)));
+        if categorical {
+            return Ok(self.at(x.div_euclid(ratio), y.div_euclid(ratio)));
+        }
+        // The reading column's centre in the input's columns, between the four around it.
+        let place = |at: i64| (at as f64 + 0.5) / ratio as f64 - 0.5;
+        let (u, v) = (place(x), place(y));
+        let (i, j) = (u.floor() as i64, v.floor() as i64);
+        let (s, t) = ((u - i as f64) as f32, (v - j as f64) as f32);
+        let bottom = self.at(i, j) + (self.at(i + 1, j) - self.at(i, j)) * s;
+        let top = self.at(i, j + 1) + (self.at(i + 1, j + 1) - self.at(i, j + 1)) * s;
+        Ok(bottom + (top - bottom) * t)
+    }
+
+    /// The input's own value at one of its columns, which the view holds.
+    fn at(&self, x: i64, y: i64) -> f32 {
         let (cx, cy) = (i64::from(self.size[0]), i64::from(self.size[1]));
         let chunk = (
             i32::try_from(x.div_euclid(cx)).expect("a chunk coordinate"),
@@ -235,13 +258,13 @@ impl FieldView<'_> {
             .get(&chunk)
             .expect("the runtime generates every chunk within reach first");
         let (x, y) = (x.rem_euclid(cx) as u32, y.rem_euclid(cy) as u32);
-        Ok(match product {
+        match product {
             Product::Field(field) => field.get(x, y),
             Product::Categories(categories) => f32::from(categories.get(x, y)),
             Product::Sites(_) | Product::Tiles(_) | Product::Points(_) | Product::Curves(_) => {
                 unreachable!("inputs are type checked when the pack loads")
             }
-        })
+        }
     }
 }
 
@@ -339,9 +362,17 @@ impl Runtime {
                 })
             })
             .collect();
+        // Focus points are in the WFC lattice's chunks; a coarser target's chunks cover several.
         let mut needed: BTreeMap<usize, BTreeSet<ChunkCoord>> = targets
             .into_iter()
-            .map(|target| (target, asked.clone()))
+            .map(|target| {
+                let scale = self.pack.stages[target].scale as i32;
+                let chunks = asked
+                    .iter()
+                    .map(|c| ChunkCoord::new(c.x.div_euclid(scale), c.y.div_euclid(scale), 0))
+                    .collect();
+                (target, chunks)
+            })
             .collect();
         // Consumers come after their inputs in `order`, so walking it backwards reaches a stage
         // only once everything that reads it has said which of its chunks it needs.
@@ -349,11 +380,15 @@ impl Runtime {
             let Some(chunks) = needed.get(&index).cloned() else {
                 continue;
             };
+            let scale = self.pack.stages[index].scale;
             for &(input, reach) in &self.pack.stages[index].inputs {
                 let reach = reach.cells(self.size);
                 let covered: BTreeSet<ChunkCoord> = chunks
                     .iter()
-                    .flat_map(|&chunk| self.chunks_within(chunk, reach))
+                    .flat_map(|&chunk| {
+                        let (min, max) = self.reader_box(chunk, reach);
+                        self.covering(scale, input, min, max)
+                    })
                     .collect();
                 needed.entry(input).or_default().extend(covered);
             }
@@ -438,11 +473,15 @@ impl Runtime {
                 .copied()
                 .filter(|chunk| !self.products.contains_key(&(index, *chunk)))
                 .collect();
+            let scale = self.pack.stages[index].scale as i32;
             missing.sort_by_key(|chunk| {
+                // Focus points are in the WFC lattice's chunks, so a coarse chunk is measured from
+                // its first one.
+                let first = ChunkCoord::new(chunk.x * scale, chunk.y * scale, 0);
                 let distance = self
                     .focus
                     .iter()
-                    .map(|focus| focus.distance(*chunk))
+                    .map(|focus| focus.distance(first))
                     .min()
                     .unwrap_or(u32::MAX);
                 (distance, *chunk)
@@ -571,7 +610,7 @@ impl Runtime {
     /// The site of a Solve stage's chunk, if the chunk lies in one.
     fn site_of(&self, index: usize, chunk: ChunkCoord) -> Option<Site> {
         let (sites, reach) = self.pack.stages[index].inputs[0];
-        self.inputs_within(chunk, sites, reach.cells(self.size))
+        self.inputs_within(index, chunk, sites, reach.cells(self.size))
             .find(|&(at, _)| at == chunk)
             .and_then(|(_, product)| product.sites().first().copied())
     }
@@ -600,38 +639,20 @@ impl Runtime {
             .ok_or_else(|| StageError::NoRegionJob(stage.name.clone()))?;
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
         let (size, halo) = (i64::from(*size), i64::from(*halo));
-        let low = [
-            i64::from(region.0) * size - halo,
-            i64::from(region.1) * size - halo,
+        // The region and its halo, in the stage's own columns.
+        let min = [
+            (i64::from(region.0) * size - halo) * sx,
+            (i64::from(region.1) * size - halo) * sy,
         ];
-        let high = [
-            i64::from(region.0) * size + size - 1 + halo,
-            i64::from(region.1) * size + size - 1 + halo,
+        let max = [
+            (i64::from(region.0) * size + size + halo) * sx - 1,
+            (i64::from(region.1) * size + size + halo) * sy - 1,
         ];
         let views = stage
             .inputs
             .iter()
             .map(|&(input, _)| {
-                let mut chunks = BTreeMap::new();
-                for y in low[1]..=high[1] {
-                    for x in low[0]..=high[0] {
-                        let at = ChunkCoord::new(x as i32, y as i32, 0);
-                        let product = self
-                            .products
-                            .get(&(input, at))
-                            .expect("inputs are generated before the stages that read them");
-                        chunks.insert((at.x, at.y), product.as_ref());
-                    }
-                }
-                let view = FieldView {
-                    stage: &stage.name,
-                    input: &self.pack.stages[input].name,
-                    reach: (halo * sx) as u32,
-                    size: self.size,
-                    min: [low[0] * sx, low[1] * sy],
-                    max: [(high[0] + 1) * sx - 1, (high[1] + 1) * sy - 1],
-                    chunks,
-                };
+                let view = self.view_over(index, input, (min, max), (halo * sx) as u32);
                 (self.pack.stages[input].name.as_str(), view)
             })
             .collect();
@@ -713,67 +734,104 @@ impl Runtime {
         self.products.len()
     }
 
-    /// The chunks whose columns lie within `reach` columns of `chunk`'s, along each axis.
-    fn chunks_within(&self, chunk: ChunkCoord, reach: [u32; 2]) -> Vec<ChunkCoord> {
+    /// The columns within `reach` columns of `chunk`'s, in the chunk's own stage's columns, from
+    /// the lowest corner to the highest, both included.
+    fn reader_box(&self, chunk: ChunkCoord, reach: [u32; 2]) -> ([i64; 2], [i64; 2]) {
         let span = |axis: usize, at: i32| {
             let size = i64::from(self.size[axis]);
-            let low = i64::from(at) * size - i64::from(reach[axis]);
-            let high = (i64::from(at) + 1) * size - 1 + i64::from(reach[axis]);
-            let chunk = |column: i64| i32::try_from(column.div_euclid(size)).expect("a chunk");
-            chunk(low)..=chunk(high)
+            let reach = i64::from(reach[axis]);
+            (
+                i64::from(at) * size - reach,
+                (i64::from(at) + 1) * size - 1 + reach,
+            )
         };
-        span(0, chunk.x)
-            .flat_map(|x| span(1, chunk.y).map(move |y| ChunkCoord::new(x, y, 0)))
+        let (x0, x1) = span(0, chunk.x);
+        let (y0, y1) = span(1, chunk.y);
+        ([x0, y0], [x1, y1])
+    }
+
+    /// The chunks of `input` that hold the columns `min..=max` of a stage of `scale`, and the
+    /// column around them that an input coarser than the reader is read between.
+    fn covering(&self, scale: u32, input: usize, min: [i64; 2], max: [i64; 2]) -> Vec<ChunkCoord> {
+        let coarser = self.pack.stages[input].scale;
+        let (scale, coarser) = (i64::from(scale), i64::from(coarser));
+        let between = if coarser > scale { coarser } else { 0 };
+        let span = |axis: usize| {
+            let cells = i64::from(self.size[axis]) * coarser;
+            let low = (min[axis] * scale - between).div_euclid(cells);
+            let high = ((max[axis] + 1) * scale - 1 + between).div_euclid(cells);
+            (
+                i32::try_from(low).expect("a chunk"),
+                i32::try_from(high).expect("a chunk"),
+            )
+        };
+        let ((x0, x1), (y0, y1)) = (span(0), span(1));
+        (x0..=x1)
+            .flat_map(|x| (y0..=y1).map(move |y| ChunkCoord::new(x, y, 0)))
             .collect()
     }
 
-    /// The products of `input` within `reach` of `chunk`.
+    /// The products of `input` within `reach` of `chunk` of stage `reader`.
     fn inputs_within(
         &self,
+        reader: usize,
         chunk: ChunkCoord,
         input: usize,
         reach: [u32; 2],
     ) -> impl Iterator<Item = (ChunkCoord, &Product)> {
-        self.chunks_within(chunk, reach).into_iter().map(move |at| {
-            let product = self
-                .products
-                .get(&(input, at))
-                .expect("inputs are generated before the stages that read them");
-            (at, product.as_ref())
-        })
+        let (min, max) = self.reader_box(chunk, reach);
+        self.covering(self.pack.stages[reader].scale, input, min, max)
+            .into_iter()
+            .map(move |at| {
+                let product = self
+                    .products
+                    .get(&(input, at))
+                    .expect("inputs are generated before the stages that read them");
+                (at, product.as_ref())
+            })
     }
 
-    fn view(&self, stage: usize, chunk: ChunkCoord, input: usize, reach: Reach) -> FieldView<'_> {
-        let reach = reach.cells(self.size);
-        let origin = [
-            i64::from(chunk.x) * i64::from(self.size[0]),
-            i64::from(chunk.y) * i64::from(self.size[1]),
-        ];
+    /// Stage `stage`'s view of `input` over its own columns `min..=max`.
+    fn view_over(
+        &self,
+        stage: usize,
+        input: usize,
+        (min, max): ([i64; 2], [i64; 2]),
+        reach: u32,
+    ) -> FieldView<'_> {
+        let scale = self.pack.stages[stage].scale;
         let chunks = self
-            .inputs_within(chunk, input, reach)
-            .map(|(at, product)| ((at.x, at.y), product))
+            .covering(scale, input, min, max)
+            .into_iter()
+            .map(|at| {
+                let product = self
+                    .products
+                    .get(&(input, at))
+                    .expect("inputs are generated before the stages that read them");
+                ((at.x, at.y), product.as_ref())
+            })
             .collect();
         FieldView {
             stage: &self.pack.stages[stage].name,
             input: &self.pack.stages[input].name,
-            reach: reach[0],
+            reach,
             size: self.size,
-            min: [
-                origin[0] - i64::from(reach[0]),
-                origin[1] - i64::from(reach[1]),
-            ],
-            max: [
-                origin[0] + i64::from(self.size[0]) - 1 + i64::from(reach[0]),
-                origin[1] + i64::from(self.size[1]) - 1 + i64::from(reach[1]),
-            ],
+            min,
+            max,
+            ratio: self.pack.stages[input].scale / scale,
             chunks,
         }
     }
 
+    fn view(&self, stage: usize, chunk: ChunkCoord, input: usize, reach: Reach) -> FieldView<'_> {
+        let reach = reach.cells(self.size);
+        self.view_over(stage, input, self.reader_box(chunk, reach), reach[0])
+    }
+
     /// Every site of `input` within `reach` of `chunk`, once each.
-    fn sites_near(&self, chunk: ChunkCoord, input: usize, reach: Reach) -> Vec<Site> {
+    fn sites_near(&self, index: usize, chunk: ChunkCoord, input: usize, reach: Reach) -> Vec<Site> {
         let mut sites: BTreeMap<(i32, i32), Site> = BTreeMap::new();
-        for (_, product) in self.inputs_within(chunk, input, reach.cells(self.size)) {
+        for (_, product) in self.inputs_within(index, chunk, input, reach.cells(self.size)) {
             for site in product.sites() {
                 sites.insert(site.region, *site);
             }
@@ -864,7 +922,7 @@ impl Runtime {
                     for (rule, index) in rules.iter().zip(&taken) {
                         let mut all = true;
                         for condition in &rule.when {
-                            if !self.holds(condition, stage.salt, column, &input)? {
+                            if !self.holds(condition, stage.salt, stage.scale, column, &input)? {
                                 all = false;
                                 break;
                             }
@@ -886,7 +944,7 @@ impl Runtime {
         let near: Vec<Site> = match &stage.kind {
             StageKind::Flatten { .. } => {
                 let (sites, reach) = stage.inputs[1];
-                self.sites_near(chunk, sites, reach)
+                self.sites_near(index, chunk, sites, reach)
             }
             _ => Vec::new(),
         };
@@ -899,7 +957,9 @@ impl Runtime {
                     i64::from(chunk.y) * i64::from(sy) + i64::from(y),
                 ];
                 let value = match &stage.kind {
-                    StageKind::Field(expr) => self.evaluate(expr, stage.salt, column, &input)?,
+                    StageKind::Field(expr) => {
+                        self.evaluate(expr, stage.salt, stage.scale, column, &input)?
+                    }
                     StageKind::Blur { input, radius } => {
                         let view = &views[&self.pack.index(input).expect("linked when loaded")];
                         let r = i64::from(*radius);
@@ -973,7 +1033,7 @@ impl Runtime {
         let sites = match avoid {
             Some(_) => {
                 let (sites, reach) = stage.inputs[1];
-                self.sites_near(chunk, sites, reach)
+                self.sites_near(index, chunk, sites, reach)
             }
             None => Vec::new(),
         };
@@ -1130,11 +1190,16 @@ impl Runtime {
         &self,
         expr: &Expr,
         salt: u32,
+        scale: u32,
         column: [i64; 2],
         input: &dyn Fn(&str) -> &'v FieldView<'v>,
     ) -> Result<f32, StageError> {
-        let value = |expr: &Expr| self.evaluate(expr, salt, column, input);
-        let centre = [column[0] as f32 + 0.5, column[1] as f32 + 0.5];
+        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, input);
+        // The column's centre in WFC cells, so a formula means the same at every scale.
+        let centre = [
+            (column[0] as f32 + 0.5) * scale as f32,
+            (column[1] as f32 + 0.5) * scale as f32,
+        ];
         Ok(match expr {
             Expr::Constant(value) => *value,
             Expr::Noise {
@@ -1143,7 +1208,7 @@ impl Runtime {
                 name,
             } => {
                 let stream = name.as_deref().map_or(salt, noise_stream);
-                value_noise(self.seed, stream, *frequency, *octaves, column)
+                value_noise(self.seed, stream, *frequency, *octaves, centre)
             }
             Expr::Input(name) => input(name).get(column[0], column[1])?,
             Expr::X => centre[0],
@@ -1215,7 +1280,7 @@ impl Runtime {
                 then,
                 otherwise,
             } => {
-                let holds = self.holds(when, salt, column, input)?;
+                let holds = self.holds(when, salt, scale, column, input)?;
                 value(if holds { then } else { otherwise })?
             }
         })
@@ -1228,10 +1293,11 @@ impl Runtime {
         &self,
         condition: &Condition,
         salt: u32,
+        scale: u32,
         column: [i64; 2],
         input: &dyn Fn(&str) -> &'v FieldView<'v>,
     ) -> Result<bool, StageError> {
-        let value = |expr: &Expr| self.evaluate(expr, salt, column, input);
+        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, input);
         Ok(match condition {
             Condition::Less(a, b) => value(a)? < value(b)?,
             Condition::Greater(a, b) => value(a)? > value(b)?,
@@ -1284,17 +1350,17 @@ fn lattice(seed: u64, salt: u32, octave: u32, x: i64, y: i64) -> f32 {
     (b >> 8) as f32 / (1u32 << 24) as f32
 }
 
-/// Fractal value noise at a world column, in 0..1: every column depends on its position alone,
-/// so chunks meet without seams.
-fn value_noise(seed: u64, salt: u32, frequency: f32, octaves: u32, column: [i64; 2]) -> f32 {
+/// Fractal value noise at a point in WFC cells, in 0..1: every point depends on its position alone,
+/// so chunks meet without seams and every scale samples the same noise.
+fn value_noise(seed: u64, salt: u32, frequency: f32, octaves: u32, at: [f32; 2]) -> f32 {
     let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
     let mut sum = 0.0;
     let mut weight = 1.0;
     let mut total = 0.0;
     let mut scale = frequency;
     for octave in 0..octaves {
-        let fx = (column[0] as f32 + 0.5) * scale;
-        let fy = (column[1] as f32 + 0.5) * scale;
+        let fx = at[0] * scale;
+        let fy = at[1] * scale;
         let (x0, y0) = (fx.floor(), fy.floor());
         let (tx, ty) = (smooth(fx - x0), smooth(fy - y0));
         let (ix, iy) = (x0 as i64, y0 as i64);
@@ -1392,6 +1458,7 @@ mod tests {
             size: [4, 4],
             min: [-1, -1],
             max: [4, 4],
+            ratio: 1,
             chunks: BTreeMap::from([((0, 0), &field)]),
         };
 
@@ -1429,7 +1496,10 @@ mod tests {
     #[test]
     fn noise_stays_in_the_unit_interval() {
         let values: Vec<f32> = (0..2000)
-            .map(|i| value_noise(3, 11, 0.37, 4, [i * 7 - 5000, i * 13 - 9000]))
+            .map(|i| {
+                let at = [(i * 7 - 5000) as f32 + 0.5, (i * 13 - 9000) as f32 + 0.5];
+                value_noise(3, 11, 0.37, 4, at)
+            })
             .collect();
 
         assert!(values.iter().all(|v| (0.0..1.0).contains(v)), "{values:?}");
