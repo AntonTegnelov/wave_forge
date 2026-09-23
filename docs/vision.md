@@ -53,15 +53,11 @@ On-demand generation only works if regenerating a region produces the same resul
 
 A pure WFC terrain generator for square (2D) and cubic (3D) grids, usable as a Rust library, fast enough for runtime use, with the testing and inspection tooling needed to develop it (see [roadmap.md](roadmap.md)). Inspiration for the kind of output we want to reach: Marian Kleineberg's infinite WFC city ([article](https://marian42.de/article/wfc/), [code](https://github.com/marian42/wavefunctioncollapse)).
 
-### Phase 2: layered world generation
+### Phase 2: generation as a pack of stages
 
-WFC is excellent for structured, locally-constrained content (cities, buildings, dungeons) and poor at large-scale natural shapes. Real worlds need several techniques combined, in the spirit of [LayerProcGen](https://github.com/runevision/LayerProcGen): generation organised into **layers**, where each layer works on bounded regions and can read the results of the layers beneath it. Examples of the intended combination:
+WFC is excellent for structured, locally-constrained content (cities, buildings, dungeons) and poor at large-scale natural shapes. Real worlds need several techniques combined, in the spirit of [LayerProcGen](https://github.com/runevision/LayerProcGen): generation organised into **stages**, where each stage works on bounded regions and reads the results of the stages it depends on, within a declared reach. Fields (noise, climate, height), scatter, sites and paths, WFC, and region-scale passes such as rivers are all stages; WFC accepts constraints produced by the others (pre-decided cells, masks, border conditions) rather than only starting from a blank grid.
 
-- noise-based generation for the broad landscape,
-- Fractal Jittered Voronoi Partitions for coastlines and region boundaries,
-- WFC for cities placed into that landscape.
-
-The system has to support **layering, blending between techniques, and multiple passes**. Phase 1 must not paint us into a corner here: WFC has to be able to accept constraints produced by other layers (pre-decided cells, masks, border conditions) rather than only starting from a blank grid.
+**The coverage goal:** a developer can build the kind of world that Minecraft, Dwarf Fortress, No Man's Sky, Noita, Caves of Qud, Elite Dangerous, Valheim or Deep Rock Galactic generate, and a newcomer still reaches a walkable world of their own in minutes. The goal is the techniques, not bit-for-bit copies of those games. History simulation, runtime simulation (falling sand, destruction, fluids) and spheres or galaxies at full scale are outside it. The design is [generation-model.md](generation-model.md), and [user-stories.md](user-stories.md) states the goal as stories whose verification is the release gate.
 
 ### Engine packaging
 

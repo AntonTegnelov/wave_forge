@@ -20,12 +20,12 @@ Where the project actually is, as of September 2026, and what has to change to m
 
 ## Known limitations
 
-- **Godot generates on a device of its own, not on Godot's.** The extension runs the generator on a worker thread with its own wgpu device, which works and keeps Godot's frame loop free. A backend over Godot's own `RenderingDevice` would avoid the second device, and the `ComputeBackend` seam is there for it, but it does not exist yet: it needs WGSL translated to SPIR-V and Godot's compute API driven from a worker, and neither can be measured in this dev container ([roadmap.md](roadmap.md#engine-integrations)).
+- **Godot generates on a device of its own, not on Godot's.** The extension runs the generator on a worker thread with its own wgpu device, which works and keeps Godot's frame loop free. A backend over Godot's own `RenderingDevice` would avoid the second device, and the `ComputeBackend` seam is there for it, but it does not exist yet: it needs WGSL translated to SPIR-V and Godot's compute API driven from a worker, and neither can be measured in this dev container ([roadmap.md](roadmap.md#still-open-generating-on-godots-own-renderingdevice)).
 - **3D only**, with 6 fixed axes; 2D means a world one cell deep (A-2).
 - **A region must fit the device's workgroup memory.** At 81 tiles, an 8×8×8 chunk fits with a halo of 1 or 2 but not 3 (38 288 B against 32 768 B), so a repair ladder stops there. Bigger chunks or more tiles need a kernel that keeps domains in a storage buffer instead, which nothing needs yet.
 - **About one city chunk in nine needs a repair**, which rewrites cells of its neighbours, so those chunks depend on the order the world was generated in (the city is not *streaming-clean*). Every chunk is placed: 0 of 1 605 over five worlds, 0 holes in the game session ([solver-fit.md](solver-fit.md)).
 - **No GPU timestamp queries and no spans.** Host wall-clock around a dispatch, plus the statistics a solve reports, are all the observability there is (A-15).
-- **No golden-image tests**, although generation is now reproducible (A-16).
+- **Golden worlds cover tiles, not images.** A 4×4-chunk city is compared tile for tile across devices (A-16, [testing.md](testing.md)); rendered images are not compared.
 
 ## Alignment tasks
 

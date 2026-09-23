@@ -44,7 +44,7 @@ Each principle is a consequence of the vision's priority list (performance first
 
 Dependencies only point downwards. The model and the seams can be used, fuzzed, benchmarked and profiled with nothing above them, and an engine integration cannot leak engine types into the core: it supplies either a [`Solver`](#51-the-solver-seam) or a [`ComputeBackend`](#82-the-backend-seam) and gets plain data back.
 
-There are two seams rather than one because engines differ in what they own. Bevy owns a wgpu device and shares it, so `wave_forge_bevy` uses the wgpu backend and the kernel unchanged. Godot owns a `RenderingDevice` that takes SPIR-V and blocks in `sync()`, and `wave_forge_godot` does not use it: it runs the generator on a [`Worker`](#53-a-thread-when-an-engine-needs-one) with a device of its own, which is what keeps Godot's frame loop free without translating a kernel. A backend over `RenderingDevice` would save the second device; the seam is there for it (see the Godot section of [roadmap.md](roadmap.md#engine-integrations)).
+There are two seams rather than one because engines differ in what they own. Bevy owns a wgpu device and shares it, so `wave_forge_bevy` uses the wgpu backend and the kernel unchanged. Godot owns a `RenderingDevice` that takes SPIR-V and blocks in `sync()`, and `wave_forge_godot` does not use it: it runs the generator on a [`Worker`](#53-a-thread-when-an-engine-needs-one) with a device of its own, which is what keeps Godot's frame loop free without translating a kernel. A backend over `RenderingDevice` would save the second device; the seam is there for it (see the Godot section of [roadmap.md](roadmap.md#still-open-generating-on-godots-own-renderingdevice)).
 
 ## 3. Model
 
@@ -186,7 +186,7 @@ That is enough to stay ahead of a player: a 24×8-chunk city around a focus walk
 
 ## 7. Phase 2: layered generation (design constraints to keep in mind now)
 
-Phase 2 organises generation into **layers** (for example landscape noise → coastlines via Fractal Jittered Voronoi Partitions → WFC cities), in the spirit of LayerProcGen: each layer generates bounded regions and may read a padded neighbourhood of the layers below it.
+Phase 2 organises generation into **layers** (for example landscape noise → coastlines via Fractal Jittered Voronoi Partitions → WFC cities), in the spirit of LayerProcGen: each layer generates bounded regions and may read a padded neighbourhood of the layers below it. The design this section anticipated is now [generation-model.md](generation-model.md), which calls a layer a *stage*.
 
 Nothing of this exists yet, and it should not be built before Phase 1 is solid. But Phase 1 decisions must keep it possible:
 
@@ -229,4 +229,4 @@ Covered in depth by [testing.md](testing.md). The architectural requirements are
 - Dev-only tools render results as images (2D tiles, four orthographic views and voxel models for 3D) so humans *and* LLM-assisted development can inspect output quickly. These tools live outside the shipped library.
 - Invariants are checked automatically, not by eye: every adjacency between decided cells, and whole worlds compared cell for cell between runs.
 
-> **Misaligned today (A-16):** unit coverage of the kernel's internals is thin (its behaviour is checked through whole-region results), and there are no golden-image tests although generation is now reproducible.
+> **Misaligned today:** unit coverage of the kernel's internals is thin (its behaviour is checked through whole-region results). A golden world (A-16) compares a generated city tile for tile across devices ([testing.md](testing.md)); rendered images are not compared.
