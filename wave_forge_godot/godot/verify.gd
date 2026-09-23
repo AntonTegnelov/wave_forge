@@ -29,10 +29,11 @@ const READY_RADIUS := 1
 const PACE := 4.2
 ## The frame rate a game would cap its main loop at.
 const FPS := 60
-## How long Godot's own thread may spend processing a frame, including the extension and the signal
-## handlers: half a frame at the 99th percentile, leaving the rest to rendering, and never a whole one.
-const PROCESS_P99_MS := 8.0
-const PROCESS_MAX_MS := 1000.0 / FPS
+## How long Godot's own thread may spend processing any frame, including the extension, the signal
+## handlers and the navigation server's sync: half a frame, leaving the rest to rendering.
+const PROCESS_MAX_MS := 8.0
+## How long the node's own `process` may take on its busiest frames, the 99th percentile.
+const NODE_P99_MS := 2.0
 ## Building the device, compiling kernels and generating the first view is loading, not play.
 const LOAD_TIMEOUT_S := 180.0
 ## Tile indices, in the order `rules.ron` declares them.
@@ -55,8 +56,10 @@ var first_tiles: PackedInt32Array
 var started_usec := 0
 var walk_started_usec := -1
 var last_frame_usec := 0
-## Per frame of the walk: Godot's process time, and the time since the previous frame.
-var process_ms := PackedFloat64Array()
+## The slowest frame Godot's thread processed during the walk, and per frame the time since the
+## previous one. Godot publishes its process time once a second, as the slowest frame of that
+## second, so the slowest is all it tells; the node's own `stats` time every frame.
+var slowest_process_ms := 0.0
 var period_ms := PackedFloat64Array()
 ## Frames on which a chunk within the ready radius had no tiles, and the first of them.
 var late_frames := 0
@@ -252,9 +255,9 @@ func _process(_delta: float) -> bool:
 			last_frame_usec = now
 		return false
 
-	# The time Godot's own thread spent on the previous frame: the extension draining its worker
-	# and emitting signals, and this script's handlers.
-	process_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
+	# The slowest frame of Godot's thread in the last second: the extension draining its worker and
+	# emitting signals, this script's handlers, and the navigation server's sync.
+	slowest_process_ms = maxf(slowest_process_ms, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 	period_ms.append((now - last_frame_usec) / 1000.0)
 	last_frame_usec = now
 	var x := _x_at((now - walk_started_usec) / 1e6)
@@ -364,16 +367,20 @@ func _check() -> void:
 		if period > 1000.0 / FPS + 2.0:
 			slow_frames += 1
 	print("verify: ran to chunk %d and back at %.1f units/s in %.2f s over %d frames" % [WALK_TO, PACE, seconds, period_ms.size()])
-	print("verify: process time p50 %.3f ms, p99 %.3f ms, max %.3f ms; frame period p50 %.2f ms, p99 %.2f ms, max %.2f ms, %d frames over %.1f ms" % [
-		_quantile(process_ms, 0.5), _quantile(process_ms, 0.99), _quantile(process_ms, 1.0),
+	var stats: Dictionary = world.stats()
+	print("verify: Godot's slowest frame %.3f ms; the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms; frame period p50 %.2f ms, p99 %.2f ms, max %.2f ms, %d frames over %.1f ms" % [
+		slowest_process_ms, stats["process_ms_median"], stats["process_ms_p99"], stats["process_ms_max"],
 		_quantile(period_ms, 0.5), _quantile(period_ms, 0.99), _quantile(period_ms, 1.0),
 		slow_frames, 1000.0 / FPS + 2.0])
-	print("verify: %d chunks generated, %d dropped, %d late frames, stats %s" % [updated.size(), evicted.size(), late_frames, world.stats()])
+	print("verify: %d chunks generated, %d dropped, %d late frames, stats %s" % [updated.size(), evicted.size(), late_frames, stats])
 
 	# The point of the worker thread: building the device, compiling kernels and dispatching all
 	# happen off Godot's own thread, so the main loop keeps its frame time while a world appears.
-	if _quantile(process_ms, 0.99) > PROCESS_P99_MS or _quantile(process_ms, 1.0) > PROCESS_MAX_MS:
-		_fail("Godot's thread spent up to %.1f ms on a frame, %.1f ms at the 99th percentile" % [_quantile(process_ms, 1.0), _quantile(process_ms, 0.99)])
+	if slowest_process_ms > PROCESS_MAX_MS:
+		_fail("Godot's thread spent %.1f ms on its slowest frame" % slowest_process_ms)
+		return
+	if stats["process_ms_p99"] > NODE_P99_MS:
+		_fail("the node's own process took %.2f ms at the 99th percentile" % stats["process_ms_p99"])
 		return
 	# And generation keeps ahead of a running player, which it cannot fake by making them wait.
 	if late_frames > 0:

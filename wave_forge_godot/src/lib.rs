@@ -50,11 +50,17 @@ use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::{FileAccess, INode, Node, PhysicsServer3D, Shape3D};
 use godot::prelude::*;
 use std::collections::HashMap;
+use timings::Timings;
 use wave_forge::loader::RuleFile;
 use wave_forge::{
     Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, Prior, RegionStatus, Ruleset,
     TileMask, Worker, WorldExtent, YUpSpace,
 };
+
+mod timings;
+
+/// How many recent frames `stats` summarises: a minute at 60 frames per second.
+const RECENT_FRAMES: usize = 3600;
 
 struct WaveForgeExtension;
 
@@ -145,6 +151,8 @@ pub struct WaveForgeWorld {
     collision_shapes: HashMap<String, Gd<Shape3D>>,
     /// Each chunk's static body and the instance each of its shapes stands for, in shape order.
     bodies: HashMap<ChunkCoord, (Rid, Vec<u64>)>,
+    /// Milliseconds of Godot's thread that `process` took on each recent frame.
+    process_ms: Timings,
 }
 
 #[godot_api]
@@ -170,6 +178,7 @@ impl INode for WaveForgeWorld {
             collider_radius: 1,
             collision_shapes: HashMap::new(),
             bodies: HashMap::new(),
+            process_ms: Timings::new(RECENT_FRAMES),
         }
     }
 
@@ -202,6 +211,7 @@ impl INode for WaveForgeWorld {
 
     /// Hands the frame whatever the generating thread finished, as signals.
     fn process(&mut self, _delta: f64) {
+        let processing = std::time::Instant::now();
         let (events, failure) = match &mut self.worker {
             Some(worker) => (worker.drain(), worker.failure().map(ToOwned::to_owned)),
             None => return,
@@ -232,6 +242,8 @@ impl INode for WaveForgeWorld {
             }
         }
         self.update_colliders(&updated);
+        self.process_ms
+            .push(processing.elapsed().as_secs_f64() * 1000.0);
     }
 }
 
@@ -572,6 +584,9 @@ impl WaveForgeWorld {
 
     /// What generation has cost so far: `batches`, `solved`, `repaired`, `rewritten_by_repair`,
     /// `failed`, `solver_ms`, `repair_batches` and `repair_ms`.
+    ///
+    /// And, once there are some, the `process_ms_median`, `process_ms_p99` and `process_ms_max`
+    /// of the node's own time on Godot's thread per frame, over recent frames, in milliseconds.
     #[func]
     fn stats(&self) -> Dictionary<GString, Variant> {
         let Some(worker) = &self.worker else {
@@ -587,6 +602,11 @@ impl WaveForgeWorld {
         out.set("solver_ms", stats.solver_ms);
         out.set("repair_batches", stats.repair_batches);
         out.set("repair_ms", stats.repair_ms);
+        if let Some([median, p99, max]) = self.process_ms.summary() {
+            out.set("process_ms_median", median);
+            out.set("process_ms_p99", p99);
+            out.set("process_ms_max", max);
+        }
         out
     }
 

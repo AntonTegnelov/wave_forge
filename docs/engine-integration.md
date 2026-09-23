@@ -308,8 +308,9 @@ loader thread ("attempted to access binding from different thread than main thre
 **whole process aborts**, because the panic cannot unwind across the engine. That is not about
 nesting (godot-rust issue #610 describes it that way): a flat Rust resource aborts the same way,
 with or without sub-threads. With godot-rust's `experimental-threads` feature every case loads
-correctly, and the node's own check runs as before (Godot's process time p99 0.34 ms, no late
-frames). A game that loads scenes in the background, as the loading guidance recommends, would
+correctly, and the node's own check runs as before (Godot's slowest frame 0.34 ms, no late
+frames; the check printed that figure as a 99th percentile, but Godot publishes its process time
+only as the slowest frame of each second, see §8 A). A game that loads scenes in the background, as the loading guidance recommends, would
 crash on any scene holding a Rust resource unless that feature is on. So the recipe resources are
 either GDScript resources the Rust side reads, which Godot's loader handles like any other script,
 or Rust classes with `experimental-threads`, whose soundness godot-rust does not yet promise. The
@@ -414,6 +415,12 @@ The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
   shape, and 0.08 ms on Godot Physics; as `StaticBody3D` and `CollisionShape3D` nodes, 1.0 ms and
   0.68 ms. So the node adds every shape first. In the Godot check, with 512 boxes per chunk,
   Godot's process time stays at 1.4 ms at worst.
+
+  Godot's `Performance.TIME_PROCESS` is the slowest frame of the last second, not the last frame's
+  time: `main.cpp` keeps the maximum and publishes it once a second (4.7.2). A percentile taken over
+  it per frame is the slowest frame. So the node times its own `process` every frame and reports the
+  median, 99th percentile and maximum in `stats()`, and the check bounds both: Godot's slowest frame
+  under 8 ms, and the node's own time under 2 ms at the 99th percentile.
 - **B, hardening.** The device measurement of §3.2 on desktops ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), InstanceSet and ChunkHash in the
   golden worlds, the Godot improvements of §6.2 ([#40](https://github.com/AntonTegnelov/wave_forge/issues/40)), and the godot-rust resource spike ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
 - **C, systems.** NavSource with its halo and asynchronous baking, measuring bake time per chunk
