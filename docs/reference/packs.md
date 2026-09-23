@@ -161,7 +161,9 @@ when its first chunk is needed, and kept while a chunk of its region is.
 
 The runtime solves towns through the `TownSolver` trait. `WfcTowns::new(chunk).with_rules(name,
 rule_file, build_solver)` is the implementation over any `Solver`, one per rule set;
-`towns::gpu_solver` builds a GPU solver on a device of its own for it; `town_prior` builds a bounded
+`towns::gpu_solver` builds a GPU solver on a device of its own for it, and
+`towns::gpu_solver_cached(rules, dir)` one that keeps its compiled kernels in `dir` across runs;
+`WfcTowns::solver(name)` shows a rule set's solver, for example what compiling has cost it; `town_prior` builds a bounded
 town's prior, which the city's own prior (`wfc_devtools::city::city_prior`) uses too. A pack with a
 Solve stage needs `Runtime::with_towns`, or generating fails with `StageError::NoTownSolver`.
 
