@@ -8,6 +8,7 @@
 //! asked for in, each is computed from the same inputs and comes out the same.
 
 use super::pack::{Condition, Expr, Output, Pack, Reach, StageKind, point_stage_id, salt};
+use super::regions::{Attempt, Curve, RegionInput, RegionJob, region_of};
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownRequest, TownSolver};
@@ -128,13 +129,19 @@ pub enum Product {
     Tiles(Option<TownChunk>),
     /// The points whose column lies in the chunk.
     Points(Vec<Point>),
+    /// The curves of the chunk's region that pass through the chunk.
+    Curves(Vec<Curve>),
 }
 
 impl Product {
     fn sites(&self) -> &[Site] {
         match self {
             Self::Sites(sites) => sites,
-            Self::Field(_) | Self::Categories(_) | Self::Tiles(_) | Self::Points(_) => {
+            Self::Field(_)
+            | Self::Categories(_)
+            | Self::Tiles(_)
+            | Self::Points(_)
+            | Self::Curves(_) => {
                 unreachable!("inputs are type checked when the pack loads")
             }
         }
@@ -168,6 +175,14 @@ pub enum StageError {
     },
     #[error("stage {0:?} solves towns, but the runtime was given no town solver")]
     NoTownSolver(String),
+    #[error("stage {0:?} names a region job the runtime was not given")]
+    NoRegionJob(String),
+    #[error("stage {stage:?} gave up on region {region:?} after {} attempts: {}", log.len(), log.join("; "))]
+    RegionRejected {
+        stage: String,
+        region: (i32, i32),
+        log: Vec<String>,
+    },
     #[error("the town solver's chunks are {solver:?} columns, the runtime's {runtime:?}")]
     ChunkMismatch { solver: [u32; 2], runtime: [u32; 2] },
     #[error("stage {stage:?} could not solve the town of region {region:?}: {message}")]
@@ -223,12 +238,15 @@ impl FieldView<'_> {
         Ok(match product {
             Product::Field(field) => field.get(x, y),
             Product::Categories(categories) => f32::from(categories.get(x, y)),
-            Product::Sites(_) | Product::Tiles(_) | Product::Points(_) => {
+            Product::Sites(_) | Product::Tiles(_) | Product::Points(_) | Product::Curves(_) => {
                 unreachable!("inputs are type checked when the pack loads")
             }
         })
     }
 }
+
+/// A Region stage's index and one of its regions.
+type RegionKey = (usize, (i32, i32));
 
 /// Generates a pack's stages for the chunks focus points ask for.
 pub struct Runtime {
@@ -245,6 +263,10 @@ pub struct Runtime {
     solved: BTreeMap<(usize, (i32, i32)), Arc<Town>>,
     /// What each stage has cost, by stage index.
     timings: Vec<StageTiming>,
+    /// The region jobs Region stages name, by name.
+    region_jobs: BTreeMap<String, Box<dyn RegionJob>>,
+    /// Regions computed, by Region stage and region, kept while a chunk of their region is needed.
+    regions: BTreeMap<RegionKey, Arc<[Curve]>>,
 }
 
 impl Runtime {
@@ -253,6 +275,8 @@ impl Runtime {
     pub fn new(pack: Arc<Pack>, seed: u64, size: [u32; 2]) -> Self {
         Self {
             timings: vec![StageTiming::default(); pack.stages.len()],
+            region_jobs: BTreeMap::new(),
+            regions: BTreeMap::new(),
             pack,
             seed,
             size,
@@ -262,6 +286,13 @@ impl Runtime {
             towns: None,
             solved: BTreeMap::new(),
         }
+    }
+
+    /// Gives Region stages that name `name` the job they run.
+    #[must_use]
+    pub fn with_region_job(mut self, name: &str, job: impl RegionJob + 'static) -> Self {
+        self.region_jobs.insert(name.to_owned(), Box::new(job));
+        self
     }
 
     /// Gives Solve stages the solver their towns are solved with.
@@ -355,6 +386,14 @@ impl Runtime {
                 })
             })
         });
+        self.regions.retain(|&(stage, region), _| {
+            let StageKind::Region { region: size, .. } = pack.stages[stage].kind else {
+                unreachable!("only Region stages compute regions")
+            };
+            needed
+                .get(&stage)
+                .is_some_and(|chunks| chunks.iter().any(|&chunk| region_of(chunk, size) == region))
+        });
         self.needed = needed;
         self.focus = focus.to_vec();
         Ok(dropped)
@@ -411,6 +450,7 @@ impl Runtime {
             for chunk in missing.into_iter().take(budget - generated.len()) {
                 let started = std::time::Instant::now();
                 self.solve_town_of(index, chunk)?;
+                self.run_region_of(index, chunk)?;
                 let product = self.generate(index, chunk)?;
                 let ms = started.elapsed().as_secs_f64() * 1000.0;
                 let timing = &mut self.timings[index];
@@ -452,9 +492,11 @@ impl Runtime {
     pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
         match self.product(stage, chunk)? {
             Product::Field(field) => Some(field),
-            Product::Sites(_) | Product::Tiles(_) | Product::Points(_) | Product::Categories(_) => {
-                None
-            }
+            Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Categories(_)
+            | Product::Curves(_) => None,
         }
     }
 
@@ -464,7 +506,25 @@ impl Runtime {
     pub fn categories(&self, stage: &str, chunk: ChunkCoord) -> Option<&Categories> {
         match self.product(stage, chunk)? {
             Product::Categories(categories) => Some(categories),
-            Product::Field(_) | Product::Sites(_) | Product::Tiles(_) | Product::Points(_) => None,
+            Product::Field(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Curves(_) => None,
+        }
+    }
+
+    /// The curves `stage` holds for `chunk`: those of its region that pass through it, if it is a
+    /// Region stage and the chunk is generated.
+    #[must_use]
+    pub fn curves(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Curve]> {
+        match self.product(stage, chunk)? {
+            Product::Curves(curves) => Some(curves),
+            Product::Field(_)
+            | Product::Categories(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_) => None,
         }
     }
 
@@ -473,9 +533,11 @@ impl Runtime {
     pub fn sites(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Site]> {
         match self.product(stage, chunk)? {
             Product::Sites(sites) => Some(sites),
-            Product::Field(_) | Product::Tiles(_) | Product::Points(_) | Product::Categories(_) => {
-                None
-            }
+            Product::Field(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Categories(_)
+            | Product::Curves(_) => None,
         }
     }
 
@@ -485,9 +547,11 @@ impl Runtime {
     pub fn tiles(&self, stage: &str, chunk: ChunkCoord) -> Option<&TownChunk> {
         match self.product(stage, chunk)? {
             Product::Tiles(town) => town.as_ref(),
-            Product::Field(_) | Product::Sites(_) | Product::Points(_) | Product::Categories(_) => {
-                None
-            }
+            Product::Field(_)
+            | Product::Sites(_)
+            | Product::Points(_)
+            | Product::Categories(_)
+            | Product::Curves(_) => None,
         }
     }
 
@@ -496,9 +560,11 @@ impl Runtime {
     pub fn points(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Point]> {
         match self.product(stage, chunk)? {
             Product::Points(points) => Some(points),
-            Product::Field(_) | Product::Sites(_) | Product::Tiles(_) | Product::Categories(_) => {
-                None
-            }
+            Product::Field(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Categories(_)
+            | Product::Curves(_) => None,
         }
     }
 
@@ -508,6 +574,92 @@ impl Runtime {
         self.inputs_within(chunk, sites, reach.cells(self.size))
             .find(|&(at, _)| at == chunk)
             .and_then(|(_, product)| product.sites().first().copied())
+    }
+
+    /// Computes the region of Region stage `index` that `chunk` lies in, if it is not computed yet:
+    /// the job's attempts in turn until one is accepted or the budget is spent.
+    fn run_region_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Region {
+            job,
+            region: size,
+            halo,
+            budget,
+            ..
+        } = &stage.kind
+        else {
+            return Ok(());
+        };
+        let region = region_of(chunk, *size);
+        if self.regions.contains_key(&(index, region)) {
+            return Ok(());
+        }
+        let job = self
+            .region_jobs
+            .get(job)
+            .ok_or_else(|| StageError::NoRegionJob(stage.name.clone()))?;
+        let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+        let (size, halo) = (i64::from(*size), i64::from(*halo));
+        let low = [
+            i64::from(region.0) * size - halo,
+            i64::from(region.1) * size - halo,
+        ];
+        let high = [
+            i64::from(region.0) * size + size - 1 + halo,
+            i64::from(region.1) * size + size - 1 + halo,
+        ];
+        let views = stage
+            .inputs
+            .iter()
+            .map(|&(input, _)| {
+                let mut chunks = BTreeMap::new();
+                for y in low[1]..=high[1] {
+                    for x in low[0]..=high[0] {
+                        let at = ChunkCoord::new(x as i32, y as i32, 0);
+                        let product = self
+                            .products
+                            .get(&(input, at))
+                            .expect("inputs are generated before the stages that read them");
+                        chunks.insert((at.x, at.y), product.as_ref());
+                    }
+                }
+                let view = FieldView {
+                    stage: &stage.name,
+                    input: &self.pack.stages[input].name,
+                    reach: (halo * sx) as u32,
+                    size: self.size,
+                    min: [low[0] * sx, low[1] * sy],
+                    max: [(high[0] + 1) * sx - 1, (high[1] + 1) * sy - 1],
+                    chunks,
+                };
+                (self.pack.stages[input].name.as_str(), view)
+            })
+            .collect();
+        let mut input = RegionInput {
+            region,
+            size: size as u32,
+            chunk: self.size,
+            retry: 0,
+            world: (self.seed as u32) ^ ((self.seed >> 32) as u32),
+            salt: stage.salt,
+            views,
+        };
+        let mut log = Vec::new();
+        for retry in 0..*budget {
+            input.retry = retry;
+            match job.run(&input)? {
+                Attempt::Accepted(curves) => {
+                    self.regions.insert((index, region), Arc::from(curves));
+                    return Ok(());
+                }
+                Attempt::Rejected(reason) => log.push(reason),
+            }
+        }
+        Err(StageError::RegionRejected {
+            stage: stage.name.clone(),
+            region,
+            log,
+        })
     }
 
     /// Solves the town of `chunk`'s site for Solve stage `index`, unless it is solved already or
@@ -665,6 +817,19 @@ impl Runtime {
         if let StageKind::Scatter { .. } = &stage.kind {
             return self.scatter(index, chunk).map(Product::Points);
         }
+        if let StageKind::Region { region, .. } = &stage.kind {
+            let curves = &self.regions[&(index, region_of(chunk, *region))];
+            let [sx, sy] = self.size.map(|size| size as f32);
+            let min = [chunk.x as f32 * sx, chunk.y as f32 * sy];
+            let max = [min[0] + sx, min[1] + sy];
+            return Ok(Product::Curves(
+                curves
+                    .iter()
+                    .filter(|curve| curve.touches(min, max))
+                    .cloned()
+                    .collect(),
+            ));
+        }
         let views: BTreeMap<usize, FieldView<'_>> = stage
             .inputs
             .iter()
@@ -766,7 +931,8 @@ impl Runtime {
                     StageKind::Sites { .. }
                     | StageKind::Solve { .. }
                     | StageKind::Scatter { .. }
-                    | StageKind::Rules { .. } => {
+                    | StageKind::Rules { .. }
+                    | StageKind::Region { .. } => {
                         unreachable!("handled above")
                     }
                 };

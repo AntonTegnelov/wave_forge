@@ -3,6 +3,7 @@
 //! focus points, providers first.
 
 pub mod pack;
+pub mod regions;
 pub mod runtime;
 pub mod worker;
 

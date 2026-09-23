@@ -68,6 +68,21 @@ pub enum StageKind {
         #[serde(default)]
         top: Option<Selector>,
     },
+    /// Curves a region job computes over a whole square region of `region` chunks at a time, from
+    /// its `inputs` over the region and `halo` chunks around it: rivers, roads, anything one chunk
+    /// cannot see. `job` names the Rust implementation the runtime was given
+    /// ([`crate::stages::Runtime::with_region_job`]); it may reject an attempt and is retried with a
+    /// new hash stream up to `budget` times. A chunk's product is the curves that pass through it.
+    Region {
+        job: String,
+        region: u32,
+        #[serde(default)]
+        halo: u32,
+        #[serde(default)]
+        inputs: Vec<String>,
+        #[serde(default = "one_attempt")]
+        budget: u32,
+    },
     /// Points of `kind` standing on the `height` field: one candidate per square block of
     /// `spacing` cells at a hashed column inside it, kept with probability `chance`, if the height
     /// there is within `between`, the slope at most `max_slope` (height per cell), the column at
@@ -103,6 +118,13 @@ pub struct Rule {
 /// The most categories one Rules stage can name: a category is a byte per column.
 pub const MAX_CATEGORIES: usize = 256;
 
+const fn one_attempt() -> u32 {
+    1
+}
+
+/// The most attempts a region job may be given.
+pub const MAX_BUDGET: u32 = 1024;
+
 const fn always() -> f32 {
     1.0
 }
@@ -115,6 +137,7 @@ pub(crate) enum Output {
     Sites,
     Tiles,
     Points,
+    Curves,
 }
 
 impl StageKind {
@@ -141,6 +164,7 @@ impl StageKind {
         match self {
             Self::Field(_) | Self::Blur { .. } | Self::Flatten { .. } => Output::Field,
             Self::Rules { .. } => Output::Categories,
+            Self::Region { .. } => Output::Curves,
             Self::Sites { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
             Self::Scatter { .. } => Output::Points,
@@ -631,6 +655,29 @@ impl Pack {
                     (height.as_str(), Reach::Cells(0), Output::Field),
                     (sites.as_str(), Reach::Cells(*blend), Output::Sites),
                 ],
+                StageKind::Region {
+                    region,
+                    halo,
+                    inputs,
+                    budget,
+                    ..
+                } => {
+                    if *region == 0 {
+                        return Err(invalid("a region of 0 chunks".to_owned()));
+                    }
+                    if !(1..=MAX_BUDGET).contains(budget) {
+                        return Err(invalid(format!(
+                            "a budget of {budget} attempts; 1 to {MAX_BUDGET} are allowed"
+                        )));
+                    }
+                    // A chunk may lie anywhere in its region, so the job's view of its inputs,
+                    // the region and its halo, reaches that far from any chunk of it.
+                    let reach = Reach::Chunks(region - 1 + halo);
+                    inputs
+                        .iter()
+                        .map(|name| (name.as_str(), reach, Output::Field))
+                        .collect()
+                }
                 StageKind::Solve { sites, .. } => {
                     vec![(sites.as_str(), Reach::Cells(0), Output::Sites)]
                 }

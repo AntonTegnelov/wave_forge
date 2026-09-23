@@ -5,6 +5,7 @@
 //! request never waits long, and hands every product back shared, so the engine's thread reads it
 //! without a copy and without asking.
 
+use super::regions::Curve;
 use super::runtime::{Categories, Field, Point, Product, Runtime, Site, StageTiming, TownChunk};
 use crate::ChunkCoord;
 use crate::scheduler::FocusPoint;
@@ -146,9 +147,11 @@ impl StageWorker {
     pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
         match self.product(stage, chunk)? {
             Product::Field(field) => Some(field),
-            Product::Sites(_) | Product::Tiles(_) | Product::Points(_) | Product::Categories(_) => {
-                None
-            }
+            Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Categories(_)
+            | Product::Curves(_) => None,
         }
     }
 
@@ -157,7 +160,24 @@ impl StageWorker {
     pub fn categories(&self, stage: &str, chunk: ChunkCoord) -> Option<&Categories> {
         match self.product(stage, chunk)? {
             Product::Categories(categories) => Some(categories),
-            Product::Field(_) | Product::Sites(_) | Product::Tiles(_) | Product::Points(_) => None,
+            Product::Field(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Curves(_) => None,
+        }
+    }
+
+    /// The curves `stage` holds for `chunk`, if it is a Region stage and they have arrived.
+    #[must_use]
+    pub fn curves(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Curve]> {
+        match self.product(stage, chunk)? {
+            Product::Curves(curves) => Some(curves),
+            Product::Field(_)
+            | Product::Categories(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_) => None,
         }
     }
 
@@ -166,9 +186,11 @@ impl StageWorker {
     pub fn sites(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Site]> {
         match self.product(stage, chunk)? {
             Product::Sites(sites) => Some(sites),
-            Product::Field(_) | Product::Tiles(_) | Product::Points(_) | Product::Categories(_) => {
-                None
-            }
+            Product::Field(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Categories(_)
+            | Product::Curves(_) => None,
         }
     }
 
@@ -177,9 +199,11 @@ impl StageWorker {
     pub fn tiles(&self, stage: &str, chunk: ChunkCoord) -> Option<&TownChunk> {
         match self.product(stage, chunk)? {
             Product::Tiles(town) => town.as_ref(),
-            Product::Field(_) | Product::Sites(_) | Product::Points(_) | Product::Categories(_) => {
-                None
-            }
+            Product::Field(_)
+            | Product::Sites(_)
+            | Product::Points(_)
+            | Product::Categories(_)
+            | Product::Curves(_) => None,
         }
     }
 
@@ -188,9 +212,11 @@ impl StageWorker {
     pub fn points(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Point]> {
         match self.product(stage, chunk)? {
             Product::Points(points) => Some(points),
-            Product::Field(_) | Product::Sites(_) | Product::Tiles(_) | Product::Categories(_) => {
-                None
-            }
+            Product::Field(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Categories(_)
+            | Product::Curves(_) => None,
         }
     }
 }
