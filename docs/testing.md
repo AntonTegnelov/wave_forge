@@ -145,8 +145,10 @@ GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_city.sh           # a p
 `prepare.sh`, which both scripts run first, builds the extension, copies it into
 `wave_forge_godot/godot` with `examples/city.ron`, exports the city's module models into
 `godot/models` with `wfc-export-models`, and writes the extension list Godot would otherwise only
-write from the editor. `verify.sh` then runs `verify.gd` headless. Besides the walk, it checks that
-every module model loads as glTF, coloured by a texture, inside its cell. `render_city.sh` renders a
+write from the editor. `verify.sh` then runs `verify.gd` headless, on Jolt. Besides the walk, it checks that
+every module model loads as glTF, coloured by a texture, inside its cell, and that at the end of the
+walk exactly the chunks within the collider radius have bodies and a ray down onto a cell hits that
+cell's instance at the top of its column. `render_city.sh` renders a
 generated city with those models through the Compatibility renderer and saves the picture: the
 check to look at after a change to the models, the tile catalogue or the coordinate mapping. It
 draws either through the extension's `instance_sets` and `RenderingServer` (`server`, the default),
