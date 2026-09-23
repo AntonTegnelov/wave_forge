@@ -1273,6 +1273,14 @@ impl Pack {
         self.stages.iter().map(|stage| stage.name.as_str())
     }
 
+    /// Where the table named `name` takes its rows from and what its columns hold, if there is
+    /// one.
+    #[must_use]
+    pub fn table(&self, name: &str) -> Option<&TableKind> {
+        let index = *self.table_by_name.get(name)?;
+        Some(&self.tables[index].kind)
+    }
+
     /// How far beyond a column of `target` each stage it depends on has to be generated, in WFC
     /// cells along the lattice's x, for chunks of `size` columns: the largest sum of reaches along
     /// any path from `target` to it, each in its reader's columns times the reader's scale, and one

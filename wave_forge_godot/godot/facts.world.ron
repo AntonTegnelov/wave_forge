@@ -1,0 +1,18 @@
+// The pack of the tables check (verify_tables.gd): a given table of villages, houses generated
+// under each village sharing its population, and a field that reads the focused village.
+(
+    version: 1,
+    tables: [
+        (name: "villages", kind: Given(columns: [
+            ("population", Number),
+            ("culture", Names(["river", "hill"])),
+        ])),
+        (name: "houses", kind: Generated(parent: Some("villages"),
+            count: Floor(Mul(Parent("population"), Constant(0.01))),
+            columns: [("people", Share("population"))])),
+    ],
+    stages: [
+        (name: "hills", kind: Field(Mul(Noise(frequency: 0.05, octaves: 3), Constant(10.0)))),
+        (name: "wealth", kind: Field(Add(Input("hills"), Row("villages", "population")))),
+    ],
+)

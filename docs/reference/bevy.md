@@ -49,7 +49,10 @@ thread.
 
 - `StagesSettings`: `chunk`, columns per chunk as the runtime was built with, and `cell_size`.
 - `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles` and `points` per stage and chunk, `timings()` per stage,
-  `translation_of(point)` in Bevy's world, and `failure()`.
+  `translation_of(point)` in Bevy's world, and `failure()`. `set_facts(facts)` and `focus(table,
+  id)` hand the stages new tables of facts and a focused row ([packs.md](packs.md#tables-of-facts)):
+  a game keeps its own `Facts`, gives it rows, and hands a copy here; the runtime `build` makes is
+  given its first facts and focus there.
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
@@ -67,4 +70,4 @@ sends a message per product.
 Bevy's device matches what the library generates on a device of its own, and a small pack's
 products arrive as messages equal to what the runtime generates, placed where the lattice puts
 them and dropped when the focus moves away, and its ground equals the library's for the same
-fields. See [testing.md](../guides/testing.md).
+fields. New facts drop the stages that read them and regenerate them with the new rows. See [testing.md](../guides/testing.md).

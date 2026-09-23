@@ -21,7 +21,10 @@ use godot::prelude::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use wave_forge::loader::{RuleFile, parse_rule_file};
-use wave_forge::stages::{Pack, Runtime, StageEvent, StageKind, StageWorker};
+use wave_forge::stages::{
+    Column, Facts, GivenRow, Pack, RowId, Runtime, StageEvent, StageKind, StageWorker, TableKind,
+    Value,
+};
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, YUpSpace, ground,
@@ -92,6 +95,9 @@ pub struct WaveForgeStages {
     kernel_cache: GString,
 
     pack: Option<Arc<Pack>>,
+    /// The pack's tables of facts for the seed, as the game last gave them; the sampler and the
+    /// stages' thread each hold a copy.
+    facts: Option<Facts>,
     /// A runtime that only samples, on Godot's thread: it never generates a chunk.
     sampler: Option<Runtime>,
     /// The rule sets Solve stages name, kept here too, to say what a town's tiles are.
@@ -143,6 +149,38 @@ struct FrameCost {
     bodies_ms: f64,
 }
 
+/// A row a game gives from GDScript, checked into the library's form: an `id` from 0, and every
+/// other key a column with a number or a name.
+fn given_row(row: &VarDictionary) -> Result<GivenRow, String> {
+    let id = row
+        .get("id")
+        .ok_or_else(|| format!("a row without an id: {row:?}"))?;
+    let id = id
+        .try_to::<i64>()
+        .ok()
+        .and_then(|id| u64::try_from(id).ok())
+        .ok_or_else(|| format!("a row id that is not a whole number from 0: {id:?}"))?;
+    let mut values = BTreeMap::new();
+    for (key, value) in row.iter_shared() {
+        let key = key.to_string();
+        if key == "id" {
+            continue;
+        }
+        let value = match value.get_type() {
+            VariantType::INT => Value::Number(value.to::<i64>() as f32),
+            VariantType::FLOAT => Value::Number(value.to::<f64>() as f32),
+            VariantType::STRING | VariantType::STRING_NAME => Value::Name(value.to_string()),
+            other => {
+                return Err(format!(
+                    "row {id} gives {key:?} as a {other:?}; a column takes a number or a name"
+                ));
+            }
+        };
+        values.insert(key, value);
+    }
+    Ok(GivenRow { id, values })
+}
+
 fn elapsed_ms(since: std::time::Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.0
 }
@@ -168,6 +206,7 @@ impl INode for WaveForgeStages {
             cell_size: Vector3::ONE,
             view_radius: 2,
             pack: None,
+            facts: None,
             sampler: None,
             rules: BTreeMap::new(),
             worker: None,
@@ -323,9 +362,22 @@ impl WaveForgeStages {
                     .to_string(),
             )
         });
+        let facts = match Facts::new(Arc::clone(&pack), seed) {
+            Ok(facts) => facts,
+            Err(error) => {
+                godot_error!("wave forge: {}: {error}", self.pack_file);
+                return false;
+            }
+        };
+        let mut sampler = Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y]);
+        sampler
+            .set_facts(facts.clone())
+            .expect("facts made for the sampler's pack and seed");
         let for_thread = Arc::clone(&pack);
+        let thread_facts = facts.clone();
         self.rules = rules.clone();
-        self.sampler = Some(Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y]));
+        self.sampler = Some(sampler);
+        self.facts = Some(facts);
         self.pack = Some(pack);
         self.followed = None;
         self.pending.clear();
@@ -333,7 +385,10 @@ impl WaveForgeStages {
         self.clear_ground_and_bodies();
         // The towns' device is built on the stages' thread, which is where it is used.
         self.worker = Some(StageWorker::spawn(move || {
-            let runtime = Runtime::new(for_thread, seed, [shape.x, shape.y]);
+            let mut runtime = Runtime::new(for_thread, seed, [shape.x, shape.y]);
+            runtime
+                .set_facts(thread_facts)
+                .map_err(|error| error.to_string())?;
             if !solves {
                 return Ok(runtime);
             }
@@ -494,6 +549,118 @@ impl WaveForgeStages {
                 PackedFloat32Array::new()
             }
         }
+    }
+
+    /// Replaces the rows of a given table of facts, a history's villages say: each row a Dictionary
+    /// with an `id`, a whole number from 0 that the game chooses, and a value for every column of
+    /// the table, a number or, for a column of names, one of its names. Every generated table below
+    /// it is computed again, and the stages that read any of them are generated again, with
+    /// `stage_dropped` and `stage_ready` for their chunks. Returns whether the rows were taken; why
+    /// not is reported as an error, and nothing changes.
+    #[func]
+    fn give_table(&mut self, table: GString, rows: VarArray) -> bool {
+        let (Some(facts), Some(sampler), Some(worker)) =
+            (&self.facts, &mut self.sampler, &self.worker)
+        else {
+            godot_error!("wave forge: give_table before start");
+            return false;
+        };
+        let mut given = Vec::with_capacity(rows.len());
+        for row in rows.iter_shared() {
+            let Ok(row) = row.try_to::<VarDictionary>() else {
+                godot_error!("wave forge: table {table:?}: a row that is not a Dictionary: {row}");
+                return false;
+            };
+            match given_row(&row) {
+                Ok(row) => given.push(row),
+                Err(message) => {
+                    godot_error!("wave forge: table {table:?}: {message}");
+                    return false;
+                }
+            }
+        }
+        let mut next = facts.clone();
+        if let Err(error) = next
+            .give(&table.to_string(), given)
+            .and_then(|()| sampler.set_facts(next.clone()).map(|_| ()))
+        {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        worker.set_facts(next.clone());
+        self.facts = Some(next);
+        true
+    }
+
+    /// Focuses the stages on one row of a table, a planet's say, whose columns stages read through
+    /// `Row`; `id` is the row's id as `table_rows` gives it. The stages that read the table are
+    /// generated again. Returns whether the table has the row; if not, that is reported as an
+    /// error and nothing changes.
+    #[func]
+    fn focus_row(&mut self, table: GString, id: PackedInt64Array) -> bool {
+        let (Some(sampler), Some(worker)) = (&mut self.sampler, &self.worker) else {
+            godot_error!("wave forge: focus_row before start");
+            return false;
+        };
+        let Ok(parts) = id
+            .as_slice()
+            .iter()
+            .map(|&part| u64::try_from(part))
+            .collect::<Result<Vec<u64>, _>>()
+        else {
+            godot_error!("wave forge: a row id of negative numbers, {id:?}");
+            return false;
+        };
+        let id = RowId(parts);
+        if let Err(error) = sampler.focus(&table.to_string(), id.clone()) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        worker.focus(&table.to_string(), id);
+        true
+    }
+
+    /// A table's rows, in the order of their ids: each a Dictionary with its `id`, a
+    /// PackedInt64Array (the game's id for a given row; the parent row's id and the row's index
+    /// among its siblings for a generated one), and a value for every column, a float or, for a
+    /// column of names, the name. Empty, with an error reported, for a table the pack does not name.
+    #[func]
+    fn table_rows(&self, table: GString) -> Array<VarDictionary> {
+        let name = table.to_string();
+        let (Some(pack), Some(facts)) = (&self.pack, &self.facts) else {
+            godot_error!("wave forge: table_rows before start");
+            return Array::new();
+        };
+        let (Some(kind), Some(rows)) = (pack.table(&name), facts.table(&name)) else {
+            godot_error!("wave forge: no table is named {name:?}");
+            return Array::new();
+        };
+        let names: Vec<Option<&[String]>> = match kind {
+            TableKind::Given { columns } => columns
+                .iter()
+                .map(|(_, column)| match column {
+                    Column::Number => None,
+                    Column::Names(names) => Some(names.as_slice()),
+                })
+                .collect(),
+            TableKind::Generated { columns, .. } => vec![None; columns.len()],
+        };
+        rows.rows
+            .iter()
+            .map(|row| {
+                let mut out = VarDictionary::new();
+                let id: PackedInt64Array = row.id.0.iter().map(|&part| part as i64).collect();
+                out.set(&"id".to_variant(), &id.to_variant());
+                for ((column, value), names) in rows.columns.iter().zip(&row.values).zip(&names) {
+                    let value = match names {
+                        Some(names) => GString::from(names[*value as usize].as_str()).to_variant(),
+                        None => value.to_variant(),
+                    };
+                    out.set(&column.to_variant(), &value);
+                }
+                out
+            })
+            .collect()
     }
 
     /// The categories a Rules stage names, in the order of their indices; empty for another stage.

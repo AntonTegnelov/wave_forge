@@ -24,7 +24,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
-    Categories, Field, Point, Runtime, Site, StageEvent, StageTiming, StageWorker, TownChunk,
+    Categories, Facts, Field, Point, RowId, Runtime, Site, StageEvent, StageTiming, StageWorker,
+    TownChunk,
 };
 use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, ground, ground_readers};
 
@@ -152,6 +153,22 @@ impl WaveForgeStages {
     #[must_use]
     pub fn failure(&self) -> Option<&str> {
         self.worker.failure()
+    }
+
+    /// Gives the stages new tables of facts. A game keeps its own [`Facts`], gives it rows, and
+    /// hands a copy here; what the change makes stale arrives as [`StageDropped`], then as
+    /// [`StageReady`] again. An error stops generation and arrives as [`StagesFailed`].
+    pub fn set_facts(&self, facts: Facts) {
+        self.worker.set_facts(facts);
+    }
+
+    /// Focuses the stages on the row `id` of `table`, whose columns stages read through
+    /// [`wave_forge::stages::Expr::Row`], with what that makes stale arriving as [`set_facts`]
+    /// says.
+    ///
+    /// [`set_facts`]: WaveForgeStages::set_facts
+    pub fn focus(&self, table: &str, id: RowId) {
+        self.worker.focus(table, id);
     }
 }
 

@@ -61,8 +61,8 @@ first, which the survival game grows into, then what the strategy game needs.
    cost 0.02 ms per chunk, so Field stages stay on the CPU.
 2. **Tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows the game
    gives, a simulated history say, or rows generated from a parent table, read by stages; with N11's
-   example project, a toy history in GDScript. Given and generated tables and a focused row are
-   built; next are the engines' access, Sites and Solve reading tables, roads with
+   example project, a toy history in GDScript. Given and generated tables, a focused row, and both
+   engines' access are built; next are Sites and Solve reading tables, roads with
    [#98](https://github.com/AntonTegnelov/wave_forge/issues/98), and the example. With region jobs
    ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) and these, the strategy game
    becomes possible, and an issue opens for its repository.
