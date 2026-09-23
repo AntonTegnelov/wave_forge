@@ -56,6 +56,8 @@ thread.
   given its first facts and focus there.
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
+- `.with_radius(stage, radius)` generates one target within a radius of its own around every
+  `GenerationFocus`, the others keeping each focus's radius.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
   have arrived ([packs.md](packs.md#ground)): `WaveForgeStages::ground(chunk)` returns the
   `GroundMesh`, relative to `chunk_corner(chunk)`, `GroundReady(chunk)` and `GroundDropped(chunk)`
