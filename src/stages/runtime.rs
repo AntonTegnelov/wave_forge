@@ -12,7 +12,8 @@ use super::regions::{Attempt, Curve, RegionInput, RegionJob, region_of};
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownRequest, TownSolver};
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use wfc_core::ChunkCoord;
 use wfc_core::hash::pcg3d;
@@ -177,6 +178,10 @@ pub enum StageError {
     NoTownSolver(String),
     #[error("stage {0:?} names a region job the runtime was not given")]
     NoRegionJob(String),
+    /// Only stages computed column by column from what they read, fields, rules and blurs of such
+    /// stages, can be sampled without chunks.
+    #[error("stage {0:?} cannot be sampled without chunks: it is not a field, rules or blur stage")]
+    NotSampled(String),
     #[error("stage {stage:?} gave up on region {region:?} after {} attempts: {}", log.len(), log.join("; "))]
     RegionRejected {
         stage: String,
@@ -228,22 +233,8 @@ impl FieldView<'_> {
                 needed: self.reach + u32::try_from(outside).expect("a small distance"),
             });
         }
-        if self.ratio == 1 {
-            return Ok(self.at(x, y));
-        }
-        let ratio = i64::from(self.ratio);
         let categorical = matches!(self.chunks.values().next(), Some(Product::Categories(_)));
-        if categorical {
-            return Ok(self.at(x.div_euclid(ratio), y.div_euclid(ratio)));
-        }
-        // The reading column's centre in the input's columns, between the four around it.
-        let place = |at: i64| (at as f64 + 0.5) / ratio as f64 - 0.5;
-        let (u, v) = (place(x), place(y));
-        let (i, j) = (u.floor() as i64, v.floor() as i64);
-        let (s, t) = ((u - i as f64) as f32, (v - j as f64) as f32);
-        let bottom = self.at(i, j) + (self.at(i + 1, j) - self.at(i, j)) * s;
-        let top = self.at(i, j + 1) + (self.at(i + 1, j + 1) - self.at(i, j + 1)) * s;
-        Ok(bottom + (top - bottom) * t)
+        between(self.ratio, categorical, x, y, |x, y| Ok(self.at(x, y)))
     }
 
     /// The input's own value at one of its columns, which the view holds.
@@ -270,6 +261,10 @@ impl FieldView<'_> {
 
 /// A Region stage's index and one of its regions.
 type RegionKey = (usize, (i32, i32));
+
+/// How an expression reads its inputs: a stage's value at one of the reading stage's columns,
+/// already brought to the reading stage's scale.
+type Read<'r> = dyn Fn(&str, i64, i64) -> Result<f32, StageError> + 'r;
 
 /// Generates a pack's stages for the chunks focus points ask for.
 pub struct Runtime {
@@ -551,6 +546,90 @@ impl Runtime {
             | Product::Points(_)
             | Product::Curves(_) => None,
         }
+    }
+
+    /// A stage's value at a point in WFC cells without generating any chunk: a field's value, or a
+    /// category's index, at the column of the stage the point lies in. It equals what the chunk
+    /// holding that column would hold. Only field, rules and blur stages whose inputs are too can
+    /// be sampled; the pack's other kinds need neighbouring chunks. A runtime made only to sample
+    /// never holds a product, so a game can keep one on any thread.
+    ///
+    /// # Errors
+    /// [`StageError::UnknownStage`] for a stage the pack does not name, and
+    /// [`StageError::NotSampled`] for a stage that is, or reads, one of the other kinds.
+    pub fn sample(&self, stage: &str, at: [f32; 2]) -> Result<f32, StageError> {
+        let index = self
+            .pack
+            .index(stage)
+            .ok_or_else(|| StageError::UnknownStage(stage.to_owned()))?;
+        let scale = self.pack.stages[index].scale as f32;
+        let column = [
+            (at[0] / scale).floor() as i64,
+            (at[1] / scale).floor() as i64,
+        ];
+        self.sample_column(index, column, &RefCell::new(HashMap::new()))
+    }
+
+    /// A stage's values over `size` of its own columns from `min`, row by row with x fastest,
+    /// sampled as [`Runtime::sample`] samples them: a world map, one value per column of a coarse
+    /// stage, for a game to read before play.
+    ///
+    /// # Errors
+    /// As [`Runtime::sample`].
+    pub fn atlas(
+        &self,
+        stage: &str,
+        min: [i64; 2],
+        size: [u32; 2],
+    ) -> Result<Vec<f32>, StageError> {
+        let index = self
+            .pack
+            .index(stage)
+            .ok_or_else(|| StageError::UnknownStage(stage.to_owned()))?;
+        let memo = RefCell::new(HashMap::new());
+        let mut values = Vec::with_capacity((size[0] * size[1]) as usize);
+        for y in 0..i64::from(size[1]) {
+            for x in 0..i64::from(size[0]) {
+                values.push(self.sample_column(index, [min[0] + x, min[1] + y], &memo)?);
+            }
+        }
+        Ok(values)
+    }
+
+    /// Stage `index`'s value at one of its columns, from its inputs' values sampled the same way,
+    /// each column computed once per call.
+    fn sample_column(
+        &self,
+        index: usize,
+        column: [i64; 2],
+        memo: &RefCell<HashMap<(usize, [i64; 2]), f32>>,
+    ) -> Result<f32, StageError> {
+        if let Some(&value) = memo.borrow().get(&(index, column)) {
+            return Ok(value);
+        }
+        let stage = &self.pack.stages[index];
+        let read = |name: &str, x: i64, y: i64| {
+            let input = self.pack.index(name).expect("linked when loaded");
+            let ratio = self.pack.stages[input].scale / stage.scale;
+            let categorical = self.pack.stages[input].kind.output() == Output::Categories;
+            between(ratio, categorical, x, y, |x, y| {
+                self.sample_column(input, [x, y], memo)
+            })
+        };
+        let value = match &stage.kind {
+            StageKind::Field(expr) => {
+                self.evaluate(expr, stage.salt, stage.scale, column, &read)?
+            }
+            StageKind::Rules { .. } => f32::from(self.categorise(index, column, &read)?),
+            StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
+            StageKind::Sites { .. }
+            | StageKind::Flatten { .. }
+            | StageKind::Solve { .. }
+            | StageKind::Scatter { .. }
+            | StageKind::Region { .. } => return Err(StageError::NotSampled(stage.name.clone())),
+        };
+        memo.borrow_mut().insert((index, column), value);
+        Ok(value)
     }
 
     /// The curves `stage` holds for `chunk`: those of its region that pass through it, if it is a
@@ -899,17 +978,10 @@ impl Runtime {
             })
             .map(|&(input, reach)| (input, self.view(index, chunk, input, reach)))
             .collect();
-        let input = |name: &str| &views[&self.pack.index(name).expect("linked when loaded")];
-        if let StageKind::Rules { rules, otherwise } = &stage.kind {
-            let names = stage.kind.categories();
-            let index_of = |name: &str| {
-                names
-                    .iter()
-                    .position(|known| *known == name)
-                    .expect("every category is named") as u8
-            };
-            let taken: Vec<u8> = rules.iter().map(|rule| index_of(&rule.category)).collect();
-            let fallback = index_of(otherwise);
+        let read = |name: &str, x: i64, y: i64| {
+            views[&self.pack.index(name).expect("linked when loaded")].get(x, y)
+        };
+        if let StageKind::Rules { .. } = &stage.kind {
             let [sx, sy] = self.size;
             let mut values = Vec::with_capacity((sx * sy) as usize);
             for y in 0..sy {
@@ -918,21 +990,7 @@ impl Runtime {
                         i64::from(chunk.x) * i64::from(sx) + i64::from(x),
                         i64::from(chunk.y) * i64::from(sy) + i64::from(y),
                     ];
-                    let mut category = fallback;
-                    for (rule, index) in rules.iter().zip(&taken) {
-                        let mut all = true;
-                        for condition in &rule.when {
-                            if !self.holds(condition, stage.salt, stage.scale, column, &input)? {
-                                all = false;
-                                break;
-                            }
-                        }
-                        if all {
-                            category = *index;
-                            break;
-                        }
-                    }
-                    values.push(category);
+                    values.push(self.categorise(index, column, &read)?);
                 }
             }
             return Ok(Product::Categories(Categories {
@@ -958,19 +1016,9 @@ impl Runtime {
                 ];
                 let value = match &stage.kind {
                     StageKind::Field(expr) => {
-                        self.evaluate(expr, stage.salt, stage.scale, column, &input)?
+                        self.evaluate(expr, stage.salt, stage.scale, column, &read)?
                     }
-                    StageKind::Blur { input, radius } => {
-                        let view = &views[&self.pack.index(input).expect("linked when loaded")];
-                        let r = i64::from(*radius);
-                        let mut sum = 0.0_f32;
-                        for dy in -r..=r {
-                            for dx in -r..=r {
-                                sum += view.get(column[0] + dx, column[1] + dy)?;
-                            }
-                        }
-                        sum / ((2 * r + 1) * (2 * r + 1)) as f32
-                    }
+                    StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
                     StageKind::Flatten { height, blend, .. } => {
                         let view = &views[&self.pack.index(height).expect("linked when loaded")];
                         let base = view.get(column[0], column[1])?;
@@ -1186,15 +1234,15 @@ impl Runtime {
         }))
     }
 
-    fn evaluate<'v>(
+    fn evaluate(
         &self,
         expr: &Expr,
         salt: u32,
         scale: u32,
         column: [i64; 2],
-        input: &dyn Fn(&str) -> &'v FieldView<'v>,
+        read: &Read<'_>,
     ) -> Result<f32, StageError> {
-        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, input);
+        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, read);
         // The column's centre in WFC cells, so a formula means the same at every scale.
         let centre = [
             (column[0] as f32 + 0.5) * scale as f32,
@@ -1210,7 +1258,7 @@ impl Runtime {
                 let stream = name.as_deref().map_or(salt, noise_stream);
                 value_noise(self.seed, stream, *frequency, *octaves, centre)
             }
-            Expr::Input(name) => input(name).get(column[0], column[1])?,
+            Expr::Input(name) => read(name, column[0], column[1])?,
             Expr::X => centre[0],
             Expr::Y => centre[1],
             Expr::Distance((x, y)) => (centre[0] - x).hypot(centre[1] - y),
@@ -1229,7 +1277,7 @@ impl Runtime {
             Expr::Is(stage, names) => {
                 let index = self.pack.index(stage).expect("linked when loaded");
                 let known = self.pack.stages[index].kind.categories();
-                let here = input(stage).get(column[0], column[1])? as usize;
+                let here = read(stage, column[0], column[1])? as usize;
                 f32::from(u8::from(names.iter().any(|name| name == known[here])))
             }
             Expr::Clamp(a, low, high) => value(a)?.clamp(*low, *high),
@@ -1249,7 +1297,6 @@ impl Runtime {
             } => {
                 let index = self.pack.index(stage).expect("linked when loaded");
                 let names = self.pack.stages[index].kind.categories();
-                let view = input(stage);
                 let reach = i64::from(*blend);
                 // A tent in each direction, so a category's weight falls off smoothly with its
                 // distance from the column and the blend moves by a small step per column.
@@ -1257,7 +1304,7 @@ impl Runtime {
                 for dy in -reach..=reach {
                     for dx in -reach..=reach {
                         let weight = ((reach + 1 - dx.abs()) * (reach + 1 - dy.abs())) as f32;
-                        let category = view.get(column[0] + dx, column[1] + dy)? as usize;
+                        let category = read(stage, column[0] + dx, column[1] + dy)? as usize;
                         match weights.iter_mut().find(|(known, _)| *known == category) {
                             Some((_, sum)) => *sum += weight,
                             None => weights.push((category, weight)),
@@ -1280,7 +1327,7 @@ impl Runtime {
                 then,
                 otherwise,
             } => {
-                let holds = self.holds(when, salt, scale, column, input)?;
+                let holds = self.holds(when, salt, scale, column, read)?;
                 value(if holds { then } else { otherwise })?
             }
         })
@@ -1289,21 +1336,93 @@ impl Runtime {
 
 impl Runtime {
     /// Whether `condition` holds at `column`.
-    fn holds<'v>(
+    fn holds(
         &self,
         condition: &Condition,
         salt: u32,
         scale: u32,
         column: [i64; 2],
-        input: &dyn Fn(&str) -> &'v FieldView<'v>,
+        read: &Read<'_>,
     ) -> Result<bool, StageError> {
-        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, input);
+        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, read);
         Ok(match condition {
             Condition::Less(a, b) => value(a)? < value(b)?,
             Condition::Greater(a, b) => value(a)? > value(b)?,
             Condition::Between(a, low, high) => (*low..=*high).contains(&value(a)?),
         })
     }
+
+    /// The category Rules stage `index` gives `column`: the first rule whose conditions all hold,
+    /// or its fallback.
+    fn categorise(
+        &self,
+        index: usize,
+        column: [i64; 2],
+        read: &Read<'_>,
+    ) -> Result<u8, StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Rules { rules, otherwise } = &stage.kind else {
+            unreachable!("only Rules stages categorise")
+        };
+        let names = stage.kind.categories();
+        let index_of = |name: &str| {
+            names
+                .iter()
+                .position(|known| *known == name)
+                .expect("every category is named") as u8
+        };
+        for rule in rules {
+            let mut all = true;
+            for condition in &rule.when {
+                if !self.holds(condition, stage.salt, stage.scale, column, read)? {
+                    all = false;
+                    break;
+                }
+            }
+            if all {
+                return Ok(index_of(&rule.category));
+            }
+        }
+        Ok(index_of(otherwise))
+    }
+}
+
+/// The average of `input` over the square of `radius` columns around `column`.
+fn blur(input: &str, radius: u32, column: [i64; 2], read: &Read<'_>) -> Result<f32, StageError> {
+    let r = i64::from(radius);
+    let mut sum = 0.0_f32;
+    for dy in -r..=r {
+        for dx in -r..=r {
+            sum += read(input, column[0] + dx, column[1] + dy)?;
+        }
+    }
+    Ok(sum / ((2 * r + 1) * (2 * r + 1)) as f32)
+}
+
+/// A reading stage's column `x`, `y` in an input `ratio` times coarser, from the input's own
+/// columns through `at`: the input's value itself at the same scale, the column it lies in for a
+/// category, and linearly between the four columns around its centre for a field.
+fn between(
+    ratio: u32,
+    categorical: bool,
+    x: i64,
+    y: i64,
+    at: impl Fn(i64, i64) -> Result<f32, StageError>,
+) -> Result<f32, StageError> {
+    if ratio == 1 {
+        return at(x, y);
+    }
+    let ratio = i64::from(ratio);
+    if categorical {
+        return at(x.div_euclid(ratio), y.div_euclid(ratio));
+    }
+    let place = |column: i64| (column as f64 + 0.5) / ratio as f64 - 0.5;
+    let (u, v) = (place(x), place(y));
+    let (i, j) = (u.floor() as i64, v.floor() as i64);
+    let (s, t) = ((u - i as f64) as f32, (v - j as f64) as f32);
+    let bottom = at(i, j)? + (at(i + 1, j)? - at(i, j)?) * s;
+    let top = at(i, j + 1)? + (at(i + 1, j + 1)? - at(i, j + 1)?) * s;
+    Ok(bottom + (top - bottom) * t)
 }
 
 /// The stream of a named noise: the same wherever the name appears, and apart from any stage's
