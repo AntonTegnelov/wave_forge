@@ -55,10 +55,10 @@ Each step is a verified pull request that updates the stories it moves. The orde
 Valheim-equivalent world (G7) first, which the survival game grows into, then what the strategy
 game needs.
 
-1. **The G7 foundations:** richer Field expressions with a seed per noise
-   ([#90](https://github.com/AntonTegnelov/wave_forge/issues/90)), categorical fields and a Rules
-   stage ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91)), and per-biome height with
-   blending ([#92](https://github.com/AntonTegnelov/wave_forge/issues/92)). The valley pack then
+1. **The G7 foundations:** categorical fields and a Rules stage
+   ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91)), and per-biome height with
+   blending ([#92](https://github.com/AntonTegnelov/wave_forge/issues/92)), on the richer Field
+   expressions of [#90](https://github.com/AntonTegnelov/wave_forge/issues/90). The valley pack then
    gets biome rings.
 2. **Per-stage timings**, then Field stages on the GPU if they call for it
    ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)).

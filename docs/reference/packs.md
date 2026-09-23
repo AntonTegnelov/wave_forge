@@ -66,18 +66,35 @@ reads one type as another.
 
 ### Field
 
-`Field(expr)`: a value per cell column, from an expression at that column alone.
+`Field(expr)`: a value per cell column, from an expression at that column alone. Coordinates are
+in cells, measured from the world's origin to the column's centre, along the lattice's x and y.
 
 | Expression | Value |
 |---|---|
 | `Constant(v)` | `v` |
 | `Noise(frequency: f, octaves: n)` | fractal value noise in 0..1: `n` layers (1 to 16), the first with `f` lattice points per cell, each next at twice the frequency and half the weight |
+| `Noise(frequency: f, octaves: n, name: "hills")` | the same, from the stream named `hills`: identical in every stage that names it |
 | `Input("name")` | another field's value at the same column |
-| `Add(a, b)`, `Mul(a, b)` | sum, product |
+| `X`, `Y` | the column's centre |
+| `Distance((x, y))` | the distance from a point to the column's centre |
+| `Angle((x, y))` | the direction from a point to the column's centre, as a fraction of a turn from +x towards +y, in 0..1 |
+| `Add(a, b)`, `Sub(a, b)`, `Mul(a, b)`, `Min(a, b)`, `Max(a, b)` | the arithmetic |
+| `Abs(a)`, `Floor(a)` | the absolute value, the largest whole number not above it |
+| `Clamp(a, low, high)` | `a` held between the bounds |
+| `Smoothstep(low, high, a)` | 0 at or below `low`, 1 at or above `high`, and a smooth step between |
+| `Remap(a, (from_low, from_high), (to_low, to_high))` | `a` mapped linearly from one range onto the other, not clamped |
+| `Curve(a, [(x, y), ...])` | a piecewise-linear curve through points in increasing x, level beyond its ends |
+| `Select(when: Less(a, b), then: c, otherwise: d)` | `c` where `a < b`, else `d`; `Greater(a, b)` compares the other way |
 
-Every `Noise` in one stage draws from the same stream, keyed by the world seed, the stage's name
-and the octave, so two noises of one stage are correlated; put independent noise in separate
-stages. Richer expressions are [#90](https://github.com/AntonTegnelov/wave_forge/issues/90).
+An unnamed `Noise` draws from its stage's own stream, keyed by the world seed, the stage's name and
+the octave, so every unnamed noise of one stage is the same function; name them to make them
+independent. Loading refuses a curve of fewer than two points or with x not increasing, a clamp
+whose low bound is above its high one, a smoothstep with equal edges, a remap from a range of one
+value, and numbers that are not finite.
+
+A condensed Valheim base height, as `tests/expressions.rs` writes it in one stage: products of
+named noises, a ridge mask that flattens the land near the centre with a smoothstep over the
+distance from it, and a fall to -0.2 past the world's edge with a clamped remap of that distance.
 
 ### Blur
 

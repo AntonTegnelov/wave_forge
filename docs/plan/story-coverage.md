@@ -16,12 +16,12 @@ community port and are unverified from Iron Gate (see the story's sources).
 
 | Valheim feature | What it needs | Today | Issue |
 |---|---|---|---|
-| Seed-derived offsets | named hash streams per stage | available; every noise in one stage shares a stream | [#90](https://github.com/AntonTegnelov/wave_forge/issues/90) |
-| Base height from products of Perlin octaves, with its own lacunarity and gain | Perlin or simplex noise, fBm parameters, a seed per noise, subtraction and absolute values | partial: value noise with fixed fBm | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45), [#90](https://github.com/AntonTegnelov/wave_forge/issues/90) |
-| Radial falloff to the edge, a flattened spawn area | distance to the origin, smoothstep, remap, clamp, min and max, curves | missing | [#90](https://github.com/AntonTegnelov/wave_forge/issues/90) |
+| Seed-derived offsets | named hash streams | available: per stage, and per named noise | |
+| Base height from products of Perlin octaves, with its own lacunarity and gain | Perlin or simplex noise, fBm parameters, a seed per noise, subtraction and absolute values | partial: value noise with fixed fBm; the formula itself is expressible (`tests/expressions.rs`) | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
+| Radial falloff to the edge, a flattened spawn area | distance to the origin, smoothstep, remap, clamp, min and max, curves | available (`tests/expressions.rs`) | |
 | Biomes by an ordered first-match list over distance, noise and height | categorical fields, a Rules stage | missing | [#91](https://github.com/AntonTegnelov/wave_forge/issues/91) |
 | Height per biome, blended where biomes meet | select by category, blending | missing | [#92](https://github.com/AntonTegnelov/wave_forge/issues/92) |
-| Cellular noise, quantised height in some biomes | cellular noise, floor and ceiling | missing | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45), [#90](https://github.com/AntonTegnelov/wave_forge/issues/90) |
+| Cellular noise, quantised height in some biomes | cellular noise, floor | partial: `Floor` quantises; cellular noise is missing | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
 | Lakes from a world scan | a region job on a coarse lattice | missing | [#69](https://github.com/AntonTegnelov/wave_forge/issues/69) |
 | Rivers and streams that carve the ground | curves, a network between sites, rasterising curves into height | missing | [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | A water level, ocean depth, snapping to water | a world water level, depth as a field | partial: a height range can stand in for depth | [#95](https://github.com/AntonTegnelov/wave_forge/issues/95) |

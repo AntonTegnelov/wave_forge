@@ -100,8 +100,8 @@ Each is a gap between the code and the design or the stories, with where it is t
   them yet.
 - **The stage runtime is a first slice.** Fields are one `f32` per cell column on the WFC lattice;
   there are no categorical fields, Rules, curves, region jobs, edits, persistence modes, world
-  bounds or per-stage request radii; Field expressions are minimal and every noise in one stage
-  shares a stream; Scatter has four tests and one kind per stage. Each is an issue under
+  bounds or per-stage request radii; noise is value noise only; Scatter has four tests and one kind
+  per stage. Each is an issue under
   [#104](https://github.com/AntonTegnelov/wave_forge/issues/104) ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, untextured and without levels of
   detail; materials, ground cover and far levels are
