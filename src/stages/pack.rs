@@ -376,6 +376,12 @@ impl Pack {
         })
     }
 
+    /// What the stage named `name` does, if there is one.
+    #[must_use]
+    pub fn kind(&self, name: &str) -> Option<&StageKind> {
+        self.index(name).map(|index| &self.stages[index].kind)
+    }
+
     /// The stages' names, in the order the file lists them.
     pub fn stage_names(&self) -> impl Iterator<Item = &str> {
         self.stages.iter().map(|stage| stage.name.as_str())
