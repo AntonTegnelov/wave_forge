@@ -54,20 +54,17 @@ has the full gap, and [#104](https://github.com/AntonTegnelov/wave_forge/issues/
 Each step is a verified pull request that updates the stories it moves. The order puts G7's world
 first, which the survival game grows into, then what the strategy game needs.
 
-1. **Town kernels** compiled before play and cached
-   ([#111](https://github.com/AntonTegnelov/wave_forge/issues/111)). Per-stage
-   timings ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)) showed fields cost
-   0.02 ms per chunk, so Field stages stay on the CPU.
-2. **The atlas:** point queries and an atlas of a finite world
-   ([#100](https://github.com/AntonTegnelov/wave_forge/issues/100)), on the coarse levels of
-   [#93](https://github.com/AntonTegnelov/wave_forge/issues/93). A history the game simulates reads
-   the world through these.
-3. **Tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows the game
+1. **Frame bounds and town kernels:** collider bodies bounded per frame in both Godot nodes
+   ([#118](https://github.com/AntonTegnelov/wave_forge/issues/118)), and town kernels compiled
+   before play and cached ([#111](https://github.com/AntonTegnelov/wave_forge/issues/111)).
+   Per-stage timings ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)) showed fields
+   cost 0.02 ms per chunk, so Field stages stay on the CPU.
+2. **Tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows the game
    gives, a simulated history say, or rows generated from a parent table, read by stages; with N11's
    example project, a toy history in GDScript. With region jobs
    ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) and these, the strategy game
    becomes possible, and an issue opens for its repository.
-4. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104):
+3. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104):
    FastNoiseLite-compatible noise ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)),
    neighbourhood filters ([#94](https://github.com/AntonTegnelov/wave_forge/issues/94)), a Scatter
    modifier chain ([#95](https://github.com/AntonTegnelov/wave_forge/issues/95)), blocking across
@@ -81,12 +78,12 @@ first, which the survival game grows into, then what the strategy game needs.
    ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), and a radius per stage
    ([#103](https://github.com/AntonTegnelov/wave_forge/issues/103)). A test pack of G7's world then
    verifies G7.
-5. **Engine depth, alongside:** ground cover, grass and wind
+4. **Engine depth, alongside:** ground cover, grass and wind
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), region tags for audio and
    localisation ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)), far proxies and
    occluders ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)), density volumes for
    G1, G3 and G8 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
-6. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
+5. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 
 **Waiting on the owner's hardware:** the frame-time measurement of own against shared devices on
@@ -106,7 +103,7 @@ grow.
 |---|---|---|---|
 | Parkour hide-and-seek and tag in an infinite WFC city, in the style of marian42's city | Godot | the streamed city with colliders and navigation | possible now ([#76](https://github.com/AntonTegnelov/wave_forge/issues/76)) |
 | Survival and crafting on a generated island with biome rings (G7) | Godot | the stages, with ground meshes and colliders; then G7 | possible for a first version ([#89](https://github.com/AntonTegnelov/wave_forge/issues/89)) |
-| Grand strategy inspired by Europa Universalis, on a world and history generated once per new game in the manner of Dwarf Fortress | Bevy | region jobs, levels, the atlas and tables of facts ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69), [#93](https://github.com/AntonTegnelov/wave_forge/issues/93), [#100](https://github.com/AntonTegnelov/wave_forge/issues/100), [#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); the history simulation is the game's, given as facts | after step 3 above |
+| Grand strategy inspired by Europa Universalis, on a world and history generated once per new game in the manner of Dwarf Fortress | Bevy | region jobs, levels, the atlas and tables of facts ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69), [#93](https://github.com/AntonTegnelov/wave_forge/issues/93), [#100](https://github.com/AntonTegnelov/wave_forge/issues/100), [#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); the history simulation is the game's, given as facts | after step 2 above |
 
 **Each game lives in its own private repository.** They are not open source. They depend on Wave
 Forge by a pinned commit, and moving the pin is a deliberate change in the game's repository, which

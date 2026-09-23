@@ -43,7 +43,9 @@ nothing blocks.
 the `Runtime` on that thread, so a town solver builds its GPU device there: a device of its own, not
 Bevy's. Whether towns should share Bevy's device is the same measurement as the solver's
 ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)). A Region stage's job is registered
-there too, with `Runtime::with_region_job`.
+there too, with `Runtime::with_region_job`. To sample a stage or read an atlas without chunks, a
+game builds a `Runtime` of the same pack and seed and calls `sample` or `atlas` on it, on any
+thread.
 
 - `StagesSettings`: `chunk`, columns per chunk as the runtime was built with, and `cell_size`.
 - `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles` and `points` per stage and chunk, `timings()` per stage,
