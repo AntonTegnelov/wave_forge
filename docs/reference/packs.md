@@ -97,6 +97,36 @@ raised chunk, even where it does not cover the column. An edit that raises a sta
 field, or names a point no Scatter stage placed, fails with `StageError::Edit` and changes nothing.
 `Edits::to_ron` and `from_ron` save and load the log.
 
+## Persistence and saves
+
+A stage may declare how a save keeps it, with `persist`:
+
+- `Pure`, the default: regenerated from the pack whenever it is needed, with the player's edits
+  replayed on it.
+- `Frozen`: each chunk is kept as it was first generated, before edits, and reused from then on,
+  even after the pack changes. Edits still apply to it. Locations a player has seen, say.
+- `Ephemeral`: regenerated like a pure stage, but its edits are never saved, so cut grass grows
+  back after a load. Clutter, say.
+
+```ron
+(name: "shrines", persist: Frozen, kind: Locations(...)),
+(name: "grass", persist: Ephemeral, kind: Scatter(kind: "grass", height: "terrain", spacing: 2)),
+```
+
+`Runtime::save()` gives a `Save`: the Wave Forge version that made it (`generator`), the pack's
+digest (`pack`, from `Pack::digest`, a hash of the pack as it was read), the edits less those of
+ephemeral stages, and every frozen chunk the runtime has generated. `Save::to_ron` and `from_ron`
+write and read it. `Runtime::load(&save)` brings a world back: it sets the save's edits and puts
+the frozen chunks of every stage this pack freezes in place, even if the pack has changed since, so
+a frozen chunk never generated before follows the new pack and one generated before stays as it
+was. A frozen chunk of a stage the pack no longer has, or no longer freezes, is left out. It
+returns the drops as `request` does, and fails as `set_edits` does, changing nothing. A game
+compares `generator` and `pack` with its own to decide what to tell a player; the runtime never
+refuses a save for them. The facts are the game's to save beside it.
+
+A runtime holds every frozen chunk it has generated for as long as it lives, and a save holds them
+all, so freezing suits stages with few products, like locations, over ones with many.
+
 ## Levels
 
 A stage may declare a `scale`: how many WFC cells one of its columns spans along each axis, 1 by
