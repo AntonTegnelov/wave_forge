@@ -148,7 +148,11 @@ GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_city.sh           # a p
 write from the editor. `verify.sh` then runs `verify.gd` headless. Besides the walk, it checks that
 every module model loads as glTF, coloured by a texture, inside its cell. `render_city.sh` renders a
 generated city with those models through the Compatibility renderer and saves the picture: the
-check to look at after a change to the models, the tile catalogue or the coordinate mapping.
+check to look at after a change to the models, the tile catalogue or the coordinate mapping. It
+draws either through the extension's `instance_sets` and `RenderingServer` (`server`, the default),
+checking every instance of the first chunk against `tile_basis` and `cell_position` as the renderer
+stores it, or through nodes from GDScript (`nodes`), and prints Godot's cost per chunk. The layout
+check needs a real renderer: headless, Godot's dummy renderer stores no multimesh data.
 
 `verify.gd` runs headless. It exits non-zero on
 any failure and prints what it generated and how long frames took. Headless, Godot's renderer is a

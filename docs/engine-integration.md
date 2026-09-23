@@ -389,6 +389,21 @@ The stages fit [roadmap.md](roadmap.md): the MVP walk first, then Phase 2.
   cost of creating a chunk's colliders (node path against server path, shapes added before or after
   `body_set_space`), the node path against the server path for visuals, and whether Compatibility
   applies supplied levels of detail.
+
+  InstanceSets exist (`wave_forge::instance_sets`, `WaveForgeWorld.instance_sets`), and the visual
+  paths are measured. Drawing a city chunk of 8×8×8 cells costs Godot's thread about 7 ms either way
+  (13 chunks, Compatibility renderer on the RTX 3070, `render_city.sh`): computing the placements is
+  0.09 ms in the library against a GDScript loop, and almost all the rest is
+  `RenderingServer.multimesh_allocate_data` at about 280 µs per multimesh, against about 6 µs for
+  creating one, setting its buffer or creating its instance. Reusing multimeshes does not help on
+  this stack: a pool of 25 multimeshes of 512 instances, refilled per chunk with padded buffers and
+  `multimesh_set_visible_instances`, cost 13.9 ms a chunk against 7.3 ms for fresh ones (20 chunks,
+  same renderer). Every write to a buffer costs a few hundred microseconds here, more for one a
+  draw has used, which points at the per-call cost of Compatibility on Mesa's OpenGL-on-Direct3D 12
+  translation rather than at allocation as such. The lever that holds on any driver is fewer calls:
+  one merged mesh per chunk instead of one multimesh per module, which Godot's own GPU
+  optimization guidance recommends for static geometry, traded against the memory that instancing
+  saves. Which wins, and whether Forward+ behaves differently, has to be measured on a desktop.
 - **B, hardening.** The device measurement of §3.2 on desktops ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), InstanceSet and ChunkHash in the
   golden worlds, the Godot improvements of §6.2 ([#40](https://github.com/AntonTegnelov/wave_forge/issues/40)), and the godot-rust resource spike ([#41](https://github.com/AntonTegnelov/wave_forge/issues/41)).
 - **C, systems.** NavSource with its halo and asynchronous baking, measuring bake time per chunk

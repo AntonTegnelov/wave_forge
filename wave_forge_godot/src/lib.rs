@@ -403,6 +403,42 @@ impl WaveForgeWorld {
         }
     }
 
+    /// A chunk's placements of the modules named in `names` (every module if it is empty), ready
+    /// to draw: one dictionary per module with its `name`, its `transforms` as a MultiMesh buffer
+    /// (twelve floats per instance, for `RenderingServer.multimesh_set_buffer` on a multimesh of
+    /// `TRANSFORM_3D` without colours or custom data), and each instance's stable `ids`. Each
+    /// transform turns the module's unit model by its tile's rotation, scales it to the cell and
+    /// puts it at the cell's centre. Empty for a chunk that has not been generated.
+    #[func]
+    fn instance_sets(&self, chunk: Vector3i, names: PackedStringArray) -> Array<VarDictionary> {
+        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+            return Array::new();
+        };
+        let Some(generated) = worker.chunk(from_vector(chunk)) else {
+            return Array::new();
+        };
+        let wanted: Vec<String> = names.as_slice().iter().map(ToString::to_string).collect();
+        let drawn = |name: &str| wanted.is_empty() || wanted.iter().any(|w| w == name);
+        wave_forge::instance_sets(generated, rules, &self.space(), drawn)
+            .into_iter()
+            .map(|set| {
+                let ids: PackedInt64Array = set
+                    .ids
+                    .iter()
+                    .map(|&id| i64::from_ne_bytes(id.to_ne_bytes()))
+                    .collect();
+                let mut out = VarDictionary::new();
+                out.set(&"name".to_variant(), &GString::from(&set.name).to_variant());
+                out.set(
+                    &"transforms".to_variant(),
+                    &PackedFloat32Array::from(set.transforms.as_slice()).to_variant(),
+                );
+                out.set(&"ids".to_variant(), &ids.to_variant());
+                out
+            })
+            .collect()
+    }
+
     /// How large one chunk is in Godot's world units.
     #[func]
     fn chunk_size(&self) -> Vector3 {

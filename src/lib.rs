@@ -42,11 +42,13 @@
 //!   when that count stays zero, and until then the generated tiles are the source of truth.
 
 pub mod generator;
+pub mod products;
 pub mod scheduler;
 pub mod space;
 pub mod worker;
 
 pub use generator::{ChunkEvent, GeneratorStats, WorldGenerator};
+pub use products::{InstanceSet, instance_sets};
 pub use scheduler::FocusPoint;
 pub use space::YUpSpace;
 pub use worker::Worker;
