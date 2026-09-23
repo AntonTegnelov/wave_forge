@@ -1,7 +1,8 @@
 //! Evaluating expressions: the nodes that combine values, whatever the leaves read.
 //!
 //! A stage's expression is evaluated at one of its columns, where its leaves read noise, inputs and
-//! the column's position. The caller says what the leaves read through [`Leaves`]; arithmetic,
+//! the column's position; a generated table's at one of its rows, where they read the parent row
+//! and the row's hash stream. The caller says what the leaves read through [`Leaves`]; arithmetic,
 //! shaping and conditions are evaluated here, once for every place an expression is evaluated.
 
 use super::pack::{Condition, Expr};
@@ -55,7 +56,13 @@ pub(crate) fn evaluate(expr: &Expr, leaves: &impl Leaves) -> Result<f32, StageEr
         | Expr::Distance(_)
         | Expr::Angle(_)
         | Expr::Is(..)
-        | Expr::Match { .. } => leaves.leaf(expr)?,
+        | Expr::Match { .. }
+        | Expr::Row(..)
+        | Expr::Parent(_)
+        | Expr::Random(..)
+        | Expr::Index
+        | Expr::Count
+        | Expr::Share(_) => leaves.leaf(expr)?,
     })
 }
 

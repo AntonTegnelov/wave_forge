@@ -31,7 +31,11 @@ fn field(name: &str, scale: u32, expr: Expr) -> StageDef {
 }
 
 fn pack(stages: Vec<StageDef>) -> Result<Pack, PackError> {
-    Pack::from_file(PackFile { version: 1, stages })
+    Pack::from_file(PackFile {
+        version: 1,
+        stages,
+        tables: Vec::new(),
+    })
 }
 
 fn run(stages: Vec<StageDef>, targets: &[&str], radius: u32) -> Runtime {

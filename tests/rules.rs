@@ -39,7 +39,11 @@ fn rule(category: &str, when: Vec<Condition>) -> Rule {
 }
 
 fn pack(stages: Vec<StageDef>) -> Result<Pack, PackError> {
-    Pack::from_file(PackFile { version: 1, stages })
+    Pack::from_file(PackFile {
+        version: 1,
+        stages,
+        tables: Vec::new(),
+    })
 }
 
 /// Every column within `radius` chunks of `centre`, as `(x, y)`.

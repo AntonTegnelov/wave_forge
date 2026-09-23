@@ -8,6 +8,7 @@
 //! asked for in, each is computed from the same inputs and comes out the same.
 
 use super::evaluate::{Leaves, evaluate, holds};
+use super::facts::{Facts, Row, RowId};
 use super::pack::{Expr, Output, Pack, Reach, StageKind, point_stage_id, salt};
 use super::regions::{Attempt, Curve, RegionInput, RegionJob, region_of};
 use crate::products::InstanceId;
@@ -189,6 +190,16 @@ pub enum StageError {
         region: (i32, i32),
         log: Vec<String>,
     },
+    #[error("no table is named {0:?}")]
+    UnknownTable(String),
+    #[error("table {table:?}: {message}")]
+    Table { table: String, message: String },
+    #[error("a stage reads the focused row of table {0:?}, but no row of it is focused")]
+    NoFocus(String),
+    #[error("the runtime was given no facts to focus a row of")]
+    NoFacts,
+    #[error("the facts were made for another pack or seed than the runtime's")]
+    OtherFacts,
     #[error("the town solver's chunks are {solver:?} columns, the runtime's {runtime:?}")]
     ChunkMismatch { solver: [u32; 2], runtime: [u32; 2] },
     #[error("stage {stage:?} could not solve the town of region {region:?}: {message}")]
@@ -286,6 +297,9 @@ pub struct Runtime {
     region_jobs: BTreeMap<String, Box<dyn RegionJob>>,
     /// Regions computed, by Region stage and region, kept while a chunk of their region is needed.
     regions: BTreeMap<RegionKey, Arc<[Curve]>>,
+    facts: Option<Facts>,
+    /// The focused row of each table that has one, by table index.
+    focused: BTreeMap<usize, Row>,
 }
 
 impl Runtime {
@@ -304,7 +318,98 @@ impl Runtime {
             products: BTreeMap::new(),
             towns: None,
             solved: BTreeMap::new(),
+            facts: None,
+            focused: BTreeMap::new(),
         }
+    }
+
+    /// Gives the runtime the facts its stages read, replacing any it had, and drops every product
+    /// that read a table that changed, returning them as (stage, chunk) as
+    /// [`Runtime::request`] does; the request regenerates them. On an error nothing changes.
+    ///
+    /// # Errors
+    /// [`StageError::OtherFacts`] if the facts were made for another pack or seed, and
+    /// [`StageError::Table`] if a focused row is not in its table any more.
+    pub fn set_facts(&mut self, facts: Facts) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        if !facts.made_for(&self.pack, self.seed) {
+            return Err(StageError::OtherFacts);
+        }
+        let mut focused = BTreeMap::new();
+        for (&table, row) in &self.focused {
+            let now = facts.tables()[table]
+                .row(&row.id)
+                .ok_or_else(|| StageError::Table {
+                    table: self.pack.tables[table].name.clone(),
+                    message: format!(
+                        "the focused row {:?} is not in the table any more",
+                        row.id.0
+                    ),
+                })?;
+            focused.insert(table, now.clone());
+        }
+        let changed: Vec<usize> = (0..self.pack.tables.len())
+            .filter(|&table| {
+                self.facts
+                    .as_ref()
+                    .is_none_or(|old| !Arc::ptr_eq(&old.tables()[table], &facts.tables()[table]))
+            })
+            .collect();
+        self.facts = Some(facts);
+        self.focused = focused;
+        Ok(self.invalidate(&changed))
+    }
+
+    /// Focuses the runtime on the row `id` of `table`, which stages read through
+    /// [`crate::stages::Expr::Row`], and drops every product that read another row of it,
+    /// returning them as [`Runtime::set_facts`] does.
+    ///
+    /// # Errors
+    /// [`StageError::NoFacts`] before [`Runtime::set_facts`], [`StageError::UnknownTable`] for a
+    /// table the pack does not name, and [`StageError::Table`] for a row it does not hold.
+    pub fn focus(
+        &mut self,
+        table: &str,
+        id: RowId,
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let facts = self.facts.as_ref().ok_or(StageError::NoFacts)?;
+        let index = *self
+            .pack
+            .table_by_name
+            .get(table)
+            .ok_or_else(|| StageError::UnknownTable(table.to_owned()))?;
+        let row = facts.tables()[index]
+            .row(&id)
+            .ok_or_else(|| StageError::Table {
+                table: table.to_owned(),
+                message: format!("it has no row {:?}", id.0),
+            })?;
+        if self.focused.get(&index) == Some(row) {
+            return Ok(Vec::new());
+        }
+        self.focused.insert(index, row.clone());
+        Ok(self.invalidate(&[index]))
+    }
+
+    /// Drops the products, towns and regions of every stage that reads one of `tables`, and of
+    /// every stage that reads one of those, returning the products as (stage, chunk).
+    fn invalidate(&mut self, tables: &[usize]) -> Vec<(String, ChunkCoord)> {
+        let mut stale = vec![false; self.pack.stages.len()];
+        // Inputs come first in `order`, so a stage's inputs are judged before it.
+        for &index in &self.pack.order {
+            let stage = &self.pack.stages[index];
+            stale[index] = stage.tables.iter().any(|table| tables.contains(table))
+                || stage.inputs.iter().any(|&(input, _)| stale[input]);
+        }
+        let mut dropped = Vec::new();
+        self.products.retain(|&(stage, chunk), _| {
+            if stale[stage] {
+                dropped.push((self.pack.stages[stage].name.clone(), chunk));
+            }
+            !stale[stage]
+        });
+        self.solved.retain(|&(stage, _), _| !stale[stage]);
+        self.regions.retain(|&(stage, _), _| !stale[stage]);
+        dropped
     }
 
     /// Gives Region stages that name `name` the job they run.
@@ -1321,6 +1426,20 @@ impl Leaves for ColumnPlace<'_, '_> {
                     blended += weight / total * evaluate(case, self)?;
                 }
                 blended
+            }
+            Expr::Row(table, column) => {
+                let index = pack.table_by_name[table];
+                let row = self
+                    .runtime
+                    .focused
+                    .get(&index)
+                    .ok_or_else(|| StageError::NoFocus(table.clone()))?;
+                row.values[pack.tables[index]
+                    .column(column)
+                    .expect("checked when loaded")]
+            }
+            Expr::Parent(_) | Expr::Random(..) | Expr::Index | Expr::Count | Expr::Share(_) => {
+                unreachable!("a stage's expressions are checked when loaded")
             }
             Expr::Constant(_)
             | Expr::Add(..)
