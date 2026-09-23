@@ -57,7 +57,7 @@ reads one type as another.
 
 | Kind | Produces | Reads, and how far |
 |---|---|---|
-| `Field` | Field | the fields named by `Input` and the categories named by `Is`, 0 cells |
+| `Field` | Field | the fields named by `Input` and the categories named by `Is`, 0 cells; the categories a `Match` names, `blend` cells |
 | `Rules` | Categories | what its conditions read, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
 | `Sites` | Sites | a height field, `region` chunks |
@@ -82,6 +82,7 @@ in cells, measured from the world's origin to the column's centre, along the lat
 | `Add(a, b)`, `Sub(a, b)`, `Mul(a, b)`, `Min(a, b)`, `Max(a, b)` | the arithmetic |
 | `Abs(a)`, `Floor(a)`, `Sin(a)` | the absolute value, the largest whole number not above it, the sine of an angle in radians |
 | `Is("stage", ["name", ...])` | 1 where a Rules stage's category is one of the names, 0 elsewhere |
+| `Match(input: "stage", cases: [("name", expr), ...], otherwise: expr, blend: b)` | one expression per category of a Rules stage, blended where categories meet (below) |
 | `Clamp(a, low, high)` | `a` held between the bounds |
 | `Smoothstep(low, high, a)` | 0 at or below `low`, 1 at or above `high`, and a smooth step between |
 | `Remap(a, (from_low, from_high), (to_low, to_high))` | `a` mapped linearly from one range onto the other, not clamped |
@@ -97,6 +98,15 @@ value, and numbers that are not finite.
 `examples/rings.world.ron` puts these together: an island's height from products of named noises,
 flattened near the centre with a smoothstep over the distance from it and a rim noise, and falling
 into the sea past its edge with a clamped remap of that distance.
+
+A `Match` weighs every category within `blend` cells of the column (at most `MAX_BLEND`, 32) by a
+tent, `(b + 1 - |dx|) * (b + 1 - |dy|)`, and blends the expressions of the categories it finds by
+those weights; a category no case names takes `otherwise`. Moving one column moves at most
+`2 / (b + 1)` of the weight, so a step between neighbouring columns is at most the largest step of
+any case plus the spread between the cases divided by `b + 1`, across chunk seams too. With a blend
+of 0 each column takes its own category's expression. Loading refuses a blend over the limit, two
+cases for one category, and a case for a category the rules do not give. The ring world's `terrain`
+stage shapes each biome's ground from the island's height this way.
 
 ### Rules
 
