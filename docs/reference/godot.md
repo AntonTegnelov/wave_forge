@@ -87,6 +87,9 @@ second, published once a second, not the last frame's time.
 | | `chunk_cells` | columns per chunk along the lattice's x and y, and a town chunk's height along z |
 | | `cell_size` | one cell in Godot's world units |
 | Streaming | `view_radius` | chunks kept generated around the followed position |
+| Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
+| | `ground_material` | the material the ground is drawn with |
+| Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
 
 ### Functions
 
@@ -102,18 +105,30 @@ second, published once a second, not the last frame's time.
   `WaveForgeWorld.instance_sets`, raised to the site's height.
 - `point_sets(stage, chunk)`: a Scatter stage's points, one dictionary per kind, with `transforms`
   as a MultiMesh buffer standing on the field and each point's `ids`.
+- `set_collision_shape(module, shape)` gives every cell of a town's module a collider in the
+  chunks within `collider_radius`, for every Solve stage; `modules_tagged(rules, tag)` names the
+  modules of a rule set that carry a tag, to assign shapes by tag.
+- `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body.
 - `stage_names()`, `stats()` (`process_ms_median`, `_p99` and `_max`).
 
 ### Signals
 
 `stage_ready(stage, chunk)`, `stage_dropped(stage, chunk)`, `generation_failed(reason)`.
 
-Turning a field into a ground mesh and a collider is the game's for now
-([#88](https://github.com/AntonTegnelov/wave_forge/issues/88)).
+### Ground and colliders
+
+With `ground_stage` set, the node builds each chunk's ground once the fields of the chunk and the
+eight around it have arrived ([packs.md](packs.md#ground)): a mesh through the `RenderingServer`,
+drawn with `ground_material`. Within `collider_radius` of the followed chunk, each chunk gets one
+static body holding its ground as a `HeightMapShape3D` and its towns' modules as the shapes
+`set_collision_shape` assigned, every shape added before the body joins the space. A height map's
+samples are one unit apart, so it is scaled by the cell's width, which needs cells as wide as they
+are deep. Ground and bodies go when their chunk's field is dropped or the player moves away.
 
 ## Checking it
 
 `wave_forge_godot/verify.sh` builds the extension and runs `godot/verify.gd` (the WFC world, with
-colliders and navigation) and `godot/verify_stages.gd` (the valley pack) in a real headless Godot.
+colliders and navigation) and `godot/verify_stages.gd` (the valley pack, its ground, and a walk
+through a town) in a real headless Godot.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).

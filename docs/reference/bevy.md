@@ -49,6 +49,11 @@ Bevy's. Whether towns should share Bevy's device is the same measurement as the 
   `translation_of(point)` in Bevy's world, and `failure()`.
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
+- `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
+  have arrived ([packs.md](packs.md#ground)): `WaveForgeStages::ground(chunk)` returns the
+  `GroundMesh`, relative to `chunk_corner(chunk)`, `GroundReady(chunk)` and `GroundDropped(chunk)`
+  announce it, `ground_mesh(&ground)` turns it into a Bevy `Mesh`, and its `heights` are the grid a
+  physics crate's height-field collider takes (the plugin depends on no physics crate).
 
 The plugin asks for the chunks around every `GenerationFocus`, drains the worker each frame and
 sends a message per product.
@@ -58,4 +63,5 @@ sends a message per product.
 `wave_forge_bevy/tests/` runs headless apps with the real `DefaultPlugins`: a city generated on
 Bevy's device matches what the library generates on a device of its own, and a small pack's
 products arrive as messages equal to what the runtime generates, placed where the lattice puts
-them and dropped when the focus moves away. See [testing.md](../guides/testing.md).
+them and dropped when the focus moves away, and its ground equals the library's for the same
+fields. See [testing.md](../guides/testing.md).

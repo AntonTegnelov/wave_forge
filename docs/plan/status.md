@@ -37,7 +37,8 @@ it, and generates any stage around focus points, providers first, through reads 
 stage's reach, the same in any order. Towns are bounded WFC worlds per site behind the `TownSolver`
 seam, solved on the GPU. `StageWorker` runs it on a thread. The valley test pack
 (`examples/valley.world.ron`) generates rolling ground, towns on levelled sites and trees kept apart
-([reference/packs.md](../reference/packs.md)). The stage runtime runs on the CPU.
+([reference/packs.md](../reference/packs.md)). The stage runtime runs on the CPU. A chunk's ground
+comes as a mesh and a height grid from any height field stage, seamless across chunks.
 
 **Products.** Instance sets in Godot's MultiMesh layout with positional `InstanceId`s, for streamed
 worlds and towns; navigation source geometry with a border into the neighbours; `YUpSpace` for
@@ -45,10 +46,12 @@ where a cell is in a Y-up engine ([engine-integration.md](../architecture/engine
 
 **Godot.** `WaveForgeWorld` streams the city with multimesh buffers, colliders on a ring near the
 player and navigation baked off Godot's thread; `WaveForgeStages` serves a pack's fields, sites,
-towns and points. Both are checked in headless Godot 4.7.2 by `verify.sh`
+towns and points, and builds the ground's meshes and, near the player, bodies for the ground and
+the towns, which a walker crosses without falling through. Both are checked in headless Godot 4.7.2 by `verify.sh`
 ([reference/godot.md](../reference/godot.md)).
 
-**Bevy.** `WaveForgePlugin` generates on Bevy's own device; `WaveForgeStagesPlugin` serves a pack.
+**Bevy.** `WaveForgePlugin` generates on Bevy's own device; `WaveForgeStagesPlugin` serves a pack
+and its ground as meshes and height grids.
 Headless apps with the real `DefaultPlugins` test both ([reference/bevy.md](../reference/bevy.md)).
 
 **Tooling.** The `wave-forge` CLI, PNG and isometric renderers, glTF model export for the city's
@@ -100,8 +103,12 @@ Each is a gap between the code and the design or the stories, with where it is t
   bounds or per-stage request radii; Field expressions are minimal and every noise in one stage
   shares a stream; Scatter has four tests and one kind per stage. Each is an issue under
   [#104](https://github.com/AntonTegnelov/wave_forge/issues/104) ([story-coverage.md](story-coverage.md)).
-- **No ground mesh or ground collider from a field** in either engine
-  ([#88](https://github.com/AntonTegnelov/wave_forge/issues/88)).
+- **The ground is one mesh per chunk at the field's resolution**, untextured and without levels of
+  detail; materials, ground cover and far levels are
+  [#46](https://github.com/AntonTegnelov/wave_forge/issues/46) and
+  [#47](https://github.com/AntonTegnelov/wave_forge/issues/47). Scattered points stand at their
+  column's height, which can differ from the mesh between column centres by up to half a column's
+  slope.
 - **No levels of detail** for the exported module meshes; they wait for authored models
   ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)).
 - **Scenes are not yet bound to points**, and there are no region tags, far proxies, occluders,

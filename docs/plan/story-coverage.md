@@ -9,7 +9,7 @@ it when a pull request closes part of a gap.
 
 Checked on 2026-09-23 against `src/stages/` after the first slice
 ([#68](https://github.com/AntonTegnelov/wave_forge/issues/68)). The valley pack gives rolling ground,
-towns on levelled sites and trees kept apart. Of the features Valheim's generator uses, that covers
+towns on levelled sites and trees kept apart, and the engines build its ground mesh and colliders. Of the features Valheim's generator uses, that covers
 about three fully and six partly. The umbrella issue is
 [#104](https://github.com/AntonTegnelov/wave_forge/issues/104). Valheim's algorithms come from a
 community port and are unverified from Iron Gate (see the story's sources).
@@ -36,7 +36,7 @@ community port and are unverified from Iron Gate (see the story's sources).
 | Felled trees and mined ore stay gone | an edits log keyed by `InstanceId` | missing; positional ids exist | [#101](https://github.com/AntonTegnelov/wave_forge/issues/101) |
 | Terrain the player digs and raises | height deltas in the edits log, invalidating dependants | missing | [#101](https://github.com/AntonTegnelov/wave_forge/issues/101) |
 | Frozen locations, a world-generator version in saves | persistence modes per stage | missing | [#102](https://github.com/AntonTegnelov/wave_forge/issues/102) |
-| The ground's mesh and collider | a ground product with skirts and material ids | missing | [#88](https://github.com/AntonTegnelov/wave_forge/issues/88) |
+| The ground's mesh and collider | a ground product, seamless across chunks, with material ids | available without materials: a mesh and a height-field collider per chunk in Godot, a mesh and height grid in Bevy | [#46](https://github.com/AntonTegnelov/wave_forge/issues/46) (materials) |
 | Generate, load and active rings of different sizes | a radius per target stage | partial: one radius for all | [#103](https://github.com/AntonTegnelov/wave_forge/issues/103) |
 | Queries for the minimap and spawners | sampling a stage at a point without chunks | missing | [#100](https://github.com/AntonTegnelov/wave_forge/issues/100) |
 | A finite disk with ocean outside | a world bound for stages | missing | [#99](https://github.com/AntonTegnelov/wave_forge/issues/99) |
@@ -61,7 +61,7 @@ Stories not listed have nothing built towards them yet beyond the shared runtime
 | G5 Caves of Qud-like | WFC inside bounded regions (towns) | map import, region jobs per zone, segmentation filters, connectivity, persistence modes ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69), [#94](https://github.com/AntonTegnelov/wave_forge/issues/94), [#102](https://github.com/AntonTegnelov/wave_forge/issues/102)) |
 | G6 Elite-like | positional ids, fields, sites | records and parent-level reads ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#93](https://github.com/AntonTegnelov/wave_forge/issues/93)) |
 | G8 Deep Rock-like | | region jobs, Assemble, curves, density volumes, edits ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69), [#70](https://github.com/AntonTegnelov/wave_forge/issues/70), [#98](https://github.com/AntonTegnelov/wave_forge/issues/98), [#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
-| N1 Press play | nodes that start on their own, colliders, navigation | a ground mesh, presets, lit and textured defaults ([#88](https://github.com/AntonTegnelov/wave_forge/issues/88), [#48](https://github.com/AntonTegnelov/wave_forge/issues/48)) |
+| N1 Press play | nodes that start on their own, colliders, navigation, a ground mesh and collider | presets, lit and textured defaults, navigation over packs ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48), [#46](https://github.com/AntonTegnelov/wave_forge/issues/46)) |
 | N3 Place my own scene | Scatter with spacing across seams | binding scenes to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), rule resources ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)) |
 | N7 My own noise | | FastNoiseLite parity ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)) |
 | N9 Share a world by seed | identical tiles across GPUs and generation orders | product and chunk hashes |

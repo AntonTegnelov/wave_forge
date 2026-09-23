@@ -235,7 +235,7 @@ and are unverified from Iron Gate).
 **Needs.** Field, Rules, Region jobs (rivers, the location table), Network, Sites, Apply, Scatter,
 Assemble, Edits, per-stage persistence. The gap, feature by feature, is in
 [story-coverage.md](../plan/story-coverage.md#g7-a-valheim-like-island-world) and tracked by
-[#104](https://github.com/AntonTegnelov/wave_forge/issues/104). **Status:** in progress (2026-09-23): the valley test pack (`examples/valley.world.ron`) generates height, towns on levelled sites built with WFC, and trees kept apart, the same in any order, and a Godot node and a Bevy plugin serve it to a game ([testing.md](../guides/testing.md)); biomes, rivers, a location table, dungeons, edits and terrain meshes are to come.
+[#104](https://github.com/AntonTegnelov/wave_forge/issues/104). **Status:** in progress (2026-09-23): the valley test pack (`examples/valley.world.ron`) generates height, towns on levelled sites built with WFC, and trees kept apart, the same in any order, and a Godot node and a Bevy plugin serve it to a game, with a ground mesh and colliders a walker crosses a town on ([testing.md](../guides/testing.md)); biomes, rivers, a location table, dungeons and edits are to come.
 
 ### G8. A Deep Rock Galactic-like cave level
 
