@@ -117,7 +117,8 @@ second, published once a second, not the last frame's time.
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
   field, rules and blur stages. An error, and NaN or an empty array, for another stage.
 - `give_table(table, rows)` replaces a given table of facts ([packs.md](packs.md#tables-of-facts)):
-  a plain Array of Dictionaries, each with an `id` from 0 and a number or, for a names column, a
+  an Array of Dictionaries, typed or not, each with an `id`, a whole number from 0 (a float such as
+  JSON reads back is taken if it is whole), and a number or, for a names column, a
   name per column. `focus_row(table, id)` focuses the stages on a row, and `table_rows(table)`
   returns a table's rows in the order of their ids, each with its `id` as a PackedInt64Array and
   its columns, names as names. Give tables and focus a row after `start` and before `follow`, since

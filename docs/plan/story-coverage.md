@@ -64,7 +64,7 @@ Stories not listed have nothing built towards them yet beyond the shared runtime
 | N1 Press play | nodes that start on their own, colliders, navigation, a ground mesh and collider | presets, lit and textured defaults, navigation over packs ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48), [#46](https://github.com/AntonTegnelov/wave_forge/issues/46)) |
 | N3 Place my own scene | Scatter with spacing across seams | binding scenes to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), rule resources ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)) |
 | N7 My own noise | | FastNoiseLite parity ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)) |
-| N11 My own history | region jobs, curves, categories, levels, the atlas, tables given and read back from GDScript, villages as sites with towns by culture or ruins, roads levelled into the ground | the example project ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
+| N11 My own history | region jobs, curves, categories, levels, the atlas, tables given and read back from GDScript, villages as sites with towns by culture or ruins, roads levelled into the ground, the example project (`examples/history`) and its check | a person following the README from a clean checkout |
 | N9 Share a world by seed | identical tiles across GPUs and generation orders | product and chunk hashes |
 | P1 Live generation without hitches | the Godot check meets the bars for a streamed WFC world with colliders and navigation | Phase 2 stages under the same bars; desktop numbers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
 | P3 Fast into a new world | kernel warming | a kernel cache, and the time recorded on a desktop |
