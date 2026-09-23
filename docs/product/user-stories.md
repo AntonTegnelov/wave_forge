@@ -382,7 +382,15 @@ from a clean checkout in an afternoon, and extending the toy history (a new kind
 no Rust. **Needs.** Tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)), the atlas and point queries
 ([#100](https://github.com/AntonTegnelov/wave_forge/issues/100)), levels
 ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93)), rasterised curves
-([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)). **Status:** not started (2026-09-23).
+([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)). **Status:** in progress (2026-09-23): the example project is
+`examples/history`: a continent preset, a toy history of 102 lines of GDScript (`history.gd`) with
+rivers, villages that grow and burn and roads to nearest neighbours, and a scene to walk through the
+result. Its headless check (`check.gd`, run by `wave_forge_godot/verify.sh`) passed on the dev
+container: one seed gives one history, which ran in 5 ms and made 112 river stretches, 8 villages and
+6 roads; a standing village and a burned one got their sites and towns 5 to 7 s after they were asked
+for; a road levels the ground; and a history saved to JSON and read back gives the same ground in a
+fresh node. The walk was looked at in rendered pictures only. The afternoon from a clean checkout,
+and extending the history without Rust, still need a person.
 
 ## P: performance
 

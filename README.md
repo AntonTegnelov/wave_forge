@@ -26,6 +26,10 @@ for event in world.poll()? { /* a chunk's tiles are ready, or it could not be pl
 
 A pack of stages runs the same way through `wave_forge::stages::Runtime`; the format is in [docs/reference/packs.md](docs/reference/packs.md), and `examples/valley.world.ron` is a complete one.
 
+`examples/history` is a Godot project that puts a history into a world with GDScript alone: a toy
+history of a continent's rivers, villages and roads, given to the stages as tables of facts, and a
+scene to walk through the result.
+
 To look at a rule set by hand, the developer CLI generates one chunk and writes each cell's tile index to `output.txt`:
 
 ```bash

@@ -164,15 +164,21 @@ fn name_site(out: &mut VarDictionary, site: &SiteId) {
     }
 }
 
-/// A row a game gives from GDScript, checked into the library's form: an `id` from 0, and every
-/// other key a column with a number or a name.
+/// A row a game gives from GDScript, checked into the library's form: an `id`, a whole number from
+/// 0, and every other key a column with a number or a name.
 fn given_row(row: &VarDictionary) -> Result<GivenRow, String> {
     let id = row
         .get("id")
         .ok_or_else(|| format!("a row without an id: {row:?}"))?;
-    let id = id
-        .try_to::<i64>()
-        .ok()
+    // JSON reads every number back as a float, so a history saved as JSON has whole float ids.
+    let whole = match id.get_type() {
+        VariantType::INT => Some(id.to::<i64>()),
+        VariantType::FLOAT => Some(id.to::<f64>())
+            .filter(|id| id.fract() == 0.0)
+            .map(|id| id as i64),
+        _ => None,
+    };
+    let id = whole
         .and_then(|id| u64::try_from(id).ok())
         .ok_or_else(|| format!("a row id that is not a whole number from 0: {id:?}"))?;
     let mut values = BTreeMap::new();
@@ -572,14 +578,14 @@ impl WaveForgeStages {
         }
     }
 
-    /// Replaces the rows of a given table of facts, a history's villages say: each row a Dictionary
-    /// with an `id`, a whole number from 0 that the game chooses, and a value for every column of
-    /// the table, a number or, for a column of names, one of its names. Every generated table below
+    /// Replaces the rows of a given table of facts, a history's villages say: an Array, typed or
+    /// not, of Dictionaries, each with an `id`, a whole number from 0 that the game chooses, and a
+    /// value for every column of the table, a number or, for a column of names, one of its names. Every generated table below
     /// it is computed again, and the stages that read any of them are generated again, with
     /// `stage_dropped` and `stage_ready` for their chunks. Returns whether the rows were taken; why
     /// not is reported as an error, and nothing changes.
     #[func]
-    fn give_table(&mut self, table: GString, rows: VarArray) -> bool {
+    fn give_table(&mut self, table: GString, rows: AnyArray) -> bool {
         let (Some(facts), Some(sampler), Some(worker)) =
             (&self.facts, &mut self.sampler, &self.worker)
         else {
