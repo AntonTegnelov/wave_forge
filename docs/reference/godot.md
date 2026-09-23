@@ -111,6 +111,9 @@ second, published once a second, not the last frame's time.
 - `set_collision_shape(module, shape)` gives every cell of a town's module a collider in the
   chunks within `collider_radius`, for every Solve stage; `modules_tagged(rules, tag)` names the
   modules of a rule set that carry a tag, to assign shapes by tag.
+- `sample(stage, position)` and `atlas(stage, min, size)`: a stage's value at a position on the
+  ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
+  field, rules and blur stages. An error, and NaN or an empty array, for another stage.
 - `curves(stage, chunk)`: a Region stage's curves through a chunk, each with its `region`, `index`,
   `points` on the ground plane in Godot's world space, and `values`.
 - `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body.
@@ -126,8 +129,9 @@ second, published once a second, not the last frame's time.
 
 At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, in the order the
 products arrived (nearest first), so after a wide request some come a few frames later; by then a
-product can have been dropped again, and its `stage_dropped` follows. `stats()` reports the
-signals still waiting as `pending_signals`.
+product can have been dropped again, and its `stage_dropped` follows. Ground is built for at most
+8 chunks per frame, nearest the player first. `stats()` reports what waits as `pending_signals`
+and `pending_grounds`.
 
 ### Ground and colliders
 

@@ -242,6 +242,13 @@ let trees = runtime.points("trees", chunk);
 - `run_until_idle` generates what is missing, stage by stage with inputs first, nearest chunk
   first; `step(budget)` generates at most `budget` products, so a caller can take new requests in
   between; `is_idle` says whether anything is left.
+- `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
+  its values over an area of its own columns, row by row with x fastest, without generating any
+  chunk: exactly what the chunks would hold. Field, Rules and Blur stages whose inputs are too can
+  be sampled; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
+  takes `&self` and holds no products, so a game can build a runtime just to sample, on any thread:
+  an atlas of 256 by 256 world tiles takes 50 ms in release on the dev container. This is how a
+  history the game simulates reads the world before play.
 - `timings()` reports what each stage has cost since the runtime was made, in the pack's order: a
   `StageTiming` of `products`, `ms` in all and `slowest_ms` (a Solve stage's includes its towns).
 - `product`, `field`, `categories`, `curves`, `sites`, `tiles` and `points` read what a stage holds for a chunk; `held`

@@ -38,7 +38,7 @@ community port and are unverified from Iron Gate (see the story's sources).
 | Frozen locations, a world-generator version in saves | persistence modes per stage | missing | [#102](https://github.com/AntonTegnelov/wave_forge/issues/102) |
 | The ground's mesh and collider | a ground product, seamless across chunks, with material ids | available without materials: a mesh and a height-field collider per chunk in Godot, a mesh and height grid in Bevy | [#46](https://github.com/AntonTegnelov/wave_forge/issues/46) (materials) |
 | Generate, load and active rings of different sizes | a radius per target stage | partial: one radius for all | [#103](https://github.com/AntonTegnelov/wave_forge/issues/103) |
-| Queries for the minimap and spawners | sampling a stage at a point without chunks | missing | [#100](https://github.com/AntonTegnelov/wave_forge/issues/100) |
+| Queries for the minimap and spawners | sampling a stage at a point without chunks | available for field, rules and blur stages: `Runtime::sample` and `atlas` | |
 | A finite disk with ocean outside | a world bound for stages | missing | [#99](https://github.com/AntonTegnelov/wave_forge/issues/99) |
 | Creatures spawned by biome | spawn points and a biome query | partial: Scatter points, no biome | [#44](https://github.com/AntonTegnelov/wave_forge/issues/44), [#91](https://github.com/AntonTegnelov/wave_forge/issues/91) |
 | World-scale generation speed | per-stage timings, GPU Field stages | timings available; fields cost 0.02 ms per chunk on the CPU, and the first town's seconds of kernel compilation dominate | [#111](https://github.com/AntonTegnelov/wave_forge/issues/111) |

@@ -442,6 +442,8 @@ default cell of 0.25, one region baked per chunk within 1 chunk of the player.
 | E32 | One region shape at batch capacities 1, 2, 4 and 8 | 4 pipelines in 8 389 ms before pipelines were shared by shape; 1 after | `wfc-gpu/tests/block_solver.rs`, dozen on the RTX 3070, at [#111] |
 | E33 | Towns of 2×2, 2×3, 3×2 and 3×3 chunks on one solver, release | the first 8 461 to 8 482 ms, of which 8 228 to 8 298 ms compiling 2 pipelines; the others 29 to 184 ms, compiling nothing; the stages check's 49 chunks arrived in 8.7 to 8.9 s instead of 16.3 to 16.6 s | `wfc-devtools/tests/town_kernels.rs` and the stages check, at [#111] |
 | E34 | A first town on a fresh device, cold and then from a pipeline cache file, release | cold 8 556 ms (8 236 compiling), warm 3 815 ms (3 727 compiling); in the stages check, the first town 8.5 to 8.7 s after it was asked for cold and 4.8 s warm. A wgpu pipeline cache on this stack cuts a pipeline from about 5.0 s to 2.1 s; creating the shader module takes 1 ms of that | `town_kernels.rs`, the stages check, and a probe of wgpu's `PipelineCache`, at [#111] |
+| E35 | An atlas of 256 by 256 world tiles of a coarse biome (Rules over a two-octave noise, scale 8) | 50 ms in release, 348 ms in debug, on the dev container's CPU | `tests/sample.rs`, at [#100] |
+| E36 | The stages check with ground built for at most 8 chunks per frame, five runs | every run passed; the node's own process p99 0.37 to 0.43 ms, max 1.6 to 5.1 ms. Before the bound, one run's slowest frame built 47 grounds in 6.8 ms and went over the 8 ms bar; in the fifth run the slowest frame built 6 bodies in 4.8 ms, which [#118] bounds | the stages check at [#100] |
 
 ### Bevy ([#26], 2026-09-18)
 
@@ -523,3 +525,5 @@ Measurements the current code still waits for.
 [#91]: https://github.com/AntonTegnelov/wave_forge/issues/91
 [#108]: https://github.com/AntonTegnelov/wave_forge/issues/108
 [#111]: https://github.com/AntonTegnelov/wave_forge/issues/111
+[#100]: https://github.com/AntonTegnelov/wave_forge/issues/100
+[#118]: https://github.com/AntonTegnelov/wave_forge/issues/118
