@@ -98,7 +98,7 @@ Each is a gap between the code and the design or the stories, with where it is t
   CPU oracle and the golden world; its generated source and workgroup budget are unit tested.
 - **Golden worlds cover tiles, not images or products.** Instance sets and chunk hashes are not in
   them yet.
-- **The stage runtime is a first slice.** Fields are one `f32` per cell column on the WFC lattice;
+- **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage;
   region jobs produce curves but nothing rasterises them yet; there are no edits, persistence modes, world
   bounds or per-stage request radii; noise is value noise only; Scatter has four tests and one kind
   per stage. Each is an issue under

@@ -22,10 +22,10 @@ community port and are unverified from Iron Gate (see the story's sources).
 | Biomes by an ordered first-match list over distance, noise and height | categorical fields, a Rules stage | available (`examples/rings.world.ron`, `tests/rules.rs`) | |
 | Height per biome, blended where biomes meet | select by category, blending | available (`examples/rings.world.ron`, `tests/blend.rs`) | |
 | Cellular noise, quantised height in some biomes | cellular noise, floor | partial: `Floor` quantises; cellular noise is missing | [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |
-| Lakes from a world scan | a region job on a coarse lattice | partial: region jobs exist; a lake job and coarse lattices do not | [#93](https://github.com/AntonTegnelov/wave_forge/issues/93) |
+| Lakes from a world scan | a region job on a coarse lattice | partial: region jobs and coarse levels exist; a lake job does not | |
 | Rivers and streams that carve the ground | curves, a network between sites, rasterising curves into height | missing | [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | A water level, ocean depth, snapping to water | a world water level, depth as a field | partial: a height range can stand in for depth | [#95](https://github.com/AntonTegnelov/wave_forge/issues/95) |
-| Zones of 64 m, terrain at a finer resolution | field resolution independent of the WFC cell, coarse levels | partial: every stage shares the WFC chunk's cells | [#93](https://github.com/AntonTegnelov/wave_forge/issues/93) |
+| Zones of 64 m, terrain at a finer resolution | field resolution independent of the WFC cell, coarse levels | available: a scale per stage, coarse feeding fine (`tests/levels.rs`) | |
 | A location table: priority, quotas, unique, minimum distance from similar, centre first | several kinds per Sites stage, quotas on a region job | missing: one footprint per region, a chance only | [#97](https://github.com/AntonTegnelov/wave_forge/issues/97) |
 | Location filters: biome, biome area, altitude, forest, terrain delta | filters reading fields and categories within a reach | missing | [#94](https://github.com/AntonTegnelov/wave_forge/issues/94), [#97](https://github.com/AntonTegnelov/wave_forge/issues/97) |
 | Levelling the ground under locations, clearing around them | base, sites, adapted field; a margin for scatter | available: `Flatten`, Scatter's `avoid` | |

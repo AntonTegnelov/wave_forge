@@ -56,9 +56,9 @@ masks ([solver.md](solver.md#the-prior)).
   single region computed before streaming starts. Region jobs agree at their borders through
   edge-keyed hashes (a river's crossing point hashed from the shared edge), not by reading each
   other. (G2, G4, G5, G6, G7, G8.) Region jobs exist as Region stages, whose job is Rust code a
-  game gives the runtime; every stage still runs on the WFC chunk lattice, and levels and records
-  are **not built yet** ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93),
-  [#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
+  game gives the runtime. Levels exist as a scale per stage, with data flowing only from coarse to
+  fine, as in Unreal PCG's hierarchical generation; reading a parent's record is part of tables of
+  facts, **not built yet** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
 - **Scheduling.** Providers first, with lifetimes held by what needs them, following LayerProcGen.
   The WFC generator's schedule is the same pattern written by hand: parity 0, parity 1 and the
   repair classes are levels of one stage, and the closure rule is provider-first generation

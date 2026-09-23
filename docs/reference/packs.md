@@ -45,14 +45,31 @@ refuses, each time with a `PackError` that names the stage:
 | `Invalid` | a parameter is out of range, or a stage reads an input of the wrong type (a field where it needs sites, say) |
 | `Cycle` | stages read each other in a cycle |
 
-`Pack::reach(target, chunk_size)` reports, for every stage `target` depends on, how many cells
-beyond a column of `target` it has to be generated: the largest sum of reaches along any path.
+`Pack::reach(target, chunk_size)` reports, for every stage `target` depends on, how many WFC cells
+beyond a column of `target` it has to be generated: the largest sum of reaches along any path, each
+in its reader's columns times the reader's scale, plus one column of an input read between its
+columns. `Pack::scale(stage)` gives a stage's scale.
 `Pack::stage_names` and `Pack::kind` describe the stages to a tool or an engine.
+
+## Levels
+
+A stage may declare a `scale`: how many WFC cells one of its columns spans along each axis, 1 by
+default. `(name: "biome", scale: 8, kind: Rules(...))` makes a coarse stage, a world map's say. Its
+chunks have as many columns as any other stage's, so each covers `scale` times as much ground, and a
+coarse world needs few of them. A coarse stage's chunks are in its own lattice: `field("biome",
+chunk)` takes the coarse chunk's coordinate.
+
+Data flows only from coarse to fine. A stage reads stages as coarse as itself or coarser, by a whole
+factor, and loading refuses anything else. A fine stage reads a coarser field between its columns,
+linearly from the four around its column's centre, and a coarser category from the column its own
+lies in. Positions in expressions (`X`, `Y`, `Distance`, `Angle`, and noise) are in WFC cells at
+every scale, so a formula means the same at any scale. Field, Blur, Rules and Region stages can be
+coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
+fields.
 
 ## Stages
 
-All stages work on one lattice for now: one value per cell column on the WFC chunk lattice, two
-dimensional, in cells. Every stage produces one of five types (a field, categories, sites, tiles or points), and loading refuses a stage that
+Every stage works on a two-dimensional lattice of cell columns at its scale. Every stage produces one of five types (a field, categories, sites, tiles or points), and loading refuses a stage that
 reads one type as another.
 
 | Kind | Produces | Reads, and how far |
