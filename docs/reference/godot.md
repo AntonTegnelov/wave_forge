@@ -90,6 +90,7 @@ second, published once a second, not the last frame's time.
 | Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
 | | `ground_material` | the material the ground is drawn with |
 | Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
+| Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
 
 ### Functions
 

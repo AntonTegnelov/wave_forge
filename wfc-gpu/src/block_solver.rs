@@ -23,18 +23,32 @@ pub struct BlockSolver<B: ComputeBackend> {
     backend: B,
     ruleset: Arc<Ruleset>,
     config: SolverConfig,
-    /// One kernel per batch capacity and region shape. Compiling one is far more expensive than a
-    /// dispatch, so they are kept; [`BlockSolver::warm`] builds them before a run needs them.
+    /// One kernel per batch capacity and region shape: a pipeline and buffers sized for the
+    /// capacity. Building one is far more expensive than a dispatch, so they are kept;
+    /// [`BlockSolver::warm`] builds them before a run needs them.
     kernels: HashMap<(u32, RegionShape), Kernel<B>>,
+    /// The compiled pipelines, by region shape. A pipeline depends on the shape alone, not on how
+    /// many regions a batch holds, so every capacity of one shape shares it, and compiling, which
+    /// takes seconds on some drivers, happens once per shape.
+    pipelines: HashMap<RegionShape, Arc<B::Pipeline>>,
+    compilation: Compilation,
     running: Option<InFlight<B>>,
     next_job: u64,
+}
+
+/// What compiling kernels has cost a solver: the pipelines it compiled and the milliseconds that
+/// took. A kernel compiles on first use unless [`BlockSolver::warm`] compiled it ahead.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Compilation {
+    pub pipelines: u32,
+    pub ms: f64,
 }
 
 /// One compiled specialisation and the buffers it binds.
 struct Kernel<B: ComputeBackend> {
     spec: KernelSpec,
     capacity: u32,
-    pipeline: B::Pipeline,
+    pipeline: Arc<B::Pipeline>,
     binding: B::Binding,
     init: B::Buffer,
     params: B::Buffer,
@@ -76,6 +90,8 @@ impl<B: ComputeBackend> BlockSolver<B> {
             ruleset,
             config,
             kernels: HashMap::new(),
+            pipelines: HashMap::new(),
+            compilation: Compilation::default(),
             running: None,
             next_job: 1,
         })
@@ -97,6 +113,12 @@ impl<B: ComputeBackend> BlockSolver<B> {
     #[must_use]
     pub fn ruleset(&self) -> &Arc<Ruleset> {
         &self.ruleset
+    }
+
+    /// How many pipelines it has compiled, and the milliseconds that took.
+    #[must_use]
+    pub const fn compilation(&self) -> Compilation {
+        self.compilation
     }
 
     /// Compiles the kernels a run will need, so the first batch does not pay for it.
@@ -209,11 +231,21 @@ impl<B: ComputeBackend> BlockSolver<B> {
         Ok(())
     }
 
-    fn build(&self, capacity: u32, region: RegionShape) -> Result<Kernel<B>, GpuError> {
+    fn build(&mut self, capacity: u32, region: RegionShape) -> Result<Kernel<B>, GpuError> {
         let spec = KernelSpec::new(region, &self.ruleset, &self.config);
         spec.check(&self.backend.limits())
             .map_err(|(needed, available)| GpuError::WorkgroupStorage { needed, available })?;
-        let pipeline = self.backend.create_pipeline(&spec.wgsl(), ENTRY)?;
+        let pipeline = match self.pipelines.get(&region) {
+            Some(pipeline) => Arc::clone(pipeline),
+            None => {
+                let compiling = std::time::Instant::now();
+                let pipeline = Arc::new(self.backend.create_pipeline(&spec.wgsl(), ENTRY)?);
+                self.compilation.pipelines += 1;
+                self.compilation.ms += compiling.elapsed().as_secs_f64() * 1000.0;
+                self.pipelines.insert(region, Arc::clone(&pipeline));
+                pipeline
+            }
+        };
         let domains = spec.domain_words() * capacity;
         let rules = self
             .backend

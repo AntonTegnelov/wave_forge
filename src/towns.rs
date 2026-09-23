@@ -145,6 +145,28 @@ pub fn gpu_solver(
     )?)
 }
 
+/// A solver on a GPU device of its own for `ruleset`, as [`gpu_solver`] makes one, that keeps its
+/// compiled kernels in `dir` across runs: compiling one takes seconds on some drivers, and a town's
+/// first solve would otherwise pay for it every time a game starts.
+///
+/// # Errors
+/// If no device is available, the rule set does not fit one, or the cache directory cannot be made
+/// or read.
+#[cfg(feature = "wgpu")]
+pub fn gpu_solver_cached(
+    ruleset: Arc<Ruleset>,
+    dir: &std::path::Path,
+) -> Result<crate::BlockSolver<crate::WgpuBackend>, crate::Error> {
+    let backend = crate::WgpuBackend::from_env()
+        .and_then(|backend| backend.cache_pipelines_in(dir))
+        .map_err(wfc_gpu::error::GpuError::from)?;
+    Ok(crate::BlockSolver::new(
+        backend,
+        ruleset,
+        crate::SolverConfig::default(),
+    )?)
+}
+
 struct RuleSet<S> {
     file: RuleFile,
     ruleset: Ruleset,
@@ -189,6 +211,15 @@ impl<S: Solver + Send> WfcTowns<S> {
             },
         );
         Ok(self)
+    }
+}
+
+impl<S: Solver> WfcTowns<S> {
+    /// The solver of the rule set `name`, to inspect, for example what compiling its kernels has
+    /// cost; `None` for a rule set it does not have.
+    #[must_use]
+    pub fn solver(&self, name: &str) -> Option<&S> {
+        self.sets.get(name)?.solver.as_ref()
     }
 }
 

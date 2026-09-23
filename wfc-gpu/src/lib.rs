@@ -15,7 +15,7 @@ pub mod kernel;
 pub mod wgpu_backend;
 
 pub use backend::{BackendError, BackendLimits, BufferUsage, ComputeBackend};
-pub use block_solver::BlockSolver;
+pub use block_solver::{BlockSolver, Compilation};
 pub use error::GpuError;
 pub use kernel::{KernelSpec, Params, SolverConfig};
 #[cfg(feature = "wgpu")]

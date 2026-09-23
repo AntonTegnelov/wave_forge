@@ -397,7 +397,7 @@ recorded. **Needs.** Levels and scales, far proxies ([#47](https://github.com/An
 
 **Acceptance criteria.** Time from pressing play to a playable area around the player under 5 s on a
 reference desktop with compiled kernels cached, and the first-run time recorded. Today it is about
-14 s in the dev container, most of it compiling kernels. **Status:** not started (2026-09-23). The valley pack's first town takes 8.5 to 8.8 s, most likely compiling its kernels, against 72 ms for every other stage together ([measurements.md](../research/measurements.md) E29, [#111](https://github.com/AntonTegnelov/wave_forge/issues/111)).
+14 s in the dev container, most of it compiling kernels. **Status:** not started (2026-09-23). The valley pack's first town arrives 8.5 to 8.7 s after it is asked for on a cold start, almost all of it compiling two kernels, and 4.8 s with the kernels cached from an earlier run; every other stage together takes 72 ms ([measurements.md](../research/measurements.md) E29, E33, E34). Compiling town kernels off the stages' thread is [#111](https://github.com/AntonTegnelov/wave_forge/issues/111).
 
 ### P4. Memory that stays bounded
 

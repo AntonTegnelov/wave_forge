@@ -199,9 +199,13 @@ library's. Which adapters the dev container and CI use is in
 - **A dispatch is capped in steps.** A shader that does not terminate takes the display driver with
   it (Windows resets a device after about two seconds), so a region has a hard step budget and
   reports `StepCap` rather than running on.
-- **Kernels are compiled when a game loads,** not at the first dispatch. One specialisation takes
-  seconds to translate, which would otherwise look like a seconds-long solve. `BlockSolver::warm`
-  compiles a list of shapes and invocation counts up front.
+- **Kernels are compiled once per region shape, ahead of time where possible, and cached across
+  runs.** One pipeline takes seconds to compile on some drivers, which would otherwise look like a
+  seconds-long solve. A pipeline depends on the region shape alone, so every batch size of one
+  shape shares it; `BlockSolver::warm` compiles a list of shapes up front; and
+  `WgpuBackend::cache_pipelines_in` keeps compiled pipelines in a file named for the adapter and
+  driver, which roughly halves a later start's compile on the dev container's stack
+  ([measurements.md](../research/measurements.md) E32 to E34).
 
 ## Alternatives that were measured or read and not taken
 

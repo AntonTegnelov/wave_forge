@@ -7,7 +7,9 @@
 ## until every chunk has arrived, then checks that towns stand on level ground at their height, that trees
 ## stand on the ground and never on a town, and that Godot's thread stayed free. Then a character with
 ## gravity walks from the open ground straight through the town and out the other side, and must never
-## sink below the ground's surface. Last, moving away drops what is no longer needed.
+## sink below the ground's surface. Then moving away drops what is no longer needed. Last, the node
+## starts again on the kernels the first start compiled and cached, and the time to the first town
+## is printed for both starts, cold and warm.
 ##
 ## The town's modules get simple shapes here: a thin floor whose top is the bottom of every street-level cell, and
 ## a full box for everything above street level, so buildings are hollow at street level, as in
@@ -49,6 +51,12 @@ var walk_to_x := 0.0
 var lowest_clearance := INF
 var highest_standing := -INF
 var walk_started_usec := 0
+## When the first town chunk arrived after it was asked for, cold and then warm; 0 until then.
+var towns_asked_usec := 0
+var first_town_usec := 0
+var cold_first_town_s := -1.0
+var warm := false
+const KERNEL_CACHE := "user://verify_kernels"
 
 func _initialize() -> void:
 	world = ClassDB.instantiate("WaveForgeStages")
@@ -59,10 +67,14 @@ func _initialize() -> void:
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	world.cell_size = Vector3.ONE * CELL_SIZE
 	world.view_radius = SEARCH_RADIUS
+	if DirAccess.dir_exists_absolute(KERNEL_CACHE):
+		for file in DirAccess.get_files_at(KERNEL_CACHE):
+			DirAccess.remove_absolute(KERNEL_CACHE.path_join(file))
+	world.kernel_cache = KERNEL_CACHE
 	world.ground_stage = "level"
 	world.collider_radius = COLLIDER_RADIUS
 	root.add_child(world)
-	world.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void: ready[[stage, chunk]] = true)
+	world.stage_ready.connect(_on_stage_ready)
 	world.stage_dropped.connect(func(stage: String, chunk: Vector3i) -> void: dropped[[stage, chunk]] = true)
 	world.generation_failed.connect(func(reason: String) -> void: _fail(reason))
 	if not world.start():
@@ -93,6 +105,11 @@ func _give_town_shapes() -> void:
 	for module in street:
 		world.set_collision_shape(module, slab)
 
+func _on_stage_ready(stage: String, chunk: Vector3i) -> void:
+	ready[[stage, chunk]] = true
+	if stage == "city" and first_town_usec == 0 and towns_asked_usec != 0:
+		first_town_usec = Time.get_ticks_usec()
+
 func _position_of(chunk: Vector3i) -> Vector3:
 	return Vector3((chunk.x + 0.5) * CELLS * CELL_SIZE, 0, (chunk.y + 0.5) * CELLS * CELL_SIZE)
 
@@ -119,6 +136,7 @@ func _find_town(waited: float) -> bool:
 	world.follow(_position_of(centre))
 	searching = false
 	started_usec = Time.get_ticks_usec()
+	towns_asked_usec = started_usec
 	return false
 
 func _view() -> Array[Vector3i]:
@@ -133,6 +151,8 @@ func _process(_delta: float) -> bool:
 	if searching:
 		_find_town(waited)
 		return false
+	if warm:
+		return _check_warm(waited)
 	if moved:
 		return _check_dropped(waited)
 	if walking:
@@ -380,6 +400,30 @@ func _check_dropped(waited: float) -> bool:
 				return true
 			return false
 	print("verify_stages: moving away dropped the first view and its ground")
+	cold_first_town_s = (first_town_usec - towns_asked_usec) / 1e6
+	# Start again, on the kernels the first start compiled into the cache.
+	warm = true
+	ready.clear()
+	first_town_usec = 0
+	world.targets = PackedStringArray(TARGETS)
+	world.view_radius = RADIUS
+	if not world.start():
+		_fail("the stages did not start again")
+		return true
+	world.follow(_position_of(centre))
+	started_usec = Time.get_ticks_usec()
+	towns_asked_usec = started_usec
+	return false
+
+## The first town after starting again on cached kernels, against the first start's.
+func _check_warm(waited: float) -> bool:
+	if first_town_usec == 0:
+		if waited > LOAD_TIMEOUT_S:
+			_fail("no town arrived %.0f s after starting again" % waited)
+			return true
+		return false
+	var warm_s := (first_town_usec - towns_asked_usec) / 1e6
+	print("verify_stages: the first town arrived %.1f s after it was asked for on a cold start and %.1f s on a start with cached kernels" % [cold_first_town_s, warm_s])
 	quit(0)
 	return true
 

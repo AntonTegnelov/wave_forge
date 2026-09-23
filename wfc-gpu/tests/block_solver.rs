@@ -478,3 +478,25 @@ fn a_malformed_batch_is_refused_before_the_device_sees_it() {
         Err(SolverError::Malformed(_))
     ));
 }
+
+#[test]
+fn one_region_shape_compiles_one_pipeline_whatever_the_batch_sizes() {
+    let chunk = OneChunk::city(ChunkShape::cube(8));
+    let mut solver = chunk.solver(SolverConfig::default());
+
+    solver
+        .warm(&[(1, chunk.shape()), (2, chunk.shape()), (5, chunk.shape())])
+        .expect("the kernels compile");
+    let job = solver
+        .start(chunk.batch(&[(1, 1), (2, 2), (3, 3), (4, 4)]))
+        .expect("a well-formed batch");
+    let result = solver.wait(job).expect("the dispatch finishes");
+
+    assert_eq!(result.statuses, vec![RegionStatus::Solved; 4]);
+    assert_eq!(
+        solver.compilation().pipelines,
+        1,
+        "{:?}",
+        solver.compilation()
+    );
+}

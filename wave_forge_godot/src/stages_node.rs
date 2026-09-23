@@ -15,7 +15,7 @@ use crate::{RECENT_FRAMES, from_vector, local_id, to_vector};
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::{ArrayType, PrimitiveType};
 use godot::classes::{
-    FileAccess, INode, Material, Node, PhysicsServer3D, RenderingServer, Shape3D,
+    FileAccess, INode, Material, Node, PhysicsServer3D, ProjectSettings, RenderingServer, Shape3D,
 };
 use godot::prelude::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -84,6 +84,12 @@ pub struct WaveForgeStages {
     #[export_group(name = "Physics")]
     #[export]
     collider_radius: i32,
+
+    /// Where compiled GPU kernels are kept across runs, so a town's first solve does not compile
+    /// them every time the game starts; `user://` paths are resolved. Empty keeps none.
+    #[export_group(name = "Advanced")]
+    #[export]
+    kernel_cache: GString,
 
     pack: Option<Arc<Pack>>,
     /// The rule sets Solve stages name, kept here too, to say what a town's tiles are.
@@ -155,6 +161,7 @@ impl INode for WaveForgeStages {
             followed: None,
             process_ms: Timings::new(RECENT_FRAMES),
             ground_stage: GString::new(),
+            kernel_cache: GString::from("user://wave_forge/kernels"),
             ground_material: None,
             collider_radius: 1,
             collision_shapes: HashMap::new(),
@@ -294,6 +301,13 @@ impl WaveForgeStages {
             z: cells.z.max(1) as u32,
         };
         let seed = self.seed as u64;
+        let cache = (!self.kernel_cache.is_empty()).then(|| {
+            std::path::PathBuf::from(
+                ProjectSettings::singleton()
+                    .globalize_path(&self.kernel_cache)
+                    .to_string(),
+            )
+        });
         let for_thread = Arc::clone(&pack);
         self.rules = rules.clone();
         self.pack = Some(pack);
@@ -308,9 +322,13 @@ impl WaveForgeStages {
             }
             let mut towns = WfcTowns::new(shape);
             for (name, file) in rules {
-                towns = towns
-                    .with_rules(&name, file, wave_forge::towns::gpu_solver)
-                    .map_err(|error| error.to_string())?;
+                towns = match &cache {
+                    Some(dir) => towns.with_rules(&name, file, |rules| {
+                        wave_forge::towns::gpu_solver_cached(rules, dir)
+                    }),
+                    None => towns.with_rules(&name, file, wave_forge::towns::gpu_solver),
+                }
+                .map_err(|error| error.to_string())?;
             }
             runtime
                 .with_towns(Box::new(towns))
