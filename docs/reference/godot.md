@@ -124,8 +124,9 @@ second, published once a second, not the last frame's time.
   a stage that reads a row with none focused stops generation. A refused give or focus is reported
   as an error, returns false and changes nothing; the stages that read a changed table are
   generated again, with `stage_dropped` and `stage_ready` for their chunks.
-- `curves(stage, chunk)`: a Region stage's curves through a chunk, each with its `region`, `index`,
-  `points` on the ground plane in Godot's world space, and `values`.
+- `curves(stage, chunk)`: a Region or TableCurves stage's curves through a chunk, each with what
+  names it (its `region` and `index`, or its `row`), `points` on the ground plane in Godot's world
+  space, and `values`.
 - `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body.
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
   since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` signals emitted in
