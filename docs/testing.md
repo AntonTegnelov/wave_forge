@@ -167,7 +167,7 @@ Two environment details matter in this dev container. Godot has to be started wi
 binaries do ([development.md](development.md#toolchain-and-environment)). And Godot's own
 `RenderingDevice` cannot be created here at all, with or without a display, because Mesa's dozen does
 not expose `VK_KHR_swapchain`; that only limits the backend discussed in
-[roadmap.md](roadmap.md#engine-integrations), not the extension, which brings its own device.
+[roadmap.md](roadmap.md#still-open-generating-on-godots-own-renderingdevice), not the extension, which brings its own device.
 
 ## Known gaps
 
