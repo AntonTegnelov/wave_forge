@@ -1,9 +1,15 @@
 ## Renders a generated city with the module models, to look at (developer tool).
 ##
 ## Run through `../render_city.sh`, which builds the extension, exports the models and starts Godot
-## with a display. The city is generated around the origin; each chunk's tiles are placed as one
-## MultiMesh per module, turned by each tile's rotation, and a picture is saved once every chunk in
-## view is there. What it shows is what a game would draw from the extension's tile catalogue.
+## with a display. The city is generated around the origin; each chunk is drawn as one MultiMesh
+## per module, and a picture is saved once every chunk in view is there.
+##
+## It draws one of two ways, named after `--` on the command line, and times each chunk on Godot's
+## thread:
+## - `server` (the default): the extension's `instance_sets` handed to RenderingServer, no nodes.
+##   The first chunk's instances are read back and compared with `tile_basis` and `cell_position`,
+##   which checks the buffer layout against a renderer that stores it.
+## - `nodes`: transforms computed in GDScript, as MultiMeshInstance3D nodes.
 extends SceneTree
 
 const CELLS := 8
@@ -17,8 +23,26 @@ var frames := 0
 ## The frame on which every chunk in view was first there, or -1 before.
 var complete_at := -1
 var placed := {}
+## How this run draws: "server" or "nodes".
+var mode := "server"
+## Milliseconds of Godot's thread each chunk took to draw, and the parts of it: asking the
+## extension for the chunk's placements, and handing them to the renderer.
+var place_ms := PackedFloat64Array()
+var ask_ms := PackedFloat64Array()
+var hand_ms := PackedFloat64Array()
+## The modules that have a model, found once.
+var drawn_names := PackedStringArray()
+## RenderingServer resources per chunk, freed when it is drawn again.
+var server_rids := {}
+var checked_layout := false
 
 func _initialize() -> void:
+	var args := OS.get_cmdline_user_args()
+	if not args.is_empty():
+		mode = args[0]
+	if mode != "server" and mode != "nodes":
+		_fail("draw with server or nodes, not %s" % mode)
+		return
 	world = ClassDB.instantiate("WaveForgeWorld")
 	world.seed = 11
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
@@ -78,9 +102,71 @@ func _model(module: String) -> Mesh:
 	models[module] = mesh
 	return mesh
 
-## Draws a chunk: every cell's module at the cell's centre, scaled to the cell and turned by the
-## tile's rotation, one MultiMesh per module.
 func _place(chunk: Vector3i) -> void:
+	var started := Time.get_ticks_usec()
+	if mode == "server":
+		_place_server(chunk)
+	else:
+		_place_nodes(chunk)
+	place_ms.append((Time.get_ticks_usec() - started) / 1000.0)
+
+## The extension's instance sets as RenderingServer multimeshes, without nodes.
+func _place_server(chunk: Vector3i) -> void:
+	if drawn_names.is_empty():
+		for module: String in _modules_with_models():
+			drawn_names.append(module)
+	var rids := []
+	var scenario := root.get_world_3d().scenario
+	var asked := Time.get_ticks_usec()
+	var sets: Array = world.instance_sets(chunk, drawn_names)
+	var handing := Time.get_ticks_usec()
+	ask_ms.append((handing - asked) / 1000.0)
+	for set: Dictionary in sets:
+		var multimesh := RenderingServer.multimesh_create()
+		var transforms: PackedFloat32Array = set["transforms"]
+		RenderingServer.multimesh_set_mesh(multimesh, _model(set["name"]).get_rid())
+		RenderingServer.multimesh_allocate_data(multimesh, transforms.size() / 12, RenderingServer.MULTIMESH_TRANSFORM_3D)
+		RenderingServer.multimesh_set_buffer(multimesh, transforms)
+		var instance := RenderingServer.instance_create2(multimesh, scenario)
+		rids.append(instance)
+		rids.append(multimesh)
+		if not checked_layout:
+			_check_layout(chunk, multimesh, set)
+	hand_ms.append((Time.get_ticks_usec() - handing) / 1000.0)
+	if checked_layout == false:
+		checked_layout = true
+		print("render_city: every instance of chunk %s sits where tile_basis and cell_position say" % chunk)
+	if server_rids.has(chunk):
+		for rid: RID in server_rids[chunk]:
+			RenderingServer.free_rid(rid)
+	server_rids[chunk] = rids
+	placed[chunk] = true
+
+## The multimesh's instances, read back from the renderer, are where the tile catalogue says.
+func _check_layout(chunk: Vector3i, multimesh: RID, set: Dictionary) -> void:
+	var tiles: PackedInt32Array = world.tiles_at(chunk)
+	var ids: PackedInt64Array = set["ids"]
+	for i in ids.size():
+		var cell := ids[i] & 0xFFFFFFFF
+		var tile := tiles[cell]
+		var expected := Transform3D(world.tile_basis(tile).scaled(Vector3.ONE * CELL_SIZE), world.cell_position(chunk, cell))
+		var got := RenderingServer.multimesh_instance_get_transform(multimesh, i)
+		if not got.is_equal_approx(expected):
+			_fail("%s at cell %d is at %s, the catalogue says %s" % [set["name"], cell, got, expected])
+			return
+
+## The modules that have a model to draw.
+func _modules_with_models() -> Array:
+	var names := []
+	for tile in world.tile_count():
+		var module: String = world.tile_name(tile)
+		if not names.has(module) and _model(module) != null:
+			names.append(module)
+	return names
+
+## Draws a chunk from GDScript: every cell's module at the cell's centre, scaled to the cell and
+## turned by the tile's rotation, one MultiMeshInstance3D per module.
+func _place_nodes(chunk: Vector3i) -> void:
 	var tiles: PackedInt32Array = world.tiles_at(chunk)
 	var by_module := {}
 	for cell in tiles.size():
@@ -124,7 +210,17 @@ func _process(_delta: float) -> bool:
 		return false
 	var image := root.get_texture().get_image()
 	image.save_png(OUT)
-	print("render_city: %d chunks drawn, saved %s" % [placed.size(), ProjectSettings.globalize_path(OUT)])
+	var sorted := place_ms.duplicate()
+	sorted.sort()
+	print("render_city: %d chunks drawn with %s, Godot's thread per chunk p50 %.2f ms, max %.2f ms; saved %s" % [
+		placed.size(), mode, sorted[sorted.size() / 2], sorted[sorted.size() - 1], ProjectSettings.globalize_path(OUT)])
+	if mode == "server":
+		ask_ms.sort()
+		hand_ms.sort()
+		print("render_city: of which instance_sets p50 %.3f ms, RenderingServer p50 %.3f ms" % [ask_ms[ask_ms.size() / 2], hand_ms[hand_ms.size() / 2]])
+	for rids: Array in server_rids.values():
+		for rid: RID in rids:
+			RenderingServer.free_rid(rid)
 	quit(0)
 	return true
 
