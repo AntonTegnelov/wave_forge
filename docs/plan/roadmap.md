@@ -64,11 +64,13 @@ first, which the survival game grows into, then what the strategy game needs.
    example project, a toy history in GDScript. Built: given and generated tables, a focused row,
    sites, towns by a row's names and roads levelled by Apply
    ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)), in both engines, and the example
-   (`examples/history`), whose check passes; a person following its README is what is left. The
-   example showed towns wait for every earlier stage over the whole view
-   ([#126](https://github.com/AntonTegnelov/wave_forge/issues/126)). With region jobs
-   ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) and these, the strategy game
-   becomes possible, and an issue opens for its repository.
+   (`examples/history`), whose check passes; a person following its README is what is left. Its
+   first town arrives in about 5.5 s, most of it the town's first solve
+   ([measurements.md](../research/measurements.md) E39,
+   [#111](https://github.com/AntonTegnelov/wave_forge/issues/111)). With region jobs
+   ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) and these, the strategy game is
+   possible; [#129](https://github.com/AntonTegnelov/wave_forge/issues/129) asks for its
+   repository.
 3. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104):
    FastNoiseLite-compatible noise ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)),
    neighbourhood filters ([#94](https://github.com/AntonTegnelov/wave_forge/issues/94)), a Scatter
