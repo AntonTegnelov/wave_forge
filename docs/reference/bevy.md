@@ -42,10 +42,11 @@ nothing blocks.
 ([packs.md](packs.md)) on a thread of its own through `StageWorker`. `build` is a closure that makes
 the `Runtime` on that thread, so a town solver builds its GPU device there: a device of its own, not
 Bevy's. Whether towns should share Bevy's device is the same measurement as the solver's
-([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
+([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)). A Region stage's job is registered
+there too, with `Runtime::with_region_job`.
 
 - `StagesSettings`: `chunk`, columns per chunk as the runtime was built with, and `cell_size`.
-- `WaveForgeStages`, a resource: `field`, `categories`, `sites`, `tiles` and `points` per stage and chunk, `timings()` per stage,
+- `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles` and `points` per stage and chunk, `timings()` per stage,
   `translation_of(point)` in Bevy's world, and `failure()`.
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
