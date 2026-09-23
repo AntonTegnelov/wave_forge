@@ -162,9 +162,11 @@ navigation source) are not an eighth type: an `Emit` stage derives them from Poi
 - an `Emit` that binds each point's `kind` to an engine asset: a `PackedScene` in Godot, a scene
   handle in Bevy.
 
-A placement's id is `(chunk coordinate, local)`, where `local` packs the stage, the cell and a slot,
-so it is positional and never an ordinal. It replaces the 32-bit chunk hash in today's instance ids,
-which two chunks can share. (N3, N5, G7.)
+A placement's id is `InstanceId { chunk, local }` (`src/products.rs`): the chunk coordinate and a
+64-bit local id packing the stage (15 bits), a slot (16 bits) and the cell's index (32 bits), so it
+is positional, never an ordinal, and fits an engine's signed 64-bit integer. The chunk is a
+coordinate rather than the 32-bit chunk hash, which two chunks can share. The tile placements of the
+WFC stage use stage 0. (N3, N5, G7.)
 
 **The Godot side authors packs through GDScript resources** that hand their engine-neutral fields to
 the library's serde types and save RON; the Bevy side uses the same types with `Reflect` derived

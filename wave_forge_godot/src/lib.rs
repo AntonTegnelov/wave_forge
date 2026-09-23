@@ -164,7 +164,8 @@ pub struct WaveForgeWorld {
     followed: Option<ChunkCoord>,
     /// The collision shape of each module that has one, by module name.
     collision_shapes: HashMap<String, Gd<Shape3D>>,
-    /// Each chunk's static body and the instance each of its shapes stands for, in shape order.
+    /// Each chunk's static body and the local id of the instance each of its shapes stands for, in
+    /// shape order.
     bodies: HashMap<ChunkCoord, (Rid, Vec<u64>)>,
     /// Each chunk's navigation region and the mesh being baked for it.
     navigation: HashMap<ChunkCoord, NavigationChunk>,
@@ -503,6 +504,9 @@ impl WaveForgeWorld {
     /// `TRANSFORM_3D` without colours or custom data), and each instance's stable `ids`. Each
     /// transform turns the module's unit model by its tile's rotation, scales it to the cell and
     /// puts it at the cell's centre. Empty for a chunk that has not been generated.
+    ///
+    /// An instance is known by its chunk and its id within the chunk, which stays the same in every
+    /// run and session; its low 32 bits are the index of the instance's cell.
     #[func]
     fn instance_sets(&self, chunk: Vector3i, names: PackedStringArray) -> Array<VarDictionary> {
         let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
@@ -516,11 +520,7 @@ impl WaveForgeWorld {
         wave_forge::instance_sets(generated, rules, &self.space(), drawn)
             .into_iter()
             .map(|set| {
-                let ids: PackedInt64Array = set
-                    .ids
-                    .iter()
-                    .map(|&id| i64::from_ne_bytes(id.to_ne_bytes()))
-                    .collect();
+                let ids: PackedInt64Array = set.ids.iter().map(|id| local_id(id.local)).collect();
                 let mut out = VarDictionary::new();
                 out.set(&"name".to_variant(), &GString::from(&set.name).to_variant());
                 out.set(
@@ -566,16 +566,25 @@ impl WaveForgeWorld {
             .collect()
     }
 
-    /// The stable id of the instance a collision hit, from the `rid` and `shape` a ray or shape
-    /// query reports: the chunk's id in the high 32 bits and the cell's index in the low ones, as
-    /// [`WaveForgeWorld::instance_sets`] gives them. -1 for a body that is not one of this node's.
+    /// The instance a collision hit, from the `rid` and `shape` a ray or shape query reports: its
+    /// `chunk` and its `id` within the chunk, as [`WaveForgeWorld::instance_sets`] gives them.
+    /// Empty for a body or shape that is not one of this node's.
     #[func]
-    fn collider_instance(&self, body: Rid, shape: i32) -> i64 {
-        self.bodies
-            .values()
-            .find(|(rid, _)| *rid == body)
-            .and_then(|(_, ids)| usize::try_from(shape).ok().and_then(|i| ids.get(i)))
-            .map_or(-1, |&id| i64::from_ne_bytes(id.to_ne_bytes()))
+    fn collider_instance(&self, body: Rid, shape: i32) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        let hit = self
+            .bodies
+            .iter()
+            .find(|(_, (rid, _))| *rid == body)
+            .and_then(|(&chunk, (_, locals))| {
+                let local = usize::try_from(shape).ok().and_then(|i| locals.get(i))?;
+                Some((chunk, *local))
+            });
+        if let Some((chunk, local)) = hit {
+            out.set(&"chunk".to_variant(), &to_vector(chunk).to_variant());
+            out.set(&"id".to_variant(), &local_id(local).to_variant());
+        }
+        out
     }
 
     /// The chunks that have colliders now.
@@ -777,7 +786,7 @@ impl WaveForgeWorld {
                     );
                     let at = Transform3D::new(basis, Vector3::new(row[3], row[7], row[11]));
                     physics.body_add_shape_ex(body, shape).transform(at).done();
-                    ids.push(id);
+                    ids.push(id.local);
                 }
             }
             physics.body_attach_object_instance_id(body, owner);
@@ -1084,6 +1093,11 @@ impl WaveForgeWorld {
         // vertical faces free of halo cells nothing will ever agree with.
         extent.with_z(0..bounds.z.max(1))
     }
+}
+
+/// An instance's id within its chunk as a Godot integer; ids stay below 2^63.
+fn local_id(local: u64) -> i64 {
+    i64::try_from(local).expect("an instance id stays below 2^63")
 }
 
 /// The lattice's coordinates as Godot sees them, which is the same order: the lattice's own axes.

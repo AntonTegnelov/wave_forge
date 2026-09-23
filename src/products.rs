@@ -15,14 +15,68 @@ use crate::space::YUpSpace;
 use std::collections::BTreeMap;
 use wfc_core::{Chunk, ChunkCoord, WorldExtent};
 
+/// Which placement an instance is, the same in every run, session and machine: the chunk it
+/// belongs to and a local id within it. A game keys what it attaches to an instance, and saved
+/// edits, by it.
+///
+/// The local id is positional, never an ordinal, so adding or removing other placements never
+/// changes it: the stage that placed it in bits 48 to 62, a slot for several placements of one
+/// stage in one cell in bits 32 to 47, and the cell's index within the chunk in the low 32 bits. It
+/// stays below 2^63, so an engine's signed 64-bit integer holds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InstanceId {
+    pub chunk: ChunkCoord,
+    pub local: u64,
+}
+
+impl InstanceId {
+    /// The stage that places a chunk's tiles.
+    pub const TILES: u16 = 0;
+    /// The largest stage number a local id holds.
+    pub const MAX_STAGE: u16 = (1 << 15) - 1;
+
+    /// The id of placement `slot` of `stage` in `cell` of `chunk`.
+    ///
+    /// # Panics
+    /// If `stage` is above [`InstanceId::MAX_STAGE`]; stage numbers are assigned by the library.
+    #[must_use]
+    pub fn new(chunk: ChunkCoord, stage: u16, cell: u32, slot: u16) -> Self {
+        assert!(
+            stage <= Self::MAX_STAGE,
+            "stage {stage} does not fit an instance id"
+        );
+        Self {
+            chunk,
+            local: (u64::from(stage) << 48) | (u64::from(slot) << 32) | u64::from(cell),
+        }
+    }
+
+    /// The stage that placed it.
+    #[must_use]
+    pub const fn stage(self) -> u16 {
+        (self.local >> 48) as u16
+    }
+
+    /// Which of its stage's placements in its cell it is.
+    #[must_use]
+    pub const fn slot(self) -> u16 {
+        (self.local >> 32) as u16
+    }
+
+    /// The index of its cell within its chunk.
+    #[must_use]
+    pub const fn cell(self) -> u32 {
+        self.local as u32
+    }
+}
+
 /// Every placement of one module in one chunk.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstanceSet {
     /// The module's name, which names its model.
     pub name: String,
-    /// Which cell each instance stands in, stable across runs: the chunk's id in the high 32 bits
-    /// and the cell's index in the low ones. A game keys what it attaches to an instance by it.
-    pub ids: Vec<u64>,
+    /// Which placement each instance is.
+    pub ids: Vec<InstanceId>,
     /// Each instance's turn from its module, in quarter turns about the lattice's +z.
     pub turns: Vec<u8>,
     /// Each instance's cell centre in a Y-up engine's world space.
@@ -98,7 +152,7 @@ pub fn instance_sets(
             origins: Vec::new(),
         });
         set.ids
-            .push((u64::from(chunk.coord.id()) << 32) | u64::from(cell));
+            .push(InstanceId::new(chunk.coord, InstanceId::TILES, cell, 0));
         set.turns.push(rules.rotation(tile));
         set.origins.push(space.cell_center(chunk.coord, cell));
     }
@@ -458,6 +512,43 @@ mod tests {
             .find(|set| set.name == "air")
             .expect("air drawn when asked for");
 
-        assert_eq!(set.ids, vec![(u64::from(chunk.coord.id()) << 32) | 1]);
+        let id = set.ids[0];
+        assert_eq!(set.ids.len(), 1);
+        assert_eq!(id.chunk, chunk.coord);
+        assert_eq!(
+            (id.stage(), id.cell(), id.slot()),
+            (InstanceId::TILES, 1, 0)
+        );
+    }
+
+    #[test]
+    fn an_instance_ids_parts_come_back_as_given_at_their_widest() {
+        let chunk = ChunkCoord::new(-7, 3, 1);
+
+        let id = InstanceId::new(chunk, InstanceId::MAX_STAGE, u32::MAX, u16::MAX);
+
+        assert_eq!(
+            (id.chunk, id.stage(), id.cell(), id.slot()),
+            (chunk, InstanceId::MAX_STAGE, u32::MAX, u16::MAX)
+        );
+        assert!(
+            i64::try_from(id.local).is_ok(),
+            "fits a signed engine integer"
+        );
+    }
+
+    #[test]
+    fn instance_ids_differ_whenever_one_part_does() {
+        let chunk = ChunkCoord::new(0, 0, 0);
+        let base = InstanceId::new(chunk, 1, 2, 3);
+
+        let others = [
+            InstanceId::new(ChunkCoord::new(1, 0, 0), 1, 2, 3),
+            InstanceId::new(chunk, 2, 2, 3),
+            InstanceId::new(chunk, 1, 3, 3),
+            InstanceId::new(chunk, 1, 2, 4),
+        ];
+
+        assert!(others.iter().all(|&other| other != base));
     }
 }
