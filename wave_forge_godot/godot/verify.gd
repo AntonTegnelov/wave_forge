@@ -146,6 +146,43 @@ func _check_city(city: Node, text: String) -> bool:
 			_fail("cell %d is at %s, expected %s" % [cell, at, expected[cell]])
 			return false
 	print("verify: the city's 81 tiles are named, turned and tagged as a game needs to place them")
+	return _check_models(city)
+
+## Every module of the city has a model a game can load at runtime, named as its tiles are: a mesh
+## coloured by a texture, or nothing at all for air.
+func _check_models(city: Node) -> bool:
+	var names := {}
+	for tile in city.tile_count():
+		names[city.tile_name(tile)] = true
+	var triangles := 0
+	for module: String in names:
+		var doc := GLTFDocument.new()
+		var state := GLTFState.new()
+		var path := "res://models/%s.glb" % module
+		if doc.append_from_file(path, state) != OK:
+			_fail("%s did not load as glTF" % path)
+			return false
+		var scene := doc.generate_scene(state)
+		var meshes := scene.find_children("*", "MeshInstance3D", true, false)
+		var drawn := not meshes.is_empty()
+		if drawn != (module != "air" and module != "stair_head"):
+			scene.free()
+			_fail("%s has %d meshes" % [module, meshes.size()])
+			return false
+		for instance: MeshInstance3D in meshes:
+			var material: StandardMaterial3D = instance.mesh.surface_get_material(0)
+			if material == null or material.albedo_texture == null:
+				scene.free()
+				_fail("%s is not coloured by a texture" % module)
+				return false
+			var aabb := instance.mesh.get_aabb()
+			if not Rect2(-0.5, -0.5, 1.0, 1.0).encloses(Rect2(aabb.position.x, aabb.position.z, aabb.size.x, aabb.size.z)):
+				scene.free()
+				_fail("%s reaches outside its cell: %s" % [module, aabb])
+				return false
+			triangles += instance.mesh.surface_get_array_index_len(0) / 3
+		scene.free()
+	print("verify: %d module models load as glTF, %d triangles in all" % [names.size(), triangles])
 	return true
 
 ## Loads until the chunks around the start are there, then runs the route by the clock, whatever

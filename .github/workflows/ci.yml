@@ -66,9 +66,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Toolchain from rust-toolchain.toml
         run: rustup toolchain install && rustc --version
+      # The extension's own workspace, and the library's, whose devtools export the models the
+      # Godot project loads.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: wave_forge_godot
+          workspaces: |
+            wave_forge_godot
+            . -> target
       - name: Software Vulkan device
         run: |
           sudo apt-get update -q
