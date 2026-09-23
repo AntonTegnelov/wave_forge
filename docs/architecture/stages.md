@@ -179,9 +179,10 @@ that row's columns, so one surface pack serves every planet. Generated rows have
 and given rows keep the game's ids, so neither ever shifts the other.
 
 A fact that changes regenerates only what depended on it, through the same invalidation as the edits
-log ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)). Today the unit is the stage: new facts drop every chunk of the stages that
-read a changed table, and of the stages below them. Chunks are the finer unit once stages read
-rows by position. A history is an edits log
+log ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)). A changed row stales the chunks its
+site covers, before and after, and a changed focused row every chunk of the stages that read it;
+staleness then spreads to each reader through its declared reach, and takes the towns and regions
+over a stale chunk with it. A history is an edits log
 written before play, and a town the player burns during play is one more fact.
 
 The limits are deliberate. History needs a finite world, as Dwarf Fortress's does. Its cost and its
