@@ -35,9 +35,9 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let (tileset, rules) = wfc_rules::loader::load_from_file(&args.rule_file)
+    let file = wfc_rules::loader::load_rule_file(&args.rule_file)
         .with_context(|| format!("loading {}", args.rule_file.display()))?;
-    let ruleset = Ruleset::new(&rules, &tileset.weights)?;
+    let ruleset = Ruleset::new(file.rules(), &file.tileset().weights)?;
     let tiles = ruleset.num_tiles();
 
     let chunk = ChunkShape {
