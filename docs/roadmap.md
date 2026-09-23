@@ -213,8 +213,8 @@ Order, each step verified before the next ([generation-model.md §8](generation-
 
 1. Positional placement ids.
 2. The stage runtime on the CPU with the order-diff test, wrapping today's WFC.
-3. Making repairs a pure level of the WFC stage, or labelling rule sets that are not
-   streaming-clean, decided by a measurement.
+3. ~~Making repairs a pure level of the WFC stage~~ ([#66](https://github.com/AntonTegnelov/wave_forge/issues/66)). Done: repairs wait for their
+   neighbourhood and go by class, and the city is the same in any generation order.
 4. The first slice, a Valheim-like surface world with WFC inside masks (G7), then the GPU Field stage.
 5. Godot authoring and viewers, the Bevy loader.
 6. One slice per stage kind: region jobs, Assemble, density volumes, records and hierarchy.

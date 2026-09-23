@@ -176,13 +176,15 @@ behind an optional feature. The decision and its reasons are in
 ## 5. Where the current generator does not fit yet
 
 **Repairs.** When a chunk cannot be solved, a repair re-solves it together with its neighbours and
-may rewrite neighbours that were already solved ([architecture.md §6.3](architecture.md)). That is
-a same-level mutation: tiles can depend on the order chunks were generated in, which breaks the
-purity rule. About one chunk in nine is repaired in the city ([status.md](status.md)). Either a
-repair becomes a pure third level of the WFC stage, whose input is the first two levels and whose
-output nothing earlier reads, or a rule set is labelled "not streaming-clean" and its worlds are
-only reproducible in the same generation order. The first is prototyped and measured before any
-other stage depends on tiles.
+may rewrite neighbours that were already solved, which on its own is a same-level mutation that
+makes tiles depend on generation order. A repair is now a pure level of the WFC stage: it waits
+until every chunk it can see has had its first attempt and the failed ones of lower repair classes
+around it are repaired, so it sees the same neighbourhood in any order
+([architecture.md §6.3](architecture.md)). The city comes out tile for tile the same generated at
+once or chunk by chunk in either direction, repairs included; the cost is a declared reach of
+`REPAIR_REACH` (3) chunks beyond a request and slower ticks at the 90th percentile
+([solver-fit.md](solver-fit.md)). Two limits stay: worlds more than one chunk tall, and a chunk
+evicted from a repaired neighbourhood, which comes back without the repair.
 
 **Variable-length GPU output.** Atomic appends make the order of emitted points depend on thread
 timing. Points are compacted by prefix sums in a fixed order and checked against a CPU reference.
