@@ -1,0 +1,8 @@
+// The pack of the edits check (verify_edits.gd): ground, and trees standing on it.
+(
+    version: 1,
+    stages: [
+        (name: "ground", kind: Field(Mul(Noise(frequency: 0.05, octaves: 2), Constant(10.0)))),
+        (name: "trees", kind: Scatter(kind: "tree", height: "ground", spacing: 3)),
+    ],
+)

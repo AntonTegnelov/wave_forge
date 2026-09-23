@@ -29,8 +29,8 @@ use wave_forge::noise::{
 };
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Facts, GivenRow, Pack, RowId, Runtime, SiteId, StageEvent, StageKind, StageWorker,
-    TableKind, Value,
+    Column, Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, SiteId, StageEvent,
+    StageKind, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -114,6 +114,9 @@ pub struct WaveForgeStages {
     /// The pack's tables of facts for the seed, as the game last gave them; the sampler and the
     /// stages' thread each hold a copy.
     facts: Option<Facts>,
+    /// The player's edits, as the game last gave or made them; the sampler and the stages' thread
+    /// each hold them too.
+    edits: Edits,
     /// A runtime that only samples, on Godot's thread: it never generates a chunk.
     sampler: Option<Runtime>,
     /// The rule sets Solve stages name, kept here too, to say what a town's tiles are.
@@ -344,6 +347,7 @@ impl INode for WaveForgeStages {
             view_radius: 2,
             pack: None,
             facts: None,
+            edits: Edits::default(),
             sampler: None,
             rules: BTreeMap::new(),
             worker: None,
@@ -775,6 +779,76 @@ impl WaveForgeStages {
         true
     }
 
+    /// Takes away a point a Scatter stage placed, a felled tree say: the point with the id
+    /// `point_sets` gave it, in the chunk it arrived in. The chunk is generated again without it,
+    /// and stays so through eviction; `edits_log` saves it. Returns whether the chunk holds such a
+    /// point; if not, that is reported as an error and nothing changes.
+    #[func]
+    fn remove_point(&mut self, stage: GString, chunk: Vector3i, id: i64) -> bool {
+        let Some(point) = self.worker.as_ref().and_then(|worker| {
+            worker
+                .points(&stage.to_string(), from_vector(chunk))?
+                .iter()
+                .find(|point| local_id(point.id.local) == id)
+                .cloned()
+        }) else {
+            godot_error!("wave forge: {stage} holds no point {id} in chunk {chunk}");
+            return false;
+        };
+        self.edit(Edit::Remove {
+            point: PointId::from(point.id),
+            at: [point.position[0], point.position[1]],
+        })
+    }
+
+    /// Raises a field stage's value, the ground's height in cells say, by `by` at the column under
+    /// `position` in Godot's world space; a negative `by` digs. Readers of the field within their
+    /// reach are generated again, and the raise stays through eviction; `edits_log` saves it.
+    /// Returns whether the stage is a field; if not, that is reported as an error.
+    #[func]
+    fn raise(&mut self, stage: GString, position: Vector3, by: f32) -> bool {
+        let Some(scale) = self
+            .pack
+            .as_ref()
+            .and_then(|pack| pack.scale(&stage.to_string()))
+        else {
+            godot_error!("wave forge: no stage is named {stage}");
+            return false;
+        };
+        let cell = [
+            self.cell_size.x * scale as f32,
+            self.cell_size.z * scale as f32,
+        ];
+        self.edit(Edit::Raise {
+            stage: stage.to_string(),
+            column: (
+                (position.x / cell[0]).floor() as i64,
+                (position.z / cell[1]).floor() as i64,
+            ),
+            by,
+        })
+    }
+
+    /// The player's edits as text, for a save: a world is its pack, seed, facts and edits.
+    #[func]
+    fn edits_log(&self) -> GString {
+        GString::from(self.edits.to_ron().as_str())
+    }
+
+    /// Replaces the player's edits with a log `edits_log` gave, from a save. Returns whether the
+    /// text is such a log for this pack; if not, that is reported as an error and nothing
+    /// changes.
+    #[func]
+    fn set_edits_log(&mut self, text: GString) -> bool {
+        match Edits::from_ron(&text.to_string()) {
+            Ok(edits) => self.set_edits(edits),
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                false
+            }
+        }
+    }
+
     /// Focuses the stages on one row of a table, a planet's say, whose columns stages read through
     /// `Row`; `id` is the row's id as `table_rows` gives it. The stages that read the table are
     /// generated again. Returns whether the table has the row; if not, that is reported as an
@@ -1109,6 +1183,28 @@ impl WaveForgeStages {
 }
 
 impl WaveForgeStages {
+    /// Adds `edit` to the player's edits and hands them on.
+    fn edit(&mut self, edit: Edit) -> bool {
+        let mut next = self.edits.clone();
+        next.push(edit);
+        self.set_edits(next)
+    }
+
+    /// Hands `edits` to the sampler and the stages' thread, if the pack takes them.
+    fn set_edits(&mut self, edits: Edits) -> bool {
+        let (Some(sampler), Some(worker)) = (&mut self.sampler, &self.worker) else {
+            godot_error!("wave forge: an edit before start");
+            return false;
+        };
+        if let Err(error) = sampler.set_edits(&edits) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        worker.set_edits(edits.clone());
+        self.edits = edits;
+        true
+    }
+
     fn chunk_shape(&self) -> ChunkShape {
         let cells = self.chunk_cells;
         ChunkShape {

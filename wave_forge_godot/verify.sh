@@ -5,8 +5,9 @@
 # which runs a focus through a streamed world in real time and asserts what a game would rely on,
 # then `godot/verify_stages.gd`, which generates the valley pack's stages and checks what they hold,
 # then `godot/verify_tables.gd`, which gives a pack tables of facts from GDScript, then
-# `godot/verify_noise.gd`, which reads a FastNoiseLite resource through a pack, and last the history
-# example's own check (examples/history/check.gd).
+# `godot/verify_noise.gd`, which reads a FastNoiseLite resource through a pack, then
+# `godot/verify_edits.gd`, which fells a tree and raises the ground, and last the history example's
+# own check (examples/history/check.gd).
 # Build in release: its frame-time bars describe the extension a game would ship.
 set -euo pipefail
 
@@ -16,5 +17,6 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_stages.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_tables.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_noise.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_edits.gd
 "$here/../examples/history/prepare.sh" "${1:-debug}"
 exec "${GODOT:-godot}" --headless --path "$here/../examples/history" --script check.gd
