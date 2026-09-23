@@ -275,8 +275,18 @@ reproduction impossible anyway.
   - `Flatten`: a height field levelled to each nearby site's height inside its footprint and
     blended back over a band of cells, a base field, then sites that read only the base, then an
     adapted field (§2).
-- **Typed products.** A stage produces a field or a list of sites, and loading refuses a stage that
-  reads one as the other.
+  - `Solve`: a town on each site, a bounded WFC world of a named rule set the size of the site's
+    footprint, with a selector for its lowest and highest layers, solved whole from a seed of the
+    site's own; a chunk's product is its part of the town and the site's height, or nothing
+    outside every site.
+- **Typed products.** A stage produces a field, a list of sites or a chunk of a town, and loading
+  refuses a stage that reads one as another.
+- **Towns behind a seam.** The runtime solves towns through the `TownSolver` trait
+  (`wave_forge::towns`). `WfcTowns` implements it over any `Solver`, one per rule set, handing the
+  solver from town to town; `town_prior` builds a bounded town's prior (a layer selector at the
+  bottom and top, and no tile facing a path out of its sides), which the city's own prior now uses
+  too. A town is solved once, when its first chunk is needed, and kept while a chunk of its region
+  is.
 - **Runtime.** `Runtime::request(focus, target)` works out, from the target backwards, which chunks
   of every stage the request needs, and drops everything else it held. `run_until_idle` generates
   what is missing, stage by stage with inputs first, nearest chunk first. A stage reads its inputs

@@ -9,6 +9,7 @@
 
 use super::pack::{Expr, Output, Pack, Reach, StageKind};
 use crate::scheduler::FocusPoint;
+use crate::towns::{Town, TownRequest, TownSolver};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use wfc_core::ChunkCoord;
@@ -68,26 +69,43 @@ impl Site {
     }
 }
 
+/// One chunk of a site's town.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TownChunk {
+    /// The site's region, which names the town.
+    pub region: (i32, i32),
+    /// The site's levelled height, where an engine puts the town's lowest layer.
+    pub height: f32,
+    /// The chunk's tiles, x fastest, then y, then z, as a WFC chunk stores them.
+    pub tiles: Arc<[u16]>,
+}
+
 /// What a stage holds for one chunk.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Product {
     Field(Field),
     /// The sites whose footprint overlaps the chunk.
     Sites(Vec<Site>),
+    /// The chunk's part of a town, or nothing for a chunk outside every site.
+    Tiles(Option<TownChunk>),
 }
 
 impl Product {
     fn field(&self) -> &Field {
         match self {
             Self::Field(field) => field,
-            Self::Sites(_) => unreachable!("inputs are type checked when the pack loads"),
+            Self::Sites(_) | Self::Tiles(_) => {
+                unreachable!("inputs are type checked when the pack loads")
+            }
         }
     }
 
     fn sites(&self) -> &[Site] {
         match self {
             Self::Sites(sites) => sites,
-            Self::Field(_) => unreachable!("inputs are type checked when the pack loads"),
+            Self::Field(_) | Self::Tiles(_) => {
+                unreachable!("inputs are type checked when the pack loads")
+            }
         }
     }
 }
@@ -107,6 +125,16 @@ pub enum StageError {
         input: String,
         reach: u32,
         needed: u32,
+    },
+    #[error("stage {0:?} solves towns, but the runtime was given no town solver")]
+    NoTownSolver(String),
+    #[error("the town solver's chunks are {solver:?} columns, the runtime's {runtime:?}")]
+    ChunkMismatch { solver: [u32; 2], runtime: [u32; 2] },
+    #[error("stage {stage:?} could not solve the town of region {region:?}: {message}")]
+    Town {
+        stage: String,
+        region: (i32, i32),
+        message: String,
     },
 }
 
@@ -163,6 +191,9 @@ pub struct Runtime {
     needed: BTreeMap<usize, BTreeSet<ChunkCoord>>,
     focus: Vec<FocusPoint>,
     products: BTreeMap<(usize, ChunkCoord), Arc<Product>>,
+    towns: Option<Box<dyn TownSolver>>,
+    /// Towns solved, by Solve stage and site region, kept while a chunk of their region is needed.
+    solved: BTreeMap<(usize, (i32, i32)), Arc<Town>>,
 }
 
 impl Runtime {
@@ -176,7 +207,25 @@ impl Runtime {
             needed: BTreeMap::new(),
             focus: Vec::new(),
             products: BTreeMap::new(),
+            towns: None,
+            solved: BTreeMap::new(),
         }
+    }
+
+    /// Gives Solve stages the solver their towns are solved with.
+    ///
+    /// # Errors
+    /// [`StageError::ChunkMismatch`] if the solver's chunks are not the runtime's.
+    pub fn with_towns(mut self, towns: Box<dyn TownSolver>) -> Result<Self, StageError> {
+        let shape = towns.chunk_shape();
+        if [shape.x, shape.y] != self.size {
+            return Err(StageError::ChunkMismatch {
+                solver: [shape.x, shape.y],
+                runtime: self.size,
+            });
+        }
+        self.towns = Some(towns);
+        Ok(self)
     }
 
     /// Asks for `target` in the chunks around `focus`, replacing the previous request. What the
@@ -220,6 +269,24 @@ impl Runtime {
                 .get(stage)
                 .is_some_and(|chunks| chunks.contains(chunk))
         });
+        let pack = Arc::clone(&self.pack);
+        self.solved.retain(|&(stage, owner), _| {
+            let StageKind::Solve { sites, .. } = &pack.stages[stage].kind else {
+                unreachable!("only Solve stages solve towns")
+            };
+            let sites = pack.index(sites).expect("linked when loaded");
+            let StageKind::Sites { region, .. } = pack.stages[sites].kind else {
+                unreachable!("a Solve stage reads a Sites stage")
+            };
+            needed.get(&stage).is_some_and(|chunks| {
+                chunks.iter().any(|chunk| {
+                    (
+                        chunk.x.div_euclid(region as i32),
+                        chunk.y.div_euclid(region as i32),
+                    ) == owner
+                })
+            })
+        });
         self.needed = needed;
         self.focus = focus.to_vec();
         Ok(())
@@ -251,6 +318,7 @@ impl Runtime {
                 (distance, *chunk)
             });
             for chunk in missing {
+                self.solve_town_of(index, chunk)?;
                 let product = self.generate(index, chunk)?;
                 self.products.insert((index, chunk), Arc::new(product));
                 generated.push((self.pack.stages[index].name.clone(), chunk));
@@ -271,7 +339,7 @@ impl Runtime {
     pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
         match self.product(stage, chunk)? {
             Product::Field(field) => Some(field),
-            Product::Sites(_) => None,
+            Product::Sites(_) | Product::Tiles(_) => None,
         }
     }
 
@@ -280,8 +348,71 @@ impl Runtime {
     pub fn sites(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Site]> {
         match self.product(stage, chunk)? {
             Product::Sites(sites) => Some(sites),
-            Product::Field(_) => None,
+            Product::Field(_) | Product::Tiles(_) => None,
         }
+    }
+
+    /// The town chunk `stage` holds for `chunk`: `None` if it is not a Solve stage, the chunk is
+    /// not generated, or it lies outside every site.
+    #[must_use]
+    pub fn tiles(&self, stage: &str, chunk: ChunkCoord) -> Option<&TownChunk> {
+        match self.product(stage, chunk)? {
+            Product::Tiles(town) => town.as_ref(),
+            Product::Field(_) | Product::Sites(_) => None,
+        }
+    }
+
+    /// The site of a Solve stage's chunk, if the chunk lies in one.
+    fn site_of(&self, index: usize, chunk: ChunkCoord) -> Option<Site> {
+        let (sites, reach) = self.pack.stages[index].inputs[0];
+        self.inputs_within(chunk, sites, reach.cells(self.size))
+            .find(|&(at, _)| at == chunk)
+            .and_then(|(_, product)| product.sites().first().copied())
+    }
+
+    /// Solves the town of `chunk`'s site for Solve stage `index`, unless it is solved already or
+    /// the chunk lies in no site.
+    fn solve_town_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Solve {
+            rules, bottom, top, ..
+        } = &stage.kind
+        else {
+            return Ok(());
+        };
+        let Some(site) = self.site_of(index, chunk) else {
+            return Ok(());
+        };
+        if self.solved.contains_key(&(index, site.region)) {
+            return Ok(());
+        }
+        let towns = self
+            .towns
+            .as_mut()
+            .ok_or_else(|| StageError::NoTownSolver(stage.name.clone()))?;
+        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+        let [high, low, _] = pcg3d([
+            world ^ stage.salt,
+            site.region.0 as u32,
+            site.region.1 as u32,
+        ]);
+        let request = TownRequest {
+            rules,
+            seed: (u64::from(high) << 32) | u64::from(low),
+            size: (
+                (site.max.0 - site.min.0) as u32,
+                (site.max.1 - site.min.1) as u32,
+            ),
+            bottom: bottom.as_ref(),
+            top: top.as_ref(),
+        };
+        let town = towns.solve(&request).map_err(|error| StageError::Town {
+            stage: stage.name.clone(),
+            region: site.region,
+            message: error.to_string(),
+        })?;
+        self.solved.insert((index, site.region), Arc::new(town));
+        Ok(())
     }
 
     /// How many chunks the runtime holds, over all stages.
@@ -360,6 +491,17 @@ impl Runtime {
 
     fn generate(&self, index: usize, chunk: ChunkCoord) -> Result<Product, StageError> {
         let stage = &self.pack.stages[index];
+        if let StageKind::Solve { .. } = &stage.kind {
+            return Ok(Product::Tiles(self.site_of(index, chunk).map(|site| {
+                let town = &self.solved[&(index, site.region)];
+                let (x, y) = (chunk.x - site.min.0, chunk.y - site.min.1);
+                TownChunk {
+                    region: site.region,
+                    height: site.height,
+                    tiles: Arc::clone(&town.chunks[(y as u32 * town.size.0 + x as u32) as usize]),
+                }
+            })));
+        }
         if let StageKind::Sites {
             region,
             size,
@@ -433,7 +575,9 @@ impl Runtime {
                             _ => base,
                         }
                     }
-                    StageKind::Sites { .. } => unreachable!("handled above"),
+                    StageKind::Sites { .. } | StageKind::Solve { .. } => {
+                        unreachable!("handled above")
+                    }
                 };
                 values.push(value);
             }

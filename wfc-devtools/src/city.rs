@@ -18,7 +18,8 @@
 use crate::invariants::{BoundaryCondition, TileGrid};
 use crate::render::{Color, VoxelModel};
 use std::collections::VecDeque;
-use wfc_core::{Prior, TileMask};
+use wave_forge::towns::Selector;
+use wfc_core::Prior;
 use wfc_rules::loader::{RuleFile, parse_rule_file};
 use wfc_rules::modules::{
     CompiledModules, DOWN, Face, ModulePrototype, NEG_X, NEG_Y, NUM_AXES, POS_X, POS_Y, UP,
@@ -168,31 +169,13 @@ impl City {
 /// If `depth` is below three: a city needs a street, a roof and air above it.
 #[must_use]
 pub fn city_prior(city: &City, depth: u32) -> Prior {
-    assert!(
-        depth >= 3,
-        "a city needs at least a street, a roof and air above it"
-    );
-    let num_tiles = city.modules.variants.len() as u32;
-    let mask_of = |tiles: &[usize]| {
-        tiles.iter().fold(TileMask::EMPTY, |mask, &tile| {
-            mask.union(TileMask::single(tile as u32))
-        })
-    };
-    let street_level = mask_of(&city.modules.variants_tagged(STREET_LEVEL));
-    let mut layers = vec![TileMask::all(num_tiles); depth as usize];
-    layers[0] = street_level;
-    layers[depth as usize - 1] = TileMask::single(city.air as u32);
-    let paths_out = |axis: usize| {
-        (0..num_tiles)
-            .filter(|&tile| {
-                matches!(city.modules.face(tile as usize, axis), Face::Horizontal(f) if f.enforce_walkable_neighbor)
-            })
-            .fold(TileMask::EMPTY, |mask, tile| mask.union(TileMask::single(tile)))
-    };
-    [POS_X, NEG_X, POS_Y, NEG_Y].iter().fold(
-        Prior::open(num_tiles).with_layers(layers),
-        |prior, &axis| prior.with_face_ban(axis, paths_out(axis)),
+    wave_forge::towns::town_prior(
+        &RuleFile::Modules(city.modules.clone()),
+        depth,
+        Some(&Selector::Tagged(STREET_LEVEL.to_owned())),
+        Some(&Selector::Named("air".to_owned())),
     )
+    .expect("the city has street-level and air tiles, and a city is at least three layers tall")
 }
 
 /// Pairs of tiles someone can walk between, as `(axis, from, to)`: `to` in the neighbour along
