@@ -98,6 +98,8 @@ second, published once a second, not the last frame's time.
 - `noises`: a Dictionary of a pack's noise names to `FastNoiseLite` resources; each replaces the
   pack's noise of that name, so a Field reading `FastNoise(name)` holds exactly what the
   resource's `get_noise_2d` gives at each column's centre in cells.
+- `target_radii`: a Dictionary of target stage names to a radius in chunks of their own; the
+  other targets keep `view_radius`.
 - `start()` loads the pack and the rule sets and starts the stages' thread, where a town solver
   builds its device.
 - `follow(position)` generates around a position in Godot's world space, asking again only when it

@@ -484,8 +484,10 @@ let trees = runtime.points("trees", chunk);
 
 - `Runtime::request(focus, targets)` works out, from the targets backwards, which chunks of every
   stage the request needs, replaces the previous request, and returns what it dropped as
-  `(stage, chunk)`. `request_bound(targets)` asks for everything inside the world's bound
-  ([World bound](#world-bound)).
+  `(stage, chunk)`. `request_each(focus, [(stage, Some(radius)), ...])` gives targets a radius of
+  their own around every focus point, a target with `None` keeping the focus point's: ground far
+  out, locations nearer and clutter nearest. `request_bound(targets)` asks for everything inside
+  the world's bound ([World bound](#world-bound)).
 - `run_until_idle` generates what is missing, stage by stage with inputs first, nearest chunk
   first; `step(budget)` generates at most `budget` products, so a caller can take new requests in
   between; `is_idle` says whether anything is left.

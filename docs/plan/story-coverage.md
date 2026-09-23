@@ -37,7 +37,7 @@ community port and are unverified from Iron Gate (see the story's sources).
 | Terrain the player digs and raises | height deltas in the edits log, invalidating dependants | missing | [#101](https://github.com/AntonTegnelov/wave_forge/issues/101) |
 | Frozen locations, a world-generator version in saves | persistence modes per stage | missing | [#102](https://github.com/AntonTegnelov/wave_forge/issues/102) |
 | The ground's mesh and collider | a ground product, seamless across chunks, with material ids | available without materials: a mesh and a height-field collider per chunk in Godot, a mesh and height grid in Bevy | [#46](https://github.com/AntonTegnelov/wave_forge/issues/46) (materials) |
-| Generate, load and active rings of different sizes | a radius per target stage | partial: one radius for all | [#103](https://github.com/AntonTegnelov/wave_forge/issues/103) |
+| Generate, load and active rings of different sizes | a radius per target stage | available: `request_each`, the Godot node's `target_radii` and Bevy's `with_radius` (`tests/stages.rs`) | |
 | Queries for the minimap and spawners | sampling a stage at a point without chunks | available for Field, Rules, Blur, Delta and Area stages: `Runtime::sample` and `atlas` | |
 | A finite disk with ocean outside | a world bound for stages | available: a pack's `bound`, a disk or a rectangle, beyond which no target chunk is generated, and `request_bound` to prepare a finite world before play (`tests/bound.rs`); the ring world is a bounded island | |
 | Creatures spawned by biome | spawn points and a biome query | partial: Scatter points, no biome | [#44](https://github.com/AntonTegnelov/wave_forge/issues/44), [#91](https://github.com/AntonTegnelov/wave_forge/issues/91) |

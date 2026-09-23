@@ -893,31 +893,61 @@ impl Runtime {
         focus: &[FocusPoint],
         targets: &[&str],
     ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let targets: Vec<(&str, Option<u32>)> =
+            targets.iter().map(|&target| (target, None)).collect();
+        self.request_around(focus, &targets)
+    }
+
+    /// Asks for each of `targets` in the chunks within its own radius of every focus point, or the
+    /// focus point's radius for a target given none: ground far out, locations nearer and clutter
+    /// nearest, say. Otherwise as [`Runtime::request`].
+    ///
+    /// # Errors
+    /// [`StageError::UnknownStage`] if no stage is named like one of `targets`.
+    pub fn request_each(
+        &mut self,
+        focus: &[FocusPoint],
+        targets: &[(&str, Option<u32>)],
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        self.request_around(focus, targets)
+    }
+
+    /// Each target within its own radius of every focus point, or the focus point's radius where
+    /// it has none.
+    fn request_around(
+        &mut self,
+        focus: &[FocusPoint],
+        targets: &[(&str, Option<u32>)],
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
         let targets = targets
             .iter()
-            .map(|target| {
+            .map(|&(target, radius)| {
                 self.pack
                     .index(target)
-                    .ok_or_else(|| StageError::UnknownStage((*target).to_owned()))
+                    .map(|index| (index, radius))
+                    .ok_or_else(|| StageError::UnknownStage(target.to_owned()))
             })
-            .collect::<Result<Vec<usize>, StageError>>()?;
-        let asked: BTreeSet<ChunkCoord> = focus
-            .iter()
-            .flat_map(|focus| {
-                let radius = focus.radius as i32;
-                let centre = focus.chunk;
-                (-radius..=radius).flat_map(move |x| {
-                    (-radius..=radius).map(move |y| ChunkCoord::new(centre.x + x, centre.y + y, 0))
+            .collect::<Result<Vec<(usize, Option<u32>)>, StageError>>()?;
+        let around = |radius: Option<u32>| -> BTreeSet<ChunkCoord> {
+            focus
+                .iter()
+                .flat_map(|focus| {
+                    let radius = radius.unwrap_or(focus.radius) as i32;
+                    let centre = focus.chunk;
+                    (-radius..=radius).flat_map(move |x| {
+                        (-radius..=radius)
+                            .map(move |y| ChunkCoord::new(centre.x + x, centre.y + y, 0))
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        };
         // Focus points are in the WFC lattice's chunks; a coarser target's chunks cover several. A
         // target's chunk wholly outside the world's bound is never asked for.
         let mut needed: BTreeMap<usize, BTreeSet<ChunkCoord>> = targets
             .into_iter()
-            .map(|target| {
+            .map(|(target, radius)| {
                 let scale = self.pack.stages[target].scale as i32;
-                let chunks = asked
+                let chunks = around(radius)
                     .iter()
                     .map(|c| ChunkCoord::new(c.x.div_euclid(scale), c.y.div_euclid(scale), 0))
                     .filter(|&chunk| self.within_bound(target, chunk))

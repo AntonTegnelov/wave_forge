@@ -20,7 +20,8 @@ const STEP: usize = 8;
 enum Order {
     Request {
         focus: Vec<FocusPoint>,
-        targets: Vec<String>,
+        /// Each target and its own radius, if it has one.
+        targets: Vec<(String, Option<u32>)>,
     },
     Facts(Facts),
     Focus {
@@ -89,10 +90,21 @@ impl StageWorker {
 
     /// Asks for the `targets` stages around `focus`, replacing the previous request.
     pub fn request(&self, focus: &[FocusPoint], targets: &[&str]) {
+        let targets: Vec<(&str, Option<u32>)> =
+            targets.iter().map(|&target| (target, None)).collect();
+        self.request_each(focus, &targets);
+    }
+
+    /// Asks for each of `targets` within its own radius of every focus point, or the focus
+    /// point's radius for a target given none, as [`Runtime::request_each`] does.
+    pub fn request_each(&self, focus: &[FocusPoint], targets: &[(&str, Option<u32>)]) {
         // A worker whose thread has stopped reports through `failure`.
         let _ = self.orders.send(Order::Request {
             focus: focus.to_vec(),
-            targets: targets.iter().map(|target| (*target).to_owned()).collect(),
+            targets: targets
+                .iter()
+                .map(|&(target, radius)| (target.to_owned(), radius))
+                .collect(),
         });
     }
 
@@ -278,8 +290,11 @@ where
             let result = match order {
                 Order::Stop => return,
                 Order::Request { focus, targets } => {
-                    let names: Vec<&str> = targets.iter().map(String::as_str).collect();
-                    runtime.request(&focus, &names)
+                    let targets: Vec<(&str, Option<u32>)> = targets
+                        .iter()
+                        .map(|(target, radius)| (target.as_str(), *radius))
+                        .collect();
+                    runtime.request_each(&focus, &targets)
                 }
                 Order::Facts(facts) => runtime.set_facts(facts),
                 Order::Focus { table, id } => runtime.focus(&table, id),

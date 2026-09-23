@@ -83,6 +83,10 @@ pub struct WaveForgeStages {
     #[export_group(name = "Streaming")]
     #[export]
     view_radius: i32,
+    /// A radius of its own for some targets, as stage name to chunks, the others keeping
+    /// `view_radius`: ground far out, locations nearer and clutter nearest, say.
+    #[export]
+    target_radii: VarDictionary,
 
     /// The field stage the ground is built from, a height in cells per column; empty for no
     /// ground. It has to be generated, as a target or as what a target reads. A chunk's ground
@@ -331,6 +335,7 @@ impl INode for WaveForgeStages {
             pack_file: GString::new(),
             rules_files: VarDictionary::new(),
             noises: VarDictionary::new(),
+            target_radii: VarDictionary::new(),
             targets: PackedStringArray::new(),
             start_on_ready: false,
             seed: 0,
@@ -591,16 +596,26 @@ impl WaveForgeStages {
             return;
         }
         self.followed = Some(chunk);
-        let targets: Vec<String> = self
+        let targets: Vec<(String, Option<u32>)> = self
             .targets
             .as_slice()
             .iter()
-            .map(ToString::to_string)
+            .map(|target| {
+                let radius = self
+                    .target_radii
+                    .get(&target.to_variant())
+                    .and_then(|radius| radius.try_to::<i64>().ok())
+                    .map(|radius| radius.max(0) as u32);
+                (target.to_string(), radius)
+            })
             .collect();
-        let names: Vec<&str> = targets.iter().map(String::as_str).collect();
-        worker.request(
+        let targets: Vec<(&str, Option<u32>)> = targets
+            .iter()
+            .map(|(target, radius)| (target.as_str(), *radius))
+            .collect();
+        worker.request_each(
             &[FocusPoint::new(chunk, self.view_radius.max(0) as u32)],
-            &names,
+            &targets,
         );
     }
 
