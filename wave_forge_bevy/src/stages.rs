@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
-    Categories, Edits, Facts, Field, Point, RowId, Runtime, Site, StageEvent, StageTiming,
+    Categories, Edits, Facts, Field, Point, RowId, Runtime, Save, Site, StageEvent, StageTiming,
     StageWorker, TownChunk,
 };
 use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, ground, ground_readers};
@@ -42,6 +42,10 @@ pub struct StageDropped {
     pub stage: String,
     pub chunk: ChunkCoord,
 }
+
+/// The save [`WaveForgeStages::request_save`] asked for, to write to disk with [`Save::to_ron`].
+#[derive(Message, Clone, Debug, PartialEq)]
+pub struct StagesSaved(pub Save);
 
 /// Generation stopped, and why.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
@@ -183,6 +187,24 @@ impl WaveForgeStages {
         self.worker.set_edits(edits);
     }
 
+    /// Asks for a save of the world: the edits a game made, less those of ephemeral stages, and
+    /// the frozen stages' chunks as first generated, stamped with the generator's version and the
+    /// pack's digest. It arrives as [`StagesSaved`] in a later frame.
+    pub fn request_save(&self) {
+        self.worker.request_save();
+    }
+
+    /// Brings the world back from `save`: its edits, and the frozen stages' chunks as they were
+    /// first generated, even under a changed pack. What it changes arrives as [`StageDropped`],
+    /// then as [`StageReady`] again. An edit the pack refuses stops generation and arrives as
+    /// [`StagesFailed`]. A game that calls [`set_edits`] afterwards hands it the save's edits with
+    /// its own after them.
+    ///
+    /// [`set_edits`]: WaveForgeStages::set_edits
+    pub fn load(&self, save: Save) {
+        self.worker.load(save);
+    }
+
     /// Focuses the stages on the row `id` of `table`, whose columns stages read through
     /// [`wave_forge::stages::Expr::Row`], with what that makes stale arriving as [`set_facts`]
     /// says.
@@ -285,6 +307,7 @@ impl Plugin for WaveForgeStagesPlugin {
         .add_message::<StageReady>()
         .add_message::<StageDropped>()
         .add_message::<StagesFailed>()
+        .add_message::<StagesSaved>()
         .add_message::<GroundReady>()
         .add_message::<GroundDropped>()
         .add_systems(
@@ -330,6 +353,7 @@ fn drain(
     mut ready: MessageWriter<StageReady>,
     mut dropped: MessageWriter<StageDropped>,
     mut failed: MessageWriter<StagesFailed>,
+    mut saved: MessageWriter<StagesSaved>,
     mut ground_ready: MessageWriter<GroundReady>,
     mut ground_dropped: MessageWriter<GroundDropped>,
 ) {
@@ -350,6 +374,13 @@ fn drain(
                     ground_dropped.write(GroundDropped(chunk));
                 }
                 dropped.write(StageDropped { stage, chunk });
+            }
+            StageEvent::Saved => {
+                let save = stages
+                    .worker
+                    .take_save()
+                    .expect("a Saved event carries a save");
+                saved.write(StagesSaved(save));
             }
         }
     }

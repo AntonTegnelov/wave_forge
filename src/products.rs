@@ -23,7 +23,9 @@ use wfc_core::{Chunk, ChunkCoord, WorldExtent};
 /// changes it: the stage that placed it in bits 48 to 62, a slot for several placements of one
 /// stage in one cell in bits 32 to 47, and the cell's index within the chunk in the low 32 bits. It
 /// stays below 2^63, so an engine's signed 64-bit integer holds it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
+)]
 pub struct InstanceId {
     pub chunk: ChunkCoord,
     pub local: u64,

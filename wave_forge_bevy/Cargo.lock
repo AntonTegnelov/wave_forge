@@ -3575,6 +3575,7 @@ dependencies = [
 name = "wfc-core"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "thiserror 2.0.20",
  "wfc-rules",
 ]

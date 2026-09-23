@@ -9,17 +9,19 @@ pub mod pack;
 pub mod regions;
 mod rivers;
 pub mod runtime;
+pub mod save;
 pub mod worker;
 
 pub use edits::{Edit, Edits, PointId};
 pub use facts::{Facts, GivenRow, MAX_SHARED, Row, RowId, Table, Value};
 pub use pack::{
     Bound, Column, Condition, Expr, Group, LocationKind, MAX_BLEND, MAX_CATEGORIES, MAX_CHILDREN,
-    MAX_SCATTER_SLOTS, MAX_TRIES, PACK_VERSION, Pack, PackError, PackFile, Profile, Rule, StageDef,
-    StageKind, TableDef, TableKind, Water,
+    MAX_SCATTER_SLOTS, MAX_TRIES, PACK_VERSION, Pack, PackError, PackFile, Persist, Profile, Rule,
+    StageDef, StageKind, TableDef, TableKind, Water,
 };
 pub use runtime::{
     Categories, Field, FieldView, Point, Product, Runtime, Site, SiteId, StageError, StageTiming,
     TownChunk,
 };
+pub use save::{FrozenChunk, Save};
 pub use worker::{StageEvent, StageWorker};

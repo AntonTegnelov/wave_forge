@@ -1,8 +1,10 @@
-// The pack of the edits check (verify_edits.gd): ground, and trees standing on it.
+// The pack of the edits check (verify_edits.gd): ground, trees standing on it, which a save keeps
+// as they were first generated, and grass, which a save never keeps.
 (
     version: 1,
     stages: [
         (name: "ground", kind: Field(Mul(Noise(frequency: 0.05, octaves: 2), Constant(10.0)))),
-        (name: "trees", kind: Scatter(kind: "tree", height: "ground", spacing: 3)),
+        (name: "trees", persist: Frozen, kind: Scatter(kind: "tree", height: "ground", spacing: 3)),
+        (name: "grass", persist: Ephemeral, kind: Scatter(kind: "grass", height: "ground", spacing: 2)),
     ],
 )

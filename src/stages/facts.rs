@@ -17,7 +17,9 @@ use wfc_core::hash::pcg3d;
 /// A row's id. A given row's is the game's own id alone; a generated row's is its parent's id
 /// followed by its index among the parent's children, or its index alone without a parent. Either
 /// way, adding or changing other rows never changes it.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize,
+)]
 pub struct RowId(pub Vec<u64>);
 
 /// One row of a table: its id and a value for each of the table's columns, in their order.

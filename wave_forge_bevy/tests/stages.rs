@@ -1,6 +1,7 @@
 //! A pack of stages in a Bevy app: a focus entity makes the stages generate around it, what
 //! arrives is what the library's runtime generates, and moving away drops what was left behind.
-//! The same holds for each chunk's ground, built from the height field.
+//! The same holds for each chunk's ground, built from the height field, and a save made in one app
+//! brings a player's edits back in another.
 
 use bevy_app::{App, Startup, Update};
 use bevy_ecs::message::MessageReader;
@@ -10,12 +11,14 @@ use bevy_transform::components::GlobalTransform;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wave_forge::stages::{Facts, GivenRow, Pack, RowId, Runtime, Value};
+use wave_forge::stages::{
+    Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, Value,
+};
 use wave_forge::{ChunkCoord, FocusPoint, ground};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::stages::{
-    GroundDropped, GroundReady, StageDropped, StageReady, StagesSettings, WaveForgeStages,
-    WaveForgeStagesPlugin, WaveForgeStagesSystems, ground_mesh,
+    GroundDropped, GroundReady, StageDropped, StageReady, StagesSaved, StagesSettings,
+    WaveForgeStages, WaveForgeStagesPlugin, WaveForgeStagesSystems, ground_mesh,
 };
 
 const PACK: &str = r#"(
@@ -46,6 +49,7 @@ struct Seen {
     dropped: Vec<(String, ChunkCoord)>,
     grounds: Vec<ChunkCoord>,
     grounds_dropped: Vec<ChunkCoord>,
+    saves: Vec<Save>,
 }
 
 fn collect(
@@ -54,6 +58,7 @@ fn collect(
     mut dropped: MessageReader<StageDropped>,
     mut grounds: MessageReader<GroundReady>,
     mut grounds_dropped: MessageReader<GroundDropped>,
+    mut saves: MessageReader<StagesSaved>,
 ) {
     seen.ready
         .extend(ready.read().map(|m| (m.stage.clone(), m.chunk)));
@@ -62,6 +67,7 @@ fn collect(
     seen.grounds.extend(grounds.read().map(|m| m.0));
     seen.grounds_dropped
         .extend(grounds_dropped.read().map(|m| m.0));
+    seen.saves.extend(saves.read().map(|m| m.0.clone()));
 }
 
 fn plugin() -> WaveForgeStagesPlugin {
@@ -499,4 +505,50 @@ fn a_target_with_a_radius_of_its_own_reaches_past_the_focus() {
     let stages = app.world().resource::<WaveForgeStages>();
     assert!(stages.points("trees", ChunkCoord::new(2, 0, 0)).is_none());
     assert!(stages.field("height", ChunkCoord::new(4, 0, 0)).is_none());
+}
+
+/// The trees in the chunk at the origin, once they have arrived.
+fn trees_at_origin(app: &mut App) -> Vec<wave_forge::stages::Point> {
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .points("trees", origin)
+            .is_some()
+    });
+    app.world()
+        .resource::<WaveForgeStages>()
+        .points("trees", origin)
+        .expect("arrived")
+        .to_vec()
+}
+
+#[test]
+fn a_save_made_in_one_app_brings_a_felled_tree_back_felled_in_another() {
+    let mut first = app();
+    let felled = trees_at_origin(&mut first)[0].clone();
+    let mut edits = Edits::default();
+    edits.push(Edit::Remove {
+        point: PointId::from(felled.id),
+        at: [felled.position[0], felled.position[1]],
+    });
+    first
+        .world()
+        .resource::<WaveForgeStages>()
+        .set_edits(edits.clone());
+    first.world().resource::<WaveForgeStages>().request_save();
+    run_until(&mut first, |app| {
+        !app.world().resource::<Seen>().saves.is_empty()
+    });
+    let save = first.world().resource::<Seen>().saves[0].clone();
+
+    let mut second = app();
+    second
+        .world()
+        .resource::<WaveForgeStages>()
+        .load(save.clone());
+    let trees = trees_at_origin(&mut second);
+
+    assert_eq!(save.edits, edits);
+    assert!(trees.iter().all(|tree| tree.id != felled.id), "{trees:?}");
 }

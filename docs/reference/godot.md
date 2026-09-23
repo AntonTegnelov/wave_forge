@@ -103,6 +103,10 @@ second, published once a second, not the last frame's time.
   Godot's world space ([packs.md](packs.md#edits)). `edits_log()` gives the player's edits as text
   for a save, and `set_edits_log(text)` restores them. A refused edit is reported as an error,
   returns false and changes nothing.
+- `request_save()` asks the stages' thread for a save ([packs.md](packs.md#persistence-and-saves)),
+  which arrives as the `saved` signal's text a game writes to disk; `load_save(text)` brings a world
+  back from it. A text that is not a save, or holds an edit the pack refuses, is reported as an
+  error, returns false and changes nothing.
 - `target_radii`: a Dictionary of target stage names to a radius in chunks of their own; the
   other targets keep `view_radius`.
 - `start()` loads the pack and the rule sets and starts the stages' thread, where a town solver
@@ -149,7 +153,8 @@ second, published once a second, not the last frame's time.
 
 ### Signals
 
-`stage_ready(stage, chunk)`, `stage_dropped(stage, chunk)`, `generation_failed(reason)`.
+`stage_ready(stage, chunk)`, `stage_dropped(stage, chunk)`, `generation_failed(reason)`,
+`saved(text)`.
 
 At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, in the order the
 products arrived (nearest first), so after a wide request some come a few frames later; by then a
@@ -173,6 +178,7 @@ are deep. Ground and bodies go when their chunk's field is dropped or the player
 colliders and navigation), `godot/verify_stages.gd` (the valley pack, its ground, and a walk
 through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) and
 `godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack) and `godot/verify_edits.gd`
-(a felled tree and raised ground through a save) in a real headless Godot.
+(a felled tree and raised ground through an edits log and a save, and cut grass growing back) in a
+real headless Godot.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).

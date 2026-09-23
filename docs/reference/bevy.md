@@ -57,7 +57,9 @@ thread.
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
 - `WaveForgeStages::set_edits(edits)` hands the stages the player's edits
-  ([packs.md](packs.md#edits)).
+  ([packs.md](packs.md#edits)). `request_save()` asks for a save, which arrives as a
+  `StagesSaved(save)` message, and `load(save)` brings a world back from one
+  ([packs.md](packs.md#persistence-and-saves)).
 - `.with_radius(stage, radius)` generates one target within a radius of its own around every
   `GenerationFocus`, the others keeping each focus's radius.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it

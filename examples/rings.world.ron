@@ -4,9 +4,9 @@
 // from the centre and noise, with a wobble that keeps the rings from being perfect circles; ore and
 // groves of birches are scattered by biome, height and how uneven the ground is, and shrines are
 // placed per ring from a location table; rivers run from the high ground to the sea and are carved
-// into the ground. The test pack for G7's biome rules, per-biome height, rivers, placement rules and
-// location table; heights run from about -0.3 to 1 before the
-// biomes shape them.
+// into the ground. Shrines are frozen, kept in a save as first placed; grass is clutter, never saved.
+// The test pack for G7's biome rules, per-biome height, rivers, placement rules, location table and
+// persistence; heights run from about -0.3 to 1 before the biomes shape them.
 (
     version: 1,
     // A finite island: nothing is generated beyond the sea around it.
@@ -105,7 +105,7 @@
             when: [Greater(Is("biome", ["grassland"]), Constant(0.5))])),
         // Shrines per ring: in every region of 24 chunks, two in the woods at least 48 cells
         // apart on gentle ground, one in the peaks and one on the grassland, the woods' first.
-        (name: "shrines", kind: Locations(height: "terrain", region: 24, kinds: [
+        (name: "shrines", persist: Frozen, kind: Locations(height: "terrain", region: 24, kinds: [
             (name: "woods_shrine", priority: 2, quota: 2, apart: 48.0, tries: 80, when: [
                 Greater(Is("biome", ["woods"]), Constant(0.5)),
                 Less(Input("roughness"), Constant(0.25)),
@@ -115,5 +115,8 @@
             (name: "meadow_shrine", quota: 1, tries: 80,
                 when: [Greater(Is("biome", ["grassland"]), Constant(0.5))]),
         ])),
+        // Grass on all the land: cut grass grows back, and a save never holds it.
+        (name: "grass", persist: Ephemeral, kind: Scatter(kind: "grass", height: "terrain", spacing: 2,
+            when: [Greater(Input("terrain"), Constant(0.05))])),
     ],
 )

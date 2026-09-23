@@ -74,10 +74,9 @@ first, which the survival game grows into, then what the strategy game needs.
 3. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104). Built: Godot's FastNoiseLite
    noise in 2D ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)), neighbourhood filters, a Scatter modifier chain, blocking
    across Scatter stages, a location table, curves drawn into the ground, a world bound, an edits
-   log and a radius per target stage. Left: a Network stage for paths between sites
-   ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)), dungeons through Assemble
-   ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)), persistence modes ([#102](https://github.com/AntonTegnelov/wave_forge/issues/102)) and
-   scenes bound to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)). A test pack of G7's world then verifies G7.
+   log, persistence modes and a radius per target stage. Left: a Network stage for paths between
+   sites ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)), dungeons through Assemble
+   ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) and scenes bound to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)). A test pack of G7's world then verifies G7.
 4. **Engine depth, alongside:** ground cover, grass and wind
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), region tags for audio and
    localisation ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)), far proxies and

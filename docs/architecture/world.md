@@ -110,8 +110,8 @@ Two limits remain:
   the other parity, which it does not wait for, because they may be waiting for it.
 - **Partial eviction of a repaired neighbourhood.** A chunk evicted and generated again comes back
   as its first attempt, without the repairs of neighbours that had rewritten it, so evicting part of
-  a repaired neighbourhood can leave a seam. Keeping the repairs is the persistence work
-  ([#102](https://github.com/AntonTegnelov/wave_forge/issues/102)).
+  a repaired neighbourhood can leave a seam. Keeping the repairs is
+  [#141](https://github.com/AntonTegnelov/wave_forge/issues/141).
 
 A rule set is **streaming-clean** when no chunk ever needs a repair; then neither limit applies. The
 city is not: about one chunk in ten is repaired.

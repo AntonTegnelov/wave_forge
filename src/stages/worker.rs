@@ -9,6 +9,7 @@ use super::edits::Edits;
 use super::facts::{Facts, RowId};
 use super::regions::Curve;
 use super::runtime::{Categories, Field, Point, Product, Runtime, Site, StageTiming, TownChunk};
+use super::save::Save;
 use crate::ChunkCoord;
 use crate::scheduler::FocusPoint;
 use std::collections::HashMap;
@@ -26,6 +27,8 @@ enum Order {
     },
     Facts(Facts),
     Edits(Edits),
+    Save,
+    Load(Box<Save>),
     Focus {
         table: String,
         id: RowId,
@@ -41,6 +44,7 @@ enum Report {
     ),
     Dropped(Vec<(String, ChunkCoord)>),
     Failed(String),
+    Saved(Box<Save>),
 }
 
 /// What changed about a stage's chunk.
@@ -50,6 +54,9 @@ pub enum StageEvent {
     Generated { stage: String, chunk: ChunkCoord },
     /// The product is no longer needed and was dropped, so anything built from it can go too.
     Dropped { stage: String, chunk: ChunkCoord },
+    /// The save [`StageWorker::request_save`] asked for is ready to take
+    /// ([`StageWorker::take_save`]).
+    Saved,
 }
 
 /// A runtime on its own thread. Dropping it asks the thread to stop and does not wait for it.
@@ -60,6 +67,8 @@ pub struct StageWorker {
     reports: Mutex<Receiver<Report>>,
     products: HashMap<(String, ChunkCoord), Arc<Product>>,
     failure: Option<String>,
+    /// The save the thread last made, until it is taken.
+    saved: Option<Save>,
     timings: Vec<(String, StageTiming)>,
 }
 
@@ -86,6 +95,7 @@ impl StageWorker {
             reports: Mutex::new(received),
             products: HashMap::new(),
             failure: None,
+            saved: None,
             timings: Vec::new(),
         }
     }
@@ -123,6 +133,23 @@ impl StageWorker {
         let _ = self.orders.send(Order::Edits(edits));
     }
 
+    /// Asks the thread for a save of the world as [`Runtime::save`] makes it; it arrives as a
+    /// [`StageEvent::Saved`] from [`StageWorker::drain`], to take with [`StageWorker::take_save`].
+    pub fn request_save(&self) {
+        let _ = self.orders.send(Order::Save);
+    }
+
+    /// The save the thread last made, once: `None` before it arrives or after it was taken.
+    pub fn take_save(&mut self) -> Option<Save> {
+        self.saved.take()
+    }
+
+    /// Brings the world back from `save`, as [`Runtime::load`] does: what it changes arrives as
+    /// drops and is generated again. An error stops the thread and arrives as a failure.
+    pub fn load(&self, save: Save) {
+        let _ = self.orders.send(Order::Load(Box::new(save)));
+    }
+
     /// Focuses the runtime on the row `id` of `table`, as [`Runtime::focus`] does, with what that
     /// makes stale arriving as drops. An error stops the thread and arrives as a failure.
     pub fn focus(&self, table: &str, id: RowId) {
@@ -158,6 +185,10 @@ impl StageWorker {
                     }
                 }
                 Ok(Report::Failed(reason)) => self.failure = Some(reason),
+                Ok(Report::Saved(save)) => {
+                    self.saved = Some(*save);
+                    events.push(StageEvent::Saved);
+                }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => return events,
             }
         }
@@ -307,6 +338,11 @@ where
                 }
                 Order::Facts(facts) => runtime.set_facts(facts),
                 Order::Edits(edits) => runtime.set_edits(&edits),
+                Order::Save => {
+                    let _ = reports.send(Report::Saved(Box::new(runtime.save())));
+                    Ok(Vec::new())
+                }
+                Order::Load(save) => runtime.load(&save),
                 Order::Focus { table, id } => runtime.focus(&table, id),
             };
             match result {

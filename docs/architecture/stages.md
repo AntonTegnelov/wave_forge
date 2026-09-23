@@ -66,9 +66,9 @@ masks ([solver.md](solver.md#the-prior)).
   with GPU stages.
 - **Persistence per stage.** A *pure* stage regenerates and replays edits; a *freeze on first emit*
   stage is snapshotted (as Minecraft, Noita, Qud and Valheim do with placed objects); an *ephemeral*
-  stage (Valheim's clutter) is never saved. Saves record the generator version. (G7, N8, P4.) Every
-  stage is pure today, and replays the player's edits ([packs.md](../reference/packs.md#edits));
-  the other modes are **not built yet** ([#102](https://github.com/AntonTegnelov/wave_forge/issues/102)).
+  stage (Valheim's clutter) is never saved. Saves record the generator version. (G7, N8, P4.) All
+  three are built, and a save records the pack's digest too
+  ([packs.md](../reference/packs.md#persistence-and-saves)).
 
 ## Data between stages
 
@@ -169,7 +169,8 @@ with the same expressions as any other value. A game gives a table at run time, 
 only data, so it can be written in any language and run anywhere, unlike a stage, which runs on the
 stages' thread and must stay pure. Stages read tables as they read fields: Sites from a table, a
 Solve choosing its rule set by a column, Apply carving roads from curves. The world is then a
-function of the pack, the seed and the facts, and a save holds the facts, never the world.
+function of the pack, the seed and the facts, and a save holds the facts and the edits, never the
+world, apart from the chunks of stages a pack freezes.
 
 The same tables describe generated hierarchies. A table can compute its rows from a parent table's
 by expressions, a budget shared among a parent's children for instance, which is what Elite's

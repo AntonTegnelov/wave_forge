@@ -1097,6 +1097,7 @@ dependencies = [
 name = "wfc-core"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "thiserror",
  "wfc-rules",
 ]

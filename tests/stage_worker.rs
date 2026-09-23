@@ -208,3 +208,49 @@ fn a_new_focus_drops_what_read_the_old_row_and_generates_it_again() {
         })
     );
 }
+
+#[test]
+fn a_save_made_on_the_thread_brings_frozen_chunks_back_on_another() {
+    let frozen = |spacing: u32| {
+        Arc::new(
+            Pack::parse(&format!(
+                r#"(version: 1, stages: [
+                    (name: "height", kind: Field(Mul(Noise(frequency: 0.04, octaves: 3), Constant(20.0)))),
+                    (name: "trees", persist: Frozen, kind: Scatter(kind: "tree", height: "height", spacing: {spacing})),
+                ])"#
+            ))
+            .expect("a valid pack"),
+        )
+    };
+    let chunk = ChunkCoord::new(0, 0, 0);
+    let first_pack = frozen(3);
+    let mut first = StageWorker::spawn(move || Ok(Runtime::new(first_pack, 4, SIZE)));
+    first.request(&[FocusPoint::new(chunk, 0)], &["trees"]);
+    drain_until(&mut first, |worker| worker.points("trees", chunk).is_some());
+    let trees = first.points("trees", chunk).expect("arrived").to_vec();
+
+    first.request_save();
+    let started = Instant::now();
+    let mut events = Vec::new();
+    while !events.contains(&StageEvent::Saved) {
+        events.extend(first.drain());
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "no save in 10 s"
+        );
+        std::thread::yield_now();
+    }
+    let save = first.take_save().expect("a save");
+    let second_pack = frozen(5);
+    let mut second = StageWorker::spawn(move || Ok(Runtime::new(second_pack, 4, SIZE)));
+    second.load(save);
+    second.request(&[FocusPoint::new(chunk, 0)], &["trees"]);
+    drain_until(&mut second, |worker| {
+        worker.points("trees", chunk).is_some()
+    });
+
+    assert_eq!(
+        second.points("trees", chunk).expect("arrived"),
+        trees.as_slice()
+    );
+}

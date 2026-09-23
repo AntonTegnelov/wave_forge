@@ -1,10 +1,12 @@
-## Fells a tree and raises the ground from GDScript, and checks that both hold through a save.
+## Fells a tree, cuts grass and raises the ground from GDScript, and checks what a save keeps.
 ##
-## Run by `../verify.sh` after `verify_noise.gd`. A tree the node placed is removed by the id
-## `point_sets` gave it, and the ground is raised under a position; the chunk comes back without
-## the tree and with the ground higher. Then a second node, given only the first one's
-## `edits_log`, holds the same. Removing a point that is not there, raising a stage that is no
-## field and a log that is not one are refused.
+## Run by `../verify.sh` after `verify_noise.gd`. A tree and a blade of grass the node placed are
+## removed by the ids `point_sets` gave them, and the ground is raised under a position; the chunk
+## comes back without them and with the ground higher. A second node given only the first one's
+## `edits_log` holds the same. Then the first node's save, from `request_save` and the `saved`
+## signal, is loaded into a third: the tree stays felled and the ground raised, but the grass,
+## an ephemeral stage whose edits are never saved, grows back. Removing a point that is not there,
+## raising a stage that is no field, and a log or a save that is not one are refused.
 extends SceneTree
 
 const CELLS := 8
@@ -16,6 +18,10 @@ var second: Node
 var ready := {}
 var dropped := {}
 var restored := {}
+var loaded := {}
+var third: Node
+var cut := -1
+var save_text := ""
 var started_usec := 0
 var phase := "arrive"
 var felled := -1
@@ -34,7 +40,7 @@ func _initialize() -> void:
 func _world() -> Node:
 	var world: Node = ClassDB.instantiate("WaveForgeStages")
 	world.pack_file = "res://edits.world.ron"
-	world.targets = PackedStringArray(["ground", "trees"])
+	world.targets = PackedStringArray(["ground", "trees", "grass"])
 	world.seed = 5
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	world.view_radius = 1
@@ -43,9 +49,9 @@ func _world() -> Node:
 	world.generation_failed.connect(func(reason: String) -> void: _fail(reason))
 	return world
 
-func _ids(world: Node) -> PackedInt64Array:
+func _ids(world: Node, stage := "trees") -> PackedInt64Array:
 	var ids := PackedInt64Array()
-	for set: Dictionary in world.point_sets("trees", ORIGIN):
+	for set: Dictionary in world.point_sets(stage, ORIGIN):
 		ids.append_array(set["ids"])
 	return ids
 
@@ -55,7 +61,7 @@ func _process(_delta: float) -> bool:
 		return true
 	match phase:
 		"arrive":
-			if ready.has(["trees", ORIGIN]) and ready.has(["ground", ORIGIN]):
+			if ready.has(["trees", ORIGIN]) and ready.has(["ground", ORIGIN]) and ready.has(["grass", ORIGIN]):
 				_edit()
 		"edited":
 			if ready.has(["trees", ORIGIN]) and ready.has(["ground", ORIGIN]):
@@ -63,16 +69,23 @@ func _process(_delta: float) -> bool:
 		"restored":
 			if restored.has(["trees", ORIGIN]) and restored.has(["ground", ORIGIN]):
 				return _check_restored()
+		"saving":
+			if save_text != "":
+				_load_save()
+		"loaded":
+			if loaded.has(["trees", ORIGIN]) and loaded.has(["ground", ORIGIN]) and loaded.has(["grass", ORIGIN]):
+				return _check_loaded()
 	return false
 
 func _edit() -> void:
 	felled = _ids(first)[0]
+	cut = _ids(first, "grass")[0]
 	height = first.field_values("ground", ORIGIN)[5 * CELLS + 5]
 	if first.remove_point("trees", Vector3i(3, 3, 0), felled) or first.raise("trees", Vector3.ZERO, 1.0) or first.set_edits_log("nonsense"):
 		_fail("a point that is not there, a stage that is no field or a log that is not one was taken")
 		return
 	ready.clear()
-	if not first.remove_point("trees", ORIGIN, felled) or not first.raise("ground", Vector3(5.5, 0, 5.5), 7.0):
+	if not first.remove_point("trees", ORIGIN, felled) or not first.remove_point("grass", ORIGIN, cut) or not first.raise("ground", Vector3(5.5, 0, 5.5), 7.0):
 		_fail("the tree or the raise was refused")
 		return
 	phase = "edited"
@@ -100,6 +113,30 @@ func _check_restored() -> bool:
 		_fail("the edits restored from the log give another world")
 		return true
 	print("verify_edits: a node given only the edits log holds the same trees and ground")
+	first.saved.connect(func(text: String) -> void: save_text = text)
+	first.request_save()
+	phase = "saving"
+	started_usec = Time.get_ticks_usec()
+	return false
+
+func _load_save() -> void:
+	third = _world()
+	third.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void: loaded[[stage, chunk]] = true)
+	if not third.start() or third.load_save("nonsense") or not third.load_save(save_text):
+		_fail("the third node took a save that is not one, or refused the first one's")
+		return
+	third.follow(Vector3(4, 0, 4))
+	phase = "loaded"
+	started_usec = Time.get_ticks_usec()
+
+func _check_loaded() -> bool:
+	if felled in _ids(third) or third.field_values("ground", ORIGIN) != first.field_values("ground", ORIGIN):
+		_fail("the save lost the felled tree or the raised ground")
+		return true
+	if not cut in _ids(third, "grass"):
+		_fail("the cut grass %d stayed cut; an ephemeral stage's edits are never saved" % cut)
+		return true
+	print("verify_edits: a save keeps the felled tree and the raised ground, and the cut grass grows back")
 	quit(0)
 	return true
 

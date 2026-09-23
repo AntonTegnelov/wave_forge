@@ -11,11 +11,12 @@ use super::edits::{Edit, Edits};
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId, Table};
 use super::pack::{
-    Column, Expr, LocationKind, MAX_SCATTER_SLOTS, Output, Pack, Profile, Reach, Stage, StageKind,
-    TableKind, point_stage_id, salt,
+    Column, Expr, LocationKind, MAX_SCATTER_SLOTS, Output, Pack, Persist, Profile, Reach, Stage,
+    StageKind, TableKind, point_stage_id, salt,
 };
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use super::rivers::DownhillRivers;
+use super::save::{FrozenChunk, Save};
 use crate::noise::NoiseConfig;
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
@@ -27,7 +28,7 @@ use wfc_core::ChunkCoord;
 use wfc_core::hash::pcg3d;
 
 /// A value per cell column of one chunk.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Field {
     pub chunk: ChunkCoord,
     /// Columns along the lattice's x and y.
@@ -49,7 +50,9 @@ impl Field {
 }
 
 /// What names a site, and the town on it.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize,
+)]
 pub enum SiteId {
     /// A Sites stage's site: the region that owns it, which has at most one.
     Region(i32, i32),
@@ -61,7 +64,7 @@ pub enum SiteId {
 }
 
 /// A settlement site: a rectangle of whole chunks at one height.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Site {
     pub id: SiteId,
     /// The kind a location table gave it; none for a Sites or TableSites stage's site.
@@ -94,7 +97,7 @@ impl Site {
 }
 
 /// One chunk of a site's town.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TownChunk {
     /// The site's id, which names the town.
     pub site: SiteId,
@@ -105,7 +108,7 @@ pub struct TownChunk {
 }
 
 /// A point a Scatter stage placed.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Point {
     /// Positional: the chunk, the stage and the column, so it never changes when other points do.
     pub id: InstanceId,
@@ -164,7 +167,7 @@ impl Point {
 
 /// A category per cell column of one chunk: an index into the categories its Rules stage names
 /// ([`crate::stages::StageKind::categories`]).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Categories {
     pub chunk: ChunkCoord,
     /// Columns along the lattice's x and y.
@@ -186,7 +189,7 @@ impl Categories {
 }
 
 /// What a stage holds for one chunk.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Product {
     Field(Field),
     Categories(Categories),
@@ -383,6 +386,11 @@ pub struct Runtime {
     facts: Option<Facts>,
     /// The player's edits, folded from their log, applied to every product as it is generated.
     edits: Folded,
+    /// The log the edits were folded from, which a save keeps.
+    log: Edits,
+    /// Every chunk of a frozen stage as it was first generated, before the edits, by stage index
+    /// and chunk: what it is from then on, and what a save keeps.
+    frozen: BTreeMap<(usize, ChunkCoord), Arc<Product>>,
     /// The noises Field expressions read by name: the pack's, with any the engine replaced.
     noises: BTreeMap<String, NoiseConfig>,
     /// The focused row of each table that has one, by table index.
@@ -446,6 +454,8 @@ impl Runtime {
             solved: BTreeMap::new(),
             facts: None,
             edits: Folded::default(),
+            log: Edits::default(),
+            frozen: BTreeMap::new(),
             focused: BTreeMap::new(),
             footprints: BTreeMap::new(),
         }
@@ -939,12 +949,79 @@ impl Runtime {
             }
         }
         self.edits = folded;
+        self.log = edits.clone();
         Ok(self.invalidate(
             stale
                 .into_iter()
                 .map(|(stage, chunks)| (stage, Stale::Chunks(chunks)))
                 .collect(),
         ))
+    }
+
+    /// What a save keeps of the world: the edits, less those of ephemeral stages, and every chunk
+    /// of a frozen stage generated so far, with the Wave Forge version and the pack's digest.
+    #[must_use]
+    pub fn save(&self) -> Save {
+        let ephemeral = |stage: usize| self.pack.stages[stage].persist == Persist::Ephemeral;
+        let kept = |edit: &&Edit| match edit {
+            Edit::Remove { point, .. } | Edit::Move { point, .. } => self
+                .point_stage(InstanceId::from(*point))
+                .is_ok_and(|stage| !ephemeral(stage)),
+            Edit::Raise { stage, .. } => self
+                .pack
+                .index(stage)
+                .is_some_and(|stage| !ephemeral(stage)),
+        };
+        Save {
+            generator: env!("CARGO_PKG_VERSION").to_owned(),
+            pack: self.pack.digest(),
+            edits: Edits {
+                log: self.log.log.iter().filter(kept).cloned().collect(),
+            },
+            frozen: self
+                .frozen
+                .iter()
+                .map(|(&(stage, chunk), product)| FrozenChunk {
+                    stage: self.pack.stages[stage].name.clone(),
+                    chunk,
+                    product: Product::clone(product),
+                })
+                .collect(),
+        }
+    }
+
+    /// Brings a world back from `save`: its edits, and the chunks of the stages this pack
+    /// freezes as they were first generated, even if the pack has changed since. A frozen chunk
+    /// of a stage this pack does not freeze, or does not have, is left out. Drops what the save
+    /// changes and returns it as [`Runtime::request`] does. On an error nothing changes.
+    ///
+    /// # Errors
+    /// [`StageError::Edit`] as [`Runtime::set_edits`].
+    pub fn load(&mut self, save: &Save) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let mut dropped = self.set_edits(&save.edits)?;
+        let mut stale: BTreeMap<usize, Stale> = BTreeMap::new();
+        for frozen in &save.frozen {
+            let Some(index) = self
+                .pack
+                .index(&frozen.stage)
+                .filter(|&index| self.pack.stages[index].persist == Persist::Frozen)
+            else {
+                continue;
+            };
+            self.frozen
+                .insert((index, frozen.chunk), Arc::new(frozen.product.clone()));
+            match stale
+                .entry(index)
+                .or_insert_with(|| Stale::Chunks(BTreeSet::new()))
+            {
+                Stale::Chunks(chunks) => {
+                    chunks.insert(frozen.chunk);
+                }
+                Stale::All => unreachable!("frozen chunks are staled one by one"),
+            }
+        }
+        dropped.extend(self.invalidate(stale));
+        Ok(dropped)
     }
 
     /// The edits of `log` as lookups, checked against the pack.
@@ -1286,10 +1363,21 @@ impl Runtime {
             });
             for chunk in missing.into_iter().take(budget - generated.len()) {
                 let started = std::time::Instant::now();
-                self.solve_town_of(index, chunk)?;
-                self.run_region_of(index, chunk)?;
-                self.place_locations_of(index, chunk)?;
-                let product = self.edited(index, self.generate(index, chunk)?);
+                let product = match self.frozen.get(&(index, chunk)) {
+                    Some(frozen) => Product::clone(frozen),
+                    None => {
+                        self.solve_town_of(index, chunk)?;
+                        self.run_region_of(index, chunk)?;
+                        self.place_locations_of(index, chunk)?;
+                        let product = self.generate(index, chunk)?;
+                        if self.pack.stages[index].persist == Persist::Frozen {
+                            self.frozen
+                                .insert((index, chunk), Arc::new(product.clone()));
+                        }
+                        product
+                    }
+                };
+                let product = self.edited(index, product);
                 let ms = started.elapsed().as_secs_f64() * 1000.0;
                 let timing = &mut self.timings[index];
                 timing.products += 1;
