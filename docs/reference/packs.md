@@ -1,0 +1,178 @@
+# Packs
+
+The pack format and the stage runtime as they are built, in `src/stages/` and `src/towns.rs`. The
+design they are a first part of, and the stage kinds still to come, are in
+[stages.md](../architecture/stages.md). This page changes in the same pull request as the code it
+describes.
+
+## A pack file
+
+A pack is RON, conventionally `*.world.ron`: a version and a list of named stages. A stage reads
+other stages by name, and how far it reads follows from its parameters, so a pack never states a
+reach by hand. The order of the list is the order a stack view shows; a stage may read any other,
+earlier or later.
+
+```ron
+(
+    version: 1,
+    stages: [
+        (name: "hills", kind: Field(Mul(Noise(frequency: 0.012, octaves: 4), Constant(48.0)))),
+        (name: "ground", kind: Blur(input: "hills", radius: 2)),
+        (name: "towns", kind: Sites(height: "ground", region: 6, size: (2, 3), chance: 0.8)),
+        (name: "level", kind: Flatten(height: "ground", sites: "towns", blend: 8)),
+        (name: "city", kind: Solve(sites: "towns", rules: "city",
+            bottom: Some(Tagged("street_level")), top: Some(Named("air")))),
+        (name: "trees", kind: Scatter(kind: "tree", height: "level", spacing: 3, chance: 0.9,
+            between: Some((6.0, 40.0)), max_slope: Some(1.2), avoid: Some(("towns", 4)), apart: 3)),
+    ],
+)
+```
+
+That is the valley test pack, `examples/valley.world.ron`: rolling ground, towns on levelled sites
+built from the city module set, and trees on the ground between them.
+
+## Loading
+
+`Pack::parse(text)` reads a pack, and `Pack::from_file(PackFile)` checks one built in code. Loading
+refuses, each time with a `PackError` that names the stage:
+
+| Error | When |
+|---|---|
+| `Syntax` | the text is not a pack (RON errors, unknown fields) |
+| `Version` | the version is not `PACK_VERSION` (1); there are no migrations yet |
+| `DuplicateName` | two stages share a name |
+| `UnknownInput` | a stage reads a name no stage has |
+| `Invalid` | a parameter is out of range, or a stage reads an input of the wrong type (a field where it needs sites, say) |
+| `Cycle` | stages read each other in a cycle |
+
+`Pack::reach(target, chunk_size)` reports, for every stage `target` depends on, how many cells
+beyond a column of `target` it has to be generated: the largest sum of reaches along any path.
+`Pack::stage_names` and `Pack::kind` describe the stages to a tool or an engine.
+
+## Stages
+
+All stages work on one lattice for now: one value per cell column on the WFC chunk lattice, two
+dimensional, in cells. Every stage produces one of four types, and loading refuses a stage that
+reads one type as another.
+
+| Kind | Produces | Reads, and how far |
+|---|---|---|
+| `Field` | Field | the fields named by `Input`, 0 cells |
+| `Blur` | Field | one field, `radius` cells |
+| `Sites` | Sites | a height field, `region` chunks |
+| `Flatten` | Field | a height field, 0 cells; a Sites stage, `blend` cells |
+| `Solve` | Tiles | a Sites stage, 0 cells |
+| `Scatter` | Points | a height field, `apart` cells (one more with `max_slope`); a Sites stage, `apart + margin` cells |
+
+### Field
+
+`Field(expr)`: a value per cell column, from an expression at that column alone.
+
+| Expression | Value |
+|---|---|
+| `Constant(v)` | `v` |
+| `Noise(frequency: f, octaves: n)` | fractal value noise in 0..1: `n` layers (1 to 16), the first with `f` lattice points per cell, each next at twice the frequency and half the weight |
+| `Input("name")` | another field's value at the same column |
+| `Add(a, b)`, `Mul(a, b)` | sum, product |
+
+Every `Noise` in one stage draws from the same stream, keyed by the world seed, the stage's name
+and the octave, so two noises of one stage are correlated; put independent noise in separate
+stages. Richer expressions are [#90](https://github.com/AntonTegnelov/wave_forge/issues/90).
+
+### Blur
+
+`Blur(input: "field", radius: r)`: the input averaged over the square of `r` cells around each
+column.
+
+### Sites
+
+`Sites(height: "field", region: r, size: (min, max), chance: c)`: settlement footprints,
+rectangles of whole chunks between `min` and `max` chunks on a side, at most one per square region
+of `r` × `r` chunks. A region has a site with probability `c`, decided by an integer test on the
+stage's hash stream, and the site is kept at least one chunk inside its region, so two sites are
+always two chunks apart. Each site's height is the mean of the height field over its footprint's
+centre and inner corners.
+
+A chunk's product lists the sites that overlap it. A `Site` has its `region` (which names it), its
+footprint `min..max` in chunks, and its `height`.
+
+### Flatten
+
+`Flatten(height: "field", sites: "sites", blend: b)`: the height field levelled to each nearby
+site's height inside its footprint and blended back to the field over `b` cells around it. This is
+the adapted field of the base, sites, adapted pattern ([stages.md](../architecture/stages.md#the-execution-contract)).
+
+### Solve
+
+`Solve(sites: "sites", rules: "name", bottom: selector, top: selector)`: a town on each site. A town
+is a bounded WFC world of the named rule set, the size of the site's footprint in chunks, solved
+whole from a seed of the site's own, with the module set's boundary rules at its sides. `bottom`
+and `top` restrict its lowest and highest layers:
+
+- `Tagged("tag")`: tiles carrying that tag;
+- `Named("tile")`: tiles of that name.
+
+A chunk's product is its part of the town (`TownChunk`: the site's region, its levelled height, and
+the chunk's tiles, x fastest, then y, then z), or nothing outside every site. A town is solved once,
+when its first chunk is needed, and kept while a chunk of its region is.
+
+The runtime solves towns through the `TownSolver` trait. `WfcTowns::new(chunk).with_rules(name,
+rule_file, build_solver)` is the implementation over any `Solver`, one per rule set;
+`towns::gpu_solver` builds a GPU solver on a device of its own for it; `town_prior` builds a bounded
+town's prior, which the city's own prior (`wfc_devtools::city::city_prior`) uses too. A pack with a
+Solve stage needs `Runtime::with_towns`, or generating fails with `StageError::NoTownSolver`.
+
+### Scatter
+
+`Scatter(kind: "tree", height: "field", spacing: s, chance, between, max_slope, avoid, apart)`:
+points of `kind` standing on the height field.
+
+- One candidate per square block of `s` cells, at a hashed column inside it, with a hashed
+  priority.
+- A candidate passes its own tests: kept with probability `chance` (default 1, compared as an
+  integer), height within `between`, slope at most `max_slope` in height per cell, and at least
+  `margin` cells from every site when `avoid: Some(("sites", margin))` is set.
+- A passing candidate is kept unless a passing candidate of higher priority lies closer than
+  `apart` cells. Neighbours are judged by their own tests, never by whether spacing kept them, so
+  the decision agrees across chunk seams.
+
+A `Point` has a positional `InstanceId` (its chunk, 15 bits of the stage's salt and its column), a
+`kind`, a `position` in cells (x and y on the ground, z the field's value) and a `turn` about the
+vertical as a fraction of a whole turn. Loading checks that no two Scatter stages share a salt.
+
+## The runtime
+
+```rust
+let pack = Arc::new(Pack::parse(&text)?);
+let mut runtime = Runtime::new(pack, seed, [8, 8])
+    .with_towns(Box::new(towns))?;          // only for packs with a Solve stage
+let dropped = runtime.request(&[FocusPoint::new(chunk, 3)], &["level", "city", "trees"])?;
+runtime.run_until_idle()?;                  // or step(budget) between frames
+let trees = runtime.points("trees", chunk);
+```
+
+- `Runtime::request(focus, targets)` works out, from the targets backwards, which chunks of every
+  stage the request needs, replaces the previous request, and returns what it dropped as
+  `(stage, chunk)`.
+- `run_until_idle` generates what is missing, stage by stage with inputs first, nearest chunk
+  first; `step(budget)` generates at most `budget` products, so a caller can take new requests in
+  between; `is_idle` says whether anything is left.
+- `product`, `field`, `sites`, `tiles` and `points` read what a stage holds for a chunk; `held`
+  counts products held.
+- A stage reads its inputs only through a `FieldView` bounded by its reach. A read outside it
+  returns `StageError::OutOfReach`, naming the stage and the reach it would have needed.
+- `StageWorker::spawn(build)` runs a runtime on a thread of its own, built there by the closure
+  (a town solver may own a device that belongs to its thread). `request` sends a new request;
+  `drain` returns `StageEvent::Generated` and `StageEvent::Dropped` events and keeps every product
+  shared for reading; `failure` reports why the thread stopped, if it did.
+
+**Named hash streams.** Every random decision draws from `pcg3d` keyed by the world seed and an
+FNV-1a salt of the stage's name, so adding, removing or reordering stages changes no other stage.
+
+**Order independence** is checked by `tests/stages.rs`: a six-stage pack comes out bit for bit the
+same over a 4×4-chunk area asked for all at once and one chunk at a time in either raster order.
+
+## In the engines
+
+- Godot: the `WaveForgeStages` node ([godot.md](godot.md#waveforgestages)).
+- Bevy: `WaveForgeStagesPlugin` ([bevy.md](bevy.md#packs-of-stages)).
