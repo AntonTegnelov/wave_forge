@@ -118,6 +118,19 @@ pub enum StageKind {
         size: (u32, u32),
         chance: f32,
     },
+    /// A location table: sites of several kinds, placed once per square region of `region` chunks,
+    /// the kinds in order of their `priority`, highest first. Each kind tries `tries` hashed
+    /// footprints of `size` chunks a side in the region, one chunk in from its edge, and keeps one
+    /// where it does not come within a chunk of a site already placed, lies at least `apart` cells
+    /// from every site of its own kind, and meets its `when` conditions at the footprint's centre,
+    /// until it has `quota` of them. Each site's height is found as a Sites stage finds it, and each
+    /// region keeps a log of what every kind placed and why candidates were refused
+    /// ([`crate::stages::Runtime::location_log`]).
+    Locations {
+        height: String,
+        region: u32,
+        kinds: Vec<LocationKind>,
+    },
     /// A settlement site for every row of the table `table`: a square of whole chunks around the
     /// chunk that holds the row's position, which the columns `at` give in WFC cells, as many
     /// chunks on a side as its `size` column says, a whole number from 1 to `max_size`. Each
@@ -237,6 +250,41 @@ pub enum StageKind {
     },
 }
 
+/// One kind of site of a location table ([`StageKind::Locations`]).
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocationKind {
+    pub name: String,
+    /// Higher is placed first; kinds of equal priority go in the order of their names.
+    #[serde(default)]
+    pub priority: i32,
+    /// The most sites of the kind in one region.
+    pub quota: u32,
+    /// Chunks along each side of a site.
+    #[serde(default = "one_chunk")]
+    pub size: u32,
+    /// The least distance, in cells, between the centres of two sites of the kind in a region.
+    #[serde(default)]
+    pub apart: f32,
+    /// Conditions at the footprint's centre, as a Rules stage takes them.
+    #[serde(default)]
+    pub when: Vec<Condition>,
+    /// How many footprints the kind tries in a region.
+    #[serde(default = "twenty_tries")]
+    pub tries: u32,
+}
+
+const fn one_chunk() -> u32 {
+    1
+}
+
+const fn twenty_tries() -> u32 {
+    20
+}
+
+/// The most footprints a kind of a location table may try in a region.
+pub const MAX_TRIES: u32 = 1024;
+
 /// Points a Scatter stage scatters around each candidate: from `size.0` to `size.1` of them, the
 /// candidate included, within `radius` cells of it.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
@@ -343,7 +391,7 @@ impl StageKind {
             | Self::Apply { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } => Output::Categories,
             Self::Region { .. } | Self::TableCurves { .. } => Output::Curves,
-            Self::Sites { .. } | Self::TableSites { .. } => Output::Sites,
+            Self::Sites { .. } | Self::TableSites { .. } | Self::Locations { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
             Self::Scatter { .. } => Output::Points,
         }
@@ -356,6 +404,8 @@ impl StageKind {
 pub(crate) enum Reach {
     Cells(u32),
     Chunks(u32),
+    /// Whole chunks and then cells beyond them.
+    ChunksAndCells(u32, u32),
 }
 
 impl Reach {
@@ -364,6 +414,9 @@ impl Reach {
         match self {
             Self::Cells(cells) => [cells, cells],
             Self::Chunks(chunks) => [chunks * size[0], chunks * size[1]],
+            Self::ChunksAndCells(chunks, cells) => {
+                [chunks * size[0] + cells, chunks * size[1] + cells]
+            }
         }
     }
 }
@@ -1161,6 +1214,11 @@ impl Pack {
                         condition.visit(&mut note);
                     }
                 }
+                StageKind::Locations { kinds, .. } => {
+                    for condition in kinds.iter().flat_map(|kind| &kind.when) {
+                        condition.visit(&mut note);
+                    }
+                }
                 _ => {}
             }
             if let Some(name) = unknown {
@@ -1217,6 +1275,7 @@ impl Pack {
                 && matches!(
                     def.kind,
                     StageKind::Sites { .. }
+                        | StageKind::Locations { .. }
                         | StageKind::TableSites { .. }
                         | StageKind::TableCurves { .. }
                         | StageKind::Apply { .. }
@@ -1297,6 +1356,60 @@ impl Pack {
                     // A chunk's site lies within the chunk's region, so its footprint is at most
                     // a region away.
                     vec![(height.as_str(), Reach::Chunks(*region), Output::Field)]
+                }
+                StageKind::Locations {
+                    height,
+                    region,
+                    kinds,
+                } => {
+                    let mut reads = vec![(height.as_str(), Reach::Chunks(*region), Output::Field)];
+                    for (index, kind) in kinds.iter().enumerate() {
+                        let refuse =
+                            |message: String| invalid(format!("kind {:?}: {message}", kind.name));
+                        if kinds[..index]
+                            .iter()
+                            .any(|earlier| earlier.name == kind.name)
+                        {
+                            return Err(refuse("two kinds share the name".to_owned()));
+                        }
+                        if kind.quota == 0 || kind.size == 0 {
+                            return Err(refuse(format!(
+                                "a quota of {} sites of {} chunks",
+                                kind.quota, kind.size
+                            )));
+                        }
+                        if *region < kind.size + 2 {
+                            return Err(refuse(format!(
+                                "a region of {region} chunks cannot keep a site of {} chunks one \
+                                 chunk inside it",
+                                kind.size
+                            )));
+                        }
+                        if !(kind.apart.is_finite() && kind.apart >= 0.0) {
+                            return Err(refuse(format!("{} cells apart", kind.apart)));
+                        }
+                        if !(1..=MAX_TRIES).contains(&kind.tries) {
+                            return Err(refuse(format!(
+                                "{} tries; 1 to {MAX_TRIES} are allowed",
+                                kind.tries
+                            )));
+                        }
+                        let mut tests = Vec::new();
+                        for condition in &kind.when {
+                            condition.check().map_err(refuse)?;
+                            check_place(|f| condition.visit(f), Place::Column, &columns)
+                                .map_err(refuse)?;
+                            condition.categories(&mut tests);
+                            let mut names = Vec::new();
+                            condition.inputs(&mut names);
+                            // A footprint's centre lies anywhere in the region.
+                            reads.extend(names.into_iter().map(|(name, output, cells)| {
+                                (name, Reach::ChunksAndCells(*region, cells), output)
+                            }));
+                        }
+                        check_categories(&categories, &by_name, &tests).map_err(refuse)?;
+                    }
+                    reads
                 }
                 StageKind::TableSites {
                     table,
@@ -1556,6 +1669,11 @@ impl Pack {
                 StageKind::Field(expr) => expr.visit(&mut note),
                 StageKind::Scatter { when, .. } => {
                     for condition in when {
+                        condition.visit(&mut note);
+                    }
+                }
+                StageKind::Locations { kinds, .. } => {
+                    for condition in kinds.iter().flat_map(|kind| &kind.when) {
                         condition.visit(&mut note);
                     }
                 }

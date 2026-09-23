@@ -10,8 +10,8 @@
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId, Table};
 use super::pack::{
-    Column, Expr, MAX_SCATTER_SLOTS, Output, Pack, Profile, Reach, Stage, StageKind, TableKind,
-    point_stage_id, salt,
+    Column, Expr, LocationKind, MAX_SCATTER_SLOTS, Output, Pack, Profile, Reach, Stage, StageKind,
+    TableKind, point_stage_id, salt,
 };
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use crate::noise::NoiseConfig;
@@ -53,12 +53,17 @@ pub enum SiteId {
     Region(i32, i32),
     /// A TableSites stage's site: the row it stands for.
     Row(RowId),
+    /// A Locations stage's site: its region and its place in the order the region placed its
+    /// sites.
+    Location { region: (i32, i32), index: u32 },
 }
 
 /// A settlement site: a rectangle of whole chunks at one height.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Site {
     pub id: SiteId,
+    /// The kind a location table gave it; none for a Sites or TableSites stage's site.
+    pub kind: Option<Arc<str>>,
     /// The chunks it covers, from `min` up to but not including `max`, along the lattice's x and y.
     pub min: (i32, i32),
     pub max: (i32, i32),
@@ -366,6 +371,9 @@ pub struct Runtime {
     region_jobs: BTreeMap<String, Box<dyn RegionJob>>,
     /// Regions computed, by Region stage and region, kept while a chunk of their region is needed.
     regions: BTreeMap<RegionKey, Arc<[Curve]>>,
+    /// Location tables placed, by Locations stage and region, kept while a chunk of their region
+    /// is needed.
+    placed: BTreeMap<RegionKey, Arc<Placed>>,
     facts: Option<Facts>,
     /// The noises Field expressions read by name: the pack's, with any the engine replaced.
     noises: BTreeMap<String, NoiseConfig>,
@@ -374,6 +382,13 @@ pub struct Runtime {
     /// Each TableSites stage's sites, by stage index: the row each stands for and the chunks it
     /// covers, from the facts.
     footprints: BTreeMap<usize, Arc<[Footprint]>>,
+}
+
+/// A location table placed in one region: its sites, and a line per kind on what it placed and
+/// refused.
+struct Placed {
+    sites: Vec<Site>,
+    log: Vec<String>,
 }
 
 /// Which chunks of a stage no longer hold what they would be generated as now.
@@ -400,6 +415,7 @@ impl Runtime {
             noises: pack.noises.clone(),
             region_jobs: BTreeMap::new(),
             regions: BTreeMap::new(),
+            placed: BTreeMap::new(),
             pack,
             seed,
             size,
@@ -813,6 +829,18 @@ impl Runtime {
                 }
             }
         });
+        self.placed.retain(|&(stage, region), _| {
+            let StageKind::Locations { region: size, .. } = pack.stages[stage].kind else {
+                unreachable!("only Locations stages place locations")
+            };
+            match stale.get(&stage) {
+                None => true,
+                Some(Stale::All) => false,
+                Some(Stale::Chunks(chunks)) => {
+                    !chunks.iter().any(|&chunk| region_of(chunk, size) == region)
+                }
+            }
+        });
         dropped
     }
 
@@ -936,6 +964,14 @@ impl Runtime {
                 .get(&stage)
                 .is_some_and(|chunks| chunks.iter().any(|&chunk| region_of(chunk, size) == region))
         });
+        self.placed.retain(|&(stage, region), _| {
+            let StageKind::Locations { region: size, .. } = pack.stages[stage].kind else {
+                unreachable!("only Locations stages place locations")
+            };
+            needed
+                .get(&stage)
+                .is_some_and(|chunks| chunks.iter().any(|&chunk| region_of(chunk, size) == region))
+        });
         self.needed = needed;
         self.focus = focus.to_vec();
         Ok(dropped)
@@ -997,6 +1033,7 @@ impl Runtime {
                 let started = std::time::Instant::now();
                 self.solve_town_of(index, chunk)?;
                 self.run_region_of(index, chunk)?;
+                self.place_locations_of(index, chunk)?;
                 let product = self.generate(index, chunk)?;
                 let ms = started.elapsed().as_secs_f64() * 1000.0;
                 let timing = &mut self.timings[index];
@@ -1138,6 +1175,7 @@ impl Runtime {
             }
             StageKind::Sites { .. }
             | StageKind::TableSites { .. }
+            | StageKind::Locations { .. }
             | StageKind::TableCurves { .. }
             | StageKind::Apply { .. }
             | StageKind::Flatten { .. }
@@ -1279,6 +1317,149 @@ impl Runtime {
         })
     }
 
+    /// Places the location table of Locations stage `index` in the region `chunk` lies in, if it
+    /// is not placed yet: the kinds in order of priority, each trying its footprints in turn.
+    fn place_locations_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Locations {
+            region: size,
+            kinds,
+            ..
+        } = &stage.kind
+        else {
+            return Ok(());
+        };
+        let region = region_of(chunk, *size);
+        if self.placed.contains_key(&(index, region)) {
+            return Ok(());
+        }
+        let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+        let side = i64::from(*size);
+        // The region's own columns: every footprint lies inside them, and so does its centre.
+        let min = [
+            i64::from(region.0) * side * sx,
+            i64::from(region.1) * side * sy,
+        ];
+        let max = [min[0] + side * sx - 1, min[1] + side * sy - 1];
+        let views: BTreeMap<usize, FieldView<'_>> = stage
+            .inputs
+            .iter()
+            .map(|&(input, reach)| {
+                let widen =
+                    |axis: usize| i64::from(reach.cells(self.size)[axis]) - side * [sx, sy][axis];
+                let (wx, wy) = (widen(0).max(0), widen(1).max(0));
+                let area = ([min[0] - wx, min[1] - wy], [max[0] + wx, max[1] + wy]);
+                (input, self.view_over(index, input, area, wx as u32))
+            })
+            .collect();
+        let read = |name: &str, x: i64, y: i64| {
+            views[&self.pack.index(name).expect("linked when loaded")].get(x, y)
+        };
+        let StageKind::Locations { height, .. } = &stage.kind else {
+            unreachable!("matched above")
+        };
+        let heights = &views[&self.pack.index(height).expect("linked when loaded")];
+        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+        let mut order: Vec<&LocationKind> = kinds.iter().collect();
+        order.sort_by(|a, b| {
+            b.priority
+                .cmp(&a.priority)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        let mut sites: Vec<Site> = Vec::new();
+        let mut log = Vec::with_capacity(order.len());
+        for kind in order {
+            let name: Arc<str> = Arc::from(kind.name.as_str());
+            let stream = world ^ stage.salt ^ salt(&kind.name);
+            let (mut kept, mut crowded, mut near, mut unmet) = (0, 0, 0, 0);
+            for attempt in 0..kind.tries {
+                if kept == kind.quota {
+                    break;
+                }
+                let [place, ..] = pcg3d([
+                    stream,
+                    region.0 as u32,
+                    (region.1 as u32) ^ attempt.wrapping_mul(0x9E37_79B9),
+                ]);
+                let room = size - kind.size - 1;
+                let offset = (1 + place % room, 1 + (place >> 16) % room);
+                let at = (
+                    region.0 * *size as i32 + offset.0 as i32,
+                    region.1 * *size as i32 + offset.1 as i32,
+                );
+                let footprint = (at, (at.0 + kind.size as i32, at.1 + kind.size as i32));
+                if sites.iter().any(|site| {
+                    site.min.0 <= footprint.1.0
+                        && footprint.0.0 <= site.max.0
+                        && site.min.1 <= footprint.1.1
+                        && footprint.0.1 <= site.max.1
+                }) {
+                    crowded += 1;
+                    continue;
+                }
+                let centre = |min: (i32, i32), max: (i32, i32)| {
+                    (
+                        (i64::from(min.0) + i64::from(max.0)) * sx / 2,
+                        (i64::from(min.1) + i64::from(max.1)) * sy / 2,
+                    )
+                };
+                let here = centre(footprint.0, footprint.1);
+                if sites.iter().any(|site| {
+                    site.kind.as_deref() == Some(kind.name.as_str()) && {
+                        let there = centre(site.min, site.max);
+                        ((here.0 - there.0) as f32).hypot((here.1 - there.1) as f32) < kind.apart
+                    }
+                }) {
+                    near += 1;
+                    continue;
+                }
+                let place = self.place(index, [here.0, here.1], &read);
+                let mut meets = true;
+                for condition in &kind.when {
+                    if !holds(condition, &place)? {
+                        meets = false;
+                        break;
+                    }
+                }
+                if !meets {
+                    unmet += 1;
+                    continue;
+                }
+                sites.push(Site {
+                    id: SiteId::Location {
+                        region,
+                        index: sites.len() as u32,
+                    },
+                    kind: Some(Arc::clone(&name)),
+                    min: footprint.0,
+                    max: footprint.1,
+                    height: self.footprint_height(footprint.0, footprint.1, heights)?,
+                });
+                kept += 1;
+            }
+            log.push(format!(
+                "{}: placed {kept} of {}; refused {crowded} crowded, {near} near its kind, {unmet} \
+                 failing its conditions",
+                kind.name, kind.quota
+            ));
+        }
+        self.placed
+            .insert((index, region), Arc::new(Placed { sites, log }));
+        Ok(())
+    }
+
+    /// What a Locations stage placed in the region `chunk` lies in and why it refused the rest:
+    /// a line per kind, in the order they were placed, if the region is placed and still needed.
+    #[must_use]
+    pub fn location_log(&self, stage: &str, chunk: ChunkCoord) -> Option<&[String]> {
+        let index = self.pack.index(stage)?;
+        let StageKind::Locations { region, .. } = self.pack.stages[index].kind else {
+            return None;
+        };
+        let placed = self.placed.get(&(index, region_of(chunk, region)))?;
+        Some(&placed.log)
+    }
+
     /// Solves the town of `chunk`'s site for Solve stage `index`, unless it is solved already or
     /// the chunk lies in no site.
     fn solve_town_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
@@ -1316,6 +1497,11 @@ impl Runtime {
         let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
         let [high, low, _] = match &site.id {
             SiteId::Region(x, y) => pcg3d([world ^ stage.salt, *x as u32, *y as u32]),
+            SiteId::Location { region, index } => pcg3d([
+                world ^ stage.salt ^ 0x6C6F_6361,
+                region.0 as u32,
+                (region.1 as u32) ^ index.wrapping_mul(0x9E37_79B9),
+            ]),
             SiteId::Row(row) => {
                 let hash = row
                     .0
@@ -1494,6 +1680,17 @@ impl Runtime {
                 }
             })));
         }
+        if let StageKind::Locations { region, .. } = &stage.kind {
+            let placed = &self.placed[&(index, region_of(chunk, *region))];
+            return Ok(Product::Sites(
+                placed
+                    .sites
+                    .iter()
+                    .filter(|site| site.overlaps(chunk))
+                    .cloned()
+                    .collect(),
+            ));
+        }
         if let StageKind::TableSites { .. } = &stage.kind {
             let (height, reach) = stage.inputs[0];
             let view = self.view(index, chunk, height, reach);
@@ -1502,6 +1699,7 @@ impl Runtime {
             for footprint in footprints.iter() {
                 let site = Site {
                     id: SiteId::Row(footprint.row.clone()),
+                    kind: None,
                     min: footprint.min,
                     max: footprint.max,
                     height: 0.0,
@@ -1644,6 +1842,7 @@ impl Runtime {
                     StageKind::Sites { .. }
                     | StageKind::Area { .. }
                     | StageKind::TableSites { .. }
+                    | StageKind::Locations { .. }
                     | StageKind::TableCurves { .. }
                     | StageKind::Apply { .. }
                     | StageKind::Solve { .. }
@@ -2059,6 +2258,7 @@ impl Runtime {
         let max = (min.0 + w as i32, min.1 + h as i32);
         Ok(Some(Site {
             id: SiteId::Region(owner.0, owner.1),
+            kind: None,
             min,
             max,
             height: self.footprint_height(min, max, height)?,
