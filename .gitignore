@@ -1,4 +1,5 @@
-/target
+# Build output of every workspace (root, wave_forge_bevy, wave_forge_godot).
+target/
 
 # Aider configuration file (potentially contains secrets)
 .aider.conf.yml
