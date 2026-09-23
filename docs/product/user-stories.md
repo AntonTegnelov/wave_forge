@@ -104,12 +104,15 @@ named parameter sets ([World generation](https://dwarffortresswiki.org/index.php
 - A test pack in this repository generates a finite world as one region job on a coarse grid: fields, eroded rivers
   as curves, biomes and connected regions, geology strata, with a rejection log when a retry is
   needed.
-- A Record slot receives a user-supplied history, whose sites the local stages then realise.
+- The game's own history, simulated before play over the world's atlas, is given as tables of facts
+  (sites with their culture, size and fate; roads as curves), and the local stages realise them:
+  towns of each culture's rule set, ruins where a site fell, roads carved into the ground.
 - A local area generated from a world tile matches its coarse fields at the edges.
 - The same seed and parameters give the same world on every run and GPU (a golden world).
 
-**Needs.** Region jobs with hashed retries, Field and Filter at coarse scale, CurveSet, Records, a
-local level reading its parent. History simulation is out of scope; the Record is the seam.
+**Needs.** Region jobs with hashed retries, Field and Filter at coarse scale, CurveSet, an atlas and
+point queries, tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)), a local level reading its parent. History simulation is the
+game's; tables of facts are the seam, and N11 is the check that the seam is approachable.
 **Status:** not started (2026-09-23).
 
 ### G3. A No Man's Sky-like planet
@@ -363,6 +366,23 @@ walking its streets, at the P1 frame rate on a reference desktop. Needs a person
 checklist in the example's README is followed from a clean checkout within an hour. **Needs.** Grass
 and wind ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), navigation, presets.
 **Status:** not started (2026-09-23).
+
+### N11. Put my own history into the world
+
+*A developer making a colony or strategy game wants the villages, roads and ruins of a history their
+game simulates to be in the world the player walks, without learning a new language or writing Rust.*
+
+**Acceptance criteria.** An example project in this repository takes a continent preset, reads its
+world map through the atlas, and runs a toy history of about 100 lines of GDScript: villages founded
+along rivers, grown over the years, joined to their nearest neighbours by roads, and some of them
+burned. It gives the result to the stages as tables of facts, and the player walks through the
+villages, the roads between them and the ruins. The same seed and history give the same world, and
+a save that holds only the history restores it. Needs a person: the example's README is followed
+from a clean checkout in an afternoon, and extending the toy history (a new kind of site, say) needs
+no Rust. **Needs.** Tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)), the atlas and point queries
+([#100](https://github.com/AntonTegnelov/wave_forge/issues/100)), levels
+([#93](https://github.com/AntonTegnelov/wave_forge/issues/93)), rasterised curves
+([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)). **Status:** not started (2026-09-23).
 
 ## P: performance
 

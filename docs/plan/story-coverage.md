@@ -44,7 +44,7 @@ community port and are unverified from Iron Gate (see the story's sources).
 | World-scale generation speed | per-stage timings, GPU Field stages | timings available; fields cost 0.02 ms per chunk on the CPU, and the first town's seconds of kernel compilation dominate | [#111](https://github.com/AntonTegnelov/wave_forge/issues/111) |
 
 Not needed for G7: density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71);
-Valheim is a height field) and records ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
+Valheim is a height field) and tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
 Far proxies ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)) help mountain views
 (P2) but are not in G7's criteria.
 
@@ -55,15 +55,16 @@ Stories not listed have nothing built towards them yet beyond the shared runtime
 | Story | What exists | What is missing |
 |---|---|---|
 | G1 Minecraft-like | fields, categories by rules, sites, scatter, the order-diff test | biomes by nearest point, 3D density volumes, Assemble (jigsaw), aquifers, carvers ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
-| G2 Dwarf Fortress-like | fields, region jobs with retries and curves | rasterised curves, records, a world bound ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98), [#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#99](https://github.com/AntonTegnelov/wave_forge/issues/99)) |
-| G3 No Man's Sky-like | fields, sites that flatten the ground, scatter | records, density volumes, point queries (`locate`), edits ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#100](https://github.com/AntonTegnelov/wave_forge/issues/100), [#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
+| G2 Dwarf Fortress-like | fields, region jobs with retries and curves | rasterised curves, levels and an atlas, tables of facts for the game's history, a world bound ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98), [#93](https://github.com/AntonTegnelov/wave_forge/issues/93), [#100](https://github.com/AntonTegnelov/wave_forge/issues/100), [#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#99](https://github.com/AntonTegnelov/wave_forge/issues/99)) |
+| G3 No Man's Sky-like | fields, sites that flatten the ground, scatter | generated tables of planet parameters, density volumes, point queries (`locate`), edits ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#100](https://github.com/AntonTegnelov/wave_forge/issues/100), [#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 | G4 Noita-like | WFC, positional ids | image import, Wang tiles, region jobs with path checks, stamps |
 | G5 Caves of Qud-like | WFC inside bounded regions (towns) | map import, region jobs per zone, segmentation filters, connectivity, persistence modes ([#94](https://github.com/AntonTegnelov/wave_forge/issues/94), [#102](https://github.com/AntonTegnelov/wave_forge/issues/102)) |
-| G6 Elite-like | positional ids, fields, sites | records and parent-level reads ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#93](https://github.com/AntonTegnelov/wave_forge/issues/93)) |
+| G6 Elite-like | positional ids, fields, sites | generated tables with parent-level reads ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#93](https://github.com/AntonTegnelov/wave_forge/issues/93)) |
 | G8 Deep Rock-like | region jobs | Assemble, rasterised curves, density volumes, edits ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70), [#98](https://github.com/AntonTegnelov/wave_forge/issues/98), [#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 | N1 Press play | nodes that start on their own, colliders, navigation, a ground mesh and collider | presets, lit and textured defaults, navigation over packs ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48), [#46](https://github.com/AntonTegnelov/wave_forge/issues/46)) |
 | N3 Place my own scene | Scatter with spacing across seams | binding scenes to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), rule resources ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)) |
 | N7 My own noise | | FastNoiseLite parity ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)) |
+| N11 My own history | region jobs, curves, categories | levels, the atlas, tables of facts, rasterised curves, the example project ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93), [#100](https://github.com/AntonTegnelov/wave_forge/issues/100), [#72](https://github.com/AntonTegnelov/wave_forge/issues/72), [#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
 | N9 Share a world by seed | identical tiles across GPUs and generation orders | product and chunk hashes |
 | P1 Live generation without hitches | the Godot check meets the bars for a streamed WFC world with colliders and navigation | Phase 2 stages under the same bars; desktop numbers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
 | P3 Fast into a new world | kernel warming | a kernel cache, and the time recorded on a desktop |

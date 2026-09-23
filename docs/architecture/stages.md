@@ -79,7 +79,7 @@ masks ([solver.md](solver.md#the-prior)).
 | **PointSet** | structure of arrays: position, rotation, scale, stable id, kind, attribute columns | sites, anchors, scatter candidates and placements, spawn points | `Sites` and `Points` |
 | **CurveSet** | polylines with per-vertex attributes (radius, flow, profile) and optional connectivity | roads, rivers, tunnels, room and site graphs | `Curves` from region jobs: points and one value per point; connectivity and rasterising are [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
-| **Record** | a typed struct keyed by a hierarchical address | planet or system parameters, a user-supplied history, a location table | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
+| **Table** | named rows of facts, each with an id, a position or a curve, and typed columns; given by the game or generated from a parent table | a history the game simulated, planet or system parameters, a location table | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
 | **Prior** and **TileGrid** | the WFC stage's input and output | tiles | `Tiles`, a town's chunk |
 | **Edits** | an operation log keyed by stable ids and cells | brushes, removed and moved placements, terrain deltas | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 
@@ -102,7 +102,7 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 | **Assemble** | a jigsaw or room graph grown from one site into Stamps, with a bounded extent | the extent | G1, G7, G8 | not built yet ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
 | **Apply** | rasterises curves and stamps into fields or Priors in a stable order | the primitives' bounds | G1, G3, G8 | `Flatten` for site footprints ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
 | **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4 to G8 | a Region stage running a `RegionJob` the game registers, producing curves |
-| **Record** | computed once per seed or per address | its parent | G2, G3, G6 | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
+| **Table** | rows given by the game, or generated once per parent row by expressions | its parent table | G2, G3, G6 | not built yet ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
 | **Emit** | products for an engine | 0 | N1, N3, P1 | done by the engine integrations today |
 | **Edits**, **Import** | sources: the edits log, painted images, imported heightmaps | 0 | N4, N8, G4 | not built yet ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)) |
 
@@ -148,6 +148,44 @@ the CPU while a town needs a GPU solver on the thread that owns its device.
 WFC inside masks painted or computed by other stages (a Rules stage writing a Prior) is the general
 form, and is **not built yet** ([#91](https://github.com/AntonTegnelov/wave_forge/issues/91)). The
 infinite city of the MVP keeps the streamed WFC world of [world.md](world.md).
+
+## History and other facts from the game
+
+Some of what shapes a world is not generation at all. A Dwarf Fortress-like game simulates
+centuries of history over its world map, and the towns, ruins and roads it leaves must be in the
+world the player walks. That simulation is game logic, iterative and stateful, and Wave Forge does
+not host it. Such a world comes together in three phases, and Wave Forge owns the first and last:
+
+1. **Terrain,** pure: a finite world at a coarse level, with its heights, biomes and rivers.
+2. **History,** the game's own code, run once before play. It reads the terrain through an atlas and
+   point queries ([#100](https://github.com/AntonTegnelov/wave_forge/issues/100)) and writes its
+   results as facts.
+3. **Realisation,** pure: stages turn the facts into what the player sees where the player goes. A
+   site becomes a town of its culture's rule set, or ruins; a road is carved into the ground.
+
+The seam is **tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): named tables of rows, each with an id, a position or a
+curve, and typed columns. A game gives a table at run time, from Rust or from GDScript. A history is
+only data, so it can be written in any language and run anywhere, unlike a stage, which runs on the
+stages' thread and must stay pure. Stages read tables as they read fields: Sites from a table, a
+Solve choosing its rule set by a column, Apply carving roads from curves. The world is then a
+function of the pack, the seed and the facts, and a save holds the facts, never the world.
+
+The same tables describe generated hierarchies. A table can compute its rows from a parent table's
+by expressions, a budget shared among a parent's children for instance, which is what Elite's
+sectors, systems and bodies and No Man's Sky's planets need. A runtime focused on one row reads
+that row's columns, so one surface pack serves every planet. Generated rows have positional ids,
+and given rows keep the game's ids, so neither ever shifts the other.
+
+A fact that changes regenerates only what depended on it, through the same invalidation as the edits
+log ([#101](https://github.com/AntonTegnelov/wave_forge/issues/101)). A history is an edits log
+written before play, and a town the player burns during play is one more fact.
+
+The limits are deliberate. History needs a finite world, as Dwarf Fortress's does. Its cost and its
+determinism are the game's, and Wave Forge offers its hash streams to make the second easy. The loop
+runs one way, terrain to history to realisation: a history that changes terrain it later reads
+keeps track of that in its own state. Whether this is approachable is decided by a worked example,
+a continent preset with a toy history of about a hundred lines of GDScript, which story N11 makes a
+criterion.
 
 ## What stays hard
 
@@ -202,7 +240,7 @@ them bit for bit; Valheim's floating-point quirks and Noita's float random numbe
 reproduction impossible anyway. The project's scope and non-goals are in
 [vision.md](../product/vision.md#non-goals); for stages specifically:
 
-- **Out of scope:** civilisation or history simulation (a Record slot the user fills), runtime
+- **Out of scope:** civilisation or history simulation (the game's, given as tables of facts), runtime
   simulation (falling sand, destruction, fluids, lighting), which belongs to the engine, blending
   terrain after a generator change, and Dwarf Fortress's whole-world rejection on infinite worlds.
 - **Deferred, with types that allow them later:** spheres, galaxies and 64-bit floats (wgpu has no
