@@ -2,6 +2,7 @@
 //! format): the pack a world is described by, and the runtime that generates its stages around
 //! focus points, providers first.
 
+mod evaluate;
 pub mod pack;
 pub mod regions;
 pub mod runtime;

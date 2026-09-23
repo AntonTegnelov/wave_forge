@@ -7,7 +7,8 @@
 //! and the stage reads them only through a view bounded by that area. Whatever order chunks are
 //! asked for in, each is computed from the same inputs and comes out the same.
 
-use super::pack::{Condition, Expr, Output, Pack, Reach, StageKind, point_stage_id, salt};
+use super::evaluate::{Leaves, evaluate, holds};
+use super::pack::{Expr, Output, Pack, Reach, StageKind, point_stage_id, salt};
 use super::regions::{Attempt, Curve, RegionInput, RegionJob, region_of};
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
@@ -617,9 +618,7 @@ impl Runtime {
             })
         };
         let value = match &stage.kind {
-            StageKind::Field(expr) => {
-                self.evaluate(expr, stage.salt, stage.scale, column, &read)?
-            }
+            StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
             StageKind::Rules { .. } => f32::from(self.categorise(index, column, &read)?),
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
             StageKind::Sites { .. }
@@ -1015,9 +1014,7 @@ impl Runtime {
                     i64::from(chunk.y) * i64::from(sy) + i64::from(y),
                 ];
                 let value = match &stage.kind {
-                    StageKind::Field(expr) => {
-                        self.evaluate(expr, stage.salt, stage.scale, column, &read)?
-                    }
+                    StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
                     StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
                     StageKind::Flatten { height, blend, .. } => {
                         let view = &views[&self.pack.index(height).expect("linked when loaded")];
@@ -1234,29 +1231,49 @@ impl Runtime {
         }))
     }
 
-    fn evaluate(
-        &self,
-        expr: &Expr,
-        salt: u32,
-        scale: u32,
+    /// Where stage `index`'s expressions are evaluated at `column`, reading inputs through `read`.
+    fn place<'p, 'r>(
+        &'p self,
+        index: usize,
         column: [i64; 2],
-        read: &Read<'_>,
-    ) -> Result<f32, StageError> {
-        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, read);
+        read: &'p Read<'r>,
+    ) -> ColumnPlace<'p, 'r> {
+        let stage = &self.pack.stages[index];
+        ColumnPlace {
+            runtime: self,
+            salt: stage.salt,
+            scale: stage.scale,
+            column,
+            read,
+        }
+    }
+}
+
+/// One column of a stage, where its expressions' leaves read noise, inputs and the position.
+struct ColumnPlace<'p, 'r> {
+    runtime: &'p Runtime,
+    salt: u32,
+    scale: u32,
+    column: [i64; 2],
+    read: &'p Read<'r>,
+}
+
+impl Leaves for ColumnPlace<'_, '_> {
+    fn leaf(&self, expr: &Expr) -> Result<f32, StageError> {
+        let (column, read, pack) = (self.column, self.read, &self.runtime.pack);
         // The column's centre in WFC cells, so a formula means the same at every scale.
         let centre = [
-            (column[0] as f32 + 0.5) * scale as f32,
-            (column[1] as f32 + 0.5) * scale as f32,
+            (column[0] as f32 + 0.5) * self.scale as f32,
+            (column[1] as f32 + 0.5) * self.scale as f32,
         ];
         Ok(match expr {
-            Expr::Constant(value) => *value,
             Expr::Noise {
                 frequency,
                 octaves,
                 name,
             } => {
-                let stream = name.as_deref().map_or(salt, noise_stream);
-                value_noise(self.seed, stream, *frequency, *octaves, centre)
+                let stream = name.as_deref().map_or(self.salt, noise_stream);
+                value_noise(self.runtime.seed, stream, *frequency, *octaves, centre)
             }
             Expr::Input(name) => read(name, column[0], column[1])?,
             Expr::X => centre[0],
@@ -1266,37 +1283,20 @@ impl Runtime {
                 let turn = (centre[1] - y).atan2(centre[0] - x) / std::f32::consts::TAU;
                 turn.rem_euclid(1.0)
             }
-            Expr::Add(a, b) => value(a)? + value(b)?,
-            Expr::Sub(a, b) => value(a)? - value(b)?,
-            Expr::Mul(a, b) => value(a)? * value(b)?,
-            Expr::Min(a, b) => value(a)?.min(value(b)?),
-            Expr::Max(a, b) => value(a)?.max(value(b)?),
-            Expr::Abs(a) => value(a)?.abs(),
-            Expr::Floor(a) => value(a)?.floor(),
-            Expr::Sin(a) => value(a)?.sin(),
             Expr::Is(stage, names) => {
-                let index = self.pack.index(stage).expect("linked when loaded");
-                let known = self.pack.stages[index].kind.categories();
+                let index = pack.index(stage).expect("linked when loaded");
+                let known = pack.stages[index].kind.categories();
                 let here = read(stage, column[0], column[1])? as usize;
                 f32::from(u8::from(names.iter().any(|name| name == known[here])))
             }
-            Expr::Clamp(a, low, high) => value(a)?.clamp(*low, *high),
-            Expr::Smoothstep(low, high, a) => {
-                let t = ((value(a)? - low) / (high - low)).clamp(0.0, 1.0);
-                t * t * (3.0 - 2.0 * t)
-            }
-            Expr::Remap(a, (from_low, from_high), (to_low, to_high)) => {
-                to_low + (value(a)? - from_low) / (from_high - from_low) * (to_high - to_low)
-            }
-            Expr::Curve(a, points) => curve(points, value(a)?),
             Expr::Match {
                 input: stage,
                 cases,
                 otherwise,
                 blend,
             } => {
-                let index = self.pack.index(stage).expect("linked when loaded");
-                let names = self.pack.stages[index].kind.categories();
+                let index = pack.index(stage).expect("linked when loaded");
+                let names = pack.stages[index].kind.categories();
                 let reach = i64::from(*blend);
                 // A tent in each direction, so a category's weight falls off smoothly with its
                 // distance from the column and the blend moves by a small step per column.
@@ -1318,40 +1318,29 @@ impl Runtime {
                         .iter()
                         .find(|(name, _)| name == names[category])
                         .map_or(otherwise.as_ref(), |(_, expr)| expr);
-                    blended += weight / total * value(case)?;
+                    blended += weight / total * evaluate(case, self)?;
                 }
                 blended
             }
-            Expr::Select {
-                when,
-                then,
-                otherwise,
-            } => {
-                let holds = self.holds(when, salt, scale, column, read)?;
-                value(if holds { then } else { otherwise })?
-            }
+            Expr::Constant(_)
+            | Expr::Add(..)
+            | Expr::Sub(..)
+            | Expr::Mul(..)
+            | Expr::Min(..)
+            | Expr::Max(..)
+            | Expr::Abs(_)
+            | Expr::Floor(_)
+            | Expr::Sin(_)
+            | Expr::Clamp(..)
+            | Expr::Smoothstep(..)
+            | Expr::Remap(..)
+            | Expr::Curve(..)
+            | Expr::Select { .. } => unreachable!("evaluate combines these itself"),
         })
     }
 }
 
 impl Runtime {
-    /// Whether `condition` holds at `column`.
-    fn holds(
-        &self,
-        condition: &Condition,
-        salt: u32,
-        scale: u32,
-        column: [i64; 2],
-        read: &Read<'_>,
-    ) -> Result<bool, StageError> {
-        let value = |expr: &Expr| self.evaluate(expr, salt, scale, column, read);
-        Ok(match condition {
-            Condition::Less(a, b) => value(a)? < value(b)?,
-            Condition::Greater(a, b) => value(a)? > value(b)?,
-            Condition::Between(a, low, high) => (*low..=*high).contains(&value(a)?),
-        })
-    }
-
     /// The category Rules stage `index` gives `column`: the first rule whose conditions all hold,
     /// or its fallback.
     fn categorise(
@@ -1371,10 +1360,11 @@ impl Runtime {
                 .position(|known| *known == name)
                 .expect("every category is named") as u8
         };
+        let place = self.place(index, column, read);
         for rule in rules {
             let mut all = true;
             for condition in &rule.when {
-                if !self.holds(condition, stage.salt, stage.scale, column, read)? {
+                if !holds(condition, &place)? {
                     all = false;
                     break;
                 }
@@ -1429,21 +1419,6 @@ fn between(
 /// own stream, whose salt is the stage's name alone.
 fn noise_stream(name: &str) -> u32 {
     salt(name) ^ 0x6E6F_6973
-}
-
-/// A piecewise-linear curve at `x`: level beyond its first and last points, linear between.
-/// The points are in increasing x and at least two, which loading checks.
-fn curve(points: &[(f32, f32)], x: f32) -> f32 {
-    let (first, last) = (points[0], points[points.len() - 1]);
-    if x <= first.0 {
-        return first.1;
-    }
-    if x >= last.0 {
-        return last.1;
-    }
-    let after = points.partition_point(|point| point.0 <= x);
-    let ((x0, y0), (x1, y1)) = (points[after - 1], points[after]);
-    y0 + (x - x0) / (x1 - x0) * (y1 - y0)
 }
 
 /// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the
