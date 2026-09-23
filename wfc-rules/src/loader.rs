@@ -84,6 +84,8 @@ pub enum RuleFile {
         tileset: TileSet,
         /// Which tiles may touch along each axis.
         rules: AdjacencyRules,
+        /// Each tile's name, by tile id.
+        names: Vec<String>,
     },
     /// Modules described by the connectors on their faces, with rotations derived; see
     /// [`crate::modules`].
@@ -117,6 +119,60 @@ impl RuleFile {
             Self::Modules(modules) => Some(modules),
         }
     }
+
+    /// How many tiles there are; tile ids run from zero to one less.
+    #[must_use]
+    pub fn num_tiles(&self) -> usize {
+        self.tileset().weights.len()
+    }
+
+    /// What tile `tile` is called: the tile's own name in a tile set, its prototype's name in a
+    /// module set, where the four rotations of one prototype share a name. A game draws one model
+    /// per name.
+    ///
+    /// # Panics
+    /// If `tile` is not a tile of the set.
+    #[must_use]
+    pub fn name(&self, tile: usize) -> &str {
+        match self {
+            Self::Tiles { names, .. } => &names[tile],
+            Self::Modules(modules) => &modules.prototype_of(tile).name,
+        }
+    }
+
+    /// How far tile `tile` is turned from its prototype, in quarter turns counter-clockwise about
+    /// +z. Always zero in a tile set, which has no rotations.
+    ///
+    /// # Panics
+    /// If `tile` is not a tile of the set.
+    #[must_use]
+    pub fn rotation(&self, tile: usize) -> u8 {
+        match self {
+            Self::Tiles { names, .. } => {
+                assert!(tile < names.len(), "tile {tile} of {}", names.len());
+                0
+            }
+            Self::Modules(modules) => modules.variants[tile].rotation,
+        }
+    }
+
+    /// The tiles whose name is `name`: one in a tile set, every rotation of the prototype in a
+    /// module set.
+    #[must_use]
+    pub fn tiles_named(&self, name: &str) -> Vec<usize> {
+        (0..self.num_tiles())
+            .filter(|&tile| self.name(tile) == name)
+            .collect()
+    }
+
+    /// The tiles whose prototype carries `tag`. A tile set has no tags, so none.
+    #[must_use]
+    pub fn tiles_tagged(&self, tag: &str) -> Vec<usize> {
+        match self {
+            Self::Tiles { .. } => Vec::new(),
+            Self::Modules(modules) => modules.variants_tagged(tag),
+        }
+    }
 }
 
 /// Parses and compiles a rule file of either form. A file with a `modules` list is a module set
@@ -132,6 +188,12 @@ pub fn parse_rule_file(content: &str) -> Result<RuleFile, LoadError> {
     struct Form {
         #[serde(default)]
         modules: Option<serde::de::IgnoredAny>,
+        #[serde(default)]
+        tiles: Vec<Named>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Named {
+        name: String,
     }
     // RON writes an option as `Some(...)`; implicit `Some` lets a plain list count as present.
     let form: Form = ron::Options::default()
@@ -145,7 +207,11 @@ pub fn parse_rule_file(content: &str) -> Result<RuleFile, LoadError> {
         Ok(RuleFile::Modules(modules))
     } else {
         let (tileset, rules) = load_from_ron_string(content)?;
-        Ok(RuleFile::Tiles { tileset, rules })
+        Ok(RuleFile::Tiles {
+            tileset,
+            rules,
+            names: form.tiles.into_iter().map(|tile| tile.name).collect(),
+        })
     }
 }
 
