@@ -7,7 +7,7 @@
 //! a view bounded by that area. Whatever order chunks are asked for in, each is computed from the
 //! same inputs and comes out the same.
 
-use super::pack::{Expr, Pack, StageKind};
+use super::pack::{Expr, Output, Pack, Reach, StageKind};
 use crate::scheduler::FocusPoint;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -36,6 +36,62 @@ impl Field {
     }
 }
 
+/// A settlement site: a rectangle of whole chunks at one height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Site {
+    /// The region that owns it, which also names it: a region has at most one site.
+    pub region: (i32, i32),
+    /// The chunks it covers, from `min` up to but not including `max`, along the lattice's x and y.
+    pub min: (i32, i32),
+    pub max: (i32, i32),
+    /// The height its ground is levelled to.
+    pub height: f32,
+}
+
+impl Site {
+    /// How far the world column `x`, `y` is from the site's footprint, in columns, for chunks of
+    /// `size` columns; zero inside it.
+    #[must_use]
+    pub fn distance(&self, x: i64, y: i64, size: [u32; 2]) -> f32 {
+        let span = |at: i64, min: i32, max: i32, size: u32| {
+            let low = i64::from(min) * i64::from(size);
+            let high = i64::from(max) * i64::from(size) - 1;
+            (low - at).max(at - high).max(0) as f32
+        };
+        let dx = span(x, self.min.0, self.max.0, size[0]);
+        let dy = span(y, self.min.1, self.max.1, size[1]);
+        (dx * dx + dy * dy).sqrt()
+    }
+
+    fn overlaps(&self, chunk: ChunkCoord) -> bool {
+        (self.min.0..self.max.0).contains(&chunk.x) && (self.min.1..self.max.1).contains(&chunk.y)
+    }
+}
+
+/// What a stage holds for one chunk.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Product {
+    Field(Field),
+    /// The sites whose footprint overlaps the chunk.
+    Sites(Vec<Site>),
+}
+
+impl Product {
+    fn field(&self) -> &Field {
+        match self {
+            Self::Field(field) => field,
+            Self::Sites(_) => unreachable!("inputs are type checked when the pack loads"),
+        }
+    }
+
+    fn sites(&self) -> &[Site] {
+        match self {
+            Self::Sites(sites) => sites,
+            Self::Field(_) => unreachable!("inputs are type checked when the pack loads"),
+        }
+    }
+}
+
 /// Why generating a stage failed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum StageError {
@@ -58,6 +114,7 @@ pub enum StageError {
 pub struct FieldView<'a> {
     stage: &'a str,
     input: &'a str,
+    /// The reach along the lattice's x, which is what errors report.
     reach: u32,
     size: [u32; 2],
     /// The columns the view may read, in world columns, inclusive.
@@ -105,7 +162,7 @@ pub struct Runtime {
     /// Which chunks of each stage the current request needs.
     needed: BTreeMap<usize, BTreeSet<ChunkCoord>>,
     focus: Vec<FocusPoint>,
-    products: BTreeMap<(usize, ChunkCoord), Arc<Field>>,
+    products: BTreeMap<(usize, ChunkCoord), Arc<Product>>,
 }
 
 impl Runtime {
@@ -150,6 +207,7 @@ impl Runtime {
                 continue;
             };
             for &(input, reach) in &self.pack.stages[index].inputs {
+                let reach = reach.cells(self.size);
                 let covered: BTreeSet<ChunkCoord> = chunks
                     .iter()
                     .flat_map(|&chunk| self.chunks_within(chunk, reach))
@@ -193,8 +251,8 @@ impl Runtime {
                 (distance, *chunk)
             });
             for chunk in missing {
-                let field = self.generate(index, chunk)?;
-                self.products.insert((index, chunk), Arc::new(field));
+                let product = self.generate(index, chunk)?;
+                self.products.insert((index, chunk), Arc::new(product));
                 generated.push((self.pack.stages[index].name.clone(), chunk));
             }
         }
@@ -203,9 +261,27 @@ impl Runtime {
 
     /// What `stage` holds for `chunk`, if it has been generated and is still needed.
     #[must_use]
-    pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
+    pub fn product(&self, stage: &str, chunk: ChunkCoord) -> Option<&Product> {
         let index = self.pack.index(stage)?;
         self.products.get(&(index, chunk)).map(Arc::as_ref)
+    }
+
+    /// The field `stage` holds for `chunk`, if it is a field stage and the chunk is generated.
+    #[must_use]
+    pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
+        match self.product(stage, chunk)? {
+            Product::Field(field) => Some(field),
+            Product::Sites(_) => None,
+        }
+    }
+
+    /// The sites `stage` holds for `chunk`, if it is a sites stage and the chunk is generated.
+    #[must_use]
+    pub fn sites(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Site]> {
+        match self.product(stage, chunk)? {
+            Product::Sites(sites) => Some(sites),
+            Product::Field(_) => None,
+        }
     }
 
     /// How many chunks the runtime holds, over all stages.
@@ -214,12 +290,12 @@ impl Runtime {
         self.products.len()
     }
 
-    /// The chunks whose columns lie within `reach` columns of `chunk`'s.
-    fn chunks_within(&self, chunk: ChunkCoord, reach: u32) -> Vec<ChunkCoord> {
+    /// The chunks whose columns lie within `reach` columns of `chunk`'s, along each axis.
+    fn chunks_within(&self, chunk: ChunkCoord, reach: [u32; 2]) -> Vec<ChunkCoord> {
         let span = |axis: usize, at: i32| {
             let size = i64::from(self.size[axis]);
-            let low = i64::from(at) * size - i64::from(reach);
-            let high = (i64::from(at) + 1) * size - 1 + i64::from(reach);
+            let low = i64::from(at) * size - i64::from(reach[axis]);
+            let high = (i64::from(at) + 1) * size - 1 + i64::from(reach[axis]);
             let chunk = |column: i64| i32::try_from(column.div_euclid(size)).expect("a chunk");
             chunk(low)..=chunk(high)
         };
@@ -228,49 +304,95 @@ impl Runtime {
             .collect()
     }
 
-    fn view<'a>(
-        &'a self,
-        stage: usize,
+    /// The products of `input` within `reach` of `chunk`.
+    fn inputs_within(
+        &self,
         chunk: ChunkCoord,
         input: usize,
-        reach: u32,
-    ) -> FieldView<'a> {
+        reach: [u32; 2],
+    ) -> impl Iterator<Item = (ChunkCoord, &Product)> {
+        self.chunks_within(chunk, reach).into_iter().map(move |at| {
+            let product = self
+                .products
+                .get(&(input, at))
+                .expect("inputs are generated before the stages that read them");
+            (at, product.as_ref())
+        })
+    }
+
+    fn view(&self, stage: usize, chunk: ChunkCoord, input: usize, reach: Reach) -> FieldView<'_> {
+        let reach = reach.cells(self.size);
         let origin = [
             i64::from(chunk.x) * i64::from(self.size[0]),
             i64::from(chunk.y) * i64::from(self.size[1]),
         ];
         let chunks = self
-            .chunks_within(chunk, reach)
-            .into_iter()
-            .map(|at| {
-                let field = self
-                    .products
-                    .get(&(input, at))
-                    .expect("inputs are generated before the stages that read them");
-                ((at.x, at.y), field.as_ref())
-            })
+            .inputs_within(chunk, input, reach)
+            .map(|(at, product)| ((at.x, at.y), product.field()))
             .collect();
         FieldView {
             stage: &self.pack.stages[stage].name,
             input: &self.pack.stages[input].name,
-            reach,
+            reach: reach[0],
             size: self.size,
-            min: [origin[0] - i64::from(reach), origin[1] - i64::from(reach)],
+            min: [
+                origin[0] - i64::from(reach[0]),
+                origin[1] - i64::from(reach[1]),
+            ],
             max: [
-                origin[0] + i64::from(self.size[0]) - 1 + i64::from(reach),
-                origin[1] + i64::from(self.size[1]) - 1 + i64::from(reach),
+                origin[0] + i64::from(self.size[0]) - 1 + i64::from(reach[0]),
+                origin[1] + i64::from(self.size[1]) - 1 + i64::from(reach[1]),
             ],
             chunks,
         }
     }
 
-    fn generate(&self, index: usize, chunk: ChunkCoord) -> Result<Field, StageError> {
+    /// Every site of `input` within `reach` of `chunk`, once each.
+    fn sites_near(&self, chunk: ChunkCoord, input: usize, reach: Reach) -> Vec<Site> {
+        let mut sites: BTreeMap<(i32, i32), Site> = BTreeMap::new();
+        for (_, product) in self.inputs_within(chunk, input, reach.cells(self.size)) {
+            for site in product.sites() {
+                sites.insert(site.region, *site);
+            }
+        }
+        sites.into_values().collect()
+    }
+
+    fn generate(&self, index: usize, chunk: ChunkCoord) -> Result<Product, StageError> {
         let stage = &self.pack.stages[index];
+        if let StageKind::Sites {
+            region,
+            size,
+            chance,
+            ..
+        } = &stage.kind
+        {
+            let (height, reach) = stage.inputs[0];
+            let view = self.view(index, chunk, height, reach);
+            let owner = (
+                chunk.x.div_euclid(*region as i32),
+                chunk.y.div_euclid(*region as i32),
+            );
+            let site = self.site(stage.salt, owner, *region, *size, *chance, &view)?;
+            return Ok(Product::Sites(
+                site.filter(|site| site.overlaps(chunk))
+                    .into_iter()
+                    .collect(),
+            ));
+        }
         let views: BTreeMap<usize, FieldView<'_>> = stage
             .inputs
             .iter()
+            .filter(|&&(input, _)| self.pack.stages[input].kind.output() == Output::Field)
             .map(|&(input, reach)| (input, self.view(index, chunk, input, reach)))
             .collect();
+        let near: Vec<Site> = match &stage.kind {
+            StageKind::Flatten { .. } => {
+                let (sites, reach) = stage.inputs[1];
+                self.sites_near(chunk, sites, reach)
+            }
+            _ => Vec::new(),
+        };
         let [sx, sy] = self.size;
         let mut values = Vec::with_capacity((sx * sy) as usize);
         for y in 0..sy {
@@ -294,15 +416,84 @@ impl Runtime {
                         }
                         sum / ((2 * r + 1) * (2 * r + 1)) as f32
                     }
+                    StageKind::Flatten { height, blend, .. } => {
+                        let view = &views[&self.pack.index(height).expect("linked when loaded")];
+                        let base = view.get(column[0], column[1])?;
+                        let nearest = near
+                            .iter()
+                            .map(|site| (site.distance(column[0], column[1], self.size), site))
+                            .min_by(|a, b| a.0.total_cmp(&b.0));
+                        match nearest {
+                            Some((0.0, site)) => site.height,
+                            Some((distance, site)) if distance < *blend as f32 => {
+                                let t = distance / *blend as f32;
+                                let t = t * t * (3.0 - 2.0 * t);
+                                site.height + (base - site.height) * t
+                            }
+                            _ => base,
+                        }
+                    }
+                    StageKind::Sites { .. } => unreachable!("handled above"),
                 };
                 values.push(value);
             }
         }
-        Ok(Field {
+        Ok(Product::Field(Field {
             chunk,
             size: self.size,
             values,
-        })
+        }))
+    }
+
+    /// The site of `owner`'s region, if it has one, from the stage's own hash stream: whether it
+    /// exists, its size and where it sits inside the region, one chunk in from every edge, and its
+    /// height from `height` over its footprint's centre and inner corners.
+    fn site(
+        &self,
+        salt: u32,
+        owner: (i32, i32),
+        region: u32,
+        size: (u32, u32),
+        chance: f32,
+        height: &FieldView<'_>,
+    ) -> Result<Option<Site>, StageError> {
+        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+        let [exists, dims, place] = pcg3d([world ^ salt, owner.0 as u32, owner.1 as u32]);
+        // Existence is an integer comparison, so it is the same on every machine.
+        if u64::from(exists) >= (f64::from(chance) * 4_294_967_296.0) as u64 {
+            return Ok(None);
+        }
+        let sizes = size.1 - size.0 + 1;
+        let (w, h) = (size.0 + dims % sizes, size.0 + (dims >> 16) % sizes);
+        let (ox, oy) = (
+            1 + place % (region - w - 1),
+            1 + (place >> 16) % (region - h - 1),
+        );
+        let min = (
+            owner.0 * region as i32 + ox as i32,
+            owner.1 * region as i32 + oy as i32,
+        );
+        let max = (min.0 + w as i32, min.1 + h as i32);
+        let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+        let (x0, y0) = (i64::from(min.0) * sx, i64::from(min.1) * sy);
+        let (x1, y1) = (i64::from(max.0) * sx - 1, i64::from(max.1) * sy - 1);
+        let samples = [
+            ((x0 + x1) / 2, (y0 + y1) / 2),
+            (x0 + 1, y0 + 1),
+            (x1 - 1, y0 + 1),
+            (x0 + 1, y1 - 1),
+            (x1 - 1, y1 - 1),
+        ];
+        let mut sum = 0.0;
+        for (x, y) in samples {
+            sum += height.get(x, y)?;
+        }
+        Ok(Some(Site {
+            region: owner,
+            min,
+            max,
+            height: sum / samples.len() as f32,
+        }))
     }
 
     fn evaluate<'v>(

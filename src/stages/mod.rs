@@ -5,4 +5,4 @@ pub mod pack;
 pub mod runtime;
 
 pub use pack::{Expr, PACK_VERSION, Pack, PackError, PackFile, StageDef, StageKind};
-pub use runtime::{Field, FieldView, Runtime, StageError};
+pub use runtime::{Field, FieldView, Product, Runtime, Site, StageError};
