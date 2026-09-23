@@ -308,3 +308,25 @@ fn categories_arrive_as_the_runtime_generates_them() {
         );
     }
 }
+
+#[test]
+fn each_stage_reports_what_it_has_cost() {
+    let mut app = app();
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        !stages.timings().is_empty()
+            && stages
+                .timings()
+                .iter()
+                .all(|(_, timing)| timing.products >= 9)
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let names: Vec<&str> = stages
+        .timings()
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(names, ["height", "trees", "cover"]);
+}

@@ -153,6 +153,14 @@ func _process(_delta: float) -> bool:
 		stats["slowest_frame_events"], stats["slowest_frame_signals_ms"],
 		stats["slowest_frame_grounds"], stats["slowest_frame_grounds_ms"],
 		stats["slowest_frame_bodies"], stats["slowest_frame_bodies_ms"]])
+	var costs: Dictionary = stats["stages"]
+	for stage: String in costs:
+		var cost: Dictionary = costs[stage]
+		print("verify_stages: stage %s: %d products in %.1f ms, %.3f ms each, %.1f ms at most" % [stage, cost["products"], cost["ms"], cost["ms"] / maxi(cost["products"], 1), cost["slowest_ms"]])
+	for stage: String in TARGETS:
+		if not costs.has(stage) or costs[stage]["products"] == 0:
+			_fail("no cost recorded for the stage %s" % stage)
+			return true
 	if stats["process_ms_p99"] > NODE_P99_MS or stats["process_ms_max"] > NODE_MAX_MS:
 		_fail("the node's process took %.2f ms at the 99th percentile, %.2f ms at worst" % [stats["process_ms_p99"], stats["process_ms_max"]])
 		return true
