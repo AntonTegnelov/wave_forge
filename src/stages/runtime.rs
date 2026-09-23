@@ -981,6 +981,40 @@ impl Runtime {
                 to_low + (value(a)? - from_low) / (from_high - from_low) * (to_high - to_low)
             }
             Expr::Curve(a, points) => curve(points, value(a)?),
+            Expr::Match {
+                input: stage,
+                cases,
+                otherwise,
+                blend,
+            } => {
+                let index = self.pack.index(stage).expect("linked when loaded");
+                let names = self.pack.stages[index].kind.categories();
+                let view = input(stage);
+                let reach = i64::from(*blend);
+                // A tent in each direction, so a category's weight falls off smoothly with its
+                // distance from the column and the blend moves by a small step per column.
+                let mut weights: Vec<(usize, f32)> = Vec::new();
+                for dy in -reach..=reach {
+                    for dx in -reach..=reach {
+                        let weight = ((reach + 1 - dx.abs()) * (reach + 1 - dy.abs())) as f32;
+                        let category = view.get(column[0] + dx, column[1] + dy)? as usize;
+                        match weights.iter_mut().find(|(known, _)| *known == category) {
+                            Some((_, sum)) => *sum += weight,
+                            None => weights.push((category, weight)),
+                        }
+                    }
+                }
+                let total: f32 = weights.iter().map(|(_, weight)| weight).sum();
+                let mut blended = 0.0;
+                for (category, weight) in weights {
+                    let case = cases
+                        .iter()
+                        .find(|(name, _)| name == names[category])
+                        .map_or(otherwise.as_ref(), |(_, expr)| expr);
+                    blended += weight / total * value(case)?;
+                }
+                blended
+            }
             Expr::Select {
                 when,
                 then,

@@ -219,7 +219,20 @@ pub enum Expr {
         then: Box<Expr>,
         otherwise: Box<Expr>,
     },
+    /// One expression per category of a Rules stage, blended where categories meet: each
+    /// category found within `blend` cells of the column weighs in with a tent that falls from the
+    /// column outwards, and a category no case names takes `otherwise`. With a `blend` of 0 it
+    /// picks the column's own category's expression.
+    Match {
+        input: String,
+        cases: Vec<(String, Expr)>,
+        otherwise: Box<Expr>,
+        blend: u32,
+    },
 }
+
+/// The widest band a `Match` blends over, in cells: a column reads `(2 * blend + 1)^2` categories.
+pub const MAX_BLEND: u32 = 32;
 
 /// A comparison of two expressions at one column.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -231,7 +244,7 @@ pub enum Condition {
 }
 
 impl Condition {
-    fn inputs<'a>(&'a self, into: &mut Vec<(&'a str, Output)>) {
+    fn inputs<'a>(&'a self, into: &mut Vec<(&'a str, Output, u32)>) {
         match self {
             Self::Less(a, b) | Self::Greater(a, b) => {
                 a.inputs(into);
@@ -254,7 +267,7 @@ impl Condition {
     }
 
     /// The categories this condition reads, with the names it expects of them.
-    fn categories<'a>(&'a self, into: &mut Vec<(&'a str, &'a [String])>) {
+    fn categories<'a>(&'a self, into: &mut Vec<(&'a str, Vec<&'a str>)>) {
         match self {
             Self::Less(a, b) | Self::Greater(a, b) => {
                 a.categories(into);
@@ -266,8 +279,9 @@ impl Condition {
 }
 
 impl Expr {
-    /// The stages this expression reads, with what it reads each as.
-    fn inputs<'a>(&'a self, into: &mut Vec<(&'a str, Output)>) {
+    /// The stages this expression reads, with what it reads each as and how many cells from the
+    /// column.
+    fn inputs<'a>(&'a self, into: &mut Vec<(&'a str, Output, u32)>) {
         match self {
             Self::Constant(_)
             | Self::Noise { .. }
@@ -275,8 +289,20 @@ impl Expr {
             | Self::Y
             | Self::Distance(_)
             | Self::Angle(_) => {}
-            Self::Input(name) => into.push((name, Output::Field)),
-            Self::Is(name, _) => into.push((name, Output::Categories)),
+            Self::Input(name) => into.push((name, Output::Field, 0)),
+            Self::Is(name, _) => into.push((name, Output::Categories, 0)),
+            Self::Match {
+                input,
+                cases,
+                otherwise,
+                blend,
+            } => {
+                into.push((input, Output::Categories, *blend));
+                for (_, case) in cases {
+                    case.inputs(into);
+                }
+                otherwise.inputs(into);
+            }
             Self::Add(a, b)
             | Self::Sub(a, b)
             | Self::Mul(a, b)
@@ -305,7 +331,7 @@ impl Expr {
     }
 
     /// The categories this expression reads, with the names it expects of them.
-    fn categories<'a>(&'a self, into: &mut Vec<(&'a str, &'a [String])>) {
+    fn categories<'a>(&'a self, into: &mut Vec<(&'a str, Vec<&'a str>)>) {
         match self {
             Self::Constant(_)
             | Self::Noise { .. }
@@ -314,7 +340,19 @@ impl Expr {
             | Self::Y
             | Self::Distance(_)
             | Self::Angle(_) => {}
-            Self::Is(name, names) => into.push((name, names)),
+            Self::Is(name, names) => into.push((name, names.iter().map(String::as_str).collect())),
+            Self::Match {
+                input,
+                cases,
+                otherwise,
+                ..
+            } => {
+                into.push((input, cases.iter().map(|(name, _)| name.as_str()).collect()));
+                for (_, case) in cases {
+                    case.categories(into);
+                }
+                otherwise.categories(into);
+            }
             Self::Add(a, b)
             | Self::Sub(a, b)
             | Self::Mul(a, b)
@@ -412,6 +450,25 @@ impl Expr {
                     ));
                 }
                 a.check()
+            }
+            Self::Match {
+                cases,
+                otherwise,
+                blend,
+                ..
+            } => {
+                if *blend > MAX_BLEND {
+                    return Err(format!(
+                        "a blend of {blend} cells; at most {MAX_BLEND} are allowed"
+                    ));
+                }
+                for (index, (name, case)) in cases.iter().enumerate() {
+                    if cases[..index].iter().any(|(earlier, _)| earlier == name) {
+                        return Err(format!("two cases for category {name:?}"));
+                    }
+                    case.check()?;
+                }
+                otherwise.check()
             }
             Self::Select {
                 when,
@@ -516,10 +573,7 @@ impl Pack {
                     check_categories(&categories, &by_name, &tests).map_err(invalid)?;
                     let mut names = Vec::new();
                     expr.inputs(&mut names);
-                    names
-                        .into_iter()
-                        .map(|(name, output)| (name, Reach::Cells(0), output))
-                        .collect()
+                    widest_reads(names)
                 }
                 StageKind::Rules { rules, .. } => {
                     let count = def.kind.categories().len();
@@ -538,10 +592,7 @@ impl Pack {
                         }
                     }
                     check_categories(&categories, &by_name, &tests).map_err(invalid)?;
-                    names
-                        .into_iter()
-                        .map(|(name, output)| (name, Reach::Cells(0), output))
-                        .collect()
+                    widest_reads(names)
                 }
                 StageKind::Blur { input, radius } => {
                     vec![(input.as_str(), Reach::Cells(*radius), Output::Field)]
@@ -711,12 +762,30 @@ pub(crate) const fn point_stage_id(salt: u32) -> u16 {
 
 /// FNV-1a of a stage's name: the same for a stage wherever it sits in the pack, so adding or
 /// reordering stages changes no other stage's random decisions.
+/// Each stage an expression reads, once for each kind it reads it as, at the widest reach any part
+/// of it reads that stage at: the runtime gives a stage one view of each input. A stage read as two
+/// kinds stays two reads, so the check of what each stage produces refuses the wrong one.
+fn widest_reads(reads: Vec<(&str, Output, u32)>) -> Vec<(&str, Reach, Output)> {
+    let mut widest: Vec<(&str, Reach, Output)> = Vec::new();
+    for (name, output, reach) in reads {
+        match widest
+            .iter_mut()
+            .find(|(known, _, kind)| *known == name && *kind == output)
+        {
+            Some((_, Reach::Cells(cells), _)) => *cells = (*cells).max(reach),
+            Some(_) => unreachable!("an expression reads in cells"),
+            None => widest.push((name, Reach::Cells(reach), output)),
+        }
+    }
+    widest
+}
+
 /// Whether every category test names categories its Rules stage has. A test of a stage that is not
 /// a Rules stage, or of no stage, is left to the check of what each stage reads.
 fn check_categories(
     categories: &[Vec<String>],
     by_name: &BTreeMap<String, usize>,
-    tests: &[(&str, &[String])],
+    tests: &[(&str, Vec<&str>)],
 ) -> Result<(), String> {
     for (input, names) in tests {
         let Some(&index) = by_name.get(*input) else {
@@ -726,7 +795,10 @@ fn check_categories(
         if known.is_empty() {
             continue;
         }
-        if let Some(missing) = names.iter().find(|name| !known.contains(name)) {
+        if let Some(missing) = names
+            .iter()
+            .find(|name| !known.iter().any(|known| known == *name))
+        {
             return Err(format!("{input:?} has no category {missing:?}"));
         }
     }
