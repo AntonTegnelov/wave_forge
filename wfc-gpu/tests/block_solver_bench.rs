@@ -64,6 +64,7 @@ fn repeated(region: &Region, init: &Domains, regions: u32, seed: u32) -> RegionB
         seeds: vec![seed; regions as usize],
         init: domains,
         budget: None,
+        portfolio: false,
     }
 }
 

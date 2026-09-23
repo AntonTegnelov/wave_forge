@@ -36,6 +36,10 @@ pub struct RegionBatch {
     pub init: Domains,
     /// How hard to try, or the solver's own default.
     pub budget: Option<SolveBudget>,
+    /// Whether the regions are one problem tried with different seeds, of which only the lowest
+    /// that solves is wanted. A solver may then stop a region as soon as a lower one has solved,
+    /// and report it [`RegionStatus::Superseded`]; the lowest solving region is the same either way.
+    pub portfolio: bool,
 }
 
 impl RegionBatch {
@@ -71,6 +75,9 @@ pub enum RegionStatus {
     /// The region's borders cannot be satisfied at all: propagating the starting domains alone
     /// empties a cell. The caller's recourse is to solve it again with its borders released.
     BorderContradiction,
+    /// A lower region of the same portfolio solved first, so this one stopped; its domains are
+    /// not a result. See [`RegionBatch::portfolio`].
+    Superseded,
 }
 
 impl RegionStatus {

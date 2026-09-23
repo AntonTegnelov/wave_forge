@@ -119,6 +119,7 @@ fn census_of_the_chunks_a_city_gives_up_on() {
                     seeds: (0..SEEDS).map(|seed| seed * 7919 + 1).collect(),
                     init,
                     budget: Some(budget),
+                    portfolio: true,
                 })
                 .expect("a well-formed batch");
             let result = solver.wait(job).expect("the dispatch finishes");

@@ -48,6 +48,8 @@ const STATUS_CAP: u32 = 2u;
 const STATUS_BOUNDARY: u32 = 3u;
 // A checkpoint held an empty cell: a bug in the checkpoint ring, never a property of the rules.
 const STATUS_BAD_CHECKPOINT: u32 = 4u;
+// A lower region of the same portfolio solved first, so this one stopped.
+const STATUS_SUPERSEDED: u32 = 5u;
 
 // One cell's possible tiles, and everything that reads or writes one. KernelSpec::wgsl generates
 // these with the words written out; see the note on mask_prelude for why nothing loops over them.
@@ -62,7 +64,9 @@ struct Params {
     radius: u32,
     // 0 restarts the region on a contradiction; 1 restores the checkpoint before the failing round.
     undo: u32,
-    pad0: u32,
+    // 1 when the regions are one problem tried with different seeds: a region stops once a lower
+    // one has solved, since only the lowest that solves is wanted.
+    portfolio: u32,
     pad1: u32,
     pad2: u32,
 };
@@ -93,7 +97,10 @@ struct Ctrl {
 @group(0) @binding(0) var<storage, read> rules: array<u32>;
 @group(0) @binding(1) var<storage, read> init: array<u32>;
 @group(0) @binding(2) var<storage, read_write> out: array<u32>;
-@group(0) @binding(3) var<storage, read_write> stats: array<u32>;
+// Word 0 is the lowest region of a portfolio that has solved so far, NONE until one has; each
+// region's record follows, STATS words from word 1. Atomic, because regions of one dispatch read
+// word 0 while others write it.
+@group(0) @binding(3) var<storage, read_write> stats: array<atomic<u32>>;
 @group(0) @binding(4) var<uniform> params: Params;
 // One integer weight per tile. Integers, because a float sum may be contracted into a fused
 // multiply-add by one driver and not another, and the same seed would then pick differently.
@@ -394,14 +401,28 @@ fn solve_region(
                 }
             } else if (st.phase == WRITE) {
                 next.phase = DONE;
-                stats[region * STATS] = next.status;
-                stats[region * STATS + 1u] = next.sweeps;
-                stats[region * STATS + 2u] = next.collapses;
-                stats[region * STATS + 3u] = next.restarts;
-                stats[region * STATS + 4u] = next.contra_cell;
-                stats[region * STATS + 5u] = next.steps;
-                stats[region * STATS + 6u] = next.backtracks;
-                stats[region * STATS + 7u] = next.tries;
+                let record = 1u + region * STATS;
+                atomicStore(&stats[record], next.status);
+                atomicStore(&stats[record + 1u], next.sweeps);
+                atomicStore(&stats[record + 2u], next.collapses);
+                atomicStore(&stats[record + 3u], next.restarts);
+                atomicStore(&stats[record + 4u], next.contra_cell);
+                atomicStore(&stats[record + 5u], next.steps);
+                atomicStore(&stats[record + 6u], next.backtracks);
+                atomicStore(&stats[record + 7u], next.tries);
+            }
+            // A region that has just solved tells the rest of its portfolio; one still working
+            // stops if a lower region already has. The lowest region that solves is the same
+            // either way, because only a lower solved region can stop one.
+            if (params.portfolio != 0u) {
+                let finishing = st.phase != WRITE && next.phase == WRITE;
+                if (finishing && next.status == STATUS_OK) {
+                    atomicMin(&stats[0], region);
+                } else if (next.phase != WRITE && next.phase != DONE
+                    && atomicLoad(&stats[0]) < region) {
+                    next.status = STATUS_SUPERSEDED;
+                    next.phase = WRITE;
+                }
             }
             // A hung shader resets the host's graphics driver, so every run has a hard step budget.
             if (next.steps >= params.max_steps && next.phase < WRITE) {

@@ -45,6 +45,10 @@ pub struct GeneratorStats {
     pub failed: u32,
     /// Time spent waiting for the solver.
     pub solver_ms: f64,
+    /// Repair batches dispatched, whether they placed their chunk or not.
+    pub repair_batches: u32,
+    /// The part of `solver_ms` spent on repairs.
+    pub repair_ms: f64,
 }
 
 /// A batch the solver is working on.
@@ -283,6 +287,7 @@ impl<S: Solver> WorldGenerator<S> {
             seeds: vec![batch_seed(self.config.seed); chunks.len()],
             init,
             budget: None,
+            portfolio: false,
         };
         self.dispatch(batch, chunks.to_vec(), regions, halo, false)
     }
@@ -307,6 +312,8 @@ impl<S: Solver> WorldGenerator<S> {
             seeds,
             init,
             budget: Some(self.config.repair.budget),
+            // One chunk tried with many seeds, of which only the lowest that solves is kept.
+            portfolio: true,
         };
         self.dispatch(batch, vec![chunk], vec![region], halo, true)
     }
@@ -380,7 +387,12 @@ impl<S: Solver> WorldGenerator<S> {
 
     /// Writes what a finished batch solved and decides what to do about what it did not.
     fn commit(&mut self, pending: Pending, result: wfc_core::BatchResult) -> Result<(), Error> {
-        self.stats.solver_ms += pending.started.elapsed().as_secs_f64() * 1000.0;
+        let elapsed_ms = pending.started.elapsed().as_secs_f64() * 1000.0;
+        self.stats.solver_ms += elapsed_ms;
+        if pending.release {
+            self.stats.repair_batches += 1;
+            self.stats.repair_ms += elapsed_ms;
+        }
         let cells = pending.regions[0].shape().cells();
         for (index, (&chunk, region)) in pending.chunks.iter().zip(&pending.regions).enumerate() {
             // A repair is one chunk tried with many seeds; the lowest seed that solved is the one

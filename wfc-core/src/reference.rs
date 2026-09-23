@@ -412,6 +412,7 @@ mod tests {
             seeds: vec![7, 7],
             init,
             budget: None,
+            portfolio: false,
         };
 
         let job = solver.start(batch).expect("a well-formed batch");
@@ -434,6 +435,7 @@ mod tests {
             seeds: vec![1],
             init: Domains::filled(region().cells(), 2),
             budget: None,
+            portfolio: false,
         };
 
         assert!(matches!(

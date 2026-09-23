@@ -361,6 +361,8 @@ struct Picky {
     finished: Option<(JobId, BatchResult)>,
     /// The seeds of every repair batch.
     repair_seeds: Vec<Vec<u32>>,
+    /// Whether each batch, in order, was a repair and whether it was marked a portfolio.
+    kinds: Vec<(bool, bool)>,
 }
 
 impl Solver for Picky {
@@ -370,6 +372,7 @@ impl Solver for Picky {
 
     fn start(&mut self, batch: RegionBatch) -> Result<JobId, SolverError> {
         let repairing = batch.budget.is_some();
+        self.kinds.push((repairing, batch.portfolio));
         if repairing {
             self.repair_seeds.push(batch.seeds.clone());
         }
@@ -425,6 +428,7 @@ fn picky(solving: Vec<usize>) -> WorldGenerator<Picky> {
         next_job: 1,
         finished: None,
         repair_seeds: Vec::new(),
+        kinds: Vec::new(),
     })
 }
 
@@ -445,6 +449,17 @@ fn a_repair_tries_several_seeds_and_keeps_the_lowest_that_solves() {
         u32::from(tile),
         5 % TILES,
         "the lowest seed that solved won"
+    );
+    // A repair is marked as one problem tried with many seeds, which lets a solver stop the seeds
+    // above one that has solved; a batch of different chunks never is.
+    assert!(
+        world
+            .solver()
+            .kinds
+            .iter()
+            .all(|&(repair, portfolio)| repair == portfolio),
+        "{:?}",
+        world.solver().kinds
     );
     let seeds = &world.solver().repair_seeds[0];
     let distinct: BTreeSet<u32> = seeds.iter().copied().collect();
