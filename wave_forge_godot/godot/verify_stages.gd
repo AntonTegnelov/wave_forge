@@ -161,6 +161,9 @@ func _process(_delta: float) -> bool:
 		if not costs.has(stage) or costs[stage]["products"] == 0:
 			_fail("no cost recorded for the stage %s" % stage)
 			return true
+	if stats["slowest_frame_events"] > 256:
+		_fail("a frame emitted %d signals; at most 256 are allowed" % stats["slowest_frame_events"])
+		return true
 	if stats["process_ms_p99"] > NODE_P99_MS or stats["process_ms_max"] > NODE_MAX_MS:
 		_fail("the node's process took %.2f ms at the 99th percentile, %.2f ms at worst" % [stats["process_ms_p99"], stats["process_ms_max"]])
 		return true
