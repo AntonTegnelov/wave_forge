@@ -184,16 +184,28 @@ pub enum StageKind {
         blend: u32,
         profile: Profile,
     },
-    /// Points of `kind` standing on the `height` field: one candidate per square block of
-    /// `spacing` cells at a hashed column inside it, kept with probability `chance`, if the height
-    /// there is within `between`, the slope at most `max_slope` (height per cell), the column at
-    /// least `margin` cells from every site of `avoid`, and no kept candidate of higher priority is
-    /// closer than `apart` cells. That last test reads neighbours' candidates, never their
-    /// results, so points keep their distance across chunk seams.
+    /// Points of `kind` standing on the `height` field, from a chain of modifiers applied in this
+    /// order:
+    ///
+    /// 1. candidates: `count` per square block of `spacing` cells, each at a hashed column inside
+    ///    it and kept with probability `chance`, and each the first of a `group` of points
+    ///    scattered around it;
+    /// 2. tests at each point's column: the height within `between`, the slope at most
+    ///    `max_slope` (height per cell), every condition of `when`, the depth under `water`, and
+    ///    at least `margin` cells from every site of `avoid`;
+    /// 3. spacing: no candidate that passes its tests and has a higher priority closer than
+    ///    `apart` cells, a test that reads neighbours' candidates, never their results, so points
+    ///    keep their distance across chunk seams;
+    /// 4. attributes: a `scale`, a `tilt` in degrees and, with probability `align`, standing
+    ///    along the ground's normal.
     Scatter {
         kind: String,
         height: String,
         spacing: u32,
+        #[serde(default = "one_each")]
+        count: (u32, u32),
+        #[serde(default)]
+        group: Option<Group>,
         #[serde(default = "always")]
         chance: f32,
         #[serde(default)]
@@ -201,10 +213,51 @@ pub enum StageKind {
         #[serde(default)]
         max_slope: Option<f32>,
         #[serde(default)]
+        when: Vec<Condition>,
+        #[serde(default)]
+        water: Option<Water>,
+        #[serde(default)]
         avoid: Option<(String, u32)>,
         #[serde(default)]
         apart: u32,
+        #[serde(default = "unscaled")]
+        scale: (f32, f32),
+        #[serde(default)]
+        tilt: (f32, f32),
+        #[serde(default)]
+        align: f32,
     },
+}
+
+/// Points a Scatter stage scatters around each candidate: from `size.0` to `size.1` of them, the
+/// candidate included, within `radius` cells of it.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Group {
+    pub size: (u32, u32),
+    pub radius: f32,
+}
+
+/// The water a Scatter stage's points stand in: a point is kept where the ground lies between
+/// `depth.0` and `depth.1` cells below `level`.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Water {
+    pub level: f32,
+    pub depth: (f32, f32),
+}
+
+/// The most candidates a Scatter stage's block may hold, and the most points a group may have:
+/// a point's slot in its id is its candidate's place in the block times 256 plus its place in the
+/// group.
+pub const MAX_SCATTER_SLOTS: u32 = 256;
+
+const fn one_each() -> (u32, u32) {
+    (1, 1)
+}
+
+const fn unscaled() -> (f32, f32) {
+    (1.0, 1.0)
 }
 
 /// The height an Apply stage gives the ground under a curve.
@@ -1293,16 +1346,79 @@ impl Pack {
                 StageKind::Scatter {
                     height,
                     spacing,
+                    count,
+                    group,
                     chance,
                     between,
                     max_slope,
+                    when,
+                    water,
                     avoid,
                     apart,
+                    scale,
+                    tilt,
+                    align,
                     ..
                 } => {
                     if *spacing == 0 {
                         return Err(invalid("a spacing of 0 cells".to_owned()));
                     }
+                    let within = |range: (u32, u32), low: u32| {
+                        low <= range.0 && range.0 <= range.1 && range.1 < MAX_SCATTER_SLOTS
+                    };
+                    if !within(*count, 1) {
+                        return Err(invalid(format!(
+                            "a count of {count:?} per block; a range from 1 to {} is allowed",
+                            MAX_SCATTER_SLOTS - 1
+                        )));
+                    }
+                    if let Some(group) = group
+                        && (!within(group.size, 1)
+                            || !(group.radius.is_finite() && group.radius >= 0.0))
+                    {
+                        return Err(invalid(format!(
+                            "a group of {:?} points within {} cells; sizes from 1 to {} and a \
+                             radius from 0 are allowed",
+                            group.size,
+                            group.radius,
+                            MAX_SCATTER_SLOTS - 1
+                        )));
+                    }
+                    if !(scale.0.is_finite() && scale.0 > 0.0 && scale.0 <= scale.1)
+                        || !scale.1.is_finite()
+                    {
+                        return Err(invalid(format!("a scale from {} to {}", scale.0, scale.1)));
+                    }
+                    if !(0.0 <= tilt.0 && tilt.0 <= tilt.1 && tilt.1 <= 180.0) {
+                        return Err(invalid(format!(
+                            "a tilt from {} to {} degrees; 0 to 180 are allowed",
+                            tilt.0, tilt.1
+                        )));
+                    }
+                    if !(0.0..=1.0).contains(align) {
+                        return Err(invalid(format!("align {align} is not between 0 and 1")));
+                    }
+                    if let Some(water) = water
+                        && !(water.level.is_finite()
+                            && water.depth.0.is_finite()
+                            && water.depth.1.is_finite()
+                            && water.depth.0 <= water.depth.1)
+                    {
+                        return Err(invalid(format!(
+                            "water at {} with depths {:?}",
+                            water.level, water.depth
+                        )));
+                    }
+                    for condition in when {
+                        condition.check().map_err(invalid)?;
+                        check_place(|f| condition.visit(f), Place::Column, &columns)
+                            .map_err(invalid)?;
+                    }
+                    let mut tests = Vec::new();
+                    for condition in when {
+                        condition.categories(&mut tests);
+                    }
+                    check_categories(&categories, &by_name, &tests).map_err(invalid)?;
                     if !(0.0..=1.0).contains(chance) {
                         return Err(invalid(format!("chance {chance} is not between 0 and 1")));
                     }
@@ -1314,13 +1430,25 @@ impl Pack {
                     if max_slope.is_some_and(|slope| slope.is_nan() || slope < 0.0) {
                         return Err(invalid(format!("a slope limit of {max_slope:?}")));
                     }
-                    // Candidates within `apart` are judged by their own tests, which read the
-                    // height one cell around them for the slope.
-                    let slope = u32::from(max_slope.is_some());
-                    let mut reads =
-                        vec![(height.as_str(), Reach::Cells(apart + slope), Output::Field)];
+                    // A chunk's points come from candidates up to a group's radius beyond it, whose
+                    // spacing is judged against candidates `apart` further out, each by its own
+                    // tests: the height one cell around it for the slope or the ground's normal,
+                    // and what its conditions read around its column.
+                    let base = apart + group.map_or(0, |group| group.radius.ceil() as u32);
+                    let around = u32::from(max_slope.is_some() || *align > 0.0);
+                    let mut fields = vec![(height.as_str(), Output::Field, base + around)];
+                    for condition in when {
+                        let mut names = Vec::new();
+                        condition.inputs(&mut names);
+                        fields.extend(
+                            names
+                                .into_iter()
+                                .map(|(name, output, reach)| (name, output, base + reach)),
+                        );
+                    }
+                    let mut reads = widest_reads(fields);
                     if let Some((sites, margin)) = avoid {
-                        reads.push((sites.as_str(), Reach::Cells(apart + margin), Output::Sites));
+                        reads.push((sites.as_str(), Reach::Cells(base + margin), Output::Sites));
                     }
                     reads
                 }
@@ -1366,6 +1494,11 @@ impl Pack {
             };
             match &def.kind {
                 StageKind::Field(expr) => expr.visit(&mut note),
+                StageKind::Scatter { when, .. } => {
+                    for condition in when {
+                        condition.visit(&mut note);
+                    }
+                }
                 StageKind::Rules { rules, .. } => {
                     for condition in rules.iter().flat_map(|rule| &rule.when) {
                         condition.visit(&mut note);
@@ -1381,8 +1514,7 @@ impl Pack {
                 | StageKind::Apply { .. }
                 | StageKind::Flatten { .. }
                 | StageKind::Solve { .. }
-                | StageKind::Region { .. }
-                | StageKind::Scatter { .. } => {}
+                | StageKind::Region { .. } => {}
             }
             stages.push(Stage {
                 tables: read_tables,

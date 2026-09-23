@@ -849,22 +849,14 @@ impl WaveForgeStages {
         let mut kinds: BTreeMap<&str, (Vec<f32>, Vec<i64>)> = BTreeMap::new();
         for point in points {
             let (transforms, ids) = kinds.entry(&point.kind).or_default();
-            let (sin, cos) = (point.turn * std::f32::consts::TAU).sin_cos();
+            let [row_x, row_y, row_z] = point.y_up_basis();
             let [x, y, height] = point.position;
-            transforms.extend([
-                cos,
-                0.0,
-                sin,
-                x * cell.x,
-                0.0,
-                1.0,
-                0.0,
-                height * cell.y,
-                -sin,
-                0.0,
-                cos,
-                y * cell.z,
-            ]);
+            transforms.extend(row_x);
+            transforms.push(x * cell.x);
+            transforms.extend(row_y);
+            transforms.push(height * cell.y);
+            transforms.extend(row_z);
+            transforms.push(y * cell.z);
             ids.push(local_id(point.id.local));
         }
         kinds
