@@ -73,8 +73,9 @@ first, which the survival game grows into, then what the strategy game needs.
    Valheim's feature parity beyond G7's criteria: scenes bound to points
    ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)) and lakes
    ([#144](https://github.com/AntonTegnelov/wave_forge/issues/144)).
-3. **Engine depth, alongside:** ground cover, grass and wind
-   ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), region tags for audio and
+3. **Engine depth, alongside.** Built in both engines: ground materials, grass from a cover field,
+   plants in a global wind, and ground levels of detail with skirts
+   ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)). Left: region tags for audio and
    localisation ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)), far proxies and
    occluders ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)), density volumes for
    G1, G3 and G8 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
@@ -84,7 +85,8 @@ first, which the survival game grows into, then what the strategy game needs.
 **Waiting on the owner's hardware:** the frame-time measurement of own against shared devices on
 desktops with native drivers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)). It
 decides the device policy in both engines, whether a backend over Godot's `RenderingDevice` is worth
-building, and whether the P stories' targets hold.
+building, and whether the P stories' targets hold. Also grass and ground levels on Forward+ on a
+desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166)).
 
 **Before any release:** builds for every desktop platform the Godot Asset Store expects (Windows,
 macOS, Linux), and a note in the extension on where godot-rust's MPL-2.0 source can be obtained.
