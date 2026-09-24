@@ -1642,7 +1642,7 @@ impl WaveForgeStages {
                 .collect();
             // The library's triangles are counter-clockwise seen from above; Godot's front faces
             // are clockwise.
-            let indices: PackedInt32Array = mesh
+            let indices: PackedInt32Array = mesh.levels[0]
                 .indices
                 .chunks(3)
                 .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])

@@ -297,8 +297,12 @@ fn a_ground_mesh_has_a_vertex_per_column_and_its_neighbours_edge() {
 
     let mesh = ground_mesh(ground);
 
-    assert_eq!(mesh.count_vertices(), 9 * 9);
-    assert_eq!(mesh.indices().expect("indexed").len(), 8 * 8 * 6);
+    assert_eq!(ground.size, [9, 9]);
+    assert_eq!(mesh.count_vertices(), ground.positions.len());
+    assert_eq!(
+        mesh.indices().expect("indexed").len(),
+        ground.levels[0].indices.len()
+    );
 }
 
 #[test]
