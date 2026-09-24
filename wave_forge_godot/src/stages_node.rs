@@ -1879,8 +1879,10 @@ impl WaveForgeStages {
                         kind: point.kind.to_string(),
                         transform: place(point.y_up_basis(), point.position),
                         id: local_id(point.id.local),
-                        // A larger plant bends less.
-                        sway: [phase(point.id.local), 1.0 / point.scale],
+                        // The shader bends a plant by the wind over its stiffness in the mesh's
+                        // own units, which its scale then enlarges: a stiffness of its scale moves
+                        // every plant's tip the wind's strength, and a larger plant leans less.
+                        sway: [phase(point.id.local), point.scale],
                     })
                     .collect(),
                 StageKind::Assemble { .. } => worker
