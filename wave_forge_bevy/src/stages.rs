@@ -25,7 +25,7 @@ use std::sync::Mutex;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
     Categories, Edits, Facts, Field, Point, RowId, Runtime, Save, Site, StageEvent, StageTiming,
-    StageWorker, TownChunk,
+    StageWorker, Stamp, TownChunk,
 };
 use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, ground, ground_readers};
 
@@ -118,6 +118,28 @@ impl WaveForgeStages {
     #[must_use]
     pub fn points(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Point]> {
         self.worker.points(stage, chunk)
+    }
+
+    /// An Assemble stage's pieces overlapping a chunk, if they have arrived.
+    #[must_use]
+    pub fn stamps(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Stamp]> {
+        self.worker.stamps(stage, chunk)
+    }
+
+    /// Where an assembled piece stands in Bevy's world: at the centre of its footprint on its
+    /// floor, turned about +Y, where a scene of the piece authored at turn 0 with its footprint
+    /// centred on its origin goes.
+    #[must_use]
+    pub fn stamp_transform(&self, stamp: &Stamp) -> Transform {
+        let rows = stamp.y_up_basis();
+        let column = |c: usize| Vec3::new(rows[0][c], rows[1][c], rows[2][c]);
+        let [x, y, floor] = stamp.position;
+        let cell = self.settings.cell_size;
+        Transform {
+            translation: Vec3::new(x * cell.x, floor * cell.y, y * cell.z),
+            rotation: Quat::from_mat3(&Mat3::from_cols(column(0), column(1), column(2))),
+            scale: Vec3::ONE,
+        }
     }
 
     /// Where a point stands in Bevy's world: the lattice's x and y across Bevy's x and z, its

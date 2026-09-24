@@ -125,6 +125,10 @@ second, published once a second, not the last frame's time.
 - `point_sets(stage, chunk)`: a Scatter stage's points, one dictionary per kind, with `transforms`
   as a MultiMesh buffer standing on the field, turned, leant and scaled as each point is, and each
   point's `ids`.
+- `stamps(stage, chunk)`: an Assemble stage's pieces overlapping a chunk, one dictionary each, with
+  the `piece` name, what names its site (as `sites` gives it), its `id`, its `transform` in Godot's
+  world space, where a scene of the piece authored at turn 0 with its footprint centred on its
+  origin goes, and the cells it covers from `min` to `max` ([packs.md](packs.md#assemble)).
 - `set_collision_shape(module, shape)` gives every cell of a town's module a collider in the
   chunks within `collider_radius`, for every Solve stage; `modules_tagged(rules, tag)` names the
   modules of a rule set that carry a tag, to assign shapes by tag.
@@ -177,8 +181,9 @@ are deep. Ground and bodies go when their chunk's field is dropped or the player
 `wave_forge_godot/verify.sh` builds the extension and runs `godot/verify.gd` (the WFC world, with
 colliders and navigation), `godot/verify_stages.gd` (the valley pack, its ground, and a walk
 through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) and
-`godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack) and `godot/verify_edits.gd`
-(a felled tree and raised ground through an edits log and a save, and cut grass growing back) in a
-real headless Godot.
+`godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack), `godot/verify_edits.gd`
+(a felled tree and raised ground through an edits log and a save, and cut grass growing back) and
+`godot/verify_assemble.gd` (a village's pieces placed by their transforms) in a real headless
+Godot.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).

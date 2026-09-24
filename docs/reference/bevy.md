@@ -48,8 +48,10 @@ game builds a `Runtime` of the same pack and seed and calls `sample` or `atlas` 
 thread.
 
 - `StagesSettings`: `chunk`, columns per chunk as the runtime was built with, and `cell_size`.
-- `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles` and `points` per stage and chunk, `timings()` per stage,
-  `translation_of(point)` and `transform_of(point)` (turned, leant and scaled) in Bevy's world, and
+- `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles`, `points` and `stamps` per stage and chunk, `timings()` per stage,
+  `translation_of(point)` and `transform_of(point)` (turned, leant and scaled) in Bevy's world,
+  `stamp_transform(stamp)`, where a scene of an assembled piece goes
+  ([packs.md](packs.md#assemble)), and
   `failure()`. `set_facts(facts)` and `focus(table,
   id)` hand the stages new tables of facts and a focused row ([packs.md](packs.md#tables-of-facts)):
   a game keeps its own `Facts`, gives it rows, and hands a copy here; the runtime `build` makes is

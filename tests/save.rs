@@ -1,6 +1,6 @@
 //! Saves: a frozen stage keeps the chunks it first generated after the pack changes, an
 //! ephemeral stage's edits are never saved, and a save records the generator and the pack. The
-//! ring world freezes its shrines and never saves its grass.
+//! ring world freezes its locations and never saves its grass.
 
 use std::sync::Arc;
 use wave_forge::stages::{Edit, Edits, Pack, Point, PointId, Runtime, Save};
@@ -125,7 +125,7 @@ fn a_save_loads_as_it_was_written() {
 }
 
 #[test]
-fn the_ring_world_saves_its_shrines_and_never_its_grass() {
+fn the_ring_world_saves_its_locations_and_never_its_grass() {
     let text = std::fs::read_to_string(format!(
         "{}/examples/rings.world.ron",
         env!("CARGO_MANIFEST_DIR")
@@ -135,7 +135,7 @@ fn the_ring_world_saves_its_shrines_and_never_its_grass() {
     let mut runtime = Runtime::new(pack, 7, [8, 8]);
     let origin = ChunkCoord::new(0, 0, 0);
     runtime
-        .request(&[FocusPoint::new(origin, 1)], &["shrines", "grass"])
+        .request(&[FocusPoint::new(origin, 1)], &["locations", "grass"])
         .expect("stages");
     runtime.run_until_idle().expect("the stages run");
     let grass = runtime.points("grass", origin).expect("generated")[0].clone();
@@ -147,5 +147,5 @@ fn the_ring_world_saves_its_shrines_and_never_its_grass() {
 
     assert!(save.edits.log.is_empty(), "{:?}", save.edits);
     assert!(!save.frozen.is_empty());
-    assert!(save.frozen.iter().all(|chunk| chunk.stage == "shrines"));
+    assert!(save.frozen.iter().all(|chunk| chunk.stage == "locations"));
 }

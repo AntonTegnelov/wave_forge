@@ -109,7 +109,7 @@ A stage may declare how a save keeps it, with `persist`:
   back after a load. Clutter, say.
 
 ```ron
-(name: "shrines", persist: Frozen, kind: Locations(...)),
+(name: "locations", persist: Frozen, kind: Locations(...)),
 (name: "grass", persist: Ephemeral, kind: Scatter(kind: "grass", height: "terrain", spacing: 2)),
 ```
 
@@ -206,8 +206,8 @@ its row ([Solve](#solve)). Roads from a table's curves are not built yet
 
 ## Stages
 
-Every stage works on a two-dimensional lattice of cell columns at its scale. Every stage produces one of six types (a field, categories, sites, tiles, points or curves), and loading refuses a stage that
-reads one type as another.
+Every stage works on a two-dimensional lattice of cell columns at its scale. Every stage produces one of seven types (a field, categories, sites, tiles, points, curves or
+stamps), and loading refuses a stage that reads one type as another.
 
 | Kind | Produces | Reads, and how far |
 |---|---|---|
@@ -222,9 +222,10 @@ reads one type as another.
 | `TableCurves` | Curves | a table's rows |
 | `Rivers` | Curves | a height field, `region - 1` chunks |
 | `Apply` | Field | a height field and a Region or TableCurves stage, `max_radius + blend` cells |
-| `Flatten` | Field | a height field, 0 cells; a Sites stage, `blend` cells |
+| `Flatten` | Field | a height field, 0 cells; a sites stage or an Assemble stage, `blend` cells |
 | `Solve` | Tiles | a Sites or TableSites stage, 0 cells |
-| `Scatter` | Points | a height field, `apart` cells (one more with `max_slope`); a Sites stage, `apart + margin` cells |
+| `Assemble` | Stamps | a sites stage, 0 cells |
+| `Scatter` | Points | a height field, `apart` cells (one more with `max_slope`); a sites stage or an Assemble stage, `apart + margin` cells |
 
 ### Field
 
@@ -377,7 +378,8 @@ too small to keep a site one chunk inside it, tries outside 1 to 1 024, a negati
 kinds of one name, and conditions that read what a stage cannot.
 
 `examples/rings.world.ron` places shrines per ring: two in the woods at least 48 cells apart on
-gentle ground, one in the peaks and one on the grassland, in every region of 24 chunks.
+gentle ground, one in the peaks and one on the grassland, in every region of 24 chunks, and after
+them a crypt in the woods.
 
 ### TableSites
 
@@ -399,6 +401,8 @@ the pack does not have.
 `Flatten(height: "field", sites: "sites", blend: b)`: the height field levelled to each nearby
 site's height inside its footprint and blended back to the field over `b` cells around it. This is
 the adapted field of the base, sites, adapted pattern ([stages.md](../architecture/stages.md#the-execution-contract)).
+`sites` may name an [Assemble](#assemble) stage instead, and then each piece's footprint is levelled
+to its floor: a village of pieces sits on sloping ground.
 
 ### Solve
 
@@ -419,6 +423,63 @@ so its town is solved again with the other rule set.
 A chunk's product is its part of the town (`TownChunk`: the site's id, its levelled height, and
 the chunk's tiles, x fastest, then y, then z), or nothing outside every site. A town is solved once,
 when its first chunk is needed, and kept while a chunk it covers is.
+
+### Assemble
+
+`Assemble(sites: "sites", start: "entry", pieces: [...], max: m, ...)`: pieces grown on each site
+from connectors, as Minecraft's jigsaw villages and Valheim's dungeons are. A piece is a box of cells
+a prefab fills, with doors on its sides:
+
+```ron
+(name: "street", size: (1, 4, 1), weight: 3, doors: [
+    (at: (0, 0, 0), facing: South, kind: "street"),
+    (at: (0, 3, 0), facing: North, kind: "street"),
+    (at: (0, 1, 0), facing: East, kind: "house"),
+]),
+```
+
+`size` is cells along the lattice's x and y and levels upward; a door opens from the cell `at` (x,
+y, level) on the side it faces, North toward +y and East toward +x; two doors of one `kind` join
+when they face each other from neighbouring cells on one level. `weight` (default 1) is how often a
+piece is drawn, and `end: true` marks a piece that only closes doors.
+
+An assembly grows inside its site's footprint:
+
+1. the piece named `start` stands at the footprint's centre, at a hashed quarter turn;
+2. each open door, in the order doors opened, draws a growing piece by weight among those with a
+   door of its kind, and one of those doors, turns the piece so the doors face each other, and keeps
+   it if it stays inside the footprint and clear of every piece placed, `tries` draws at most
+   (default 20);
+3. growth stops at `max` pieces, and each door still open is closed by the first end piece of its
+   kind that fits;
+4. an assembly of fewer than `min` growing pieces (default 0) is grown again from a new hash
+   stream, `rerolls` times at most (default 0), and then fails with `StageError::Assemble`, naming
+   the stage and the site.
+
+`kinds: ["crypt"]` grows only on sites of those kinds of a location table, and `lift: l` raises
+every piece `l` cells above its site, a dungeon above its entrance. An assembly is seeded from the
+site's id and grown once, when its first chunk is needed, and kept while a chunk it covers is, so a
+chunk finds the pieces overlapping it without growing the rest, and every piece is the same in any
+order.
+
+A chunk's product is the pieces whose footprint overlaps it (`Stamp`): a positional `InstanceId`
+(the chunk and cell of the footprint's centre, 15 bits of the stage's salt, and the piece's place in
+its assembly's growth), the site's id, the piece's name, a `position` in cells (the footprint's
+centre along x and y, and its floor: the site's height plus `lift` plus its level), a `turn` as a
+fraction of a whole turn, 0, 0.25, 0.5 or 0.75, from +x toward +y, and the columns it covers from
+`min` up to but not including `max`. `Stamp::y_up_basis` gives the turn in a Y-up engine's axes: an
+engine places a scene of the piece, authored at turn 0 with its footprint centred on its origin and
+its floor at the origin's height, at `position` with that basis, and its doors then open where the
+assembly joined them. Scatter's `avoid` keeps a margin from pieces as from sites.
+
+Loading refuses two pieces of one name, a box of no cells, a growing piece of weight 0, a door that
+is not on the side it faces, a `start` that no piece is named or that is an end piece, `min` above
+`max`, `max` outside 1 to 1 024, rerolls above 1 024, tries outside 1 to 1 024, and a lift that is not
+finite. Its ids share the Scatter stages' salts, so no Assemble stage shares a salt with a Scatter
+stage either.
+
+`examples/rings.world.ron` grows a dungeon of rooms, corridors and turns 40 cells above every crypt
+of its location table, capping its dead ends, rerolled until it has eight pieces.
 
 The runtime solves towns through the `TownSolver` trait. `WfcTowns::new(chunk).with_rules(name,
 rule_file, build_solver)` is the implementation over any `Solver`, one per rule set;
@@ -446,7 +507,8 @@ field, made by a chain of modifiers applied in this order. Every field after `sp
      field, a terrain delta, a biome area;
    - with `water: Some((level: w, depth: (low, high)))`, the ground between `low` and `high` cells
      below `w`;
-   - at least `margin` cells from every site, with `avoid: Some(("sites", margin))`;
+   - at least `margin` cells from every site, or every piece of an Assemble stage, with
+     `avoid: Some(("sites", margin))`;
    - at least a clearance from every point of the Scatter stages `block` names, with
      `block: [("rocks", 2.5)]`. Those stages are placed first, so where two kinds would overlap
      the one blocked gives way, the same whatever order chunks are asked for in.

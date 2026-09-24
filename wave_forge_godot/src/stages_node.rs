@@ -1122,6 +1122,51 @@ impl WaveForgeStages {
             .collect()
     }
 
+    /// An Assemble stage's pieces overlapping a chunk, one dictionary each: its `piece` name, what
+    /// names its site (as `sites` gives it), its `id` among the chunk's instances, its `transform`
+    /// in Godot's world space (at the centre of its footprint on its floor, turned about +Y, where
+    /// a scene of the piece authored at turn 0 with its footprint centred on its origin goes), and
+    /// the cells it covers from `min` up to but not including `max`.
+    #[func]
+    fn stamps(&self, stage: GString, chunk: Vector3i) -> Array<VarDictionary> {
+        let Some(stamps) = self
+            .worker
+            .as_ref()
+            .and_then(|worker| worker.stamps(&stage.to_string(), from_vector(chunk)))
+        else {
+            return Array::new();
+        };
+        let cell = self.cell_size;
+        stamps
+            .iter()
+            .map(|stamp| {
+                let [row_x, row_y, row_z] = stamp.y_up_basis().map(Vector3::from_array);
+                let [x, y, floor] = stamp.position;
+                let transform = Transform3D::new(
+                    Basis::from_rows(row_x, row_y, row_z),
+                    Vector3::new(x * cell.x, floor * cell.y, y * cell.z),
+                );
+                let columns = |at: [i64; 2]| {
+                    Vector2i::new(
+                        i32::try_from(at[0]).expect("a cell in Godot's range"),
+                        i32::try_from(at[1]).expect("a cell in Godot's range"),
+                    )
+                };
+                let mut out = VarDictionary::new();
+                out.set(
+                    &"piece".to_variant(),
+                    &GString::from(&*stamp.piece).to_variant(),
+                );
+                name_site(&mut out, &stamp.site);
+                out.set(&"id".to_variant(), &local_id(stamp.id.local).to_variant());
+                out.set(&"transform".to_variant(), &transform.to_variant());
+                out.set(&"min".to_variant(), &columns(stamp.min).to_variant());
+                out.set(&"max".to_variant(), &columns(stamp.max).to_variant());
+                out
+            })
+            .collect()
+    }
+
     /// A Scatter stage's points in a chunk, one dictionary per kind: its `kind`, its `transforms`
     /// as a MultiMesh buffer of twelve floats per point in Godot's world space (turned about +Y,
     /// unscaled, standing on the field), and each point's `ids` within the chunk.

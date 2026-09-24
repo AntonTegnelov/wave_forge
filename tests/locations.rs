@@ -204,7 +204,7 @@ fn a_table_that_cannot_be_placed_is_refused_by_stage() {
 }
 
 #[test]
-fn the_ring_worlds_shrines_stand_in_their_rings_within_their_quotas() {
+fn the_ring_worlds_shrines_and_crypts_stand_in_their_rings_within_their_quotas() {
     let text = std::fs::read_to_string(format!(
         "{}/examples/rings.world.ron",
         env!("CARGO_MANIFEST_DIR")
@@ -217,13 +217,13 @@ fn the_ring_worlds_shrines_stand_in_their_rings_within_their_quotas() {
         .flat_map(|y| (-13..13).map(move |x| ChunkCoord::new(x, y, 0)))
         .collect();
     runtime
-        .request_bound(&["shrines", "biome"])
+        .request_bound(&["locations", "biome"])
         .expect("a bounded island");
     runtime.run_until_idle().expect("the stages run");
     let mut sites: BTreeMap<SiteId, Site> = BTreeMap::new();
     // Only the chunks that meet the island's bound are generated.
     for &chunk in &chunks {
-        for site in runtime.sites("shrines", chunk).into_iter().flatten() {
+        for site in runtime.sites("locations", chunk).into_iter().flatten() {
             sites.insert(site.id.clone(), site.clone());
         }
     }
@@ -239,6 +239,7 @@ fn the_ring_worlds_shrines_stand_in_their_rings_within_their_quotas() {
         let expected = match kind(site) {
             "woods_shrine" => "woods",
             "peak_shrine" => "peaks",
+            "crypt" => "woods",
             _ => "grassland",
         };
         assert_eq!(biome(centre(site)), expected, "{site:?}");
@@ -248,7 +249,7 @@ fn the_ring_worlds_shrines_stand_in_their_rings_within_their_quotas() {
         let quota = if kind == "woods_shrine" { 2 } else { 1 };
         assert!(count <= quota, "{count} {kind}s in {region:?}");
     }
-    for kind in ["woods_shrine", "peak_shrine", "meadow_shrine"] {
+    for kind in ["woods_shrine", "peak_shrine", "meadow_shrine", "crypt"] {
         assert!(
             counts.keys().any(|&(_, k)| k == kind),
             "no {kind} on the island: {counts:?}"

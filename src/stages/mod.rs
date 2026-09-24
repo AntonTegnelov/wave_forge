@@ -2,6 +2,7 @@
 //! format): the pack a world is described by, and the runtime that generates its stages around
 //! focus points, providers first.
 
+mod assemble;
 pub mod edits;
 mod evaluate;
 pub mod facts;
@@ -15,13 +16,13 @@ pub mod worker;
 pub use edits::{Edit, Edits, PointId};
 pub use facts::{Facts, GivenRow, MAX_SHARED, Row, RowId, Table, Value};
 pub use pack::{
-    Bound, Column, Condition, Expr, Group, LocationKind, MAX_BLEND, MAX_CATEGORIES, MAX_CHILDREN,
-    MAX_SCATTER_SLOTS, MAX_TRIES, PACK_VERSION, Pack, PackError, PackFile, Persist, Profile, Rule,
-    StageDef, StageKind, TableDef, TableKind, Water,
+    Bound, Column, Condition, Door, Expr, Facing, Group, LocationKind, MAX_BLEND, MAX_CATEGORIES,
+    MAX_CHILDREN, MAX_PIECES, MAX_SCATTER_SLOTS, MAX_TRIES, PACK_VERSION, Pack, PackError,
+    PackFile, Persist, Piece, Profile, Rule, StageDef, StageKind, TableDef, TableKind, Water,
 };
 pub use runtime::{
     Categories, Field, FieldView, Point, Product, Runtime, Site, SiteId, StageError, StageTiming,
-    TownChunk,
+    Stamp, TownChunk,
 };
 pub use save::{FrozenChunk, Save};
 pub use worker::{StageEvent, StageWorker};
