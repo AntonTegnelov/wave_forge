@@ -57,7 +57,7 @@ pub mod towns;
 pub mod worker;
 
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
-pub use ground::{GroundMesh, ground, ground_readers};
+pub use ground::{GroundMesh, ground, ground_materials, ground_readers};
 pub use products::{InstanceId, InstanceSet, NavSource, NavSourceError, instance_sets, nav_source};
 pub use scheduler::FocusPoint;
 pub use space::YUpSpace;
