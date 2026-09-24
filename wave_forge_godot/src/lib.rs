@@ -74,7 +74,15 @@ const RECENT_BAKES: usize = 256;
 struct WaveForgeExtension;
 
 #[gdextension]
-unsafe impl ExtensionLibrary for WaveForgeExtension {}
+unsafe impl ExtensionLibrary for WaveForgeExtension {
+    fn on_stage_init(stage: InitStage) {
+        // As soon as the rendering server is there, before a scene loads, so a material compiled
+        // anywhere finds the wind.
+        if stage == InitStage::MainLoop {
+            grass::ensure_wind();
+        }
+    }
+}
 
 /// Generates a world in chunks around a position the game keeps handing it.
 ///

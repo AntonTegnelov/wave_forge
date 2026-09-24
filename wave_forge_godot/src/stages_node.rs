@@ -10,7 +10,7 @@
 //! as a height map and the town's modules as the shapes the game assigned them, built through the
 //! `PhysicsServer3D` with every shape added before the body joins the space.
 
-use crate::grass::{GRASS_SHADER, Grass, ensure_wind};
+use crate::grass::{GRASS_SHADER, Grass};
 use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
@@ -641,7 +641,6 @@ impl WaveForgeStages {
                 );
                 return false;
             }
-            ensure_wind();
             let columns = [
                 self.chunk_cells.x.max(1) as u32,
                 self.chunk_cells.y.max(1) as u32,
@@ -1262,6 +1261,14 @@ impl WaveForgeStages {
         self.grass.as_ref()?.material_of(from_vector(chunk))
     }
 
+    /// The reference vegetation shader's code: give it to the material of a plant's mesh bound in
+    /// `scenes`, and the plant bends in the global wind by the phase and stiffness its MultiMesh
+    /// carries per instance.
+    #[func]
+    fn vegetation_shader_code(&self) -> GString {
+        GString::from(VEGETATION_SHADER)
+    }
+
     /// The reference grass shader's code, to copy into a shader of a game's own.
     #[func]
     fn grass_shader_code(&self) -> GString {
@@ -1872,6 +1879,8 @@ impl WaveForgeStages {
                         kind: point.kind.to_string(),
                         transform: place(point.y_up_basis(), point.position),
                         id: local_id(point.id.local),
+                        // A larger plant bends less.
+                        sway: [phase(point.id.local), 1.0 / point.scale],
                     })
                     .collect(),
                 StageKind::Assemble { .. } => worker
@@ -1883,6 +1892,7 @@ impl WaveForgeStages {
                         kind: stamp.piece.to_string(),
                         transform: place(stamp.y_up_basis(), stamp.position),
                         id: local_id(stamp.id.local),
+                        sway: [phase(stamp.id.local), 1.0],
                     })
                     .collect(),
                 _ => return None,
@@ -2026,6 +2036,15 @@ impl WaveForgeStages {
         self.free_bodies();
         self.placements.clear();
     }
+}
+
+/// The reference vegetation shader: plants bending in the global wind.
+const VEGETATION_SHADER: &str = include_str!("shaders/vegetation.gdshader");
+
+/// A placement's phase in the wind as a fraction of a turn, from its id, so neighbours sway apart.
+fn phase(local: u64) -> f32 {
+    let mixed = (local ^ (local >> 29)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    (mixed >> 40) as f32 / (1u64 << 24) as f32
 }
 
 /// The reference ground shader: a chunk's material ids per vertex, blended through a palette.
