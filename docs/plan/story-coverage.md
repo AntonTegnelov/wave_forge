@@ -7,10 +7,11 @@ it when a pull request closes part of a gap.
 
 ## G7, a Valheim-like island world
 
-Checked on 2026-09-23 against `src/stages/` after the first slice
-([#68](https://github.com/AntonTegnelov/wave_forge/issues/68)). The valley pack gives rolling ground,
-towns on levelled sites and trees kept apart, and the engines build its ground mesh and colliders. Of the features Valheim's generator uses, that covers
-about three fully and six partly. The umbrella issue is
+Checked on 2026-09-24 against `src/stages/` after the Assemble stage
+([#70](https://github.com/AntonTegnelov/wave_forge/issues/70)). The ring world meets every acceptance
+criterion of G7, which is verified ([user-stories.md](../product/user-stories.md#g7-a-valheim-like-island-world)).
+The table compares the library with every feature Valheim's generator uses, some beyond G7's
+criteria: 22 are available and 4 partial. The umbrella issue was
 [#104](https://github.com/AntonTegnelov/wave_forge/issues/104). Valheim's algorithms come from a
 community port and are unverified from Iron Gate (see the story's sources).
 
@@ -22,16 +23,16 @@ community port and are unverified from Iron Gate (see the story's sources).
 | Biomes by an ordered first-match list over distance, noise and height | categorical fields, a Rules stage | available (`examples/rings.world.ron`, `tests/rules.rs`) | |
 | Height per biome, blended where biomes meet | select by category, blending | available (`examples/rings.world.ron`, `tests/blend.rs`) | |
 | Cellular noise, quantised height in some biomes | cellular noise, floor | available: FastNoiseLite's cellular noise and `Floor` | |
-| Lakes from a world scan | a region job on a coarse lattice | partial: region jobs and coarse levels exist; a lake job does not | |
+| Lakes from a world scan | a region job on a coarse lattice | partial: region jobs and coarse levels exist; a lake job does not | [#144](https://github.com/AntonTegnelov/wave_forge/issues/144) |
 | Rivers and streams that carve the ground | curves, a network between sites, rasterising curves into height | available: a Rivers stage runs rivers downhill to the sea in every region, and Apply carves them into the ground without seams (`tests/rivers.rs`, `tests/apply.rs`); a river stops at its region's edge, and there is no Network stage for paths between sites | [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
-| A water level, ocean depth, snapping to water | a world water level, depth as a field | partial: a height range can stand in for depth | [#95](https://github.com/AntonTegnelov/wave_forge/issues/95) |
+| A water level, ocean depth, snapping to water | a world water level, depth as a field | partial: a Scatter stage's `water` tests the depth under a level it names (`tests/scatter_chain.rs`); no level shared by the pack, and no standing on the water's surface | [#144](https://github.com/AntonTegnelov/wave_forge/issues/144) |
 | Zones of 64 m, terrain at a finer resolution | field resolution independent of the WFC cell, coarse levels | available: a scale per stage, coarse feeding fine (`tests/levels.rs`) | |
 | A location table: priority, quotas, unique, minimum distance from similar, centre first | several kinds per Sites stage, quotas on a region job | available: a Locations stage places kinds in priority order per region with quotas, distances from their own kind and conditions, and logs its refusals (`tests/locations.rs`); 'unique' in an infinite world is a quota of one per region, and 'centre first' is not built | |
-| Location filters: biome, biome area, altitude, forest, terrain delta | filters reading fields and categories within a reach | partial: `Delta` gives terrain delta and `Area` biome area (`tests/filters.rs`), and biome and altitude are Rules conditions, which a location table's kinds apply | |
+| Location filters: biome, biome area, altitude, forest, terrain delta | filters reading fields and categories within a reach | available: `Delta` gives terrain delta and `Area` biome area (`tests/filters.rs`), and biome, altitude and a forest noise are conditions over fields, which a location table's kinds apply | |
 | Levelling the ground under locations, clearing around them | base, sites, adapted field; a margin for scatter | available: `Flatten`, Scatter's `avoid` | |
 | Vegetation rules: counts and groups per zone, tilt, altitude, depth, forest threshold, scale | a Scatter modifier chain, slots, masks, normals | available: counts and groups per block, conditions over any field or category, water depth, scale, tilt and ground alignment (`tests/scatter_chain.rs`); the ring world scatters ore and birch groves | |
 | Placements blocked by earlier placements | priority across Scatter stages | available: `block` keeps a clearance from earlier Scatter stages' points, the same in any order (`tests/scatter_chain.rs`) | |
-| Dungeons: prefab room graphs, rerolled, placed above the entrance | Assemble into stamps, with retries | missing | [#70](https://github.com/AntonTegnelov/wave_forge/issues/70) |
+| Dungeons: prefab room graphs, rerolled, placed above the entrance | Assemble into stamps, with retries | available: an Assemble stage grows rooms from connectors on a location table's kind, caps dead ends, rerolls a dungeon that comes out small, and lifts it above its entrance; the ring world grows one above every crypt (`tests/assemble.rs`, `verify_assemble.gd`) | |
 | Clutter, never saved | an ephemeral stage; ground cover on the GPU | partial: an `Ephemeral` stage's edits are never saved, and the ring world's grass is one (`tests/save.rs`, `verify_edits.gd`); no GPU cover | [#46](https://github.com/AntonTegnelov/wave_forge/issues/46) |
 | Felled trees and mined ore stay gone | an edits log keyed by `InstanceId` | available: `Edit::Remove` by a point's id, through eviction and regeneration (`tests/edits.rs`, `verify_edits.gd`) | |
 | Terrain the player digs and raises | height deltas in the edits log, invalidating dependants | available: `Edit::Raise` of a field by column, dirtying what reads it within its reach (`tests/edits.rs`) | |
@@ -54,13 +55,13 @@ Stories not listed have nothing built towards them yet beyond the shared runtime
 
 | Story | What exists | What is missing |
 |---|---|---|
-| G1 Minecraft-like | fields, categories by rules, sites, scatter, the order-diff test | biomes by nearest point, 3D density volumes, Assemble (jigsaw), aquifers, carvers ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#70](https://github.com/AntonTegnelov/wave_forge/issues/70)) |
+| G1 Minecraft-like | fields, categories by rules, sites, scatter, jigsaw villages by Assemble, the order-diff test | biomes by nearest point, 3D density volumes, aquifers, carvers ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)) |
 | G2 Dwarf Fortress-like | fields, region jobs with retries and curves, levels, the atlas and point queries, given tables whose rows become sites with towns of each row's rule set and roads levelled into the ground, rivers carved by region jobs | a Network stage, the test pack ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) |
 | G3 No Man's Sky-like | fields, sites that flatten the ground, scatter, generated tables of planet parameters read through a focused row | density volumes, `locate` queries ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71), [#100](https://github.com/AntonTegnelov/wave_forge/issues/100)) |
 | G4 Noita-like | WFC, positional ids | image import, Wang tiles, region jobs with path checks, stamps |
 | G5 Caves of Qud-like | WFC inside bounded regions (towns), frozen stages for zones kept as first generated | map import, region jobs per zone, segmentation filters, connectivity ([#94](https://github.com/AntonTegnelov/wave_forge/issues/94)) |
 | G6 Elite-like | positional ids, fields, sites, levels, generated tables of sectors, systems and bodies with shared budgets, a surface stage reading a focused body in both engines | the test pack and its check, authored rows among generated ones, Scatter and Apply reading a body's row ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)) |
-| G8 Deep Rock-like | region jobs, curves drawn into a height field | Assemble, tunnels through density volumes ([#70](https://github.com/AntonTegnelov/wave_forge/issues/70), [#71](https://github.com/AntonTegnelov/wave_forge/issues/71)) |
+| G8 Deep Rock-like | region jobs, curves drawn into a height field, rooms by Assemble | caves carved into density volumes from a room graph, tunnels through them ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)) |
 | N1 Press play | nodes that start on their own, colliders, navigation, a ground mesh and collider | presets, lit and textured defaults, navigation over packs ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48), [#46](https://github.com/AntonTegnelov/wave_forge/issues/46)) |
 | N3 Place my own scene | Scatter with spacing across seams | binding scenes to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), rule resources ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)) |
 | N7 My own noise | FastNoiseLite parity, exact against Godot, and `FastNoiseLite` resources assigned in the Godot node | nothing for its criterion; Bevy's `Reflect` and 3D noise are [#45](https://github.com/AntonTegnelov/wave_forge/issues/45) |

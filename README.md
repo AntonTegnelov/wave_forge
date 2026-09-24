@@ -6,7 +6,7 @@ Worlds are generated in chunks around the player, on the GPU, and come out the s
 
 ## Status
 
-**In development, not published.** The library streams an infinite WFC city around moving focus points, and generates a first valley with towns from a pack of stages, and island biomes by rules. A Godot extension and a Bevy plugin serve both to a game and are checked in real engines. Biomes, rivers, dungeons, edits and ground meshes are still to come. See [docs/plan/status.md](docs/plan/status.md) for what works and its limits, and [docs/plan/roadmap.md](docs/plan/roadmap.md) for what comes next.
+**In development, not published.** The library streams an infinite WFC city around moving focus points, and generates worlds from packs of stages: a valley with towns, and an island with biome rings, rivers, a location table, dungeons, ground meshes, player edits and saves. A Godot extension and a Bevy plugin serve both to a game and are checked in real engines. Paths between sites and scenes bound to points are still to come. See [docs/plan/status.md](docs/plan/status.md) for what works and its limits, and [docs/plan/roadmap.md](docs/plan/roadmap.md) for what comes next.
 
 ## Try it
 

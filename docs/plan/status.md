@@ -32,11 +32,14 @@ reference worlds is placed. `Worker` runs it on a thread.
 connectors, and the city (`examples/city.ron`) is one. A `Prior` carries masks per layer, bans per
 world face and per-cell overrides.
 
-**Stages.** `wave_forge::stages` loads a pack (Field, Rules, Blur, Sites, Flatten, Solve, Scatter), checks
-it, and generates any stage around focus points, providers first, through reads bounded by each
-stage's reach, the same in any order. Towns are bounded WFC worlds per site behind the `TownSolver`
-seam, solved on the GPU. `StageWorker` runs it on a thread. The valley test pack
-(`examples/valley.world.ron`) generates rolling ground, towns on levelled sites and trees kept apart
+**Stages.** `wave_forge::stages` loads a pack of stages (fields and filters, rules, sites and
+location tables, towns, assemblies of pieces, scatter chains, region jobs and rivers, curves drawn
+into the ground), checks it, and generates any stage around focus points, providers first, through
+reads bounded by each stage's reach, the same in any order. Towns are bounded WFC worlds per site
+behind the `TownSolver` seam, solved on the GPU. Edits and saves with persistence per stage keep
+what a player changed. `StageWorker` runs it on a thread. The valley test pack
+(`examples/valley.world.ron`) generates rolling ground, towns on levelled sites and trees kept apart,
+and the ring world (`examples/rings.world.ron`) a bounded island that verifies G7
 ([reference/packs.md](../reference/packs.md)). The stage runtime runs on the CPU. A chunk's ground
 comes as a mesh and a height grid from any height field stage, seamless across chunks.
 
@@ -102,8 +105,8 @@ Each is a gap between the code and the design or the stories, with where it is t
   curves from region jobs and tables are drawn into height fields, but there is no Network stage to
   find paths between sites; tables of facts reach stages through a focused row, sites, towns and
   roads
-  ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a runtime holds every frozen chunk it has generated for as long as it lives ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)); noise is the library's value noise and Godot's FastNoiseLite in 2D; a Scatter stage has one kind. Each is an issue under
-  [#104](https://github.com/AntonTegnelov/wave_forge/issues/104) ([story-coverage.md](story-coverage.md)).
+  ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a runtime holds every frozen chunk it has generated for as long as it lives ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)); noise is the library's value noise and Godot's FastNoiseLite in 2D; a Scatter stage has one kind. Each has an issue
+  ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, untextured and without levels of
   detail; materials, ground cover and far levels are
   [#46](https://github.com/AntonTegnelov/wave_forge/issues/46) and
