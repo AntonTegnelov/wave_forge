@@ -105,3 +105,29 @@ colours of the four vertices around each fragment, so materials meet in a band a
 applies Bevy's lighting, or none for an unlit base. A chunk's ground reads the materials of the
 chunks beyond its far edges, so the material stage has to be generated one chunk beyond the ground,
 with `.with_radius` say.
+
+## Grass
+
+`GrassMaterial` is an `ExtendedMaterial` over `StandardMaterial` with a vertex shader of its own.
+Every chunk draws the same mesh, `grass_mesh(columns, per_column)`: `per_column` blades for each
+column, each a triangle carrying nothing but its index, in its second UV channel.
+`grass_material(stages, chunk, cover, per_column, base, images)` makes a chunk's, once its ground
+is built and `cover`, a field stage's product for the chunk, has arrived; `grass_material_of(mesh,
+cover, cell, per_column, base, images)` makes one for a ground built some other way. It holds the
+ground's height per vertex (one float each) and the cover per column (one byte each) as images. The
+grass shader gives blade *b* its column, a hashed place in it, a hashed turn and height, and shows
+it only where a hash is below the column's cover; it stands on the ground's heights, blended between
+vertices, and sways in the wind. A blade is drawn from both sides, casts no shadow and has no
+prepass.
+
+The shader moves the blades far from where the mesh has them, so a chunk's grass needs the bounds
+`grass_bounds(stages, chunk)` gives, or `grass_bounds_of(mesh, cell)`: an `Aabb` over the chunk and
+its heights, and `NoAutoAabb`. Both go on the grass's entity, since without `NoAutoAabb` Bevy
+replaces the bounds with the mesh's own whenever the entity's mesh changes, and culls the chunk's
+grass wherever the chunk's corner is out of view.
+
+## Wind
+
+The `Wind` resource is a `Vec4`: a direction along x and z, a strength in world units at a blade's
+tip, and a speed. It blows gently along +x unless a game sets it, and a change reaches every grass
+material in the next frame.
