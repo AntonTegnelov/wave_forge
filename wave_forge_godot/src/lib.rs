@@ -891,14 +891,7 @@ impl WaveForgeWorld {
             return 0;
         };
         let radius = self.collider_radius;
-        let within = |chunk: ChunkCoord| {
-            radius >= 0
-                && (chunk.x - focus.x)
-                    .abs()
-                    .max((chunk.y - focus.y).abs())
-                    .max((chunk.z - focus.z).abs())
-                    <= radius
-        };
+        let within = |chunk: ChunkCoord| radius >= 0 && chunk_distance(chunk, focus) <= radius;
         let mut physics = PhysicsServer3D::singleton();
         let gone: Vec<ChunkCoord> = self
             .bodies
@@ -935,13 +928,7 @@ impl WaveForgeWorld {
             .collect();
         // Nearest first, and a few a frame: each body costs Godot's thread a fraction of a
         // millisecond, and a turn of the player can make a whole ring of chunks due at once.
-        wanted.sort_by_key(|chunk| {
-            let distance = (chunk.x - focus.x)
-                .abs()
-                .max((chunk.y - focus.y).abs())
-                .max((chunk.z - focus.z).abs());
-            (distance, *chunk)
-        });
+        wanted.sort_by_key(|&chunk| (chunk_distance(chunk, focus), chunk));
         self.bodies_pending = wanted.len().saturating_sub(BODIES_PER_FRAME);
         wanted.truncate(BODIES_PER_FRAME);
         let built = wanted.len();
@@ -1042,14 +1029,7 @@ impl WaveForgeWorld {
             return;
         };
         let radius = self.navigation_radius;
-        let within = |chunk: ChunkCoord| {
-            radius >= 0
-                && (chunk.x - focus.x)
-                    .abs()
-                    .max((chunk.y - focus.y).abs())
-                    .max((chunk.z - focus.z).abs())
-                    <= radius
-        };
+        let within = |chunk: ChunkCoord| radius >= 0 && chunk_distance(chunk, focus) <= radius;
         let mut server = NavigationServer3D::singleton();
         let gone: Vec<ChunkCoord> = self
             .navigation
@@ -1148,12 +1128,7 @@ impl WaveForgeWorld {
         }
         // One bake is prepared per frame, nearest first: preparing one costs Godot's thread up to
         // 3 ms, and a focus crossing into a chunk makes several due at once.
-        wanted.sort_by_key(|chunk| {
-            (chunk.x - focus.x)
-                .abs()
-                .max((chunk.y - focus.y).abs())
-                .max((chunk.z - focus.z).abs())
-        });
+        wanted.sort_by_key(|&chunk| chunk_distance(chunk, focus));
         let cell_height = server.map_get_cell_height(map);
         let template = self
             .navigation_template
