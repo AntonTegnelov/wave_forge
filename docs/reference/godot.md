@@ -209,8 +209,13 @@ them included.
 ### Ground and colliders
 
 With `ground_stage` set, the node builds each chunk's ground once the fields of the chunk and the
-eight around it have arrived ([packs.md](packs.md#ground)): a mesh at full detail, skirt included,
-through the `RenderingServer`, drawn with `ground_material`. Within `collider_radius` of the
+eight around it have arrived ([packs.md](packs.md#ground)): a mesh through the `RenderingServer`,
+drawn with `ground_material`, whose surface holds full detail and the coarser levels as its `lods`,
+skirts included. Godot draws a coarser level once its error, seen from the camera, shrinks below
+the viewport's `mesh_lod_threshold` in pixels (1 by default), and ends at the first level that does
+not, in order of key; so a level's key is its error in world units, or a finer level's when that
+is larger, and the smallest positive float for a level that strays nowhere, since Godot skips a key
+that is not positive. Of levels with the same key, the coarsest is drawn. Within `collider_radius` of the
 followed chunk, each chunk gets one static body holding its ground as a `HeightMapShape3D` and its
 towns' modules as the shapes `set_collision_shape` assigned, every shape added before the body
 joins the space. A height map's
