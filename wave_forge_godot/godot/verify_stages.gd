@@ -107,7 +107,8 @@ func _give_town_shapes() -> void:
 
 func _on_stage_ready(stage: String, chunk: Vector3i) -> void:
 	ready[[stage, chunk]] = true
-	if stage == "city" and first_town_usec == 0 and towns_asked_usec != 0:
+	# A Solve stage's chunks outside every site arrive at once; only one in a town has waited for it.
+	if stage == "city" and first_town_usec == 0 and towns_asked_usec != 0 and not world.town("city", chunk).is_empty():
 		first_town_usec = Time.get_ticks_usec()
 
 func _position_of(chunk: Vector3i) -> Vector3:
