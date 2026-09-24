@@ -168,6 +168,17 @@ pub trait Solver {
         true
     }
 
+    /// Prepares for batches of these region counts and shapes, so the first batch of each does not
+    /// pay for it: a solver that compiles per shape, as the GPU solver does, compiles them here. A
+    /// solver with nothing to prepare does nothing.
+    ///
+    /// # Errors
+    /// If the solver cannot prepare for one of them, a kernel that does not compile say.
+    fn warm(&mut self, shapes: &[(u32, RegionShape)]) -> Result<(), SolverError> {
+        let _ = shapes;
+        Ok(())
+    }
+
     /// Starts a batch.
     ///
     /// # Errors

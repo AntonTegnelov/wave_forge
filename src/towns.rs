@@ -235,10 +235,7 @@ impl<S: Solver + Send> TownSolver for WfcTowns<S> {
             .ok_or_else(|| TownError::UnknownRules(request.rules.to_owned()))?;
         let prior = town_prior(&set.file, self.chunk.z, request.bottom, request.top)?;
         let (w, h) = request.size;
-        let extent = WorldExtent::new(self.chunk)
-            .with_x(0..w as i32)
-            .with_y(0..h as i32)
-            .with_z(0..1);
+        let extent = town_extent(self.chunk, request.size);
         let solver = set
             .solver
             .take()
@@ -248,9 +245,16 @@ impl<S: Solver + Send> TownSolver for WfcTowns<S> {
             .extent(extent)
             .halo(1)
             .build_with(solver);
+        // Every kernel the town runs is compiled at once before it starts, rather than one after
+        // another as its batches first need them.
+        let shapes = world.kernel_shapes(w.max(h));
         let centre = ChunkCoord::new(w as i32 / 2, h as i32 / 2, 0);
         world.request(&[FocusPoint::new(centre, w.max(h))]);
-        let outcome = world.run_until_idle();
+        let outcome = world
+            .solver_mut()
+            .warm(&shapes)
+            .map_err(crate::Error::from)
+            .and_then(|()| world.run_until_idle());
         let mut unplaced: Vec<(i32, i32)> = Vec::new();
         let mut chunks = Vec::with_capacity((w * h) as usize);
         if outcome.is_ok() {
@@ -275,4 +279,12 @@ impl<S: Solver + Send> TownSolver for WfcTowns<S> {
             chunks,
         })
     }
+}
+
+/// The bounded world a town of `size` chunks is solved in.
+fn town_extent(chunk: ChunkShape, size: (u32, u32)) -> WorldExtent {
+    WorldExtent::new(chunk)
+        .with_x(0..size.0 as i32)
+        .with_y(0..size.1 as i32)
+        .with_z(0..1)
 }

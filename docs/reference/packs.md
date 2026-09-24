@@ -422,7 +422,12 @@ so its town is solved again with the other rule set.
 
 A chunk's product is its part of the town (`TownChunk`: the site's id, its levelled height, and
 the chunk's tiles, x fastest, then y, then z), or nothing outside every site. A town is solved once,
-when its first chunk is needed, and kept while a chunk it covers is.
+when its first chunk is needed, and kept while a chunk it covers is. Towns are solved on a thread
+of their own, in the order they are asked for, so every other stage goes on generating meanwhile; a
+chunk in a site arrives once its town is back, a chunk outside every site at once, and
+`run_until_idle` waits for towns only when nothing else is left. A town compiles every kernel its
+world runs at once before it starts ([measurements.md](../research/measurements.md) E41, E42). A
+solver that panics stops generation with `StageError::TownsStopped`.
 
 ### Assemble
 

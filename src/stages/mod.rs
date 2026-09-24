@@ -11,6 +11,7 @@ pub mod regions;
 mod rivers;
 pub mod runtime;
 pub mod save;
+mod town_thread;
 pub mod worker;
 
 pub use edits::{Edit, Edits, PointId};

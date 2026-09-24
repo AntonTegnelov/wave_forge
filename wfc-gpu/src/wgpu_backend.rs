@@ -21,6 +21,9 @@ const WANTED_INVOCATIONS: u32 = 512;
 /// Storage buffers the kernel binds, which is more than the eight a default device promises.
 const STORAGE_BUFFERS: u32 = 10;
 
+/// Numbers each partial cache file, so writers on several threads never share one.
+static PARTIALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Compute on wgpu.
 #[derive(Debug)]
 pub struct WgpuBackend {
@@ -252,7 +255,10 @@ impl ComputeBackend for WgpuBackend {
             && let Some(data) = cache.get_data()
         {
             // Written beside the file and renamed over it, so a crash never leaves half a cache.
-            let partial = path.with_extension("partial");
+            let partial = path.with_extension(format!(
+                "partial.{}",
+                PARTIALS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
             std::fs::write(&partial, data)
                 .and_then(|()| std::fs::rename(&partial, path))
                 .map_err(|reason| BackendError::Cache {
