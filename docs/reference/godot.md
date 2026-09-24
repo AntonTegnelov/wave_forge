@@ -90,6 +90,8 @@ second, published once a second, not the last frame's time.
 | Streaming | `view_radius` | chunks kept generated around the followed position |
 | Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
 | | `ground_material` | the material the ground is drawn with |
+| | `ground_material_stage` | a Rules or Area stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
+| | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
 | Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
 | Scenes | `scenes` | a kind (a Scatter point's kind or an Assemble piece's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
@@ -210,6 +212,20 @@ static body holding its ground as a `HeightMapShape3D` and its towns' modules as
 samples are one unit apart, so it is scaled by the cell's width, which needs cells as wide as they
 are deep. Ground and bodies go when their chunk's field is dropped or the player moves away.
 
+With `ground_material_stage` set, a chunk's ground also waits for that stage's categories of
+itself and of the chunks beyond its far edges ([packs.md](packs.md#ground)), and gets a copy of
+its material of its own. The copy takes three shader parameters: `wave_forge_materials`, a texture
+of one texel per ground vertex holding its category in the red channel as id / 255;
+`wave_forge_cell`, the cell's width along x and z; and `wave_forge_palette`, a 256 by 1 texture of
+a colour per category from `ground_palette`, categories past its end taking colours of their own.
+With `ground_material` empty, the copy is of the reference ground shader, embedded in the extension,
+which blends the colours of the four vertices around every fragment, so materials meet in a smooth
+band a cell wide on every renderer, Compatibility included. `ground_shader_code()` gives its code,
+to start a game's own shader from; a game's `ground_material` has to be a `ShaderMaterial` taking
+the same parameters. `ground_material_of(chunk)` gives a chunk's copy. Loading refuses a
+`ground_material_stage` that is no Rules or Area stage, and a `ground_material` that is no
+`ShaderMaterial` beside it.
+
 ## Checking it
 
 `wave_forge_godot/verify.sh` builds the extension and runs `godot/verify.gd` (the WFC world, with
@@ -218,7 +234,8 @@ through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) 
 `godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack), `godot/verify_edits.gd`
 (a felled tree and raised ground through an edits log and a save, and cut grass growing back) and
 `godot/verify_assemble.gd` (a village's pieces placed by their transforms) and
-`godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes) in a real
-headless Godot.
+`godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes) and
+`godot/verify_ground.gd` (the ground's materials per category) in a real headless Godot.
+`render_ground.sh` renders the ground's materials to a picture, to look at.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).

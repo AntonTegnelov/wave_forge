@@ -13,11 +13,12 @@
 use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
+use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::{ArrayType, PrimitiveType};
 use godot::classes::{
-    FastNoiseLite, FileAccess, INode, Material, Node, Node3D, PhysicsServer3D, ProjectSettings,
-    RenderingServer, Shape3D,
+    FastNoiseLite, FileAccess, INode, Image, ImageTexture, Material, Node, Node3D, PhysicsServer3D,
+    ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D,
 };
 use godot::obj::EngineEnum;
 use godot::prelude::*;
@@ -30,13 +31,13 @@ use wave_forge::noise::{
 };
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, SiteId, StageEvent,
-    StageKind, StageWorker, TableKind, Value,
+    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, PointId, RowId, Runtime, Save,
+    SiteId, StageEvent, StageKind, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, YUpSpace, ground,
-    ground_readers,
+    ground_materials, ground_readers,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -98,6 +99,16 @@ pub struct WaveForgeStages {
     /// The material the ground is drawn with; none draws it with Godot's default.
     #[export]
     ground_material: Option<Gd<Material>>,
+    /// A Rules or Area stage at the ground's scale whose categories are the ground's materials;
+    /// empty for none. Each chunk's ground then gets its own copy of `ground_material`, which has to
+    /// be a `ShaderMaterial` taking `wave_forge_materials`, `wave_forge_cell` and
+    /// `wave_forge_palette`, or of the reference ground shader when `ground_material` is empty.
+    #[export]
+    ground_material_stage: GString,
+    /// A colour per category of `ground_material_stage`, by index; categories past its end take
+    /// colours of their own from their index.
+    #[export]
+    ground_palette: PackedColorArray,
 
     /// How many chunks around the followed position get colliders: the ground, and every town's
     /// modules that have a shape (`set_collision_shape`). Below zero, none.
@@ -152,6 +163,12 @@ pub struct WaveForgeStages {
     ground_due: std::collections::BTreeSet<ChunkCoord>,
     /// The chunks whose ground is built: its mesh, and its `RenderingServer` mesh and instance.
     grounds: HashMap<ChunkCoord, (GroundMesh, Rid, Rid)>,
+    /// Each chunk's copy of the ground material, holding its material ids, while its ground is
+    /// built; none without `ground_material_stage`.
+    chunk_materials: HashMap<ChunkCoord, Gd<ShaderMaterial>>,
+    /// `ground_palette` as the texture the ground material reads, and the material every chunk's
+    /// is copied from, made when the node starts.
+    palette: Option<(Gd<ImageTexture>, Gd<ShaderMaterial>)>,
     /// What the node's slowest frame since the start spent Godot's thread on.
     slowest_frame: FrameCost,
     /// Signals not yet emitted, in the order their events arrived.
@@ -382,6 +399,10 @@ impl INode for WaveForgeStages {
             ground_stage: GString::new(),
             kernel_cache: GString::from("user://wave_forge/kernels"),
             ground_material: None,
+            ground_material_stage: GString::new(),
+            ground_palette: PackedColorArray::new(),
+            chunk_materials: HashMap::new(),
+            palette: None,
             collider_radius: 1,
             collision_shapes: HashMap::new(),
             grounds: HashMap::new(),
@@ -452,9 +473,14 @@ impl INode for WaveForgeStages {
                 }
             }
         }
+        let material_stage = self.ground_material_stage.to_string();
         for event in &events {
             match event {
-                StageEvent::Generated { stage, chunk } if *stage == ground_stage => {
+                // A chunk's ground reads the materials of itself and of the chunks beyond its
+                // far edges, which are among the chunks whose ground reads a field of this chunk.
+                StageEvent::Generated { stage, chunk }
+                    if *stage == ground_stage || *stage == material_stage =>
+                {
                     arrived.push(*chunk);
                 }
                 StageEvent::Dropped { stage, chunk } if *stage == ground_stage => gone.push(*chunk),
@@ -565,6 +591,17 @@ impl WaveForgeStages {
                     return false;
                 }
             }
+        }
+        if !self.ground_material_stage.is_empty() {
+            match self.materials_template(&pack) {
+                Ok(template) => self.palette = Some(template),
+                Err(error) => {
+                    godot_error!("wave forge: {error}");
+                    return false;
+                }
+            }
+        } else {
+            self.palette = None;
         }
         let solves = pack
             .stage_names()
@@ -1140,6 +1177,19 @@ impl WaveForgeStages {
         names.into_iter().map(GString::from).collect()
     }
 
+    /// The material a chunk's ground is drawn with, when `ground_material_stage` gives it one of
+    /// its own; null otherwise or before the chunk's ground is built.
+    #[func]
+    fn ground_material_of(&self, chunk: Vector3i) -> Option<Gd<ShaderMaterial>> {
+        self.chunk_materials.get(&from_vector(chunk)).cloned()
+    }
+
+    /// The reference ground shader's code, to copy into a shader of a game's own.
+    #[func]
+    fn ground_shader_code(&self) -> GString {
+        GString::from(GROUND_SHADER)
+    }
+
     /// The chunks whose ground is built.
     #[func]
     fn ground_chunks(&self) -> Array<Vector3i> {
@@ -1438,6 +1488,7 @@ impl WaveForgeStages {
                 rendering.free_rid(instance);
                 rendering.free_rid(mesh);
             }
+            self.chunk_materials.remove(chunk);
         }
         let Some(worker) = &self.worker else {
             return 0;
@@ -1451,6 +1502,7 @@ impl WaveForgeStages {
             return 0;
         };
         let stage = self.ground_stage.to_string();
+        let material_stage = self.ground_material_stage.to_string();
         let cell = self.cell_size.to_array();
         self.ground_due
             .extend(arrived.iter().copied().flat_map(ground_readers));
@@ -1476,12 +1528,20 @@ impl WaveForgeStages {
             if self.grounds.contains_key(&chunk) {
                 continue;
             }
-            if let Some(mesh) = ground(chunk, |at| worker.field(&stage, at), cell) {
-                built.push((chunk, mesh));
+            let Some(mesh) = ground(chunk, |at| worker.field(&stage, at), cell) else {
+                continue;
+            };
+            if self.palette.is_none() {
+                built.push((chunk, mesh, None));
+                continue;
+            }
+            if let Some(ids) = ground_materials(chunk, |at| worker.categories(&material_stage, at))
+            {
+                built.push((chunk, mesh, Some(ids)));
             }
         }
         let count = built.len();
-        for (chunk, mesh) in built {
+        for (chunk, mesh, ids) in built {
             let rid = rendering.mesh_create();
             let mut arrays = VarArray::new();
             arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
@@ -1507,8 +1567,17 @@ impl WaveForgeStages {
             arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
             arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
             rendering.mesh_add_surface_from_arrays(rid, PrimitiveType::TRIANGLES, &arrays);
-            if let Some(material) = &self.ground_material {
-                rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+            match (ids, &self.palette) {
+                (Some(ids), Some((palette, template))) => {
+                    let material = chunk_material(template, palette, &mesh, &ids, cell);
+                    rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+                    self.chunk_materials.insert(chunk, material);
+                }
+                _ => {
+                    if let Some(material) = &self.ground_material {
+                        rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+                    }
+                }
             }
             let instance = rendering.instance_create2(rid, scenario);
             rendering.instance_set_transform(
@@ -1770,13 +1839,94 @@ impl WaveForgeStages {
         }
     }
 
+    /// The palette texture and the material each chunk's ground material is copied from.
+    fn materials_template(
+        &self,
+        pack: &Pack,
+    ) -> Result<(Gd<ImageTexture>, Gd<ShaderMaterial>), String> {
+        let stage = self.ground_material_stage.to_string();
+        match pack.kind(&stage) {
+            Some(StageKind::Rules { .. } | StageKind::Area { .. }) => {}
+            _ => {
+                return Err(format!(
+                    "ground_material_stage {stage:?} is no Rules or Area stage of the pack"
+                ));
+            }
+        }
+        let template = match &self.ground_material {
+            None => {
+                let mut shader = Shader::new_gd();
+                shader.set_code(GROUND_SHADER);
+                let mut material = ShaderMaterial::new_gd();
+                material.set_shader(&shader);
+                material
+            }
+            Some(material) => material.clone().try_cast::<ShaderMaterial>().map_err(|_| {
+                "ground_material must be a ShaderMaterial when ground_material_stage is set"
+                    .to_owned()
+            })?,
+        };
+        let colours: Vec<u8> = (0..MAX_CATEGORIES)
+            .flat_map(|index| {
+                let colour = self
+                    .ground_palette
+                    .get(index)
+                    .unwrap_or_else(|| Color::from_hsv(index as f64 * 0.618_034 % 1.0, 0.45, 0.6));
+                [colour.r8(), colour.g8(), colour.b8(), 255]
+            })
+            .collect();
+        let image = Image::create_from_data(
+            MAX_CATEGORIES as i32,
+            1,
+            false,
+            ImageFormat::RGBA8,
+            &PackedByteArray::from(colours.as_slice()),
+        )
+        .ok_or("the ground palette could not be made")?;
+        let palette = ImageTexture::create_from_image(&image)
+            .ok_or("the ground palette could not be made")?;
+        Ok((palette, template))
+    }
+
     fn clear_ground_and_bodies(&mut self) {
         let mut rendering = RenderingServer::singleton();
         for (_, (_, mesh, instance)) in self.grounds.drain() {
             rendering.free_rid(instance);
             rendering.free_rid(mesh);
         }
+        // Freed after the meshes that draw with them.
+        self.chunk_materials.clear();
         self.free_bodies();
         self.placements.clear();
     }
+}
+
+/// The reference ground shader: a chunk's material ids per vertex, blended through a palette.
+const GROUND_SHADER: &str = include_str!("shaders/ground.gdshader");
+
+/// A chunk's copy of `template` holding the material `ids` of its ground's vertices, one texel each.
+fn chunk_material(
+    template: &Gd<ShaderMaterial>,
+    palette: &Gd<ImageTexture>,
+    mesh: &GroundMesh,
+    ids: &[u8],
+    cell: [f32; 3],
+) -> Gd<ShaderMaterial> {
+    let image = Image::create_from_data(
+        mesh.size[0] as i32,
+        mesh.size[1] as i32,
+        false,
+        ImageFormat::R8,
+        &PackedByteArray::from(ids),
+    )
+    .expect("an image of one byte per vertex");
+    let materials = ImageTexture::create_from_image(&image).expect("a texture of the image");
+    let mut material = template.duplicate_resource();
+    material.set_shader_parameter("wave_forge_materials", &materials.to_variant());
+    material.set_shader_parameter("wave_forge_palette", &palette.to_variant());
+    material.set_shader_parameter(
+        "wave_forge_cell",
+        &Vector2::new(cell[0], cell[2]).to_variant(),
+    );
+    material
 }

@@ -8,10 +8,13 @@
 //! own, and [`ground`] builds it only once all nine have arrived; [`ground_readers`] says which
 //! chunks' ground may have become buildable when one field arrives.
 //!
+//! [`ground_materials`] gives the category of every vertex of the same grid from a Rules stage, so
+//! an engine can tell its ground shader which material each part of the ground is.
+//!
 //! Everything is in a Y-up engine's axes, as [`crate::YUpSpace`] maps them: the lattice's x is the
 //! engine's x, its y the engine's z, and a field's height the engine's y.
 
-use crate::stages::Field;
+use crate::stages::{Categories, Field};
 use wfc_core::ChunkCoord;
 
 /// One chunk's ground, ready for an engine: a triangle mesh and the same heights as a grid for a
@@ -102,6 +105,46 @@ pub fn ground<'a>(
         indices,
         heights,
     })
+}
+
+/// The category of every vertex of `chunk`'s ground, from a Rules stage at the height field's
+/// scale whose chunks `categories` looks up: in the order of [`GroundMesh::positions`], so the
+/// vertices along the +x and +y edges take the first columns of the chunks beyond them, as their
+/// heights do.
+///
+/// Returns `None` until the categories of `chunk` and of the chunks beyond its +x edge, its +y edge
+/// and its +x+y corner have arrived.
+///
+/// # Panics
+/// If those chunks do not all have one size: a stage's chunks are one size.
+#[must_use]
+pub fn ground_materials<'a>(
+    chunk: ChunkCoord,
+    categories: impl Fn(ChunkCoord) -> Option<&'a Categories>,
+) -> Option<Vec<u8>> {
+    let own = categories(chunk)?;
+    let [sx, sy] = own.size;
+    let mut beyond = [[None; 2]; 2];
+    for (dy, row) in beyond.iter_mut().enumerate() {
+        for (dx, slot) in row.iter_mut().enumerate() {
+            let at = ChunkCoord::new(chunk.x + dx as i32, chunk.y + dy as i32, chunk.z);
+            let neighbour = categories(at)?;
+            assert_eq!(
+                neighbour.size, own.size,
+                "the categories of one stage share a size"
+            );
+            *slot = Some(neighbour);
+        }
+    }
+    let mut materials = Vec::with_capacity(((sx + 1) * (sy + 1)) as usize);
+    for j in 0..=sy {
+        for i in 0..=sx {
+            let (dx, dy) = (usize::from(i == sx), usize::from(j == sy));
+            let from = beyond[dy][dx].expect("every neighbour was looked up above");
+            materials.push(from.get(i % sx, j % sy));
+        }
+    }
+    Some(materials)
 }
 
 /// The chunks whose ground reads the field of `chunk`: itself and the eight around it. When that
@@ -241,6 +284,70 @@ mod tests {
                 assert!((got - want).abs() < 1e-6, "{normal:?} against {expected:?}");
             }
         }
+    }
+
+    /// Categories that are a function of the world column, as every Rules stage's are.
+    fn categories(category: impl Fn(i64, i64) -> u8) -> BTreeMap<ChunkCoord, Categories> {
+        let mut out = BTreeMap::new();
+        for cy in -2..=2 {
+            for cx in -2..=2 {
+                let chunk = ChunkCoord::new(cx, cy, 0);
+                let values = (0..SIZE[1])
+                    .flat_map(|y| (0..SIZE[0]).map(move |x| (x, y)))
+                    .map(|(x, y)| {
+                        category(
+                            i64::from(cx) * i64::from(SIZE[0]) + i64::from(x),
+                            i64::from(cy) * i64::from(SIZE[1]) + i64::from(y),
+                        )
+                    })
+                    .collect();
+                out.insert(
+                    chunk,
+                    Categories {
+                        chunk,
+                        size: SIZE,
+                        values,
+                    },
+                );
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_vertex_takes_the_category_of_the_column_it_stands_over() {
+        let banded = |x: i64, y: i64| ((x.div_euclid(3) + 2 * y.div_euclid(2)).rem_euclid(5)) as u8;
+        let all = categories(banded);
+        let chunk = ChunkCoord::new(-1, 1, 0);
+
+        let materials = ground_materials(chunk, |at| all.get(&at)).expect("all arrived");
+
+        let size = [SIZE[0] + 1, SIZE[1] + 1];
+        assert_eq!(materials.len(), (size[0] * size[1]) as usize);
+        for j in 0..size[1] {
+            for i in 0..size[0] {
+                let column = (
+                    i64::from(chunk.x) * i64::from(SIZE[0]) + i64::from(i),
+                    i64::from(chunk.y) * i64::from(SIZE[1]) + i64::from(j),
+                );
+                assert_eq!(
+                    materials[(j * size[0] + i) as usize],
+                    banded(column.0, column.1),
+                    "vertex ({i}, {j})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_materials_until_the_chunks_beyond_the_far_edges_have_arrived() {
+        let mut all = categories(|_, _| 1);
+        let chunk = ChunkCoord::new(0, 0, 0);
+        all.remove(&ChunkCoord::new(1, 1, 0));
+
+        let materials = ground_materials(chunk, |at| all.get(&at));
+
+        assert_eq!(materials, None);
     }
 
     #[test]
