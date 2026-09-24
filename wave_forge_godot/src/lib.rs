@@ -193,10 +193,11 @@ pub struct WaveForgeWorld {
     slowest_frame: FrameCost,
     /// How many navigation bakes have finished, the milliseconds from asking for each recent one to
     /// its mesh being in place, and the milliseconds of Godot's thread each took to prepare and
-    /// hand over, and to put in its region once baked.
+    /// hand over, of that to gather its source triangles, and to put it in its region once baked.
     baked: i64,
     bake_ms: Timings,
     bake_start_ms: Timings,
+    bake_source_ms: Timings,
     bake_finish_ms: Timings,
 }
 
@@ -266,6 +267,7 @@ impl INode for WaveForgeWorld {
             baked: 0,
             bake_ms: Timings::new(RECENT_BAKES),
             bake_start_ms: Timings::new(RECENT_BAKES),
+            bake_source_ms: Timings::new(RECENT_BAKES),
             bake_finish_ms: Timings::new(RECENT_BAKES),
         }
     }
@@ -731,7 +733,9 @@ impl WaveForgeWorld {
     /// And the `_median`, `_p99` and `_max` of recent timings in milliseconds, once there are
     /// some: `process_ms`, the node's own time on Godot's thread per frame; `navigation_bake_ms`,
     /// from asking for a chunk's bake to its mesh being in place; `navigation_start_ms` and
-    /// `navigation_finish_ms`, Godot's thread preparing a bake and putting its mesh in the region.
+    /// `navigation_finish_ms`, Godot's thread preparing a bake and putting its mesh in the region;
+    /// and `navigation_source_ms`, the part of preparing a bake that gathers its source triangles,
+    /// the rest being their handover to Godot.
     #[func]
     fn stats(&self) -> Dictionary<GString, Variant> {
         let Some(worker) = &self.worker else {
@@ -767,6 +771,7 @@ impl WaveForgeWorld {
             ("process", &self.process_ms),
             ("navigation_bake", &self.bake_ms),
             ("navigation_start", &self.bake_start_ms),
+            ("navigation_source", &self.bake_source_ms),
             ("navigation_finish", &self.bake_finish_ms),
         ] {
             if let Some([median, p99, max]) = timings.summary() {
@@ -1057,6 +1062,8 @@ impl WaveForgeWorld {
                 }
             };
             started = true;
+            self.bake_source_ms
+                .push(preparing.elapsed().as_secs_f64() * 1000.0);
             // Handed over in one copy each; the setters keep the arrays they are given, where
             // `append_arrays` copies them again and rewrites every index.
             // The indices are in Recast's winding, counter-clockwise, where Godot's faces are

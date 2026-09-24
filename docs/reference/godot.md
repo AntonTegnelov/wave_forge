@@ -69,7 +69,8 @@ extension needs none of godot-rust's thread-safety features.
 - **Recent timings**, each as `_median`, `_p99` and `_max` in milliseconds: `process_ms` (the node's
   own time on Godot's thread per frame), `navigation_bake_ms` (from asking for a bake to its mesh
   being in place), `navigation_start_ms` and `navigation_finish_ms` (Godot's thread preparing a bake
-  and putting its mesh in place).
+  and putting its mesh in place), and `navigation_source_ms` (the part of a start that gathers the
+  source triangles, the rest being their handover to Godot).
 
 The node times itself because Godot's `Performance.TIME_PROCESS` is the slowest frame of the last
 second, published once a second, not the last frame's time.
