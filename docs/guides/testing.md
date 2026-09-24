@@ -280,7 +280,7 @@ cargo test --manifest-path wave_forge_bevy/Cargo.toml                       # no
 cargo test --manifest-path wave_forge_bevy/Cargo.toml --release -- --ignored --nocapture
 GODOT=/path/to/godot bash wave_forge_godot/verify.sh release                # needs a Godot 4 binary
 GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_city.sh           # a picture of the city
-GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_ground.sh         # a picture of the ground's materials
+GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_ground.sh         # the ground, grass and wind
 ```
 
 `prepare.sh`, which both Godot scripts run first, builds the extension and puts what the Godot

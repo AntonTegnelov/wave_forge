@@ -250,6 +250,19 @@ draws on every renderer, Compatibility included. `grass_chunks()` lists the chun
 not have, or grass without `ground_stage`. What it costs is in
 [measurements.md](../research/measurements.md) (E45).
 
+### Wind
+
+`wave_forge_wind` is a global shader parameter, a `vec4`: a direction along x and z, a strength
+in world units, and a speed. The extension registers it as it loads, before any scene, blowing
+gently along +x, unless the project's settings declare it (Project Settings, Shader Globals); a game
+changes it with `RenderingServer.global_shader_parameter_set`. The grass shader reads it, and so does
+the reference vegetation shader, which `vegetation_shader_code()` gives: on a plant's mesh bound in
+`scenes`, it bends the plant downwind, more the higher up a vertex is (up to `bend_height`) and the
+less stiff the plant, keeping each vertex's distance from the root, and flutters its outer parts
+along their normals, after GPU Gems 3, chapter 16. Every MultiMesh the node places carries each
+instance's custom data: its phase in the wind, as a fraction of a turn hashed from its id, and its
+stiffness, one over a point's scale, so a larger plant bends less and no two move alike.
+
 ## Checking it
 
 `wave_forge_godot/verify.sh` builds the extension and runs `godot/verify.gd` (the WFC world, with
@@ -260,7 +273,8 @@ through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) 
 `godot/verify_assemble.gd` (a village's pieces placed by their transforms) and
 `godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes) and
 `godot/verify_ground.gd` (the ground's materials per category, and grass) in a real headless
-Godot. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, and
-times grass.
+Godot. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
+grass, and checks that trees drawn with the vegetation shader move in the wind and stand still
+without it.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).

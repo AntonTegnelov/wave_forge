@@ -453,6 +453,7 @@ default cell of 0.25, one region baked per chunk within 1 chunk of the player.
 | E43 | The city check, twenty runs in two sets of ten | all twenty passed; Godot's slowest frame 2.5 to 7.0 ms and the node's own max 2.5 to 7.5 ms, p99 0.62 to 0.76 ms, at most 2 frame periods over 18.7 ms a run. The one frame over 5 ms (7.5 ms) built no bodies but spent 5.1 ms in the collider phase. Freeing a body of 512 shapes takes 0.02 to 0.15 ms, and ten more runs timing each part of the phase found no phase over 1 ms without a body built, so that frame was a stall landing inside the phase, of E37's kind; none reached the 8 ms bar | the city check at [#118], `verify.gd` in release, dozen on the RTX 3070 |
 | E44 | Placing a scene's node fresh against reusing a pooled one, 2 000 nodes, three runs | a `Node3D` with a mesh child: instantiating and attaching 6.0 to 12.9 µs, freeing 2.1 to 2.5 µs; a `StaticBody3D` with a mesh and a box collider: 6.9 to 8.6 µs and 5.4 to 5.7 µs; detaching and reattaching either 0.3 to 0.5 µs. Pooling is about 25 times cheaper per node, but a fresh node fits over 140 times in the 2 ms placing budget. Headless, so the dummy renderer: a real renderer's instances cost more to create, unmeasured | a probe script in headless Godot 4.7.2, release, at [#44] |
 | E45 | Grass through the reference grass shader: 25 chunks of 8×8 cells, 8 blades a cell (12 800 blades, those without cover collapsed in the vertex shader), frame time with vsync off, 300 frames with grass and 300 without | seen close up, 5.05 to 5.19 ms a frame with grass against 4.51 to 4.93 ms without, so 0.26 to 0.54 ms for grass; seen from 40 units, 5.06 to 8.21 ms against 4.98 to 6.39 ms, noisier. Frame time holds the CPU's part too, and the dev container's display is Xvfb | `render_ground.sh` under `xvfb-run`, Compatibility (OpenGL) over dozen on the RTX 3070, release, at [#46] |
+| E46 | The city check, four runs after E43 | three passed at 2.5 to 2.8 ms; one failed the 8 ms bar at 11.8 ms, the node's 11.75 ms of it navigation 9.5 ms, starting a bake 8.9 ms (usually 1.6 to 2.7), with bakes on the navigation server's threads slow too (p99 49 ms against 33): a host stall, as in E37 and E43, but this time over the bar and inside the node's own work ([#157]) | the city check, `verify.gd` in release, dozen on the RTX 3070 |
 
 ### Bevy ([#26], 2026-09-18)
 
@@ -538,5 +539,6 @@ Measurements the current code still waits for.
 [#118]: https://github.com/AntonTegnelov/wave_forge/issues/118
 [#126]: https://github.com/AntonTegnelov/wave_forge/issues/126
 [#146]: https://github.com/AntonTegnelov/wave_forge/issues/146
+[#157]: https://github.com/AntonTegnelov/wave_forge/issues/157
 [#44]: https://github.com/AntonTegnelov/wave_forge/issues/44
 [#46]: https://github.com/AntonTegnelov/wave_forge/issues/46

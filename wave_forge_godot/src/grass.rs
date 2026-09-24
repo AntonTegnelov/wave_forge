@@ -242,21 +242,15 @@ impl Drop for Grass {
     }
 }
 
-/// Whether this process has registered the wind.
-static WIND: std::sync::Once = std::sync::Once::new();
-
-/// Registers the global wind parameter the grass shader reads, blowing along +x gently, unless the
-/// project's settings declare it, once per process. Asking the rendering server which globals it
-/// has is for the editor only.
+/// Registers the global wind parameter the grass and vegetation shaders read, blowing along +x
+/// gently, unless the project's settings declare it. The extension calls it once, as it loads.
 pub(crate) fn ensure_wind() {
     if godot::classes::ProjectSettings::singleton().has_setting("shader_globals/wave_forge_wind") {
         return;
     }
-    WIND.call_once(|| {
-        RenderingServer::singleton().global_shader_parameter_add(
-            "wave_forge_wind",
-            godot::classes::rendering_server::GlobalShaderParameterType::VEC4,
-            &Vector4::new(1.0, 0.0, 0.15, 1.5).to_variant(),
-        );
-    });
+    RenderingServer::singleton().global_shader_parameter_add(
+        "wave_forge_wind",
+        godot::classes::rendering_server::GlobalShaderParameterType::VEC4,
+        &Vector4::new(1.0, 0.0, 0.15, 1.5).to_variant(),
+    );
 }
