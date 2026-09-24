@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use wave_forge::stages::{
     Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, Stamp, Value,
 };
-use wave_forge::{ChunkCoord, FocusPoint, ground};
+use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::stages::{
     GroundDropped, GroundReady, InstanceSpawned, Placed, StageDropped, StagePlacements, StageReady,
@@ -239,6 +239,42 @@ fn the_ground_that_arrives_is_the_librarys_ground_of_the_same_fields() {
             seen.grounds.iter().filter(|&&c| c == chunk).count(),
             1,
             "{chunk:?} is announced once"
+        );
+    }
+}
+
+#[test]
+fn the_grounds_materials_are_the_librarys_categories_of_its_vertices() {
+    let mut app = app_with(
+        plugin()
+            .with_ground("height")
+            .with_ground_materials("cover")
+            // The ground reads the materials of the chunks beyond its far edges too.
+            .with_radius("cover", 2),
+    );
+    let mut direct = runtime();
+    direct
+        .request(
+            &[FocusPoint::new(ChunkCoord::new(0, 0, 0), 2)],
+            &["height", "cover"],
+        )
+        .expect("stages");
+    direct.run_until_idle().expect("the stages run");
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        around_origin()
+            .iter()
+            .all(|&c| stages.ground_materials(c).is_some())
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    for chunk in around_origin() {
+        let expected = ground_materials(chunk, |at| direct.categories("cover", at));
+        assert_eq!(
+            stages.ground_materials(chunk),
+            expected.as_deref(),
+            "chunk {chunk:?}"
         );
     }
 }

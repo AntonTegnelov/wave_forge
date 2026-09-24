@@ -69,6 +69,9 @@ thread.
   and a `Placed { stage, chunk, id }` component, announced by an `InstanceSpawned { entity, placed }`
   message, and despawned when its chunk is dropped. A piece overlapping several chunks gets one
   entity, from the chunk holding its footprint's centre. Insert it before the stages it binds arrive.
+- `.with_ground_materials(stage)` gives the ground the categories of a Rules or Area stage as
+  materials ([Ground materials](#ground-materials)); `WaveForgeStages::ground_materials(chunk)`
+  gives them per ground vertex, and `settings()` how chunks and cells sit in Bevy's world.
 - `.with_radius(stage, radius)` generates one target within a radius of its own around every
   `GenerationFocus`, the others keeping each focus's radius.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
@@ -87,3 +90,18 @@ Bevy's device matches what the library generates on a device of its own, and a s
 products arrive as messages equal to what the runtime generates, placed where the lattice puts
 them and dropped when the focus moves away, and its ground equals the library's for the same
 fields. New facts drop the stages that read them and regenerate them with the new rows. See [testing.md](../guides/testing.md).
+
+## Ground materials
+
+`WaveForgeMaterialsPlugin`, which a game that renders adds after Bevy's own plugins, registers the
+reference materials and embeds their WESL shaders. `GroundMaterial` is an `ExtendedMaterial` over
+`StandardMaterial`: everything but the base colour is the `StandardMaterial`'s, and the base colour
+comes from the chunk's materials. `ground_material(stages, chunk, base, palette, images)` makes a
+chunk's, once its ground is built with materials, and `ground_material_of(mesh, ids, corner, cell,
+base, palette, images)` makes one for a ground built some other way. Its id image holds a texel per
+ground vertex, the category / 255 in red; `palette_image(colours)` makes the 256 by 1 palette,
+categories past the colours given taking colours of their own. The fragment shader blends the
+colours of the four vertices around each fragment, so materials meet in a band a cell wide, then
+applies Bevy's lighting, or none for an unlit base. A chunk's ground reads the materials of the
+chunks beyond its far edges, so the material stage has to be generated one chunk beyond the ground,
+with `.with_radius` say.

@@ -19,6 +19,14 @@ bevy_asset = "0.20.0-rc.1"
 bevy_ecs = "0.20.0-rc.1"
 bevy_math = "0.20.0-rc.1"
 bevy_mesh = "0.20.0-rc.1"
+# The materials of the ground, grass and swaying plants, which are PBR materials with shaders of our
+# own.
+bevy_pbr = "0.20.0-rc.1"
+# The types those materials are made of: colours, images, reflection for assets, shader paths.
+bevy_color = "0.20.0-rc.1"
+bevy_image = "0.20.0-rc.1"
+bevy_reflect = "0.20.0-rc.1"
+bevy_shader = "0.20.0-rc.1"
 bevy_render = "0.20.0-rc.1"
 bevy_transform = "0.20.0-rc.1"
 wave_forge = { path = ".." }
@@ -31,11 +39,14 @@ wgpu = { version = "30.0.1", default-features = false }
 wfc-core = { path = "../wfc-core", features = ["reference"] }
 # The city rule set, for the test that runs on a real device.
 wfc-devtools = { path = "../wfc-devtools" }
-# The engine itself, for the test that lets Bevy's own render plugin create the device. Headless:
-# no windowing feature, so `DefaultPlugins` brings no winit and the app runs without a display.
+# The engine itself, for the tests that let Bevy's own render plugin create the device and draw
+# the reference materials. Headless: no windowing feature, so `DefaultPlugins` brings no winit and
+# the app runs without a display.
 bevy = { version = "0.20.0-rc.1", default-features = false, features = [
     "bevy_render",
     "bevy_asset",
+    "bevy_pbr",
+    "bevy_core_pipeline",
 ] }
 # A device made the way Bevy makes one, for the shared-device test.
 pollster = "1.0.1"
