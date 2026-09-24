@@ -1,0 +1,12 @@
+// The pack of the ground check (verify_ground.gd): rolling ground whose materials are its
+// categories, sand low, grass in between and rock high.
+(
+    version: 1,
+    stages: [
+        (name: "height", kind: Field(Mul(Noise(frequency: 0.05, octaves: 3), Constant(12.0)))),
+        (name: "surface", kind: Rules(rules: [
+            (category: "sand", when: [Less(Input("height"), Constant(4.0))]),
+            (category: "rock", when: [Greater(Input("height"), Constant(8.0))]),
+        ], otherwise: "grass")),
+    ],
+)

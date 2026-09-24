@@ -7,8 +7,9 @@
 # then `godot/verify_tables.gd`, which gives a pack tables of facts from GDScript, then
 # `godot/verify_noise.gd`, which reads a FastNoiseLite resource through a pack, then
 # `godot/verify_edits.gd`, which fells a tree and raises the ground, then `godot/verify_assemble.gd`,
-# which places a village's pieces, then `godot/verify_scenes.gd`, which binds scenes to them, and
-# last the history example's own check (examples/history/check.gd).
+# which places a village's pieces, then `godot/verify_scenes.gd`, which binds scenes to them, then
+# `godot/verify_ground.gd`, which gives the ground a material per category, and last the history
+# example's own check (examples/history/check.gd).
 # Build in release: its frame-time bars describe the extension a game would ship.
 set -euo pipefail
 
@@ -21,5 +22,6 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_edits.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_assemble.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_scenes.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_ground.gd
 "$here/../examples/history/prepare.sh" "${1:-debug}"
 exec "${GODOT:-godot}" --headless --path "$here/../examples/history" --script check.gd
