@@ -119,6 +119,11 @@ pub struct WaveForgeStages {
     /// can go over by one chunk's placing.
     #[export]
     placement_budget_ms: f64,
+    /// Chunks around the followed position within which a scene placed as nodes is so; farther
+    /// out it is drawn as a MultiMesh of its first mesh, or not at all without one, and a chunk
+    /// crossing the radius is placed again. Below zero, such scenes are always nodes.
+    #[export]
+    promotion_radius: i32,
 
     /// Where compiled GPU kernels are kept across runs, so a town's first solve does not compile
     /// them every time the game starts; `user://` paths are resolved. Empty keeps none.
@@ -385,6 +390,7 @@ impl INode for WaveForgeStages {
             bodies_pending: 0,
             scenes: VarDictionary::new(),
             placement_budget_ms: 2.0,
+            promotion_radius: -1,
             placements: Placements::default(),
             slowest_frame: FrameCost::default(),
             pending: VecDeque::new(),
@@ -1738,10 +1744,14 @@ impl WaveForgeStages {
         };
         let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
         let budget = self.placement_budget_ms;
+        let radius = self.promotion_radius;
+        let near = |chunk: ChunkCoord| {
+            radius < 0 || (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()) <= radius
+        };
         let mut holder = self.base().clone();
         let result = self
             .placements
-            .place(&mut holder, scenario, focus, budget, items);
+            .place(&mut holder, scenario, focus, budget, near, items);
         match result {
             Ok(spawned) => {
                 let count = spawned.len();
