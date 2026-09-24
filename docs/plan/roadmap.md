@@ -54,13 +54,7 @@ has the full gap, and [#104](https://github.com/AntonTegnelov/wave_forge/issues/
 Each step is a verified pull request that updates the stories it moves. The order puts G7's world
 first, which the survival game grows into, then what the strategy game needs.
 
-1. **Frame bounds:** collider bodies bounded per frame in both Godot nodes
-   ([#118](https://github.com/AntonTegnelov/wave_forge/issues/118)). Towns are solved on a thread
-   of their own with cached kernels; compiling them earlier was measured and not taken
-   ([solver.md](../architecture/solver.md#alternatives-that-were-measured-or-read-and-not-taken)).
-   Per-stage timings ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)) showed fields
-   cost 0.02 ms per chunk, so Field stages stay on the CPU.
-2. **Tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows the game
+1. **Tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows the game
    gives, a simulated history say, or rows generated from a parent table, read by stages; with N11's
    example project, a toy history in GDScript. Built: given and generated tables, a focused row,
    sites, towns by a row's names and roads levelled by Apply
@@ -71,7 +65,7 @@ first, which the survival game grows into, then what the strategy game needs.
    ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) and these, the strategy game is
    possible; [#129](https://github.com/AntonTegnelov/wave_forge/issues/129) asks for its
    repository.
-3. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104). Built: Godot's FastNoiseLite
+2. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104). Built: Godot's FastNoiseLite
    noise in 2D ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)), neighbourhood filters, a Scatter modifier chain, blocking
    across Scatter stages, a location table, curves drawn into the ground, a world bound, an edits
    log, persistence modes, a radius per target stage and dungeons through Assemble. The ring world
@@ -79,12 +73,12 @@ first, which the survival game grows into, then what the strategy game needs.
    criteria: a Network stage for paths between sites
    ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) and scenes bound to points
    ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
-4. **Engine depth, alongside:** ground cover, grass and wind
+3. **Engine depth, alongside:** ground cover, grass and wind
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), region tags for audio and
    localisation ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)), far proxies and
    occluders ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)), density volumes for
    G1, G3 and G8 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
-5. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
+4. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 
 **Waiting on the owner's hardware:** the frame-time measurement of own against shared devices on
