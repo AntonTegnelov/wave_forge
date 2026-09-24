@@ -221,6 +221,7 @@ stamps), and loading refuses a stage that reads one type as another.
 | `Locations` | Sites | a height field, and what its kinds' conditions read, `region` chunks |
 | `TableCurves` | Curves | a table's rows |
 | `Rivers` | Curves | a height field, `region - 1` chunks |
+| `Network` | Curves | a height field and a sites stage, `region - 1` chunks |
 | `Apply` | Field | a height field and a Region or TableCurves stage, `max_radius + blend` cells |
 | `Flatten` | Field | a height field, 0 cells; a sites stage or an Assemble stage, `blend` cells |
 | `Solve` | Tiles | a Sites or TableSites stage, 0 cells |
@@ -577,6 +578,22 @@ goes lower, or the region's edge. Its values, the radius an Apply stage carves b
 so regions never read each other, and rivers are the same in any order; a river that reaches its
 region's edge stops there, so large regions suit an island whose rivers run to its coast. The ring
 world's rivers run from its high ground to the sea and are carved into its `ground`.
+
+### Network
+
+`Network(sites: "towns", height: "ground", region: 12, width: 1.5, climb: 4.0, dry: Some(0.05))`:
+paths between sites over a height field, a region job built into the library. In every square
+region of `region` chunks, the sites of the sites stage `sites` whose centre lies in the region are
+joined by a minimum spanning tree over the distances between their centres, grown from the first
+site by id, and each edge becomes the cheapest path between the two centres by A* over the region's
+columns: a step to one of the eight neighbours costs its length plus `climb` (default 4) times the
+height it climbs or falls, so a road goes round a ridge through a gap rather than over it. Columns
+below `dry` are never crossed, and an edge with no dry path is left out. A path is cut where it
+enters either site's footprint, and its values are `width` (default 1.5), the radius an Apply stage
+levels or carves by. A path never leaves its region, so regions never read each other and paths are
+the same in any order; sites of different regions are not joined, so a network's region should hold
+several of its sites' regions. Loading refuses a region of 0 chunks, a negative width or climb and a
+`dry` that is not finite.
 
 ### TableCurves
 

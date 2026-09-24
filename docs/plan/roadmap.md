@@ -68,11 +68,11 @@ first, which the survival game grows into, then what the strategy game needs.
 2. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104). Built: Godot's FastNoiseLite
    noise in 2D ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)), neighbourhood filters, a Scatter modifier chain, blocking
    across Scatter stages, a location table, curves drawn into the ground, a world bound, an edits
-   log, persistence modes, a radius per target stage and dungeons through Assemble. The ring world
-   meets every criterion of G7 and verifies it. Left for Valheim's feature parity beyond G7's
-   criteria: a Network stage for paths between sites
-   ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)) and scenes bound to points
-   ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
+   log, persistence modes, a radius per target stage, dungeons through Assemble and a Network stage
+   for paths between sites. The ring world meets every criterion of G7 and verifies it. Left for
+   Valheim's feature parity beyond G7's criteria: scenes bound to points
+   ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)) and lakes
+   ([#144](https://github.com/AntonTegnelov/wave_forge/issues/144)).
 3. **Engine depth, alongside:** ground cover, grass and wind
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), region tags for audio and
    localisation ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)), far proxies and

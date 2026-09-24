@@ -102,8 +102,7 @@ Each is a gap between the code and the design or the stories, with where it is t
 - **Golden worlds cover tiles, not images or products.** Instance sets and chunk hashes are not in
   them yet.
 - **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage;
-  curves from region jobs and tables are drawn into height fields, but there is no Network stage to
-  find paths between sites; tables of facts reach stages through a focused row, sites, towns and
+  curves from region jobs, networks between sites and tables are drawn into height fields; tables of facts reach stages through a focused row, sites, towns and
   roads
   ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a runtime holds every frozen chunk it has generated for as long as it lives ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)); noise is the library's value noise and Godot's FastNoiseLite in 2D; a Scatter stage has one kind. Each has an issue
   ([story-coverage.md](story-coverage.md)).

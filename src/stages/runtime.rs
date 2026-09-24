@@ -11,6 +11,7 @@ use super::assemble::Growth;
 use super::edits::{Edit, Edits};
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId, Table};
+use super::network::SitePaths;
 use super::pack::{
     Column, Expr, LocationKind, MAX_SCATTER_SLOTS, Output, Pack, Persist, Profile, Reach, Stage,
     StageKind, TableKind, point_stage_id, salt,
@@ -993,11 +994,10 @@ impl Runtime {
             .retain(|&(stage, _), (site, _)| fresh(stage, site));
         let pack = Arc::clone(&self.pack);
         self.regions.retain(|&(stage, region), _| {
-            let (StageKind::Region { region: size, .. } | StageKind::Rivers { region: size, .. }) =
-                pack.stages[stage].kind
-            else {
-                unreachable!("only Region and Rivers stages compute regions")
-            };
+            let size = pack.stages[stage]
+                .kind
+                .job_region()
+                .expect("only region jobs compute regions");
             match stale.get(&stage) {
                 None => true,
                 Some(Stale::All) => false,
@@ -1398,11 +1398,10 @@ impl Runtime {
         // world computes them once before streaming.
         let finite = pack.bound.is_some();
         self.regions.retain(|&(stage, region), _| {
-            let (StageKind::Region { region: size, .. } | StageKind::Rivers { region: size, .. }) =
-                pack.stages[stage].kind
-            else {
-                unreachable!("only Region and Rivers stages compute regions")
-            };
+            let size = pack.stages[stage]
+                .kind
+                .job_region()
+                .expect("only region jobs compute regions");
             finite
                 || needed.get(&stage).is_some_and(|chunks| {
                     chunks.iter().any(|&chunk| region_of(chunk, size) == region)
@@ -1692,7 +1691,8 @@ impl Runtime {
             | StageKind::Scatter { .. }
             | StageKind::Assemble { .. }
             | StageKind::Region { .. }
-            | StageKind::Rivers { .. } => return Err(StageError::NotSampled(stage.name.clone())),
+            | StageKind::Rivers { .. }
+            | StageKind::Network { .. } => return Err(StageError::NotSampled(stage.name.clone())),
         };
         // A sample is what the chunk holds, raises included.
         let value = value
@@ -1792,6 +1792,7 @@ impl Runtime {
     fn run_region_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let stage = &self.pack.stages[index];
         let rivers;
+        let paths;
         let (job, size, halo, budget): (&dyn RegionJob, &u32, &u32, &u32) = match &stage.kind {
             StageKind::Region {
                 job,
@@ -1823,6 +1824,22 @@ impl Runtime {
                 };
                 (&rivers, region, &0, &1)
             }
+            StageKind::Network {
+                height,
+                region,
+                width,
+                climb,
+                dry,
+                ..
+            } => {
+                paths = SitePaths {
+                    height,
+                    width: *width,
+                    climb: *climb,
+                    dry: *dry,
+                };
+                (&paths, region, &0, &1)
+            }
             _ => return Ok(()),
         };
         let region = region_of(chunk, *size);
@@ -1840,14 +1857,51 @@ impl Runtime {
             (i64::from(region.0) * size + size + halo) * sx - 1,
             (i64::from(region.1) * size + size + halo) * sy - 1,
         ];
+        let fields =
+            |&&(input, _): &&(usize, Reach)| self.pack.stages[input].kind.output() == Output::Field;
         let views = stage
             .inputs
             .iter()
+            .filter(fields)
             .map(|&(input, _)| {
                 let view = self.view_over(index, input, (min, max), (halo * sx) as u32);
                 (self.pack.stages[input].name.as_str(), view)
             })
             .collect();
+        // A Network stage's sites: those whose centre lies in the region, once each.
+        let mut sites: BTreeMap<SiteId, Site> = BTreeMap::new();
+        for &(input, _) in &stage.inputs {
+            if self.pack.stages[input].kind.output() != Output::Sites {
+                continue;
+            }
+            for y in 0..size {
+                for x in 0..size {
+                    let at = ChunkCoord::new(
+                        (i64::from(region.0) * size + x) as i32,
+                        (i64::from(region.1) * size + y) as i32,
+                        0,
+                    );
+                    let product = self
+                        .products
+                        .get(&(input, at))
+                        .expect("a region job's inputs are generated over its region first");
+                    for site in product.sites() {
+                        sites.insert(site.id.clone(), site.clone());
+                    }
+                }
+            }
+        }
+        let inside = |site: &Site| {
+            let centre = |low: i32, high: i32| (i64::from(low) + i64::from(high)) / 2;
+            region_of(
+                ChunkCoord::new(
+                    centre(site.min.0, site.max.0) as i32,
+                    centre(site.min.1, site.max.1) as i32,
+                    0,
+                ),
+                size as u32,
+            ) == region
+        };
         let mut input = RegionInput {
             region,
             size: size as u32,
@@ -1856,6 +1910,7 @@ impl Runtime {
             world: (self.seed as u32) ^ ((self.seed >> 32) as u32),
             salt: stage.salt,
             views,
+            sites: sites.into_values().filter(|site| inside(site)).collect(),
         };
         let mut log = Vec::new();
         for retry in 0..*budget {
@@ -2448,8 +2503,8 @@ impl Runtime {
         if let StageKind::Scatter { .. } = &stage.kind {
             return self.scatter(index, chunk).map(Product::Points);
         }
-        if let StageKind::Region { region, .. } | StageKind::Rivers { region, .. } = &stage.kind {
-            let curves = &self.regions[&(index, region_of(chunk, *region))];
+        if let Some(region) = stage.kind.job_region() {
+            let curves = &self.regions[&(index, region_of(chunk, region))];
             let (min, max) = self.chunk_rect(chunk);
             return Ok(Product::Curves(
                 curves
@@ -2562,7 +2617,8 @@ impl Runtime {
                     | StageKind::Assemble { .. }
                     | StageKind::Rules { .. }
                     | StageKind::Region { .. }
-                    | StageKind::Rivers { .. } => {
+                    | StageKind::Rivers { .. }
+                    | StageKind::Network { .. } => {
                         unreachable!("handled above")
                     }
                 };
