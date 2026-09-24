@@ -54,11 +54,10 @@ has the full gap, and [#104](https://github.com/AntonTegnelov/wave_forge/issues/
 Each step is a verified pull request that updates the stories it moves. The order puts G7's world
 first, which the survival game grows into, then what the strategy game needs.
 
-1. **Frame bounds and town kernels:** collider bodies bounded per frame in both Godot nodes
-   ([#118](https://github.com/AntonTegnelov/wave_forge/issues/118)), and town kernels compiled
-   ahead of the first town if that can beat compiling on demand
-   ([#146](https://github.com/AntonTegnelov/wave_forge/issues/146)); towns are already solved on a
-   thread of their own with cached kernels.
+1. **Frame bounds:** collider bodies bounded per frame in both Godot nodes
+   ([#118](https://github.com/AntonTegnelov/wave_forge/issues/118)). Towns are solved on a thread
+   of their own with cached kernels; compiling them earlier was measured and not taken
+   ([solver.md](../architecture/solver.md#alternatives-that-were-measured-or-read-and-not-taken)).
    Per-stage timings ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)) showed fields
    cost 0.02 ms per chunk, so Field stages stay on the CPU.
 2. **Tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows the game
