@@ -1,6 +1,6 @@
 //! The block solver: one workgroup per region, one dispatch per batch.
 
-use crate::backend::{BufferUsage, ComputeBackend};
+use crate::backend::{BackendError, BufferUsage, ComputeBackend};
 use crate::error::GpuError;
 use crate::kernel::{ENTRY, KernelSpec, Params, STATS_WORDS, SolverConfig};
 use std::collections::HashMap;
@@ -121,11 +121,45 @@ impl<B: ComputeBackend> BlockSolver<B> {
         self.compilation
     }
 
-    /// Compiles the kernels a run will need, so the first batch does not pay for it.
+    /// Compiles the kernels a run will need, so the first batch does not pay for it: the pipelines
+    /// of different shapes at once, each on a thread of its own, since a driver takes seconds over
+    /// one. What [`BlockSolver::compilation`] counts is the time that took on the clock.
     ///
     /// # Errors
     /// If a kernel does not compile or does not fit the device.
     pub fn warm(&mut self, shapes: &[(u32, RegionShape)]) -> Result<(), GpuError> {
+        let mut missing: Vec<(RegionShape, String)> = Vec::new();
+        for &(_, region) in shapes {
+            if self.pipelines.contains_key(&region)
+                || missing.iter().any(|(known, _)| *known == region)
+            {
+                continue;
+            }
+            let spec = KernelSpec::new(region, &self.ruleset, &self.config);
+            spec.check(&self.backend.limits())
+                .map_err(|(needed, available)| GpuError::WorkgroupStorage { needed, available })?;
+            missing.push((region, spec.wgsl()));
+        }
+        let compiling = std::time::Instant::now();
+        let backend = &self.backend;
+        let compiled: Vec<(RegionShape, Result<B::Pipeline, BackendError>)> =
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = missing
+                    .iter()
+                    .map(|(region, wgsl)| {
+                        scope.spawn(move || (*region, backend.create_pipeline(wgsl, ENTRY)))
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("a compiling thread"))
+                    .collect()
+            });
+        for (region, pipeline) in compiled {
+            self.pipelines.insert(region, Arc::new(pipeline?));
+            self.compilation.pipelines += 1;
+        }
+        self.compilation.ms += compiling.elapsed().as_secs_f64() * 1000.0;
         for &(regions, region) in shapes {
             self.ensure_kernel(capacity_for(regions), region)?;
         }
@@ -376,6 +410,10 @@ impl<B: ComputeBackend> Solver for BlockSolver<B> {
 
     fn accepts(&self, region: RegionShape) -> bool {
         self.fits(region)
+    }
+
+    fn warm(&mut self, shapes: &[(u32, RegionShape)]) -> Result<(), SolverError> {
+        Self::warm(self, shapes).map_err(GpuError::into_solver)
     }
 
     fn start(&mut self, batch: RegionBatch) -> Result<JobId, SolverError> {

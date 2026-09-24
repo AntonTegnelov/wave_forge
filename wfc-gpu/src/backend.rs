@@ -58,10 +58,11 @@ pub enum BackendError {
 /// The solver creates one pipeline per region shape, buffers per batch capacity, writes the inputs,
 /// and dispatches one workgroup per region. Implementations are free to be as simple as they like:
 /// there is no bind group management and no queue here, and caching compiled pipelines across runs
-/// is the implementation's own business.
-pub trait ComputeBackend {
+/// is the implementation's own business. The solver compiles several pipelines at once from as many
+/// threads, so a backend is shared between threads and its pipelines cross them.
+pub trait ComputeBackend: Sync {
     /// A compiled kernel.
-    type Pipeline;
+    type Pipeline: Send;
     /// A set of buffers bound to a pipeline, in binding order.
     type Binding;
     /// Device memory.
