@@ -56,7 +56,9 @@ first, which the survival game grows into, then what the strategy game needs.
 
 1. **Frame bounds and town kernels:** collider bodies bounded per frame in both Godot nodes
    ([#118](https://github.com/AntonTegnelov/wave_forge/issues/118)), and town kernels compiled
-   before play and cached ([#111](https://github.com/AntonTegnelov/wave_forge/issues/111)).
+   ahead of the first town if that can beat compiling on demand
+   ([#146](https://github.com/AntonTegnelov/wave_forge/issues/146)); towns are already solved on a
+   thread of their own with cached kernels.
    Per-stage timings ([#87](https://github.com/AntonTegnelov/wave_forge/issues/87)) showed fields
    cost 0.02 ms per chunk, so Field stages stay on the CPU.
 2. **Tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows the game
@@ -65,9 +67,8 @@ first, which the survival game grows into, then what the strategy game needs.
    sites, towns by a row's names and roads levelled by Apply
    ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)), in both engines, and the example
    (`examples/history`), whose check passes; a person following its README is what is left. Its
-   first town arrives in about 5.5 s, most of it the town's first solve
-   ([measurements.md](../research/measurements.md) E39,
-   [#111](https://github.com/AntonTegnelov/wave_forge/issues/111)). With region jobs
+   first town arrives in about 5 to 6 s, most of it compiling the town's kernels
+   ([measurements.md](../research/measurements.md) E39, E42). With region jobs
    ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) and these, the strategy game is
    possible; [#129](https://github.com/AntonTegnelov/wave_forge/issues/129) asks for its
    repository.
