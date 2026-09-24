@@ -7,6 +7,11 @@
 //! with any GPU device it needs, are built on that thread, so a town solver gets a device of its
 //! own there rather than Bevy's.
 //!
+//! A game binds a kind (a Scatter point's kind, or an Assemble piece's name) to what its entities
+//! hold through [`StagePlacements`]: every point or piece of a bound kind gets an entity at its
+//! transform with a [`Placed`] component, announced by [`InstanceSpawned`] and despawned with its
+//! chunk.
+//!
 //! With [`WaveForgeStagesPlugin::with_ground`], the plugin also builds each chunk's ground from a
 //! height field stage once the fields around it have arrived, and says so with [`GroundReady`]: a
 //! [`GroundMesh`] a game turns into a [`Mesh`] with [`ground_mesh`] and hands its heights to the
@@ -15,8 +20,11 @@
 use crate::GenerationFocus;
 use bevy_app::{App, Plugin, Update};
 use bevy_asset::RenderAssetUsages;
-use bevy_ecs::message::{Message, MessageWriter};
-use bevy_ecs::prelude::{IntoScheduleConfigs, Query, ResMut, Resource};
+use bevy_ecs::message::{Message, MessageReader, MessageWriter};
+use bevy_ecs::prelude::{
+    Commands, Component, Entity, IntoScheduleConfigs, Query, ResMut, Resource,
+};
+use bevy_ecs::system::EntityCommands;
 use bevy_math::{Mat3, Quat, Vec3};
 use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_transform::components::{GlobalTransform, Transform};
@@ -27,7 +35,7 @@ use wave_forge::stages::{
     Categories, Edits, Facts, Field, Point, RowId, Runtime, Save, Site, StageEvent, StageTiming,
     StageWorker, Stamp, TownChunk,
 };
-use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, ground, ground_readers};
+use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, InstanceId, ground, ground_readers};
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
@@ -50,6 +58,49 @@ pub struct StagesSaved(pub Save);
 /// Generation stopped, and why.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct StagesFailed(pub String);
+
+/// What a game gives the entities of a kind, a Scatter point's kind or an Assemble piece's name:
+/// a `SceneRoot` of a glTF scene, a mesh and a material, a collider, anything.
+type Spawn = Box<dyn Fn(&mut EntityCommands) + Send + Sync>;
+
+/// Kinds bound to what their entities hold, and the entities each stage's chunk has.
+///
+/// Insert it, and bind kinds with [`StagePlacements::bind`], before the stages it binds arrive:
+/// a chunk is placed as it arrives.
+#[derive(Resource, Default)]
+pub struct StagePlacements {
+    bound: HashMap<String, Spawn>,
+    placed: HashMap<(String, ChunkCoord), Vec<Entity>>,
+}
+
+impl StagePlacements {
+    /// Gives every entity of `kind` what `spawn` inserts, beside its [`Transform`] and [`Placed`].
+    #[must_use]
+    pub fn bind(
+        mut self,
+        kind: &str,
+        spawn: impl Fn(&mut EntityCommands) + Send + Sync + 'static,
+    ) -> Self {
+        self.bound.insert(kind.to_owned(), Box::new(spawn));
+        self
+    }
+}
+
+/// An entity placed for a point or a piece: its stage and chunk, and its id, as the stage's
+/// products give it.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct Placed {
+    pub stage: String,
+    pub chunk: ChunkCoord,
+    pub id: InstanceId,
+}
+
+/// An entity was placed for a point or a piece of a bound kind.
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
+pub struct InstanceSpawned {
+    pub entity: Entity,
+    pub placed: Placed,
+}
 
 /// A chunk's ground is ready to read from [`WaveForgeStages::ground`].
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
@@ -331,10 +382,13 @@ impl Plugin for WaveForgeStagesPlugin {
         .add_message::<StagesFailed>()
         .add_message::<StagesSaved>()
         .add_message::<GroundReady>()
+        .add_message::<InstanceSpawned>()
         .add_message::<GroundDropped>()
         .add_systems(
             Update,
-            (follow_focus, drain).chain().in_set(WaveForgeStagesSystems),
+            (follow_focus, drain, place)
+                .chain()
+                .in_set(WaveForgeStagesSystems),
         );
     }
 }
@@ -420,5 +474,71 @@ fn drain(
     }
     if let (false, Some(reason)) = (had_failed, stages.worker.failure()) {
         failed.write(StagesFailed(reason.to_owned()));
+    }
+}
+
+/// Spawns an entity for every point or piece of a bound kind in each chunk that arrived, and
+/// despawns those of each chunk dropped. A piece overlapping several chunks is placed once, by the
+/// chunk holding its footprint's centre.
+fn place(
+    mut commands: Commands,
+    stages: ResMut<WaveForgeStages>,
+    placements: Option<ResMut<StagePlacements>>,
+    mut ready: MessageReader<StageReady>,
+    mut dropped: MessageReader<StageDropped>,
+    mut spawned: MessageWriter<InstanceSpawned>,
+) {
+    let Some(mut placements) = placements else {
+        ready.clear();
+        dropped.clear();
+        return;
+    };
+    for StageDropped { stage, chunk } in dropped.read() {
+        for entity in placements
+            .placed
+            .remove(&(stage.clone(), *chunk))
+            .into_iter()
+            .flatten()
+        {
+            commands.entity(entity).despawn();
+        }
+    }
+    for StageReady { stage, chunk } in ready.read() {
+        let items: Vec<(&str, Transform, InstanceId)> =
+            if let Some(points) = stages.points(stage, *chunk) {
+                points
+                    .iter()
+                    .map(|point| (&*point.kind, stages.transform_of(point), point.id))
+                    .collect()
+            } else if let Some(stamps) = stages.stamps(stage, *chunk) {
+                stamps
+                    .iter()
+                    .filter(|stamp| stamp.id.chunk == *chunk)
+                    .map(|stamp| (&*stamp.piece, stages.stamp_transform(stamp), stamp.id))
+                    .collect()
+            } else {
+                continue;
+            };
+        let mut entities = Vec::new();
+        for (kind, transform, id) in items {
+            let Some(spawn) = placements.bound.get(kind) else {
+                continue;
+            };
+            let placed = Placed {
+                stage: stage.clone(),
+                chunk: *chunk,
+                id,
+            };
+            let mut entity = commands.spawn((transform, placed.clone()));
+            spawn(&mut entity);
+            let entity = entity.id();
+            spawned.write(InstanceSpawned { entity, placed });
+            entities.push(entity);
+        }
+        if let Some(old) = placements.placed.insert((stage.clone(), *chunk), entities) {
+            for entity in old {
+                commands.entity(entity).despawn();
+            }
+        }
     }
 }
