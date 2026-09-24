@@ -1,20 +1,20 @@
-//! Reference materials for what the stages build (docs/reference/bevy.md, "Ground materials" and
-//! "Grass").
+//! Reference materials for what the stages build (docs/reference/bevy.md, "Ground materials",
+//! "Grass" and "Wind").
 //!
 //! [`WaveForgeMaterialsPlugin`] registers them and embeds their shaders; a game that renders adds
 //! it after Bevy's own plugins. [`GroundMaterial`] draws a chunk's ground with a colour per
 //! material, blended between the ground's vertices, from [`WaveForgeStages::ground_materials`].
 //! [`GrassMaterial`] draws grass from a cover field over one mesh of blades every chunk shares,
-//! swaying in the [`Wind`].
+//! and [`VegetationMaterial`] a plant's mesh, both swaying in the [`Wind`].
 
 use crate::stages::WaveForgeStages;
 use bevy_app::{App, Plugin, Update};
-use bevy_asset::{Asset, Assets, Handle, RenderAssetUsages, embedded_asset};
+use bevy_asset::{Asset, AssetEvent, Assets, Handle, RenderAssetUsages, embedded_asset};
 use bevy_camera::primitives::Aabb;
 use bevy_camera::visibility::NoAutoAabb;
 use bevy_color::{Color, ColorToPacked};
 use bevy_ecs::change_detection::DetectChanges;
-use bevy_ecs::prelude::{Res, ResMut, Resource};
+use bevy_ecs::prelude::{MessageReader, Res, ResMut, Resource};
 use bevy_image::Image;
 use bevy_math::{IVec4, Vec3, Vec4};
 use bevy_mesh::{Mesh, PrimitiveTopology};
@@ -62,17 +62,23 @@ impl Plugin for WaveForgeMaterialsPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/ground.wesl");
         embedded_asset!(app, "shaders/grass.wesl");
+        embedded_asset!(app, "shaders/vegetation.wesl");
         app.add_plugins((
             MaterialPlugin::<GroundMaterial>::default(),
             MaterialPlugin::<GrassMaterial>::default(),
+            MaterialPlugin::<VegetationMaterial>::default(),
         ))
         .init_resource::<Wind>()
-        .add_systems(Update, blow);
+        .add_systems(
+            Update,
+            (blow::<GrassMaterials>, blow::<VegetationMaterials>),
+        );
     }
 }
 
-/// The wind grass sways in: a direction along x and z, a strength in world units at a blade's tip,
-/// and a speed. Changing it reaches every grass material in the next frame.
+/// The wind grass and plants sway in: a direction along x and z, a strength in world units at a
+/// blade's or a plant's tip, and a speed. Changing it reaches every grass and vegetation material in
+/// the next frame, and a material added later gets it as it is.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct Wind(pub Vec4);
 
@@ -83,13 +89,32 @@ impl Default for Wind {
     }
 }
 
-/// Gives every grass material the wind, when it changes.
-fn blow(wind: Res<Wind>, mut grass: ResMut<Assets<GrassMaterial>>) {
-    if !wind.is_changed() {
+/// A reference material that sways in the [`Wind`].
+trait Sways: MaterialExtension {
+    fn wind(&mut self) -> &mut Vec4;
+}
+
+/// Gives every material of `E` the wind when it changes, and a material added since the wind last
+/// changed the wind as it is.
+fn blow<E: Sways>(
+    wind: Res<Wind>,
+    mut added: MessageReader<AssetEvent<ExtendedMaterial<StandardMaterial, E>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, E>>>,
+) {
+    if wind.is_changed() {
+        added.clear();
+        for (_, material) in materials.iter_mut() {
+            *material.extension.wind() = wind.0;
+        }
         return;
     }
-    for (_, material) in grass.iter_mut() {
-        material.extension.settings.wind = wind.0;
+    for event in added.read() {
+        // A material added and removed within one frame is gone by now.
+        if let AssetEvent::Added { id } = event
+            && let Some(mut material) = materials.get_mut(*id)
+        {
+            *material.extension.wind() = wind.0;
+        }
     }
 }
 
@@ -147,6 +172,72 @@ impl MaterialExtension for GrassMaterials {
 /// A chunk's grass: Bevy's `StandardMaterial` for lighting, the blades placed and coloured by the
 /// grass shader.
 pub type GrassMaterial = ExtendedMaterial<StandardMaterial, GrassMaterials>;
+
+impl Sways for GrassMaterials {
+    fn wind(&mut self) -> &mut Vec4 {
+        &mut self.settings.wind
+    }
+}
+
+/// What the vegetation shader reads about a kind of plant.
+#[derive(ShaderType, Clone, Copy, Debug)]
+pub struct VegetationSettings {
+    /// The wind, as [`Wind`] gives it.
+    pub wind: Vec4,
+    /// The height, in the mesh's own units, at which the plant bends fully, then how far its outer
+    /// parts flutter, in the mesh's own units at full wind.
+    pub bend: Vec4,
+}
+
+/// What [`VegetationMaterial`] adds to a `StandardMaterial`: how the plant bends.
+#[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
+pub struct VegetationMaterials {
+    /// The plant's bending and the wind.
+    #[uniform(100)]
+    pub settings: VegetationSettings,
+}
+
+impl MaterialExtension for VegetationMaterials {
+    fn vertex_shader() -> ShaderRef {
+        "embedded://wave_forge_bevy/shaders/vegetation.wesl".into()
+    }
+
+    /// The same bending in the prepass, so depth, shadows and motion vectors follow the plant.
+    fn prepass_vertex_shader() -> ShaderRef {
+        "embedded://wave_forge_bevy/shaders/vegetation.wesl".into()
+    }
+}
+
+impl Sways for VegetationMaterials {
+    fn wind(&mut self) -> &mut Vec4 {
+        &mut self.settings.wind
+    }
+}
+
+/// A plant that bends in the [`Wind`]: Bevy's `StandardMaterial` for its looks, the vegetation
+/// shader for its vertices.
+pub type VegetationMaterial = ExtendedMaterial<StandardMaterial, VegetationMaterials>;
+
+/// A plant's material: `base` for its looks, bending fully at `bend_height` and fluttering its
+/// outer parts by `flutter`, both in the mesh's own units. Its phase in the wind is hashed from
+/// where each plant stands and its stiffness is its scale, so every plant's top sways by about the
+/// wind's strength in world units, a larger plant leaning less.
+#[must_use]
+pub fn vegetation_material(
+    base: StandardMaterial,
+    bend_height: f32,
+    flutter: f32,
+) -> VegetationMaterial {
+    VegetationMaterial {
+        base,
+        extension: VegetationMaterials {
+            settings: VegetationSettings {
+                wind: Wind::default().0,
+                bend: Vec4::new(bend_height, flutter, 0.0, 0.0),
+            },
+        },
+    }
+}
 
 /// The mesh of blades every chunk's grass shares: `per_column` blades for each of `columns`, each a
 /// triangle carrying its index in its second UV channel, from which the grass shader places it.
@@ -365,5 +456,60 @@ pub fn ground_material_of(
             materials: images.add(materials),
             palette,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::MinimalPlugins;
+    use bevy::asset::{AssetApp, AssetPlugin};
+
+    fn grass() -> GrassMaterial {
+        GrassMaterial {
+            base: StandardMaterial::default(),
+            extension: GrassMaterials {
+                settings: GrassSettings {
+                    cell_and_blade: Vec4::ONE,
+                    wind: Wind::default().0,
+                    chunk_and_count: IVec4::ZERO,
+                    base_colour: Vec4::ONE,
+                    tip_colour: Vec4::ONE,
+                },
+                heights: Handle::default(),
+                cover: Handle::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn a_material_added_after_the_wind_changed_sways_in_that_wind() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<GrassMaterial>()
+            .init_resource::<Wind>()
+            .add_systems(Update, blow::<GrassMaterials>);
+        let wind = Wind(Vec4::new(0.0, 1.0, 0.4, 2.0));
+        app.insert_resource(wind);
+        app.update();
+        app.update();
+
+        let grass = app
+            .world_mut()
+            .resource_mut::<Assets<GrassMaterial>>()
+            .add(grass());
+        app.update();
+        app.update();
+
+        let materials = app.world().resource::<Assets<GrassMaterial>>();
+        assert_eq!(
+            materials
+                .get(&grass)
+                .expect("added")
+                .extension
+                .settings
+                .wind,
+            wind.0
+        );
     }
 }

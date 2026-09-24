@@ -374,8 +374,8 @@ walking its streets, at the P1 frame rate on a reference desktop. Needs a person
 checklist in the example's README is followed from a clean checkout within an hour. **Needs.** Grass
 and wind ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), navigation, presets.
 **Status:** not started (2026-09-24). Grass and trees that sway in a global wind are drawn in
-Godot (`verify_ground.gd`, `render_ground.sh`), and grass that sways in a wind in Bevy
-(`grass_render.rs`).
+Godot (`verify_ground.gd`, `render_ground.sh`) and in Bevy (`grass_render.rs`,
+`vegetation_render.rs`).
 
 ### N11. Put my own history into the world
 

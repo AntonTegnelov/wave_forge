@@ -107,8 +107,8 @@ Each is a gap between the code and the design or the stories, with where it is t
   ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a runtime holds every frozen chunk it has generated for as long as it lives ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)); noise is the library's value noise and Godot's FastNoiseLite in 2D; a Scatter stage has one kind. Each has an issue
   ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, without levels of detail; Godot
-  draws its materials and grass and Bevy its materials and grass; Bevy's swaying plants and far
-  levels are [#46](https://github.com/AntonTegnelov/wave_forge/issues/46) and
+  and Bevy draw its materials and grass and sway plants in the wind; far levels are
+  [#46](https://github.com/AntonTegnelov/wave_forge/issues/46) and
   [#47](https://github.com/AntonTegnelov/wave_forge/issues/47). Scattered points stand at their
   column's height, which can differ from the mesh between column centres by up to half a column's
   slope.
