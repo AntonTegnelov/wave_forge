@@ -413,7 +413,7 @@ per second, Godot's slowest frame under 8 ms, the node's own time under 2 ms at 
 and no frame with a chunk missing within the ready radius. **Status:** in progress (2026-09-23): the Godot check
 meets these for a streamed WFC world (a small band rule set) with colliders and navigation (slowest frame 3.4 ms, node p99 0.56 ms,
 [measurements.md](../research/measurements.md)), on the dev container's RTX 3070
-through dozen; not yet with Phase 2 stages or on a desktop. With the valley pack's stages, the stages node's own time stays at 0.23 to 0.28 ms at the 99th percentile and under 3 ms at worst over ten runs, now that it emits at most 256 signals per frame ([measurements.md](../research/measurements.md) E31); that check does not yet run at 4.2 m/s through a stages world. With collider bodies bounded per frame, the city node's own time stays under 3.7 ms at worst over ten runs, but one run in ten still exceeded Godot's 8 ms bar through a stall outside the node (E37), which [#118](https://github.com/AntonTegnelov/wave_forge/issues/118) tracks.
+through dozen; not yet with Phase 2 stages or on a desktop. With the valley pack's stages, the stages node's own time stays at 0.23 to 0.28 ms at the 99th percentile and under 3 ms at worst over ten runs, now that it emits at most 256 signals per frame ([measurements.md](../research/measurements.md) E31); that check does not yet run at 4.2 m/s through a stages world. With collider bodies bounded per frame, twenty runs of the city check stayed under Godot's 8 ms bar, the slowest at 7.0 ms (E43); one run in ten had exceeded it earlier through a stall outside the node (E37), and such stalls still land now and then without reaching the bar.
 
 ### P2. Long view distance
 
