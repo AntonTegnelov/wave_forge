@@ -91,6 +91,8 @@ second, published once a second, not the last frame's time.
 | Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
 | | `ground_material` | the material the ground is drawn with |
 | Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
+| Scenes | `scenes` | a kind (a Scatter point's kind or an Assemble piece's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
+| | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
 
 ### Functions
@@ -158,13 +160,38 @@ second, published once a second, not the last frame's time.
 ### Signals
 
 `stage_ready(stage, chunk)`, `stage_dropped(stage, chunk)`, `generation_failed(reason)`,
-`saved(text)`.
+`saved(text)`, `instance_spawned(node, chunk, id)`.
 
 At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, in the order the
 products arrived (nearest first), so after a wide request some come a few frames later; by then a
 product can have been dropped again, and its `stage_dropped` follows. Ground is built for at most
 8 chunks per frame, and bodies for at most 3, nearest the player first. `stats()` reports what
-waits as `pending_signals`, `pending_grounds` and `pending_colliders`.
+waits as `pending_signals`, `pending_grounds`, `pending_colliders` and `pending_placements`, and
+what is placed as `placed_nodes` and `placed_instances`.
+
+### Scenes
+
+`scenes` binds a kind to a scene: a Scatter point's kind, or an Assemble piece's name, so a
+dungeon's rooms bind the same way as trees. A value is a `PackedScene`, or a path the node loads on
+Godot's loader threads when it starts; placing waits until every scene has loaded. A scene holding
+another extension's Rust resource has to be given as a `PackedScene`, since such a resource aborts
+the process when loaded on a loader thread
+([engine-integration.md](../architecture/engine-integration.md#godot-tiers-of-disclosure)).
+
+Each scene is drawn one of two ways, chosen when it is bound:
+
+- **A lone mesh:** a scene whose root is a `MeshInstance3D` without children or a script is drawn as
+  one `RenderingServer` MultiMesh per chunk and kind, never as nodes.
+- **Nodes:** any other scene is instantiated as nodes under the `WaveForgeStages` node, at the
+  point's or piece's transform, and `instance_spawned(node, chunk, id)` names each, with the id
+  `point_sets` and `stamps` give it. A piece overlapping several chunks is placed once, by the chunk
+  holding its footprint's centre.
+
+Chunks are placed nearest the followed position first, each whole, until `placement_budget_ms` is
+spent, so a frame can go over by one chunk's placing. Everything a chunk placed is freed when the
+chunk is dropped; a point removed by an edit is gone from its chunk, so its scene is never placed
+again. Every chunk the stages hold is placed, those generated beyond the view for a stage that reads
+them included.
 
 ### Ground and colliders
 
@@ -183,7 +210,8 @@ colliders and navigation), `godot/verify_stages.gd` (the valley pack, its ground
 through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) and
 `godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack), `godot/verify_edits.gd`
 (a felled tree and raised ground through an edits log and a save, and cut grass growing back) and
-`godot/verify_assemble.gd` (a village's pieces placed by their transforms) in a real headless
-Godot.
+`godot/verify_assemble.gd` (a village's pieces placed by their transforms) and
+`godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes) in a real
+headless Godot.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).
