@@ -10,6 +10,7 @@
 //! as a height map and the town's modules as the shapes the game assigned them, built through the
 //! `PhysicsServer3D` with every shape added before the body joins the space.
 
+use crate::grass::{GRASS_SHADER, Grass, ensure_wind};
 use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
@@ -110,6 +111,22 @@ pub struct WaveForgeStages {
     #[export]
     ground_palette: PackedColorArray,
 
+    /// A field stage whose value per column, from 0 to 1, is how much of it grass covers; empty for
+    /// no grass. Grass stands on the ground, so it needs `ground_stage`.
+    #[export_group(name = "Grass")]
+    #[export]
+    grass_stage: GString,
+    /// Blades per column where the cover is 1.
+    #[export]
+    grass_per_cell: i32,
+    /// How many chunks around the followed position get grass.
+    #[export]
+    grass_radius: i32,
+    /// The material grass is drawn with: a `ShaderMaterial` taking the reference grass shader's
+    /// parameters, or empty for the reference grass shader itself.
+    #[export]
+    grass_material: Option<Gd<Material>>,
+
     /// How many chunks around the followed position get colliders: the ground, and every town's
     /// modules that have a shape (`set_collision_shape`). Below zero, none.
     #[export_group(name = "Physics")]
@@ -166,6 +183,8 @@ pub struct WaveForgeStages {
     /// Each chunk's copy of the ground material, holding its material ids, while its ground is
     /// built; none without `ground_material_stage`.
     chunk_materials: HashMap<ChunkCoord, Gd<ShaderMaterial>>,
+    /// The grass: its shared blades and each chunk's instance; none without `grass_stage`.
+    grass: Option<Grass>,
     /// `ground_palette` as the texture the ground material reads, and the material every chunk's
     /// is copied from, made when the node starts.
     palette: Option<(Gd<ImageTexture>, Gd<ShaderMaterial>)>,
@@ -191,6 +210,9 @@ const SIGNALS_PER_FRAME: usize = 256;
 /// building each takes tenths of a millisecond on Godot's thread, so the rest wait for the next
 /// frames, nearest the followed position first.
 const GROUNDS_PER_FRAME: usize = 8;
+
+/// The most chunks one frame gives grass: each uploads two small textures.
+const GRASS_PER_FRAME: usize = 4;
 
 /// What one frame of `process` cost Godot's thread, and what it spent it on.
 #[derive(Clone, Copy, Debug, Default)]
@@ -400,6 +422,11 @@ impl INode for WaveForgeStages {
             kernel_cache: GString::from("user://wave_forge/kernels"),
             ground_material: None,
             ground_material_stage: GString::new(),
+            grass_stage: GString::new(),
+            grass_per_cell: 8,
+            grass_radius: 1,
+            grass_material: None,
+            grass: None,
             ground_palette: PackedColorArray::new(),
             chunk_materials: HashMap::new(),
             palette: None,
@@ -523,6 +550,7 @@ impl INode for WaveForgeStages {
         let building = std::time::Instant::now();
         frame.bodies = self.update_colliders();
         frame.bodies_ms = elapsed_ms(building);
+        self.update_grass();
         let placing = std::time::Instant::now();
         frame.placed = self.update_placements();
         frame.placements_ms = elapsed_ms(placing);
@@ -602,6 +630,33 @@ impl WaveForgeStages {
             }
         } else {
             self.palette = None;
+        }
+        if self.grass_stage.is_empty() {
+            self.grass = None;
+        } else {
+            if pack.kind(&self.grass_stage.to_string()).is_none() || self.ground_stage.is_empty() {
+                godot_error!(
+                    "wave forge: grass_stage {} is no stage of the pack, or there is no ground_stage                      for grass to stand on",
+                    self.grass_stage
+                );
+                return false;
+            }
+            ensure_wind();
+            let columns = [
+                self.chunk_cells.x.max(1) as u32,
+                self.chunk_cells.y.max(1) as u32,
+            ];
+            match Grass::new(
+                self.grass_material.as_ref(),
+                self.grass_per_cell.max(1) as u32,
+                columns,
+            ) {
+                Ok(grass) => self.grass = Some(grass),
+                Err(error) => {
+                    godot_error!("wave forge: {error}");
+                    return false;
+                }
+            }
         }
         let solves = pack
             .stage_names()
@@ -1188,6 +1243,29 @@ impl WaveForgeStages {
     #[func]
     fn ground_shader_code(&self) -> GString {
         GString::from(GROUND_SHADER)
+    }
+
+    /// The chunks that have grass.
+    #[func]
+    fn grass_chunks(&self) -> Array<Vector3i> {
+        self.grass
+            .iter()
+            .flat_map(Grass::chunks)
+            .map(to_vector)
+            .collect()
+    }
+
+    /// A chunk's copy of the grass material, holding its cover and ground heights; null without
+    /// grass there.
+    #[func]
+    fn grass_material_of(&self, chunk: Vector3i) -> Option<Gd<ShaderMaterial>> {
+        self.grass.as_ref()?.material_of(from_vector(chunk))
+    }
+
+    /// The reference grass shader's code, to copy into a shader of a game's own.
+    #[func]
+    fn grass_shader_code(&self) -> GString {
+        GString::from(GRASS_SHADER)
     }
 
     /// The chunks whose ground is built.
@@ -1839,6 +1917,52 @@ impl WaveForgeStages {
         }
     }
 
+    /// Grows grass on the chunks within `grass_radius` of the followed one whose ground is built,
+    /// nearest first and a few a frame, and frees the grass of the others.
+    fn update_grass(&mut self) {
+        let Some(scenario) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_scenario())
+        else {
+            return;
+        };
+        let (Some(worker), Some(grass)) = (&self.worker, &mut self.grass) else {
+            return;
+        };
+        let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
+        let radius = self.grass_radius;
+        let distance = |chunk: ChunkCoord| (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs());
+        let grounds = &self.grounds;
+        let keep = |chunk: ChunkCoord| distance(chunk) <= radius && grounds.contains_key(&chunk);
+        let mut candidates: Vec<ChunkCoord> = grounds
+            .keys()
+            .copied()
+            .filter(|&chunk| keep(chunk))
+            .collect();
+        candidates.sort_by_key(|&chunk| (distance(chunk), chunk));
+        let (cell, chunk_cells) = (self.cell_size, self.chunk_cells);
+        let corner = |chunk: ChunkCoord| {
+            Vector3::new(
+                chunk.x as f32 * chunk_cells.x.max(1) as f32 * cell.x,
+                0.0,
+                chunk.y as f32 * chunk_cells.y.max(1) as f32 * cell.z,
+            )
+        };
+        let stage = self.grass_stage.to_string();
+        grass.update(
+            scenario,
+            cell,
+            corner,
+            keep,
+            &candidates,
+            GRASS_PER_FRAME,
+            |chunk| grounds.get(&chunk).map(|(mesh, _, _)| mesh),
+            |chunk| worker.field(&stage, chunk),
+        );
+    }
+
     /// The palette texture and the material each chunk's ground material is copied from.
     fn materials_template(
         &self,
@@ -1889,6 +2013,9 @@ impl WaveForgeStages {
     }
 
     fn clear_ground_and_bodies(&mut self) {
+        if let Some(grass) = &mut self.grass {
+            grass.clear();
+        }
         let mut rendering = RenderingServer::singleton();
         for (_, (_, mesh, instance)) in self.grounds.drain() {
             rendering.free_rid(instance);

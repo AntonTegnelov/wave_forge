@@ -4,7 +4,8 @@
 ## every chunk's ground gets its own copy of the reference ground shader's material, whose id
 ## texture holds the category of every vertex of the ground, the chunks beyond the far edges
 ## included, and whose cell is the node's. A material stage that is no Rules or Area stage is
-## refused.
+## refused. Grass grows on every chunk of ground within its radius, each chunk's grass material
+## holding the chunk's cover per column and the ground's height per vertex.
 extends SceneTree
 
 const CELLS := 8
@@ -33,7 +34,7 @@ func _initialize() -> void:
 func _world(material_stage: String) -> Node:
 	var node: Node = ClassDB.instantiate("WaveForgeStages")
 	node.pack_file = "res://ground.world.ron"
-	node.targets = PackedStringArray(["height", "surface"])
+	node.targets = PackedStringArray(["height", "surface", "cover"])
 	node.seed = 3
 	node.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	node.cell_size = CELL
@@ -41,17 +42,19 @@ func _world(material_stage: String) -> Node:
 	node.collider_radius = -1
 	node.ground_stage = "height"
 	node.ground_material_stage = material_stage
+	node.grass_stage = "cover"
+	node.grass_radius = 1
 	root.add_child(node)
 	return node
 
 func _process(_delta: float) -> bool:
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
-		_fail("the ground had not arrived")
+		_fail("the ground had not arrived: %d grounds, %d grass" % [world.ground_chunks().size(), world.grass_chunks().size()])
 		return true
 	var stats: Dictionary = world.stats()
-	if stats["pending_grounds"] > 0 or world.ground_chunks().size() < 9:
+	if stats["pending_grounds"] > 0 or world.ground_chunks().size() < 9 or world.grass_chunks().size() < 9:
 		return false
-	return _check()
+	return _check() or _check_grass()
 
 ## The category of the world column `column`, from the chunk that holds it.
 func _category(column: Vector2i) -> int:
@@ -88,6 +91,43 @@ func _check() -> bool:
 		_fail("only %d materials on the ground" % seen.size())
 		return true
 	print("verify_ground: %d chunks of ground, each with the categories of its %d vertices, %d materials in all" % [world.ground_chunks().size(), (CELLS + 1) * (CELLS + 1), seen.size()])
+	return false
+
+## The height field's value at the world column `column`, in world units.
+func _height(column: Vector2i) -> float:
+	var chunk := Vector3i(floori(float(column.x) / CELLS), floori(float(column.y) / CELLS), 0)
+	var values: PackedFloat32Array = world.field_values("height", chunk)
+	return values[posmod(column.y, CELLS) * CELLS + posmod(column.x, CELLS)] * CELL.y
+
+func _check_grass() -> bool:
+	var covered := 0
+	for chunk: Vector3i in world.grass_chunks():
+		if maxi(absi(chunk.x), absi(chunk.y)) > 1:
+			_fail("grass on %s, beyond its radius" % chunk)
+			return true
+		var material: ShaderMaterial = world.grass_material_of(chunk)
+		if material.shader.code != world.grass_shader_code():
+			_fail("the grass of %s is not drawn with the reference shader" % chunk)
+			return true
+		var cover: PackedByteArray = material.get_shader_parameter("wave_forge_cover").get_image().get_data()
+		var field: PackedFloat32Array = world.field_values("cover", chunk)
+		for i in field.size():
+			if cover[i] != roundi(clampf(field[i], 0.0, 1.0) * 255.0):
+				_fail("column %d of %s has cover %d for %f" % [i, chunk, cover[i], field[i]])
+				return true
+			if cover[i] > 0:
+				covered += 1
+		var heights: Image = material.get_shader_parameter("wave_forge_heights").get_image()
+		for j in CELLS + 1:
+			for i in CELLS + 1:
+				var expected := _height(Vector2i(chunk.x * CELLS + i, chunk.y * CELLS + j))
+				if not is_equal_approx(heights.get_pixel(i, j).r, expected):
+					_fail("vertex (%d, %d) of %s holds height %f, not %f" % [i, j, chunk, heights.get_pixel(i, j).r, expected])
+					return true
+	if covered == 0:
+		_fail("no column has grass")
+		return true
+	print("verify_ground: grass on %d chunks, %d columns covered, each chunk with its cover and the ground's heights" % [world.grass_chunks().size(), covered])
 	quit(0)
 	return true
 
