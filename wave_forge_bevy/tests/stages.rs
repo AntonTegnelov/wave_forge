@@ -1,13 +1,14 @@
 //! A pack of stages in a Bevy app: a focus entity makes the stages generate around it, what
 //! arrives is what the library's runtime generates, and moving away drops what was left behind.
 //! The same holds for each chunk's ground, built from the height field, and a save made in one app
-//! brings a player's edits back in another. An assembled piece stands where its stage grew it.
+//! brings a player's edits back in another. An assembled piece stands where its stage grew it, and
+//! bound kinds get an entity per point or piece, which goes with its chunk.
 
 use bevy_app::{App, Startup, Update};
-use bevy_ecs::message::MessageReader;
+use bevy_ecs::message::{MessageReader, Messages};
 use bevy_ecs::prelude::{Commands, IntoScheduleConfigs, Query, ResMut, Resource, With};
 use bevy_math::Vec3;
-use bevy_transform::components::GlobalTransform;
+use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,8 +18,9 @@ use wave_forge::stages::{
 use wave_forge::{ChunkCoord, FocusPoint, ground};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::stages::{
-    GroundDropped, GroundReady, StageDropped, StageReady, StagesSaved, StagesSettings,
-    WaveForgeStages, WaveForgeStagesPlugin, WaveForgeStagesSystems, ground_mesh,
+    GroundDropped, GroundReady, InstanceSpawned, Placed, StageDropped, StagePlacements, StageReady,
+    StagesSaved, StagesSettings, WaveForgeStages, WaveForgeStagesPlugin, WaveForgeStagesSystems,
+    ground_mesh,
 };
 
 const PACK: &str = r#"(
@@ -629,4 +631,114 @@ fn an_assembled_house_placed_by_its_transform_opens_its_door_onto_a_street() {
         }
     }
     assert!(checked >= 3, "{checked} houses checked");
+}
+
+#[derive(bevy_ecs::prelude::Component)]
+struct Tree;
+
+#[derive(bevy_ecs::prelude::Component)]
+struct House;
+
+/// The placed entities of a marker, with their transforms and what they stand for.
+fn placed<T: bevy_ecs::prelude::Component>(app: &mut App) -> Vec<(Transform, Placed)> {
+    let mut query = app
+        .world_mut()
+        .query_filtered::<(&Transform, &Placed), With<T>>();
+    query
+        .iter(app.world())
+        .map(|(transform, placed)| (*transform, placed.clone()))
+        .collect()
+}
+
+#[test]
+fn every_tree_of_a_bound_kind_gets_an_entity_that_goes_with_its_chunk() {
+    let mut app = app();
+    app.insert_resource(StagePlacements::default().bind("tree", |entity| {
+        entity.insert(Tree);
+    }));
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        around_origin()
+            .iter()
+            .all(|&chunk| stages.points("trees", chunk).is_some())
+    });
+    let spawned = app.world().resource::<Messages<InstanceSpawned>>().len();
+
+    let trees = placed::<Tree>(&mut app);
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let mut expected = 0;
+    for chunk in around_origin() {
+        for point in stages.points("trees", chunk).expect("arrived") {
+            expected += 1;
+            let entity = trees
+                .iter()
+                .find(|(_, placed)| placed.id == point.id)
+                .expect("an entity for every tree");
+            assert_eq!(entity.0, stages.transform_of(point));
+            assert_eq!(entity.1.chunk, chunk);
+        }
+    }
+    assert_eq!(trees.len(), expected);
+    assert!(spawned > 0);
+
+    app.add_systems(
+        Update,
+        |mut focus: Query<&mut GlobalTransform, With<GenerationFocus>>| {
+            for mut at in &mut focus {
+                *at = GlobalTransform::from_translation(Vec3::new(800.0, 0.0, 800.0));
+            }
+        },
+    );
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<Seen>()
+            .dropped
+            .contains(&("trees".to_owned(), ChunkCoord::new(0, 0, 0)))
+    });
+    let trees = placed::<Tree>(&mut app);
+    let stages = app.world().resource::<WaveForgeStages>();
+    assert!(
+        trees
+            .iter()
+            .all(|(_, placed)| stages.points("trees", placed.chunk).is_some())
+    );
+}
+
+#[test]
+fn a_piece_overlapping_several_chunks_gets_one_entity() {
+    let pack = Arc::new(Pack::parse(VILLAGE).expect("a valid pack"));
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["village"], SETTINGS, move || {
+            Ok(Runtime::new(pack, 21, SETTINGS.chunk))
+        })
+        .with_radius("village", 4),
+    );
+    app.insert_resource(StagePlacements::default().bind("house", |entity| {
+        entity.insert(House);
+    }));
+    let area: Vec<ChunkCoord> = (-4..=4)
+        .flat_map(|y| (-4..=4).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        area.iter()
+            .all(|&chunk| stages.stamps("village", chunk).is_some())
+    });
+
+    let houses = placed::<House>(&mut app);
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let mut owned = std::collections::BTreeSet::new();
+    for &chunk in &area {
+        for stamp in stages.stamps("village", chunk).expect("arrived") {
+            if &*stamp.piece == "house" && stamp.id.chunk == chunk {
+                owned.insert(stamp.id);
+            }
+        }
+    }
+    let ids: std::collections::BTreeSet<_> = houses.iter().map(|(_, placed)| placed.id).collect();
+    assert!(owned.len() >= 3, "{} houses", owned.len());
+    assert_eq!(houses.len(), ids.len(), "no house placed twice");
+    assert_eq!(ids, owned);
 }
