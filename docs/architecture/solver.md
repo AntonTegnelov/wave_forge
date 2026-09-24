@@ -202,10 +202,13 @@ library's. Which adapters the dev container and CI use is in
 - **Kernels are compiled once per region shape, ahead of time where possible, and cached across
   runs.** One pipeline takes seconds to compile on some drivers, which would otherwise look like a
   seconds-long solve. A pipeline depends on the region shape alone, so every batch size of one
-  shape shares it; `BlockSolver::warm` compiles a list of shapes up front; and
-  `WgpuBackend::cache_pipelines_in` keeps compiled pipelines in a file named for the adapter and
-  driver, which roughly halves a later start's compile on the dev container's stack
-  ([measurements.md](../research/measurements.md) E32 to E34).
+  shape shares it; `BlockSolver::warm` compiles a list of shapes up front, the pipelines of
+  different shapes at once, each on a thread of its own; and `WgpuBackend::cache_pipelines_in`
+  keeps compiled pipelines in a file named for the adapter and driver, which roughly halves a later
+  start's compile on the dev container's stack ([measurements.md](../research/measurements.md) E32
+  to E34, E41). A town compiles every kernel its world runs this way just before it is solved, on
+  the stage runtime's town thread, so nothing else waits for it (E42). Compiling a pack's town
+  kernels any earlier was measured and not taken (below).
 
 ## Alternatives that were measured or read and not taken
 
@@ -220,6 +223,29 @@ Each has its evidence in [measurements.md](../research/measurements.md) or
   implementation exists, and measured CPU ports were far slower than propagation with undo.
 - **AC-4 support counters:** cells × 6 × tiles counters against a few words of bitset per cell, and
   they combine poorly with backtracking.
+- **Compiling every town kernel a pack can need before its first town**
+  ([#146](https://github.com/AntonTegnelov/wave_forge/issues/146)). A pack's Solve stages allow a
+  known set of rule sets and site sizes, so the town solver could compile all their kernels from
+  the moment the runtime is built. Measured on the dozen stack (E41, E42), it can only pay when the
+  pack has one set of kernels. The history example, with two rule sets and towns one and two chunks
+  wide (four sets of kernels, since an axis one chunk wide gets no halo), had its villages 17.6 and
+  22.3 s after it asked for them instead of 5.0 and 5.9 s. Three reasons, each measured:
+  - A rule set has one solver, and a compile cannot be interrupted, so a town asked for while a
+    size it does not need is compiling waits for that whole compile, and then compiles its own.
+  - Compiling everything at once does not remove the wait: compiles contend on this driver, so six
+    pipelines at once take 8.5 s where one town's three take 8.0 s, and the town that needs two of
+    the six gets them no sooner than by compiling its own.
+  - There is little time to win before the first request. A town is asked for as soon as its site
+    is known: the history example's first village arrives 5.0 s after the example asks for it, with
+    a cached compile of about 3.7 s (E34), so its request reached the town thread about a second
+    in. The compile itself is what is
+    left, and the pipeline cache already brings the valley's first town to 3.9 to 4.0 s, inside
+    P3's 5 s.
+
+  Worth measuring again if a driver compiles pipelines in parallel without contending, or if a game
+  asks for its first town long after start. A game with a loading screen can already compile ahead
+  itself: `BlockSolver::warm` takes the shapes `WorldGenerator::kernel_shapes` lists for a town world,
+  before the solver is handed to `WfcTowns`.
 - **Nogood recording:** it helped the old solver on constraint-heavy rule sets, but the block kernel
   with checkpoint undo and a 32-seed repair portfolio places every chunk of the reference worlds
   without it.
