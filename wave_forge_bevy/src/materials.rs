@@ -9,12 +9,12 @@
 
 use crate::stages::WaveForgeStages;
 use bevy_app::{App, Plugin, Update};
-use bevy_asset::{Asset, Assets, Handle, RenderAssetUsages, embedded_asset};
+use bevy_asset::{Asset, AssetEvent, Assets, Handle, RenderAssetUsages, embedded_asset};
 use bevy_camera::primitives::Aabb;
 use bevy_camera::visibility::NoAutoAabb;
 use bevy_color::{Color, ColorToPacked};
 use bevy_ecs::change_detection::DetectChanges;
-use bevy_ecs::prelude::{Res, ResMut, Resource};
+use bevy_ecs::prelude::{MessageReader, Res, ResMut, Resource};
 use bevy_image::Image;
 use bevy_math::{IVec4, Vec3, Vec4};
 use bevy_mesh::{Mesh, PrimitiveTopology};
@@ -83,13 +83,27 @@ impl Default for Wind {
     }
 }
 
-/// Gives every grass material the wind, when it changes.
-fn blow(wind: Res<Wind>, mut grass: ResMut<Assets<GrassMaterial>>) {
-    if !wind.is_changed() {
+/// Gives every grass material the wind when it changes, and a material added since the wind
+/// last changed the wind as it is.
+fn blow(
+    wind: Res<Wind>,
+    mut added: MessageReader<AssetEvent<GrassMaterial>>,
+    mut grass: ResMut<Assets<GrassMaterial>>,
+) {
+    if wind.is_changed() {
+        added.clear();
+        for (_, material) in grass.iter_mut() {
+            material.extension.settings.wind = wind.0;
+        }
         return;
     }
-    for (_, material) in grass.iter_mut() {
-        material.extension.settings.wind = wind.0;
+    for event in added.read() {
+        // A material added and removed within one frame is gone by now.
+        if let AssetEvent::Added { id } = event
+            && let Some(mut material) = grass.get_mut(*id)
+        {
+            material.extension.settings.wind = wind.0;
+        }
     }
 }
 
@@ -365,5 +379,60 @@ pub fn ground_material_of(
             materials: images.add(materials),
             palette,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::MinimalPlugins;
+    use bevy::asset::{AssetApp, AssetPlugin};
+
+    fn grass() -> GrassMaterial {
+        GrassMaterial {
+            base: StandardMaterial::default(),
+            extension: GrassMaterials {
+                settings: GrassSettings {
+                    cell_and_blade: Vec4::ONE,
+                    wind: Wind::default().0,
+                    chunk_and_count: IVec4::ZERO,
+                    base_colour: Vec4::ONE,
+                    tip_colour: Vec4::ONE,
+                },
+                heights: Handle::default(),
+                cover: Handle::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn a_material_added_after_the_wind_changed_sways_in_that_wind() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<GrassMaterial>()
+            .init_resource::<Wind>()
+            .add_systems(Update, blow);
+        let wind = Wind(Vec4::new(0.0, 1.0, 0.4, 2.0));
+        app.insert_resource(wind);
+        app.update();
+        app.update();
+
+        let grass = app
+            .world_mut()
+            .resource_mut::<Assets<GrassMaterial>>()
+            .add(grass());
+        app.update();
+        app.update();
+
+        let materials = app.world().resource::<Assets<GrassMaterial>>();
+        assert_eq!(
+            materials
+                .get(&grass)
+                .expect("added")
+                .extension
+                .settings
+                .wind,
+            wind.0
+        );
     }
 }
