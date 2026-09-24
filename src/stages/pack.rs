@@ -276,6 +276,25 @@ pub enum StageKind {
         #[serde(default = "one_cell")]
         step: u32,
     },
+    /// Paths between the sites of `sites` over the `height` field: in every square region of
+    /// `region` chunks, the sites whose centre lies in it are joined by a minimum spanning tree over
+    /// the distances between their centres, and each of its edges is the cheapest path between the
+    /// two centres that stays in the region, a step costing its length plus `climb` times the
+    /// height it climbs or falls. Columns below `dry` are never crossed. A path is cut where it
+    /// enters either site's footprint, and its values are `width`, its radius for an Apply stage.
+    /// A path never leaves its region, so regions never read each other, and sites in different
+    /// regions are not joined. A chunk's product is the paths of its region that pass through it.
+    Network {
+        sites: String,
+        height: String,
+        region: u32,
+        #[serde(default = "road_width")]
+        width: f32,
+        #[serde(default = "steep_climb")]
+        climb: f32,
+        #[serde(default)]
+        dry: Option<f32>,
+    },
     /// A straight curve for every row of the table `table`, from the point the columns `from` give
     /// to the one `to` give, in WFC cells, with the radius its `radius` column gives at both ends:
     /// a road a history laid between two villages, say. A chunk's product is the curves that pass
@@ -449,6 +468,14 @@ const fn one_cell() -> u32 {
     1
 }
 
+const fn road_width() -> f32 {
+    1.5
+}
+
+const fn steep_climb() -> f32 {
+    4.0
+}
+
 /// The most rivers a Rivers stage may send from one region.
 pub const MAX_SOURCES: u32 = 64;
 
@@ -561,6 +588,16 @@ impl StageKind {
         names
     }
 
+    /// How many chunks a side of the regions a region job runs over, for the stages that run one.
+    pub(crate) const fn job_region(&self) -> Option<u32> {
+        match self {
+            Self::Region { region, .. }
+            | Self::Rivers { region, .. }
+            | Self::Network { region, .. } => Some(*region),
+            _ => None,
+        }
+    }
+
     pub(crate) const fn output(&self) -> Output {
         match self {
             Self::Field(_)
@@ -569,7 +606,10 @@ impl StageKind {
             | Self::Flatten { .. }
             | Self::Apply { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } => Output::Categories,
-            Self::Region { .. } | Self::Rivers { .. } | Self::TableCurves { .. } => Output::Curves,
+            Self::Region { .. }
+            | Self::Rivers { .. }
+            | Self::Network { .. }
+            | Self::TableCurves { .. } => Output::Curves,
             Self::Sites { .. } | Self::TableSites { .. } | Self::Locations { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
             Self::Scatter { .. } => Output::Points,
@@ -1655,6 +1695,32 @@ impl Pack {
                     // region's height.
                     vec![(height.as_str(), Reach::Chunks(region - 1), Output::Field)]
                 }
+                StageKind::Network {
+                    sites,
+                    height,
+                    region,
+                    width,
+                    climb,
+                    dry,
+                } => {
+                    if *region == 0 {
+                        return Err(invalid("a region of 0 chunks".to_owned()));
+                    }
+                    if !(width.is_finite() && *width >= 0.0 && climb.is_finite() && *climb >= 0.0)
+                        || dry.is_some_and(|dry| !dry.is_finite())
+                    {
+                        return Err(invalid(format!(
+                            "a width of {width}, a climb of {climb} and dry above {dry:?}"
+                        )));
+                    }
+                    // A chunk may lie anywhere in its region, and the paths read the whole
+                    // region's height and sites.
+                    let reach = Reach::Chunks(region - 1);
+                    vec![
+                        (height.as_str(), reach, Output::Field),
+                        (sites.as_str(), reach, Output::Sites),
+                    ]
+                }
                 StageKind::TableCurves {
                     table,
                     from,
@@ -1951,7 +2017,8 @@ impl Pack {
                 | StageKind::Solve { .. }
                 | StageKind::Assemble { .. }
                 | StageKind::Region { .. }
-                | StageKind::Rivers { .. } => {}
+                | StageKind::Rivers { .. }
+                | StageKind::Network { .. } => {}
             }
             stages.push(Stage {
                 tables: read_tables,

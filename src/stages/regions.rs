@@ -14,7 +14,7 @@
 //! gives up with every reason once the stage's budget is spent.
 
 use super::facts::RowId;
-use super::runtime::{FieldView, StageError};
+use super::runtime::{FieldView, Site, StageError};
 use std::collections::BTreeMap;
 use wfc_core::hash::pcg3d;
 
@@ -98,6 +98,8 @@ pub struct RegionInput<'a> {
     pub(crate) world: u32,
     pub(crate) salt: u32,
     pub(crate) views: BTreeMap<&'a str, FieldView<'a>>,
+    /// The sites whose centre lies in the region, for the stages that read sites.
+    pub(crate) sites: Vec<Site>,
 }
 
 impl RegionInput<'_> {
@@ -117,6 +119,16 @@ impl RegionInput<'_> {
         let (x0, x1) = span(self.region.0, 0);
         let (y0, y1) = span(self.region.1, 1);
         ([x0, y0], [x1, y1])
+    }
+
+    /// Columns per chunk along the lattice's x and y.
+    pub(crate) const fn chunk(&self) -> [u32; 2] {
+        self.chunk
+    }
+
+    /// The sites whose centre lies in the region, in the order of their ids.
+    pub(crate) fn sites(&self) -> &[Site] {
+        &self.sites
     }
 
     /// Which attempt this is, from 0.

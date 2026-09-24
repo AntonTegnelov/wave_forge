@@ -6,6 +6,7 @@ mod assemble;
 pub mod edits;
 mod evaluate;
 pub mod facts;
+mod network;
 pub mod pack;
 pub mod regions;
 mod rivers;
