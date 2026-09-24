@@ -683,6 +683,12 @@ all nine have arrived, and the ground of a view reaches one chunk less than its 
 `ground_readers(chunk)` lists the chunks whose ground may have become buildable when that chunk's
 field arrives.
 
+`wave_forge::ground_materials(chunk, categories)` gives the category of every vertex of the same
+grid from a Rules or Area stage at the height field's scale, the vertices along the +x and +y edges
+taking the neighbours' first columns as their heights do: the materials an engine's ground shader
+tells apart. It returns `None` until the categories of the chunk and of the chunks beyond its +x
+edge, its +y edge and its +x+y corner have arrived.
+
 ## In the engines
 
 - Godot: the `WaveForgeStages` node ([godot.md](godot.md#waveforgestages)).
