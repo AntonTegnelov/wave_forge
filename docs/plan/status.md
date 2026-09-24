@@ -109,7 +109,7 @@ Each is a gap between the code and the design or the stories, with where it is t
 - **The ground is one mesh per chunk at the field's resolution**, with levels of detail and skirts
   that Godot and Bevy draw by distance; both draw its materials and grass and sway plants in the
   wind; Forward+ measurements and far proxies are
-  [#46](https://github.com/AntonTegnelov/wave_forge/issues/46) and
+  [#166](https://github.com/AntonTegnelov/wave_forge/issues/166) and
   [#47](https://github.com/AntonTegnelov/wave_forge/issues/47). Scattered points stand at their
   column's height, which can differ from the mesh between column centres by up to half a column's
   slope.
