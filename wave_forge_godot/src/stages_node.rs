@@ -10,12 +10,13 @@
 //! as a height map and the town's modules as the shapes the game assigned them, built through the
 //! `PhysicsServer3D` with every shape added before the body joins the space.
 
+use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::{ArrayType, PrimitiveType};
 use godot::classes::{
-    FastNoiseLite, FileAccess, INode, Material, Node, PhysicsServer3D, ProjectSettings,
+    FastNoiseLite, FileAccess, INode, Material, Node, Node3D, PhysicsServer3D, ProjectSettings,
     RenderingServer, Shape3D,
 };
 use godot::obj::EngineEnum;
@@ -104,6 +105,21 @@ pub struct WaveForgeStages {
     #[export]
     collider_radius: i32,
 
+    /// Scenes placed where Scatter and Assemble stages put things, as a kind (a point's kind or a
+    /// piece's name) to a `PackedScene` or a path to one, loaded on Godot's loader threads; give a
+    /// scene holding another extension's Rust resource as a `PackedScene`, since such a resource
+    /// aborts the process when loaded on a loader thread. A
+    /// scene whose root is a lone `MeshInstance3D` without a script is drawn as one MultiMesh per
+    /// chunk; any other is instantiated as nodes under this one, and `instance_spawned` names each.
+    #[export_group(name = "Scenes")]
+    #[export]
+    scenes: VarDictionary,
+    /// How long each frame may spend placing scenes, in milliseconds; chunks still due wait for
+    /// the next frames, nearest the followed position first. A chunk is placed whole, so a frame
+    /// can go over by one chunk's placing.
+    #[export]
+    placement_budget_ms: f64,
+
     /// Where compiled GPU kernels are kept across runs, so a town's first solve does not compile
     /// them every time the game starts; `user://` paths are resolved. Empty keeps none.
     #[export_group(name = "Advanced")]
@@ -140,6 +156,8 @@ pub struct WaveForgeStages {
     bodies: HashMap<ChunkCoord, (Rid, Option<Rid>, BodyContents)>,
     /// Chunks within `collider_radius` still waiting for a body after the last frame.
     bodies_pending: usize,
+    /// The scenes bound to kinds, and what each stage's chunk placed.
+    placements: Placements,
 }
 
 /// The most `stage_ready` and `stage_dropped` signals one frame emits. A wide request can bring
@@ -166,6 +184,9 @@ struct FrameCost {
     /// Chunks whose body was built, and the milliseconds that took.
     bodies: usize,
     bodies_ms: f64,
+    /// Nodes placed from bound scenes, and the milliseconds placing took, MultiMeshes included.
+    placed: usize,
+    placements_ms: f64,
 }
 
 /// A Godot `FastNoiseLite` resource as the library's noise configuration, every property read as
@@ -362,6 +383,9 @@ impl INode for WaveForgeStages {
             ground_due: std::collections::BTreeSet::new(),
             bodies: HashMap::new(),
             bodies_pending: 0,
+            scenes: VarDictionary::new(),
+            placement_budget_ms: 2.0,
+            placements: Placements::default(),
             slowest_frame: FrameCost::default(),
             pending: VecDeque::new(),
         }
@@ -401,6 +425,27 @@ impl INode for WaveForgeStages {
         }
         let ground_stage = self.ground_stage.to_string();
         let (mut arrived, mut gone) = (Vec::new(), Vec::new());
+        if self.placements.any() {
+            let placing = |stage: &str| {
+                matches!(
+                    self.pack.as_ref().and_then(|pack| pack.kind(stage)),
+                    Some(StageKind::Scatter { .. } | StageKind::Assemble { .. })
+                )
+            };
+            for event in &events {
+                match event {
+                    StageEvent::Generated { stage, chunk } if placing(stage) => {
+                        self.placements.arrived(stage, *chunk);
+                    }
+                    StageEvent::Dropped { stage, chunk } if placing(stage) => {
+                        self.placements.dropped(stage, *chunk);
+                    }
+                    StageEvent::Generated { .. }
+                    | StageEvent::Dropped { .. }
+                    | StageEvent::Saved => {}
+                }
+            }
+        }
         for event in &events {
             match event {
                 StageEvent::Generated { stage, chunk } if *stage == ground_stage => {
@@ -446,6 +491,9 @@ impl INode for WaveForgeStages {
         let building = std::time::Instant::now();
         frame.bodies = self.update_colliders();
         frame.bodies_ms = elapsed_ms(building);
+        let placing = std::time::Instant::now();
+        frame.placed = self.update_placements();
+        frame.placements_ms = elapsed_ms(placing);
         frame.ms = elapsed_ms(processing);
         self.process_ms.push(frame.ms);
         if frame.ms > self.slowest_frame.ms {
@@ -466,6 +514,11 @@ impl WaveForgeStages {
     /// A stage's product for a chunk is no longer needed and was dropped.
     #[signal]
     fn stage_dropped(stage: GString, chunk: Vector3i);
+
+    /// A node of a bound scene was placed under this node, at the point or piece of `chunk` whose
+    /// id is `id`, as `point_sets` and `stamps` give ids. It is freed when its chunk is dropped.
+    #[signal]
+    fn instance_spawned(node: Gd<Node3D>, chunk: Vector3i, id: i64);
 
     /// Generation stopped, and why.
     #[signal]
@@ -575,6 +628,13 @@ impl WaveForgeStages {
         self.pending.clear();
         self.ground_due.clear();
         self.clear_ground_and_bodies();
+        self.placements = match Placements::new(&self.scenes) {
+            Ok(placements) => placements,
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                return false;
+            }
+        };
         // The towns' device is built on the stages' thread, which is where it is used.
         self.worker = Some(StageWorker::spawn(move || {
             let mut runtime = with_noises(Runtime::new(for_thread, seed, [shape.x, shape.y]))?;
@@ -1257,12 +1317,23 @@ impl WaveForgeStages {
             &"pending_colliders".to_variant(),
             &(self.bodies_pending as i64).to_variant(),
         );
+        out.set(
+            &"pending_placements".to_variant(),
+            &(self.placements.pending() as i64).to_variant(),
+        );
+        let (nodes, instances) = self.placements.counts();
+        out.set(&"placed_nodes".to_variant(), &(nodes as i64).to_variant());
+        out.set(
+            &"placed_instances".to_variant(),
+            &(instances as i64).to_variant(),
+        );
         let slowest = self.slowest_frame;
         for (key, value) in [
             ("slowest_frame_ms", slowest.ms),
             ("slowest_frame_signals_ms", slowest.signals_ms),
             ("slowest_frame_grounds_ms", slowest.grounds_ms),
             ("slowest_frame_bodies_ms", slowest.bodies_ms),
+            ("slowest_frame_placements_ms", slowest.placements_ms),
         ] {
             out.set(&key.to_variant(), &value.to_variant());
         }
@@ -1270,6 +1341,7 @@ impl WaveForgeStages {
             ("slowest_frame_events", slowest.events),
             ("slowest_frame_grounds", slowest.grounds),
             ("slowest_frame_bodies", slowest.bodies),
+            ("slowest_frame_placed", slowest.placed),
         ] {
             out.set(&key.to_variant(), &(count as i64).to_variant());
         }
@@ -1610,6 +1682,84 @@ impl WaveForgeStages {
         }
     }
 
+    /// Places the chunks of bound scenes that are due, within the frame's budget, and signals
+    /// each node placed. Returns how many nodes were placed.
+    fn update_placements(&mut self) -> usize {
+        let (Some(worker), Some(pack)) = (&self.worker, &self.pack) else {
+            return 0;
+        };
+        let Some(scenario) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_scenario())
+        else {
+            return 0;
+        };
+        let cell = self.cell_size;
+        let bound: Vec<String> = self.placements.kinds();
+        let binds = |kind: &str| bound.iter().any(|known| known == kind);
+        let items = |stage: &str, chunk: ChunkCoord| -> Option<Vec<Item>> {
+            let place = |rows: [[f32; 3]; 3], [x, y, height]: [f32; 3]| {
+                Transform3D::new(
+                    Basis::from_rows(
+                        Vector3::from_array(rows[0]),
+                        Vector3::from_array(rows[1]),
+                        Vector3::from_array(rows[2]),
+                    ),
+                    Vector3::new(x * cell.x, height * cell.y, y * cell.z),
+                )
+            };
+            let items: Vec<Item> = match pack.kind(stage)? {
+                StageKind::Scatter { .. } => worker
+                    .points(stage, chunk)?
+                    .iter()
+                    .filter(|point| binds(&point.kind))
+                    .map(|point| Item {
+                        kind: point.kind.to_string(),
+                        transform: place(point.y_up_basis(), point.position),
+                        id: local_id(point.id.local),
+                    })
+                    .collect(),
+                StageKind::Assemble { .. } => worker
+                    .stamps(stage, chunk)?
+                    .iter()
+                    // A piece overlapping several chunks is placed by the one its id names.
+                    .filter(|stamp| stamp.id.chunk == chunk && binds(&stamp.piece))
+                    .map(|stamp| Item {
+                        kind: stamp.piece.to_string(),
+                        transform: place(stamp.y_up_basis(), stamp.position),
+                        id: local_id(stamp.id.local),
+                    })
+                    .collect(),
+                _ => return None,
+            };
+            Some(items)
+        };
+        let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
+        let budget = self.placement_budget_ms;
+        let mut holder = self.base().clone();
+        let result = self
+            .placements
+            .place(&mut holder, scenario, focus, budget, items);
+        match result {
+            Ok(spawned) => {
+                let count = spawned.len();
+                for (node, chunk, id) in spawned {
+                    self.signals()
+                        .instance_spawned()
+                        .emit(&node, to_vector(chunk), id);
+                }
+                count
+            }
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                self.placements.clear();
+                0
+            }
+        }
+    }
+
     fn clear_ground_and_bodies(&mut self) {
         let mut rendering = RenderingServer::singleton();
         for (_, (_, mesh, instance)) in self.grounds.drain() {
@@ -1617,5 +1767,6 @@ impl WaveForgeStages {
             rendering.free_rid(mesh);
         }
         self.free_bodies();
+        self.placements.clear();
     }
 }

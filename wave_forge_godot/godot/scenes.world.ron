@@ -1,0 +1,27 @@
+// The pack of the scenes check (verify_scenes.gd): a village of streets and houses grown on each
+// site, the ground levelled under it, and trees kept clear of it.
+(
+    version: 1,
+    stages: [
+        (name: "ground", kind: Field(Mul(Noise(frequency: 0.03, octaves: 2), Constant(12.0)))),
+        (name: "villages", kind: Sites(height: "ground", region: 6, size: (2, 3), chance: 1.0)),
+        (name: "village", kind: Assemble(sites: "villages", start: "square", max: 14, min: 5, rerolls: 4, pieces: [
+            (name: "square", size: (4, 4, 1), doors: [
+                (at: (3, 1, 0), facing: East, kind: "street"),
+                (at: (0, 2, 0), facing: West, kind: "street"),
+                (at: (1, 3, 0), facing: North, kind: "street"),
+                (at: (2, 0, 0), facing: South, kind: "street"),
+            ]),
+            (name: "street", size: (1, 4, 1), weight: 3, doors: [
+                (at: (0, 0, 0), facing: South, kind: "street"),
+                (at: (0, 3, 0), facing: North, kind: "street"),
+                (at: (0, 1, 0), facing: East, kind: "house"),
+                (at: (0, 2, 0), facing: West, kind: "house"),
+            ]),
+            (name: "house", size: (3, 3, 1), weight: 2, doors: [(at: (1, 0, 0), facing: South, kind: "house")]),
+            (name: "wall", size: (1, 1, 1), end: true, doors: [(at: (0, 0, 0), facing: South, kind: "street")]),
+        ])),
+        (name: "level", kind: Flatten(height: "ground", sites: "village", blend: 3)),
+        (name: "trees", kind: Scatter(kind: "tree", height: "level", spacing: 3, avoid: Some(("village", 2)))),
+    ],
+)
