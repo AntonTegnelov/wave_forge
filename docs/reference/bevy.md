@@ -77,7 +77,8 @@ thread.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
   have arrived ([packs.md](packs.md#ground)): `WaveForgeStages::ground(chunk)` returns the
   `GroundMesh`, relative to `chunk_corner(chunk)`, `GroundReady(chunk)` and `GroundDropped(chunk)`
-  announce it, `ground_mesh(&ground)` turns it into a Bevy `Mesh`, and its `heights` are the grid a
+  announce it, `ground_mesh(&ground)` turns it into a Bevy `Mesh` at full detail, skirt included,
+  and its `heights` are the grid a
   physics crate's height-field collider takes (the plugin depends on no physics crate).
 
 The plugin asks for the chunks around every `GenerationFocus`, drains the worker each frame and

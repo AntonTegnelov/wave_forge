@@ -209,10 +209,11 @@ them included.
 ### Ground and colliders
 
 With `ground_stage` set, the node builds each chunk's ground once the fields of the chunk and the
-eight around it have arrived ([packs.md](packs.md#ground)): a mesh through the `RenderingServer`,
-drawn with `ground_material`. Within `collider_radius` of the followed chunk, each chunk gets one
-static body holding its ground as a `HeightMapShape3D` and its towns' modules as the shapes
-`set_collision_shape` assigned, every shape added before the body joins the space. A height map's
+eight around it have arrived ([packs.md](packs.md#ground)): a mesh at full detail, skirt included,
+through the `RenderingServer`, drawn with `ground_material`. Within `collider_radius` of the
+followed chunk, each chunk gets one static body holding its ground as a `HeightMapShape3D` and its
+towns' modules as the shapes `set_collision_shape` assigned, every shape added before the body
+joins the space. A height map's
 samples are one unit apart, so it is scaled by the cell's width, which needs cells as wide as they
 are deep. Ground and bodies go when their chunk's field is dropped or the player moves away.
 

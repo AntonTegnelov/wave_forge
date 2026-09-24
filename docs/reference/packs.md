@@ -674,9 +674,22 @@ same over a 4×4-chunk area asked for all at once and one chunk at a time in eit
 a `GroundMesh` with a vertex above every column's centre plus the first column of the +x and +y
 neighbours, so neighbouring chunks share their edge vertices exactly. Normals come from central
 differences, which at an edge read the neighbour, so shading is continuous across chunks.
-Triangles face up (counter-clockwise seen from +y), positions are relative to the chunk's corner
-on the ground plane with heights absolute, and `heights` holds the same grid for a height-field
-collider. All of it is in a Y-up engine's axes.
+Positions are relative to the chunk's corner on the ground plane with heights absolute, and
+`heights` holds the same grid for a height-field collider. All of it is in a Y-up engine's axes.
+
+The triangles come in `levels` of detail, finest first. A level with a `step` of *s* triangulates
+every *s*-th vertex along both axes, and there is one for every power of two that divides the
+chunk's columns both ways: chunks of 8 by 8 columns have steps 1, 2, 4 and 8, and chunks with an odd
+number of columns only full detail. A level's `error` is how far, in engine units, its surface is
+at most above or below the grid's, which is what an engine weighs to choose a level by distance.
+Neighbours at different levels share only the coarser one's edge vertices, so every level also
+hangs a skirt: after the grid, `positions` holds a copy of each edge vertex, lower by the largest
+error any level has along the chunk's edges plus a tenth of a cell's height, with its edge vertex's
+normal. A level's `indices` hold its surface, facing up (counter-clockwise seen from +y), then its
+skirt, facing out of the chunk. A coarser level's vertices are all a finer one's, so two levels
+part along an edge by at most the coarser one's error there, which the skirt covers; the tenth of
+a cell covers the cracks rasterisation opens where one side of an edge has vertices the other
+lacks.
 
 A chunk's ground reads the fields of the eight chunks around it, so `ground` returns `None` until
 all nine have arrived, and the ground of a view reaches one chunk less than its fields.

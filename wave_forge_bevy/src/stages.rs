@@ -308,7 +308,8 @@ impl WaveForgeStages {
     }
 }
 
-/// A chunk's ground as a Bevy mesh: positions, normals and triangles, front faces up.
+/// A chunk's ground as a Bevy mesh at full detail: positions, normals and the first level's
+/// triangles, the surface facing up and the skirt out.
 #[must_use]
 pub fn ground_mesh(ground: &GroundMesh) -> Mesh {
     Mesh::new(
@@ -317,7 +318,7 @@ pub fn ground_mesh(ground: &GroundMesh) -> Mesh {
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, ground.positions.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, ground.normals.clone())
-    .with_inserted_indices(Indices::U32(ground.indices.clone()))
+    .with_inserted_indices(Indices::U32(ground.levels[0].indices.clone()))
 }
 
 type Build = Box<dyn FnOnce() -> Result<Runtime, String> + Send>;
