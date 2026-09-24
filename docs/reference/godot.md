@@ -261,7 +261,8 @@ the reference vegetation shader, which `vegetation_shader_code()` gives: on a pl
 less stiff the plant, keeping each vertex's distance from the root, and flutters its outer parts
 along their normals, after GPU Gems 3, chapter 16. Every MultiMesh the node places carries each
 instance's custom data: its phase in the wind, as a fraction of a turn hashed from its id, and its
-stiffness, one over a point's scale, so a larger plant bends less and no two move alike.
+stiffness, a point's scale, so every plant's top sways by about the wind's strength in world units, a
+larger plant leaning less, and no two move alike.
 
 ## Checking it
 
