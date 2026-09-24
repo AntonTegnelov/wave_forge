@@ -129,5 +129,18 @@ grass wherever the chunk's corner is out of view.
 ## Wind
 
 The `Wind` resource is a `Vec4`: a direction along x and z, a strength in world units at a blade's
-tip, and a speed. It blows gently along +x unless a game sets it, and a change reaches every grass
-material in the next frame.
+or a plant's tip, and a speed. It blows gently along +x unless a game sets it. A change reaches
+every grass and vegetation material in the next frame, and a material added later gets the wind as
+it is.
+
+`VegetationMaterial` is an `ExtendedMaterial` over `StandardMaterial` whose vertex shader bends a
+plant's mesh in the wind, after GPU Gems 3, chapter 16, while the `StandardMaterial` gives its
+looks. `vegetation_material(base, bend_height, flutter)` makes one. It leans the plant downwind,
+more the higher up a vertex is (fully at `bend_height`, in the mesh's own units) and the less stiff
+the plant, keeping each vertex's distance from the root, and flutters its outer parts out from the
+plant's axis by `flutter`. A plant's phase in the wind is hashed from where it stands, and its
+stiffness is its scale, so every plant's top sways by about the wind's strength in world units, a
+larger plant leaning less, and no two move alike. The same vertex shader runs in the prepass, so
+depth, shadows and motion vectors follow the swaying plant; that is why the flutter goes out from
+the axis rather than along the normals, which Bevy's prepass has only when a normal prepass runs.
+A plant's mesh stands on its origin with +y up, and is neither skinned nor morphed.
