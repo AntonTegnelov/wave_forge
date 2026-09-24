@@ -1,5 +1,5 @@
 // The pack of the ground check (verify_ground.gd): rolling ground whose materials are its
-// categories, sand low, grass in between and rock high.
+// categories, sand low, grass in between and rock high, with grass growing on the grass.
 (
     version: 1,
     stages: [
@@ -8,5 +8,7 @@
             (category: "sand", when: [Less(Input("height"), Constant(4.0))]),
             (category: "rock", when: [Greater(Input("height"), Constant(8.0))]),
         ], otherwise: "grass")),
+        // Grass covers the grassland fully and nothing else.
+        (name: "cover", kind: Field(Is("surface", ["grass"]))),
     ],
 )
