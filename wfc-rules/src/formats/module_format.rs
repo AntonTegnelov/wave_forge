@@ -20,6 +20,12 @@
 //!     ],
 //! )
 //! ```
+//!
+//! A module can also say what its cell is like, for sound and walking: `surface: "cobblestone"`,
+//! what walkers in the cell stand on; `indoor: true`, that the cell is inside; and
+//! `sounds: [(at: (0.5, 0.5, 0.2), key: "fountain")]`, sounds playing at points of the cell, from 0
+//! to 1 along x, y and z in the module's own frame, which turn with it. A surface or key may not be
+//! empty, and a sound's point must be in its cell.
 
 use crate::LoadError;
 use crate::modules::{
@@ -94,6 +100,23 @@ struct ModuleDef {
     /// frame, for example `("+x", "road_end")`.
     #[serde(default)]
     exclude: Vec<(String, String)>,
+    /// What walkers in the cell stand on, for footsteps.
+    #[serde(default)]
+    surface: Option<String>,
+    /// Whether the cell is inside.
+    #[serde(default)]
+    indoor: bool,
+    /// Sounds the module makes, in its own frame.
+    #[serde(default)]
+    sounds: Vec<SoundDef>,
+}
+
+/// A sound a module makes: `at` a point of its cell, from 0 to 1 along x, y and z.
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+struct SoundDef {
+    at: (f32, f32, f32),
+    key: String,
 }
 
 const fn one() -> f32 {
@@ -110,7 +133,10 @@ const fn yes() -> bool {
 /// If the text is not valid RON of this form, or a module names a face, a connector pairing or an
 /// axis that does not exist, or uses a top face as a side or the other way round.
 pub fn parse_module_set(content: &str) -> Result<ModuleSet, LoadError> {
-    let file: ModuleFile = ron::from_str(content)
+    // An optional field such as `surface: "stone"` reads without `Some(...)`, which still works.
+    let file: ModuleFile = ron::Options::default()
+        .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+        .from_str(content)
         .map_err(|error| LoadError::ParseError(format!("module set: {error}")))?;
 
     // Connector ids are handed out as the faces are read, in the order of their names, so the same
@@ -228,6 +254,35 @@ pub fn parse_module_set(content: &str) -> Result<ModuleSet, LoadError> {
         }
         for (axis, other) in &module.exclude {
             prototype = prototype.exclude(axis_index(axis, &module.name)?, other);
+        }
+        if let Some(surface) = &module.surface {
+            if surface.is_empty() {
+                return Err(LoadError::InvalidData(format!(
+                    "module {:?} has an empty surface",
+                    module.name
+                )));
+            }
+            prototype = prototype.surface(surface);
+        }
+        if module.indoor {
+            prototype = prototype.indoor();
+        }
+        for sound in &module.sounds {
+            let at = [sound.at.0, sound.at.1, sound.at.2];
+            if !at.iter().all(|coordinate| (0.0..=1.0).contains(coordinate)) {
+                return Err(LoadError::InvalidData(format!(
+                    "module {:?} plays {:?} at {at:?}, outside its cell: each coordinate runs \
+                     from 0 to 1",
+                    module.name, sound.key
+                )));
+            }
+            if sound.key.is_empty() {
+                return Err(LoadError::InvalidData(format!(
+                    "module {:?} has a sound without a key",
+                    module.name
+                )));
+            }
+            prototype = prototype.sound(at, &sound.key);
         }
         set = set.with(prototype);
     }
@@ -361,5 +416,97 @@ mod tests {
         let error = parse_module_set(&text).expect_err("wieght is not a field");
 
         assert!(error.to_string().contains("wieght"), "{error}");
+    }
+
+    const SOUNDING: &str = r#"(
+        faces: {
+            "air": Side(connector: "air"),
+            "road": Side(connector: "road", walkable: true),
+            "open": Top(connector: "open"),
+        },
+        modules: [
+            (name: "air", sides: ["air", "air", "air", "air"], up: "open", down: "open"),
+            (name: "kiosk", sides: ["road", "air", "air", "air"], up: "open", down: "open",
+             surface: "cobblestone", indoor: true, sounds: [(at: (0.9, 0.5, 0.2), key: "radio")]),
+        ],
+    )"#;
+
+    #[test]
+    fn a_modules_surface_indoor_and_sounds_are_read() {
+        let compiled = parse_module_set(SOUNDING)
+            .expect("valid file")
+            .compile()
+            .expect("valid set");
+
+        let kiosk = compiled.prototype_of(compiled.variants_of("kiosk")[0]);
+        let air = compiled.prototype_of(compiled.variants_of("air")[0]);
+        assert_eq!(kiosk.surface.as_deref(), Some("cobblestone"));
+        assert!(kiosk.indoor);
+        assert_eq!(kiosk.sounds.len(), 1);
+        assert_eq!(
+            (air.surface.as_deref(), air.indoor, air.sounds.len()),
+            (None, false, 0)
+        );
+    }
+
+    #[test]
+    fn a_sound_turns_with_its_module() {
+        let compiled = parse_module_set(SOUNDING)
+            .expect("valid file")
+            .compile()
+            .expect("valid set");
+        let road = compiled.connector("road").expect("named");
+        // The side each axis faces, as the point in the middle of it.
+        let middles = [
+            (POS_X, [1.0, 0.5]),
+            (NEG_X, [0.0, 0.5]),
+            (POS_Y, [0.5, 1.0]),
+            (NEG_Y, [0.5, 0.0]),
+        ];
+
+        let tiles = compiled.variants_of("kiosk");
+        assert_eq!(tiles.len(), 4);
+        for tile in tiles {
+            let [x, y, z] = compiled.sounds(tile)[0].at;
+            let nearest = middles
+                .iter()
+                .min_by(|a, b| {
+                    let distance = |m: [f32; 2]| (m[0] - x).powi(2) + (m[1] - y).powi(2);
+                    distance(a.1).total_cmp(&distance(b.1))
+                })
+                .expect("four sides")
+                .0;
+
+            assert!(
+                matches!(
+                    compiled.face(tile, nearest),
+                    crate::modules::Face::Horizontal(face) if face.connector == road
+                ),
+                "tile {tile}: the radio is by axis {nearest}, which is not the road"
+            );
+            assert_eq!(z, 0.2);
+        }
+    }
+
+    #[test]
+    fn a_sound_outside_its_cell_is_an_error() {
+        let text = SOUNDING.replace("(0.9, 0.5, 0.2)", "(1.5, 0.5, 0.2)");
+
+        let error = parse_module_set(&text).expect_err("outside the cell");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("\"kiosk\"") && message.contains("outside"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_empty_surface_or_sound_key_is_an_error() {
+        let surface = SOUNDING.replace(r#"surface: "cobblestone""#, r#"surface: """#);
+        let key = SOUNDING.replace(r#"key: "radio""#, r#"key: """#);
+
+        assert!(parse_module_set(&surface).is_err());
+        assert!(parse_module_set(&key).is_err());
     }
 }

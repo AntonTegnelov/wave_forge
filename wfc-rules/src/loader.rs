@@ -165,6 +165,42 @@ impl RuleFile {
             .collect()
     }
 
+    /// What walkers on tile `tile` stand on, if its module says. A tile set says nothing.
+    ///
+    /// # Panics
+    /// If `tile` is not a tile of the set.
+    #[must_use]
+    pub fn surface(&self, tile: usize) -> Option<&str> {
+        match self {
+            Self::Tiles { .. } => None,
+            Self::Modules(modules) => modules.prototype_of(tile).surface.as_deref(),
+        }
+    }
+
+    /// Whether tile `tile` is inside. A tile set's tiles are not.
+    ///
+    /// # Panics
+    /// If `tile` is not a tile of the set.
+    #[must_use]
+    pub fn indoor(&self, tile: usize) -> bool {
+        match self {
+            Self::Tiles { .. } => false,
+            Self::Modules(modules) => modules.prototype_of(tile).indoor,
+        }
+    }
+
+    /// The sounds tile `tile` makes, turned with it. A tile set's tiles make none.
+    ///
+    /// # Panics
+    /// If `tile` is not a tile of the set.
+    #[must_use]
+    pub fn sounds(&self, tile: usize) -> Vec<crate::modules::ModuleSound> {
+        match self {
+            Self::Tiles { .. } => Vec::new(),
+            Self::Modules(modules) => modules.sounds(tile),
+        }
+    }
+
     /// The tiles whose prototype carries `tag`. A tile set has no tags, so none.
     #[must_use]
     pub fn tiles_tagged(&self, tag: &str) -> Vec<usize> {
