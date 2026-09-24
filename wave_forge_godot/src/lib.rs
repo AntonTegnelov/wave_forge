@@ -61,6 +61,7 @@ use wave_forge::{
     Ruleset, TileMask, Worker, WorldExtent, YUpSpace,
 };
 
+mod placements;
 mod stages_node;
 mod timings;
 
