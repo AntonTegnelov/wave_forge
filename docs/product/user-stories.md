@@ -373,7 +373,8 @@ with grass and wind, lighting that changes over a day, a generated town, and nav
 walking its streets, at the P1 frame rate on a reference desktop. Needs a person: the trailer
 checklist in the example's README is followed from a clean checkout within an hour. **Needs.** Grass
 and wind ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), navigation, presets.
-**Status:** not started (2026-09-23).
+**Status:** not started (2026-09-24). Grass that sways in a global wind is drawn in Godot
+(`verify_ground.gd`, `render_ground.sh`).
 
 ### N11. Put my own history into the world
 

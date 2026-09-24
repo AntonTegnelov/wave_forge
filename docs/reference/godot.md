@@ -92,6 +92,10 @@ second, published once a second, not the last frame's time.
 | | `ground_material` | the material the ground is drawn with |
 | | `ground_material_stage` | a Rules or Area stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
+| Grass | `grass_stage` | a field stage whose value per column, 0 to 1, is how much of it grass covers ([Grass](#grass)); empty for none |
+| | `grass_per_cell` | blades per column where the cover is 1 (default 8) |
+| | `grass_radius` | chunks around the followed position that get grass (default 1) |
+| | `grass_material` | a `ShaderMaterial` taking the reference grass shader's parameters; empty for that shader |
 | Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
 | Scenes | `scenes` | a kind (a Scatter point's kind or an Assemble piece's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
@@ -226,6 +230,26 @@ the same parameters. `ground_material_of(chunk)` gives a chunk's copy. Loading r
 `ground_material_stage` that is no Rules or Area stage, and a `ground_material` that is no
 `ShaderMaterial` beside it.
 
+### Grass
+
+With `grass_stage` set, every chunk within `grass_radius` of the followed position whose ground is
+built gets grass, a few chunks a frame, nearest first, and loses it when it leaves the radius. All
+chunks share one MultiMesh of `grass_per_cell` blades per column, each with the identity transform,
+so its buffer is uploaded once. Each chunk draws it as an instance of its own, with a copy of the
+grass material holding `wave_forge_cover` (the chunk's cover per column, one byte each),
+`wave_forge_heights` (the ground's height per vertex, one float each), `wave_forge_cell`,
+`wave_forge_per_column` and `wave_forge_chunk`. The reference grass shader, embedded in the
+extension (`grass_shader_code()` gives it), gives blade `INSTANCE_ID` its column, a hashed place in
+it, a hashed turn and height, and shows it only where a hash is below the column's cover; it stands
+on the ground's heights, blended between vertices, and sways in the global shader parameter
+`wave_forge_wind` (a direction along x and z, a strength at the tip, a speed), which the node
+registers blowing gently along +x unless the project's settings declare it. Grass casts no shadow,
+takes no GI, and is bounded by its chunk rather than by its blades, which the shader moves. It
+draws on every renderer, Compatibility included. `grass_chunks()` lists the chunks with grass and
+`grass_material_of(chunk)` gives a chunk's material. Loading refuses a `grass_stage` the pack does
+not have, or grass without `ground_stage`. What it costs is in
+[measurements.md](../research/measurements.md) (E45).
+
 ## Checking it
 
 `wave_forge_godot/verify.sh` builds the extension and runs `godot/verify.gd` (the WFC world, with
@@ -235,7 +259,8 @@ through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) 
 (a felled tree and raised ground through an edits log and a save, and cut grass growing back) and
 `godot/verify_assemble.gd` (a village's pieces placed by their transforms) and
 `godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes) and
-`godot/verify_ground.gd` (the ground's materials per category) in a real headless Godot.
-`render_ground.sh` renders the ground's materials to a picture, to look at.
+`godot/verify_ground.gd` (the ground's materials per category, and grass) in a real headless
+Godot. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, and
+times grass.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).
