@@ -35,7 +35,9 @@ use wave_forge::stages::{
     Categories, Edits, Facts, Field, Point, RowId, Runtime, Save, Site, StageEvent, StageTiming,
     StageWorker, Stamp, TownChunk,
 };
-use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, InstanceId, ground, ground_readers};
+use wave_forge::{
+    ChunkCoord, FocusPoint, GroundMesh, InstanceId, ground, ground_materials, ground_readers,
+};
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
@@ -130,6 +132,10 @@ pub struct WaveForgeStages {
     /// The field stage the ground is built from, if any.
     ground_stage: Option<String>,
     grounds: HashMap<ChunkCoord, GroundMesh>,
+    /// The Rules or Area stage whose categories are the ground's materials, if any.
+    ground_material_stage: Option<String>,
+    /// Each built ground's category per vertex, with a material stage.
+    ground_ids: HashMap<ChunkCoord, Vec<u8>>,
 }
 
 impl WaveForgeStages {
@@ -222,6 +228,20 @@ impl WaveForgeStages {
         self.grounds.get(&chunk)
     }
 
+    /// The category of every vertex of a chunk's ground, in the order of its positions, from the
+    /// stage [`WaveForgeStagesPlugin::with_ground_materials`] names; `None` without one or before
+    /// the chunk's ground is built.
+    #[must_use]
+    pub fn ground_materials(&self, chunk: ChunkCoord) -> Option<&[u8]> {
+        self.ground_ids.get(&chunk).map(Vec::as_slice)
+    }
+
+    /// How chunks and cells sit in Bevy's world, as the plugin was given it.
+    #[must_use]
+    pub const fn settings(&self) -> StagesSettings {
+        self.settings
+    }
+
     /// Where a chunk's corner sits on Bevy's ground plane, which a chunk's ground is relative to.
     #[must_use]
     pub fn chunk_corner(&self, chunk: ChunkCoord) -> Vec3 {
@@ -309,6 +329,7 @@ pub struct WaveForgeStagesPlugin {
     targets: Vec<(String, Option<u32>)>,
     settings: StagesSettings,
     ground_stage: Option<String>,
+    ground_material_stage: Option<String>,
 }
 
 impl WaveForgeStagesPlugin {
@@ -327,6 +348,7 @@ impl WaveForgeStagesPlugin {
                 .collect(),
             settings,
             ground_stage: None,
+            ground_material_stage: None,
         }
     }
 
@@ -355,6 +377,16 @@ impl WaveForgeStagesPlugin {
         self.ground_stage = Some(stage.to_owned());
         self
     }
+
+    /// Gives the ground the categories of the Rules or Area stage `stage` as materials: a chunk's
+    /// ground then also waits for them, and [`WaveForgeStages::ground_materials`] gives them per
+    /// vertex, for [`crate::materials::ground_material`]. The stage has to be generated too, one
+    /// chunk beyond the ground, since a chunk's ground reads the materials beyond its far edges.
+    #[must_use]
+    pub fn with_ground_materials(mut self, stage: &str) -> Self {
+        self.ground_material_stage = Some(stage.to_owned());
+        self
+    }
 }
 
 /// The set both of the plugin's systems run in, so a game can order its own work around them.
@@ -376,6 +408,8 @@ impl Plugin for WaveForgeStagesPlugin {
             asked: Vec::new(),
             ground_stage: self.ground_stage.clone(),
             grounds: HashMap::new(),
+            ground_material_stage: self.ground_material_stage.clone(),
+            ground_ids: HashMap::new(),
         })
         .add_message::<StageReady>()
         .add_message::<StageDropped>()
@@ -435,11 +469,15 @@ fn drain(
 ) {
     let had_failed = stages.worker.failure().is_some();
     let ground_stage = stages.ground_stage.clone();
+    let material_stage = stages.ground_material_stage.clone();
     let mut arrived = Vec::new();
     for event in stages.worker.drain() {
         match event {
             StageEvent::Generated { stage, chunk } => {
-                if ground_stage.as_ref() == Some(&stage) {
+                // A chunk's ground reads the materials of itself and of the chunks beyond its far
+                // edges, which are among the chunks whose ground reads a field of this chunk.
+                if ground_stage.as_ref() == Some(&stage) || material_stage.as_ref() == Some(&stage)
+                {
                     arrived.push(chunk);
                 }
                 ready.write(StageReady { stage, chunk });
@@ -447,6 +485,7 @@ fn drain(
             StageEvent::Dropped { stage, chunk } => {
                 if ground_stage.as_ref() == Some(&stage) && stages.grounds.remove(&chunk).is_some()
                 {
+                    stages.ground_ids.remove(&chunk);
                     ground_dropped.write(GroundDropped(chunk));
                 }
                 dropped.write(StageDropped { stage, chunk });
@@ -466,10 +505,19 @@ fn drain(
             if stages.grounds.contains_key(&chunk) {
                 continue;
             }
-            if let Some(mesh) = ground(chunk, |at| stages.worker.field(stage, at), cell) {
-                stages.grounds.insert(chunk, mesh);
-                ground_ready.write(GroundReady(chunk));
+            let Some(mesh) = ground(chunk, |at| stages.worker.field(stage, at), cell) else {
+                continue;
+            };
+            if let Some(materials) = &material_stage {
+                let Some(ids) =
+                    ground_materials(chunk, |at| stages.worker.categories(materials, at))
+                else {
+                    continue;
+                };
+                stages.ground_ids.insert(chunk, ids);
             }
+            stages.grounds.insert(chunk, mesh);
+            ground_ready.write(GroundReady(chunk));
         }
     }
     if let (false, Some(reason)) = (had_failed, stages.worker.failure()) {
