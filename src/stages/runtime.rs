@@ -18,13 +18,15 @@ use super::pack::{
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use super::rivers::DownhillRivers;
 use super::save::{FrozenChunk, Save};
+use super::town_thread::{Done, Job, Stopped, TownKey, TownThread};
 use crate::noise::NoiseConfig;
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
-use crate::towns::{Town, TownRequest, TownSolver};
+use crate::towns::{Town, TownSolver};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
+use std::time::Duration;
 use wfc_core::ChunkCoord;
 use wfc_core::hash::pcg3d;
 
@@ -397,6 +399,8 @@ pub enum StageError {
     },
     #[error("the town solver's chunks are {solver:?} columns, the runtime's {runtime:?}")]
     ChunkMismatch { solver: [u32; 2], runtime: [u32; 2] },
+    #[error("the town solver's thread stopped")]
+    TownsStopped,
     #[error("stage {stage:?} could not solve the town of {site:?}: {message}")]
     Town {
         stage: String,
@@ -495,7 +499,12 @@ pub struct Runtime {
     needed: BTreeMap<usize, BTreeSet<ChunkCoord>>,
     focus: Vec<FocusPoint>,
     products: BTreeMap<(usize, ChunkCoord), Arc<Product>>,
-    towns: Option<Box<dyn TownSolver>>,
+    towns: Option<TownThread>,
+    /// Towns asked of the town thread and not back yet, by Solve stage and site, with the ticket
+    /// of the request and the site, dropped as solved towns are.
+    solving: BTreeMap<(usize, SiteId), (u64, Site)>,
+    /// The ticket of the next town request.
+    ticket: u64,
     /// Towns solved, by Solve stage and site, with the site, kept while a chunk it covers is
     /// needed.
     solved: BTreeMap<(usize, SiteId), (Site, Arc<Town>)>,
@@ -578,6 +587,8 @@ impl Runtime {
             focus: Vec::new(),
             products: BTreeMap::new(),
             towns: None,
+            solving: BTreeMap::new(),
+            ticket: 0,
             solved: BTreeMap::new(),
             assembled: BTreeMap::new(),
             facts: None,
@@ -976,6 +987,8 @@ impl Runtime {
         };
         self.solved
             .retain(|&(stage, _), (site, _)| fresh(stage, site));
+        self.solving
+            .retain(|&(stage, _), (_, site)| fresh(stage, site));
         self.assembled
             .retain(|&(stage, _), (site, _)| fresh(stage, site));
         let pack = Arc::clone(&self.pack);
@@ -1264,7 +1277,7 @@ impl Runtime {
                 runtime: self.size,
             });
         }
-        self.towns = Some(towns);
+        self.towns = Some(TownThread::spawn(towns));
         Ok(self)
     }
 
@@ -1377,6 +1390,8 @@ impl Runtime {
         };
         self.solved
             .retain(|&(stage, _), (site, _)| covered(stage, site));
+        self.solving
+            .retain(|&(stage, _), (_, site)| covered(stage, site));
         self.assembled
             .retain(|&(stage, _), (site, _)| covered(stage, site));
         // A bounded world has few regions, so it keeps every one it has computed, as a finite
@@ -1451,7 +1466,13 @@ impl Runtime {
     /// # Errors
     /// A [`StageError`] from a stage, which is a bug in that stage.
     pub fn run_until_idle(&mut self) -> Result<Vec<(String, ChunkCoord)>, StageError> {
-        self.step(usize::MAX)
+        let mut generated = self.step(usize::MAX)?;
+        // Every other stage is generated; what is left waits for towns.
+        while !self.solving.is_empty() {
+            self.receive_towns(Duration::MAX)?;
+            generated.extend(self.step(usize::MAX)?);
+        }
+        Ok(generated)
     }
 
     /// Whether everything the request needs is generated.
@@ -1471,6 +1492,7 @@ impl Runtime {
     /// # Errors
     /// A [`StageError`] from a stage, which is a bug in that stage.
     pub fn step(&mut self, budget: usize) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        self.receive_towns(Duration::ZERO)?;
         let mut generated = Vec::new();
         for &index in &self.pack.order.clone() {
             if generated.len() >= budget {
@@ -1498,11 +1520,16 @@ impl Runtime {
                 (distance, *chunk)
             });
             for chunk in missing.into_iter().take(budget - generated.len()) {
+                if !self.frozen.contains_key(&(index, chunk)) {
+                    self.request_town_of(index, chunk)?;
+                    if self.waits_for_town(index, chunk) {
+                        continue;
+                    }
+                }
                 let started = std::time::Instant::now();
                 let product = match self.frozen.get(&(index, chunk)) {
                     Some(frozen) => Product::clone(frozen),
                     None => {
-                        self.solve_town_of(index, chunk)?;
                         self.assemble_of(index, chunk)?;
                         self.run_region_of(index, chunk)?;
                         self.place_locations_of(index, chunk)?;
@@ -1991,9 +2018,9 @@ impl Runtime {
         Some(&placed.log)
     }
 
-    /// Solves the town of `chunk`'s site for Solve stage `index`, unless it is solved already or
-    /// the chunk lies in no site.
-    fn solve_town_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
+    /// Asks the town thread for the town of `chunk`'s site for Solve stage `index`, unless it is
+    /// solved or asked for already, or the chunk lies in no site.
+    fn request_town_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Solve {
             rules,
@@ -2008,7 +2035,8 @@ impl Runtime {
         let Some(site) = self.site_of(index, chunk) else {
             return Ok(());
         };
-        if self.solved.contains_key(&(index, site.id.clone())) {
+        let key = (index, site.id.clone());
+        if self.solved.contains_key(&key) || self.solving.contains_key(&key) {
             return Ok(());
         }
         let rules = match (&site.id, by) {
@@ -2023,27 +2051,79 @@ impl Runtime {
         };
         let towns = self
             .towns
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| StageError::NoTownSolver(stage.name.clone()))?;
         let [high, low, _] = site_hash(self.seed, stage.salt, &site.id);
-        let request = TownRequest {
-            rules,
+        self.ticket += 1;
+        towns.send(Job {
+            key: TownKey {
+                stage: index,
+                site: site.id.clone(),
+                ticket: self.ticket,
+            },
+            rules: rules.clone(),
             seed: (u64::from(high) << 32) | u64::from(low),
             size: (
                 (site.max.0 - site.min.0) as u32,
                 (site.max.1 - site.min.1) as u32,
             ),
-            bottom: bottom.as_ref(),
-            top: top.as_ref(),
-        };
-        let town = towns.solve(&request).map_err(|error| StageError::Town {
-            stage: stage.name.clone(),
-            site: site.id.clone(),
-            message: error.to_string(),
-        })?;
-        self.solved
-            .insert((index, site.id.clone()), (site, Arc::new(town)));
+            bottom: bottom.clone(),
+            top: top.clone(),
+        });
+        self.solving
+            .insert((index, site.id.clone()), (self.ticket, site));
         Ok(())
+    }
+
+    /// Whether `chunk` of stage `index` lies in a site whose town is not back from the town
+    /// thread yet.
+    fn waits_for_town(&self, index: usize, chunk: ChunkCoord) -> bool {
+        matches!(self.pack.stages[index].kind, StageKind::Solve { .. })
+            && self
+                .site_of(index, chunk)
+                .is_some_and(|site| !self.solved.contains_key(&(index, site.id)))
+    }
+
+    /// Takes the towns the town thread has solved, waiting up to `wait` for the first, and keeps
+    /// those still asked for. A Solve stage's time includes the towns it solved.
+    fn receive_towns(&mut self, wait: Duration) -> Result<(), StageError> {
+        let Some(towns) = &self.towns else {
+            return Ok(());
+        };
+        let done = towns
+            .take(wait)
+            .map_err(|Stopped| StageError::TownsStopped)?;
+        for Done { key, town, ms } in done {
+            let at = (key.stage, key.site.clone());
+            if !self
+                .solving
+                .get(&at)
+                .is_some_and(|&(ticket, _)| ticket == key.ticket)
+            {
+                continue;
+            }
+            let (_, site) = self.solving.remove(&at).expect("looked up above");
+            let town = town.map_err(|error| StageError::Town {
+                stage: self.pack.stages[key.stage].name.clone(),
+                site: key.site,
+                message: error.to_string(),
+            })?;
+            let timing = &mut self.timings[at.0];
+            timing.ms += ms;
+            timing.slowest_ms = timing.slowest_ms.max(ms);
+            self.solved.insert(at, (site, Arc::new(town)));
+        }
+        Ok(())
+    }
+
+    /// Waits up to `wait` for a town the runtime asked its town thread for, when stepping has
+    /// nothing else left to do; a worker calls this rather than stepping again at once.
+    ///
+    /// # Errors
+    /// [`StageError::Town`] if the town could not be solved, and [`StageError::TownsStopped`] if
+    /// the town thread stopped.
+    pub fn wait_for_towns(&mut self, wait: Duration) -> Result<(), StageError> {
+        self.receive_towns(wait)
     }
 
     /// The site of an Assemble stage's chunk, if the chunk lies in one of the kinds it grows on.

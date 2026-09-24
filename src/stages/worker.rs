@@ -17,9 +17,13 @@ use crate::scheduler::FocusPoint;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// Products generated between two looks for new requests: small, so a request waits little.
 const STEP: usize = 8;
+
+/// How long the thread waits for a town before looking for new orders again.
+const TOWN_WAIT: Duration = Duration::from_millis(10);
 
 enum Order {
     Request {
@@ -382,7 +386,14 @@ where
             continue;
         }
         match runtime.step(STEP) {
-            Ok(generated) if generated.is_empty() => {}
+            // Not idle with nothing generated: what is left waits for towns. Wait for one briefly,
+            // so a new order is still taken soon.
+            Ok(generated) if generated.is_empty() => {
+                if let Err(error) = runtime.wait_for_towns(TOWN_WAIT) {
+                    let _ = reports.send(Report::Failed(error.to_string()));
+                    return;
+                }
+            }
             Ok(generated) => {
                 let products = generated
                     .into_iter()

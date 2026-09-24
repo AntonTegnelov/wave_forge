@@ -1,13 +1,15 @@
-//! Solve stages: a town per site, solved whole, the same whatever order its chunks are asked for in.
+//! Solve stages: a town per site, solved whole, the same whatever order its chunks are asked for in,
+//! on a thread of their own while other stages generate.
 //!
 //! These run on the CPU reference solver with a small module set of ground and air, so they need no
 //! GPU; the city on a GPU is checked in `wfc-devtools`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, channel};
 use wave_forge::loader::parse_rule_file;
 use wave_forge::stages::{Pack, Runtime, StageError};
-use wave_forge::towns::WfcTowns;
+use wave_forge::towns::{Town, TownError, TownRequest, TownSolver, WfcTowns};
 use wave_forge::{ChunkCoord, ChunkShape, FocusPoint};
 use wfc_core::reference::ReferenceSolver;
 
@@ -169,4 +171,60 @@ fn a_rule_set_the_solver_was_not_given_is_named() {
         matches!(&result, Err(StageError::Town { message, .. }) if message.contains("blocks")),
         "{result:?}"
     );
+}
+
+/// A town solver that holds each town until the test lets it go.
+struct Gated {
+    gate: Receiver<()>,
+}
+
+impl TownSolver for Gated {
+    fn chunk_shape(&self) -> ChunkShape {
+        CHUNK
+    }
+
+    fn solve(&mut self, request: &TownRequest<'_>) -> Result<Town, TownError> {
+        self.gate.recv().expect("the test lets the town go");
+        let (w, h) = request.size;
+        let cells = (CHUNK.x * CHUNK.y * CHUNK.z) as usize;
+        Ok(Town {
+            size: request.size,
+            chunks: vec![Arc::from(vec![0u16; cells]); (w * h) as usize],
+        })
+    }
+}
+
+#[test]
+fn every_other_stage_generates_while_a_town_is_being_solved() {
+    let (open, gate) = channel::<()>();
+    let mut runtime = Runtime::new(
+        Arc::new(Pack::parse(PACK).expect("a valid pack")),
+        5,
+        [CHUNK.x, CHUNK.y],
+    )
+    .with_towns(Box::new(Gated { gate }))
+    .expect("matching chunks");
+    let focus: Vec<FocusPoint> = area().into_iter().map(|c| FocusPoint::new(c, 0)).collect();
+    runtime
+        .request(&focus, &["height", "buildings"])
+        .expect("stages");
+
+    let first = runtime.step(usize::MAX).expect("the stages run");
+    let waiting = !runtime.is_idle();
+    for _ in 0..area().len() {
+        open.send(()).expect("the town thread");
+    }
+    let rest = runtime.run_until_idle().expect("the stages run");
+
+    let in_a_town = |(stage, chunk): &(String, ChunkCoord)| {
+        stage == "buildings" && runtime.tiles("buildings", *chunk).is_some()
+    };
+    assert!(first.iter().filter(|(stage, _)| stage == "height").count() >= area().len());
+    assert!(
+        !first.iter().any(in_a_town),
+        "a town chunk came before its town"
+    );
+    assert!(waiting);
+    assert!(rest.iter().any(in_a_town));
+    assert!(runtime.is_idle());
 }
