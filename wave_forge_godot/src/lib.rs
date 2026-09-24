@@ -61,6 +61,7 @@ use wave_forge::{
     Ruleset, TileMask, Worker, WorldExtent, YUpSpace,
 };
 
+mod audio;
 mod grass;
 mod placements;
 mod stages_node;
@@ -147,6 +148,19 @@ pub struct WaveForgeWorld {
     #[export]
     navigation_template: Option<Gd<NavigationMesh>>,
 
+    /// Chunks within this many of the followed chunk sound: an `Area3D` per interior, reverbed on
+    /// `interior_reverb_bus`, and a player for each emitter whose key `sounds` maps to a stream,
+    /// from a module set's `indoor` and `sounds`. Below zero, none do.
+    #[export_group(name = "Audio")]
+    #[export]
+    audio_radius: i32,
+    /// The stream each sound key plays, as key to `AudioStream`.
+    #[export]
+    sounds: VarDictionary,
+    /// The audio bus whose effects interiors give the sounds inside them; empty for no interiors.
+    #[export]
+    interior_reverb_bus: StringName,
+
     /// Cells solved around a chunk and thrown away, so its borders can be completed. Changing it
     /// compiles other kernels.
     #[export_group(name = "Advanced")]
@@ -183,6 +197,10 @@ pub struct WaveForgeWorld {
     bodies_due: std::collections::BTreeSet<ChunkCoord>,
     /// Chunks within `collider_radius` still waiting for a body after the last frame.
     bodies_pending: usize,
+    /// The areas and players of the chunks within `audio_radius`.
+    audio: audio::RegionAudio,
+    /// Chunks whose tiles changed since their sound was built, to build again.
+    audio_due: std::collections::BTreeSet<ChunkCoord>,
     /// Each chunk's navigation region and the mesh being baked for it.
     navigation: HashMap<ChunkCoord, NavigationChunk>,
     /// The triangles of each module's collision shape, as the navigation bake reads them.
@@ -218,6 +236,15 @@ struct FrameCost {
 /// The most chunks one frame gives a collider body, in either node. A body costs Godot's thread
 /// about 0.3 ms for a chunk of 512 boxes on the dev container, so three stay near a millisecond.
 pub(crate) const BODIES_PER_FRAME: usize = 3;
+
+/// How many chunks apart two chunks are along the axis where they are furthest apart: the
+/// distance the node's radii are measured in.
+fn chunk_distance(a: ChunkCoord, b: ChunkCoord) -> i32 {
+    (a.x - b.x)
+        .abs()
+        .max((a.y - b.y).abs())
+        .max((a.z - b.z).abs())
+}
 
 fn elapsed_ms(since: std::time::Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.0
@@ -258,6 +285,11 @@ impl INode for WaveForgeWorld {
             bodies: HashMap::new(),
             bodies_due: std::collections::BTreeSet::new(),
             bodies_pending: 0,
+            audio_radius: -1,
+            sounds: VarDictionary::new(),
+            interior_reverb_bus: StringName::default(),
+            audio: audio::RegionAudio::default(),
+            audio_due: std::collections::BTreeSet::new(),
             navigation_radius: -1,
             navigation_template: None,
             navigation: HashMap::new(),
@@ -273,7 +305,7 @@ impl INode for WaveForgeWorld {
     }
 
     /// Frees the chunks' bodies and navigation regions, which belong to the physics and navigation
-    /// servers rather than to the tree.
+    /// servers rather than to the tree, and stops the chunks' sounds.
     fn exit_tree(&mut self) {
         let mut physics = PhysicsServer3D::singleton();
         for (_, (body, _)) in self.bodies.drain() {
@@ -283,6 +315,7 @@ impl INode for WaveForgeWorld {
         for (_, chunk) in self.navigation.drain() {
             navigation.free_rid(chunk.region);
         }
+        self.audio.stop();
     }
 
     /// Starts generating from `rules_file` if the node is set to start on its own.
@@ -347,6 +380,7 @@ impl INode for WaveForgeWorld {
         let navigating = std::time::Instant::now();
         self.update_navigation(&updated);
         frame.navigation_ms = elapsed_ms(navigating);
+        self.update_audio(&updated);
         frame.ms = elapsed_ms(processing);
         self.process_ms.push(frame.ms);
         if frame.ms > self.slowest_frame.ms {
@@ -708,6 +742,59 @@ impl WaveForgeWorld {
     }
 
     /// The coordinates of every chunk generated and not yet dropped.
+    /// What walkers stand on at `position`: the `surface` of the module in the cell holding it,
+    /// or an empty string where the module gives none or the chunk is not generated.
+    #[func]
+    fn surface_at(&self, position: Vector3) -> GString {
+        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+            return GString::new();
+        };
+        wave_forge::surface_at(
+            position.to_array(),
+            |chunk| worker.chunk(chunk),
+            rules,
+            &self.space(),
+        )
+        .map(GString::from)
+        .unwrap_or_default()
+    }
+
+    /// A generated chunk's region tags: `interiors`, an `AABB` per box of indoor cells, and
+    /// `emitters`, a dictionary per sound with its `position` and `key`. Empty for a chunk that is
+    /// not generated.
+    #[func]
+    fn region_tags(&self, chunk: Vector3i) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+            return out;
+        };
+        let Some(chunk) = worker.chunk(from_vector(chunk)) else {
+            return out;
+        };
+        let tags = wave_forge::region_tags(chunk, rules, &self.space());
+        let interiors: Array<Aabb> = tags
+            .interiors
+            .iter()
+            .map(|interior| {
+                let min = Vector3::from_array(interior.min);
+                Aabb::new(min, Vector3::from_array(interior.max) - min)
+            })
+            .collect();
+        let emitters: Array<VarDictionary> = tags
+            .emitters
+            .iter()
+            .map(|emitter| {
+                let mut entry = VarDictionary::new();
+                entry.set("position", Vector3::from_array(emitter.at));
+                entry.set("key", &GString::from(emitter.key.as_str()));
+                entry
+            })
+            .collect();
+        out.set("interiors", &interiors);
+        out.set("emitters", &emitters);
+        out
+    }
+
     #[func]
     fn generated_chunks(&self) -> Array<Vector3i> {
         match &self.worker {
@@ -804,14 +891,7 @@ impl WaveForgeWorld {
             return 0;
         };
         let radius = self.collider_radius;
-        let within = |chunk: ChunkCoord| {
-            radius >= 0
-                && (chunk.x - focus.x)
-                    .abs()
-                    .max((chunk.y - focus.y).abs())
-                    .max((chunk.z - focus.z).abs())
-                    <= radius
-        };
+        let within = |chunk: ChunkCoord| radius >= 0 && chunk_distance(chunk, focus) <= radius;
         let mut physics = PhysicsServer3D::singleton();
         let gone: Vec<ChunkCoord> = self
             .bodies
@@ -848,13 +928,7 @@ impl WaveForgeWorld {
             .collect();
         // Nearest first, and a few a frame: each body costs Godot's thread a fraction of a
         // millisecond, and a turn of the player can make a whole ring of chunks due at once.
-        wanted.sort_by_key(|chunk| {
-            let distance = (chunk.x - focus.x)
-                .abs()
-                .max((chunk.y - focus.y).abs())
-                .max((chunk.z - focus.z).abs());
-            (distance, *chunk)
-        });
+        wanted.sort_by_key(|&chunk| (chunk_distance(chunk, focus), chunk));
         self.bodies_pending = wanted.len().saturating_sub(BODIES_PER_FRAME);
         wanted.truncate(BODIES_PER_FRAME);
         let built = wanted.len();
@@ -891,6 +965,54 @@ impl WaveForgeWorld {
         built
     }
 
+    /// Keeps sound on every chunk within `audio_radius` of the followed chunk, building a few a
+    /// frame, nearest first, as bodies are built, and again when a chunk's tiles change; drops it
+    /// from the chunks out of range.
+    fn update_audio(&mut self, updated: &[ChunkCoord]) {
+        let (Some(worker), Some(rules), Some(focus)) = (&self.worker, &self.rules, self.followed)
+        else {
+            return;
+        };
+        let radius = self.audio_radius;
+        let within = |chunk: ChunkCoord| radius >= 0 && chunk_distance(chunk, focus) <= radius;
+        let gone: Vec<ChunkCoord> = self
+            .audio
+            .chunks()
+            .filter(|&chunk| !within(chunk) || worker.chunk(chunk).is_none())
+            .collect();
+        for chunk in gone {
+            self.audio.drop_chunk(chunk);
+        }
+        self.audio_due
+            .extend(updated.iter().copied().filter(|&chunk| within(chunk)));
+        self.audio_due.retain(|&chunk| within(chunk));
+        let built: std::collections::HashSet<ChunkCoord> = self.audio.chunks().collect();
+        let mut wanted: Vec<ChunkCoord> = worker
+            .chunks()
+            .map(|chunk| chunk.coord)
+            .filter(|&chunk| within(chunk))
+            .filter(|chunk| !built.contains(chunk) || self.audio_due.contains(chunk))
+            .collect();
+        wanted.sort_by_key(|&chunk| (chunk_distance(chunk, focus), chunk));
+        wanted.truncate(BODIES_PER_FRAME);
+        let layout = self.space();
+        let tags: Vec<wave_forge::RegionTags> = wanted
+            .iter()
+            .map(|&coord| {
+                let chunk = worker
+                    .chunk(coord)
+                    .expect("chosen from the worker's chunks");
+                wave_forge::region_tags(chunk, rules, &layout)
+            })
+            .collect();
+        let (sounds, reverb_bus) = (self.sounds.clone(), self.interior_reverb_bus.clone());
+        let mut owner = self.base().clone();
+        for tags in tags {
+            self.audio_due.remove(&tags.chunk);
+            self.audio.build(&mut owner, &tags, &sounds, &reverb_bus);
+        }
+    }
+
     /// Keeps a navigation mesh on every chunk within `navigation_radius` of the followed chunk:
     /// bakes the ones that have none, or whose tiles or neighbours changed, once all their
     /// neighbours are there; puts finished bakes into the map; frees the ones out of range.
@@ -907,14 +1029,7 @@ impl WaveForgeWorld {
             return;
         };
         let radius = self.navigation_radius;
-        let within = |chunk: ChunkCoord| {
-            radius >= 0
-                && (chunk.x - focus.x)
-                    .abs()
-                    .max((chunk.y - focus.y).abs())
-                    .max((chunk.z - focus.z).abs())
-                    <= radius
-        };
+        let within = |chunk: ChunkCoord| radius >= 0 && chunk_distance(chunk, focus) <= radius;
         let mut server = NavigationServer3D::singleton();
         let gone: Vec<ChunkCoord> = self
             .navigation
@@ -1013,12 +1128,7 @@ impl WaveForgeWorld {
         }
         // One bake is prepared per frame, nearest first: preparing one costs Godot's thread up to
         // 3 ms, and a focus crossing into a chunk makes several due at once.
-        wanted.sort_by_key(|chunk| {
-            (chunk.x - focus.x)
-                .abs()
-                .max((chunk.y - focus.y).abs())
-                .max((chunk.z - focus.z).abs())
-        });
+        wanted.sort_by_key(|&chunk| chunk_distance(chunk, focus));
         let cell_height = server.map_get_cell_height(map);
         let template = self
             .navigation_template

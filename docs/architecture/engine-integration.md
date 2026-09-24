@@ -78,8 +78,10 @@ NavSource (`wave_forge::nav_source`), SpawnPoints as the points of Scatter stage
 custom data yet, and RegionTags in part: `wave_forge::region_tags` gives a chunk's interiors (boxes
 of indoor cells) and emitters (sounds at points), and `wave_forge::surface_at` what walkers stand
 on at a point, from a module set's `indoor`, `sounds` and `surface` fields
-(`wfc-rules/src/formats/module_format.rs`); a biome is a Rules stage's category, and place names
-are not built yet ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)). Colliders are built by the Godot node from a shape the game assigns per module. The
+(`wfc-rules/src/formats/module_format.rs`), which Godot's `WaveForgeWorld` turns into reverb
+areas and pooled players ([godot.md](../reference/godot.md#sound-and-surfaces)); a biome is a Rules
+stage's category, and place names and Bevy's mapping are not built yet
+([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)). Colliders are built by the Godot node from a shape the game assigns per module. The
 other products are not built yet; [roadmap.md](../plan/roadmap.md) has their issues.
 
 Configuration that goes with the products rather than being emitted per chunk:
