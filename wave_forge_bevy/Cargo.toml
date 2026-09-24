@@ -22,7 +22,9 @@ bevy_mesh = "0.20.0-rc.1"
 # The materials of the ground, grass and swaying plants, which are PBR materials with shaders of our
 # own.
 bevy_pbr = "0.20.0-rc.1"
-# The types those materials are made of: colours, images, reflection for assets, shader paths.
+# The types those materials are made of: colours, images, reflection for assets, shader paths, and
+# the bounds of grass, which its shader moves away from its mesh.
+bevy_camera = "0.20.0-rc.1"
 bevy_color = "0.20.0-rc.1"
 bevy_image = "0.20.0-rc.1"
 bevy_reflect = "0.20.0-rc.1"
@@ -41,12 +43,14 @@ wfc-core = { path = "../wfc-core", features = ["reference"] }
 wfc-devtools = { path = "../wfc-devtools" }
 # The engine itself, for the tests that let Bevy's own render plugin create the device and draw
 # the reference materials. Headless: no windowing feature, so `DefaultPlugins` brings no winit and
-# the app runs without a display.
+# the app runs without a display. Its log shows a shader's or a pipeline's errors, which the tests
+# would otherwise fail on without saying why.
 bevy = { version = "0.20.0-rc.1", default-features = false, features = [
     "bevy_render",
     "bevy_asset",
     "bevy_pbr",
     "bevy_core_pipeline",
+    "bevy_log",
 ] }
 # A device made the way Bevy makes one, for the shared-device test.
 pollster = "1.0.1"
