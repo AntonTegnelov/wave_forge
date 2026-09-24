@@ -146,7 +146,8 @@ In Godot, what matters is the time the extension takes from Godot's own thread. 
 
 - **Recent frames:** `process_ms_median`, `process_ms_p99` and `process_ms_max`, the node's own time
   per frame, and the same for navigation bakes (`navigation_bake_ms_*`, `navigation_start_ms_*`,
-  `navigation_finish_ms_*`). `WaveForgeStages.stats()` reports `process_ms_*` for its node.
+  `navigation_source_ms_*`, `navigation_finish_ms_*`). A slow start whose source time is small was
+  spent handing the triangles to Godot. `WaveForgeStages.stats()` reports `process_ms_*` for its node.
 - **The slowest frame since the start, broken down:** `slowest_frame_ms` in all,
   `slowest_frame_events` drained and `slowest_frame_signals_ms` emitting them (the handlers connected
   to the signals included), `slowest_frame_colliders` chunks given bodies in
