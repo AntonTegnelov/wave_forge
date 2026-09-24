@@ -317,7 +317,8 @@ a `MeshLibrary`, which 4.7 gives a dedicated editor), and Scatter stages for pla
 a render mode: Auto, MultiMesh or Nodes. In Auto, a static single-mesh scene becomes chunked
 MultiMeshes, and a scene with scripts or bodies is instantiated as real nodes, optionally promoted
 from instance to node as the player approaches. The node binds kinds to scenes with Auto today
-([godot.md](../reference/godot.md#scenes)); pooling, promotion and Bevy's side are
+([godot.md](../reference/godot.md#scenes)), and Bevy binds kinds to what their entities hold
+([bevy.md](../reference/bevy.md)); promotion near the player is
 [#44](https://github.com/AntonTegnelov/wave_forge/issues/44).
 
 Brushes follow Terrain3D: a toolbar at the side of the 3D viewport, an `EditorDock` (4.6+), input

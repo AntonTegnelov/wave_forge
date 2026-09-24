@@ -62,6 +62,13 @@ thread.
   ([packs.md](packs.md#edits)). `request_save()` asks for a save, which arrives as a
   `StagesSaved(save)` message, and `load(save)` brings a world back from one
   ([packs.md](packs.md#persistence-and-saves)).
+- `StagePlacements`, a resource: `StagePlacements::default().bind(kind, |entity| ...)` binds a
+  kind, a Scatter point's kind or an Assemble piece's name, to what its entities hold: a
+  `SceneRoot` of a glTF scene, a mesh and a material, anything. Every point or piece of a bound kind
+  in a chunk that arrives gets an entity with its `Transform` (`transform_of` or `stamp_transform`)
+  and a `Placed { stage, chunk, id }` component, announced by an `InstanceSpawned { entity, placed }`
+  message, and despawned when its chunk is dropped. A piece overlapping several chunks gets one
+  entity, from the chunk holding its footprint's centre. Insert it before the stages it binds arrive.
 - `.with_radius(stage, radius)` generates one target within a radius of its own around every
   `GenerationFocus`, the others keeping each focus's radius.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
