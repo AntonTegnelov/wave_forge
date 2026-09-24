@@ -33,6 +33,30 @@ impl YUpSpace {
         self.cell_size
     }
 
+    /// How many cells a chunk has along the lattice's x, y and z.
+    #[must_use]
+    pub const fn chunk_shape(&self) -> ChunkShape {
+        self.chunk
+    }
+
+    /// The chunk a point in the engine's world space falls in, and the index of its cell there,
+    /// counted as [`YUpSpace::cell_center`] counts them.
+    #[must_use]
+    pub fn cell_at(&self, point: [f32; 3]) -> (ChunkCoord, u32) {
+        let chunk = self.chunk_at(point);
+        let origin = self.chunk_origin(chunk);
+        let along = |axis: usize, cells: u32| {
+            // Floating-point division can land one past the last cell for a point on the far edge.
+            ((((point[axis] - origin[axis]) / self.cell_size[axis]).floor()) as u32).min(cells - 1)
+        };
+        let (x, y, z) = (
+            along(0, self.chunk.x),
+            along(2, self.chunk.y),
+            along(1, self.chunk.z),
+        );
+        (chunk, x + self.chunk.x * (y + self.chunk.y * z))
+    }
+
     /// One chunk's size along the engine's x, y and z.
     #[must_use]
     pub fn chunk_size(&self) -> [f32; 3] {
@@ -116,6 +140,16 @@ mod tests {
             [8.0, 3.0, 1.0],
             "x 4 cells of 2, up 3 cells of 1, z 2 cells of 0.5"
         );
+    }
+
+    #[test]
+    fn a_cells_centre_is_in_that_cell() {
+        let space = space();
+        let chunk = ChunkCoord::new(-3, 2, -1);
+
+        for cell in 0..SHAPE.cells() {
+            assert_eq!(space.cell_at(space.cell_center(chunk, cell)), (chunk, cell));
+        }
     }
 
     #[test]
