@@ -20,6 +20,7 @@
 use crate::GenerationFocus;
 use bevy_app::{App, Plugin, Update};
 use bevy_asset::RenderAssetUsages;
+use bevy_camera::visibility::VisibilityRange;
 use bevy_ecs::message::{Message, MessageReader, MessageWriter};
 use bevy_ecs::prelude::{
     Commands, Component, Entity, IntoScheduleConfigs, Query, ResMut, Resource,
@@ -29,6 +30,7 @@ use bevy_math::{Mat3, Quat, Vec3};
 use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Mutex;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
@@ -321,6 +323,86 @@ pub fn ground_mesh(ground: &GroundMesh) -> Mesh {
     .with_inserted_indices(Indices::U32(ground.levels[0].indices.clone()))
 }
 
+/// How far a chunk's ground may stray on screen before a finer level is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GroundDetail {
+    /// The most pixels a level's error may span.
+    pub pixels: f32,
+    /// The viewport's height in pixels.
+    pub height: f32,
+    /// The camera's vertical field of view, in radians.
+    pub fov: f32,
+}
+
+/// One level of detail of a chunk's ground, ready to spawn at the chunk's corner.
+pub struct GroundLevelMesh {
+    /// The level's [`wave_forge::GroundLevel::step`].
+    pub step: u32,
+    /// The full mesh's positions and normals with the level's triangles, skirt included.
+    pub mesh: Mesh,
+    /// The distances from the camera the level is drawn at, from the centre of the mesh's bounds.
+    pub range: VisibilityRange,
+}
+
+/// A chunk's ground as one mesh per level of detail, each with the distances from the camera it is
+/// drawn at: a coarser level once its error, seen from anywhere in the chunk, spans at most
+/// `detail.pixels`. The skirts let neighbours at different levels meet without a gap. A level no
+/// distance would draw, because a coarser one strays as little, is left out.
+#[must_use]
+pub fn ground_levels(ground: &GroundMesh, detail: GroundDetail) -> Vec<GroundLevelMesh> {
+    let (low, high) = ground.positions.iter().fold(
+        (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+        |(low, high), &position| (low.min(position.into()), high.max(position.into())),
+    );
+    let radius = (high - low).length() / 2.0;
+    let errors: Vec<f32> = ground.levels.iter().map(|level| level.error).collect();
+    let per_error = detail.height / (2.0 * (detail.fov / 2.0).tan() * detail.pixels);
+    level_ranges(&errors, radius, per_error)
+        .into_iter()
+        .zip(&ground.levels)
+        .filter(|(range, _)| range.start < range.end)
+        .map(|(range, level)| {
+            let mesh = Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::default(),
+            )
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, ground.positions.clone())
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, ground.normals.clone())
+            .with_inserted_indices(Indices::U32(level.indices.clone()));
+            GroundLevelMesh {
+                step: level.step,
+                mesh,
+                range: VisibilityRange {
+                    use_aabb: true,
+                    ..VisibilityRange::abrupt(range.start, range.end)
+                },
+            }
+        })
+        .collect()
+}
+
+/// The distances each level is drawn at, finest first, from their `errors`: a level from where its
+/// error is `per_error` times closer than the camera, plus the `radius` of the chunk's bounds, to
+/// where the next level starts. A level's error counts as at least every finer level's, since a
+/// coarser level must not be drawn nearer than a finer one.
+fn level_ranges(errors: &[f32], radius: f32, per_error: f32) -> Vec<Range<f32>> {
+    let starts: Vec<f32> = errors
+        .iter()
+        .enumerate()
+        .scan(0.0_f32, |key, (index, &error)| {
+            *key = key.max(error);
+            Some(if index == 0 {
+                0.0
+            } else {
+                *key * per_error + radius
+            })
+        })
+        .collect();
+    (0..starts.len())
+        .map(|index| starts[index]..starts.get(index + 1).copied().unwrap_or(f32::INFINITY))
+        .collect()
+}
+
 type Build = Box<dyn FnOnce() -> Result<Runtime, String> + Send>;
 
 /// Generates the `targets` stages of a pack around every [`GenerationFocus`].
@@ -589,5 +671,24 @@ fn place(
                 commands.entity(entity).despawn();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_coarser_level_starts_where_its_error_is_small_enough_from_every_point_of_the_chunk() {
+        let ranges = level_ranges(&[0.0, 0.5, 2.0], 10.0, 100.0);
+
+        assert_eq!(ranges, [0.0..60.0, 60.0..210.0, 210.0..f32::INFINITY]);
+    }
+
+    #[test]
+    fn a_level_straying_less_than_a_finer_one_is_never_drawn_nearer() {
+        let ranges = level_ranges(&[0.0, 2.0, 1.0, 3.0], 0.0, 1.0);
+
+        assert_eq!(ranges, [0.0..2.0, 2.0..2.0, 2.0..3.0, 3.0..f32::INFINITY]);
     }
 }

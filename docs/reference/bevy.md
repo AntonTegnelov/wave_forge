@@ -78,8 +78,9 @@ thread.
   have arrived ([packs.md](packs.md#ground)): `WaveForgeStages::ground(chunk)` returns the
   `GroundMesh`, relative to `chunk_corner(chunk)`, `GroundReady(chunk)` and `GroundDropped(chunk)`
   announce it, `ground_mesh(&ground)` turns it into a Bevy `Mesh` at full detail, skirt included,
-  and its `heights` are the grid a
-  physics crate's height-field collider takes (the plugin depends on no physics crate).
+  or `ground_levels` into one per level of detail ([Ground levels of detail](#ground-levels-of-detail)),
+  and its `heights` are the grid a physics crate's height-field collider takes (the plugin depends
+  on no physics crate).
 
 The plugin asks for the chunks around every `GenerationFocus`, drains the worker each frame and
 sends a message per product.
@@ -91,6 +92,19 @@ Bevy's device matches what the library generates on a device of its own, and a s
 products arrive as messages equal to what the runtime generates, placed where the lattice puts
 them and dropped when the focus moves away, and its ground equals the library's for the same
 fields. New facts drop the stages that read them and regenerate them with the new rows. See [testing.md](../guides/testing.md).
+
+## Ground levels of detail
+
+`ground_levels(&ground, detail)` gives a chunk's ground as one `GroundLevelMesh` per level of
+detail ([packs.md](packs.md#ground)): its `step`, a `mesh` with the full positions and normals and
+the level's triangles, skirt included, and the abrupt `VisibilityRange` it is drawn in, measured
+from the centre of the mesh's bounds. Each goes on an entity of its own at the chunk's corner.
+`GroundDetail { pixels, height, fov }` says how many pixels a level's error may span in a viewport
+`height` pixels tall under a vertical field of view of `fov` radians: a coarser level is drawn from
+where its error spans that many pixels, pushed out by half the diagonal of the chunk's bounds so no
+point of the chunk is nearer, and a level's error counts as at least every finer level's. A level
+no distance would draw is left out. Bevy chooses no mesh's level on its own, so a game that wants
+the levels spawns these instead of `ground_mesh`.
 
 ## Ground materials
 
