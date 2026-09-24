@@ -26,6 +26,9 @@ extension needs none of godot-rust's thread-safety features.
 | Physics | `collider_radius` | chunks around the player that get colliders |
 | Navigation | `navigation_radius` | chunks around the player that get navigation meshes |
 | | `navigation_template` | the `NavigationMesh` settings chunks are baked with |
+| Audio | `audio_radius` | chunks around the player that sound ([Sound and surfaces](#sound-and-surfaces)); below zero, none |
+| | `sounds` | the stream each sound key plays, as key to `AudioStream` |
+| | `interior_reverb_bus` | the audio bus interiors reverb on; empty for no interiors |
 | Advanced | `halo` | the first parity's halo, in cells |
 | | `warm_kernels` | compile the kernels a run needs when generation starts |
 
@@ -49,6 +52,8 @@ extension needs none of godot-rust's thread-safety features.
 - **Navigation:** `navigation_chunks()` lists the chunks whose mesh is in the map. The node bakes
   one region per chunk from the collider shapes and the library's navigation source, off Godot's
   thread.
+- **Sound and surfaces:** `surface_at(position)`, `region_tags(chunk)`
+  ([Sound and surfaces](#sound-and-surfaces)).
 - **Cost:** `stats()`, below.
 
 ### Signals
@@ -74,6 +79,25 @@ extension needs none of godot-rust's thread-safety features.
 
 The node times itself because Godot's `Performance.TIME_PROCESS` is the slowest frame of the last
 second, published once a second, not the last frame's time.
+
+### Sound and surfaces
+
+A module set's modules may say what walkers in their cell stand on (`surface`), that the cell is
+inside (`indoor`) and where sounds play in it (`sounds`); the city example says all three
+(`examples/city.ron`, and the format in `wfc-rules/src/formats/module_format.rs`).
+`surface_at(position)` gives the surface of the module in the cell holding a position, or an empty
+string, which is what a game's footsteps ask. `region_tags(chunk)` gives a generated chunk's
+`interiors`, an `AABB` per box of indoor cells, the boxes together covering each indoor cell once,
+and its `emitters`, a dictionary per sound with its `position` in Godot's world and its `key`.
+
+Within `audio_radius` of the followed chunk, the node gives each chunk's interiors an `Area3D`, on
+collision layer 1 as a player's default `area_mask` expects, that reverbs the sounds inside it on
+`interior_reverb_bus`, and each emitter whose key `sounds` maps an `AudioStreamPlayer3D`, playing,
+all as children of the node; a key `sounds` does not map plays nothing, with a warning once per key.
+At most three chunks get their sound per frame, nearest first, and again when their tiles change.
+A chunk leaving the radius frees its areas and stops its players, which a pool keeps for the next
+chunk, and the node stops them all when it leaves the tree. A game that wants its own mapping
+leaves `audio_radius` below zero and reads `region_tags`.
 
 ## WaveForgeStages
 
@@ -280,8 +304,9 @@ through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) 
 (a felled tree and raised ground through an edits log and a save, and cut grass growing back) and
 `godot/verify_assemble.gd` (a village's pieces placed by their transforms) and
 `godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes) and
-`godot/verify_ground.gd` (the ground's materials per category, and grass) in a real headless
-Godot. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
+`godot/verify_ground.gd` (the ground's materials per category, and grass) and
+`godot/verify_sound.gd` (the city's surfaces, interiors, emitters and the node's sound) in a real
+headless Godot. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
 grass, and checks that trees drawn with the vegetation shader move in the wind and stand still
 without it.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
