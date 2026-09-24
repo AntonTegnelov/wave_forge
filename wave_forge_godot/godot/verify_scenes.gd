@@ -4,7 +4,9 @@
 ## MultiMeshes; houses are a scene given as a PackedScene and streets one given by a path, loaded
 ## on Godot's loader threads, so both are placed as nodes. Every house and street piece the stage
 ## grew gets exactly one node, named by `instance_spawned`, standing at the piece's transform, and
-## every tree is drawn once. Moving away frees them.
+## every tree is drawn once. With a promotion radius that puts some pieces inside and some outside,
+## those outside are freed as nodes and drawn as MultiMeshes of their mesh instead, and become
+## nodes again when promotion is turned off. Moving away frees them all.
 extends SceneTree
 
 const CELLS := 8
@@ -18,6 +20,9 @@ var ready := {}
 var spawned := {}
 var started_usec := 0
 var phase := "arrive"
+var pieces := {}
+var trees := 0
+var radius := 0
 
 func _initialize() -> void:
 	var tree := MeshInstance3D.new()
@@ -42,7 +47,7 @@ func _initialize() -> void:
 	world.generation_failed.connect(func(reason: String) -> void: _fail(reason))
 	world.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void: ready[[stage, chunk]] = true)
 	world.instance_spawned.connect(func(node: Node3D, chunk: Vector3i, id: int) -> void:
-		if spawned.has([chunk, id]):
+		if spawned.has([chunk, id]) and is_instance_valid(spawned[[chunk, id]]):
 			_fail("%s %d was spawned twice" % [chunk, id])
 		spawned[[chunk, id]] = node)
 	if not world.start():
@@ -84,6 +89,23 @@ func _process(_delta: float) -> bool:
 			if stats["pending_signals"] > 0 or stats["pending_placements"] > 0:
 				return false
 			return _check(stats)
+		"promote":
+			if stats["pending_placements"] > 0:
+				return false
+			return _check_promoted(stats)
+		"restore":
+			if stats["pending_placements"] > 0:
+				return false
+			for key in pieces:
+				if not is_instance_valid(spawned[key]):
+					return false
+			if stats["placed_nodes"] != pieces.size() or stats["placed_instances"] != trees:
+				return false
+			print("verify_scenes: without promotion, every piece is a node again")
+			world.follow(Vector3(2000, 0, 2000))
+			phase = "leave"
+			started_usec = Time.get_ticks_usec()
+			return false
 		"leave":
 			for node in spawned.values():
 				if is_instance_valid(node):
@@ -100,7 +122,6 @@ func _chunk_of(at: Vector3) -> Vector3i:
 
 func _check(stats: Dictionary) -> bool:
 	var expected := {}
-	var trees := 0
 	# Every chunk the stages hold places its pieces, those generated for a stage that reads them
 	# beyond the view included.
 	var held: Array[Vector3i] = []
@@ -133,8 +154,37 @@ func _check(stats: Dictionary) -> bool:
 		_fail("%d trees drawn for %d points" % [stats["placed_instances"], trees])
 		return true
 	print("verify_scenes: %d pieces placed as nodes where the stage grew them, %d trees drawn as MultiMeshes; placing's slowest frame %.3f ms" % [expected.size(), trees, stats["slowest_frame_placements_ms"]])
-	world.follow(Vector3(2000, 0, 2000))
-	phase = "leave"
+	pieces = expected
+	var distances: Array[int] = []
+	for key in pieces:
+		distances.append(maxi(absi(key[0].x), absi(key[0].y)))
+	distances.sort()
+	radius = distances[distances.size() / 2]
+	world.promotion_radius = radius
+	phase = "promote"
+	started_usec = Time.get_ticks_usec()
+	return false
+
+## Nodes only within the promotion radius of the followed chunk, every other piece drawn by its
+## mesh.
+func _check_promoted(stats: Dictionary) -> bool:
+	var near := 0
+	for key in pieces:
+		var chunk: Vector3i = key[0]
+		var node = spawned[key]
+		var inside: bool = maxi(absi(chunk.x), absi(chunk.y)) <= radius
+		if inside:
+			near += 1
+		if inside != is_instance_valid(node):
+			return false
+	if stats["placed_nodes"] != near or stats["placed_instances"] != trees + pieces.size() - near:
+		return false
+	if near == 0 or near == pieces.size():
+		_fail("a promotion radius of %d puts %d of %d pieces inside" % [radius, near, pieces.size()])
+		return true
+	print("verify_scenes: with a promotion radius of %d, %d pieces stay nodes and %d are drawn as MultiMeshes" % [radius, near, pieces.size() - near])
+	world.promotion_radius = -1
+	phase = "restore"
 	started_usec = Time.get_ticks_usec()
 	return false
 

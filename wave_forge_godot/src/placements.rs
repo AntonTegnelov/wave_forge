@@ -3,7 +3,9 @@
 //! A kind (a Scatter point's kind, or an Assemble piece's name) is bound to a scene. A scene whose
 //! root is a lone `MeshInstance3D` without a script is drawn as one `RenderingServer` MultiMesh per
 //! chunk and kind, never as nodes; any other scene is instantiated as nodes, off the tree, and
-//! attached under a per-frame time budget nearest the followed position first. A chunk that is
+//! attached under a per-frame time budget nearest the followed position first. With promotion, a
+//! scene placed as nodes is so only near the followed position; farther out it is drawn as a
+//! MultiMesh of its first mesh, and a chunk crossing the radius is placed again. A chunk that is
 //! dropped takes its MultiMeshes and nodes with it.
 
 use godot::classes::rendering_server::MultimeshTransformFormat;
@@ -24,8 +26,9 @@ enum Binding {
     Loading(GString),
     /// A lone mesh, drawn as a MultiMesh per chunk.
     Mesh(Gd<Mesh>),
-    /// A scene instantiated as nodes.
-    Nodes(Gd<PackedScene>),
+    /// A scene instantiated as nodes, and its first mesh with where it sits in the scene, which
+    /// stands in for it beyond the promotion radius.
+    Nodes(Gd<PackedScene>, Option<(Gd<Mesh>, Transform3D)>),
 }
 
 /// One thing to place: its kind, where it stands in Godot's world, and its id within its chunk.
@@ -41,6 +44,8 @@ pub(crate) struct Item {
 struct Placed {
     multimeshes: Vec<(Rid, Rid, usize)>,
     nodes: Vec<Gd<Node3D>>,
+    /// Whether it was placed within the promotion radius.
+    near: bool,
 }
 
 /// Every kind's binding, the chunks waiting to be placed, and what each placed.
@@ -137,8 +142,9 @@ impl Placements {
         self.due.len()
     }
 
-    /// Places due chunks, nearest `focus` first, until `budget_ms` is spent: each chunk's items
-    /// as `items` gives them. Waits while any scene is still loading. Returns the nodes placed.
+    /// Places due chunks, and chunks that crossed the promotion radius, nearest `focus` first,
+    /// until `budget_ms` is spent: each chunk's items as `items` gives them, a node scene's as nodes
+    /// only where `near` holds. Waits while any scene is still loading. Returns the nodes placed.
     ///
     /// # Errors
     /// Naming a scene that failed to load or whose root is not a `Node3D`.
@@ -148,12 +154,20 @@ impl Placements {
         scenario: Rid,
         focus: ChunkCoord,
         budget_ms: f64,
+        near: impl Fn(ChunkCoord) -> bool,
         items: impl Fn(&str, ChunkCoord) -> Option<Vec<Item>>,
     ) -> Result<Vec<Spawned>, String> {
         let started = std::time::Instant::now();
         if !self.loaded()? {
             return Ok(Vec::new());
         }
+        let crossed: Vec<(String, ChunkCoord)> = self
+            .placed
+            .iter()
+            .filter(|((_, chunk), placed)| placed.near != near(*chunk))
+            .map(|(key, _)| key.clone())
+            .collect();
+        self.due.extend(crossed);
         let mut due: Vec<(String, ChunkCoord)> = self.due.iter().cloned().collect();
         due.sort_by_key(|(stage, chunk)| {
             let distance = (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs());
@@ -174,13 +188,26 @@ impl Placements {
             for item in &items {
                 by_kind.entry(&item.kind).or_default().push(item);
             }
-            let mut placed = Placed::default();
+            let mut placed = Placed {
+                near: near(chunk),
+                ..Placed::default()
+            };
             for (kind, items) in by_kind {
                 match &self.bindings[kind] {
-                    Binding::Mesh(mesh) => {
-                        placed.multimeshes.push(multimesh(mesh, &items, scenario))
+                    Binding::Mesh(mesh) => placed.multimeshes.push(multimesh(
+                        mesh,
+                        Transform3D::IDENTITY,
+                        &items,
+                        scenario,
+                    )),
+                    Binding::Nodes(_, proxy) if !placed.near => {
+                        if let Some((mesh, offset)) = proxy {
+                            placed
+                                .multimeshes
+                                .push(multimesh(mesh, *offset, &items, scenario));
+                        }
                     }
-                    Binding::Nodes(scene) => {
+                    Binding::Nodes(scene, _) => {
                         for item in items {
                             let mut node = scene
                                 .try_instantiate_as::<Node3D>()
@@ -238,7 +265,7 @@ impl Placements {
 /// holding a mesh, otherwise as nodes.
 fn classify(scene: &Gd<PackedScene>) -> Binding {
     let Some(root) = scene.instantiate() else {
-        return Binding::Nodes(scene.clone());
+        return Binding::Nodes(scene.clone(), None);
     };
     let lone = root.get_child_count() == 0 && root.get_script().is_none();
     let mesh = root
@@ -246,16 +273,39 @@ fn classify(scene: &Gd<PackedScene>) -> Binding {
         .try_cast::<MeshInstance3D>()
         .ok()
         .and_then(|instance| instance.get_mesh());
-    root.free();
-    match mesh {
+    let binding = match mesh {
         Some(mesh) if lone => Binding::Mesh(mesh),
-        _ => Binding::Nodes(scene.clone()),
-    }
+        _ => Binding::Nodes(scene.clone(), first_mesh(&root, Transform3D::IDENTITY)),
+    };
+    root.free();
+    binding
 }
 
-/// A MultiMesh of `mesh` at every item's transform, drawn in `scenario`: the MultiMesh, its
-/// instance and how many it draws.
-fn multimesh(mesh: &Gd<Mesh>, items: &[&Item], scenario: Rid) -> (Rid, Rid, usize) {
+/// The first mesh under `node`, depth first, and where it sits relative to the scene's root, given
+/// that `node` sits at `at`.
+fn first_mesh(node: &Gd<Node>, at: Transform3D) -> Option<(Gd<Mesh>, Transform3D)> {
+    if let Ok(instance) = node.clone().try_cast::<MeshInstance3D>()
+        && let Some(mesh) = instance.get_mesh()
+    {
+        return Some((mesh, at));
+    }
+    node.get_children().iter_shared().find_map(|child| {
+        let placed = child
+            .clone()
+            .try_cast::<Node3D>()
+            .map_or(at, |child| at * child.get_transform());
+        first_mesh(&child, placed)
+    })
+}
+
+/// A MultiMesh of `mesh` at every item's transform, placed at `offset` within it, drawn in
+/// `scenario`: the MultiMesh, its instance and how many it draws.
+fn multimesh(
+    mesh: &Gd<Mesh>,
+    offset: Transform3D,
+    items: &[&Item],
+    scenario: Rid,
+) -> (Rid, Rid, usize) {
     let mut rendering = RenderingServer::singleton();
     let multimesh = rendering.multimesh_create();
     rendering.multimesh_set_mesh(multimesh, mesh.get_rid());
@@ -269,7 +319,7 @@ fn multimesh(mesh: &Gd<Mesh>, items: &[&Item], scenario: Rid) -> (Rid, Rid, usiz
     let buffer: Vec<f32> = items
         .iter()
         .flat_map(|item| {
-            let Transform3D { basis, origin } = item.transform;
+            let Transform3D { basis, origin } = item.transform * offset;
             let [a, b, c] = basis.rows;
             [
                 a.x, a.y, a.z, origin.x, b.x, b.y, b.z, origin.y, c.x, c.y, c.z, origin.z,

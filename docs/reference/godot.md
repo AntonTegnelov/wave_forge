@@ -93,6 +93,7 @@ second, published once a second, not the last frame's time.
 | Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
 | Scenes | `scenes` | a kind (a Scatter point's kind or an Assemble piece's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
+| | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
 
 ### Functions
@@ -186,6 +187,12 @@ Each scene is drawn one of two ways, chosen when it is bound:
   point's or piece's transform, and `instance_spawned(node, chunk, id)` names each, with the id
   `point_sets` and `stamps` give it. A piece overlapping several chunks is placed once, by the chunk
   holding its footprint's centre.
+
+With `promotion_radius` at zero or more, a scene placed as nodes is so only in chunks within that
+many chunks of the followed position. Farther out it is drawn as a MultiMesh of its first mesh,
+depth first, where that mesh sits in the scene, or not at all if it has none, which suits a spawner
+that should act only near the player. A chunk that crosses the radius as the player moves is placed
+again, under the same budget, and `instance_spawned` names its nodes again.
 
 Chunks are placed nearest the followed position first, each whole, until `placement_budget_ms` is
 spent, so a frame can go over by one chunk's placing. Everything a chunk placed is freed when the
