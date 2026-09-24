@@ -196,6 +196,22 @@ pub struct ModulePrototype {
     pub excluded: Vec<(usize, String)>,
     /// Free-form labels for tests, renderers and tools (for example `"building"` or `"walkable"`).
     pub tags: BTreeSet<String>,
+    /// What walkers in the module's cell stand on, for footsteps: a name the game maps to sounds or
+    /// effects.
+    pub surface: Option<String>,
+    /// Whether the module's cell is inside, out of the weather and in a room's acoustics.
+    pub indoor: bool,
+    /// The sounds the module makes, in its own frame.
+    pub sounds: Vec<ModuleSound>,
+}
+
+/// A sound a module makes, and where in its cell it plays.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleSound {
+    /// Where in the cell, from 0 to 1 along x, y and z.
+    pub at: [f32; 3],
+    /// What plays there: a name the game maps to a sound.
+    pub key: String,
 }
 
 impl ModulePrototype {
@@ -216,6 +232,9 @@ impl ModulePrototype {
             rotatable: true,
             excluded: Vec::new(),
             tags: BTreeSet::new(),
+            surface: None,
+            indoor: false,
+            sounds: Vec::new(),
         }
     }
 
@@ -244,6 +263,31 @@ impl ModulePrototype {
     #[must_use]
     pub fn tag(mut self, tag: impl Into<String>) -> Self {
         self.tags.insert(tag.into());
+        self
+    }
+
+    /// Sets what walkers in the cell stand on.
+    #[must_use]
+    pub fn surface(mut self, surface: impl Into<String>) -> Self {
+        self.surface = Some(surface.into());
+        self
+    }
+
+    /// Marks the cell as inside.
+    #[must_use]
+    pub fn indoor(mut self) -> Self {
+        self.indoor = true;
+        self
+    }
+
+    /// Adds a sound playing `at` a point of the cell, from 0 to 1 along each axis in the
+    /// prototype's own frame.
+    #[must_use]
+    pub fn sound(mut self, at: [f32; 3], key: impl Into<String>) -> Self {
+        self.sounds.push(ModuleSound {
+            at,
+            key: key.into(),
+        });
         self
     }
 
@@ -356,6 +400,28 @@ impl CompiledModules {
     #[must_use]
     pub fn face(&self, tile: usize, axis: usize) -> Face {
         variant_face(&self.prototypes, self.variants[tile], axis)
+    }
+
+    /// The sounds of tile `tile`, turned with it about the cell's vertical axis.
+    #[must_use]
+    pub fn sounds(&self, tile: usize) -> Vec<ModuleSound> {
+        let turns = self.variants[tile].rotation;
+        self.prototype_of(tile)
+            .sounds
+            .iter()
+            .map(|sound| {
+                let [mut x, mut y, z] = sound.at;
+                // A quarter turn counter-clockwise about the cell's centre takes (x, y) to
+                // (1 - y, x), as it takes the +x face to +y.
+                for _ in 0..turns {
+                    (x, y) = (1.0 - y, x);
+                }
+                ModuleSound {
+                    at: [x, y, z],
+                    key: sound.key.clone(),
+                }
+            })
+            .collect()
     }
 }
 

@@ -68,14 +68,18 @@ has no built-in floating origin
 | **Colliders** | heightfield grids; a shape library per prototype (boxes or convex pieces) and the transforms that compose it per chunk; triangle meshes only as a last resort | CPU |
 | **NavSource** | walkable and blocking triangles from the neighbouring chunks as far as a border past the chunk's edges, with the bounds and border to bake with; not snapped, because Godot's map merges the border vertices of neighbouring bakes as they are (measured, see [measurements.md](../research/measurements.md); Bevy's navigation crates not yet) | CPU |
 | **Occluders** | conservative boxes or solid faces per chunk | CPU |
-| **RegionTags** | biome, indoor or outdoor, surface material per walkable face, interior volumes, audio emitter points, place names as translation keys with arguments | CPU |
+| **RegionTags** | biome, indoor or outdoor, what walkers stand on per module, interior volumes, audio emitter points, place names as translation keys with arguments | CPU |
 | **Splines** (Phase 2) | roads and rivers: control points, width, material | CPU |
 | **SpawnPoints** | kind id, transform, stable id (the chunk coordinate and a local id packing the stage, the cell and a slot, never an ordinal), custom data; produced by Scatter stages ([stages.md](stages.md#placement-rules-are-scatter-stages)) | CPU |
 | **ChunkHash** | a hash over the products gameplay depends on | CPU |
 
 Built today: TileGrid, InstanceSet (`wave_forge::instance_sets`, for a streamed world and for towns),
-NavSource (`wave_forge::nav_source`), and SpawnPoints as the points of Scatter stages, without
-custom data yet. Colliders are built by the Godot node from a shape the game assigns per module. The
+NavSource (`wave_forge::nav_source`), SpawnPoints as the points of Scatter stages, without
+custom data yet, and RegionTags in part: `wave_forge::region_tags` gives a chunk's interiors (boxes
+of indoor cells) and emitters (sounds at points), and `wave_forge::surface_at` what walkers stand
+on at a point, from a module set's `indoor`, `sounds` and `surface` fields
+(`wfc-rules/src/formats/module_format.rs`); a biome is a Rules stage's category, and place names
+are not built yet ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)). Colliders are built by the Godot node from a shape the game assigns per module. The
 other products are not built yet; [roadmap.md](../plan/roadmap.md) has their issues.
 
 Configuration that goes with the products rather than being emitted per chunk:
