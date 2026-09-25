@@ -46,9 +46,11 @@
 //!   of neighbours that had rewritten it. A rule set is *streaming-clean* when no repair is ever
 //!   needed, which makes partial eviction safe too.
 
+pub mod cell_boxes;
 pub mod generator;
 pub mod ground;
 pub mod noise;
+pub mod occluders;
 pub mod products;
 pub mod region_tags;
 pub mod scheduler;
@@ -57,10 +59,12 @@ pub mod stages;
 pub mod towns;
 pub mod worker;
 
+pub use cell_boxes::CellBox;
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
 pub use ground::{GroundLevel, GroundMesh, ground, ground_materials, ground_readers};
+pub use occluders::occluders;
 pub use products::{InstanceId, InstanceSet, NavSource, NavSourceError, instance_sets, nav_source};
-pub use region_tags::{Emitter, Interior, RegionTags, region_tags, surface_at};
+pub use region_tags::{Emitter, RegionTags, region_tags, surface_at};
 pub use scheduler::FocusPoint;
 pub use space::YUpSpace;
 pub use worker::Worker;

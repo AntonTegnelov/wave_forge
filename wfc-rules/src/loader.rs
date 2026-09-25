@@ -189,6 +189,19 @@ impl RuleFile {
         }
     }
 
+    /// Whether tile `tile`'s model fills its cell with opaque geometry. A tile set's tiles do not
+    /// say so.
+    ///
+    /// # Panics
+    /// If `tile` is not a tile of the set.
+    #[must_use]
+    pub fn solid(&self, tile: usize) -> bool {
+        match self {
+            Self::Tiles { .. } => false,
+            Self::Modules(modules) => modules.prototype_of(tile).solid,
+        }
+    }
+
     /// The sounds tile `tile` makes, turned with it. A tile set's tiles make none.
     ///
     /// # Panics

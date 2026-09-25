@@ -25,7 +25,9 @@
 //! what walkers in the cell stand on; `indoor: true`, that the cell is inside; and
 //! `sounds: [(at: (0.5, 0.5, 0.2), key: "fountain")]`, sounds playing at points of the cell, from 0
 //! to 1 along x, y and z in the module's own frame, which turn with it. A surface or key may not be
-//! empty, and a sound's point must be in its cell.
+//! empty, and a sound's point must be in its cell. `solid: true` says the module's model fills its
+//! whole cell with opaque geometry, so the cell can hide what is behind it: say it only of a model
+//! with no gap a view could pass through, or an occluder hides what should show.
 
 use crate::LoadError;
 use crate::modules::{
@@ -106,6 +108,9 @@ struct ModuleDef {
     /// Whether the cell is inside.
     #[serde(default)]
     indoor: bool,
+    /// Whether the module's model fills its cell with opaque geometry.
+    #[serde(default)]
+    solid: bool,
     /// Sounds the module makes, in its own frame.
     #[serde(default)]
     sounds: Vec<SoundDef>,
@@ -267,6 +272,9 @@ pub fn parse_module_set(content: &str) -> Result<ModuleSet, LoadError> {
         if module.indoor {
             prototype = prototype.indoor();
         }
+        if module.solid {
+            prototype = prototype.solid();
+        }
         for sound in &module.sounds {
             let at = [sound.at.0, sound.at.1, sound.at.2];
             if !at.iter().all(|coordinate| (0.0..=1.0).contains(coordinate)) {
@@ -427,7 +435,8 @@ mod tests {
         modules: [
             (name: "air", sides: ["air", "air", "air", "air"], up: "open", down: "open"),
             (name: "kiosk", sides: ["road", "air", "air", "air"], up: "open", down: "open",
-             surface: "cobblestone", indoor: true, sounds: [(at: (0.9, 0.5, 0.2), key: "radio")]),
+             surface: "cobblestone", indoor: true, solid: true,
+             sounds: [(at: (0.9, 0.5, 0.2), key: "radio")]),
         ],
     )"#;
 
@@ -442,6 +451,8 @@ mod tests {
         let air = compiled.prototype_of(compiled.variants_of("air")[0]);
         assert_eq!(kiosk.surface.as_deref(), Some("cobblestone"));
         assert!(kiosk.indoor);
+        assert!(kiosk.solid);
+        assert!(!air.solid);
         assert_eq!(kiosk.sounds.len(), 1);
         assert_eq!(
             (air.surface.as_deref(), air.indoor, air.sounds.len()),
