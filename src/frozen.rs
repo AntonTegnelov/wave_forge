@@ -4,11 +4,12 @@
 use std::path::PathBuf;
 use wfc_core::ChunkCoord;
 
-/// Where the chunks of a frozen stage wait while no request needs them: a game's save directory, a
-/// database, or memory. Wave Forge hands a chunk over when it leaves memory and asks for it when it
+/// Where the chunks of a frozen stage or a frozen world wait while no request needs them: a game's
+/// save directory, a database, or memory. Wave Forge hands a chunk over when it leaves memory and asks for it when it
 /// is needed again. What a chunk's bytes hold is Wave Forge's business; a store only keeps them,
-/// by layer (a stage's name) and chunk.
-pub trait FrozenStore: Send {
+/// by layer (a stage's name, or `tiles` for a frozen WFC world) and chunk. It is `Send` and `Sync`
+/// because the generator that holds it moves between threads and an engine may share it.
+pub trait FrozenStore: Send + Sync {
     /// Keeps `bytes` for `chunk` of `layer`, replacing anything kept for it.
     ///
     /// # Errors
