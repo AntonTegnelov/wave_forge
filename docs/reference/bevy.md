@@ -28,7 +28,11 @@ chunk beyond its radius). It also converts between spaces: `chunk_at`, `translat
 **Components, resources and messages:**
 
 - `GenerationFocus`, a component: generate around this entity, within its radius.
-- `WaveForgeWorld<S>`, a resource: `chunk(coord)`, `is_idle`, `pending_chunks`.
+- `WaveForgeWorld<S>`, a resource: `chunk(coord)`, `is_idle`, `pending_chunks`, and from a module
+  set's `surface`, `indoor` and `sounds` ([godot.md](godot.md#sound-and-surfaces) has what they
+  mean): `surface_at(translation, tiles)`, what walkers stand on at a point, for footsteps, and
+  `region_tags(coord, tiles)`, a chunk's `interiors` (boxes of indoor cells) and `emitters` (sounds
+  at points) in Bevy's world. A game gives them to its own audio crate; the plugin depends on none.
 - `WaveForgeTiles`, a resource: the rule file, and `rotation_of(tile)`.
 - `ChunkUpdated`, `ChunkFailed`, `ChunkEvicted`: messages per chunk.
 - `WaveForgeSystems`: the system set, to order a game's systems around the plugin's.
