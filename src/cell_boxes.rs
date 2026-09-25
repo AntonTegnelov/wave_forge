@@ -1,5 +1,5 @@
 //! Boxes that cover chosen cells of a chunk, for the products made of whole cells: interiors
-//! ([`crate::region_tags`]) and occluders ([`crate::occluders`]).
+//! ([`mod@crate::region_tags`]) and occluders ([`mod@crate::occluders`]).
 
 use crate::space::YUpSpace;
 use wfc_core::ChunkCoord;
