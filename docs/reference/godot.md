@@ -70,7 +70,8 @@ extension needs none of godot-rust's thread-safety features.
 ### stats()
 
 - **Generation:** `batches`, `solved`, `repaired`, `rewritten_by_repair`, `failed`, `solver_ms`,
-  `repair_batches`, `repair_ms`.
+  `repair_batches`, `repair_ms`, and `replayed`, repairs run again to rewrite a chunk generated
+  again ([world.md](../architecture/world.md#regenerating-exactly)).
 - **Waiting:** `pending_colliders`, the chunks within `collider_radius` still waiting for a body.
 - **Navigation:** `navigation_baked`, `navigation_polygons`.
 - **The slowest frame since the start:** `slowest_frame_ms` in all, `slowest_frame_events` drained

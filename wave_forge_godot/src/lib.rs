@@ -884,7 +884,7 @@ impl WaveForgeWorld {
     }
 
     /// What generation has cost so far: `batches`, `solved`, `repaired`, `rewritten_by_repair`,
-    /// `failed`, `solver_ms`, `repair_batches` and `repair_ms`; how many navigation bakes have
+    /// `failed`, `solver_ms`, `repair_batches`, `repair_ms` and `replayed`; how many navigation bakes have
     /// finished (`navigation_baked`) and the polygons of the meshes in place
     /// (`navigation_polygons`); and the chunks within `collider_radius` still waiting for a body
     /// (`pending_colliders`), since at most three are given one per frame.
@@ -916,6 +916,7 @@ impl WaveForgeWorld {
         out.set("solver_ms", stats.solver_ms);
         out.set("repair_batches", stats.repair_batches);
         out.set("repair_ms", stats.repair_ms);
+        out.set("replayed", stats.replayed);
         out.set("navigation_baked", self.baked);
         let polygons: i64 = self
             .navigation
