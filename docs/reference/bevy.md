@@ -33,6 +33,8 @@ chunk beyond its radius). It also converts between spaces: `chunk_at`, `translat
   mean): `surface_at(translation, tiles)`, what walkers stand on at a point, for footsteps, and
   `region_tags(coord, tiles)`, a chunk's `interiors` (boxes of indoor cells) and `emitters` (sounds
   at points) in Bevy's world. A game gives them to its own audio crate; the plugin depends on none.
+  `proxy_levels(coord, tiles, colour, detail, begin)` gives a chunk's far stand-in
+  ([Far proxies](#far-proxies)).
 - `WaveForgeTiles`, a resource: the rule file, and `rotation_of(tile)`.
 - `ChunkUpdated`, `ChunkFailed`, `ChunkEvicted`: messages per chunk.
 - `WaveForgeSystems`: the system set, to order a game's systems around the plugin's.
@@ -97,6 +99,19 @@ Bevy's device matches what the library generates on a device of its own, and a s
 products arrive as messages equal to what the runtime generates, placed where the lattice puts
 them and dropped when the focus moves away, and its ground equals the library's for the same
 fields. New facts drop the stages that read them and regenerate them with the new rows. See [testing.md](../guides/testing.md).
+
+## Far proxies
+
+`WaveForgeWorld::proxy_levels(coord, &tiles, colour, detail, begin)` gives a generated chunk's far
+stand-in, the library's `proxy_mesh`, as one `ProxyLevelMesh` per level: its `cells`, a `mesh` of
+boxes whose vertex colours come from `colour`, each module's colour seen from afar (a module
+without one is left out), and the `VisibilityRange` it is drawn in. The finest level is drawn from
+`begin` on and each coarser one from where its error spans `detail`'s pixels
+([Ground levels of detail](#ground-levels-of-detail) has the rule); each goes on an entity of its
+own at the chunk's corner, `settings().translation_of(coord)`, with a `StandardMaterial`, which
+draws the colours. A game ends its own drawing of the chunk at `begin` with a `VisibilityRange`, so
+the chunk costs one draw call from there on where its modules cost one per module. An empty list
+means the chunk has nothing to stand in for.
 
 ## Ground levels of detail
 
