@@ -37,8 +37,9 @@ verified), the date it last changed and a link to its evidence. A story that reg
 in progress.
 
 **Publishing is a human-only task,** and so is anything like it: releasing to the Godot Asset Store
-or crates.io, creating a release or a release tag, and announcing. An agent prepares all of it and
-never does any of it ([contributing.md](../guides/contributing.md#publishing-is-human-only)).
+or crates.io, creating a release or a release tag, announcing, and promoting `develop` to `main`. An
+agent prepares all of it and never does any of it
+([contributing.md](../guides/contributing.md#publishing-is-human-only)).
 The proof-of-concept games mark milestones on the way; the public release waits until every story is
 verified.
 
