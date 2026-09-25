@@ -245,7 +245,8 @@ products arrived (nearest first), so after a wide request some come a few frames
 product can have been dropped again, and its `stage_dropped` follows. Ground is built for at most
 8 chunks per frame, and bodies for at most 3, nearest the player first. `stats()` reports what
 waits as `pending_signals`, `pending_grounds`, `pending_colliders` and `pending_placements`, and
-what is placed as `placed_nodes` and `placed_instances`.
+what is placed as `placed_nodes` and `placed_instances`, and the nodes of pooled scenes waiting to
+be placed again as `pooled_nodes` ([Scenes](#scenes)).
 
 ### Scenes
 
@@ -272,6 +273,17 @@ many chunks of the followed position. Farther out it is drawn as a MultiMesh of 
 depth first, where that mesh sits in the scene, or not at all if it has none, which suits a spawner
 that should act only near the player. A chunk that crosses the radius as the player moves is placed
 again, under the same budget, and `instance_spawned` names its nodes again.
+
+**Pooling.** A scene whose root script defines `_wave_forge_reset()` is pooled. When its chunk is
+dropped or crosses the promotion radius, each of its nodes is reset by that method, while still in
+the tree, then taken out of the tree and kept for the next placement of the same kind, which moves
+it and announces it with `instance_spawned` as if it were new. A scene without the method is always
+instantiated fresh, so a node's script state (a chest opened, a timer running) never carries into
+another place unless the scene clears it itself. A pool only holds nodes that were placed at the
+same time before, so it never outgrows the most its kind has had placed; the pools are freed with
+the node. A node the game frees itself is forgotten, never reused. Reusing a node is cheaper than
+instantiating one, though placing either one is cheap next to the placing budget
+([measurements.md](../research/measurements.md), E44 and E51).
 
 Chunks are placed nearest the followed position first, each whole, until `placement_budget_ms` is
 spent, so a frame can go over by one chunk's placing. Everything a chunk placed is freed when the
@@ -361,7 +373,8 @@ through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) 
 `godot/verify_noise.gd` (a `FastNoiseLite` resource read through a pack), `godot/verify_edits.gd`
 (a felled tree and raised ground through an edits log and a save, and cut grass growing back) and
 `godot/verify_assemble.gd` (a village's pieces placed by their transforms) and
-`godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes) and
+`godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes),
+`godot/verify_pooling.gd` (pooled scenes reused and reset, others never) and
 `godot/verify_ground.gd` (the ground's materials per category, and grass) and
 `godot/verify_sound.gd` (the city's surfaces, interiors, emitters and the node's sound) and
 `godot/verify_names.gd` (a location's name through a translation) and `godot/verify_occlusion.gd`

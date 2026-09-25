@@ -6,7 +6,9 @@
 //! attached under a per-frame time budget nearest the followed position first. With promotion, a
 //! scene placed as nodes is so only near the followed position; farther out it is drawn as a
 //! MultiMesh of its first mesh, and a chunk crossing the radius is placed again. A chunk that is
-//! dropped takes its MultiMeshes and nodes with it.
+//! dropped takes its MultiMeshes and nodes with it, except the nodes of a scene whose root defines
+//! `_wave_forge_reset`: those are reset, taken out of the tree and kept for the next placement of
+//! their kind.
 
 use crate::gi::Gi;
 use godot::classes::rendering_server::MultimeshTransformFormat;
@@ -16,6 +18,10 @@ use godot::classes::{
 use godot::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use wave_forge::ChunkCoord;
+
+/// The method whose presence on a scene's root opts the scene into pooling, and which resets a
+/// pooled node before it is reused.
+const RESET: &str = "_wave_forge_reset";
 
 /// `ResourceLoader.ThreadLoadStatus` values.
 const IN_PROGRESS: i64 = 1;
@@ -27,9 +33,15 @@ enum Binding {
     Loading(GString),
     /// A lone mesh, drawn as a MultiMesh per chunk.
     Mesh(Gd<Mesh>),
-    /// A scene instantiated as nodes, and its first mesh with where it sits in the scene, which
-    /// stands in for it beyond the promotion radius.
-    Nodes(Gd<PackedScene>, Option<(Gd<Mesh>, Transform3D)>),
+    /// A scene instantiated as nodes.
+    Nodes {
+        scene: Gd<PackedScene>,
+        /// Its first mesh with where it sits in the scene, which stands in for it beyond the
+        /// promotion radius.
+        proxy: Option<(Gd<Mesh>, Transform3D)>,
+        /// Whether its root defines [`RESET`], so a node freed from a chunk is kept for reuse.
+        pooled: bool,
+    },
 }
 
 /// One thing to place: its kind, where it stands in Godot's world, its id within its chunk, how
@@ -45,21 +57,25 @@ pub(crate) struct Item {
 }
 
 /// What a stage's chunk placed: its MultiMeshes with their instances and how many each draws,
-/// and its nodes.
+/// its nodes, and its nodes of pooled scenes by kind.
 #[derive(Default)]
 struct Placed {
     multimeshes: Vec<(Rid, Rid, usize)>,
     nodes: Vec<Gd<Node3D>>,
+    pooled: BTreeMap<String, Vec<Gd<Node3D>>>,
     /// Whether it was placed within the promotion radius.
     near: bool,
 }
 
-/// Every kind's binding, the chunks waiting to be placed, and what each placed.
+/// Every kind's binding, the chunks waiting to be placed, what each placed, and the nodes of
+/// pooled scenes waiting outside the tree to be placed again. A pool only holds nodes that were
+/// placed at once before, so it never outgrows the most its kind has had placed.
 #[derive(Default)]
 pub(crate) struct Placements {
     bindings: BTreeMap<String, Binding>,
     due: BTreeSet<(String, ChunkCoord)>,
     placed: HashMap<(String, ChunkCoord), Placed>,
+    pools: HashMap<String, Vec<Gd<Node3D>>>,
 }
 
 /// A node placed: the node, its chunk and its id, for `instance_spawned`.
@@ -122,7 +138,7 @@ impl Placements {
         let key = (stage.to_owned(), chunk);
         self.due.remove(&key);
         if let Some(placed) = self.placed.remove(&key) {
-            free(placed);
+            self.release(placed);
         }
     }
 
@@ -132,7 +148,9 @@ impl Placements {
             .values()
             .fold((0, 0), |(nodes, instances), placed| {
                 (
-                    nodes + placed.nodes.len(),
+                    nodes
+                        + placed.nodes.len()
+                        + placed.pooled.values().map(Vec::len).sum::<usize>(),
                     instances
                         + placed
                             .multimeshes
@@ -141,6 +159,11 @@ impl Placements {
                             .sum::<usize>(),
                 )
             })
+    }
+
+    /// How many nodes of pooled scenes wait outside the tree to be placed again.
+    pub(crate) fn pooled(&self) -> usize {
+        self.pools.values().map(Vec::len).sum()
     }
 
     /// Chunks waiting to be placed.
@@ -186,6 +209,10 @@ impl Placements {
             }
             let key = (stage, chunk);
             self.due.remove(&key);
+            // Released first, so a chunk placed again reuses its own pooled nodes.
+            if let Some(old) = self.placed.remove(&key) {
+                self.release(old);
+            }
             // Dropped since it arrived: nothing to place.
             let Some(items) = items(&key.0, chunk) else {
                 continue;
@@ -206,39 +233,87 @@ impl Placements {
                         &items,
                         scenario,
                     )),
-                    Binding::Nodes(_, proxy) if !placed.near => {
+                    Binding::Nodes { proxy, .. } if !placed.near => {
                         if let Some((mesh, offset)) = proxy {
                             placed
                                 .multimeshes
                                 .push(multimesh(mesh, *offset, &items, scenario));
                         }
                     }
-                    Binding::Nodes(scene, _) => {
+                    Binding::Nodes { scene, pooled, .. } => {
+                        let mut pool =
+                            pooled.then(|| self.pools.entry(kind.to_owned()).or_default());
+                        let mut nodes = Vec::with_capacity(items.len());
                         for item in items {
-                            let mut node = scene
-                                .try_instantiate_as::<Node3D>()
-                                .ok_or_else(|| format!("the scene of {kind:?} is not a Node3D"))?;
+                            let reused = pool.as_mut().and_then(|pool| pool.pop());
+                            let mut node = match reused {
+                                Some(node) => node,
+                                None => scene.try_instantiate_as::<Node3D>().ok_or_else(|| {
+                                    format!("the scene of {kind:?} is not a Node3D")
+                                })?,
+                            };
                             node.set_transform(item.transform);
                             holder.add_child(&node);
                             spawned.push((node.clone(), chunk, item.id));
-                            placed.nodes.push(node);
+                            nodes.push(node);
+                        }
+                        if *pooled {
+                            placed.pooled.insert(kind.to_owned(), nodes);
+                        } else {
+                            placed.nodes.extend(nodes);
                         }
                     }
                     Binding::Loading(_) => unreachable!("placing waits for every scene to load"),
                 }
             }
-            if let Some(old) = self.placed.insert(key, placed) {
-                free(old);
-            }
+            self.placed.insert(key, placed);
         }
         Ok(spawned)
     }
 
-    /// Frees everything placed, and forgets what was due.
+    /// Frees everything placed and every pooled node, and forgets what was due.
     pub(crate) fn clear(&mut self) {
         self.due.clear();
         for (_, placed) in self.placed.drain() {
             free(placed);
+        }
+        for (_, pool) in self.pools.drain() {
+            for node in pool {
+                // Out of the tree, so nothing else frees it; the game may have freed it already.
+                if node.is_instance_valid() {
+                    node.free();
+                }
+            }
+        }
+    }
+
+    /// Frees what a chunk placed, except its nodes of pooled scenes, which are reset and moved out
+    /// of the tree into their kind's pool. A node the game freed or queued for freeing is left to
+    /// the game.
+    fn release(&mut self, placed: Placed) {
+        let Placed {
+            multimeshes,
+            nodes,
+            pooled,
+            ..
+        } = placed;
+        free(Placed {
+            multimeshes,
+            nodes,
+            ..Placed::default()
+        });
+        for (kind, nodes) in pooled {
+            let pool = self.pools.entry(kind).or_default();
+            for mut node in nodes {
+                if !node.is_instance_valid() || node.is_queued_for_deletion() {
+                    continue;
+                }
+                node.call(RESET, &[]);
+                if let Some(mut parent) = node.get_parent() {
+                    parent.remove_child(&node);
+                }
+                pool.push(node);
+            }
         }
     }
 
@@ -271,7 +346,11 @@ impl Placements {
 /// holding a mesh, otherwise as nodes.
 fn classify(scene: &Gd<PackedScene>) -> Binding {
     let Some(root) = scene.instantiate() else {
-        return Binding::Nodes(scene.clone(), None);
+        return Binding::Nodes {
+            scene: scene.clone(),
+            proxy: None,
+            pooled: false,
+        };
     };
     let lone = root.get_child_count() == 0 && root.get_script().is_none();
     let mesh = root
@@ -281,7 +360,11 @@ fn classify(scene: &Gd<PackedScene>) -> Binding {
         .and_then(|instance| instance.get_mesh());
     let binding = match mesh {
         Some(mesh) if lone => Binding::Mesh(mesh),
-        _ => Binding::Nodes(scene.clone(), first_mesh(&root, Transform3D::IDENTITY)),
+        _ => Binding::Nodes {
+            scene: scene.clone(),
+            proxy: first_mesh(&root, Transform3D::IDENTITY),
+            pooled: root.has_method(RESET),
+        },
     };
     root.free();
     binding
@@ -341,13 +424,20 @@ fn multimesh(
     (multimesh, instance, items.len())
 }
 
+/// Frees everything a chunk placed. A node the game freed already is left alone.
 fn free(placed: Placed) {
     let mut rendering = RenderingServer::singleton();
     for (multimesh, instance, _) in placed.multimeshes {
         rendering.free_rid(instance);
         rendering.free_rid(multimesh);
     }
-    for mut node in placed.nodes {
-        node.queue_free();
+    for mut node in placed
+        .nodes
+        .into_iter()
+        .chain(placed.pooled.into_values().flatten())
+    {
+        if node.is_instance_valid() {
+            node.queue_free();
+        }
     }
 }
