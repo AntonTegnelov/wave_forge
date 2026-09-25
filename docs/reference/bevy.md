@@ -17,6 +17,7 @@ built in `Plugin::finish`.
 | `WaveForgePlugin::from_rules(file, prior, settings)` | the same from a rule file, and insert `WaveForgeTiles` so systems can ask what each tile is |
 | `WaveForgePlugin::on_own_device(ruleset, prior, settings)` | a device of its own, for a Bevy build on another wgpu version or to isolate generation from rendering |
 | `.solver_config(config)` | how the GPU solver runs a region (`SolverConfig`); a smaller `max_batch` makes each dispatch hold the device for less of a frame and fills the world more slowly. Which setting a game should use is measured by `examples/frame_times.rs` ([desktop-measurements.md](../guides/desktop-measurements.md)) |
+| `.frozen(store)` | freeze the world: a chunk it evicts goes to the `FrozenStore` as it is and comes back from it rather than being generated, even after the rule set changes ([world.md](../architecture/world.md#regenerating-exactly)) |
 | `.warm(radius)` | compile every kernel a focus of up to `radius` can dispatch, repairs included, while the plugin builds, instead of at the first dispatch |
 | `WaveForgeSolverPlugin::new(ruleset, prior, settings, solver)` | generate on a solver the game built: another backend, or the CPU reference in a test |
 
