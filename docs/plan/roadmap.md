@@ -85,6 +85,12 @@ first, which the survival game grows into, then what the strategy game needs.
    and G8 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
 4. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
+5. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
+   technique, then played from what it wrote. It needs a store for chunks outside memory
+   ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)), density volumes
+   ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)), the bake, and a whole-world run
+   with progress, cancelling and resuming, with baked content streamed from disk
+   ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)); then the maximal preset.
 
 **Waiting on the owner's hardware:** the frame-time measurement of own against shared devices on
 desktops with native drivers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)). It
