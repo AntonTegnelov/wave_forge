@@ -28,7 +28,8 @@ extension needs none of godot-rust's thread-safety features.
 | | `navigation_template` | the `NavigationMesh` settings chunks are baked with |
 | Audio | `audio_radius` | chunks around the player that sound ([Sound and surfaces](#sound-and-surfaces)); below zero, none |
 | | `sounds` | the stream each sound key plays, as key to `AudioStream` |
-| | `interior_reverb_bus` | the audio bus interiors reverb on; empty for no interiors |
+| | `interior_reverb_bus` | the audio bus interiors reverb the sounds inside them on; empty for none |
+| | `interior_audio_bus` | the audio bus sounds inside interiors play on instead of their own; empty for none, and with both empty, no interiors |
 | Advanced | `halo` | the first parity's halo, in cells |
 | | `warm_kernels` | compile the kernels a run needs when generation starts |
 
@@ -92,7 +93,8 @@ and its `emitters`, a dictionary per sound with its `position` in Godot's world 
 
 Within `audio_radius` of the followed chunk, the node gives each chunk's interiors an `Area3D`, on
 collision layer 1 as a player's default `area_mask` expects, that reverbs the sounds inside it on
-`interior_reverb_bus`, and each emitter whose key `sounds` maps an `AudioStreamPlayer3D`, playing,
+`interior_reverb_bus` and plays them on `interior_audio_bus` (a muffled indoor mix, say), each when
+set, and each emitter whose key `sounds` maps an `AudioStreamPlayer3D`, playing,
 all as children of the node; a key `sounds` does not map plays nothing, with a warning once per key.
 At most three chunks get their sound per frame, nearest first, and again when their tiles change.
 A chunk leaving the radius frees its areas and stops its players, which a pool keeps for the next
