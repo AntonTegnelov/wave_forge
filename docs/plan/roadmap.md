@@ -71,8 +71,8 @@ first, which the survival game grows into, then what the strategy game needs.
    log, persistence modes, a radius per target stage, dungeons through Assemble and a Network stage
    for paths between sites, and lakes with one water per pack
    ([#144](https://github.com/AntonTegnelov/wave_forge/issues/144)). The ring world meets every
-   criterion of G7 and verifies it. Left for Valheim's feature parity beyond G7's criteria: pooling
-   scenes bound to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
+   criterion of G7 and verifies it, and scenes bound to points are pooled when they reset themselves
+   ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
 3. **Engine depth, alongside.** Built in both engines: ground materials, grass from a cover field,
    plants in a global wind, and ground levels of detail with skirts
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)); region tags for sound and
