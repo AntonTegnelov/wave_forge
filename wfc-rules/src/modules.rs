@@ -201,6 +201,9 @@ pub struct ModulePrototype {
     pub surface: Option<String>,
     /// Whether the module's cell is inside, out of the weather and in a room's acoustics.
     pub indoor: bool,
+    /// Whether the module's model fills its whole cell with opaque geometry, so the cell can hide
+    /// what is behind it.
+    pub solid: bool,
     /// The sounds the module makes, in its own frame.
     pub sounds: Vec<ModuleSound>,
 }
@@ -234,6 +237,7 @@ impl ModulePrototype {
             tags: BTreeSet::new(),
             surface: None,
             indoor: false,
+            solid: false,
             sounds: Vec::new(),
         }
     }
@@ -277,6 +281,13 @@ impl ModulePrototype {
     #[must_use]
     pub fn indoor(mut self) -> Self {
         self.indoor = true;
+        self
+    }
+
+    /// Marks the cell as filled with opaque geometry.
+    #[must_use]
+    pub fn solid(mut self) -> Self {
+        self.solid = true;
         self
     }
 
