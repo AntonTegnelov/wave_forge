@@ -81,8 +81,8 @@ on at a point, from a module set's `indoor`, `sounds` and `surface` fields
 (`wfc-rules/src/formats/module_format.rs`), which Godot's `WaveForgeWorld` turns into reverb
 areas and pooled players ([godot.md](../reference/godot.md#sound-and-surfaces)); a biome is a Rules
 stage's category; a location's name is a translation key with arguments
-([packs.md](../reference/packs.md#locations)); Bevy's mapping is not built yet
-([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)). Colliders are built by the Godot node from a shape the game assigns per module. The
+([packs.md](../reference/packs.md#locations)); Bevy gives the same data through its world
+resource ([bevy.md](../reference/bevy.md)) and maps it to no audio crate yet. Colliders are built by the Godot node from a shape the game assigns per module. The
 other products are not built yet; [roadmap.md](../plan/roadmap.md) has their issues.
 
 Configuration that goes with the products rather than being emitted per chunk:
