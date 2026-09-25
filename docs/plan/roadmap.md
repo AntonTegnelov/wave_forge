@@ -71,8 +71,8 @@ first, which the survival game grows into, then what the strategy game needs.
    log, persistence modes, a radius per target stage, dungeons through Assemble and a Network stage
    for paths between sites, and lakes with one water per pack
    ([#144](https://github.com/AntonTegnelov/wave_forge/issues/144)). The ring world meets every
-   criterion of G7 and verifies it. Left for Valheim's feature parity beyond G7's criteria: pooling
-   scenes bound to points ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
+   criterion of G7 and verifies it, and scenes bound to points are pooled when they reset themselves
+   ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
 3. **Engine depth, alongside.** Built in both engines: ground materials, grass from a cover field,
    plants in a global wind, and ground levels of detail with skirts
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)); region tags for sound and
@@ -85,6 +85,12 @@ first, which the survival game grows into, then what the strategy game needs.
    and G8 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
 4. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
+5. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
+   technique, then played from what it wrote. It needs a store for chunks outside memory
+   ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)), density volumes
+   ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)), the bake, and a whole-world run
+   with progress, cancelling and resuming, with baked content streamed from disk
+   ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)); then the maximal preset.
 
 **Waiting on the owner's hardware:** the frame-time measurement of own against shared devices on
 desktops with native drivers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)). It

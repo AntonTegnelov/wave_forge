@@ -5,9 +5,10 @@ guide the design ([stages.md](../architecture/stages.md)), which guides the arch
 guides the implementation: a design choice names the stories it serves, and a story that no design
 serves is a gap.
 
-There are three groups. **G** stories replicate the world generation of a well-known game, **N**
+There are four groups. **G** stories replicate the world generation of a well-known game, **N**
 stories are newcomers and beginners who want something simple but their own, or something impressive
-without effort, and **P** stories need performance.
+without effort, **P** stories need performance, and **M** stories combine nearly every technique at
+a scale no game would generate while the player plays.
 
 ## The verification gate
 
@@ -473,3 +474,74 @@ scope. **Status:** not started (2026-09-23).
 **Acceptance criteria.** Changing a parameter regenerates only the stages downstream of it and
 updates a 3×3-chunk preview within 200 ms on a reference desktop, measured per stage.
 **Needs.** Cache keyed by stage parameters, invalidation of dependants. **Status:** not started (2026-09-23).
+
+## M: maximal worlds
+
+A maximal world uses nearly every technique the G stories name, together, with far more rules,
+pieces, biomes and variation than any one of them. It is not generated at run time: it is generated
+ahead of time, in the editor before the game is built or once before play as Dwarf Fortress does,
+and what that generation hands the engine must then play smoothly. Runtime simulation and spheres or
+galaxies at full scale stay outside it, as in [vision.md](vision.md#phase-2-generation-as-a-pack-of-stages).
+As for the P stories, the targets are proposals until they are measured on a reference desktop
+([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
+
+### M1. Bake a maximal world in the editor
+
+*A studio making an open-world game wants a continent richer than they could build by hand,
+generated in the editor before the game is built, and shipped as content that plays at a steady
+frame rate.*
+
+**Context.** Studios that ship generated worlds as content generate them offline and hand-edit the
+result (the bake of N8 is the small version of this). What an offline run allows is scale and
+richness, not speed: every stage the pack declares, at full detail, over the whole world. What the
+game needs is what the engine would have built at run time, ready on disk: meshes with levels of
+detail, far proxies, occluders, colliders and navigation.
+
+**Acceptance criteria.**
+- A maximal preset in this repository generates a finite continent of 4 by 4 km at full detail. Its
+  pack has at least 100 stages, at least 40 biomes chosen by rules, per-biome height, rivers, lakes
+  and roads between sites, caves and overhangs in density volumes, a history of settlements given as
+  tables of facts, towns of at least 8 cultures, each culture a WFC module set of at least 60 modules,
+  at least 200 Assemble pieces in dungeons and buildings, at least 30 location kinds with quotas and
+  spacing, and vegetation and clutter by rule chains.
+- The bake runs in the Godot editor, reports its progress by stage, can be cancelled, and resumes
+  after an interruption from what it had written. Its memory stays bounded however large the world:
+  finished chunks go to disk.
+- The same pack and seed give the same baked content, byte for byte.
+- Generation finishes within 10 minutes on a reference desktop.
+- The baked world plays without generating anything: walking at 4.2 m/s and flying at 30 m/s over
+  it, at 60 frames per second at 1080p on a reference desktop, with a view distance of 2 km (P2),
+  the slowest frame under 16.7 ms, and memory that stays bounded (P4).
+
+**Needs.** Every stage kind, levels, density volumes
+([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)), tables of facts, a store for
+chunks outside memory ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)), the bake
+([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)), a far ground
+([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)), and an offline run with progress,
+cancelling and resuming, and streaming baked content from disk
+([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)). **Status:** not started
+(2026-09-25).
+
+### M2. Generate a maximal world once before play
+
+*A player starting a new world in a colony or strategy game waits once, watching a progress bar, for
+a world and its history as rich as M1's, then plays it without further waits.*
+
+**Context.** Dwarf Fortress generates a world and centuries of its history before play, which takes
+minutes and is part of the ritual; the world is then saved and only read. Here the history is the
+game's ([stages.md](../architecture/stages.md#history-and-other-facts-from-the-game)), written
+between terrain and realisation, and the world is generated at full detail rather than on demand.
+
+**Acceptance criteria.**
+- M1's maximal preset, run by a game at the start of a new world: terrain, then the game's history
+  over the atlas, then everything the history realises, over the whole continent.
+- It reports progress by stage, can be cancelled, keeps its memory bounded, and resumes after the
+  game is closed mid-way.
+- Generation finishes within 10 minutes on a reference desktop.
+- The result is kept as frozen chunks in the game's store, and loading the world reads them rather
+  than generating them again; the same pack, seed and history give the same world.
+- It then plays as M1's baked world does, at the same bars.
+
+**Needs.** What M1 needs, less the editor, plus per-stage persistence (`Frozen`) through the game's
+store ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)). **Status:** not started
+(2026-09-25).
