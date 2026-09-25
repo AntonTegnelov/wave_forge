@@ -1,0 +1,9 @@
+// The pack of the far ground check (render_far.gd): the same rolling ground at full detail near the
+// focus and at a coarse scale far from it.
+(
+    version: 1,
+    stages: [
+        (name: "height", kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
+        (name: "far", scale: 8, kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
+    ],
+)

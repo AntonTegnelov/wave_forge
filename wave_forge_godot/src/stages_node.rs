@@ -40,8 +40,8 @@ use wave_forge::stages::{
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
-    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, YUpSpace, ground,
-    ground_materials, ground_readers,
+    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, YUpSpace, far_ground,
+    ground, ground_materials, ground_readers,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -113,6 +113,12 @@ pub struct WaveForgeStages {
     /// colours of their own from their index.
     #[export]
     ground_palette: PackedColorArray,
+    /// A coarse field stage the far ground is drawn from beyond the near ground, a height in cells
+    /// per column like `ground_stage`'s; empty for none. Give it a radius of its own in
+    /// `target_radii`, as far as the ground should reach; a coarse chunk's far ground needs the
+    /// fields around it, so it reaches one coarse chunk less. It is drawn with `ground_material`.
+    #[export]
+    far_ground_stage: GString,
 
     /// A field stage whose value per column, from 0 to 1, is how much of it grass covers; empty for
     /// no grass. Grass stands on the ground, so it needs `ground_stage`.
@@ -190,6 +196,12 @@ pub struct WaveForgeStages {
     ground_due: std::collections::BTreeSet<ChunkCoord>,
     /// The chunks whose ground is built: its mesh, and its `RenderingServer` mesh and instance.
     grounds: HashMap<ChunkCoord, (GroundMesh, Rid, Rid)>,
+    /// Chunks of `far_ground_stage` whose far ground may have to be built again: a field around
+    /// them arrived, or near ground came or went on or beside them.
+    far_due: std::collections::BTreeSet<ChunkCoord>,
+    /// The chunks of `far_ground_stage` whose far ground is drawn: its `RenderingServer` mesh and
+    /// instance.
+    far_grounds: HashMap<ChunkCoord, (Rid, Rid)>,
     /// Each chunk's copy of the ground material, holding its material ids, while its ground is
     /// built; none without `ground_material_stage`.
     chunk_materials: HashMap<ChunkCoord, Gd<ShaderMaterial>>,
@@ -220,6 +232,8 @@ const SIGNALS_PER_FRAME: usize = 256;
 /// building each takes tenths of a millisecond on Godot's thread, so the rest wait for the next
 /// frames, nearest the followed position first.
 const GROUNDS_PER_FRAME: usize = 8;
+/// How many coarse chunks get their far ground built per frame at most.
+const FAR_GROUNDS_PER_FRAME: usize = 4;
 
 /// The most chunks one frame gives grass: each uploads two small textures.
 const GRASS_PER_FRAME: usize = 4;
@@ -429,6 +443,7 @@ impl INode for WaveForgeStages {
             followed: None,
             process_ms: Timings::new(RECENT_FRAMES),
             ground_stage: GString::new(),
+            far_ground_stage: GString::new(),
             kernel_cache: GString::from("user://wave_forge/kernels"),
             frozen_directory: GString::new(),
             ground_material: None,
@@ -444,6 +459,8 @@ impl INode for WaveForgeStages {
             collider_radius: 1,
             collision_shapes: HashMap::new(),
             grounds: HashMap::new(),
+            far_due: std::collections::BTreeSet::new(),
+            far_grounds: HashMap::new(),
             ground_due: std::collections::BTreeSet::new(),
             bodies: HashMap::new(),
             bodies_pending: 0,
@@ -525,6 +542,19 @@ impl INode for WaveForgeStages {
                 StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
             }
         }
+        let far_stage = self.far_ground_stage.to_string();
+        let (mut far_arrived, mut far_gone) = (Vec::new(), Vec::new());
+        for event in &events {
+            match event {
+                StageEvent::Generated { stage, chunk } if *stage == far_stage => {
+                    far_arrived.push(*chunk);
+                }
+                StageEvent::Dropped { stage, chunk } if *stage == far_stage => {
+                    far_gone.push(*chunk);
+                }
+                StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
+            }
+        }
         if let Some(save) = save {
             self.signals()
                 .saved()
@@ -556,7 +586,22 @@ impl INode for WaveForgeStages {
         }
         frame.signals_ms = elapsed_ms(signalling);
         let grounding = std::time::Instant::now();
+        let near_before: std::collections::BTreeSet<ChunkCoord> =
+            self.grounds.keys().copied().collect();
         frame.grounds = self.update_ground(&arrived, &gone);
+        let near_changed: Vec<ChunkCoord> = self
+            .grounds
+            .keys()
+            .copied()
+            .filter(|chunk| !near_before.contains(chunk))
+            .chain(
+                near_before
+                    .iter()
+                    .copied()
+                    .filter(|chunk| !self.grounds.contains_key(chunk)),
+            )
+            .collect();
+        self.update_far_ground(&far_arrived, &far_gone, &near_changed);
         frame.grounds_ms = elapsed_ms(grounding);
         let building = std::time::Instant::now();
         frame.bodies = self.update_colliders();
@@ -641,6 +686,18 @@ impl WaveForgeStages {
             }
         } else {
             self.palette = None;
+        }
+        if !self.far_ground_stage.is_empty()
+            && !matches!(
+                pack.kind(&self.far_ground_stage.to_string()),
+                Some(StageKind::Field(_))
+            )
+        {
+            godot_error!(
+                "wave forge: far_ground_stage {} is no field stage of the pack",
+                self.far_ground_stage
+            );
+            return false;
         }
         if self.grass_stage.is_empty() {
             self.grass = None;
@@ -1302,6 +1359,15 @@ impl WaveForgeStages {
         self.grounds.keys().map(|&chunk| to_vector(chunk)).collect()
     }
 
+    /// The chunks of `far_ground_stage` whose far ground is drawn.
+    #[func]
+    fn far_ground_chunks(&self) -> Array<Vector3i> {
+        self.far_grounds
+            .keys()
+            .map(|&chunk| to_vector(chunk))
+            .collect()
+    }
+
     /// The chunks that have a static body: their ground, and their towns' modules.
     #[func]
     fn collider_chunks(&self) -> Array<Vector3i> {
@@ -1499,6 +1565,10 @@ impl WaveForgeStages {
         out.set(
             &"pending_grounds".to_variant(),
             &(self.ground_due.len() as i64).to_variant(),
+        );
+        out.set(
+            &"pending_far_grounds".to_variant(),
+            &(self.far_due.len() as i64).to_variant(),
         );
         out.set(
             &"pending_colliders".to_variant(),
@@ -1721,6 +1791,119 @@ impl WaveForgeStages {
             self.grounds.insert(chunk, (mesh, rid, instance));
         }
         count
+    }
+
+    /// Draws the far ground of the coarse chunks that are due, nearest the followed position first
+    /// and at most [`FAR_GROUNDS_PER_FRAME`] a frame: one mesh each, leaving out the chunks whose
+    /// near ground is drawn and walled off where it meets them ([`far_ground`]). A coarse chunk is
+    /// due when a field around it arrives, and when near ground comes or goes on or beside a
+    /// lattice chunk it covers; one whose field is dropped is freed.
+    fn update_far_ground(
+        &mut self,
+        arrived: &[ChunkCoord],
+        gone: &[ChunkCoord],
+        near_changed: &[ChunkCoord],
+    ) {
+        let stage = self.far_ground_stage.to_string();
+        let (Some(worker), Some(pack)) = (&self.worker, &self.pack) else {
+            return;
+        };
+        let Some(scale) = pack.scale(&stage) else {
+            return;
+        };
+        let scale = scale as i32;
+        let mut rendering = RenderingServer::singleton();
+        for chunk in gone {
+            self.far_due.remove(chunk);
+            if let Some((mesh, instance)) = self.far_grounds.remove(chunk) {
+                rendering.free_rid(instance);
+                rendering.free_rid(mesh);
+            }
+        }
+        for chunk in arrived {
+            for (dx, dy) in (-1..=1).flat_map(|dy| (-1..=1).map(move |dx| (dx, dy))) {
+                self.far_due
+                    .insert(ChunkCoord::new(chunk.x + dx, chunk.y + dy, 0));
+            }
+        }
+        for fine in near_changed {
+            for (dx, dy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
+                self.far_due.insert(ChunkCoord::new(
+                    (fine.x + dx).div_euclid(scale),
+                    (fine.y + dy).div_euclid(scale),
+                    0,
+                ));
+            }
+        }
+        let Some(scenario) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_scenario())
+        else {
+            return;
+        };
+        let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
+        let mut due: Vec<ChunkCoord> = self.far_due.iter().copied().collect();
+        due.sort_by_key(|chunk| {
+            let first = ChunkCoord::new(chunk.x * scale, chunk.y * scale, 0);
+            (
+                (first.x - focus.x).abs().max((first.y - focus.y).abs()),
+                *chunk,
+            )
+        });
+        let cell = self.cell_size.to_array();
+        let mut built = Vec::new();
+        for chunk in due {
+            if built.len() == FAR_GROUNDS_PER_FRAME {
+                break;
+            }
+            // Looked at now: built, or waiting for a field around it, whose arrival makes it due
+            // again.
+            self.far_due.remove(&chunk);
+            let far = far_ground(
+                chunk,
+                scale as u32,
+                |at| worker.field(&stage, at),
+                cell,
+                |fine| self.grounds.get(&fine).map(|(mesh, _, _)| mesh),
+            );
+            if let Some(far) = far {
+                built.push(far);
+            }
+        }
+        for far in built {
+            let rid = rendering.mesh_create();
+            let mut arrays = VarArray::new();
+            arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
+            let vertices: PackedVector3Array = far
+                .positions
+                .iter()
+                .map(|&[x, y, z]| Vector3::new(x, y, z))
+                .collect();
+            let normals: PackedVector3Array = far
+                .normals
+                .iter()
+                .map(|&[x, y, z]| Vector3::new(x, y, z))
+                .collect();
+            arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
+            arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+            add_levelled_surface(rid, &mut arrays, &far.indices, &[]);
+            if let Some(material) = &self.ground_material {
+                rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+            }
+            let instance = rendering.instance_create2(rid, scenario);
+            let first = ChunkCoord::new(far.chunk.x * scale, far.chunk.y * scale, 0);
+            rendering.instance_set_transform(
+                instance,
+                Transform3D::new(Basis::IDENTITY, self.chunk_corner(first)),
+            );
+            Gi::Static.apply(instance);
+            if let Some((mesh, old)) = self.far_grounds.insert(far.chunk, (rid, instance)) {
+                rendering.free_rid(old);
+                rendering.free_rid(mesh);
+            }
+        }
     }
 
     /// Keeps one static body on every chunk within `collider_radius` of the followed chunk that
@@ -2080,6 +2263,11 @@ impl WaveForgeStages {
             grass.clear();
         }
         let mut rendering = RenderingServer::singleton();
+        self.far_due.clear();
+        for (_, (mesh, instance)) in self.far_grounds.drain() {
+            rendering.free_rid(instance);
+            rendering.free_rid(mesh);
+        }
         for (_, (_, mesh, instance)) in self.grounds.drain() {
             rendering.free_rid(instance);
             rendering.free_rid(mesh);
