@@ -76,7 +76,9 @@ has no built-in floating origin
 Built today: TileGrid, InstanceSet (`wave_forge::instance_sets`, for a streamed world and for towns),
 NavSource (`wave_forge::nav_source`), SpawnPoints as the points of Scatter stages, without
 custom data yet, a far ProxyMesh per chunk of coloured boxes with coarser levels
-(`wave_forge::proxy_mesh`, from a colour the game gives each module), Occluders as boxes of a
+(`wave_forge::proxy_mesh`, from a colour the game gives each module), which Godot's
+`WaveForgeWorld` draws from a distance on, the game's near drawing hiding under it as its
+`visibility_parent` ([godot.md](../reference/godot.md#far-proxies)), Occluders as boxes of a
 module set's `solid` cells (`wave_forge::occluders`),
 which Godot's `WaveForgeWorld` keeps near the player ([godot.md](../reference/godot.md#occlusion)),
 and RegionTags in part: `wave_forge::region_tags` gives a chunk's interiors (boxes

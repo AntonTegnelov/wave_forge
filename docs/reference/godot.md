@@ -31,6 +31,8 @@ extension needs none of godot-rust's thread-safety features.
 | | `interior_reverb_bus` | the audio bus interiors reverb the sounds inside them on; empty for none |
 | | `interior_audio_bus` | the audio bus sounds inside interiors play on instead of their own; empty for none, and with both empty, no interiors |
 | Occlusion | `occluder_radius` | chunks around the player that get occluders of their solid cells ([Occlusion](#occlusion)); below zero, none |
+| Far | `proxy_distance` | from this distance on, each generated chunk is drawn as its far proxy ([Far proxies](#far-proxies)); below zero, never |
+| | `proxy_colours` | each module's colour seen from afar, as module name to `Color`; a module without one is left out |
 | Advanced | `halo` | the first parity's halo, in cells |
 | | `warm_kernels` | compile the kernels a run needs when generation starts |
 
@@ -57,6 +59,7 @@ extension needs none of godot-rust's thread-safety features.
 - **Sound and surfaces:** `surface_at(position)`, `region_tags(chunk)`
   ([Sound and surfaces](#sound-and-surfaces)).
 - **Occlusion:** `occluders(chunk)` ([Occlusion](#occlusion)).
+- **Far proxies:** `proxy_instance(chunk)`, `proxy_chunks()` ([Far proxies](#far-proxies)).
 - **Cost:** `stats()`, below.
 
 ### Signals
@@ -119,6 +122,23 @@ city draws and saved several milliseconds; from above the roofs they hid under 1
 chunk's MultiMesh of a module is culled only when all of it is hidden, and culling cost more than it
 saved. Rebuilding three chunks' occluders costs Godot a millisecond or more on the frames after the
 player crosses into a chunk. `occluder_radius` is below zero until a game turns it on.
+
+### Far proxies
+
+With `proxy_distance` at zero or more, the node draws each generated chunk as one mesh of boxes
+coloured by `proxy_colours`, the library's `proxy_mesh`: a box per cell of a coloured module, and coarser levels of boxes standing for two,
+four and more cells a side as the surface's `lods`. It shows from `proxy_distance` on, as a
+visibility range with no end, takes static global illumination and casts no shadow, and is built
+at most three chunks a frame, nearest first, again when the chunk's tiles change, and freed when
+the chunk is dropped or `proxy_distance` goes below zero.
+
+A far chunk then costs one draw call where its modules cost one per module. The game draws the
+chunk near the player as before and hands it over by giving each of its instances the chunk's
+proxy as parent: `RenderingServer.instance_set_visibility_parent(instance,
+world.proxy_instance(chunk))`, or a node's `visibility_parent`. The game's drawing of the chunk then
+hides wherever its proxy shows, and the switch is exact per chunk. `proxy_instance(chunk)` is an
+invalid RID until the chunk's proxy is built, so a game sets the parent once it is, and a chunk
+with no coloured module has none. `proxy_chunks()` lists the chunks given their proxy.
 
 ## WaveForgeStages
 
@@ -343,8 +363,10 @@ through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) 
 `godot/verify_ground.gd` (the ground's materials per category, and grass) and
 `godot/verify_sound.gd` (the city's surfaces, interiors, emitters and the node's sound) and
 `godot/verify_names.gd` (a location's name through a translation) and `godot/verify_occlusion.gd`
-(the city's occluders, and the node's) in a real headless Godot. `render_occlusion.sh` measures
-what occluders cull and cost from above the city and from a street. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
+(the city's occluders, and the node's) and `godot/verify_proxies.gd` (a proxy for every generated
+chunk) in a real headless Godot. `render_occlusion.sh` measures what occluders cull and cost from
+above the city and from a street, and `render_proxies.sh` checks that a chunk's modules draw near
+and its proxy far, never both. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
 grass, and checks that trees drawn with the vegetation shader move in the wind and stand still
 without it.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
