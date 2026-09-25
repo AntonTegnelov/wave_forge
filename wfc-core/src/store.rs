@@ -299,16 +299,29 @@ pub fn region_init(
     region: &Region,
     release: bool,
 ) -> Domains {
-    let extent = store.extent();
     let shape = store.shape();
     let parity = region.chunk().parity();
-    let readable = |at: WorldCell| -> Option<u16> {
+    region_init_by(store.extent(), prior, ruleset, region, release, |at| {
         let same_parity = ChunkCoord::of_cell(at, shape).parity() == parity;
         if same_parity && !release {
             return None;
         }
         store.tile(at)
-    };
+    })
+}
+
+/// The starting domains of a region in `extent`, reading decided cells through `readable`: the
+/// tile a cell holds, or `None` for a cell to leave open. [`region_init`] reads a store this way; a
+/// caller that reads cells as they were at an earlier point of generation passes its own.
+#[must_use]
+pub fn region_init_by(
+    extent: &WorldExtent,
+    prior: &Prior,
+    ruleset: &Ruleset,
+    region: &Region,
+    release: bool,
+    readable: impl Fn(WorldCell) -> Option<u16>,
+) -> Domains {
     let masks = region.cells().map(|(at, _)| {
         if !extent.contains_cell(at) {
             return prior.open_domain(at, extent);
