@@ -426,8 +426,12 @@ detail.*
 
 **Acceptance criteria.** Coarse levels (fields and proxies) reach a view distance of at least 2 km
 on a mid-range desktop GPU at 60 frames per second, with the chunks per second each level generates
-recorded. **Needs.** Levels and scales, far proxies ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)).
-**Status:** not started (2026-09-23). Measured so far: a field stage costs 0.02 ms per chunk of 64 columns on the CPU in release (valley pack, dozen on the RTX 3070, [measurements.md](../research/measurements.md) E29), so fields are not what limits view distance.
+recorded. **Needs.** Levels and scales, far proxies ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)),
+a far ground from a coarse height stage ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)).
+**Status:** in progress (2026-09-25): coarse stages, ground levels of detail and far proxies are
+built in both engines (in Godot a far chunk of the city is one draw call, `render_proxies.sh` in
+[testing.md](../guides/testing.md)); a far ground from a coarse stage is not, and nothing is
+measured at 2 km. Measured so far: a field stage costs 0.02 ms per chunk of 64 columns on the CPU in release (valley pack, dozen on the RTX 3070, [measurements.md](../research/measurements.md) E29), so fields are not what limits view distance.
 
 ### P3. Fast into a new world
 

@@ -46,8 +46,9 @@ community port and are unverified from Iron Gate (see the story's sources).
 
 Not needed for G7: density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71);
 Valheim is a height field) and tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
-Far proxies ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)) help mountain views
-(P2) but are not in G7's criteria.
+Far proxies ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47), built) and a far ground
+from a coarse height stage ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)) serve
+mountain views (P2) but are not in G7's criteria.
 
 ## The other stories
 
