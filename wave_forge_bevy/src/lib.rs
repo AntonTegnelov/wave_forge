@@ -44,8 +44,8 @@ use std::sync::Mutex;
 use wave_forge::loader::RuleFile;
 use wave_forge::{
     BlockSolver, Builder, Chunk, ChunkCoord, ChunkEvent, ChunkShape, ChunkStore, FocusPoint,
-    GeneratorStats, ModelError, Prior, RegionStatus, RepairPolicy, Ruleset, Solver, WgpuBackend,
-    WorldExtent, WorldGenerator, YUpSpace,
+    GeneratorStats, ModelError, Prior, RegionStatus, RegionTags, RepairPolicy, Ruleset, Solver,
+    WgpuBackend, WorldExtent, WorldGenerator, YUpSpace,
 };
 
 /// An entity that generation follows, usually the player or the camera.
@@ -200,6 +200,34 @@ impl<S: Solver + Send + Sync + 'static> WaveForgeWorld<S> {
     #[must_use]
     pub fn chunk(&self, coord: ChunkCoord) -> Option<&Chunk> {
         self.generator.chunk(coord)
+    }
+
+    /// A generated chunk's rooms and sounds in Bevy's world space, from a module set's `indoor`
+    /// and `sounds` ([`wave_forge::region_tags`]), or `None` if it has not been generated.
+    #[must_use]
+    pub fn region_tags(&self, coord: ChunkCoord, tiles: &WaveForgeTiles) -> Option<RegionTags> {
+        let chunk = self.chunk(coord)?;
+        Some(wave_forge::region_tags(
+            chunk,
+            tiles,
+            &self.settings.space(),
+        ))
+    }
+
+    /// What walkers stand on at a point in Bevy's world space: the `surface` of the module in the
+    /// cell holding it, if its chunk is generated and the module gives one.
+    #[must_use]
+    pub fn surface_at<'a>(
+        &'a self,
+        translation: Vec3,
+        tiles: &'a WaveForgeTiles,
+    ) -> Option<&'a str> {
+        wave_forge::surface_at(
+            translation.to_array(),
+            |coord| self.chunk(coord),
+            tiles,
+            &self.settings.space(),
+        )
     }
 
     /// Every chunk generated so far.
