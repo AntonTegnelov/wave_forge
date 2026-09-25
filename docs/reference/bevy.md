@@ -100,16 +100,16 @@ fields. New facts drop the stages that read them and regenerate them with the ne
 
 ## Ground levels of detail
 
-`ground_levels(&ground, detail)` gives a chunk's ground as one `GroundLevelMesh` per level of
-detail ([packs.md](packs.md#ground)): its `step`, a `mesh` with the full positions and normals and
-the level's triangles, skirt included, and the abrupt `VisibilityRange` it is drawn in, measured
-from the centre of the mesh's bounds. Each goes on an entity of its own at the chunk's corner.
-`GroundDetail { pixels, height, fov }` says how many pixels a level's error may span in a viewport
-`height` pixels tall under a vertical field of view of `fov` radians: a coarser level is drawn from
-where its error spans that many pixels, pushed out by half the diagonal of the chunk's bounds so no
-point of the chunk is nearer, and a level's error counts as at least every finer level's. A level
-no distance would draw is left out. Bevy chooses no mesh's level on its own, so a game that wants
-the levels spawns these instead of `ground_mesh`.
+`ground_levels(&ground, detail)` gives a chunk's ground as one `GroundLevelMesh` per level of detail
+([packs.md](packs.md#ground)): its `step`, a `mesh` with the full positions and normals and the
+level's triangles, skirt included, and the abrupt `VisibilityRange` it is drawn in, measured from
+the centre of the mesh's bounds. Each goes on an entity of its own at the chunk's corner.
+`LevelDetail { pixels, height, fov }` (in `wave_forge_bevy::levels`) says how many pixels a level's
+error may span in a viewport `height` pixels tall under a vertical field of view of `fov` radians: a
+coarser level is drawn from where its error spans that many pixels, pushed out by half the diagonal
+of the chunk's bounds so no point of the chunk is nearer, and a level's error counts as at least
+every finer level's. A level no distance would draw is left out. Bevy chooses no mesh's level on its
+own, so a game that wants the levels spawns these instead of `ground_mesh`.
 
 ## Ground materials
 
