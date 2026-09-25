@@ -33,6 +33,8 @@ chunk beyond its radius). It also converts between spaces: `chunk_at`, `translat
   mean): `surface_at(translation, tiles)`, what walkers stand on at a point, for footsteps, and
   `region_tags(coord, tiles)`, a chunk's `interiors` (boxes of indoor cells) and `emitters` (sounds
   at points) in Bevy's world. A game gives them to its own audio crate; the plugin depends on none.
+  `proxy_levels(coord, tiles, colour, detail, begin)` gives a chunk's far stand-in
+  ([Far proxies](#far-proxies)).
 - `WaveForgeTiles`, a resource: the rule file, and `rotation_of(tile)`.
 - `ChunkUpdated`, `ChunkFailed`, `ChunkEvicted`: messages per chunk.
 - `WaveForgeSystems`: the system set, to order a game's systems around the plugin's.
@@ -98,18 +100,31 @@ products arrive as messages equal to what the runtime generates, placed where th
 them and dropped when the focus moves away, and its ground equals the library's for the same
 fields. New facts drop the stages that read them and regenerate them with the new rows. See [testing.md](../guides/testing.md).
 
+## Far proxies
+
+`WaveForgeWorld::proxy_levels(coord, &tiles, colour, detail, begin)` gives a generated chunk's far
+stand-in, the library's `proxy_mesh`, as one `ProxyLevelMesh` per level: its `cells`, a `mesh` of
+boxes whose vertex colours come from `colour`, each module's colour seen from afar (a module
+without one is left out), and the `VisibilityRange` it is drawn in. The finest level is drawn from
+`begin` on and each coarser one from where its error spans `detail`'s pixels
+([Ground levels of detail](#ground-levels-of-detail) has the rule); each goes on an entity of its
+own at the chunk's corner, `settings().translation_of(coord)`, with a `StandardMaterial`, which
+draws the colours. A game ends its own drawing of the chunk at `begin` with a `VisibilityRange`, so
+the chunk costs one draw call from there on where its modules cost one per module. An empty list
+means the chunk has nothing to stand in for.
+
 ## Ground levels of detail
 
-`ground_levels(&ground, detail)` gives a chunk's ground as one `GroundLevelMesh` per level of
-detail ([packs.md](packs.md#ground)): its `step`, a `mesh` with the full positions and normals and
-the level's triangles, skirt included, and the abrupt `VisibilityRange` it is drawn in, measured
-from the centre of the mesh's bounds. Each goes on an entity of its own at the chunk's corner.
-`GroundDetail { pixels, height, fov }` says how many pixels a level's error may span in a viewport
-`height` pixels tall under a vertical field of view of `fov` radians: a coarser level is drawn from
-where its error spans that many pixels, pushed out by half the diagonal of the chunk's bounds so no
-point of the chunk is nearer, and a level's error counts as at least every finer level's. A level
-no distance would draw is left out. Bevy chooses no mesh's level on its own, so a game that wants
-the levels spawns these instead of `ground_mesh`.
+`ground_levels(&ground, detail)` gives a chunk's ground as one `GroundLevelMesh` per level of detail
+([packs.md](packs.md#ground)): its `step`, a `mesh` with the full positions and normals and the
+level's triangles, skirt included, and the abrupt `VisibilityRange` it is drawn in, measured from
+the centre of the mesh's bounds. Each goes on an entity of its own at the chunk's corner.
+`LevelDetail { pixels, height, fov }` (in `wave_forge_bevy::levels`) says how many pixels a level's
+error may span in a viewport `height` pixels tall under a vertical field of view of `fov` radians: a
+coarser level is drawn from where its error spans that many pixels, pushed out by half the diagonal
+of the chunk's bounds so no point of the chunk is nearer, and a level's error counts as at least
+every finer level's. A level no distance would draw is left out. Bevy chooses no mesh's level on its
+own, so a game that wants the levels spawns these instead of `ground_mesh`.
 
 ## Ground materials
 

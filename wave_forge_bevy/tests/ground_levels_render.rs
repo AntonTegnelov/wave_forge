@@ -24,7 +24,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, ground};
-use wave_forge_bevy::stages::{GroundDetail, ground_levels};
+use wave_forge_bevy::levels::LevelDetail;
+use wave_forge_bevy::stages::ground_levels;
 
 const PACK: &str = r#"(
     version: 1,
@@ -87,7 +88,7 @@ fn draw(
     for entity in old {
         world.despawn(entity);
     }
-    let detail = GroundDetail {
+    let detail = LevelDetail {
         pixels,
         height: HEIGHT as f32,
         fov: FOV,

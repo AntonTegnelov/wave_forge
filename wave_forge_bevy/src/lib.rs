@@ -30,14 +30,20 @@
 //! and Bevy's `y` is the lattice's `z`; [`WaveForgeSettings::cell_size`] says how large one cell is
 //! along each of Bevy's axes.
 
+pub mod levels;
 pub mod materials;
 pub mod stages;
 
+use crate::levels::{LevelDetail, bounds_radius, level_ranges, visibility};
 use bevy_app::{App, Plugin, Update};
+use bevy_asset::RenderAssetUsages;
+use bevy_camera::visibility::VisibilityRange;
+use bevy_color::{Color, ColorToComponents};
 use bevy_ecs::error::Result;
 use bevy_ecs::message::{Message, MessageWriter};
 use bevy_ecs::prelude::{Component, IntoScheduleConfigs, Query, ResMut, Resource};
 use bevy_math::{Quat, Vec3};
+use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_render::renderer::{RenderDevice, RenderQueue};
 use bevy_transform::components::GlobalTransform;
 use std::sync::Mutex;
@@ -184,6 +190,17 @@ impl std::ops::Deref for WaveForgeTiles {
     }
 }
 
+/// One level of detail of a chunk's far stand-in, ready to spawn at the chunk's corner.
+pub struct ProxyLevelMesh {
+    /// The level's [`wave_forge::ProxyLevel::cells`].
+    pub cells: u32,
+    /// The stand-in's positions, normals and colours with the level's triangles; a
+    /// `StandardMaterial` draws its colours.
+    pub mesh: Mesh,
+    /// The distances from the camera the level is drawn at, from the centre of the mesh's bounds.
+    pub range: VisibilityRange,
+}
+
 /// The generated world, as a Bevy resource.
 ///
 /// A game reads chunks from here when a [`ChunkUpdated`] message tells it one has changed.
@@ -227,6 +244,57 @@ impl<S: Solver + Send + Sync + 'static> WaveForgeWorld<S> {
             |coord| self.chunk(coord),
             tiles,
             &self.settings.space(),
+        )
+    }
+
+    /// A generated chunk's far stand-in as one mesh per level of detail
+    /// ([`wave_forge::proxy_mesh`]): boxes coloured by `colour`, each module's colour seen from
+    /// afar, a module without one left out. The finest level is drawn from `begin` on, where a
+    /// game's own drawing of the chunk ends its `VisibilityRange`, and each coarser one from where
+    /// its error spans `detail`'s pixels. Each goes on an entity of its own at the chunk's corner,
+    /// [`WaveForgeSettings::translation_of`]. `None` if the chunk has not been generated; empty if
+    /// it has nothing to stand in for.
+    #[must_use]
+    pub fn proxy_levels(
+        &self,
+        coord: ChunkCoord,
+        tiles: &WaveForgeTiles,
+        colour: impl Fn(&str) -> Option<Color>,
+        detail: LevelDetail,
+        begin: f32,
+    ) -> Option<Vec<ProxyLevelMesh>> {
+        let chunk = self.chunk(coord)?;
+        let proxy = wave_forge::proxy_mesh(chunk, tiles, &self.settings.space(), |module| {
+            colour(module).map(|colour| colour.to_linear().to_f32_array())
+        });
+        if proxy.levels[0].indices.is_empty() {
+            return Some(Vec::new());
+        }
+        let errors: Vec<f32> = proxy.levels.iter().map(|level| level.error).collect();
+        let ranges = level_ranges(
+            &errors,
+            bounds_radius(&proxy.positions),
+            detail.per_error(),
+            begin,
+        );
+        Some(
+            ranges
+                .iter()
+                .zip(&proxy.levels)
+                .filter(|(range, level)| range.start < range.end && !level.indices.is_empty())
+                .map(|(range, level)| ProxyLevelMesh {
+                    cells: level.cells,
+                    mesh: Mesh::new(
+                        PrimitiveTopology::TriangleList,
+                        RenderAssetUsages::default(),
+                    )
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, proxy.positions.clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, proxy.normals.clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, proxy.colours.clone())
+                    .with_inserted_indices(Indices::U32(level.indices.clone())),
+                    range: visibility(range),
+                })
+                .collect(),
         )
     }
 
