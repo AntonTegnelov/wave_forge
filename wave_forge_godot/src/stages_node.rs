@@ -1438,6 +1438,17 @@ impl WaveForgeStages {
             })
     }
 
+    /// The loaded pack's water: its `level`, the sea's height in cells of height, below which a
+    /// game draws water. Empty if the pack declares none.
+    #[func]
+    fn water(&self) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        if let Some(water) = self.pack.as_ref().and_then(|pack| pack.water()) {
+            out.set("level", water.level);
+        }
+        out
+    }
+
     /// What the node has cost Godot's thread: `process_ms_median`, `_p99` and `_max` over recent
     /// frames, once there are some; and what its slowest frame since the start spent the time on:
     /// `slowest_frame_ms` in all, `slowest_frame_events` signals emitted in

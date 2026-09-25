@@ -74,6 +74,20 @@ world computes its region jobs and location tables before play. A bounded world 
 and location table it has computed, since it has few; without a bound it fails with
 `StageError::Unbounded`. `Pack::bound` gives the bound to an engine.
 
+## Water
+
+A pack may declare the water it shares:
+
+```ron
+water: Some((level: 0.05)),
+```
+
+`level` is the sea's height in cells of height: below it the ground is under water. Every stage
+that reads water reads this one, so they agree: a Scatter stage's `water` measures depth below it,
+and rivers run down to it. `Pack::water` gives it to an engine, which draws its water there.
+Loading refuses a level that is not a number, and a Scatter stage's `water` or a Rivers stage in a
+pack that declares no water.
+
 ## Edits
 
 What a player changes in a world is a log, `Edits`, which a game keeps and saves beside its facts:
@@ -519,8 +533,9 @@ field, made by a chain of modifiers applied in this order. Every field after `sp
    - every condition of `when`, which takes the conditions a Rules stage takes over any
      expression: a biome with `Greater(Is("biome", ["woods"]), Constant(0.5))`, an altitude, a mask
      field, a terrain delta, a biome area;
-   - with `water: Some((level: w, depth: (low, high)))`, the ground between `low` and `high` cells
-     below `w`;
+   - with `water: Some((depth: (low, high)))`, the ground between `low` and `high` cells below the
+     pack's water ([Water](#water)); with `float: true` in it, the point stands on the water's
+     surface rather than on the ground under it, a lily or a boat;
    - at least `margin` cells from every site, or every piece of an Assemble stage, with
      `avoid: Some(("sites", margin))`;
    - at least a clearance from every point of the Scatter stages `block` names, with
@@ -576,16 +591,16 @@ registers its own jobs in the runtime it builds; a Godot game, which cannot, use
 
 ### Rivers
 
-`Rivers(height: "terrain", region: 16, sources: 3, sea: 0.05, width: (0.6, 2.0), step: 2)`: rivers
-down a height field, a region job built into the library, so a pack names it without Rust. In every
-square region of `region` chunks, each of `sources` rivers (1 to `MAX_SOURCES`, 64) starts at the
-highest of a few hashed columns of the region and steps `step` cells (default 1) at a time to the
-lowest of the eight columns around it, until it reaches a height below `sea`, a hollow where no step
-goes lower, or the region's edge. Its values, the radius an Apply stage carves by, grow from
-`width.0` at its source to `width.1` at its mouth (default 1 to 3). A river never leaves its region,
-so regions never read each other, and rivers are the same in any order; a river that reaches its
-region's edge stops there, so large regions suit an island whose rivers run to its coast. The ring
-world's rivers run from its high ground to the sea and are carved into its `ground`.
+`Rivers(height: "terrain", region: 16, sources: 3, width: (0.6, 2.0), step: 2)`: rivers down a
+height field, a region job built into the library, so a pack names it without Rust. In every square
+region of `region` chunks, each of `sources` rivers (1 to `MAX_SOURCES`, 64) starts at the highest
+of a few hashed columns of the region and steps `step` cells (default 1) at a time to the lowest of
+the eight columns around it, until it reaches a height below the pack's water ([Water](#water)), a
+hollow where no step goes lower, or the region's edge. Its values, the radius an Apply stage carves
+by, grow from `width.0` at its source to `width.1` at its mouth (default 1 to 3). A river never
+leaves its region, so regions never read each other, and rivers are the same in any order; a river
+that reaches its region's edge stops there, so large regions suit an island whose rivers run to its
+coast. The ring world's rivers run from its high ground to the sea and are carved into its `ground`.
 
 ### Network
 

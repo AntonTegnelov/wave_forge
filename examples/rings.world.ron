@@ -12,6 +12,8 @@
     version: 1,
     // A finite island: nothing is generated beyond the sea around it.
     bound: Some(Disk(centre: (0.0, 0.0), radius: 110.0)),
+    // The sea, which rivers run to.
+    water: Some((level: 0.05)),
     stages: [
         // Broad continents times rolling hills, with detail added where there is land.
         (name: "land", kind: Field(Sub(
@@ -75,7 +77,7 @@
         ))),
         // Rivers from the high ground to the sea, three in every region of 16 chunks, carved into
         // the terrain as the ground a player walks.
-        (name: "rivers", kind: Rivers(height: "terrain", region: 16, sources: 3, sea: 0.05,
+        (name: "rivers", kind: Rivers(height: "terrain", region: 16, sources: 3,
             width: (0.6, 2.0), step: 2)),
         (name: "ground", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
             profile: Carve(0.1))),

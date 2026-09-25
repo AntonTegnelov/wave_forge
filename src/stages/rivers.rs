@@ -8,8 +8,9 @@
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob};
 use super::runtime::StageError;
 
-/// The Rivers stage's job: `sources` rivers per region down the field `height` to `sea`, stepping
-/// `step` cells at a time, widening from `width.0` at the source to `width.1` at the mouth.
+/// The Rivers stage's job: `sources` rivers per region down the field `height` to `sea`, the
+/// pack's water level, stepping `step` cells at a time, widening from `width.0` at the source to
+/// `width.1` at the mouth.
 pub(crate) struct DownhillRivers<'a> {
     pub(crate) height: &'a str,
     pub(crate) sources: u32,

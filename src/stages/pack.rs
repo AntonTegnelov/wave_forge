@@ -32,6 +32,17 @@ pub struct PackFile {
     /// [`Expr::FastNoise`]; an engine may replace one ([`crate::stages::Runtime::with_noise`]).
     #[serde(default)]
     pub noises: BTreeMap<String, NoiseConfig>,
+    /// The water the whole pack shares: where Scatter stages measure depth, where rivers end, and
+    /// what an engine fills with water.
+    #[serde(default)]
+    pub water: Option<PackWater>,
+}
+
+/// A pack's water: the sea's level, in cells of height, below which the ground is under water.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackWater {
+    pub level: f32,
 }
 
 /// The edge of a finite world, in WFC cells along the lattice's x and y.
@@ -262,15 +273,14 @@ pub enum StageKind {
     },
     /// Rivers down the `height` field: in every square region of `region` chunks, `sources` of
     /// them, each from the highest of a few hashed columns stepping `step` cells at a time to the
-    /// lowest column around it, until it reaches `sea`, a hollow it cannot leave or the region's
-    /// edge. A river's values, its radius for an Apply stage, grow from `width.0` at its source
+    /// lowest column around it, until it reaches the pack's water, a hollow it cannot leave or the
+    /// region's edge. A river's values, its radius for an Apply stage, grow from `width.0` at its source
     /// to `width.1` at its mouth. A river never leaves its region, so regions never read each
     /// other. A chunk's product is the rivers of its region that pass through it.
     Rivers {
         height: String,
         region: u32,
         sources: u32,
-        sea: f32,
         #[serde(default = "narrow_to_wide")]
         width: (f32, f32),
         #[serde(default = "one_cell")]
@@ -500,12 +510,14 @@ pub struct Group {
 }
 
 /// The water a Scatter stage's points stand in: a point is kept where the ground lies between
-/// `depth.0` and `depth.1` cells below `level`.
+/// `depth.0` and `depth.1` cells below the pack's water, and with `float` stands on the water's
+/// surface rather than on the ground under it.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Water {
-    pub level: f32,
     pub depth: (f32, f32),
+    #[serde(default)]
+    pub float: bool,
 }
 
 /// The most candidates a Scatter stage's block may hold, and the most points a group may have:
@@ -1090,6 +1102,8 @@ pub enum PackError {
     Cycle(Vec<String>),
     #[error("{0}")]
     Bound(String),
+    #[error("the pack's water: {0}")]
+    Water(String),
     #[error("two tables are named {0:?}")]
     DuplicateTable(String),
     #[error("table {table:?}: {message}")]
@@ -1392,6 +1406,7 @@ pub struct Pack {
     /// The noises Field expressions read by name.
     pub(crate) noises: BTreeMap<String, NoiseConfig>,
     pub(crate) bound: Option<Bound>,
+    pub(crate) water: Option<PackWater>,
     /// FNV-1a of the pack as RON, which a save records.
     pub(crate) digest: u64,
 }
@@ -1421,6 +1436,11 @@ impl Pack {
         }
         if let Some(bound) = &file.bound {
             bound.check().map_err(PackError::Bound)?;
+        }
+        if let Some(water) = &file.water
+            && !water.level.is_finite()
+        {
+            return Err(PackError::Water(format!("a level of {}", water.level)));
         }
         let (tables, table_by_name, table_order) = link_tables(file.tables)?;
         for def in &file.stages {
@@ -1682,10 +1702,14 @@ impl Pack {
                     height,
                     region,
                     sources,
-                    sea,
                     width,
                     step,
                 } => {
+                    if file.water.is_none() {
+                        return Err(invalid(
+                            "rivers run to the sea, but the pack declares no water".to_owned(),
+                        ));
+                    }
                     if *region == 0 || *step == 0 {
                         return Err(invalid(format!(
                             "a region of {region} chunks and steps of {step} cells"
@@ -1696,13 +1720,12 @@ impl Pack {
                             "{sources} sources a region; 1 to {MAX_SOURCES} are allowed"
                         )));
                     }
-                    if !(sea.is_finite()
-                        && width.0.is_finite()
+                    if !(width.0.is_finite()
                         && width.1.is_finite()
                         && width.0 >= 0.0
                         && width.1 >= 0.0)
                     {
-                        return Err(invalid(format!("sea at {sea} and widths {width:?}")));
+                        return Err(invalid(format!("widths of {width:?}")));
                     }
                     // A chunk may lie anywhere in its region, and the rivers read the whole
                     // region's height.
@@ -1894,16 +1917,18 @@ impl Pack {
                     if !(0.0..=1.0).contains(align) {
                         return Err(invalid(format!("align {align} is not between 0 and 1")));
                     }
-                    if let Some(water) = water
-                        && !(water.level.is_finite()
-                            && water.depth.0.is_finite()
+                    if let Some(water) = water {
+                        if file.water.is_none() {
+                            return Err(invalid(
+                                "water depths, but the pack declares no water".to_owned(),
+                            ));
+                        }
+                        if !(water.depth.0.is_finite()
                             && water.depth.1.is_finite()
                             && water.depth.0 <= water.depth.1)
-                    {
-                        return Err(invalid(format!(
-                            "water at {} with depths {:?}",
-                            water.level, water.depth
-                        )));
+                        {
+                            return Err(invalid(format!("water depths of {:?}", water.depth)));
+                        }
                     }
                     for condition in when {
                         condition.check().map_err(invalid)?;
@@ -2066,6 +2091,7 @@ impl Pack {
             table_order,
             noises: file.noises,
             bound: file.bound,
+            water: file.water,
             digest,
         })
     }
@@ -2132,6 +2158,12 @@ impl Pack {
     #[must_use]
     pub const fn bound(&self) -> Option<&Bound> {
         self.bound.as_ref()
+    }
+
+    /// The water the pack shares, if it declares any.
+    #[must_use]
+    pub const fn water(&self) -> Option<&PackWater> {
+        self.water.as_ref()
     }
 
     /// The scale `stage` works at, in WFC cells per column.
