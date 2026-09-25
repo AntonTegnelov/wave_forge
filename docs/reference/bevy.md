@@ -32,7 +32,8 @@ chunk beyond its radius). It also converts between spaces: `chunk_at`, `translat
   set's `surface`, `indoor` and `sounds` ([godot.md](godot.md#sound-and-surfaces) has what they
   mean): `surface_at(translation, tiles)`, what walkers stand on at a point, for footsteps, and
   `region_tags(coord, tiles)`, a chunk's `interiors` (boxes of indoor cells) and `emitters` (sounds
-  at points) in Bevy's world. A game gives them to its own audio crate; the plugin depends on none.
+  at points) in Bevy's world. A game gives them to its own audio crate; the plugin depends on none
+  ([Sound and names](#sound-and-names) shows one mapping).
   `proxy_levels(coord, tiles, colour, detail, begin)` gives a chunk's far stand-in
   ([Far proxies](#far-proxies)).
 - `WaveForgeTiles`, a resource: the rule file, and `rotation_of(tile)`.
@@ -62,7 +63,8 @@ thread.
   id)` hand the stages new tables of facts and a focused row ([packs.md](packs.md#tables-of-facts)):
   a game keeps its own `Facts`, gives it rows, and hands a copy here; the runtime `build` makes is
   given its first facts and focus there. A location's `Site::name()` is a translation key with
-  arguments ([packs.md](packs.md#locations)), for a game's localisation, a Fluent bundle say. The
+  arguments ([packs.md](packs.md#locations)), for a game's localisation, a Fluent bundle say
+  ([Sound and names](#sound-and-names)). The
   pack's water is the game's own `Pack::water()` ([packs.md](packs.md#water)).
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
@@ -100,6 +102,28 @@ Bevy's device matches what the library generates on a device of its own, and a s
 products arrive as messages equal to what the runtime generates, placed where the lattice puts
 them and dropped when the focus moves away, and its ground equals the library's for the same
 fields. New facts drop the stages that read them and regenerate them with the new rows. See [testing.md](../guides/testing.md).
+
+## Sound and names
+
+`wave_forge_bevy/examples/sound_and_names.rs` is the mapping a game writes from region tags and
+place names to `bevy_kira_audio` and Fluent, neither of which the plugin depends on.
+
+- Each of a chunk's emitters becomes an entity with a `SpatialAudioEmitter` playing a looped sound
+  for its key, spawned on `ChunkUpdated` and stopped on `ChunkEvicted` or when the chunk is
+  generated again.
+- A sound on the other side of a wall from the listener, one indoors and the other not, is heard
+  over a quarter of its `SpatialRadius`. `bevy_kira_audio` 0.27 has no effects and no buses, so
+  interiors cannot reverb or route a room's sounds through it: a channel's volume is written onto
+  each of its sounds, and spatial audio overwrites each sound's volume every frame. Reverb waits for
+  a crate that exposes it on the tracked Bevy version
+  ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
+- A location's `Site::name()` is formatted by a thread-safe Fluent bundle
+  (`fluent::concurrent::FluentBundle`, so it can be a resource) from its key and arguments, the
+  isolation marks off, and a key without a translation falls back to the key.
+
+`bevy_kira_audio` links ALSA on Linux, so building the example there needs `libasound2-dev`, as
+the Bevy CI job installs. Its tests run with `cargo test`; running it needs a compute device, and
+without an audio output it warns and still runs.
 
 ## Far proxies
 
