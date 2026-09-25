@@ -4,16 +4,17 @@
 // from the centre and noise, with a wobble that keeps the rings from being perfect circles; ore and
 // groves of birches are scattered by biome, height and how uneven the ground is, and shrines and
 // crypts are placed per ring from a location table, each crypt with a dungeon of rooms grown above
-// it; rivers run from the high ground to the sea and are carved into the ground. Locations are
-// frozen, kept in a save as first placed; grass is clutter, never saved. The test pack for G7's
-// biome rules, per-biome height, rivers, placement rules, location table, dungeons and persistence;
-// heights run from about -0.3 to 1 before the biomes shape them.
+// it; lakes stand in the hollows, and rivers run from the high ground to the sea or a lake and are
+// carved into the ground. Locations are frozen, kept in a save as first placed; grass is clutter,
+// never saved. The test pack for G7's biome rules, per-biome height, lakes, rivers, placement rules,
+// location table, dungeons and persistence; heights run from about -0.3 to 1 before the biomes
+// shape them.
 (
     version: 1,
     // A finite island: nothing is generated beyond the sea around it.
     bound: Some(Disk(centre: (0.0, 0.0), radius: 110.0)),
-    // The sea, which rivers run to.
-    water: Some((level: 0.05)),
+    // The sea, which rivers run to, and the lakes that stand in the island's hollows.
+    water: Some((level: 0.05, lakes: Some("lakes"))),
     stages: [
         // Broad continents times rolling hills, with detail added where there is land.
         (name: "land", kind: Field(Sub(
@@ -75,8 +76,10 @@
             otherwise: Input("height"),
             blend: 3,
         ))),
-        // Rivers from the high ground to the sea, three in every region of 16 chunks, carved into
-        // the terrain as the ground a player walks.
+        // Lakes in the terrain's hollows, in every region of 16 chunks, at least six columns each.
+        (name: "lakes", kind: Lakes(height: "terrain", region: 16, min_columns: 6)),
+        // Rivers from the high ground to the sea or a lake, three in every region of 16 chunks,
+        // carved into the terrain as the ground a player walks.
         (name: "rivers", kind: Rivers(height: "terrain", region: 16, sources: 3,
             width: (0.6, 2.0), step: 2)),
         (name: "ground", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,

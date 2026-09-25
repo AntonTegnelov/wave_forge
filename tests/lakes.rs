@@ -264,3 +264,61 @@ fn lakes_fill_a_coarse_lattice_as_a_fine_one() {
     }
     assert!(lake_columns > 0, "no lake on the coarse lattice");
 }
+
+#[test]
+fn the_ring_world_has_lakes_in_its_hollows_and_rivers_that_reach_them() {
+    let text = std::fs::read_to_string(format!(
+        "{}/examples/rings.world.ron",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("the ring world");
+    let mut runtime = Runtime::new(Arc::new(Pack::parse(&text).expect("a valid pack")), 7, SIZE);
+
+    runtime
+        .request_bound(&["lakes", "terrain", "rivers"])
+        .expect("a bounded island");
+    runtime.run_until_idle().expect("the stages run");
+
+    let mut lake_columns = 0;
+    let mut wet = std::collections::BTreeSet::new();
+    for y in -14..14 {
+        for x in -14..14 {
+            let chunk = ChunkCoord::new(x, y, 0);
+            let (Some(terrain), Some(lakes)) = (
+                runtime.field("terrain", chunk),
+                runtime.field("lakes", chunk),
+            ) else {
+                continue;
+            };
+            for (at, (&ground, &surface)) in terrain.values.iter().zip(&lakes.values).enumerate() {
+                assert!(surface >= ground);
+                if surface > ground {
+                    lake_columns += 1;
+                    assert!(surface > 0.05, "a lake below the sea");
+                    let (cx, cy) = (at as i64 % 8, at as i64 / 8);
+                    wet.insert((i64::from(x) * 8 + cx, i64::from(y) * 8 + cy));
+                }
+            }
+        }
+    }
+    let mut ends = BTreeMap::new();
+    for y in -14..14 {
+        for x in -14..14 {
+            for river in runtime
+                .curves("rivers", ChunkCoord::new(x, y, 0))
+                .unwrap_or_default()
+            {
+                let last = river.points.last().expect("a river has points");
+                let end = (last[0].floor() as i64, last[1].floor() as i64);
+                ends.insert(river.id.clone(), wet.contains(&end));
+            }
+        }
+    }
+    let ends_in_lakes = ends.values().filter(|&&in_lake| in_lake).count();
+    println!(
+        "{lake_columns} columns under lakes; {ends_in_lakes} of {} rivers end in one",
+        ends.len()
+    );
+    assert!(lake_columns >= 20, "{lake_columns} columns under lakes");
+    assert!(ends_in_lakes > 0, "no river reaches a lake");
+}
