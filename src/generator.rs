@@ -1,13 +1,14 @@
 //! Generating a world around its focus points, one batch at a time.
 
+use crate::layers::{Layers, Phase, cell_index};
 use crate::scheduler::{self, FocusPoint};
 use crate::{Error, WorldConfig};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 use wfc_core::{
-    Chunk, ChunkCoord, ChunkStore, Domains, JobId, Prior, Region, RegionBatch, RegionShape,
-    RegionStatus, Ruleset, Solver, region_init,
+    Chunk, ChunkCoord, ChunkStore, Domains, JobId, ModelError, Prior, Region, RegionBatch,
+    RegionShape, RegionStatus, Ruleset, Solver, region_init_by,
 };
 
 /// What happened to a chunk.
@@ -49,6 +50,9 @@ pub struct GeneratorStats {
     pub repair_batches: u32,
     /// The part of `solver_ms` spent on repairs.
     pub repair_ms: f64,
+    /// Repairs of chunks in memory run again, to rewrite a neighbour generated again as they
+    /// rewrote it the first time.
+    pub replayed: u32,
 }
 
 /// A batch the solver is working on.
@@ -58,6 +62,8 @@ struct Pending {
     regions: Vec<Region>,
     /// Whether the batch may rewrite cells its chunks did not own, which a repair does.
     release: bool,
+    /// Whether the batch is a repair run again ([`WorldGenerator::replays`]).
+    replay: bool,
     halo: u32,
     started: Instant,
 }
@@ -86,6 +92,14 @@ pub struct WorldGenerator<S: Solver> {
     failed: BTreeSet<ChunkCoord>,
     /// Chunks whose first attempt failed, and the halo their next repair uses.
     repairs: BTreeMap<ChunkCoord, u32>,
+    /// Chunks in memory that a repair placed, and the halo it placed them with.
+    repaired: BTreeMap<ChunkCoord, u32>,
+    /// Repairs to run again: of chunks in memory whose repair rewrote a neighbour that has since
+    /// been evicted and generated again, and the halo each used (docs/architecture/world.md,
+    /// "Regenerating exactly").
+    replays: BTreeMap<ChunkCoord, u32>,
+    /// What each chunk in memory was after each phase that wrote it.
+    layers: Layers,
     pending: Option<Pending>,
     events: Vec<ChunkEvent>,
     stats: GeneratorStats,
@@ -105,6 +119,9 @@ impl<S: Solver> WorldGenerator<S> {
             focus: Vec::new(),
             failed: BTreeSet::new(),
             repairs: BTreeMap::new(),
+            repaired: BTreeMap::new(),
+            replays: BTreeMap::new(),
+            layers: Layers::default(),
             pending: None,
             events: Vec::new(),
             stats: GeneratorStats::default(),
@@ -125,8 +142,19 @@ impl<S: Solver> WorldGenerator<S> {
         if self.pending.is_some() {
             return Ok(());
         }
-        let missing =
-            scheduler::missing(&self.needed(), &self.store, &self.deferred(), &self.focus);
+        // A second-parity chunk reads its face neighbours after the first-parity repairs, so it
+        // also waits for those run again.
+        let missing: Vec<ChunkCoord> =
+            scheduler::missing(&self.needed(), &self.store, &self.deferred(), &self.focus)
+                .into_iter()
+                .filter(|chunk| {
+                    chunk.parity() == 0
+                        || !chunk
+                            .face_neighbours()
+                            .iter()
+                            .any(|face| self.replays.contains_key(face))
+                })
+                .collect();
         let batch = scheduler::next_batch(
             &missing,
             &self.store,
@@ -142,17 +170,28 @@ impl<S: Solver> WorldGenerator<S> {
         // with its halo released, which lets it rewrite the neighbouring cells it covers. Only a
         // repair whose neighbourhood is complete may run (`repair_ready`), and among those the
         // lowest class first; with nothing ready, what `needed` added is still being generated.
-        let ready = self
-            .active_repairs()
-            .into_iter()
-            .filter(|chunk| self.repair_ready(*chunk))
-            .min_by_key(|chunk| (scheduler::repair_class(*chunk), *chunk));
-        if let Some(chunk) = ready {
+        loop {
+            let ready = self
+                .active_repairs()
+                .into_iter()
+                .filter(|chunk| self.repair_ready(*chunk))
+                .min_by_key(|chunk| (scheduler::repair_class(*chunk), *chunk));
+            let Some(chunk) = ready else {
+                break;
+            };
+            if let Some(halo) = self.replays.remove(&chunk) {
+                // A replay with nothing left to write is dropped, and the next one looked at.
+                if self.replay_writes(chunk) {
+                    self.stats.replayed += 1;
+                    return self.start_repair(chunk, halo, true);
+                }
+                continue;
+            }
             let halo = self
                 .repairs
                 .remove(&chunk)
                 .expect("chosen from the queued repairs");
-            return self.start_repair(chunk, halo);
+            return self.start_repair(chunk, halo, false);
         }
         // A repair waits only for first attempts, and for repairs of lower classes, none of which
         // wait for it: a first-parity repair never waits for a second-parity chunk. So with active
@@ -173,7 +212,7 @@ impl<S: Solver> WorldGenerator<S> {
         scheduler::repair_neighbourhood(chunk, &self.config.extent)
             .into_iter()
             .all(|neighbour| {
-                if self.repairs.contains_key(&neighbour) {
+                if self.queued(neighbour) {
                     scheduler::repair_class(neighbour) > class
                 } else {
                     self.store.contains(neighbour) || self.failed.contains(&neighbour)
@@ -214,13 +253,13 @@ impl<S: Solver> WorldGenerator<S> {
             .keys()
             .copied()
             .filter(|chunk| self.wanted.contains(chunk))
+            .chain(self.replays.keys().copied())
             .collect();
         let mut frontier: Vec<ChunkCoord> = active.iter().copied().collect();
         while let Some(chunk) = frontier.pop() {
             let class = scheduler::repair_class(chunk);
             for neighbour in scheduler::repair_neighbourhood(chunk, extent) {
-                let lower = self.repairs.contains_key(&neighbour)
-                    && scheduler::repair_class(neighbour) < class;
+                let lower = self.queued(neighbour) && scheduler::repair_class(neighbour) < class;
                 let unattempted = !self.store.contains(neighbour)
                     && !self.failed.contains(&neighbour)
                     && !self.repairs.contains_key(&neighbour);
@@ -228,7 +267,7 @@ impl<S: Solver> WorldGenerator<S> {
                     .then(|| neighbour.face_neighbours())
                     .into_iter()
                     .flatten()
-                    .filter(|face| self.repairs.contains_key(face));
+                    .filter(|face| self.queued(*face));
                 for waited_for in lower.then_some(neighbour).into_iter().chain(blockers) {
                     if active.insert(waited_for) {
                         frontier.push(waited_for);
@@ -237,6 +276,11 @@ impl<S: Solver> WorldGenerator<S> {
             }
         }
         active
+    }
+
+    /// Whether a repair of `chunk` is queued, to run for the first time or again.
+    fn queued(&self, chunk: ChunkCoord) -> bool {
+        self.repairs.contains_key(&chunk) || self.replays.contains_key(&chunk)
     }
 
     /// Takes whatever the solver has finished, without blocking.
@@ -351,11 +395,10 @@ impl<S: Solver> WorldGenerator<S> {
         &self.failed
     }
 
-    /// Drops the chunks further than `margin` beyond every focus point and hands them back, so a
-    /// game can persist them. A chunk generated again is solved against the neighbours that stayed,
-    /// so it fits them, but it need not have the tiles it had (see the determinism contract in the
-    /// crate documentation); [`import`](Self::import) puts a persisted one back as it was. Chunks a
-    /// queued repair still has to see stay, or they would be generated again at once.
+    /// Drops the chunks further than `margin` beyond every focus point and hands them back. A chunk
+    /// asked for again comes back with the tiles it had, repairs included (see the determinism
+    /// contract in the crate documentation), so a game need not keep them. Chunks a queued repair
+    /// still has to see stay, or they would be generated again at once.
     pub fn evict_outside(&mut self, focus: &[FocusPoint], margin: u32) -> Vec<Chunk> {
         let needed = self.repair_needs(&self.active_repairs());
         let far: Vec<ChunkCoord> = self
@@ -369,18 +412,29 @@ impl<S: Solver> WorldGenerator<S> {
                     .all(|focus| focus.distance(*coord) > focus.radius + margin)
             })
             .collect();
+        for coord in &far {
+            self.layers.forget(*coord);
+            self.repaired.remove(coord);
+            self.replays.remove(coord);
+        }
         far.into_iter()
             .filter_map(|coord| self.store.remove(coord))
             .collect()
     }
 
-    /// Puts a chunk back, for example one a game had persisted.
+    /// Puts a chunk back, for example one a game had persisted. It is taken as it is: every
+    /// operation around it reads its tiles, whatever phase of the schedule it is in.
     ///
     /// # Errors
     /// If the chunk is outside the world or the wrong size.
     pub fn import(&mut self, chunk: Chunk) -> Result<(), Error> {
-        self.failed.remove(&chunk.coord);
-        Ok(self.store.insert(chunk)?)
+        let coord = chunk.coord;
+        self.store.insert(chunk)?;
+        self.failed.remove(&coord);
+        self.repaired.remove(&coord);
+        self.replays.remove(&coord);
+        self.layers.born(coord, None);
+        Ok(())
     }
 
     /// Dispatches `chunks` as one batch.
@@ -390,7 +444,7 @@ impl<S: Solver> WorldGenerator<S> {
         let mut init = Domains::from_words(0, self.ruleset.words_per_cell(), Vec::new())
             .expect("an empty batch");
         for region in &regions {
-            let domains = region_init(&self.store, &self.prior, &self.ruleset, region, release);
+            let domains = self.region_init(region, release);
             init.append(&domains);
         }
         let batch = RegionBatch {
@@ -402,17 +456,17 @@ impl<S: Solver> WorldGenerator<S> {
             budget: None,
             portfolio: false,
         };
-        self.dispatch(batch, chunks.to_vec(), regions, halo, false)
+        self.dispatch(batch, chunks.to_vec(), regions, halo, false, false)
     }
 
     /// Repairs one chunk: its region with the halo released, solved once per seed of the repair
     /// policy in one dispatch. A chunk that exhausted a first attempt usually has an arrangement
     /// that another seed finds (docs/architecture/world.md, "Repairs"), and the seeds run side by
     /// side, so trying many costs about as much as trying one.
-    fn start_repair(&mut self, chunk: ChunkCoord, halo: u32) -> Result<(), Error> {
+    fn start_repair(&mut self, chunk: ChunkCoord, halo: u32, replay: bool) -> Result<(), Error> {
         let shape = self.region_shape(halo);
         let region = Region::new(chunk, shape);
-        let domains = region_init(&self.store, &self.prior, &self.ruleset, &region, true);
+        let domains = self.region_init(&region, true);
         let seeds = repair_seeds(self.config.seed, halo, self.repair_width());
         let mut init = Domains::from_words(0, self.ruleset.words_per_cell(), Vec::new())
             .expect("an empty batch");
@@ -428,7 +482,48 @@ impl<S: Solver> WorldGenerator<S> {
             // One chunk tried with many seeds, of which only the lowest that solves is kept.
             portfolio: true,
         };
-        self.dispatch(batch, vec![chunk], vec![region], halo, true)
+        self.dispatch(batch, vec![chunk], vec![region], halo, true, replay)
+    }
+
+    /// Whether running the repair of `chunk` again would write anything: a neighbour it rewrote in
+    /// a fresh world is in memory and has not yet passed the repair's phase, because it was
+    /// generated again. A repair is run again with the halo it placed the chunk with, and writes
+    /// the neighbours as it wrote them the first time.
+    fn replay_writes(&self, chunk: ChunkCoord) -> bool {
+        let phase = Phase::repair(chunk);
+        scheduler::repair_neighbourhood(chunk, &self.config.extent)
+            .into_iter()
+            .chain(chunk.face_neighbours())
+            .filter(|neighbour| self.store.contains(*neighbour))
+            .any(|neighbour| self.layers.latest(neighbour) < Some(phase))
+    }
+
+    /// The starting domains of `region` for the operation on its chunk: a repair when `release`
+    /// holds, otherwise a first attempt. Its neighbours are read as they were before the
+    /// operation's phase, which is how a fresh world had them however much has been evicted and
+    /// generated again since; and a first attempt reads only chunks of the other parity, as the
+    /// ones a batch cannot contain.
+    fn region_init(&self, region: &Region, release: bool) -> Domains {
+        let chunk = region.chunk();
+        let phase = if release {
+            Phase::repair(chunk)
+        } else {
+            Phase::first_attempt(chunk)
+        };
+        let shape = self.store.shape();
+        region_init_by(
+            &self.config.extent,
+            &self.prior,
+            &self.ruleset,
+            region,
+            release,
+            |at| {
+                if !release && ChunkCoord::of_cell(at, shape).parity() == chunk.parity() {
+                    return None;
+                }
+                self.layers.tile_before(&self.store, at, phase)
+            },
+        )
     }
 
     /// Every (regions, region shape) pair a run can dispatch for focus points of up to `radius`:
@@ -484,6 +579,7 @@ impl<S: Solver> WorldGenerator<S> {
         regions: Vec<Region>,
         halo: u32,
         release: bool,
+        replay: bool,
     ) -> Result<(), Error> {
         let job = self.solver.start(batch)?;
         self.stats.batches += 1;
@@ -492,6 +588,7 @@ impl<S: Solver> WorldGenerator<S> {
             chunks,
             regions,
             release,
+            replay,
             halo,
             started: Instant::now(),
         });
@@ -516,6 +613,11 @@ impl<S: Solver> WorldGenerator<S> {
                 Some(index).filter(|&index| result.statuses[index].is_solved())
             };
             let Some(solved) = solved else {
+                assert!(
+                    !pending.replay,
+                    "a repair of {chunk:?} run again did not solve, though it read what it read \
+                     the first time"
+                );
                 self.give_up_or_repair(
                     chunk,
                     result.statuses[index],
@@ -525,17 +627,155 @@ impl<S: Solver> WorldGenerator<S> {
                 continue;
             };
             let domains = result.region(solved, cells);
-            let touched = self.store.commit(region, &domains, pending.release)?;
+            let touched = self.write(region, &domains, pending.release)?;
+            if pending.replay {
+                self.events
+                    .extend(touched.into_iter().map(ChunkEvent::Updated));
+                continue;
+            }
             self.stats.solved += 1;
             if pending.release {
                 self.stats.repaired += 1;
                 self.stats.rewritten_by_repair += touched.len() as u32 - 1;
+                self.repaired.insert(chunk, pending.halo);
             }
             self.failed.remove(&chunk);
             self.events
                 .extend(touched.into_iter().map(ChunkEvent::Updated));
         }
         Ok(())
+    }
+
+    /// Writes what the operation on `region`'s chunk decided, a repair when `release` holds, and
+    /// returns the chunks it changed. It writes the chunk itself and, for a repair, the cells of
+    /// the neighbours in its region that exist and have not yet passed its phase; a neighbour last
+    /// written by another operation of the same phase takes these cells into that version. A
+    /// neighbour that has passed the phase holds this write already, from the first time: what
+    /// was decided now has to be what it holds, or the operation read something other than it read
+    /// then.
+    ///
+    /// # Errors
+    /// If a cell to write was left undecided.
+    ///
+    /// # Panics
+    /// If a neighbour that has passed the phase holds anything else, which would mean the phases
+    /// do not order the operations as the scheduler runs them.
+    fn write(
+        &mut self,
+        region: &Region,
+        domains: &Domains,
+        release: bool,
+    ) -> Result<Vec<ChunkCoord>, Error> {
+        let own = region.chunk();
+        let phase = if release {
+            Phase::repair(own)
+        } else {
+            Phase::first_attempt(own)
+        };
+        let shape = self.store.shape();
+        let mut by_chunk: BTreeMap<ChunkCoord, Vec<(usize, u16)>> = BTreeMap::new();
+        for (index, (at, inner)) in region.cells().enumerate() {
+            if !self.config.extent.contains_cell(at) {
+                continue;
+            }
+            let coord = ChunkCoord::of_cell(at, shape);
+            if !inner && !(release && self.store.contains(coord)) {
+                continue;
+            }
+            let Some(tile) = domains.decided(index as u32) else {
+                return Err(ModelError::Undecided { cell: at }.into());
+            };
+            let tile = u16::try_from(tile).expect("a tile index fits u16");
+            by_chunk
+                .entry(coord)
+                .or_default()
+                .push((cell_index(coord, shape, at), tile));
+        }
+        let mut touched = Vec::new();
+        for (coord, cells) in by_chunk {
+            let Some(chunk) = self.store.get(coord) else {
+                let mut tiles = vec![0u16; shape.cells() as usize].into_boxed_slice();
+                for &(cell, tile) in &cells {
+                    tiles[cell] = tile;
+                }
+                self.store.insert(Chunk {
+                    coord,
+                    tiles,
+                    version: 1,
+                })?;
+                self.layers.born(coord, Some(phase));
+                self.replay_around(coord, phase);
+                touched.push(coord);
+                continue;
+            };
+            let latest = self.layers.latest(coord);
+            if latest < Some(phase) {
+                let before = chunk.tiles.clone();
+                let mut tiles = before.clone();
+                for &(cell, tile) in &cells {
+                    tiles[cell] = tile;
+                }
+                let version = chunk.version + 1;
+                self.store.insert(Chunk {
+                    coord,
+                    tiles,
+                    version,
+                })?;
+                self.layers.rewritten(coord, phase, before);
+                touched.push(coord);
+                continue;
+            }
+            if latest == Some(phase) {
+                // Another operation of this phase wrote the chunk last. Operations of one phase
+                // are two chunks apart and write different cells of a chunk between them, so this
+                // one's cells join the same version.
+                if cells.iter().any(|&(cell, tile)| chunk.tiles[cell] != tile) {
+                    let mut tiles = chunk.tiles.clone();
+                    for &(cell, tile) in &cells {
+                        tiles[cell] = tile;
+                    }
+                    let version = chunk.version + 1;
+                    self.store.insert(Chunk {
+                        coord,
+                        tiles,
+                        version,
+                    })?;
+                    touched.push(coord);
+                }
+                continue;
+            }
+            match self.layers.written_by(&self.store, coord, phase) {
+                Some(held) => assert!(
+                    cells.iter().all(|&(cell, tile)| held[cell] == tile),
+                    "the operation on {own:?} at {phase:?}, run again, wrote {coord:?} otherwise \
+                     than the first time"
+                ),
+                None => assert!(
+                    !self.layers.existed_before(coord, phase),
+                    "{coord:?} existed before the operation on {own:?} at {phase:?} and was not \
+                     written by it"
+                ),
+            }
+        }
+        Ok(touched)
+    }
+
+    /// A chunk entered the store at `phase`: every chunk in memory within one of it whose repair
+    /// comes after `phase` in a fresh world rewrote it then, so that repair runs again. In a fresh
+    /// world no such repair has run yet, since each waits for the chunks around it.
+    fn replay_around(&mut self, chunk: ChunkCoord, phase: Phase) {
+        let around: Vec<ChunkCoord> = (-1..=1)
+            .flat_map(|x| (-1..=1).flat_map(move |y| (-1..=1).map(move |z| (x, y, z))))
+            .filter(|&offset| offset != (0, 0, 0))
+            .map(|(x, y, z)| ChunkCoord::new(chunk.x + x, chunk.y + y, chunk.z + z))
+            .collect();
+        for neighbour in around {
+            if let Some(&halo) = self.repaired.get(&neighbour)
+                && Phase::repair(neighbour) > phase
+            {
+                self.replays.insert(neighbour, halo);
+            }
+        }
     }
 
     /// Queues a repair for a chunk that would not solve, or gives up on it.

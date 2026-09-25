@@ -92,16 +92,11 @@ For a fixed rule set, prior and configuration:
 - **The same requests give the same world** on any backend, any number of threads, and any solver
   invocation count. Every choice is a hash of the world seed, the chunk's coordinate and where the
   solve had got to ([solver.md](solver.md#seeds-and-hashing)).
-- **Without repairs, a chunk's tiles are a function of its coordinate.** A chunk is solved against
-  its face neighbours and nothing else, so a neighbourhood evicted and asked for again comes back the
-  same. Evicting *part* of one need not: a chunk regenerated beside a neighbour that stayed is solved
-  against that neighbour, which keeps the seam invisible, and need not give the tiles it had.
-- **Partial eviction never leaves a seam, repairs included.** A first attempt pins the neighbours
-  of the other parity that are in the store, whether a repair rewrote them or not, so a chunk
-  generated again fits the neighbours that stayed. A city evicted beyond every cut across it and
-  asked for again has no adjacency the rules forbid (`wfc-devtools/tests/partial_eviction.rs`). A
-  game that wants a chunk back with the tiles it had persists what `evict_outside` hands back and
-  puts it back with `import`.
+- **A chunk evicted and asked for again comes back tile for tile, repairs included**, with nothing
+  saved: a game walking away and back sees what it saw
+  ([Regenerating exactly](#regenerating-exactly)). An 8×4-chunk city evicted beyond every cut across
+  it and asked for again is the city generated once, and so is one walked along and back while
+  evicting behind the focus (`wfc-devtools/tests/partial_eviction.rs`, seeds 8 and 11).
 - **With repairs, the world is the same in any generation order.** A 4×4-chunk city comes out tile
   for tile the same generated all at once or chunk by chunk in either raster order, repairs included
   (`wfc-devtools/tests/order_diff.rs`, seeds 8 and 11). Every chunk a repair rewrote is reported as
@@ -116,14 +111,52 @@ corner chunks of the other parity, which it does not wait for, because they may 
 A rule set is **streaming-clean** when no chunk ever needs a repair; then the limit does not apply.
 The city is not: about one chunk in ten is repaired.
 
+## Regenerating exactly
+
+Solving an evicted chunk again against the neighbours that stayed would fit them but change it. The
+waits above hold every operation in a fresh world to one order around each chunk, and each reads its
+neighbours at a fixed point of it: a first-parity first attempt reads nothing, a second-parity one
+reads its face neighbours after the first-parity repairs, and a repair reads them after the first
+attempts and the lower classes. A neighbour that stayed has moved on since, rewritten by repairs that
+came later. So regeneration reads the past, in the manner of Boris the Brave's
+[Infinite Modifying in Blocks](https://www.boristhebrave.com/2021/11/08/infinite-modifying-in-blocks/),
+where every block is a fixed function of a bounded set of earlier layers.
+
+- **Phases.** Around one chunk a fresh world runs first-parity first attempts, then first-parity
+  repairs by class, then second-parity first attempts, then second-parity repairs by class. The
+  scheduler's waits keep every operation within one chunk of another in that order.
+- **Views.** The generator keeps, for each chunk in memory that a repair has rewritten, its tiles
+  after each phase that wrote it. An operation reads every neighbour as it was before its own phase,
+  so it reads what it read in a fresh world however much has been evicted and generated again since.
+- **Writes by phase.** A repair writes the neighbours in its region that have not yet passed its
+  phase. Repairs of one phase are two chunks apart and write different cells of a chunk between
+  them, so those join one version. A neighbour that has passed the phase holds the write already,
+  and what the repair decided has to equal it; if it did not, the model of the schedule would be
+  wrong, and the generator panics rather than go on.
+- **Replays.** A repair of a chunk that stayed rewrote the neighbours around it, and a neighbour
+  generated again has lost that. So when a chunk enters memory, every repair of a chunk in memory
+  within one of it that comes later in the order runs again, with the halo it placed its chunk
+  with, and writes only what has not passed its phase; a second-parity first attempt waits for the
+  replays on its face neighbours. A replay with nothing left to write is dropped. `GeneratorStats`
+  counts them as `replayed`.
+
+In a fresh world every view is the current tiles and no replay can be queued, since each repair
+waits for the chunks around it: the golden world and the order-independence tests pass unchanged.
+The pasts are kept only for chunks in memory and go with them. Generating an evicted part of the
+city again costs about what generating it the first time did
+([measurements.md](../research/measurements.md#regenerating-exactly-188-2026-09-25)). A chunk put
+back with `import` is taken as it is, visible to every phase. The limit of worlds more than one
+chunk tall stays.
+
 ## Streaming
 
 `WorldGenerator::request` takes focus points (a chunk and a radius). `tick` starts the next batch:
 the nearest eligible chunks of one parity or, when nothing else can start, the lowest-class repair
 whose neighbourhood is complete. `poll` commits whatever has finished and returns `ChunkEvent`s
 (`Updated`, `Failed`, and `Evicted` from a `Worker`); `wait` and `run_until_idle` block instead, for tests and tools.
-`evict_outside` hands chunks beyond a margin back so a game can persist them, keeping what active
-repairs need, and `import` puts one back.
+`evict_outside` drops chunks beyond a margin, keeping what active repairs need, and hands them back;
+asked for again they come back the same, so a game need not keep them. `import` puts a chunk back as
+it is.
 
 A `Worker` runs the same generator on a thread of its own for engines that cannot poll
 ([overview.md](overview.md#threads)).
