@@ -76,11 +76,13 @@ first, which the survival game grows into, then what the strategy game needs.
 3. **Engine depth, alongside.** Built in both engines: ground materials, grass from a cover field,
    plants in a global wind, and ground levels of detail with skirts
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)); region tags for sound and
-   place names as translation keys ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43)).
-   Left: Bevy's audio and Fluent mapping
-   ([#174](https://github.com/AntonTegnelov/wave_forge/issues/174)), far proxies and
-   occluders ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)), density volumes for
-   G1, G3 and G8 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
+   place names as translation keys ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43));
+   far proxies, occluders and GI by content class
+   ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)). Left: a far ground from a
+   coarse height stage for P2 ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)),
+   Bevy's audio and Fluent mapping
+   ([#174](https://github.com/AntonTegnelov/wave_forge/issues/174)), density volumes for G1, G3
+   and G8 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
 4. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 

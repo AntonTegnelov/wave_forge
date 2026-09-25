@@ -108,18 +108,18 @@ Each is a gap between the code and the design or the stories, with where it is t
   ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, with levels of detail and skirts
   that Godot and Bevy draw by distance; both draw its materials and grass and sway plants in the
-  wind; Forward+ measurements and far proxies are
-  [#166](https://github.com/AntonTegnelov/wave_forge/issues/166) and
-  [#47](https://github.com/AntonTegnelov/wave_forge/issues/47). Scattered points stand at their
+  wind; Forward+ measurements are [#166](https://github.com/AntonTegnelov/wave_forge/issues/166),
+  and a far ground from a coarse height stage is
+  [#183](https://github.com/AntonTegnelov/wave_forge/issues/183). Scattered points stand at their
   column's height, which can differ from the mesh between column centres by up to half a column's
   slope.
 - **No levels of detail** for the exported module meshes; they wait for authored models
   ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)).
 - **Scenes bound to points are not pooled** (a decision for the owner,
-  [#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), and there are no far proxies,
-  occluders or authoring tools
-  ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47),
-  [#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). Region tags reach Bevy as data,
+  [#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), and there are no authoring tools
+  ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). Far proxies, occluders and GI by
+  content class are built ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)); occluders
+  pay only from street level (E50). Region tags reach Bevy as data,
   and its mapping to an audio crate and Fluent waits for those crates to support its Bevy version
   ([#174](https://github.com/AntonTegnelov/wave_forge/issues/174)).
 - **Licences for a distributed build.** Everything in both integrations' dependency trees is MIT,
