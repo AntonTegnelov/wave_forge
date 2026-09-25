@@ -49,6 +49,7 @@
 //!   needed, which lifts that limit too.
 
 pub mod cell_boxes;
+pub mod far_ground;
 pub mod frozen;
 pub mod generator;
 pub mod ground;
@@ -65,6 +66,7 @@ pub mod towns;
 pub mod worker;
 
 pub use cell_boxes::CellBox;
+pub use far_ground::{FarGround, far_ground};
 pub use frozen::{DirectoryStore, FrozenStore, StoreError};
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
 pub use ground::{GroundLevel, GroundMesh, ground, ground_materials, ground_readers};
