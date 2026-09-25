@@ -197,6 +197,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   is its `name_key` with its `name_args` ([packs.md](packs.md#locations)), which a game turns into
   words with `tr(site.name_key, "wave_forge").format(site.name_args)` and a translation of that key
   in the `wave_forge` context.
+- `water()`: the pack's water ([packs.md](packs.md#water)), its `level` in cells of height, or an
+  empty dictionary if the pack declares none.
 - `town(stage, chunk)`: a town's `region` or `row`, `height` and `tiles` in a chunk.
 - `town_instance_sets(stage, chunk, names)`: a town chunk's placements in the layout of
   `WaveForgeWorld.instance_sets`, raised to the site's height.
