@@ -144,7 +144,7 @@ func _check_editor_setup() -> bool:
 		if property["usage"] & PROPERTY_USAGE_GROUP:
 			groups.append(property["name"])
 	# The node's own groups come first; Node's inherited ones follow.
-	if groups.slice(0, 8) != ["Rules", "World", "Streaming", "Physics", "Navigation", "Audio", "Occlusion", "Advanced"]:
+	if groups.slice(0, 9) != ["Rules", "World", "Streaming", "Physics", "Navigation", "Audio", "Occlusion", "Far", "Advanced"]:
 		node.free()
 		_fail("the inspector groups are %s" % [groups])
 		return false

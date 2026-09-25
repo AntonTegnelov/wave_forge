@@ -68,6 +68,7 @@ mod grass;
 mod lods;
 mod occlusion;
 mod placements;
+mod proxy;
 mod radius;
 mod stages_node;
 mod timings;
@@ -179,6 +180,17 @@ pub struct WaveForgeWorld {
     #[export]
     occluder_radius: i32,
 
+    /// From this distance on, each generated chunk is drawn as one mesh of boxes coloured by
+    /// `proxy_colours`, with coarser levels further out; a game hides its own drawing of the chunk
+    /// there by making `proxy_instance(chunk)` its `visibility_parent`. Below zero, none are.
+    #[export_group(name = "Far")]
+    #[export]
+    proxy_distance: f32,
+    /// Each module's colour seen from afar, as module name to `Color`; a module without one is
+    /// left out of the proxies.
+    #[export]
+    proxy_colours: VarDictionary,
+
     /// Cells solved around a chunk and thrown away, so its borders can be completed. Changing it
     /// compiles other kernels.
     #[export_group(name = "Advanced")]
@@ -223,6 +235,11 @@ pub struct WaveForgeWorld {
     /// since theirs was built.
     occluders: occlusion::Occluders,
     occluders_due: std::collections::BTreeSet<ChunkCoord>,
+    /// Each generated chunk's proxy, the chunks whose tiles changed since theirs was built, and
+    /// the distance they were last drawn from.
+    proxies: proxy::Proxies,
+    proxies_due: std::collections::BTreeSet<ChunkCoord>,
+    proxies_begin: f32,
     /// Each chunk's navigation region and the mesh being baked for it.
     navigation: HashMap<ChunkCoord, NavigationChunk>,
     /// The triangles of each module's collision shape, as the navigation bake reads them.
@@ -307,6 +324,11 @@ impl INode for WaveForgeWorld {
             occluder_radius: -1,
             occluders: occlusion::Occluders::default(),
             occluders_due: std::collections::BTreeSet::new(),
+            proxy_distance: -1.0,
+            proxy_colours: VarDictionary::new(),
+            proxies: proxy::Proxies::default(),
+            proxies_due: std::collections::BTreeSet::new(),
+            proxies_begin: -1.0,
             navigation_radius: -1,
             navigation_template: None,
             navigation: HashMap::new(),
@@ -333,6 +355,7 @@ impl INode for WaveForgeWorld {
             navigation.free_rid(chunk.region);
         }
         self.audio.stop();
+        self.proxies.clear();
     }
 
     /// Starts generating from `rules_file` if the node is set to start on its own.
@@ -399,6 +422,7 @@ impl INode for WaveForgeWorld {
         frame.navigation_ms = elapsed_ms(navigating);
         self.update_audio(&updated);
         self.update_occluders(&updated);
+        self.update_proxies(&updated);
         frame.ms = elapsed_ms(processing);
         self.process_ms.push(frame.ms);
         if frame.ms > self.slowest_frame.ms {
@@ -777,6 +801,22 @@ impl WaveForgeWorld {
         .unwrap_or_default()
     }
 
+    /// The instance of a chunk's far proxy, for a game's own drawing of the chunk to take as its
+    /// `visibility_parent`, so the game's drawing hides where the proxy shows; an invalid RID for
+    /// a chunk without one.
+    #[func]
+    fn proxy_instance(&self, chunk: Vector3i) -> Rid {
+        self.proxies
+            .instance(from_vector(chunk))
+            .unwrap_or(Rid::Invalid)
+    }
+
+    /// The chunks that have been given their proxy, those with nothing to stand in for included.
+    #[func]
+    fn proxy_chunks(&self) -> Array<Vector3i> {
+        self.proxies.chunks().map(to_vector).collect()
+    }
+
     /// A generated chunk's occluders: an `AABB` per box of its solid cells, the boxes together
     /// covering each solid cell once. Empty for a chunk that is not generated.
     #[func]
@@ -1043,6 +1083,70 @@ impl WaveForgeWorld {
         let mut owner = self.base().clone();
         for tags in tags {
             self.audio.build(&mut owner, &tags, &sounds, &buses);
+        }
+    }
+
+    /// Keeps a proxy on every generated chunk while `proxy_distance` is zero or more, building a
+    /// few a frame, nearest first, and again when a chunk's tiles change; frees the others.
+    fn update_proxies(&mut self, updated: &[ChunkCoord]) {
+        let (Some(worker), Some(rules), Some(focus)) = (&self.worker, &self.rules, self.followed)
+        else {
+            return;
+        };
+        let generated: HashSet<ChunkCoord> = worker.chunks().map(|chunk| chunk.coord).collect();
+        let built: HashSet<ChunkCoord> = self.proxies.chunks().collect();
+        // Every generated chunk is within reach while proxies are on.
+        let radius = if self.proxy_distance >= 0.0 {
+            i32::MAX
+        } else {
+            -1
+        };
+        let plan = radius::plan(
+            radius,
+            focus,
+            &generated,
+            &built,
+            &mut self.proxies_due,
+            updated,
+            BODIES_PER_FRAME,
+        );
+        let layout = self.space();
+        let colours = &self.proxy_colours;
+        let colour = |module: &str| {
+            colours
+                .get(module)
+                .and_then(|colour| colour.try_to::<Color>().ok())
+                .map(|colour| [colour.r, colour.g, colour.b, colour.a])
+        };
+        let meshes: Vec<wave_forge::ProxyMesh> = plan
+            .build
+            .iter()
+            .map(|&coord| {
+                let chunk = worker
+                    .chunk(coord)
+                    .expect("chosen from the worker's chunks");
+                wave_forge::proxy_mesh(chunk, rules, &layout, colour)
+            })
+            .collect();
+        for chunk in plan.gone {
+            self.proxies.drop_chunk(chunk);
+        }
+        if self.proxies_begin != self.proxy_distance {
+            self.proxies.set_begin(self.proxy_distance);
+            self.proxies_begin = self.proxy_distance;
+        }
+        let Some(scenario) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_scenario())
+        else {
+            return;
+        };
+        for mesh in meshes {
+            let corner = Vector3::from_array(layout.chunk_origin(mesh.chunk));
+            self.proxies
+                .build(scenario, corner, &mesh, self.proxy_distance);
         }
     }
 
