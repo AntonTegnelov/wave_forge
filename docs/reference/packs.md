@@ -82,11 +82,13 @@ A pack may declare the water it shares:
 water: Some((level: 0.05)),
 ```
 
-`level` is the sea's height in cells of height: below it the ground is under water. Every stage
-that reads water reads this one, so they agree: a Scatter stage's `water` measures depth below it,
-and rivers run down to it. `Pack::water` gives it to an engine, which draws its water there.
-Loading refuses a level that is not a number, and a Scatter stage's `water` or a Rivers stage in a
-pack that declares no water.
+`level` is the sea's height in cells of height: below it the ground is under water. With
+`lakes: Some("lakes")` it also names a [Lakes](#lakes) stage, whose surface raises the water inland.
+Every stage that reads water reads this one, so they agree: a Scatter stage's `water` measures depth
+below the sea or a lake, whichever is higher, and rivers run down to the sea or into a lake.
+`Pack::water` gives it to an engine, which draws its water there. Loading refuses a level that is
+not a number, lakes that name no Lakes stage, and a Scatter stage's `water`, a Rivers stage or a
+Lakes stage in a pack that declares no water.
 
 ## Edits
 
@@ -153,8 +155,8 @@ Data flows only from coarse to fine. A stage reads stages as coarse as itself or
 factor, and loading refuses anything else. A fine stage reads a coarser field between its columns,
 linearly from the four around its column's centre, and a coarser category from the column its own
 lies in. Positions in expressions (`X`, `Y`, `Distance`, `Angle`, and noise) are in WFC cells at
-every scale, so a formula means the same at any scale. Field, Blur, Rules and Region stages can be
-coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
+every scale, so a formula means the same at any scale. Field, Blur, Rules, Region and Lakes stages
+can be coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
 fields.
 
 ## Stages
@@ -534,8 +536,8 @@ field, made by a chain of modifiers applied in this order. Every field after `sp
      expression: a biome with `Greater(Is("biome", ["woods"]), Constant(0.5))`, an altitude, a mask
      field, a terrain delta, a biome area;
    - with `water: Some((depth: (low, high)))`, the ground between `low` and `high` cells below the
-     pack's water ([Water](#water)); with `float: true` in it, the point stands on the water's
-     surface rather than on the ground under it, a lily or a boat;
+     pack's water ([Water](#water)), a lake's surface where there is one; with `float: true` in it,
+     the point stands on the water's surface rather than on the ground under it, a lily or a boat;
    - at least `margin` cells from every site, or every piece of an Assemble stage, with
      `avoid: Some(("sites", margin))`;
    - at least a clearance from every point of the Scatter stages `block` names, with
@@ -596,11 +598,27 @@ height field, a region job built into the library, so a pack names it without Ru
 region of `region` chunks, each of `sources` rivers (1 to `MAX_SOURCES`, 64) starts at the highest
 of a few hashed columns of the region and steps `step` cells (default 1) at a time to the lowest of
 the eight columns around it, until it reaches a height below the pack's water ([Water](#water)), a
-hollow where no step goes lower, or the region's edge. Its values, the radius an Apply stage carves
+lake of the pack's water, a hollow where no step goes lower, or the region's edge. Its values, the radius an Apply stage carves
 by, grow from `width.0` at its source to `width.1` at its mouth (default 1 to 3). A river never
 leaves its region, so regions never read each other, and rivers are the same in any order; a river
 that reaches its region's edge stops there, so large regions suit an island whose rivers run to its
 coast. The ring world's rivers run from its high ground to the sea and are carved into its `ground`.
+
+### Lakes
+
+`Lakes(height: "terrain", region: 16, min_columns: 4)`: water standing in the hollows of a height
+field, a region job built into the library. In every square region of `region` chunks, a priority
+flood (Barnes, Lehman and Mulla, 2014) starts from the region's edge columns and from the columns
+under the pack's water, where water drains away, and raises every other column to the lowest height
+its water could spill over. A column raised above its ground and above the sea is under a lake, and
+a connected set of such columns, of at least `min_columns` (default 4), is a lake; a smaller one is
+left dry. A lake never reaches its region's edge, since the edge drains, so regions never read each
+other and lakes are the same in any order; a hollow across a region border stays dry.
+
+The product is a field of the water's surface: a lake's level over its columns, the ground's height
+everywhere else, so an expression can read it like any field and never meets a missing value. A
+Lakes stage may be coarse ([Levels](#levels)), filling hollows over a world map. The pack's water
+names it to join the rest of the water; loading refuses a region of 0 chunks or lakes of 0 columns.
 
 ### Network
 
