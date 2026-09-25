@@ -9,3 +9,5 @@ CONVENTIONS.MD
 .cursor/
 .claude/
 .aider*
+# Results of tools/measure_desktop.ps1, sent to the owner, never committed.
+/measurements/

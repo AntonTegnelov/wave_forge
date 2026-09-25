@@ -51,7 +51,7 @@ use wave_forge::loader::RuleFile;
 use wave_forge::{
     BlockSolver, Builder, Chunk, ChunkCoord, ChunkEvent, ChunkShape, ChunkStore, FocusPoint,
     GeneratorStats, ModelError, Prior, RegionStatus, RegionTags, RepairPolicy, Ruleset, Solver,
-    WgpuBackend, WorldExtent, WorldGenerator, YUpSpace,
+    SolverConfig, WgpuBackend, WorldExtent, WorldGenerator, YUpSpace,
 };
 
 /// An entity that generation follows, usually the player or the camera.
@@ -346,6 +346,8 @@ pub struct WaveForgePlugin {
     prior: Prior,
     settings: WaveForgeSettings,
     own_device: bool,
+    /// How the GPU solver runs a region.
+    solver: SolverConfig,
     /// The focus radius to compile kernels for while the plugin is built.
     warm: Option<u32>,
     /// The rule file the rule set came from, inserted as [`WaveForgeTiles`].
@@ -361,6 +363,7 @@ impl WaveForgePlugin {
             prior,
             settings,
             own_device: false,
+            solver: SolverConfig::default(),
             warm: None,
             tiles: None,
         }
@@ -397,6 +400,15 @@ impl WaveForgePlugin {
         self
     }
 
+    /// How the GPU solver runs a region. A smaller `max_batch` makes each dispatch shorter, so it
+    /// holds the device, which rendering may share, for less of a frame, and fills the world more
+    /// slowly.
+    #[must_use]
+    pub const fn solver_config(mut self, solver: SolverConfig) -> Self {
+        self.solver = solver;
+        self
+    }
+
     /// A plugin that asks for a device of its own, for a game whose Bevy build uses a different
     /// wgpu version than this crate, or one that wants generation isolated from rendering.
     #[must_use]
@@ -418,7 +430,8 @@ impl Plugin for WaveForgePlugin {
 
     /// Builds the generator once every other plugin has built, which is when Bevy's device exists.
     fn finish(&self, app: &mut App) {
-        let builder = builder(&self.ruleset, &self.prior, &self.settings);
+        let builder =
+            builder(&self.ruleset, &self.prior, &self.settings).solver_config(self.solver);
         let mut generator = if self.own_device {
             builder.build()
         } else {

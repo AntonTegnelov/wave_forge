@@ -96,7 +96,8 @@ first, which the survival game grows into, then what the strategy game needs.
 desktops with native drivers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)). It
 decides the device policy in both engines, whether a backend over Godot's `RenderingDevice` is worth
 building, and whether the P stories' targets hold. Also grass and ground levels on Forward+ on a
-desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166)).
+desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166)). One script takes all of
+them ([desktop-measurements.md](../guides/desktop-measurements.md)).
 
 **Before any release:** builds for every desktop platform the Godot Asset Store expects (Windows,
 macOS, Linux), and a note in the extension on where godot-rust's MPL-2.0 source can be obtained.
