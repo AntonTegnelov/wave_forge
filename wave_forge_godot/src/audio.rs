@@ -18,6 +18,13 @@ struct ChunkSound {
     players: Vec<Gd<AudioStreamPlayer3D>>,
 }
 
+/// The audio buses interiors give the sounds inside them: `reverb` their reverb, `audio` the bus
+/// they play on instead of their own. Empty for none.
+pub(crate) struct InteriorBuses {
+    pub(crate) reverb: StringName,
+    pub(crate) audio: StringName,
+}
+
 /// The areas and players of the chunks within the audio radius.
 #[derive(Default)]
 pub(crate) struct RegionAudio {
@@ -34,19 +41,20 @@ impl RegionAudio {
         self.chunks.keys().copied()
     }
 
-    /// Gives `tags`' chunk areas for its interiors, with reverb on `reverb_bus` unless it is empty,
-    /// and a player for each emitter whose key `sounds` maps to a stream, all children of `owner`;
-    /// replacing what the chunk had.
+    /// Gives `tags`' chunk areas for its interiors, which reverb the sounds inside them on
+    /// `buses.reverb` and play them on `buses.audio`, each unless empty, and a player for each
+    /// emitter whose key `sounds` maps to a stream, all children of `owner`; replacing what the
+    /// chunk had.
     pub(crate) fn build(
         &mut self,
         owner: &mut Gd<Node>,
         tags: &RegionTags,
         sounds: &VarDictionary,
-        reverb_bus: &StringName,
+        buses: &InteriorBuses,
     ) {
         self.drop_chunk(tags.chunk);
         let mut areas = Vec::new();
-        if !reverb_bus.is_empty() {
+        if !buses.reverb.is_empty() || !buses.audio.is_empty() {
             for interior in &tags.interiors {
                 let [min, max] = [interior.min, interior.max].map(Vector3::from_array);
                 let mut shape = BoxShape3D::new_gd();
@@ -54,12 +62,18 @@ impl RegionAudio {
                 let mut collision = CollisionShape3D::new_alloc();
                 collision.set_shape(&shape);
                 let mut area = Area3D::new_alloc();
-                // Areas only give their reverb to sounds inside them; they detect nothing.
+                // Areas only change the sounds inside them; they detect nothing.
                 area.set_monitoring(false);
                 area.set_collision_mask(0);
-                area.set_use_reverb_bus(true);
-                area.set_reverb_bus_name(reverb_bus);
-                area.set_reverb_amount(1.0);
+                if !buses.reverb.is_empty() {
+                    area.set_use_reverb_bus(true);
+                    area.set_reverb_bus_name(&buses.reverb);
+                    area.set_reverb_amount(1.0);
+                }
+                if !buses.audio.is_empty() {
+                    area.set_audio_bus_override(true);
+                    area.set_audio_bus_name(&buses.audio);
+                }
                 area.add_child(&collision);
                 area.set_position((min + max) / 2.0);
                 owner.add_child(&area);
