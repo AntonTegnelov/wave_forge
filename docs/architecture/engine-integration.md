@@ -75,7 +75,8 @@ has no built-in floating origin
 
 Built today: TileGrid, InstanceSet (`wave_forge::instance_sets`, for a streamed world and for towns),
 NavSource (`wave_forge::nav_source`), SpawnPoints as the points of Scatter stages, without
-custom data yet, and RegionTags in part: `wave_forge::region_tags` gives a chunk's interiors (boxes
+custom data yet, Occluders as boxes of a module set's `solid` cells (`wave_forge::occluders`),
+and RegionTags in part: `wave_forge::region_tags` gives a chunk's interiors (boxes
 of indoor cells) and emitters (sounds at points), and `wave_forge::surface_at` what walkers stand
 on at a point, from a module set's `indoor`, `sounds` and `surface` fields
 (`wfc-rules/src/formats/module_format.rs`), which Godot's `WaveForgeWorld` turns into reverb
