@@ -17,6 +17,7 @@ built in `Plugin::finish`.
 | `WaveForgePlugin::from_rules(file, prior, settings)` | the same from a rule file, and insert `WaveForgeTiles` so systems can ask what each tile is |
 | `WaveForgePlugin::on_own_device(ruleset, prior, settings)` | a device of its own, for a Bevy build on another wgpu version or to isolate generation from rendering |
 | `.solver_config(config)` | how the GPU solver runs a region (`SolverConfig`); a smaller `max_batch` makes each dispatch hold the device for less of a frame and fills the world more slowly. Which setting a game should use is measured by `examples/frame_times.rs` ([desktop-measurements.md](../guides/desktop-measurements.md)) |
+| `.frozen(store)` | freeze the world: a chunk it evicts goes to the `FrozenStore` as it is and comes back from it rather than being generated, even after the rule set changes ([world.md](../architecture/world.md#regenerating-exactly)) |
 | `.warm(radius)` | compile every kernel a focus of up to `radius` can dispatch, repairs included, while the plugin builds, instead of at the first dispatch |
 | `WaveForgeSolverPlugin::new(ruleset, prior, settings, solver)` | generate on a solver the game built: another backend, or the CPU reference in a test |
 
@@ -66,7 +67,9 @@ thread.
   given its first facts and focus there. A location's `Site::name()` is a translation key with
   arguments ([packs.md](packs.md#locations)), for a game's localisation, a Fluent bundle say
   ([Sound and names](#sound-and-names)). The
-  pack's water is the game's own `Pack::water()` ([packs.md](packs.md#water)).
+  pack's water is the game's own `Pack::water()` ([packs.md](packs.md#water)). A frozen stage's
+  store is given where the runtime is built, `Runtime::with_store`, in the plugin's `build` closure
+  ([packs.md](packs.md#persistence-and-saves)).
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
 - `WaveForgeStages::set_edits(edits)` hands the stages the player's edits

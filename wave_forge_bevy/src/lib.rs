@@ -50,8 +50,8 @@ use std::sync::Mutex;
 use wave_forge::loader::RuleFile;
 use wave_forge::{
     BlockSolver, Builder, Chunk, ChunkCoord, ChunkEvent, ChunkShape, ChunkStore, FocusPoint,
-    GeneratorStats, ModelError, Prior, RegionStatus, RegionTags, RepairPolicy, Ruleset, Solver,
-    SolverConfig, WgpuBackend, WorldExtent, WorldGenerator, YUpSpace,
+    FrozenStore, GeneratorStats, ModelError, Prior, RegionStatus, RegionTags, RepairPolicy,
+    Ruleset, Solver, SolverConfig, WgpuBackend, WorldExtent, WorldGenerator, YUpSpace,
 };
 
 /// An entity that generation follows, usually the player or the camera.
@@ -352,6 +352,8 @@ pub struct WaveForgePlugin {
     warm: Option<u32>,
     /// The rule file the rule set came from, inserted as [`WaveForgeTiles`].
     tiles: Option<RuleFile>,
+    /// The store of a frozen world, handed to the generator as it is built.
+    frozen: Mutex<Option<Box<dyn FrozenStore>>>,
 }
 
 impl WaveForgePlugin {
@@ -366,6 +368,7 @@ impl WaveForgePlugin {
             solver: SolverConfig::default(),
             warm: None,
             tiles: None,
+            frozen: Mutex::new(None),
         }
     }
 
@@ -409,6 +412,15 @@ impl WaveForgePlugin {
         self
     }
 
+    /// Freezes the world: a chunk it evicts goes to `store` as it is, and comes back from it rather
+    /// than being generated, even if the rule set changed since
+    /// ([`WorldGenerator::with_store`]).
+    #[must_use]
+    pub fn frozen(self, store: Box<dyn FrozenStore>) -> Self {
+        *self.frozen.lock().expect("not poisoned") = Some(store);
+        self
+    }
+
     /// A plugin that asks for a device of its own, for a game whose Bevy build uses a different
     /// wgpu version than this crate, or one that wants generation isolated from rendering.
     #[must_use]
@@ -439,6 +451,9 @@ impl Plugin for WaveForgePlugin {
             builder.build_on(device, queue)
         }
         .expect("a device for Wave Forge, and a rule set that fits it");
+        if let Some(store) = self.frozen.lock().expect("not poisoned").take() {
+            generator = generator.with_store(store);
+        }
         if let Some(radius) = self.warm {
             let shapes = generator.kernel_shapes(radius);
             generator

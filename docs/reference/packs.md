@@ -140,8 +140,15 @@ returns the drops as `request` does, and fails as `set_edits` does, changing not
 compares `generator` and `pack` with its own to decide what to tell a player; the runtime never
 refuses a save for them. The facts are the game's to save beside it.
 
-A runtime holds every frozen chunk it has generated for as long as it lives, and a save holds them
-all, so freezing suits stages with few products, like locations, over ones with many.
+Without a store, a runtime holds every frozen chunk it has generated for as long as it lives, and a
+save holds them all, so freezing suits stages with few products, like locations. With one,
+`Runtime::with_store(store)`, a frozen chunk the request no longer needs leaves memory for the store
+and comes back from it, unchanged, when a request needs it again, so a walk across an infinite world
+holds a bounded number of them (`tests/frozen_store.rs`). A store is anything that implements
+`FrozenStore`, which keeps bytes by stage name and chunk; `DirectoryStore::new(path)` keeps a file
+per chunk under a directory. A save then holds only the frozen chunks in memory, and the game keeps
+the store with its saves; a runtime of a changed pack given the same store reads a stored chunk as
+it was first generated.
 
 ## Levels
 

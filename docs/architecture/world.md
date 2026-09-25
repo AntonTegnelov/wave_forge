@@ -148,6 +148,16 @@ city again costs about what generating it the first time did
 back with `import` is taken as it is, visible to every phase. The limit of worlds more than one
 chunk tall stays.
 
+**A frozen world** keeps instead. Given a store (`WorldGenerator::with_store`, the `FrozenStore`
+interface frozen stages use, [packs.md](../reference/packs.md#persistence-and-saves)), a world puts
+every chunk it evicts in the store as it is, and a chunk it needs that the store has comes back from
+it, taken as it is, rather than being generated. So what a player saw survives a change of the rule
+set or the prior, as long as the tile indices mean the same tiles; a chunk never generated before is
+generated against the stored ones like any other. The store is asked about a chunk once while it
+stays needed. A store that fails keeps the chunk in memory, and the next `tick` or `poll` reports the
+failure. `GeneratorStats` counts the chunks it brought back as `restored`
+(`wfc-devtools/tests/frozen_world.rs`).
+
 ## Streaming
 
 `WorldGenerator::request` takes focus points (a chunk and a radius). `tick` starts the next batch:

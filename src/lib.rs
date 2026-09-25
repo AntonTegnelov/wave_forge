@@ -42,11 +42,14 @@
 //!   saved: every operation reads its neighbours as a fresh world had them, and the repairs of
 //!   chunks that stayed run again for the neighbours generated again (docs/architecture/world.md,
 //!   "Regenerating exactly").
+//! - A frozen world, given a store ([`WorldGenerator::with_store`]), keeps what it evicts and
+//!   brings it back as it was instead, even after the rule set changes.
 //! - One limit remains: in a world more than one chunk tall a first-parity repair also reaches
 //!   corner chunks it does not wait for. A rule set is *streaming-clean* when no repair is ever
 //!   needed, which lifts that limit too.
 
 pub mod cell_boxes;
+pub mod frozen;
 pub mod generator;
 pub mod ground;
 mod layers;
@@ -62,6 +65,7 @@ pub mod towns;
 pub mod worker;
 
 pub use cell_boxes::CellBox;
+pub use frozen::{DirectoryStore, FrozenStore, StoreError};
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
 pub use ground::{GroundLevel, GroundMesh, ground, ground_materials, ground_readers};
 pub use occluders::occluders;
@@ -97,6 +101,9 @@ pub enum Error {
     #[cfg(feature = "wgpu")]
     #[error(transparent)]
     Gpu(#[from] wfc_gpu::error::GpuError),
+    /// A frozen world's store failed, or held something that is not a chunk of the world.
+    #[error(transparent)]
+    Store(#[from] frozen::StoreError),
 }
 
 /// When a chunk will not solve, how hard to try again.

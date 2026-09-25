@@ -1,5 +1,6 @@
 //! Generating a world around its focus points, one batch at a time.
 
+use crate::frozen::{FrozenStore, StoreError};
 use crate::layers::{Layers, Phase, cell_index};
 use crate::scheduler::{self, FocusPoint};
 use crate::{Error, WorldConfig};
@@ -53,7 +54,12 @@ pub struct GeneratorStats {
     /// Repairs of chunks in memory run again, to rewrite a neighbour generated again as they
     /// rewrote it the first time.
     pub replayed: u32,
+    /// Chunks of a frozen world brought back from its store rather than generated.
+    pub restored: u32,
 }
+
+/// The layer a frozen world keeps its chunks under in its store.
+const TILES: &str = "tiles";
 
 /// A batch the solver is working on.
 struct Pending {
@@ -100,6 +106,14 @@ pub struct WorldGenerator<S: Solver> {
     replays: BTreeMap<ChunkCoord, u32>,
     /// What each chunk in memory was after each phase that wrote it.
     layers: Layers,
+    /// Where a frozen world keeps the chunks it evicts ([`WorldGenerator::with_store`]).
+    frozen: Option<Box<dyn FrozenStore>>,
+    /// The chunks to generate that the store was asked for and did not have, forgotten once they
+    /// are no longer needed.
+    not_stored: BTreeSet<ChunkCoord>,
+    /// A store's failure while evicting, which the next [`WorldGenerator::tick`] or
+    /// [`WorldGenerator::poll`] reports.
+    store_failure: Option<StoreError>,
     pending: Option<Pending>,
     events: Vec<ChunkEvent>,
     stats: GeneratorStats,
@@ -122,10 +136,23 @@ impl<S: Solver> WorldGenerator<S> {
             repaired: BTreeMap::new(),
             replays: BTreeMap::new(),
             layers: Layers::default(),
+            frozen: None,
+            not_stored: BTreeSet::new(),
+            store_failure: None,
             pending: None,
             events: Vec::new(),
             stats: GeneratorStats::default(),
         }
+    }
+
+    /// Freezes the world: a chunk it evicts goes to `store` as it is, and a chunk it is asked for
+    /// that the store has comes back from it rather than being generated, even if the rule set or
+    /// the prior changed since. A stored chunk holds tile indices, so a changed rule set has to
+    /// keep the indices meaning the same tiles.
+    #[must_use]
+    pub fn with_store(mut self, store: Box<dyn FrozenStore>) -> Self {
+        self.frozen = Some(store);
+        self
     }
 
     /// Asks for the chunks around these focus points, replacing the previous request.
@@ -139,9 +166,13 @@ impl<S: Solver> WorldGenerator<S> {
     /// # Errors
     /// If the solver refuses the batch.
     pub fn tick(&mut self) -> Result<(), Error> {
+        if let Some(failure) = self.store_failure.take() {
+            return Err(failure.into());
+        }
         if self.pending.is_some() {
             return Ok(());
         }
+        self.restore_stored()?;
         // A second-parity chunk reads its face neighbours after the first-parity repairs, so it
         // also waits for those run again.
         let missing: Vec<ChunkCoord> =
@@ -288,6 +319,9 @@ impl<S: Solver> WorldGenerator<S> {
     /// # Errors
     /// If the solver or the store failed.
     pub fn poll(&mut self) -> Result<Vec<ChunkEvent>, Error> {
+        if let Some(failure) = self.store_failure.take() {
+            return Err(failure.into());
+        }
         if let Some(pending) = self.pending.take() {
             match self.solver.poll(pending.job)? {
                 Some(result) => self.commit(pending, result)?,
@@ -398,7 +432,9 @@ impl<S: Solver> WorldGenerator<S> {
     /// Drops the chunks further than `margin` beyond every focus point and hands them back. A chunk
     /// asked for again comes back with the tiles it had, repairs included (see the determinism
     /// contract in the crate documentation), so a game need not keep them. Chunks a queued repair
-    /// still has to see stay, or they would be generated again at once.
+    /// still has to see stay, or they would be generated again at once. A frozen world keeps each
+    /// in its store first; if the store fails, the chunk and those after it stay in memory, and
+    /// the next [`tick`](Self::tick) or [`poll`](Self::poll) reports the failure.
     pub fn evict_outside(&mut self, focus: &[FocusPoint], margin: u32) -> Vec<Chunk> {
         let needed = self.repair_needs(&self.active_repairs());
         let far: Vec<ChunkCoord> = self
@@ -412,14 +448,79 @@ impl<S: Solver> WorldGenerator<S> {
                     .all(|focus| focus.distance(*coord) > focus.radius + margin)
             })
             .collect();
-        for coord in &far {
-            self.layers.forget(*coord);
-            self.repaired.remove(coord);
-            self.replays.remove(coord);
+        let mut evicted = Vec::new();
+        for coord in far {
+            if let Some(store) = &mut self.frozen {
+                let chunk = self.store.get(coord).expect("listed from the store");
+                let bytes = chunk
+                    .tiles
+                    .iter()
+                    .flat_map(|tile| tile.to_le_bytes())
+                    .collect();
+                if let Err(failure) = store.keep(TILES, coord, bytes) {
+                    self.store_failure = Some(failure);
+                    break;
+                }
+            }
+            self.layers.forget(coord);
+            self.repaired.remove(&coord);
+            self.replays.remove(&coord);
+            evicted.extend(self.store.remove(coord));
         }
-        far.into_iter()
-            .filter_map(|coord| self.store.remove(coord))
-            .collect()
+        evicted
+    }
+
+    /// Brings back from a frozen world's store the chunks to generate that it has, each taken as it
+    /// is, and remembers those it does not have while they stay needed, so it is asked once.
+    ///
+    /// # Errors
+    /// If the store fails, or holds something for a chunk that is not a chunk of this world.
+    fn restore_stored(&mut self) -> Result<(), Error> {
+        if self.frozen.is_none() {
+            return Ok(());
+        }
+        let needed = self.needed();
+        self.not_stored.retain(|chunk| needed.contains(chunk));
+        let missing = scheduler::missing(&needed, &self.store, &self.deferred(), &self.focus);
+        let cells = self.config.chunk.cells() as usize;
+        let tiles = self.ruleset.num_tiles();
+        let store = self.frozen.as_mut().expect("checked above");
+        let mut restored = Vec::new();
+        for coord in missing {
+            if self.not_stored.contains(&coord) {
+                continue;
+            }
+            let Some(bytes) = store.fetch(TILES, coord)? else {
+                self.not_stored.insert(coord);
+                continue;
+            };
+            let chunk: Box<[u16]> = bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes(*pair))
+                .collect();
+            if bytes.len() != cells * 2 || chunk.iter().any(|&tile| u32::from(tile) >= tiles) {
+                return Err(StoreError(format!(
+                    "the store's chunk {coord:?} is not a chunk of this world: {} bytes for {cells} \
+                     cells of up to {tiles} tiles",
+                    bytes.len()
+                ))
+                .into());
+            }
+            restored.push(Chunk {
+                coord,
+                tiles: chunk,
+                version: 1,
+            });
+        }
+        for chunk in restored {
+            let coord = chunk.coord;
+            self.import(chunk)?;
+            self.stats.restored += 1;
+            self.events.push(ChunkEvent::Updated(coord));
+        }
+        Ok(())
     }
 
     /// Puts a chunk back, for example one a game had persisted. It is taken as it is: every

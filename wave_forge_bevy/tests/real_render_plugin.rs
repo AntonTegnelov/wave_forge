@@ -156,3 +156,99 @@ fn a_solver_config_of_one_region_a_batch_solves_each_chunk_in_a_batch_of_its_own
     assert_eq!(stats.solved, 4 + stats.repaired, "{stats:?}");
     assert!(stats.batches >= stats.solved, "{stats:?}");
 }
+
+/// The bytes a frozen world kept, by layer and chunk, shared with the test.
+type Kept = std::collections::HashMap<(String, ChunkCoord), Vec<u8>>;
+
+/// A store in memory the test can look into.
+#[derive(Clone, Default)]
+struct SharedStore(std::sync::Arc<std::sync::Mutex<Kept>>);
+
+impl wave_forge::FrozenStore for SharedStore {
+    fn keep(
+        &mut self,
+        layer: &str,
+        chunk: ChunkCoord,
+        bytes: Vec<u8>,
+    ) -> Result<(), wave_forge::StoreError> {
+        self.0
+            .lock()
+            .expect("not poisoned")
+            .insert((layer.to_owned(), chunk), bytes);
+        Ok(())
+    }
+
+    fn fetch(
+        &mut self,
+        layer: &str,
+        chunk: ChunkCoord,
+    ) -> Result<Option<Vec<u8>>, wave_forge::StoreError> {
+        Ok(self
+            .0
+            .lock()
+            .expect("not poisoned")
+            .get(&(layer.to_owned(), chunk))
+            .cloned())
+    }
+}
+
+#[test]
+#[ignore = "needs a compute device; run with --ignored in release mode"]
+fn a_frozen_plugin_keeps_the_chunks_it_evicts_in_its_store() {
+    let city = city::city();
+    let rules = parse_rule_file(city::CITY_RON).expect("the city's rule file loads");
+    let settings = WaveForgeSettings {
+        seed: 11,
+        extent: WorldExtent::new(CHUNK)
+            .with_x(0..6)
+            .with_y(0..1)
+            .with_z(0..1),
+        halo: 1,
+        cell_size: Vec3::splat(2.0),
+        evict_margin: Some(1),
+        ..WaveForgeSettings::default()
+    };
+    let store = SharedStore::default();
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins).add_plugins(
+        WaveForgePlugin::from_rules(rules, city_prior(&city, CHUNK.z), settings)
+            .expect("the city's weights make a rule set")
+            .frozen(Box::new(store.clone())),
+    );
+    let started = Instant::now();
+    while app.plugins_state() == PluginsState::Adding {
+        bevy::tasks::tick_global_task_pools_on_main_thread();
+        assert!(started.elapsed() < Duration::from_secs(60), "no renderer");
+    }
+    app.finish();
+    app.cleanup();
+    let focus = app
+        .world_mut()
+        .spawn((
+            GlobalTransform::from_translation(Vec3::new(8.0, 0.0, 8.0)),
+            GenerationFocus::new(0),
+        ))
+        .id();
+
+    for x in 0..6 {
+        let at = Vec3::new(16.0 * x as f32 + 8.0, 0.0, 8.0);
+        *app.world_mut()
+            .get_mut::<GlobalTransform>(focus)
+            .expect("the focus") = GlobalTransform::from_translation(at);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            app.update();
+            if app.world().resource::<CityWorld>().is_idle() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "still generating");
+        }
+    }
+
+    let kept = store.0.lock().expect("not poisoned");
+    assert!(
+        kept.contains_key(&("tiles".to_owned(), ChunkCoord::new(0, 0, 0))),
+        "the chunk walked away from is in the store: {:?}",
+        kept.keys().collect::<Vec<_>>()
+    );
+}
