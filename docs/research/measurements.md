@@ -347,6 +347,13 @@ to its end would give.
 |---|---|---|---|
 | L30 | Four city towns of 6 to 9 chunks, each a bounded world solved whole on its site | 0 adjacency violations across their seams; identical generated all at once and one chunk at a time | `wfc-devtools/tests/towns.rs` on dozen, and on lavapipe in CI |
 
+### Regenerating exactly ([#188], 2026-09-25)
+
+| ID | Measurement | Result | Protocol |
+|---|---|---|---|
+| L31 | An 8×4-chunk city (32 chunks) generated whole, then for each cut evicted beyond it from its corner and asked for whole again, seeds 8 and 11; what generating it again cost against the first generation | tile for tile the city generated once at every cut, for both seeds. The whole city at once: 5 and 6 batches, 91 and 78 ms in the solver. Again after evicting 31 chunks: 5 and 6 batches, 79 and 118 ms; 23 chunks: 5 and 6 batches, 117 and 156 ms, one repair replayed; 16 chunks: 3 and 4 batches, 30 and 49 ms, one replayed; 4 chunks: 2 batches, 18 and 24 ms. So a part generated again costs about what it cost the first time | `partial_eviction.rs` with `--nocapture`, release, RTX 3070 through dozen, at [#188] |
+| L32 | The same cuts with replays turned off, and the walk along a 16×4 city and back | 2 to 10 chunks differ at the cuts that evict a repaired chunk's neighbours (cuts 3 to 5), and the walk's settled chunks differ: the views alone do not suffice, the replays are needed | a local mutation of `replay_around`, not committed, at [#188] |
+
 ## The engines
 
 No frame cost has been measured in Bevy yet; its rows are correctness checks with counts.
@@ -548,3 +555,4 @@ Measurements the current code still waits for.
 [#44]: https://github.com/AntonTegnelov/wave_forge/issues/44
 [#46]: https://github.com/AntonTegnelov/wave_forge/issues/46
 [#47]: https://github.com/AntonTegnelov/wave_forge/issues/47
+[#188]: https://github.com/AntonTegnelov/wave_forge/issues/188

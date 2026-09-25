@@ -32,23 +32,24 @@
 //!   seed, the chunk's coordinate, and where the solve had got to.
 //! - A chunk is solved against its face neighbours and nothing else. The scheduler solves one
 //!   parity of the chunk lattice first and holds a chunk of the other parity until the four or six
-//!   chunks it reads are finished, so without repairs a chunk's tiles are a function of its
-//!   coordinate: evicting a neighbourhood and asking for it again gives the same tiles. Evicting
-//!   part of one does not. A chunk generated again beside a neighbour that stayed is solved against
-//!   that neighbour, which is what keeps the seam invisible, and need not give the tiles it had.
+//!   chunks it reads are finished.
 //! - A repair rewrites cells of the neighbours it covers, and still leaves the world a function of
 //!   its configuration: it waits until every chunk it can see has had its first attempt and the
 //!   failed ones of lower repair classes around it are repaired, so it sees the same neighbourhood
 //!   whatever order the world was generated in. Every chunk a repair rewrote is reported as
-//!   [`ChunkEvent::Updated`] and counted in [`GeneratorStats`]. A chunk generated again after a
-//!   partial eviction is solved against the neighbours that stayed, rewritten or not, so it never
-//!   leaves a seam. One limit remains: in a world more than one chunk tall a first-parity repair
-//!   also reaches corner chunks it does not wait for. A rule set is *streaming-clean* when no
-//!   repair is ever needed, which lifts that limit too.
+//!   [`ChunkEvent::Updated`] and counted in [`GeneratorStats`].
+//! - A chunk evicted and asked for again comes back tile for tile, repairs included, with nothing
+//!   saved: every operation reads its neighbours as a fresh world had them, and the repairs of
+//!   chunks that stayed run again for the neighbours generated again (docs/architecture/world.md,
+//!   "Regenerating exactly").
+//! - One limit remains: in a world more than one chunk tall a first-parity repair also reaches
+//!   corner chunks it does not wait for. A rule set is *streaming-clean* when no repair is ever
+//!   needed, which lifts that limit too.
 
 pub mod cell_boxes;
 pub mod generator;
 pub mod ground;
+mod layers;
 pub mod noise;
 pub mod occluders;
 pub mod products;

@@ -27,7 +27,7 @@ pub use crate::rules::{MAX_TILES, RuleTable, Ruleset, TileMask};
 pub use crate::solver::{
     BatchResult, JobId, RegionBatch, RegionStats, RegionStatus, SolveBudget, Solver, SolverError,
 };
-pub use crate::store::{Chunk, ChunkStore, WorldExtent, region_init};
+pub use crate::store::{Chunk, ChunkStore, WorldExtent, region_init, region_init_by};
 
 use thiserror::Error;
 
