@@ -96,6 +96,12 @@ For a fixed rule set, prior and configuration:
   its face neighbours and nothing else, so a neighbourhood evicted and asked for again comes back the
   same. Evicting *part* of one need not: a chunk regenerated beside a neighbour that stayed is solved
   against that neighbour, which keeps the seam invisible, and need not give the tiles it had.
+- **Partial eviction never leaves a seam, repairs included.** A first attempt pins the neighbours
+  of the other parity that are in the store, whether a repair rewrote them or not, so a chunk
+  generated again fits the neighbours that stayed. A city evicted beyond every cut across it and
+  asked for again has no adjacency the rules forbid (`wfc-devtools/tests/partial_eviction.rs`). A
+  game that wants a chunk back with the tiles it had persists what `evict_outside` hands back and
+  puts it back with `import`.
 - **With repairs, the world is the same in any generation order.** A 4×4-chunk city comes out tile
   for tile the same generated all at once or chunk by chunk in either raster order, repairs included
   (`wfc-devtools/tests/order_diff.rs`, seeds 8 and 11). Every chunk a repair rewrote is reported as
@@ -104,17 +110,11 @@ For a fixed rule set, prior and configuration:
   dozen is tile for tile the same on Mesa's lavapipe, which CI checks on every pull request
   (`wfc-devtools/tests/golden_world.rs`).
 
-Two limits remain:
+One limit remains: **worlds more than one chunk tall.** There, a first-parity repair also reaches
+corner chunks of the other parity, which it does not wait for, because they may be waiting for it.
 
-- **Worlds more than one chunk tall.** There, a first-parity repair also reaches corner chunks of
-  the other parity, which it does not wait for, because they may be waiting for it.
-- **Partial eviction of a repaired neighbourhood.** A chunk evicted and generated again comes back
-  as its first attempt, without the repairs of neighbours that had rewritten it, so evicting part of
-  a repaired neighbourhood can leave a seam. Keeping the repairs is
-  [#141](https://github.com/AntonTegnelov/wave_forge/issues/141).
-
-A rule set is **streaming-clean** when no chunk ever needs a repair; then neither limit applies. The
-city is not: about one chunk in ten is repaired.
+A rule set is **streaming-clean** when no chunk ever needs a repair; then the limit does not apply.
+The city is not: about one chunk in ten is repaired.
 
 ## Streaming
 

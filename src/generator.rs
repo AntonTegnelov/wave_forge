@@ -352,8 +352,9 @@ impl<S: Solver> WorldGenerator<S> {
     }
 
     /// Drops the chunks further than `margin` beyond every focus point and hands them back, so a
-    /// game can persist them. Regenerating one gives the same tiles unless a repair has rewritten
-    /// its neighbours since (see the determinism contract in the crate documentation). Chunks a
+    /// game can persist them. A chunk generated again is solved against the neighbours that stayed,
+    /// so it fits them, but it need not have the tiles it had (see the determinism contract in the
+    /// crate documentation); [`import`](Self::import) puts a persisted one back as it was. Chunks a
     /// queued repair still has to see stay, or they would be generated again at once.
     pub fn evict_outside(&mut self, focus: &[FocusPoint], margin: u32) -> Vec<Chunk> {
         let needed = self.repair_needs(&self.active_repairs());
