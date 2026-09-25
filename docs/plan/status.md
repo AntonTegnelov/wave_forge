@@ -115,12 +115,13 @@ Each is a gap between the code and the design or the stories, with where it is t
   slope.
 - **No levels of detail** for the exported module meshes; they wait for authored models
   ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)).
-- **Scenes are not yet bound to points**, and there are no region tags, far proxies, occluders,
-  or authoring tools
-  ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44),
-  [#43](https://github.com/AntonTegnelov/wave_forge/issues/43),
-  [#47](https://github.com/AntonTegnelov/wave_forge/issues/47),
-  [#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
+- **Scenes bound to points are not pooled** (a decision for the owner,
+  [#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), and there are no far proxies,
+  occluders or authoring tools
+  ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47),
+  [#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). Region tags reach Bevy as data,
+  and its mapping to an audio crate and Fluent waits for those crates to support its Bevy version
+  ([#174](https://github.com/AntonTegnelov/wave_forge/issues/174)).
 - **Licences for a distributed build.** Everything in both integrations' dependency trees is MIT,
   Apache-2.0, Zlib or Unlicense except godot-rust (0.5.5), which is MPL-2.0: compatible, but a
   distributed extension binary has to say where the MPL-covered source can be obtained.
