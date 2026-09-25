@@ -152,7 +152,10 @@ leaves `audio_radius` below zero and reads `region_tags`.
   `category_names(stage)`.
 - `sites(stage, chunk)`: the sites overlapping a chunk, each with what names it (its `region` for
   a Sites stage, its `row` for a TableSites stage, its `region` and `index` and its `kind` for a
-  Locations stage), footprint `min` and `max` in chunks, and levelled `height`.
+  Locations stage), footprint `min` and `max` in chunks, and levelled `height`. A location's name
+  is its `name_key` with its `name_args` ([packs.md](packs.md#locations)), which a game turns into
+  words with `tr(site.name_key, "wave_forge").format(site.name_args)` and a translation of that key
+  in the `wave_forge` context.
 - `town(stage, chunk)`: a town's `region` or `row`, `height` and `tiles` in a chunk.
 - `town_instance_sets(stage, chunk, names)`: a town chunk's placements in the layout of
   `WaveForgeWorld.instance_sets`, raised to the site's height.
@@ -305,8 +308,8 @@ through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) 
 `godot/verify_assemble.gd` (a village's pieces placed by their transforms) and
 `godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes) and
 `godot/verify_ground.gd` (the ground's materials per category, and grass) and
-`godot/verify_sound.gd` (the city's surfaces, interiors, emitters and the node's sound) in a real
-headless Godot. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
+`godot/verify_sound.gd` (the city's surfaces, interiors, emitters and the node's sound) and
+`godot/verify_names.gd` (a location's name through a translation) in a real headless Godot. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
 grass, and checks that trees drawn with the vegetation shader move in the wind and stand still
 without it.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and

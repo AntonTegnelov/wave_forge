@@ -55,7 +55,8 @@ thread.
   `failure()`. `set_facts(facts)` and `focus(table,
   id)` hand the stages new tables of facts and a focused row ([packs.md](packs.md#tables-of-facts)):
   a game keeps its own `Facts`, gives it rows, and hands a copy here; the runtime `build` makes is
-  given its first facts and focus there.
+  given its first facts and focus there. A location's `Site::name()` is a translation key with
+  arguments ([packs.md](packs.md#locations)), for a game's localisation, a Fluent bundle say.
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
 - `WaveForgeStages::set_edits(edits)` hands the stages the player's edits
