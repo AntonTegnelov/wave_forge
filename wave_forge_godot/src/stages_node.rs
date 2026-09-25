@@ -1289,9 +1289,12 @@ impl WaveForgeStages {
 
     /// A Sites, TableSites or Locations stage's sites that overlap a chunk: what names each one,
     /// its `region` (Vector2i), the `row` (PackedInt64Array) of its table it stands for, or its
-    /// `region` and `index` in a location table along with its `kind`; the chunks it covers from
-    /// `min` up to but not including `max` (Vector2i, along the lattice's x and y); and its
-    /// levelled `height` in cells. Empty if there are none or the chunk has not arrived.
+    /// `region` and `index` in a location table along with its `kind`, and then its name as a
+    /// translation key `name_key` (`wf-place-<kind>`) with the arguments `name_args` a translation
+    /// may use (`region_x`, `region_y`, `index`), for `tr(name_key, "wave_forge")` and `format`;
+    /// the chunks it covers from `min` up to but not including `max` (Vector2i, along the
+    /// lattice's x and y); and its levelled `height` in cells. Empty if there are none or the
+    /// chunk has not arrived.
     #[func]
     fn sites(&self, stage: GString, chunk: Vector3i) -> Array<VarDictionary> {
         let Some(sites) = self
@@ -1308,6 +1311,17 @@ impl WaveForgeStages {
                 name_site(&mut out, &site.id);
                 if let Some(kind) = &site.kind {
                     out.set(&"kind".to_variant(), &GString::from(&**kind).to_variant());
+                }
+                if let Some(name) = site.name() {
+                    let mut args = VarDictionary::new();
+                    for (arg, value) in &name.args {
+                        args.set(&arg.to_variant(), &value.to_variant());
+                    }
+                    out.set(
+                        &"name_key".to_variant(),
+                        &GString::from(name.key.as_str()).to_variant(),
+                    );
+                    out.set(&"name_args".to_variant(), &args.to_variant());
                 }
                 out.set(
                     &"min".to_variant(),

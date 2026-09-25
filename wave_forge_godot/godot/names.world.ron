@@ -1,0 +1,11 @@
+// The pack of the place names check (verify_names.gd): a location table whose sites are named by
+// translation keys.
+(
+    version: 1,
+    stages: [
+        (name: "ground", kind: Field(Constant(4.0))),
+        (name: "places", kind: Locations(height: "ground", region: 4, kinds: [
+            (name: "stone_circle", quota: 2, tries: 20),
+        ])),
+    ],
+)
