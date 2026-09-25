@@ -87,9 +87,9 @@ Each is a gap between the code and the design or the stories, with where it is t
   [#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
 - **No desktop numbers.** Every timing comes from the dev container's translated driver or from
   lavapipe ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
-- **Order independence has two limits:** worlds more than one chunk tall, and partial eviction of a
-  repaired neighbourhood ([world.md](../architecture/world.md#what-determinism-means-here)). The city
-  needs a repair in about one chunk in ten.
+- **Order independence has a limit:** worlds more than one chunk tall
+  ([world.md](../architecture/world.md#what-determinism-means-here)). The city needs a repair in
+  about one chunk in ten.
 - **A region must fit the device's workgroup memory.** At 81 tiles an 8×8×8 chunk fits a halo of 1
   or 2, not 3 (38 288 B against 32 768 B), so a repair's halo stops at 2. Bigger regions would need
   domains in a storage buffer, which nothing needs yet.

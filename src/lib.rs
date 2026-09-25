@@ -40,11 +40,11 @@
 //!   its configuration: it waits until every chunk it can see has had its first attempt and the
 //!   failed ones of lower repair classes around it are repaired, so it sees the same neighbourhood
 //!   whatever order the world was generated in. Every chunk a repair rewrote is reported as
-//!   [`ChunkEvent::Updated`] and counted in [`GeneratorStats`]. Two limits remain: in a world more
-//!   than one chunk tall a first-parity repair also reaches corner chunks it does not wait for,
-//!   and a chunk evicted and generated again comes back as its first attempt, without the repairs
-//!   of neighbours that had rewritten it. A rule set is *streaming-clean* when no repair is ever
-//!   needed, which makes partial eviction safe too.
+//!   [`ChunkEvent::Updated`] and counted in [`GeneratorStats`]. A chunk generated again after a
+//!   partial eviction is solved against the neighbours that stayed, rewritten or not, so it never
+//!   leaves a seam. One limit remains: in a world more than one chunk tall a first-parity repair
+//!   also reaches corner chunks it does not wait for. A rule set is *streaming-clean* when no
+//!   repair is ever needed, which lifts that limit too.
 
 pub mod cell_boxes;
 pub mod generator;
