@@ -168,6 +168,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
+| | `frozen_directory` | where frozen stages' chunks the request no longer needs are kept, a file each, so they leave memory and come back unchanged ([packs.md](packs.md#persistence-and-saves)); `user://` paths are resolved, and the game keeps the directory with its saves. Empty keeps every frozen chunk in memory, and in the save |
 
 ### Functions
 

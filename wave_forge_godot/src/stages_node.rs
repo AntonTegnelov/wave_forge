@@ -27,6 +27,7 @@ use godot::obj::EngineEnum;
 use godot::prelude::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
+use wave_forge::DirectoryStore;
 use wave_forge::loader::{RuleFile, parse_rule_file};
 use wave_forge::noise::{
     CellularDistanceFunction, CellularReturnType, DomainWarpFractalType, DomainWarpType,
@@ -160,6 +161,13 @@ pub struct WaveForgeStages {
     #[export_group(name = "Advanced")]
     #[export]
     kernel_cache: GString,
+
+    /// Where the chunks of frozen stages that the request no longer needs are kept, one file each,
+    /// so they leave memory and come back unchanged; `user://` paths are resolved. The game keeps
+    /// the directory with its saves, since a save then holds only the frozen chunks in memory.
+    /// Empty keeps every frozen chunk in memory, and in the save.
+    #[export]
+    frozen_directory: GString,
 
     pack: Option<Arc<Pack>>,
     /// The pack's tables of facts for the seed, as the game last gave them; the sampler and the
@@ -422,6 +430,7 @@ impl INode for WaveForgeStages {
             process_ms: Timings::new(RECENT_FRAMES),
             ground_stage: GString::new(),
             kernel_cache: GString::from("user://wave_forge/kernels"),
+            frozen_directory: GString::new(),
             ground_material: None,
             ground_material_stage: GString::new(),
             grass_stage: GString::new(),
@@ -676,6 +685,13 @@ impl WaveForgeStages {
                     .to_string(),
             )
         });
+        let frozen = (!self.frozen_directory.is_empty()).then(|| {
+            std::path::PathBuf::from(
+                ProjectSettings::singleton()
+                    .globalize_path(&self.frozen_directory)
+                    .to_string(),
+            )
+        });
         let mut noises = Vec::new();
         for (name, noise) in self.noises.iter_shared() {
             let name = name.to::<GString>().to_string();
@@ -737,6 +753,9 @@ impl WaveForgeStages {
         // The towns' device is built on the stages' thread, which is where it is used.
         self.worker = Some(StageWorker::spawn(move || {
             let mut runtime = with_noises(Runtime::new(for_thread, seed, [shape.x, shape.y]))?;
+            if let Some(directory) = frozen {
+                runtime = runtime.with_store(Box::new(DirectoryStore::new(directory)));
+            }
             runtime
                 .set_facts(thread_facts)
                 .map_err(|error| error.to_string())?;

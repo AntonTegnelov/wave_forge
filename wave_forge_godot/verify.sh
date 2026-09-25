@@ -6,7 +6,8 @@
 # then `godot/verify_stages.gd`, which generates the valley pack's stages and checks what they hold,
 # then `godot/verify_tables.gd`, which gives a pack tables of facts from GDScript, then
 # `godot/verify_noise.gd`, which reads a FastNoiseLite resource through a pack, then
-# `godot/verify_edits.gd`, which fells a tree and raises the ground, then `godot/verify_assemble.gd`,
+# `godot/verify_edits.gd`, which fells a tree and raises the ground, then `godot/verify_frozen.gd`,
+# which keeps frozen chunks in a directory while they are out of memory, then `godot/verify_assemble.gd`,
 # which places a village's pieces, then `godot/verify_scenes.gd`, which binds scenes to them, then
 # `godot/verify_pooling.gd`, which reuses the nodes of scenes that reset themselves, then
 # `godot/verify_ground.gd`, which gives the ground a material per category, then
@@ -25,6 +26,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_tables.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_noise.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_edits.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_frozen.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_assemble.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_scenes.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_pooling.gd
