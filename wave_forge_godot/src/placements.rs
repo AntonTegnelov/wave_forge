@@ -8,6 +8,7 @@
 //! MultiMesh of its first mesh, and a chunk crossing the radius is placed again. A chunk that is
 //! dropped takes its MultiMeshes and nodes with it.
 
+use crate::gi::Gi;
 use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
     Mesh, MeshInstance3D, Node, Node3D, PackedScene, RenderingServer, ResourceLoader,
@@ -31,14 +32,16 @@ enum Binding {
     Nodes(Gd<PackedScene>, Option<(Gd<Mesh>, Transform3D)>),
 }
 
-/// One thing to place: its kind, where it stands in Godot's world, its id within its chunk, and
-/// how it sways: a phase as a fraction of a turn and a stiffness, which a MultiMesh carries as each
-/// instance's custom data for a wind shader.
+/// One thing to place: its kind, where it stands in Godot's world, its id within its chunk, how
+/// it sways (a phase as a fraction of a turn and a stiffness, which a MultiMesh carries as each
+/// instance's custom data for a wind shader), and the global illumination it takes part in, which
+/// is its content class's: a stage's items all share one.
 pub(crate) struct Item {
     pub(crate) kind: String,
     pub(crate) transform: Transform3D,
     pub(crate) id: i64,
     pub(crate) sway: [f32; 2],
+    pub(crate) gi: Gi,
 }
 
 /// What a stage's chunk placed: its MultiMeshes with their instances and how many each draws,
@@ -334,6 +337,7 @@ fn multimesh(
         .collect();
     rendering.multimesh_set_buffer(multimesh, &PackedFloat32Array::from(buffer.as_slice()));
     let instance = rendering.instance_create2(multimesh, scenario);
+    items[0].gi.apply(instance);
     (multimesh, instance, items.len())
 }
 

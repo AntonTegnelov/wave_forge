@@ -63,6 +63,7 @@ use wave_forge::{
 };
 
 mod audio;
+mod gi;
 mod grass;
 mod occlusion;
 mod placements;
