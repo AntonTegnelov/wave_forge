@@ -1841,14 +1841,17 @@ impl Runtime {
                 height,
                 region,
                 sources,
-                sea,
                 width,
                 step,
             } => {
                 rivers = DownhillRivers {
                     height,
                     sources: *sources,
-                    sea: *sea,
+                    sea: self
+                        .pack
+                        .water()
+                        .expect("a pack with rivers declares water")
+                        .level,
                     width: *width,
                     step: *step,
                 };
@@ -2888,7 +2891,8 @@ impl Runtime {
                 }
             }
         }
-        // The height of a point standing at `at` in `column`, if it passes the stage's tests there.
+        // The height of a point standing at `at` in `column`, on the ground or on the water if it
+        // floats, if it passes the stage's tests there.
         let passes = |column: (i64, i64), at: (f32, f32)| -> Result<Option<f32>, StageError> {
             let (x, y) = column;
             let here = heights.get(x, y)?;
@@ -2908,10 +2912,19 @@ impl Runtime {
                     return Ok(None);
                 }
             }
-            if water.is_some_and(|water| {
-                !(water.depth.0..=water.depth.1).contains(&(water.level - here))
-            }) {
-                return Ok(None);
+            let mut standing = here;
+            if let Some(water) = water {
+                let level = self
+                    .pack
+                    .water()
+                    .expect("a Scatter stage with water is in a pack with water")
+                    .level;
+                if !(water.depth.0..=water.depth.1).contains(&(level - here)) {
+                    return Ok(None);
+                }
+                if water.float {
+                    standing = standing.max(level);
+                }
             }
             if avoided
                 .iter()
@@ -2925,7 +2938,7 @@ impl Runtime {
             {
                 return Ok(None);
             }
-            Ok(Some(here))
+            Ok(Some(standing))
         };
         let mut heights_of: Vec<Option<f32>> = Vec::with_capacity(candidates.len());
         for candidate in &candidates {

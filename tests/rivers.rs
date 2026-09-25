@@ -9,12 +9,13 @@ use wave_forge::{ChunkCoord, FocusPoint};
 
 const PACK: &str = r#"(
     version: 1,
+    water: Some((level: 0.0)),
     stages: [
         (name: "ground", kind: Field(Sub(
             Mul(Noise(frequency: 0.03, octaves: 3), Constant(30.0)),
             Mul(Distance((0.0, 0.0)), Constant(0.2)),
         ))),
-        (name: "rivers", kind: Rivers(height: "ground", region: 4, sources: 3, sea: 0.0,
+        (name: "rivers", kind: Rivers(height: "ground", region: 4, sources: 3,
             width: (1.0, 3.0), step: 2)),
     ],
 )"#;
@@ -139,23 +140,32 @@ fn rivers_are_the_same_in_any_order() {
 
 #[test]
 fn rivers_that_cannot_run_are_refused() {
-    for rivers in [
-        "sources: 0, sea: 0.0",
-        "sources: 65, sea: 0.0",
-        "sources: 1, sea: 0.0, step: 0",
-        "sources: 1, sea: 0.0, width: (-1.0, 2.0)",
-    ] {
-        let result = Pack::parse(&format!(
-            r#"(version: 1, stages: [
+    let with = |water: &str, rivers: &str| {
+        Pack::parse(&format!(
+            r#"(version: 1, {water} stages: [
                 (name: "ground", kind: Field(Constant(1.0))),
                 (name: "rivers", kind: Rivers(height: "ground", region: 4, {rivers})),
             ])"#
-        ));
+        ))
+    };
+
+    for (water, rivers) in [
+        ("water: Some((level: 0.0)),", "sources: 0"),
+        ("water: Some((level: 0.0)),", "sources: 65"),
+        ("water: Some((level: 0.0)),", "sources: 1, step: 0"),
+        (
+            "water: Some((level: 0.0)),",
+            "sources: 1, width: (-1.0, 2.0)",
+        ),
+        ("", "sources: 1"),
+    ] {
+        let result = with(water, rivers);
         assert!(
             matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "rivers"),
-            "{rivers}: {result:?}"
+            "{water} {rivers}: {result:?}"
         );
     }
+    assert!(with("water: Some((level: 0.0)),", "sources: 1").is_ok());
 }
 
 #[test]

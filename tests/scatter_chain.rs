@@ -10,6 +10,7 @@ use wave_forge::{ChunkCoord, FocusPoint};
 
 const PACK: &str = r#"(
     version: 1,
+    water: Some((level: 10.0)),
     stages: [
         (name: "ground", kind: Field(Mul(Noise(frequency: 0.05, octaves: 3), Constant(20.0)))),
         (name: "side", kind: Rules(rules: [(category: "west", when: [Less(X, Constant(40.0))])], otherwise: "east")),
@@ -19,7 +20,9 @@ const PACK: &str = r#"(
         (name: "westerly", kind: Scatter(kind: "ore", height: "ground", spacing: 6,
             when: [Greater(Is("side", ["west"]), Constant(0.5)), Greater(Input("ground"), Constant(8.0))])),
         (name: "shallows", kind: Scatter(kind: "reed", height: "ground", spacing: 4,
-            water: Some((level: 10.0, depth: (0.5, 3.0))))),
+            water: Some((depth: (0.5, 3.0))))),
+        (name: "lilies", kind: Scatter(kind: "lily", height: "ground", spacing: 4,
+            water: Some((depth: (0.5, 3.0), float: true)))),
         (name: "tilted", kind: Scatter(kind: "rock", height: "ground", spacing: 4, tilt: (10.0, 30.0))),
     ],
 )"#;
@@ -183,6 +186,23 @@ fn a_point_in_water_stands_as_deep_as_its_range_allows() {
 }
 
 #[test]
+fn a_floating_point_stands_on_the_water_over_ground_as_deep_as_its_range_allows() {
+    let (runtime, points) = scatter("lilies", &[area()]);
+
+    let points = all(&points);
+    assert!(points.len() > 20, "{} points", points.len());
+    for point in points {
+        let (x, y) = (
+            point.position[0].floor() as i64,
+            point.position[1].floor() as i64,
+        );
+        let depth = 10.0 - ground(&runtime, x, y);
+        assert_eq!(point.position[2], 10.0);
+        assert!((0.5..=3.0).contains(&depth), "{depth}");
+    }
+}
+
+#[test]
 fn a_point_leans_within_its_tilt_or_along_the_ground() {
     let (_, tilted) = scatter("tilted", &[area()]);
     let (runtime, groves) = scatter("groves", &[area()]);
@@ -221,6 +241,22 @@ fn a_point_leans_within_its_tilt_or_along_the_ground() {
 }
 
 #[test]
+fn water_depths_out_of_order_are_refused() {
+    let result = Pack::parse(
+        r#"(version: 1, water: Some((level: 1.0)), stages: [
+            (name: "ground", kind: Field(Constant(1.0))),
+            (name: "s", kind: Scatter(kind: "k", height: "ground", spacing: 4,
+                water: Some((depth: (3.0, 1.0))))),
+        ])"#,
+    );
+
+    assert!(
+        matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "s"),
+        "{result:?}"
+    );
+}
+
+#[test]
 fn a_chain_out_of_range_is_refused_by_stage() {
     let with = |scatter: &str| {
         Pack::parse(&format!(
@@ -241,7 +277,7 @@ fn a_chain_out_of_range_is_refused_by_stage() {
         "tilt: (0.0, 200.0)",
         "align: 2.0",
         "scale: (0.0, 1.0)",
-        "water: Some((level: 1.0, depth: (3.0, 1.0)))",
+        "water: Some((depth: (1.0, 3.0)))",
         "when: [Less(Input(\"nowhere\"), Constant(1.0))]",
     ] {
         let result = with(scatter);
