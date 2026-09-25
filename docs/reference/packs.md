@@ -371,12 +371,20 @@ alone, whatever order chunks are asked for in, and kept while any chunk of it is
 `kind` names its kind, and its id is `SiteId::Location` with its region and its place in the order
 the region placed its sites; Flatten, Solve and Scatter's `avoid` read these sites as any others.
 
+A site of a location table has a name for a game to show, `Site::name()`: never a finished string,
+but the translation key `wf-place-<kind>`, the kind's name with its underscores as hyphens (a
+`stone_circle` is `wf-place-stone-circle`), and the arguments `region_x`, `region_y` and `index` a
+translation may use to tell sites of a kind apart. A Sites or TableSites stage's site has no name;
+a row's name is the game's.
+
 `Runtime::location_log(stage, chunk)` gives a line per kind for the region the chunk lies in, such
 as `altar: placed 2 of 3; refused 5 crowded, 1 near its kind, 12 failing its conditions`. A quota is
 per region, so what a world holds grows with the world; a finite world placed as one region holds
 exactly its quotas, and 'unique' is a quota of 1. Loading refuses a quota or a size of 0, a region
 too small to keep a site one chunk inside it, tries outside 1 to 1 024, a negative distance, two
-kinds of one name, and conditions that read what a stage cannot.
+kinds of one name, a kind's name that could not be a key (it starts with a lowercase letter and
+holds only lowercase ASCII letters, digits, `_` and `-`), and conditions that read what a stage
+cannot.
 
 `examples/rings.world.ron` places shrines per ring: two in the woods at least 48 cells apart on
 gentle ground, one in the peaks and one on the grassland, in every region of 24 chunks, and after
