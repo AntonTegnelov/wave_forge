@@ -5,9 +5,10 @@
 //! own with a copy of the grass material holding the chunk's cover and ground heights, and the
 //! grass shader places each blade from its `INSTANCE_ID`. Grass casts no shadow and takes no GI.
 
+use crate::gi::Gi;
 use godot::classes::image::Format as ImageFormat;
 use godot::classes::rendering_server::{
-    ArrayType, InstanceFlags, MultimeshTransformFormat, PrimitiveType, ShadowCastingSetting,
+    ArrayType, MultimeshTransformFormat, PrimitiveType, ShadowCastingSetting,
 };
 use godot::classes::{Image, ImageTexture, Material, RenderingServer, Shader, ShaderMaterial};
 use godot::obj::EngineEnum;
@@ -133,8 +134,7 @@ impl Grass {
             rendering.instance_geometry_set_material_override(instance, material.get_rid());
             rendering
                 .instance_geometry_set_cast_shadows_setting(instance, ShadowCastingSetting::OFF);
-            rendering.instance_geometry_set_flag(instance, InstanceFlags::USE_BAKED_LIGHT, false);
-            rendering.instance_geometry_set_flag(instance, InstanceFlags::USE_DYNAMIC_GI, false);
+            Gi::Off.apply(instance);
             // The blades are moved in the shader, so the bounds are the chunk's, not the blades'.
             let (low, high) = mesh
                 .heights

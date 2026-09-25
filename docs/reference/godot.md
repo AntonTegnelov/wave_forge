@@ -237,7 +237,9 @@ the process when loaded on a loader thread
 Each scene is drawn one of two ways, chosen when it is bound:
 
 - **A lone mesh:** a scene whose root is a `MeshInstance3D` without children or a script is drawn as
-  one `RenderingServer` MultiMesh per chunk and kind, never as nodes.
+  one `RenderingServer` MultiMesh per chunk and kind, never as nodes. A Scatter point's MultiMesh
+  takes no global illumination, as a prop's; an Assemble piece's is static, as a building's, so
+  SDFGI and baked lighting take it in ([Global illumination](#global-illumination)).
 - **Nodes:** any other scene is instantiated as nodes under the `WaveForgeStages` node, at the
   point's or piece's transform, and `instance_spawned(node, chunk, id)` names each, with the id
   `point_sets` and `stamps` give it. A piece overlapping several chunks is placed once, by the chunk
@@ -254,6 +256,16 @@ spent, so a frame can go over by one chunk's placing. Everything a chunk placed 
 chunk is dropped; a point removed by an edit is gone from its chunk, so its scene is never placed
 again. Every chunk the stages hold is placed, those generated beyond the view for a stage that reads
 them included.
+
+### Global illumination
+
+What the node draws itself takes the global illumination of its content class, as
+`GeometryInstance3D`'s `gi_mode` would set it
+([engine-integration.md](../architecture/engine-integration.md#content-classes)): the ground and
+Assemble pieces drawn as MultiMeshes are static, so SDFGI and baked lighting take them in; grass
+and Scatter points drawn as MultiMeshes take none, being many, small and swaying. Scenes placed as
+nodes keep their own `gi_mode`, and `WaveForgeWorld` leaves drawing, and so this, to the game: a
+city's modules are buildings, static.
 
 ### Ground and colliders
 

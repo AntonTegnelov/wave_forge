@@ -10,6 +10,7 @@
 //! as a height map and the town's modules as the shapes the game assigned them, built through the
 //! `PhysicsServer3D` with every shape added before the body joins the space.
 
+use crate::gi::Gi;
 use crate::grass::{GRASS_SHADER, Grass};
 use crate::placements::{Item, Placements};
 use crate::timings::Timings;
@@ -1691,6 +1692,7 @@ impl WaveForgeStages {
                 instance,
                 Transform3D::new(Basis::IDENTITY, self.chunk_corner(chunk)),
             );
+            Gi::Static.apply(instance);
             self.grounds.insert(chunk, (mesh, rid, instance));
         }
         count
@@ -1905,6 +1907,7 @@ impl WaveForgeStages {
                         // own units, which its scale then enlarges: a stiffness of its scale moves
                         // every plant's tip the wind's strength, and a larger plant leans less.
                         sway: [phase(point.id.local), point.scale],
+                        gi: Gi::Off,
                     })
                     .collect(),
                 StageKind::Assemble { .. } => worker
@@ -1917,6 +1920,7 @@ impl WaveForgeStages {
                         transform: place(stamp.y_up_basis(), stamp.position),
                         id: local_id(stamp.id.local),
                         sway: [phase(stamp.id.local), 1.0],
+                        gi: Gi::Static,
                     })
                     .collect(),
                 _ => return None,
