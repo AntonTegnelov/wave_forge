@@ -29,6 +29,9 @@ func _initialize() -> void:
 		_fail("the stages did not start")
 		return
 	world.follow(Vector3(1, 0, 1))
+	if world.water() != {"level": 3.0}:
+		_fail("the pack's water is %s" % world.water())
+		return
 	started_usec = Time.get_ticks_usec()
 
 func _world(material_stage: String) -> Node:

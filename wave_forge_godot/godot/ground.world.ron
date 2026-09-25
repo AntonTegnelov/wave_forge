@@ -2,6 +2,8 @@
 // categories, sand low, grass in between and rock high, with grass growing on the grass.
 (
     version: 1,
+    // The sea: the sand below it is under water.
+    water: Some((level: 3.0)),
     stages: [
         (name: "height", kind: Field(Mul(Noise(frequency: 0.05, octaves: 3), Constant(12.0)))),
         (name: "surface", kind: Rules(rules: [

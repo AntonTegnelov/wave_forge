@@ -30,6 +30,9 @@ func _initialize() -> void:
 		_fail("the stages did not start")
 		return
 	world.follow(Vector3.ZERO)
+	if not world.water().is_empty():
+		_fail("a pack without water has %s" % world.water())
+		return
 	started_usec = Time.get_ticks_usec()
 
 func _process(_delta: float) -> bool:
