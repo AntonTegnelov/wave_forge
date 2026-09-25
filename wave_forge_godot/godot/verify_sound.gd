@@ -4,7 +4,8 @@
 ## (`surface`), which modules are inside (`indoor`, its buildings) and where fountains play
 ## (`sounds`). Every cell's surface is its module's; a chunk's interiors hold every building cell
 ## once and no other; its emitters sit in its fountains' cells. Within `audio_radius` the node gives
-## each interior an `Area3D` reverbed on `interior_reverb_bus` and each emitter a playing
+## each interior an `Area3D` reverbing on `interior_reverb_bus` and playing the sounds inside it on
+## `interior_audio_bus`, and each emitter a playing
 ## `AudioStreamPlayer3D`, and once the player has moved away, it frees the areas and stops the
 ## players.
 extends SceneTree
@@ -14,6 +15,7 @@ const CELL_SIZE := 2.0
 const RADIUS := 2
 const TIMEOUT_S := 120.0
 const BUS := &"Rooms"
+const INDOORS := &"Indoors"
 const SURFACES := {
 	"grass": "grass", "plaza": "stone", "plaza_lamp": "stone", "pillar_base": "stone",
 	"plaza_fountain": "stone", "road_straight": "asphalt", "road_corner": "asphalt",
@@ -32,8 +34,9 @@ var phase := "arrive"
 var waited := 0
 
 func _initialize() -> void:
-	AudioServer.add_bus()
-	AudioServer.set_bus_name(AudioServer.bus_count - 1, BUS)
+	for bus in [BUS, INDOORS]:
+		AudioServer.add_bus()
+		AudioServer.set_bus_name(AudioServer.bus_count - 1, bus)
 	world = ClassDB.instantiate("WaveForgeWorld")
 	world.seed = 11
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
@@ -52,6 +55,7 @@ func _initialize() -> void:
 	fountain.loop_end = 44100
 	world.sounds = {"fountain": fountain}
 	world.interior_reverb_bus = BUS
+	world.interior_audio_bus = INDOORS
 	if not world.load_rules(FileAccess.get_file_as_string("res://city.ron")):
 		_fail("res://city.ron could not be loaded")
 		return
@@ -161,7 +165,10 @@ func _check_nodes() -> bool:
 		if not area.reverb_bus_enabled or area.reverb_bus_name != BUS:
 			_fail("an interior reverbs on %s" % area.reverb_bus_name)
 			return false
-	print("verify_sound: %d interiors reverb on %s, %d players play the fountains" % [areas.size(), BUS, playing.size()])
+		if not area.audio_bus_override or area.audio_bus_name != INDOORS:
+			_fail("the sounds in an interior play on %s" % area.audio_bus_name)
+			return false
+	print("verify_sound: %d interiors reverb on %s and play on %s, %d players play the fountains" % [areas.size(), BUS, INDOORS, playing.size()])
 	return true
 
 ## Once the player has left, no area is left and no player plays where it was; the chunks it went to

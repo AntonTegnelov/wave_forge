@@ -148,18 +148,24 @@ pub struct WaveForgeWorld {
     #[export]
     navigation_template: Option<Gd<NavigationMesh>>,
 
-    /// Chunks within this many of the followed chunk sound: an `Area3D` per interior, reverbed on
-    /// `interior_reverb_bus`, and a player for each emitter whose key `sounds` maps to a stream,
-    /// from a module set's `indoor` and `sounds`. Below zero, none do.
+    /// Chunks within this many of the followed chunk sound: an `Area3D` per interior, reverbing
+    /// on `interior_reverb_bus` and playing on `interior_audio_bus`, and a player for each emitter
+    /// whose key `sounds` maps to a stream, from a module set's `indoor` and `sounds`. Below zero,
+    /// none do.
     #[export_group(name = "Audio")]
     #[export]
     audio_radius: i32,
     /// The stream each sound key plays, as key to `AudioStream`.
     #[export]
     sounds: VarDictionary,
-    /// The audio bus whose effects interiors give the sounds inside them; empty for no interiors.
+    /// The audio bus whose effects interiors give the sounds inside them as reverb; empty for
+    /// none.
     #[export]
     interior_reverb_bus: StringName,
+    /// The audio bus sounds inside interiors play on instead of their own; empty for none. With
+    /// both buses empty there are no interiors.
+    #[export]
+    interior_audio_bus: StringName,
 
     /// Cells solved around a chunk and thrown away, so its borders can be completed. Changing it
     /// compiles other kernels.
@@ -288,6 +294,7 @@ impl INode for WaveForgeWorld {
             audio_radius: -1,
             sounds: VarDictionary::new(),
             interior_reverb_bus: StringName::default(),
+            interior_audio_bus: StringName::default(),
             audio: audio::RegionAudio::default(),
             audio_due: std::collections::BTreeSet::new(),
             navigation_radius: -1,
@@ -1005,11 +1012,15 @@ impl WaveForgeWorld {
                 wave_forge::region_tags(chunk, rules, &layout)
             })
             .collect();
-        let (sounds, reverb_bus) = (self.sounds.clone(), self.interior_reverb_bus.clone());
+        let sounds = self.sounds.clone();
+        let buses = audio::InteriorBuses {
+            reverb: self.interior_reverb_bus.clone(),
+            audio: self.interior_audio_bus.clone(),
+        };
         let mut owner = self.base().clone();
         for tags in tags {
             self.audio_due.remove(&tags.chunk);
-            self.audio.build(&mut owner, &tags, &sounds, &reverb_bus);
+            self.audio.build(&mut owner, &tags, &sounds, &buses);
         }
     }
 
