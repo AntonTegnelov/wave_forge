@@ -161,6 +161,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_material` | the material the ground is drawn with |
 | | `ground_material_stage` | a Rules or Area stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
+| | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
 | Grass | `grass_stage` | a field stage whose value per column, 0 to 1, is how much of it grass covers ([Grass](#grass)); empty for none |
 | | `grass_per_cell` | blades per column where the cover is 1 (default 8) |
 | | `grass_radius` | chunks around the followed position that get grass (default 1) |
@@ -232,7 +233,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 - `curves(stage, chunk)`: a Region or TableCurves stage's curves through a chunk, each with what
   names it (its `region` and `index`, or its `row`), `points` on the ground plane in Godot's world
   space, and `values`.
-- `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body.
+- `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body, and
+  `far_ground_chunks()` the chunks of `far_ground_stage` whose far ground is drawn.
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
   since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` signals emitted in
   `slowest_frame_signals_ms`, `slowest_frame_grounds` built in `slowest_frame_grounds_ms`,
@@ -247,8 +249,10 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, in the order the
 products arrived (nearest first), so after a wide request some come a few frames later; by then a
 product can have been dropped again, and its `stage_dropped` follows. Ground is built for at most
-8 chunks per frame, and bodies for at most 3, nearest the player first. `stats()` reports what
-waits as `pending_signals`, `pending_grounds`, `pending_colliders` and `pending_placements`, and
+8 chunks per frame, far ground for at most 4 coarse chunks, again when ground comes or goes on or
+beside one, and bodies for at most 3, nearest the player first. `stats()` reports what waits as
+`pending_signals`, `pending_grounds`, `pending_far_grounds`, `pending_colliders` and
+`pending_placements`, and
 what is placed as `placed_nodes` and `placed_instances`, and the nodes of pooled scenes waiting to
 be placed again as `pooled_nodes` ([Scenes](#scenes)).
 

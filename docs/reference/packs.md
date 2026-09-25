@@ -750,6 +750,23 @@ taking the neighbours' first columns as their heights do: the materials an engin
 tells apart. It returns `None` until the categories of the chunk and of the chunks beyond its +x
 edge, its +y edge and its +x+y corner have arrived.
 
+### Far ground
+
+`wave_forge::far_ground(chunk, scale, field, cell_size, near)` builds the ground beyond the near
+ground from a coarse height field stage ([Levels](#levels)): one `FarGround` mesh per chunk of it,
+covering its `scale` by `scale` chunks of the WFC lattice. It has a vertex at every lattice chunk's
+corner, where a near ground's first vertex is, with the height a fine stage reading the coarse field
+there gets, so each lattice chunk is one square with exactly a near ground's outline, and two
+neighbouring coarse chunks meet exactly. `near` gives the near ground drawn on a lattice chunk, if
+any: its square is left out, so the two never overlap. Along every edge a far square shares with a
+near ground a wall stands, from the higher of the two edges to below the lower by as much as the
+near ground's skirt hangs, so no view sees between them at any level of detail the near ground is
+drawn at; a square beside a near ground fans out from its centre through the wall's feet, so the
+two share their vertices and no crack opens. Positions are relative to the corner of the first
+lattice chunk the coarse chunk covers, with heights absolute; the walls face both ways. It returns
+`None` until the coarse fields of the chunk and the eight around it have arrived, so the far ground
+reaches one coarse chunk less than its field.
+
 ## In the engines
 
 - Godot: the `WaveForgeStages` node ([godot.md](godot.md#waveforgestages)).

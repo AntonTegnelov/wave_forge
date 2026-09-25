@@ -46,9 +46,9 @@ community port and are unverified from Iron Gate (see the story's sources).
 
 Not needed for G7: density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71);
 Valheim is a height field) and tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)).
-Far proxies ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47), built) and a far ground
-from a coarse height stage ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)) serve
-mountain views (P2) but are not in G7's criteria.
+Far proxies ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)) and a far ground from a
+coarse height stage ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)), both built,
+serve mountain views (P2) but are not in G7's criteria.
 
 ## The other stories
 
@@ -71,5 +71,5 @@ Stories not listed have nothing built towards them yet beyond the shared runtime
 | P1 Live generation without hitches | the Godot check meets the bars for a streamed WFC world with colliders and navigation | Phase 2 stages under the same bars; desktop numbers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
 | P3 Fast into a new world | kernel warming | a kernel cache, and the time recorded on a desktop |
 | P4 Bounded memory | the game session's chunk bound, frozen stages bounded by a store ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)) | a 30-minute walk measuring process and GPU memory |
-| M1 Bake a maximal world | most stage kinds, levels, tables of facts, far proxies, occluders, ground levels, `Frozen` stages | the maximal preset, density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)), a store for chunks outside memory ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)), the bake ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)), a far ground ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)), an offline run with progress, cancelling and resuming, and baked content streamed from disk ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)), desktop numbers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
+| M1 Bake a maximal world | most stage kinds, levels, tables of facts, far proxies, occluders, ground levels and a far ground, `Frozen` stages and worlds with a store for what is out of memory | the maximal preset, density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)), the bake ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)), an offline run with progress, cancelling and resuming, and baked content streamed from disk ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)), desktop numbers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
 | M2 A maximal world before play | what M1 has, and the history seam of N11 | what M1 misses less the editor, with the result kept as frozen chunks in the game's store ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)) |

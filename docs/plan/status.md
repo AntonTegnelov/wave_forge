@@ -108,9 +108,9 @@ Each is a gap between the code and the design or the stories, with where it is t
   ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, with levels of detail and skirts
   that Godot and Bevy draw by distance; both draw its materials and grass and sway plants in the
-  wind; Forward+ measurements are [#166](https://github.com/AntonTegnelov/wave_forge/issues/166),
-  and a far ground from a coarse height stage is
-  [#183](https://github.com/AntonTegnelov/wave_forge/issues/183). Scattered points stand at their
+  wind; Forward+ measurements are [#166](https://github.com/AntonTegnelov/wave_forge/issues/166).
+  Beyond it, a far ground from a coarse height stage meets it without a gap
+  ([packs.md](../reference/packs.md#far-ground)). Scattered points stand at their
   column's height, which can differ from the mesh between column centres by up to half a column's
   slope.
 - **No levels of detail** for the exported module meshes; they wait for authored models
