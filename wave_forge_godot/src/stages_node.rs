@@ -12,12 +12,13 @@
 
 use crate::gi::Gi;
 use crate::grass::{GRASS_SHADER, Grass};
+use crate::lods::add_levelled_surface;
 use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
 use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
-use godot::classes::rendering_server::{ArrayType, PrimitiveType};
+use godot::classes::rendering_server::ArrayType;
 use godot::classes::{
     FastNoiseLite, FileAccess, INode, Image, ImageTexture, Material, Node, Node3D, PhysicsServer3D,
     ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D,
@@ -1660,21 +1661,11 @@ impl WaveForgeStages {
             let [finest, coarser @ ..] = mesh.levels.as_slice() else {
                 unreachable!("a ground has full detail at least");
             };
-            arrays.set(
-                ArrayType::INDEX.ord() as usize,
-                &godot_triangles(&finest.indices).to_variant(),
-            );
-            let errors: Vec<f32> = coarser.iter().map(|level| level.error).collect();
-            let mut lods = VarDictionary::new();
-            // A coarser level overwrites a finer one of the same key, so of levels that stray
-            // alike the coarsest is drawn.
-            for (key, level) in lod_keys(&errors).into_iter().zip(coarser) {
-                lods.set(key, &godot_triangles(&level.indices).to_variant());
-            }
-            rendering
-                .mesh_add_surface_from_arrays_ex(rid, PrimitiveType::TRIANGLES, &arrays)
-                .lods(&lods)
-                .done();
+            let coarser: Vec<(&[u32], f32)> = coarser
+                .iter()
+                .map(|level| (level.indices.as_slice(), level.error))
+                .collect();
+            add_levelled_surface(rid, &mut arrays, &finest.indices, &coarser);
             match (ids, &self.palette) {
                 (Some(ids), Some((palette, template))) => {
                     let material = chunk_material(template, palette, &mesh, &ids, cell);
@@ -2075,31 +2066,6 @@ fn phase(local: u64) -> f32 {
     (mixed >> 40) as f32 / (1u64 << 24) as f32
 }
 
-/// A ground level's triangles for Godot: the library's are counter-clockwise seen from their front,
-/// Godot's clockwise.
-fn godot_triangles(indices: &[u32]) -> PackedInt32Array {
-    indices
-        .chunks(3)
-        .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])
-        .map(|index| index as i32)
-        .collect()
-}
-
-/// The keys of the coarser ground levels in a surface's `lods`, from their errors in world units.
-/// Godot draws a level while its key, projected to the screen, stays under the viewport's
-/// `mesh_lod_threshold` in pixels, and stops at the first level that does not, in order of key; so
-/// a key is at least every finer level's. It skips a key that is not positive, and a level that
-/// strays nowhere is drawn at every distance, so such a key is the smallest positive float.
-fn lod_keys(errors: &[f32]) -> Vec<f32> {
-    errors
-        .iter()
-        .scan(f32::MIN_POSITIVE, |key, &error| {
-            *key = key.max(error);
-            Some(*key)
-        })
-        .collect()
-}
-
 /// The reference ground shader: a chunk's material ids per vertex, blended through a palette.
 const GROUND_SHADER: &str = include_str!("shaders/ground.gdshader");
 
@@ -2128,23 +2094,4 @@ fn chunk_material(
         &Vector2::new(cell[0], cell[2]).to_variant(),
     );
     material
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lod_keys_never_fall_below_a_finer_levels() {
-        let keys = lod_keys(&[0.5, 0.25, 2.0]);
-
-        assert_eq!(keys, [0.5, 0.5, 2.0]);
-    }
-
-    #[test]
-    fn a_level_that_strays_nowhere_gets_a_positive_key() {
-        let keys = lod_keys(&[0.0, 0.0]);
-
-        assert_eq!(keys, [f32::MIN_POSITIVE, f32::MIN_POSITIVE]);
-    }
 }

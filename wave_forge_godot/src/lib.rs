@@ -65,6 +65,7 @@ use wave_forge::{
 mod audio;
 mod gi;
 mod grass;
+mod lods;
 mod occlusion;
 mod placements;
 mod radius;
