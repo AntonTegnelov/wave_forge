@@ -35,6 +35,7 @@ extension needs none of godot-rust's thread-safety features.
 | | `proxy_colours` | each module's colour seen from afar, as module name to `Color`; a module without one is left out |
 | Advanced | `halo` | the first parity's halo, in cells |
 | | `warm_kernels` | compile the kernels a run needs when generation starts |
+| | `frozen_directory` | freezes the world: where the chunks it evicts are kept as they are, a file each, and come back from rather than being generated, even after the rule set changes ([world.md](../architecture/world.md#regenerating-exactly)); `user://` paths are resolved, and the game keeps the directory with its saves. Empty generates an evicted chunk again, tile for tile |
 
 ### Functions
 
@@ -70,8 +71,9 @@ extension needs none of godot-rust's thread-safety features.
 ### stats()
 
 - **Generation:** `batches`, `solved`, `repaired`, `rewritten_by_repair`, `failed`, `solver_ms`,
-  `repair_batches`, `repair_ms`, and `replayed`, repairs run again to rewrite a chunk generated
-  again ([world.md](../architecture/world.md#regenerating-exactly)).
+  `repair_batches`, `repair_ms`, `replayed`, repairs run again to rewrite a chunk generated again,
+  and `restored`, chunks a frozen world brought back from its directory
+  ([world.md](../architecture/world.md#regenerating-exactly)).
 - **Waiting:** `pending_colliders`, the chunks within `collider_radius` still waiting for a body.
 - **Navigation:** `navigation_baked`, `navigation_polygons`.
 - **The slowest frame since the start:** `slowest_frame_ms` in all, `slowest_frame_events` drained

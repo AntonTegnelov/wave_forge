@@ -50,7 +50,7 @@
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::{
     FileAccess, INode, NavigationMesh, NavigationMeshSourceGeometryData3D, NavigationServer3D,
-    Node, PhysicsServer3D, Shape3D,
+    Node, PhysicsServer3D, ProjectSettings, Shape3D,
 };
 use godot::prelude::*;
 use radius::chunk_distance;
@@ -58,8 +58,8 @@ use std::collections::{HashMap, HashSet};
 use timings::Timings;
 use wave_forge::loader::RuleFile;
 use wave_forge::{
-    Builder, ChunkCoord, ChunkEvent, ChunkShape, FocusPoint, NavSourceError, Prior, RegionStatus,
-    Ruleset, TileMask, Worker, WorldExtent, YUpSpace,
+    Builder, ChunkCoord, ChunkEvent, ChunkShape, DirectoryStore, FocusPoint, NavSourceError, Prior,
+    RegionStatus, Ruleset, TileMask, Worker, WorldExtent, YUpSpace,
 };
 
 mod audio;
@@ -204,6 +204,12 @@ pub struct WaveForgeWorld {
     /// way, so this decides whether the wait lands at the start or in the middle.
     #[export]
     warm_kernels: bool,
+    /// Freezes the world: where the chunks it evicts are kept as they are, one file each, and come
+    /// back from rather than being generated, even after the rule set changes, as long as its tile
+    /// indices mean the same tiles; `user://` paths are resolved. The game keeps the directory with
+    /// its saves. Empty generates an evicted chunk again, tile for tile, when it is needed.
+    #[export]
+    frozen_directory: GString,
 
     /// Tiles allowed on each layer, from the world's lowest layer up, as set by
     /// [`WaveForgeWorld::set_layer_tiles`].
@@ -305,6 +311,7 @@ impl INode for WaveForgeWorld {
             evict_margin: 0,
             world_chunks: Vector3i::ZERO,
             warm_kernels: true,
+            frozen_directory: GString::new(),
             layers: Vec::new(),
             face_bans: Default::default(),
             rules: None,
@@ -506,6 +513,13 @@ impl WaveForgeWorld {
         let extent = self.extent();
         let (seed, halo) = (self.seed as u64, self.halo.max(0) as u32);
         let warm = self.warm_kernels.then_some(self.view_radius.max(0) as u32);
+        let frozen = (!self.frozen_directory.is_empty()).then(|| {
+            std::path::PathBuf::from(
+                ProjectSettings::singleton()
+                    .globalize_path(&self.frozen_directory)
+                    .to_string(),
+            )
+        });
         self.followed = None;
         // Everything here happens on the generating thread, including building the device and
         // compiling the kernels, so Godot's own thread never waits for either.
@@ -515,6 +529,9 @@ impl WaveForgeWorld {
                 .extent(extent)
                 .halo(halo)
                 .build()?;
+            if let Some(directory) = frozen {
+                world = world.with_store(Box::new(DirectoryStore::new(directory)));
+            }
             if let Some(radius) = warm {
                 let shapes = world.kernel_shapes(radius);
                 world.solver_mut().warm(&shapes)?;
@@ -884,7 +901,7 @@ impl WaveForgeWorld {
     }
 
     /// What generation has cost so far: `batches`, `solved`, `repaired`, `rewritten_by_repair`,
-    /// `failed`, `solver_ms`, `repair_batches`, `repair_ms` and `replayed`; how many navigation bakes have
+    /// `failed`, `solver_ms`, `repair_batches`, `repair_ms`, `replayed` and `restored`; how many navigation bakes have
     /// finished (`navigation_baked`) and the polygons of the meshes in place
     /// (`navigation_polygons`); and the chunks within `collider_radius` still waiting for a body
     /// (`pending_colliders`), since at most three are given one per frame.
@@ -917,6 +934,7 @@ impl WaveForgeWorld {
         out.set("repair_batches", stats.repair_batches);
         out.set("repair_ms", stats.repair_ms);
         out.set("replayed", stats.replayed);
+        out.set("restored", stats.restored);
         out.set("navigation_baked", self.baked);
         let polygons: i64 = self
             .navigation
