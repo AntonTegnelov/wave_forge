@@ -75,6 +75,7 @@ Each topic has one home; other documents link to it rather than repeating it.
 | [testing.md](guides/testing.md) | test layers, running them, end-to-end tests, benchmarks, the game session, rendering tools, engine checks |
 | [debugging.md](guides/debugging.md) | reproducing failures, invariant oracles, the counters a solve returns, debugging stages and the Godot node |
 | [performance.md](guides/performance.md) | method, where work runs, memory, code priorities, build profiles, profiling |
+| [desktop-measurements.md](guides/desktop-measurements.md) | the script that takes the measurements a desktop owes, and how to run it on Windows |
 
 ### research: the evidence
 
