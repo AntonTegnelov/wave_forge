@@ -30,6 +30,7 @@ extension needs none of godot-rust's thread-safety features.
 | | `sounds` | the stream each sound key plays, as key to `AudioStream` |
 | | `interior_reverb_bus` | the audio bus interiors reverb the sounds inside them on; empty for none |
 | | `interior_audio_bus` | the audio bus sounds inside interiors play on instead of their own; empty for none, and with both empty, no interiors |
+| Occlusion | `occluder_radius` | chunks around the player that get occluders of their solid cells ([Occlusion](#occlusion)); below zero, none |
 | Advanced | `halo` | the first parity's halo, in cells |
 | | `warm_kernels` | compile the kernels a run needs when generation starts |
 
@@ -55,6 +56,7 @@ extension needs none of godot-rust's thread-safety features.
   thread.
 - **Sound and surfaces:** `surface_at(position)`, `region_tags(chunk)`
   ([Sound and surfaces](#sound-and-surfaces)).
+- **Occlusion:** `occluders(chunk)` ([Occlusion](#occlusion)).
 - **Cost:** `stats()`, below.
 
 ### Signals
@@ -100,6 +102,23 @@ At most three chunks get their sound per frame, nearest first, and again when th
 A chunk leaving the radius frees its areas and stops its players, which a pool keeps for the next
 chunk, and the node stops them all when it leaves the tree. A game that wants its own mapping
 leaves `audio_radius` below zero and reads `region_tags`.
+
+### Occlusion
+
+A module set's modules may say they fill their cell with opaque geometry (`solid`), which the city
+example says of its closed buildings. `occluders(chunk)` gives a generated chunk's solid cells as
+an `AABB` per box, the boxes together covering each solid cell once. Within `occluder_radius` of
+the followed chunk, the node gives each chunk with a solid cell one `OccluderInstance3D` holding an
+`ArrayOccluder3D` of its boxes, a child of the node, at most three chunks a frame, nearest first,
+again when its tiles change, and frees it when the chunk leaves the radius. Godot's occlusion
+culling uses them once the viewport's `use_occlusion_culling` is on.
+
+Whether they pay depends on the view and on how the game draws
+([measurements.md](../research/measurements.md) E50). From a street they hid half of what the
+city draws and saved several milliseconds; from above the roofs they hid under 1%, because a
+chunk's MultiMesh of a module is culled only when all of it is hidden, and culling cost more than it
+saved. Rebuilding three chunks' occluders costs Godot a millisecond or more on the frames after the
+player crosses into a chunk. `occluder_radius` is below zero until a game turns it on.
 
 ## WaveForgeStages
 
@@ -311,7 +330,9 @@ through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) 
 `godot/verify_scenes.gd` (scenes bound to trees and pieces, as MultiMeshes and as nodes) and
 `godot/verify_ground.gd` (the ground's materials per category, and grass) and
 `godot/verify_sound.gd` (the city's surfaces, interiors, emitters and the node's sound) and
-`godot/verify_names.gd` (a location's name through a translation) in a real headless Godot. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
+`godot/verify_names.gd` (a location's name through a translation) and `godot/verify_occlusion.gd`
+(the city's occluders, and the node's) in a real headless Godot. `render_occlusion.sh` measures
+what occluders cull and cost from above the city and from a street. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
 grass, and checks that trees drawn with the vegetation shader move in the wind and stand still
 without it.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and

@@ -53,7 +53,8 @@ use godot::classes::{
     Node, PhysicsServer3D, Shape3D,
 };
 use godot::prelude::*;
-use std::collections::HashMap;
+use radius::chunk_distance;
+use std::collections::{HashMap, HashSet};
 use timings::Timings;
 use wave_forge::loader::RuleFile;
 use wave_forge::{
@@ -63,7 +64,9 @@ use wave_forge::{
 
 mod audio;
 mod grass;
+mod occlusion;
 mod placements;
+mod radius;
 mod stages_node;
 mod timings;
 
@@ -167,6 +170,13 @@ pub struct WaveForgeWorld {
     #[export]
     interior_audio_bus: StringName,
 
+    /// Chunks within this many of the followed chunk get an occluder of their solid cells, from a
+    /// module set's `solid`, for Godot's occlusion culling, which the viewport's
+    /// `use_occlusion_culling` turns on. Below zero, none do.
+    #[export_group(name = "Occlusion")]
+    #[export]
+    occluder_radius: i32,
+
     /// Cells solved around a chunk and thrown away, so its borders can be completed. Changing it
     /// compiles other kernels.
     #[export_group(name = "Advanced")]
@@ -207,6 +217,10 @@ pub struct WaveForgeWorld {
     audio: audio::RegionAudio,
     /// Chunks whose tiles changed since their sound was built, to build again.
     audio_due: std::collections::BTreeSet<ChunkCoord>,
+    /// The occluders of the chunks within `occluder_radius`, and the chunks whose tiles changed
+    /// since theirs was built.
+    occluders: occlusion::Occluders,
+    occluders_due: std::collections::BTreeSet<ChunkCoord>,
     /// Each chunk's navigation region and the mesh being baked for it.
     navigation: HashMap<ChunkCoord, NavigationChunk>,
     /// The triangles of each module's collision shape, as the navigation bake reads them.
@@ -242,15 +256,6 @@ struct FrameCost {
 /// The most chunks one frame gives a collider body, in either node. A body costs Godot's thread
 /// about 0.3 ms for a chunk of 512 boxes on the dev container, so three stay near a millisecond.
 pub(crate) const BODIES_PER_FRAME: usize = 3;
-
-/// How many chunks apart two chunks are along the axis where they are furthest apart: the
-/// distance the node's radii are measured in.
-fn chunk_distance(a: ChunkCoord, b: ChunkCoord) -> i32 {
-    (a.x - b.x)
-        .abs()
-        .max((a.y - b.y).abs())
-        .max((a.z - b.z).abs())
-}
 
 fn elapsed_ms(since: std::time::Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.0
@@ -297,6 +302,9 @@ impl INode for WaveForgeWorld {
             interior_audio_bus: StringName::default(),
             audio: audio::RegionAudio::default(),
             audio_due: std::collections::BTreeSet::new(),
+            occluder_radius: -1,
+            occluders: occlusion::Occluders::default(),
+            occluders_due: std::collections::BTreeSet::new(),
             navigation_radius: -1,
             navigation_template: None,
             navigation: HashMap::new(),
@@ -388,6 +396,7 @@ impl INode for WaveForgeWorld {
         self.update_navigation(&updated);
         frame.navigation_ms = elapsed_ms(navigating);
         self.update_audio(&updated);
+        self.update_occluders(&updated);
         frame.ms = elapsed_ms(processing);
         self.process_ms.push(frame.ms);
         if frame.ms > self.slowest_frame.ms {
@@ -766,6 +775,25 @@ impl WaveForgeWorld {
         .unwrap_or_default()
     }
 
+    /// A generated chunk's occluders: an `AABB` per box of its solid cells, the boxes together
+    /// covering each solid cell once. Empty for a chunk that is not generated.
+    #[func]
+    fn occluders(&self, chunk: Vector3i) -> Array<Aabb> {
+        let (Some(worker), Some(rules)) = (&self.worker, &self.rules) else {
+            return Array::new();
+        };
+        let Some(chunk) = worker.chunk(from_vector(chunk)) else {
+            return Array::new();
+        };
+        wave_forge::occluders(chunk, rules, &self.space())
+            .iter()
+            .map(|cell_box| {
+                let min = Vector3::from_array(cell_box.min);
+                Aabb::new(min, Vector3::from_array(cell_box.max) - min)
+            })
+            .collect()
+    }
+
     /// A generated chunk's region tags: `interiors`, an `AABB` per box of indoor cells, and
     /// `emitters`, a dictionary per sound with its `position` and `key`. Empty for a chunk that is
     /// not generated.
@@ -980,30 +1008,20 @@ impl WaveForgeWorld {
         else {
             return;
         };
-        let radius = self.audio_radius;
-        let within = |chunk: ChunkCoord| radius >= 0 && chunk_distance(chunk, focus) <= radius;
-        let gone: Vec<ChunkCoord> = self
-            .audio
-            .chunks()
-            .filter(|&chunk| !within(chunk) || worker.chunk(chunk).is_none())
-            .collect();
-        for chunk in gone {
-            self.audio.drop_chunk(chunk);
-        }
-        self.audio_due
-            .extend(updated.iter().copied().filter(|&chunk| within(chunk)));
-        self.audio_due.retain(|&chunk| within(chunk));
-        let built: std::collections::HashSet<ChunkCoord> = self.audio.chunks().collect();
-        let mut wanted: Vec<ChunkCoord> = worker
-            .chunks()
-            .map(|chunk| chunk.coord)
-            .filter(|&chunk| within(chunk))
-            .filter(|chunk| !built.contains(chunk) || self.audio_due.contains(chunk))
-            .collect();
-        wanted.sort_by_key(|&chunk| (chunk_distance(chunk, focus), chunk));
-        wanted.truncate(BODIES_PER_FRAME);
+        let generated: HashSet<ChunkCoord> = worker.chunks().map(|chunk| chunk.coord).collect();
+        let built: HashSet<ChunkCoord> = self.audio.chunks().collect();
+        let plan = radius::plan(
+            self.audio_radius,
+            focus,
+            &generated,
+            &built,
+            &mut self.audio_due,
+            updated,
+            BODIES_PER_FRAME,
+        );
         let layout = self.space();
-        let tags: Vec<wave_forge::RegionTags> = wanted
+        let tags: Vec<wave_forge::RegionTags> = plan
+            .build
             .iter()
             .map(|&coord| {
                 let chunk = worker
@@ -1012,6 +1030,9 @@ impl WaveForgeWorld {
                 wave_forge::region_tags(chunk, rules, &layout)
             })
             .collect();
+        for chunk in plan.gone {
+            self.audio.drop_chunk(chunk);
+        }
         let sounds = self.sounds.clone();
         let buses = audio::InteriorBuses {
             reverb: self.interior_reverb_bus.clone(),
@@ -1019,8 +1040,45 @@ impl WaveForgeWorld {
         };
         let mut owner = self.base().clone();
         for tags in tags {
-            self.audio_due.remove(&tags.chunk);
             self.audio.build(&mut owner, &tags, &sounds, &buses);
+        }
+    }
+
+    /// Keeps an occluder on every chunk within `occluder_radius` of the followed chunk, building a
+    /// few a frame, nearest first, and again when a chunk's tiles change; frees the others.
+    fn update_occluders(&mut self, updated: &[ChunkCoord]) {
+        let (Some(worker), Some(rules), Some(focus)) = (&self.worker, &self.rules, self.followed)
+        else {
+            return;
+        };
+        let generated: HashSet<ChunkCoord> = worker.chunks().map(|chunk| chunk.coord).collect();
+        let built: HashSet<ChunkCoord> = self.occluders.chunks().collect();
+        let plan = radius::plan(
+            self.occluder_radius,
+            focus,
+            &generated,
+            &built,
+            &mut self.occluders_due,
+            updated,
+            BODIES_PER_FRAME,
+        );
+        let layout = self.space();
+        let boxes: Vec<(ChunkCoord, Vec<wave_forge::CellBox>)> = plan
+            .build
+            .iter()
+            .map(|&coord| {
+                let chunk = worker
+                    .chunk(coord)
+                    .expect("chosen from the worker's chunks");
+                (coord, wave_forge::occluders(chunk, rules, &layout))
+            })
+            .collect();
+        for chunk in plan.gone {
+            self.occluders.drop_chunk(chunk);
+        }
+        let mut owner = self.base().clone();
+        for (coord, boxes) in boxes {
+            self.occluders.build(&mut owner, coord, &boxes);
         }
     }
 
