@@ -9,7 +9,8 @@ guide. In short, on each graphics API in -Apis:
     at a walk and in flight, and with smaller batches (wave_forge_bevy/examples/frame_times.rs).
   - Godot (#39, P1): frame times while the city streams with its models drawn, on Forward+
     (wave_forge_godot/godot/measure_city.gd).
-  - Godot (#166): grass and ground levels of detail on Forward+ (render_ground.gd, render_lods.gd).
+  - Godot (#166, P2): grass, ground levels of detail and far ground on Forward+ (render_ground.gd,
+    render_lods.gd, render_far.gd).
 And once, P3: the history example's first towns, on a first run and a second one.
 
 Everything goes into measurements/<date-time>/ in the repository, and a zip of it next to that
@@ -228,7 +229,7 @@ foreach ($api in $Apis) {
         }
     }
     if ($Only -contains "ground") {
-        foreach ($script in @("render_ground", "render_lods")) {
+        foreach ($script in @("render_ground", "render_lods", "render_far")) {
             $name = "godot-$script-$api"
             [void](Invoke-Logged $name $Godot (@("--path", $GodotProject) + $renderer + @("--script", "$script.gd")))
             # The pictures a script saved, named in its output.
@@ -259,7 +260,7 @@ foreach ($file in @("bevy.txt", "godot_city.txt")) {
 }
 foreach ($log in Get-ChildItem $Logs -Filter "*.log") {
     foreach ($line in Get-Content $log.FullName) {
-        if ($line -match "^(render_ground|render_lods|check): ") { $summary.Add("$($log.BaseName): $line") }
+        if ($line -match "^(render_ground|render_lods|render_far|check): ") { $summary.Add("$($log.BaseName): $line") }
     }
 }
 $summary.Add("")

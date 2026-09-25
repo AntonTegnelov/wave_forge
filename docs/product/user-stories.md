@@ -438,10 +438,12 @@ detail.*
 on a mid-range desktop GPU at 60 frames per second, with the chunks per second each level generates
 recorded. **Needs.** Levels and scales, far proxies ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)),
 a far ground from a coarse height stage ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)).
-**Status:** in progress (2026-09-25): coarse stages, ground levels of detail and far proxies are
-built in both engines (in Godot a far chunk of the city is one draw call, `render_proxies.sh` in
-[testing.md](../guides/testing.md)); a far ground from a coarse stage is not, and nothing is
-measured at 2 km. Measured so far: a field stage costs 0.02 ms per chunk of 64 columns on the CPU in release (valley pack, dozen on the RTX 3070, [measurements.md](../research/measurements.md) E29), so fields are not what limits view distance.
+**Status:** in progress (2026-09-25): coarse stages, ground levels of detail, far proxies and a far
+ground from a coarse height stage are built in both engines (in Godot a far chunk of the city is
+one draw call, `render_proxies.sh` in [testing.md](../guides/testing.md), and the far ground meets
+the near ground without a gap pixel in any view, `render_far.gd`, E52, where the coarse stage
+generates about 58 000 chunks a second of its own time, each covering 64 of the lattice). Nothing
+is measured at 2 km on a desktop yet ([desktop-measurements.md](../guides/desktop-measurements.md)). Measured so far: a field stage costs 0.02 ms per chunk of 64 columns on the CPU in release (valley pack, dozen on the RTX 3070, [measurements.md](../research/measurements.md) E29), so fields are not what limits view distance.
 
 ### P3. Fast into a new world
 

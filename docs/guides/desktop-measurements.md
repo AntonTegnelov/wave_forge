@@ -15,7 +15,7 @@ On Vulkan and on Direct3D 12:
 |---|---|---|
 | A city streamed around a moving focus in Bevy and drawn at 1080p: on Bevy's device and on one of the solver's own, at 4.2 m/s and 30 m/s, and at 30 m/s with batches of at most 16 and 4 regions. An idle phase first, the cost of drawing alone | `wave_forge_bevy/examples/frame_times.rs` | where the solver runs in both engines, and whether a smaller batch buys smoother frames ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
 | The city walked in Godot with its module models drawn, on Forward+, at 4.2 m/s and 30 m/s, with the node's own time | `wave_forge_godot/godot/measure_city.gd` | the solver on a device of its own in a desktop Godot ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), P1's frame rate |
-| Grass on 25 chunks with and without it, and the ground's levels of detail with a check for gaps, on Forward+ | `render_ground.gd`, `render_lods.gd` | E45 and E47 on a desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166)) |
+| Grass on 25 chunks with and without it, the ground's levels of detail, and the far ground beyond the near ground, each with a check for gaps, on Forward+ | `render_ground.gd`, `render_lods.gd`, `render_far.gd` | E45, E47 and E52 on a desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166), P2) |
 
 Once, headless: the history example's first towns, on the first run after building and on a second
 one, for P3's time into a new world.
