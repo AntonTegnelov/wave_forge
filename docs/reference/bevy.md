@@ -66,7 +66,9 @@ thread.
   given its first facts and focus there. A location's `Site::name()` is a translation key with
   arguments ([packs.md](packs.md#locations)), for a game's localisation, a Fluent bundle say
   ([Sound and names](#sound-and-names)). The
-  pack's water is the game's own `Pack::water()` ([packs.md](packs.md#water)).
+  pack's water is the game's own `Pack::water()` ([packs.md](packs.md#water)). A frozen stage's
+  store is given where the runtime is built, `Runtime::with_store`, in the plugin's `build` closure
+  ([packs.md](packs.md#persistence-and-saves)).
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
 - `WaveForgeStages::set_edits(edits)` hands the stages the player's edits

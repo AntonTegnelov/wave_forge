@@ -21,6 +21,7 @@ use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of}
 use super::rivers::DownhillRivers;
 use super::save::{FrozenChunk, Save};
 use super::town_thread::{Done, Job, Stopped, TownKey, TownThread};
+use crate::frozen::{FrozenStore, StoreError};
 use crate::noise::NoiseConfig;
 use crate::products::InstanceId;
 use crate::scheduler::FocusPoint;
@@ -433,6 +434,8 @@ pub enum StageError {
     ChunkMismatch { solver: [u32; 2], runtime: [u32; 2] },
     #[error("the town solver's thread stopped")]
     TownsStopped,
+    #[error(transparent)]
+    Store(#[from] StoreError),
     #[error("stage {stage:?} could not solve the town of {site:?}: {message}")]
     Town {
         stage: String,
@@ -560,8 +563,11 @@ pub struct Runtime {
     /// The log the edits were folded from, which a save keeps.
     log: Edits,
     /// Every chunk of a frozen stage as it was first generated, before the edits, by stage index
-    /// and chunk: what it is from then on, and what a save keeps.
+    /// and chunk: what it is from then on, and what a save keeps. With a store, only those a
+    /// request needs; the others wait in the store.
     frozen: BTreeMap<(usize, ChunkCoord), Arc<Product>>,
+    /// Where frozen chunks no request needs wait, if the game gave one.
+    store: Option<Box<dyn FrozenStore>>,
     /// The noises Field expressions read by name: the pack's, with any the engine replaced.
     noises: BTreeMap<String, NoiseConfig>,
     /// The focused row of each table that has one, by table index.
@@ -631,6 +637,7 @@ impl Runtime {
             edits: Folded::default(),
             log: Edits::default(),
             frozen: BTreeMap::new(),
+            store: None,
             focused: BTreeMap::new(),
             footprints: BTreeMap::new(),
         }
@@ -1305,6 +1312,73 @@ impl Runtime {
         }
     }
 
+    /// Gives frozen stages a store for the chunks no request needs, so they leave memory without
+    /// being lost: a chunk goes to the store when a request drops it and comes back from it when a
+    /// request needs it again. Without one, a runtime keeps every frozen chunk it has generated.
+    #[must_use]
+    pub fn with_store(mut self, store: Box<dyn FrozenStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// The frozen chunk of stage `index` at `chunk`, from memory or from the store, which it is
+    /// kept in memory from then on; `None` if it has never been generated.
+    fn frozen_product(
+        &mut self,
+        index: usize,
+        chunk: ChunkCoord,
+    ) -> Result<Option<Arc<Product>>, StageError> {
+        if let Some(product) = self.frozen.get(&(index, chunk)) {
+            return Ok(Some(Arc::clone(product)));
+        }
+        let Some(store) = &mut self.store else {
+            return Ok(None);
+        };
+        let stage = &self.pack.stages[index].name;
+        let Some(bytes) = store.fetch(stage, chunk)? else {
+            return Ok(None);
+        };
+        let product: Product = std::str::from_utf8(&bytes)
+            .map_err(|error| error.to_string())
+            .and_then(|text| ron::from_str(text).map_err(|error| error.to_string()))
+            .map_err(|error| {
+                StoreError(format!(
+                    "the store's chunk {chunk:?} of stage {stage:?} is not one Wave Forge kept: \
+                     {error}"
+                ))
+            })?;
+        let product = Arc::new(product);
+        self.frozen.insert((index, chunk), Arc::clone(&product));
+        Ok(Some(product))
+    }
+
+    /// Moves the frozen chunks no request needs to the store, if there is one.
+    fn store_unneeded_frozen(&mut self) -> Result<(), StageError> {
+        let Some(store) = &mut self.store else {
+            return Ok(());
+        };
+        let unneeded: Vec<(usize, ChunkCoord)> = self
+            .frozen
+            .keys()
+            .copied()
+            .filter(|&(stage, chunk)| {
+                !self
+                    .needed
+                    .get(&stage)
+                    .is_some_and(|chunks| chunks.contains(&chunk))
+            })
+            .collect();
+        for key in unneeded {
+            let product = self
+                .frozen
+                .remove(&key)
+                .expect("listed from the frozen chunks");
+            let text = ron::to_string(product.as_ref()).expect("a product is plain data");
+            store.keep(&self.pack.stages[key.0].name, key.1, text.into_bytes())?;
+        }
+        Ok(())
+    }
+
     /// Gives Region stages that name `name` the job they run.
     #[must_use]
     pub fn with_region_job(mut self, name: &str, job: impl RegionJob + 'static) -> Self {
@@ -1474,6 +1548,7 @@ impl Runtime {
         });
         self.needed = needed;
         self.focus = focus.to_vec();
+        self.store_unneeded_frozen()?;
         Ok(dropped)
     }
 
@@ -1575,15 +1650,20 @@ impl Runtime {
                 (distance, *chunk)
             });
             for chunk in missing.into_iter().take(budget - generated.len()) {
-                if !self.frozen.contains_key(&(index, chunk)) {
+                let frozen = if self.pack.stages[index].persist == Persist::Frozen {
+                    self.frozen_product(index, chunk)?
+                } else {
+                    None
+                };
+                if frozen.is_none() {
                     self.request_town_of(index, chunk)?;
                     if self.waits_for_town(index, chunk) {
                         continue;
                     }
                 }
                 let started = std::time::Instant::now();
-                let product = match self.frozen.get(&(index, chunk)) {
-                    Some(frozen) => Product::clone(frozen),
+                let product = match frozen {
+                    Some(frozen) => Product::clone(&frozen),
                     None => {
                         self.assemble_of(index, chunk)?;
                         self.run_region_of(index, chunk)?;
