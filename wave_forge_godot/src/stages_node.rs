@@ -1495,6 +1495,10 @@ impl WaveForgeStages {
             &"placed_instances".to_variant(),
             &(instances as i64).to_variant(),
         );
+        out.set(
+            &"pooled_nodes".to_variant(),
+            &(self.placements.pooled() as i64).to_variant(),
+        );
         let slowest = self.slowest_frame;
         for (key, value) in [
             ("slowest_frame_ms", slowest.ms),
