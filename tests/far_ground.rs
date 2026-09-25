@@ -153,6 +153,24 @@ fn covering(p: [f32; 2], triangles: &[[[f32; 2]; 3]]) -> usize {
         .count()
 }
 
+/// Whether `p` lies within a hundredth of a unit of a triangle's edge, where which triangle holds
+/// it is a matter of rounding.
+fn on_an_edge(p: [f32; 2], triangles: &[[[f32; 2]; 3]]) -> bool {
+    let near_segment = |a: [f32; 2], b: [f32; 2]| {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let length = dx * dx + dy * dy;
+        if length == 0.0 {
+            return false;
+        }
+        let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length).clamp(0.0, 1.0);
+        let (x, y) = (a[0] + t * dx - p[0], a[1] + t * dy - p[1]);
+        (x * x + y * y).sqrt() < 0.01
+    };
+    triangles
+        .iter()
+        .any(|[a, b, c]| near_segment(*a, *b) || near_segment(*b, *c) || near_segment(*c, *a))
+}
+
 #[test]
 fn far_and_near_ground_cover_every_point_once() {
     let runtime = runtime();
@@ -192,6 +210,9 @@ fn far_and_near_ground_cover_every_point_once() {
             {
                 continue;
             }
+            if on_an_edge(p, &triangles) {
+                continue;
+            }
             assert_eq!(covering(p, &triangles), 1, "the point {p:?}");
             checked += 1;
         }
@@ -200,7 +221,7 @@ fn far_and_near_ground_cover_every_point_once() {
 }
 
 #[test]
-fn a_wall_joins_every_near_edge_the_far_ground_meets_to_the_far_edge() {
+fn a_wall_joins_every_near_edge_the_far_ground_meets_from_above_it_to_below_its_skirt() {
     let runtime = runtime();
     let near = near_grounds(&runtime);
 
@@ -208,16 +229,21 @@ fn a_wall_joins_every_near_edge_the_far_ground_meets_to_the_far_edge() {
 
     let span = COLUMNS as f32 * CELL[0];
     let vertices: Vec<[f32; 3]> = (0..far.positions.len()).map(|v| world(&far, v)).collect();
-    let has = |x: f32, y: f32, z: f32| {
+    // The lowest and highest far ground vertex standing at a place of the ground plane.
+    let span_at = |x: f32, z: f32| {
         vertices
             .iter()
-            .any(|v| (v[0] - x).abs() < 1e-4 && (v[1] - y).abs() < 1e-4 && (v[2] - z).abs() < 1e-4)
+            .filter(|v| (v[0] - x).abs() < 1e-4 && (v[2] - z).abs() < 1e-4)
+            .fold((f32::MAX, f32::MIN), |(low, high), v| {
+                (low.min(v[1]), high.max(v[1]))
+            })
     };
     // The block's outer edges: along x = 2 chunks, below the block's first column of chunks.
     let mut edges = 0;
     for (chunk, mesh) in &near {
         let [w, h] = mesh.size;
         let corner = [chunk.x as f32 * span, chunk.y as f32 * span];
+        let skirt = mesh.positions[0][1] - mesh.positions[(w * h) as usize][1];
         let outer: Vec<(bool, Vec<u32>)> = vec![
             (chunk.x == 2, (0..h).map(|k| k * w).collect()),
             (chunk.x == 4, (0..h).map(|k| k * w + w - 1).collect()),
@@ -227,16 +253,22 @@ fn a_wall_joins_every_near_edge_the_far_ground_meets_to_the_far_edge() {
         for (_, edge) in outer.into_iter().filter(|(faces_far, _)| *faces_far) {
             edges += 1;
             for vertex in edge {
-                let [x, top, z] = mesh.positions[vertex as usize];
+                let [x, edge, z] = mesh.positions[vertex as usize];
+                let (low, high) = span_at(x + corner[0], z + corner[1]);
                 assert!(
-                    has(x + corner[0], top, z + corner[1]),
-                    "no wall top at {chunk:?}'s vertex {vertex}"
+                    high >= edge - 1e-4 && low <= edge - skirt + 1e-4,
+                    "the wall at {chunk:?}'s vertex {vertex} spans {low} to {high}, its edge {edge}"
                 );
             }
         }
     }
     assert_eq!(edges, 12, "the block's outer edges");
-    // Two triangles each way per segment, nine vertices per edge.
-    let surface = 2 * 3 * (SCALE * SCALE - 9) as usize;
-    assert_eq!(far.indices.len(), surface + 12 * 8 * 4 * 3);
+    // Two triangles each way per segment of each of a wall's two strips, above and below its foot on
+    // the far edge, eight segments to an edge; a square beside the
+    // block fans from its centre through its outline, eight vertices along its walled edge and one
+    // for each other corner; the rest are two triangles.
+    let walls = 12 * 8 * 2 * 4;
+    let beside = 12 * (8 + 3);
+    let plain = 2 * (SCALE * SCALE - 9 - 12) as usize;
+    assert_eq!(far.indices.len(), 3 * (walls + beside + plain));
 }
