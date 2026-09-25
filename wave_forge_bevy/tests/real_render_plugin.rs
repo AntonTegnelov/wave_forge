@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 use std::time::{Duration, Instant};
 use wave_forge::loader::parse_rule_file;
-use wave_forge::{BlockSolver, ChunkCoord, ChunkShape, WgpuBackend, WorldExtent};
+use wave_forge::{BlockSolver, ChunkCoord, ChunkShape, SolverConfig, WgpuBackend, WorldExtent};
 use wave_forge_bevy::{
     GenerationFocus, WaveForgePlugin, WaveForgeSettings, WaveForgeSystems, WaveForgeTiles,
     WaveForgeWorld,
@@ -47,9 +47,9 @@ fn build_chunks(
     }
 }
 
-#[test]
-#[ignore = "needs a compute device; run with --ignored in release mode"]
-fn bevys_own_device_generates_a_city() {
+/// A 2 by 2 chunk city generated on Bevy's device by the plugin `configure` makes of the default
+/// one, run until it is idle; and how many frames that took.
+fn generated_city(configure: impl FnOnce(WaveForgePlugin) -> WaveForgePlugin) -> (App, u32) {
     let city = city::city();
     let rules = parse_rule_file(city::CITY_RON).expect("the city's rule file loads");
     let settings = WaveForgeSettings {
@@ -62,15 +62,14 @@ fn bevys_own_device_generates_a_city() {
         cell_size: Vec3::splat(2.0),
         ..WaveForgeSettings::default()
     };
+    let plugin = WaveForgePlugin::from_rules(rules, city_prior(&city, CHUNK.z), settings)
+        .expect("the city's weights make a rule set")
+        .warm(1);
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
         // After Bevy's own plugins, so the device exists by the time this one finishes.
-        .add_plugins(
-            WaveForgePlugin::from_rules(rules, city_prior(&city, CHUNK.z), settings)
-                .expect("the city's weights make a rule set")
-                .warm(1),
-        )
+        .add_plugins(configure(plugin))
         .init_resource::<Built>()
         .add_systems(Update, build_chunks.after(WaveForgeSystems))
         .add_systems(Startup, |mut commands: Commands| {
@@ -92,12 +91,6 @@ fn bevys_own_device_generates_a_city() {
     app.finish();
     app.cleanup();
 
-    let adapter = app
-        .world()
-        .get_resource::<RenderDevice>()
-        .expect("Bevy created the device")
-        .limits()
-        .max_compute_workgroup_storage_size;
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut frames = 0u32;
     loop {
@@ -105,7 +98,7 @@ fn bevys_own_device_generates_a_city() {
         frames += 1;
         if app.world().resource::<CityWorld>().is_idle() {
             app.update();
-            break;
+            return (app, frames);
         }
         assert!(
             Instant::now() < deadline,
@@ -113,7 +106,21 @@ fn bevys_own_device_generates_a_city() {
             app.world().resource::<CityWorld>().stats()
         );
     }
+}
 
+#[test]
+#[ignore = "needs a compute device; run with --ignored in release mode"]
+fn bevys_own_device_generates_a_city() {
+    let city = city::city();
+
+    let (app, frames) = generated_city(|plugin| plugin);
+
+    let adapter = app
+        .world()
+        .get_resource::<RenderDevice>()
+        .expect("Bevy created the device")
+        .limits()
+        .max_compute_workgroup_storage_size;
     let built = app.world().resource::<Built>();
     let world = app.world().resource::<CityWorld>();
     eprintln!(
@@ -132,4 +139,20 @@ fn bevys_own_device_generates_a_city() {
     assert!(built.0.contains(&ChunkCoord::new(0, 0, 0)), "{:?}", built.0);
     let tiles = app.world().resource::<WaveForgeTiles>();
     assert_eq!(tiles.num_tiles(), city.modules.variants.len());
+}
+
+#[test]
+#[ignore = "needs a compute device; run with --ignored in release mode"]
+fn a_solver_config_of_one_region_a_batch_solves_each_chunk_in_a_batch_of_its_own() {
+    let one = SolverConfig {
+        max_batch: 1,
+        ..SolverConfig::default()
+    };
+
+    let (app, _) = generated_city(|plugin| plugin.solver_config(one));
+
+    let stats = app.world().resource::<CityWorld>().stats();
+    assert_eq!(stats.failed, 0);
+    assert_eq!(stats.solved, 4 + stats.repaired, "{stats:?}");
+    assert!(stats.batches >= stats.solved, "{stats:?}");
 }
