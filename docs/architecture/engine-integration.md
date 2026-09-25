@@ -76,6 +76,7 @@ has no built-in floating origin
 Built today: TileGrid, InstanceSet (`wave_forge::instance_sets`, for a streamed world and for towns),
 NavSource (`wave_forge::nav_source`), SpawnPoints as the points of Scatter stages, without
 custom data yet, Occluders as boxes of a module set's `solid` cells (`wave_forge::occluders`),
+which Godot's `WaveForgeWorld` keeps near the player ([godot.md](../reference/godot.md#occlusion)),
 and RegionTags in part: `wave_forge::region_tags` gives a chunk's interiors (boxes
 of indoor cells) and emitters (sounds at points), and `wave_forge::surface_at` what walkers stand
 on at a point, from a module set's `indoor`, `sounds` and `surface` fields
@@ -418,7 +419,9 @@ engines make that impossible or pointless:
 
 ## Open questions
 
-These were left open by the research: the cost of rebuilding occluders while streaming, the speed of
-vertex-shader grass on Compatibility and Forward+, the best hook for writes on Godot's main
-`RenderingDevice`, Bevy's occlusion culling on Direct3D 12 and Metal in 0.20, and one key scheme for
-localisation catalogues shared by Godot's `.po`/`.csv` and Fluent's `.ftl`.
+Left open by the research and answered since: the cost of rebuilding occluders while streaming
+([measurements.md](../research/measurements.md) E50), vertex-shader grass on Compatibility (E45),
+and one key scheme for localisation catalogues, `wf-<category>-<token>`
+([packs.md](../reference/packs.md#locations)). Still open: grass on Forward+
+([#166](https://github.com/AntonTegnelov/wave_forge/issues/166)), the best hook for writes on
+Godot's main `RenderingDevice`, and Bevy's occlusion culling on Direct3D 12 and Metal in 0.20.
