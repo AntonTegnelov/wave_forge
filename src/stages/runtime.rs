@@ -11,6 +11,7 @@ use super::assemble::Growth;
 use super::edits::{Edit, Edits};
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId, Table};
+use super::lakes::lake_surface;
 use super::network::SitePaths;
 use super::pack::{
     Column, Expr, LocationKind, MAX_SCATTER_SLOTS, Output, Pack, Persist, Profile, Reach, Stage,
@@ -550,6 +551,9 @@ pub struct Runtime {
     /// Location tables placed, by Locations stage and region, kept while a chunk of their region
     /// is needed.
     placed: BTreeMap<RegionKey, Arc<Placed>>,
+    /// Lakes filled, by Lakes stage and region: the water's surface over the region's columns, row
+    /// by row, kept while a chunk of their region is needed.
+    lakes: BTreeMap<RegionKey, Arc<[f32]>>,
     facts: Option<Facts>,
     /// The player's edits, folded from their log, applied to every product as it is generated.
     edits: Folded,
@@ -611,6 +615,7 @@ impl Runtime {
             region_jobs: BTreeMap::new(),
             regions: BTreeMap::new(),
             placed: BTreeMap::new(),
+            lakes: BTreeMap::new(),
             pack,
             seed,
             size,
@@ -1048,6 +1053,18 @@ impl Runtime {
                 }
             }
         });
+        self.lakes.retain(|&(stage, region), _| {
+            let StageKind::Lakes { region: size, .. } = pack.stages[stage].kind else {
+                unreachable!("only Lakes stages fill lakes")
+            };
+            match stale.get(&stage) {
+                None => true,
+                Some(Stale::All) => false,
+                Some(Stale::Chunks(chunks)) => {
+                    !chunks.iter().any(|&chunk| region_of(chunk, size) == region)
+                }
+            }
+        });
         dropped
     }
 
@@ -1446,6 +1463,15 @@ impl Runtime {
                     chunks.iter().any(|&chunk| region_of(chunk, size) == region)
                 })
         });
+        self.lakes.retain(|&(stage, region), _| {
+            let StageKind::Lakes { region: size, .. } = pack.stages[stage].kind else {
+                unreachable!("only Lakes stages fill lakes")
+            };
+            finite
+                || needed.get(&stage).is_some_and(|chunks| {
+                    chunks.iter().any(|&chunk| region_of(chunk, size) == region)
+                })
+        });
         self.needed = needed;
         self.focus = focus.to_vec();
         Ok(dropped)
@@ -1562,6 +1588,7 @@ impl Runtime {
                         self.assemble_of(index, chunk)?;
                         self.run_region_of(index, chunk)?;
                         self.place_locations_of(index, chunk)?;
+                        self.fill_lakes_of(index, chunk)?;
                         let product = self.generate(index, chunk)?;
                         if self.pack.stages[index].persist == Persist::Frozen {
                             self.frozen
@@ -1722,7 +1749,8 @@ impl Runtime {
             | StageKind::Assemble { .. }
             | StageKind::Region { .. }
             | StageKind::Rivers { .. }
-            | StageKind::Network { .. } => return Err(StageError::NotSampled(stage.name.clone())),
+            | StageKind::Network { .. }
+            | StageKind::Lakes { .. } => return Err(StageError::NotSampled(stage.name.clone())),
         };
         // A sample is what the chunk holds, raises included.
         let value = value
@@ -1852,6 +1880,7 @@ impl Runtime {
                         .water()
                         .expect("a pack with rivers declares water")
                         .level,
+                    lakes: self.pack.water().and_then(|water| water.lakes.as_deref()),
                     width: *width,
                     step: *step,
                 };
@@ -1965,6 +1994,57 @@ impl Runtime {
 
     /// Places the location table of Locations stage `index` in the region `chunk` lies in, if it
     /// is not placed yet: the kinds in order of priority, each trying its footprints in turn.
+    /// Fills the lakes of the region of Lakes stage `index` that `chunk` lies in, if it has not
+    /// been filled yet.
+    fn fill_lakes_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Lakes {
+            height,
+            region: size,
+            min_columns,
+        } = &stage.kind
+        else {
+            return Ok(());
+        };
+        let region = region_of(chunk, *size);
+        if self.lakes.contains_key(&(index, region)) {
+            return Ok(());
+        }
+        let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+        let side = i64::from(*size);
+        let min = [
+            i64::from(region.0) * side * sx,
+            i64::from(region.1) * side * sy,
+        ];
+        let (width, depth) = (side * sx, side * sy);
+        let input = self.pack.index(height).expect("linked when loaded");
+        let view = self.view_over(
+            index,
+            input,
+            (min, [min[0] + width - 1, min[1] + depth - 1]),
+            0,
+        );
+        let mut heights = Vec::with_capacity((width * depth) as usize);
+        for y in 0..depth {
+            for x in 0..width {
+                heights.push(view.get(min[0] + x, min[1] + y)?);
+            }
+        }
+        let sea = self
+            .pack
+            .water()
+            .expect("a pack with lakes declares water")
+            .level;
+        let surface = lake_surface(
+            &heights,
+            [width as usize, depth as usize],
+            sea,
+            *min_columns,
+        );
+        self.lakes.insert((index, region), Arc::from(surface));
+        Ok(())
+    }
+
     fn place_locations_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Locations {
@@ -2480,6 +2560,26 @@ impl Runtime {
                     .unwrap_or_default(),
             ));
         }
+        if let StageKind::Lakes { region: size, .. } = &stage.kind {
+            let region = region_of(chunk, *size);
+            let surface = &self.lakes[&(index, region)];
+            let [sx, sy] = self.size;
+            let side = (size * sx) as usize;
+            // The chunk's columns in the region's rows.
+            let (ox, oy) = (
+                ((chunk.x - region.0 * *size as i32) as u32 * sx) as usize,
+                ((chunk.y - region.1 * *size as i32) as u32 * sy) as usize,
+            );
+            let values = (0..sy as usize)
+                .flat_map(|y| (0..sx as usize).map(move |x| (x, y)))
+                .map(|(x, y)| surface[(oy + y) * side + ox + x])
+                .collect();
+            return Ok(Product::Field(Field {
+                chunk,
+                size: self.size,
+                values,
+            }));
+        }
         if let StageKind::Locations { region, .. } = &stage.kind {
             let placed = &self.placed[&(index, region_of(chunk, *region))];
             return Ok(Product::Sites(
@@ -2651,7 +2751,8 @@ impl Runtime {
                     | StageKind::Rules { .. }
                     | StageKind::Region { .. }
                     | StageKind::Rivers { .. }
-                    | StageKind::Network { .. } => {
+                    | StageKind::Network { .. }
+                    | StageKind::Lakes { .. } => {
                         unreachable!("handled above")
                     }
                 };
@@ -2914,11 +3015,15 @@ impl Runtime {
             }
             let mut standing = here;
             if let Some(water) = water {
-                let level = self
+                let pack_water = self
                     .pack
                     .water()
-                    .expect("a Scatter stage with water is in a pack with water")
-                    .level;
+                    .expect("a Scatter stage with water is in a pack with water");
+                // A lake raises the water above the sea where it lies.
+                let level = match &pack_water.lakes {
+                    Some(lakes) => pack_water.level.max(read(lakes, x, y)?),
+                    None => pack_water.level,
+                };
                 if !(water.depth.0..=water.depth.1).contains(&(level - here)) {
                     return Ok(None);
                 }

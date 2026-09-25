@@ -38,11 +38,14 @@ pub struct PackFile {
     pub water: Option<PackWater>,
 }
 
-/// A pack's water: the sea's level, in cells of height, below which the ground is under water.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+/// A pack's water: the sea's level, in cells of height, below which the ground is under water,
+/// and the Lakes stage, if any, whose surface raises the water inland.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackWater {
     pub level: f32,
+    #[serde(default)]
+    pub lakes: Option<String>,
 }
 
 /// The edge of a finite world, in WFC cells along the lattice's x and y.
@@ -207,6 +210,18 @@ pub enum StageKind {
         region: u32,
         size: (u32, u32),
         chance: f32,
+    },
+    /// Lakes in the hollows of the `height` field: in every square region of `region` chunks, a
+    /// priority flood from the region's edge columns and from the columns under the pack's water
+    /// fills every hollow to the height its water would spill at, and a connected set of filled
+    /// columns of at least `min_columns` is a lake. A lake never touches its region's edge, which
+    /// drains, so regions never read each other. The product is a field of the water's surface: a
+    /// lake's level over its columns, the ground everywhere else.
+    Lakes {
+        height: String,
+        region: u32,
+        #[serde(default = "four_columns")]
+        min_columns: u32,
     },
     /// A location table: sites of several kinds, placed once per square region of `region` chunks,
     /// the kinds in order of their `priority`, highest first. Each kind tries `tries` hashed
@@ -525,6 +540,10 @@ pub struct Water {
 /// group.
 pub const MAX_SCATTER_SLOTS: u32 = 256;
 
+const fn four_columns() -> u32 {
+    4
+}
+
 const fn one_each() -> (u32, u32) {
     (1, 1)
 }
@@ -616,7 +635,8 @@ impl StageKind {
             | Self::Blur { .. }
             | Self::Delta { .. }
             | Self::Flatten { .. }
-            | Self::Apply { .. } => Output::Field,
+            | Self::Apply { .. }
+            | Self::Lakes { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } => Output::Categories,
             Self::Region { .. }
             | Self::Rivers { .. }
@@ -1437,11 +1457,22 @@ impl Pack {
         if let Some(bound) = &file.bound {
             bound.check().map_err(PackError::Bound)?;
         }
-        if let Some(water) = &file.water
-            && !water.level.is_finite()
-        {
-            return Err(PackError::Water(format!("a level of {}", water.level)));
+        if let Some(water) = &file.water {
+            if !water.level.is_finite() {
+                return Err(PackError::Water(format!("a level of {}", water.level)));
+            }
+            if let Some(lakes) = &water.lakes
+                && !file
+                    .stages
+                    .iter()
+                    .any(|def| def.name == *lakes && matches!(def.kind, StageKind::Lakes { .. }))
+            {
+                return Err(PackError::Water(format!(
+                    "its lakes are {lakes:?}, which is no Lakes stage"
+                )));
+            }
         }
+        let lakes = file.water.as_ref().and_then(|water| water.lakes.as_deref());
         let (tables, table_by_name, table_order) = link_tables(file.tables)?;
         for def in &file.stages {
             let mut unknown = None;
@@ -1608,6 +1639,25 @@ impl Pack {
                     // a region away.
                     vec![(height.as_str(), Reach::Chunks(*region), Output::Field)]
                 }
+                StageKind::Lakes {
+                    height,
+                    region,
+                    min_columns,
+                } => {
+                    if *region == 0 || *min_columns == 0 {
+                        return Err(invalid(format!(
+                            "a region of {region} chunks and lakes of at least {min_columns} \
+                             columns"
+                        )));
+                    }
+                    if file.water.is_none() {
+                        return Err(invalid(
+                            "lakes stand above the sea, but the pack declares no water".to_owned(),
+                        ));
+                    }
+                    // A chunk may lie anywhere in its region, and the lakes fill the whole region.
+                    vec![(height.as_str(), Reach::Chunks(region - 1), Output::Field)]
+                }
                 StageKind::Locations {
                     height,
                     region,
@@ -1728,8 +1778,13 @@ impl Pack {
                         return Err(invalid(format!("widths of {width:?}")));
                     }
                     // A chunk may lie anywhere in its region, and the rivers read the whole
-                    // region's height.
-                    vec![(height.as_str(), Reach::Chunks(region - 1), Output::Field)]
+                    // region's height, and its lakes, where they end.
+                    let mut reads =
+                        vec![(height.as_str(), Reach::Chunks(region - 1), Output::Field)];
+                    if let Some(lakes) = lakes {
+                        reads.push((lakes, Reach::Chunks(region - 1), Output::Field));
+                    }
+                    reads
                 }
                 StageKind::Network {
                     sites,
@@ -1958,6 +2013,9 @@ impl Pack {
                     let base = apart + group.map_or(0, |group| group.radius.ceil() as u32);
                     let around = u32::from(max_slope.is_some() || *align > 0.0);
                     let mut fields = vec![(height.as_str(), Output::Field, base + around)];
+                    if let (Some(_), Some(lakes)) = (water, lakes) {
+                        fields.push((lakes, Output::Field, base));
+                    }
                     for condition in when {
                         let mut names = Vec::new();
                         condition.inputs(&mut names);
@@ -2056,7 +2114,8 @@ impl Pack {
                 | StageKind::Assemble { .. }
                 | StageKind::Region { .. }
                 | StageKind::Rivers { .. }
-                | StageKind::Network { .. } => {}
+                | StageKind::Network { .. }
+                | StageKind::Lakes { .. } => {}
             }
             stages.push(Stage {
                 tables: read_tables,
