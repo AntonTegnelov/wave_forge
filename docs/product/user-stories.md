@@ -22,6 +22,12 @@ verification:
   numbers with the build, driver and hardware they were measured on), repeated after changes that
   touch the story.
 
+Checks of how approachable a story is (a README followed from a clean checkout, a world made in
+minutes) run together near the release, once the features they exercise stop changing, mostly by AI
+agents that follow the documentation as a newcomer would
+([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)). Until then every change is written
+for that newcomer: names, errors, defaults, examples and READMEs.
+
 A story counts as **verified** only when every acceptance criterion passes on the reference stacks
 and the evidence is linked from the story. The evidence comes from this repository's test packs,
 presets and examples, so it can be linked and rerun by anyone; the proof-of-concept games in their
@@ -31,9 +37,10 @@ verified), the date it last changed and a link to its evidence. A story that reg
 in progress.
 
 **Publishing is a human-only task,** and so is anything like it: releasing to the Godot Asset Store
-or crates.io, creating a release or a release tag, announcing, and promoting `develop` to `main`. An
-agent prepares all of it and never does any of it
-([contributing.md](../guides/contributing.md#publishing-is-human-only)).
+or crates.io, creating a release or a release tag, and announcing. An agent prepares all of it and
+never does any of it ([contributing.md](../guides/contributing.md#publishing-is-human-only)).
+The proof-of-concept games mark milestones on the way; the public release waits until every story is
+verified.
 
 Where each story stands against the code, with the issues that close its gaps, is in
 [story-coverage.md](../plan/story-coverage.md).
@@ -387,7 +394,8 @@ world map through the atlas, and runs a toy history of about 100 lines of GDScri
 along rivers, grown over the years, joined to their nearest neighbours by roads, and some of them
 burned. It gives the result to the stages as tables of facts, and the player walks through the
 villages, the roads between them and the ruins. The same seed and history give the same world, and
-a save that holds only the history restores it. Needs a person: the example's README is followed
+a save that holds only the history restores it. Needs a person, near the release
+([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)): the example's README is followed
 from a clean checkout in an afternoon, and extending the toy history (a new kind of site, say) needs
 no Rust. **Needs.** Tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)), the atlas and point queries
 ([#100](https://github.com/AntonTegnelov/wave_forge/issues/100)), levels

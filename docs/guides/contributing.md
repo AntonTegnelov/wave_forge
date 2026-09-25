@@ -37,9 +37,13 @@ building and *why*, read [vision.md](../product/vision.md) and the
 
 ## Publishing is human-only
 
-Releasing to the Godot Asset Store or crates.io, creating a release or a release tag, announcing,
-and promoting `develop` to `main` are done by the owner, and so is anything like them. Agents prepare
-builds, notes and checklists, and stop there.
+Releasing to the Godot Asset Store or crates.io, creating a release or a release tag, and
+announcing are done by the owner, and so is anything like them. Agents prepare builds, notes and
+checklists, and stop there.
+
+`main` is a checkpoint of `develop`, not a release. An agent promotes `develop` to `main` now and then,
+through a pull request from `develop` to `main` with a green CI, and only when the owner has asked for
+promotions; nothing is published by it.
 
 ## Documentation and comments
 
