@@ -1603,6 +1603,19 @@ impl Pack {
                         {
                             return Err(refuse("two kinds share the name".to_owned()));
                         }
+                        // A site's name is the translation key `wf-place-<kind>`.
+                        let translatable = kind.name.starts_with(|c: char| c.is_ascii_lowercase())
+                            && kind.name.chars().all(|c| {
+                                c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'
+                            });
+                        if !translatable {
+                            return Err(refuse(
+                                "a kind's name starts with a lowercase letter and holds only \
+                                 lowercase ASCII letters, digits, `_` and `-`: its sites are \
+                                 named by the translation key wf-place-<kind>"
+                                    .to_owned(),
+                            ));
+                        }
                         if kind.quota == 0 || kind.size == 0 {
                             return Err(refuse(format!(
                                 "a quota of {} sites of {} chunks",

@@ -23,8 +23,8 @@ pub use pack::{
     PackFile, Persist, Piece, Profile, Rule, StageDef, StageKind, TableDef, TableKind, Water,
 };
 pub use runtime::{
-    Categories, Field, FieldView, Point, Product, Runtime, Site, SiteId, StageError, StageTiming,
-    Stamp, TownChunk,
+    Categories, Field, FieldView, PlaceName, Point, Product, Runtime, Site, SiteId, StageError,
+    StageTiming, Stamp, TownChunk,
 };
 pub use save::{FrozenChunk, Save};
 pub use worker::{StageEvent, StageWorker};

@@ -80,7 +80,37 @@ pub struct Site {
     pub height: f32,
 }
 
+/// A place's name for a game to show: a translation key and the arguments a translation may use,
+/// never a finished string, so every language names places its own way.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlaceName {
+    /// `wf-place-<kind>`, the kind's name with its underscores as hyphens: lowercase ASCII with
+    /// hyphens, which a Fluent message id, a `.po` msgid and a CSV key all accept.
+    pub key: String,
+    /// `region_x` and `region_y`, the region that placed the site, and `index`, its place among
+    /// the region's sites, so a translation can tell sites of one kind apart.
+    pub args: Vec<(&'static str, i64)>,
+}
+
 impl Site {
+    /// The site's name, for a site a location table placed; a Sites or TableSites stage's site
+    /// has none, and a row's name is the game's.
+    #[must_use]
+    pub fn name(&self) -> Option<PlaceName> {
+        let SiteId::Location { region, index } = self.id else {
+            return None;
+        };
+        let kind = self.kind.as_deref()?;
+        Some(PlaceName {
+            key: format!("wf-place-{}", kind.replace('_', "-")),
+            args: vec![
+                ("region_x", i64::from(region.0)),
+                ("region_y", i64::from(region.1)),
+                ("index", i64::from(index)),
+            ],
+        })
+    }
+
     /// How far the world column `x`, `y` is from the site's footprint, in columns, for chunks of
     /// `size` columns; zero inside it.
     #[must_use]
