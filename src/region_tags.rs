@@ -6,6 +6,7 @@
 //! gives a room's acoustics, and emitters, sounds at points in the engine's world space.
 //! [`surface_at`] answers what the module under a point says walkers stand on.
 
+use crate::cell_boxes::{CellBox, cell_boxes};
 use crate::loader::RuleFile;
 use crate::space::YUpSpace;
 use wfc_core::{Chunk, ChunkCoord};
@@ -15,18 +16,9 @@ use wfc_core::{Chunk, ChunkCoord};
 pub struct RegionTags {
     pub chunk: ChunkCoord,
     /// Boxes that together cover the chunk's indoor cells, each cell once.
-    pub interiors: Vec<Interior>,
+    pub interiors: Vec<CellBox>,
     /// Every sound the chunk's modules make.
     pub emitters: Vec<Emitter>,
-}
-
-/// A box of indoor cells.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Interior {
-    /// The lowest corner along the engine's x, y and z.
-    pub min: [f32; 3],
-    /// The highest corner.
-    pub max: [f32; 3],
 }
 
 /// A sound playing at a point.
@@ -44,61 +36,12 @@ pub fn region_tags(chunk: &Chunk, rules: &RuleFile, space: &YUpSpace) -> RegionT
     let shape = space.chunk_shape();
     let [cell_x, cell_up, cell_z] = space.cell_size();
     let origin = space.chunk_origin(chunk.coord);
-    let index = |x: u32, y: u32, z: u32| (x + shape.x * (y + shape.y * z)) as usize;
     let indoor: Vec<bool> = chunk
         .tiles
         .iter()
         .map(|&tile| rules.indoor(usize::from(tile)))
         .collect();
-
-    // Grow each box from its first uncovered indoor cell along x, then y, then z, as far as every
-    // cell it would take is indoor and uncovered.
-    let mut covered = vec![false; indoor.len()];
-    let mut interiors = Vec::new();
-    for z in 0..shape.z {
-        for y in 0..shape.y {
-            for x in 0..shape.x {
-                if !indoor[index(x, y, z)] || covered[index(x, y, z)] {
-                    continue;
-                }
-                let free =
-                    |x: u32, y: u32, z: u32| indoor[index(x, y, z)] && !covered[index(x, y, z)];
-                let mut high_x = x + 1;
-                while high_x < shape.x && free(high_x, y, z) {
-                    high_x += 1;
-                }
-                let mut high_y = y + 1;
-                while high_y < shape.y && (x..high_x).all(|x| free(x, high_y, z)) {
-                    high_y += 1;
-                }
-                let mut high_z = z + 1;
-                while high_z < shape.z
-                    && (y..high_y).all(|y| (x..high_x).all(|x| free(x, y, high_z)))
-                {
-                    high_z += 1;
-                }
-                for cz in z..high_z {
-                    for cy in y..high_y {
-                        for cx in x..high_x {
-                            covered[index(cx, cy, cz)] = true;
-                        }
-                    }
-                }
-                interiors.push(Interior {
-                    min: [
-                        origin[0] + x as f32 * cell_x,
-                        origin[1] + z as f32 * cell_up,
-                        origin[2] + y as f32 * cell_z,
-                    ],
-                    max: [
-                        origin[0] + high_x as f32 * cell_x,
-                        origin[1] + high_z as f32 * cell_up,
-                        origin[2] + high_y as f32 * cell_z,
-                    ],
-                });
-            }
-        }
-    }
+    let interiors = cell_boxes(chunk.coord, &indoor, space);
 
     let mut emitters = Vec::new();
     for (cell, &tile) in chunk.tiles.iter().enumerate() {
