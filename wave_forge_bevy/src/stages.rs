@@ -26,11 +26,11 @@ use bevy_ecs::message::{Message, MessageReader, MessageWriter};
 use bevy_ecs::prelude::{
     Commands, Component, Entity, IntoScheduleConfigs, Query, ResMut, Resource,
 };
-use bevy_ecs::system::EntityCommands;
+use bevy_ecs::system::{EntityCommands, SystemParam};
 use bevy_math::{Mat3, Quat, Vec3};
 use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_transform::components::{GlobalTransform, Transform};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Mutex;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
@@ -38,7 +38,8 @@ use wave_forge::stages::{
     StageWorker, Stamp, TownChunk,
 };
 use wave_forge::{
-    ChunkCoord, FocusPoint, GroundMesh, InstanceId, ground, ground_materials, ground_readers,
+    ChunkCoord, FarGround, FocusPoint, GroundMesh, InstanceId, far_ground, ground,
+    ground_materials, ground_readers,
 };
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
@@ -114,6 +115,15 @@ pub struct GroundReady(pub ChunkCoord);
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GroundDropped(pub ChunkCoord);
 
+/// A chunk of the far ground's coarse stage has its far ground, new or built again, to read from
+/// [`WaveForgeStages::far_ground`].
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FarGroundReady(pub ChunkCoord);
+
+/// A chunk of the far ground's coarse stage was dropped, and its far ground with it.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FarGroundDropped(pub ChunkCoord);
+
 /// How chunks and cells sit in Bevy's world.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StagesSettings {
@@ -138,6 +148,11 @@ pub struct WaveForgeStages {
     ground_material_stage: Option<String>,
     /// Each built ground's category per vertex, with a material stage.
     ground_ids: HashMap<ChunkCoord, Vec<u8>>,
+    /// The coarse field stage the far ground is built from and its scale, if any.
+    far_ground_stage: Option<(String, u32)>,
+    far_grounds: HashMap<ChunkCoord, FarGround>,
+    /// Coarse chunks whose far ground may have to be built again.
+    far_due: BTreeSet<ChunkCoord>,
 }
 
 impl WaveForgeStages {
@@ -228,6 +243,29 @@ impl WaveForgeStages {
     #[must_use]
     pub fn ground(&self, chunk: ChunkCoord) -> Option<&GroundMesh> {
         self.grounds.get(&chunk)
+    }
+
+    /// A chunk of the coarse stage's far ground, if it is built: drawn at
+    /// [`WaveForgeStages::far_ground_corner`] with [`far_ground_mesh`], and left out where a chunk
+    /// has ground of its own ([`wave_forge::far_ground`]).
+    #[must_use]
+    pub fn far_ground(&self, chunk: ChunkCoord) -> Option<&FarGround> {
+        self.far_grounds.get(&chunk)
+    }
+
+    /// Where the far ground of a chunk of the coarse stage goes in Bevy's world: the corner of the
+    /// first chunk of the lattice it covers.
+    ///
+    /// # Panics
+    /// If the plugin draws no far ground.
+    #[must_use]
+    pub fn far_ground_corner(&self, chunk: ChunkCoord) -> Vec3 {
+        let (_, scale) = self
+            .far_ground_stage
+            .as_ref()
+            .expect("the plugin draws a far ground");
+        let scale = *scale as i32;
+        self.chunk_corner(ChunkCoord::new(chunk.x * scale, chunk.y * scale, 0))
     }
 
     /// The category of every vertex of a chunk's ground, in the order of its positions, from the
@@ -323,6 +361,19 @@ pub fn ground_mesh(ground: &GroundMesh) -> Mesh {
     .with_inserted_indices(Indices::U32(ground.levels[0].indices.clone()))
 }
 
+/// A coarse chunk's far ground as a Bevy mesh, to spawn at
+/// [`WaveForgeStages::far_ground_corner`]: the surface facing up and its walls both ways.
+#[must_use]
+pub fn far_ground_mesh(far: &FarGround) -> Mesh {
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, far.positions.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, far.normals.clone())
+    .with_inserted_indices(Indices::U32(far.indices.clone()))
+}
+
 /// One level of detail of a chunk's ground, ready to spawn at the chunk's corner.
 pub struct GroundLevelMesh {
     /// The level's [`wave_forge::GroundLevel::step`].
@@ -377,6 +428,7 @@ pub struct WaveForgeStagesPlugin {
     settings: StagesSettings,
     ground_stage: Option<String>,
     ground_material_stage: Option<String>,
+    far_ground_stage: Option<(String, u32)>,
 }
 
 impl WaveForgeStagesPlugin {
@@ -396,6 +448,7 @@ impl WaveForgeStagesPlugin {
             settings,
             ground_stage: None,
             ground_material_stage: None,
+            far_ground_stage: None,
         }
     }
 
@@ -422,6 +475,18 @@ impl WaveForgeStagesPlugin {
     #[must_use]
     pub fn with_ground(mut self, stage: &str) -> Self {
         self.ground_stage = Some(stage.to_owned());
+        self
+    }
+
+    /// Builds a far ground beyond the ground from the coarse field stage `stage` of `scale`
+    /// (the pack's [`wave_forge::stages::Pack::scale`]), one mesh per chunk of it, and announces
+    /// each with [`FarGroundReady`], again whenever ground comes or goes on or beside it. Give the
+    /// stage a radius of its own with [`WaveForgeStagesPlugin::with_radius`], as far as the ground
+    /// should reach; a coarse chunk's far ground needs the fields around it, so it reaches one
+    /// coarse chunk less.
+    #[must_use]
+    pub fn with_far_ground(mut self, stage: &str, scale: u32) -> Self {
+        self.far_ground_stage = Some((stage.to_owned(), scale));
         self
     }
 
@@ -457,6 +522,9 @@ impl Plugin for WaveForgeStagesPlugin {
             grounds: HashMap::new(),
             ground_material_stage: self.ground_material_stage.clone(),
             ground_ids: HashMap::new(),
+            far_ground_stage: self.far_ground_stage.clone(),
+            far_grounds: HashMap::new(),
+            far_due: BTreeSet::new(),
         })
         .add_message::<StageReady>()
         .add_message::<StageDropped>()
@@ -465,6 +533,8 @@ impl Plugin for WaveForgeStagesPlugin {
         .add_message::<GroundReady>()
         .add_message::<InstanceSpawned>()
         .add_message::<GroundDropped>()
+        .add_message::<FarGroundReady>()
+        .add_message::<FarGroundDropped>()
         .add_systems(
             Update,
             (follow_focus, drain, place)
@@ -504,6 +574,15 @@ fn follow_focus(
     stages.asked = wanted;
 }
 
+/// What [`drain`] says about the ground and the far ground.
+#[derive(SystemParam)]
+struct GroundWriters<'w> {
+    ready: MessageWriter<'w, GroundReady>,
+    dropped: MessageWriter<'w, GroundDropped>,
+    far_ready: MessageWriter<'w, FarGroundReady>,
+    far_dropped: MessageWriter<'w, FarGroundDropped>,
+}
+
 /// Takes what the stages' thread finished, as messages, and builds the ground it completed.
 fn drain(
     mut stages: ResMut<WaveForgeStages>,
@@ -511,16 +590,25 @@ fn drain(
     mut dropped: MessageWriter<StageDropped>,
     mut failed: MessageWriter<StagesFailed>,
     mut saved: MessageWriter<StagesSaved>,
-    mut ground_ready: MessageWriter<GroundReady>,
-    mut ground_dropped: MessageWriter<GroundDropped>,
+    mut grounds: GroundWriters,
 ) {
     let had_failed = stages.worker.failure().is_some();
     let ground_stage = stages.ground_stage.clone();
     let material_stage = stages.ground_material_stage.clone();
+    let far_stage = stages.far_ground_stage.clone();
     let mut arrived = Vec::new();
+    // Chunks whose ground came or went, which changes the far ground over and beside them.
+    let mut near_changed = Vec::new();
     for event in stages.worker.drain() {
         match event {
             StageEvent::Generated { stage, chunk } => {
+                if far_stage.as_ref().is_some_and(|(far, _)| *far == stage) {
+                    for (dx, dy) in (-1..=1).flat_map(|dy| (-1..=1).map(move |dx| (dx, dy))) {
+                        stages
+                            .far_due
+                            .insert(ChunkCoord::new(chunk.x + dx, chunk.y + dy, 0));
+                    }
+                }
                 // A chunk's ground reads the materials of itself and of the chunks beyond its far
                 // edges, which are among the chunks whose ground reads a field of this chunk.
                 if ground_stage.as_ref() == Some(&stage) || material_stage.as_ref() == Some(&stage)
@@ -533,7 +621,14 @@ fn drain(
                 if ground_stage.as_ref() == Some(&stage) && stages.grounds.remove(&chunk).is_some()
                 {
                     stages.ground_ids.remove(&chunk);
-                    ground_dropped.write(GroundDropped(chunk));
+                    near_changed.push(chunk);
+                    grounds.dropped.write(GroundDropped(chunk));
+                }
+                if far_stage.as_ref().is_some_and(|(far, _)| *far == stage) {
+                    stages.far_due.remove(&chunk);
+                    if stages.far_grounds.remove(&chunk).is_some() {
+                        grounds.far_dropped.write(FarGroundDropped(chunk));
+                    }
                 }
                 dropped.write(StageDropped { stage, chunk });
             }
@@ -564,7 +659,36 @@ fn drain(
                 stages.ground_ids.insert(chunk, ids);
             }
             stages.grounds.insert(chunk, mesh);
-            ground_ready.write(GroundReady(chunk));
+            near_changed.push(chunk);
+            grounds.ready.write(GroundReady(chunk));
+        }
+    }
+    if let Some((stage, scale)) = &far_stage {
+        let scale = *scale as i32;
+        for fine in near_changed {
+            for (dx, dy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
+                stages.far_due.insert(ChunkCoord::new(
+                    (fine.x + dx).div_euclid(scale),
+                    (fine.y + dy).div_euclid(scale),
+                    0,
+                ));
+            }
+        }
+        let cell = stages.settings.cell_size.to_array();
+        let due: Vec<ChunkCoord> = std::mem::take(&mut stages.far_due).into_iter().collect();
+        for chunk in due {
+            // Waits for a field around it, whose arrival makes it due again.
+            let Some(far) = far_ground(
+                chunk,
+                scale as u32,
+                |at| stages.worker.field(stage, at),
+                cell,
+                |fine| stages.grounds.get(&fine),
+            ) else {
+                continue;
+            };
+            stages.far_grounds.insert(chunk, far);
+            grounds.far_ready.write(FarGroundReady(chunk));
         }
     }
     if let (false, Some(reason)) = (had_failed, stages.worker.failure()) {

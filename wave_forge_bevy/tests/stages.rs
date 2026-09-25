@@ -18,9 +18,9 @@ use wave_forge::stages::{
 use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::stages::{
-    GroundDropped, GroundReady, InstanceSpawned, Placed, StageDropped, StagePlacements, StageReady,
-    StagesSaved, StagesSettings, WaveForgeStages, WaveForgeStagesPlugin, WaveForgeStagesSystems,
-    ground_mesh,
+    FarGroundDropped, GroundDropped, GroundReady, InstanceSpawned, Placed, StageDropped,
+    StagePlacements, StageReady, StagesSaved, StagesSettings, WaveForgeStages,
+    WaveForgeStagesPlugin, WaveForgeStagesSystems, far_ground_mesh, ground_mesh,
 };
 
 const PACK: &str = r#"(
@@ -781,4 +781,94 @@ fn a_piece_overlapping_several_chunks_gets_one_entity() {
     assert!(owned.len() >= 3, "{} houses", owned.len());
     assert_eq!(houses.len(), ids.len(), "no house placed twice");
     assert_eq!(ids, owned);
+}
+
+/// A pack with ground at full detail near the focus and at a coarse scale of 8 beyond it.
+const FAR_PACK: &str = r#"(
+    version: 1,
+    stages: [
+        (name: "height", kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
+        (name: "far", scale: 8, kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
+    ],
+)"#;
+
+fn far_app() -> App {
+    app_with(
+        WaveForgeStagesPlugin::new(&["height", "far"], SETTINGS, || {
+            Ok(Runtime::new(
+                Arc::new(Pack::parse(FAR_PACK).expect("a valid pack")),
+                4,
+                SETTINGS.chunk,
+            ))
+        })
+        .with_ground("height")
+        .with_far_ground("far", 8)
+        .with_radius("far", 24),
+    )
+}
+
+#[test]
+fn the_far_ground_is_the_librarys_and_leaves_out_the_chunks_with_ground() {
+    let mut app = far_app();
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        stages.far_ground(ChunkCoord::new(0, 0, 0)).is_some()
+            && stages.ground(ChunkCoord::new(0, 0, 0)).is_some()
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let origin = ChunkCoord::new(0, 0, 0);
+    let expected = wave_forge::far_ground(
+        origin,
+        8,
+        |at| stages.field("far", at),
+        SETTINGS.cell_size.to_array(),
+        |fine| stages.ground(fine),
+    )
+    .expect("the fields around it arrived");
+    assert_eq!(stages.far_ground(origin), Some(&expected));
+    assert_eq!(
+        stages.far_ground_corner(origin),
+        stages.chunk_corner(origin)
+    );
+    let far = far_ground_mesh(stages.far_ground(origin).expect("built"));
+    assert_eq!(
+        far.count_vertices(),
+        expected.positions.len(),
+        "the mesh holds the far ground's vertices"
+    );
+}
+
+#[test]
+fn moving_away_drops_the_far_ground() {
+    let mut app = far_app();
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .far_ground(origin)
+            .is_some()
+    });
+
+    let mut focus = app
+        .world_mut()
+        .query_filtered::<&mut GlobalTransform, With<GenerationFocus>>();
+    for mut at in focus.iter_mut(app.world_mut()) {
+        *at = GlobalTransform::from_translation(Vec3::new(8000.0, 0.0, 8000.0));
+    }
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .far_ground(origin)
+            .is_none()
+    });
+
+    let dropped: Vec<ChunkCoord> = app
+        .world_mut()
+        .resource_mut::<Messages<FarGroundDropped>>()
+        .drain()
+        .map(|message| message.0)
+        .collect();
+    assert!(dropped.contains(&origin), "{dropped:?}");
 }
