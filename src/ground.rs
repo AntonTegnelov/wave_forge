@@ -152,6 +152,55 @@ pub fn ground<'a>(
     })
 }
 
+/// The height of the ground at a point `at` of the ground plane (the engine's x and z), in engine
+/// units: where [`ground`]'s surface at full detail stands there, on the same triangles, from a
+/// height field with chunks of `columns` whose chunks `field` looks up, with cells `cell_size`
+/// along the engine's x, y and z. Gameplay code reads the ground here rather than a field's column,
+/// since a field holds one height per column centre and the ground is the surface between them.
+///
+/// Returns `None` until the fields of the chunks holding the four column centres around `at` have
+/// arrived.
+#[must_use]
+pub fn ground_height<'a>(
+    at: [f32; 2],
+    columns: [u32; 2],
+    field: impl Fn(ChunkCoord) -> Option<&'a Field>,
+    cell_size: [f32; 3],
+) -> Option<f32> {
+    let [cell_x, cell_up, cell_z] = cell_size;
+    let [columns_x, columns_y] = columns.map(i64::from);
+    let height = |x: i64, y: i64| -> Option<f32> {
+        let chunk = ChunkCoord::new(
+            x.div_euclid(columns_x) as i32,
+            y.div_euclid(columns_y) as i32,
+            0,
+        );
+        Some(field(chunk)?.get(
+            x.rem_euclid(columns_x) as u32,
+            y.rem_euclid(columns_y) as u32,
+        ))
+    };
+    // Vertices stand above column centres, so the square holding `at` has its corners at the
+    // centres of columns (i, j) to (i + 1, j + 1).
+    let (u, v) = (at[0] / cell_x - 0.5, at[1] / cell_z - 0.5);
+    let (i, j) = (u.floor() as i64, v.floor() as i64);
+    let (s, t) = (u - i as f32, v - j as f32);
+    let (c00, c10, c01, c11) = (
+        height(i, j)?,
+        height(i + 1, j)?,
+        height(i, j + 1)?,
+        height(i + 1, j + 1)?,
+    );
+    // The square's triangles meet along the diagonal from (i + 1, j) to (i, j + 1), as the
+    // ground's levels have them.
+    let level = if s + t <= 1.0 {
+        c00 + s * (c10 - c00) + t * (c01 - c00)
+    } else {
+        c11 + (1.0 - s) * (c01 - c11) + (1.0 - t) * (c10 - c11)
+    };
+    Some(level * cell_up)
+}
+
 /// How deep a skirt hangs beyond what the levels' edges need, in cells of height.
 const SKIRT_MARGIN: f32 = 0.1;
 
