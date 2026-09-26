@@ -24,6 +24,9 @@ ron = "0.12.2"
 libm = "0.2.16"
 # Only for the types `build_on` takes from an engine; the backend itself lives in wfc-gpu.
 wgpu = { version = "30.0.1", optional = true }
+# Reflection of the noise configuration, so a Bevy game edits it as it edits its own components;
+# the Bevy plugin turns it on, at the Bevy version it tracks.
+bevy_reflect = { version = "0.20.0-rc.1", optional = true }
 
 [dev-dependencies]
 # The CPU reference solver: the facade's tests run without a GPU.
@@ -38,6 +41,8 @@ default = ["wgpu"]
 wgpu = ["dep:wgpu", "wfc-gpu/wgpu"]
 # The CPU reference solver, for tests and benchmarks.
 reference = ["wfc-core/reference"]
+# `Reflect` on the noise configuration, for the Bevy plugin.
+bevy_reflect = ["dep:bevy_reflect"]
 
 [workspace]
 members = [
