@@ -1376,6 +1376,7 @@ dependencies = [
 name = "wave_forge"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "ron",
  "serde",
  "serde_json",

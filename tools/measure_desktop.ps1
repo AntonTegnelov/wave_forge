@@ -11,7 +11,8 @@ guide. In short, on each graphics API in -Apis:
     (wave_forge_godot/godot/measure_city.gd).
   - Godot (#166, P2): grass, ground levels of detail and far ground on Forward+ (render_ground.gd,
     render_lods.gd, render_far.gd).
-And once, P3: the history example's first towns, on a first run and a second one.
+And once, P3: the history example's first towns, on a first run and a second one; and the golden
+stages test, which checks the stages come out on Windows bit for bit as recorded on Linux.
 
 Everything goes into measurements/<date-time>/ in the repository, and a zip of it next to that
 folder. A run that fails is recorded and the others go on; the script ends with a non-zero exit code
@@ -35,7 +36,7 @@ The graphics APIs to measure on: vulkan, d3d12 or both (the default on Windows).
 How long each measured phase lasts. Default 20.
 
 .PARAMETER Only
-Run only some parts: bevy, godot, ground, history. Default all.
+Run only some parts: bevy, godot, ground, history, stages. Default all.
 
 .PARAMETER SkipBuild
 Use what an earlier run built.
@@ -49,7 +50,7 @@ param(
     [string]$BuildDir = "",
     [string[]]$Apis = @(),
     [int]$Seconds = 20,
-    [string[]]$Only = @("bevy", "godot", "ground", "history"),
+    [string[]]$Only = @("bevy", "godot", "ground", "history", "stages"),
     [switch]$SkipBuild
 )
 
@@ -66,8 +67,8 @@ if ($BuildDir -eq "") {
 $Apis = @($Apis | ForEach-Object { $_ -split "," } | Where-Object { $_ -ne "" })
 $Only = @($Only | ForEach-Object { $_ -split "," } | Where-Object { $_ -ne "" })
 foreach ($part in $Only) {
-    if (@("bevy", "godot", "ground", "history") -notcontains $part) {
-        throw "-Only takes bevy, godot, ground and history, not $part"
+    if (@("bevy", "godot", "ground", "history", "stages") -notcontains $part) {
+        throw "-Only takes bevy, godot, ground, history and stages, not $part"
     }
 }
 if ($Apis.Count -eq 0) {
@@ -248,6 +249,12 @@ if ($Only -contains "history") {
     foreach ($attempt in @("first", "second")) {
         [void](Invoke-Logged "history-$attempt" $Godot @("--headless", "--path", $HistoryProject, "--script", "check.gd"))
     }
+}
+
+if ($Only -contains "stages") {
+    $env:CARGO_TARGET_DIR = $Targets.root
+    [void](Invoke-Logged "golden-stages" "cargo" @("test", "--release", "--manifest-path", (Join-Path $Repo "Cargo.toml"), "--test", "golden_stages"))
+    Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
 }
 
 # --- Summary -----------------------------------------------------------------------------------
