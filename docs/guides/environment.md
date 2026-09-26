@@ -57,6 +57,35 @@ directory.
   have a non-zero length", or a linked library fails with "invalid ELF header". `cargo clean` for
   the affected workspace is the fix; the files are not recoverable.
 
+### Build output budget
+
+Cargo never deletes build output. Each change of features, flags, dependencies or toolchain adds
+files under a new hash beside the old ones, and incremental caches add a directory per session.
+Left alone, `~/.cache/cargo-target` grew to 181 GB and filled the host's disk. Three things keep it
+bounded.
+
+- **Container-local Cargo settings** in `~/.cargo/config.toml` (the cargo-home volume, not the
+  repository): `build.target-dir = "/home/dev/.cache/cargo-target/default"`, so a build that
+  forgets `CARGO_TARGET_DIR` lands on the volume instead of in a `target/` on the bind mount, and
+  `profile.dev.debug = "line-tables-only"`, which keeps file and line numbers in backtraces but
+  drops the full debug info that is most of a debug build's size.
+- **[`tools/prune_build_output.sh`](../../tools/prune_build_output.sh)**, installed as
+  `~/.cargo/bin/prune-build-output` with `--install`. Its full pass deletes target dirs with no
+  build for 3 days, incremental caches unused for 2 days and dependency outputs no build has read
+  for 2 days. Then it holds the whole of `~/.cache/cargo-target` and the main checkout's `target/`
+  volume to 40 GB (`BUILD_OUTPUT_BUDGET_GB`): first every incremental cache goes, then whole target
+  dirs, least recently built first. `--quick` checks only the budget. Everything it deletes is
+  rebuilt by the next build that needs it.
+- **Two Claude Code hooks** in `~/.claude/settings.json`: the full pass when a session starts, and
+  the budget check before every Bash command that runs `cargo`.
+
+A new target dir is one of the three above. A throwaway one, for a probe or a bisection, is
+deleted as soon as its result is read.
+
+Space freed inside the container is not given back to Windows by itself: the WSL disk image keeps
+its size until the owner compacts, on the host, the WSL disk image (`.vhdx`) that holds the Docker
+volumes: `wsl --shutdown`, then `Optimize-VHD` or `diskpart`'s `compact vdisk`.
+
 ## The dev container's GPU
 
 The dev container has the host's GPU, an NVIDIA RTX 3070. Inside WSL2 the GPU is only reachable
