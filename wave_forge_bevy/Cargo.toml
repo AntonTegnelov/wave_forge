@@ -31,7 +31,8 @@ bevy_reflect = "0.20.0-rc.1"
 bevy_shader = "0.20.0-rc.1"
 bevy_render = "0.20.0-rc.1"
 bevy_transform = "0.20.0-rc.1"
-wave_forge = { path = ".." }
+# With `Reflect` on its noise configuration, so a game edits it as its own components.
+wave_forge = { path = "..", features = ["bevy_reflect"] }
 # The types Bevy's device and queue are, handed straight to `Builder::build_on`. Declaring it is
 # what makes a wgpu version disagreement between the plugin and Bevy a plain Cargo error.
 wgpu = { version = "30.0.1", default-features = false }

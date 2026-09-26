@@ -27,7 +27,7 @@ pub(crate) fn evaluate(expr: &Expr, leaves: &impl Leaves) -> Result<f32, StageEr
         Expr::Max(a, b) => value(a)?.max(value(b)?),
         Expr::Abs(a) => value(a)?.abs(),
         Expr::Floor(a) => value(a)?.floor(),
-        Expr::Sin(a) => value(a)?.sin(),
+        Expr::Sin(a) => libm::sinf(value(a)?),
         Expr::Clamp(a, low, high) => value(a)?.clamp(*low, *high),
         Expr::Smoothstep(low, high, a) => {
             let t = ((value(a)? - low) / (high - low)).clamp(0.0, 1.0);

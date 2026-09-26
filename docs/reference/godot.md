@@ -217,6 +217,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 - `set_collision_shape(module, shape)` gives every cell of a town's module a collider in the
   chunks within `collider_radius`, for every Solve stage; `modules_tagged(rules, tag)` names the
   modules of a rule set that carry a tag, to assign shapes by tag.
+- `ground_height(position)`: the height of the ground's surface at full detail above a position,
+  from `ground_stage`'s fields ([packs.md](packs.md#ground)), what a game stands a player or an
+  object on; NaN until the fields around it have arrived.
 - `sample(stage, position)` and `atlas(stage, min, size)`: a stage's value at a position on the
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
   Field, Rules, Blur, Delta and Area stages. An error, and NaN or an empty array, for another

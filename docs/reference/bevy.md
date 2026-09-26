@@ -99,7 +99,11 @@ thread.
   announce it, `ground_mesh(&ground)` turns it into a Bevy `Mesh` at full detail, skirt included,
   or `ground_levels` into one per level of detail ([Ground levels of detail](#ground-levels-of-detail)),
   and its `heights` are the grid a physics crate's height-field collider takes (the plugin depends
-  on no physics crate).
+  on no physics crate). `WaveForgeStages::ground_height(translation)` gives the height of the
+  ground's surface above a point, what a game stands a player or an object on.
+- A pack's noises are given where the runtime is built, `Runtime::with_noise(name, config)`. The
+  plugin registers `NoiseConfig` for reflection, so a game edits one as it edits its own
+  components.
 
 The plugin asks for the chunks around every `GenerationFocus`, drains the worker each frame and
 sends a message per product.
