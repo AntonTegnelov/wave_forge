@@ -15,7 +15,10 @@
 //! With [`WaveForgeStagesPlugin::with_ground`], the plugin also builds each chunk's ground from a
 //! height field stage once the fields around it have arrived, and says so with [`GroundReady`]: a
 //! [`GroundMesh`] a game turns into a [`Mesh`] with [`ground_mesh`] and hands its heights to the
-//! height-field collider of its physics crate.
+//! height-field collider of its physics crate. With [`WaveForgeStagesPlugin::with_volume`], it
+//! builds each chunk's surface from a Volume stage the same way and says so with [`VolumeReady`]: a
+//! [`VolumeMesh`] a game turns into a [`Mesh`] with [`surface_mesh`] and hands to the trimesh
+//! collider of its physics crate, since a height field cannot hold an overhang.
 
 use crate::GenerationFocus;
 use crate::levels::{LevelDetail, bounds_radius, level_ranges, visibility};
@@ -36,11 +39,11 @@ use wave_forge::noise::NoiseConfig;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
     Categories, Edits, Facts, Field, Point, RowId, Runtime, Save, Site, StageEvent, StageTiming,
-    StageWorker, Stamp, TownChunk,
+    StageWorker, Stamp, TownChunk, Volume,
 };
 use wave_forge::{
-    ChunkCoord, FarGround, FocusPoint, GroundMesh, InstanceId, far_ground, ground,
-    ground_materials, ground_readers,
+    ChunkCoord, FarGround, FocusPoint, GroundMesh, InstanceId, VolumeMesh, far_ground, ground,
+    ground_materials, ground_readers, volume_mesh,
 };
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
@@ -125,6 +128,14 @@ pub struct FarGroundReady(pub ChunkCoord);
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FarGroundDropped(pub ChunkCoord);
 
+/// A chunk's volume surface is ready to read from [`WaveForgeStages::surface`].
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VolumeReady(pub ChunkCoord);
+
+/// A chunk's volume was dropped, and its surface with it.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VolumeDropped(pub ChunkCoord);
+
 /// How chunks and cells sit in Bevy's world.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StagesSettings {
@@ -154,6 +165,9 @@ pub struct WaveForgeStages {
     far_grounds: HashMap<ChunkCoord, FarGround>,
     /// Coarse chunks whose far ground may have to be built again.
     far_due: BTreeSet<ChunkCoord>,
+    /// The Volume stage the surface is built from, if any.
+    volume_stage: Option<String>,
+    surfaces: HashMap<ChunkCoord, VolumeMesh>,
 }
 
 impl WaveForgeStages {
@@ -244,6 +258,20 @@ impl WaveForgeStages {
     #[must_use]
     pub fn ground(&self, chunk: ChunkCoord) -> Option<&GroundMesh> {
         self.grounds.get(&chunk)
+    }
+
+    /// A Volume stage's values for a chunk, if they have arrived.
+    #[must_use]
+    pub fn volume(&self, stage: &str, chunk: ChunkCoord) -> Option<&Volume> {
+        self.worker.volume(stage, chunk)
+    }
+
+    /// A chunk's volume surface, once its volume and the eight around it have arrived: a mesh in
+    /// Bevy's axes relative to [`WaveForgeStages::chunk_corner`], for drawing with
+    /// [`surface_mesh`] and for a trimesh collider alike. A surface without triangles is built too.
+    #[must_use]
+    pub fn surface(&self, chunk: ChunkCoord) -> Option<&VolumeMesh> {
+        self.surfaces.get(&chunk)
     }
 
     /// A chunk of the coarse stage's far ground, if it is built: drawn at
@@ -377,6 +405,18 @@ pub fn ground_mesh(ground: &GroundMesh) -> Mesh {
     .with_inserted_indices(Indices::U32(ground.levels[0].indices.clone()))
 }
 
+/// A chunk's volume surface as a Bevy mesh, facing from solid to empty.
+#[must_use]
+pub fn surface_mesh(surface: &VolumeMesh) -> Mesh {
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, surface.positions.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, surface.normals.clone())
+    .with_inserted_indices(Indices::U32(surface.indices.clone()))
+}
+
 /// A coarse chunk's far ground as a Bevy mesh, to spawn at
 /// [`WaveForgeStages::far_ground_corner`]: the surface facing up and its walls both ways.
 #[must_use]
@@ -445,6 +485,7 @@ pub struct WaveForgeStagesPlugin {
     ground_stage: Option<String>,
     ground_material_stage: Option<String>,
     far_ground_stage: Option<(String, u32)>,
+    volume_stage: Option<String>,
 }
 
 impl WaveForgeStagesPlugin {
@@ -465,6 +506,7 @@ impl WaveForgeStagesPlugin {
             ground_stage: None,
             ground_material_stage: None,
             far_ground_stage: None,
+            volume_stage: None,
         }
     }
 
@@ -506,6 +548,16 @@ impl WaveForgeStagesPlugin {
         self
     }
 
+    /// Builds each chunk's surface from the Volume stage `stage` at scale 1, where its values cross
+    /// zero, and announces it with [`VolumeReady`]. The stage has to be generated, as a target or
+    /// as what a target reads; a chunk's surface needs the volumes around it, so it reaches one
+    /// chunk less than the volumes do.
+    #[must_use]
+    pub fn with_volume(mut self, stage: &str) -> Self {
+        self.volume_stage = Some(stage.to_owned());
+        self
+    }
+
     /// Gives the ground the categories of the Rules or Area stage `stage` as materials: a chunk's
     /// ground then also waits for them, and [`WaveForgeStages::ground_materials`] gives them per
     /// vertex, for [`crate::materials::ground_material`]. The stage has to be generated too, one
@@ -541,6 +593,8 @@ impl Plugin for WaveForgeStagesPlugin {
             far_ground_stage: self.far_ground_stage.clone(),
             far_grounds: HashMap::new(),
             far_due: BTreeSet::new(),
+            volume_stage: self.volume_stage.clone(),
+            surfaces: HashMap::new(),
         })
         .add_message::<StageReady>()
         .add_message::<StageDropped>()
@@ -551,6 +605,8 @@ impl Plugin for WaveForgeStagesPlugin {
         .add_message::<GroundDropped>()
         .add_message::<FarGroundReady>()
         .add_message::<FarGroundDropped>()
+        .add_message::<VolumeReady>()
+        .add_message::<VolumeDropped>()
         .register_type::<NoiseConfig>()
         .add_systems(
             Update,
@@ -591,13 +647,15 @@ fn follow_focus(
     stages.asked = wanted;
 }
 
-/// What [`drain`] says about the ground and the far ground.
+/// What [`drain`] says about the ground, the far ground and the volume's surface.
 #[derive(SystemParam)]
 struct GroundWriters<'w> {
     ready: MessageWriter<'w, GroundReady>,
     dropped: MessageWriter<'w, GroundDropped>,
     far_ready: MessageWriter<'w, FarGroundReady>,
     far_dropped: MessageWriter<'w, FarGroundDropped>,
+    volume_ready: MessageWriter<'w, VolumeReady>,
+    volume_dropped: MessageWriter<'w, VolumeDropped>,
 }
 
 /// Takes what the stages' thread finished, as messages, and builds the ground it completed.
@@ -613,7 +671,9 @@ fn drain(
     let ground_stage = stages.ground_stage.clone();
     let material_stage = stages.ground_material_stage.clone();
     let far_stage = stages.far_ground_stage.clone();
+    let volume_stage = stages.volume_stage.clone();
     let mut arrived = Vec::new();
+    let mut volumes_arrived = Vec::new();
     // Chunks whose ground came or went, which changes the far ground over and beside them.
     let mut near_changed = Vec::new();
     for event in stages.worker.drain() {
@@ -632,6 +692,9 @@ fn drain(
                 {
                     arrived.push(chunk);
                 }
+                if volume_stage.as_ref() == Some(&stage) {
+                    volumes_arrived.push(chunk);
+                }
                 ready.write(StageReady { stage, chunk });
             }
             StageEvent::Dropped { stage, chunk } => {
@@ -640,6 +703,10 @@ fn drain(
                     stages.ground_ids.remove(&chunk);
                     near_changed.push(chunk);
                     grounds.dropped.write(GroundDropped(chunk));
+                }
+                if volume_stage.as_ref() == Some(&stage) && stages.surfaces.remove(&chunk).is_some()
+                {
+                    grounds.volume_dropped.write(VolumeDropped(chunk));
                 }
                 if far_stage.as_ref().is_some_and(|(far, _)| *far == stage) {
                     stages.far_due.remove(&chunk);
@@ -678,6 +745,21 @@ fn drain(
             stages.grounds.insert(chunk, mesh);
             near_changed.push(chunk);
             grounds.ready.write(GroundReady(chunk));
+        }
+    }
+    if let Some(stage) = &volume_stage {
+        let voxel = stages.settings.cell_size.to_array();
+        for chunk in volumes_arrived.into_iter().flat_map(ground_readers) {
+            if stages.surfaces.contains_key(&chunk) {
+                continue;
+            }
+            // Waits for a volume around it, whose arrival looks at it again.
+            let Some(surface) = volume_mesh(chunk, |at| stages.worker.volume(stage, at), voxel)
+            else {
+                continue;
+            };
+            stages.surfaces.insert(chunk, surface);
+            grounds.volume_ready.write(VolumeReady(chunk));
         }
     }
     if let Some((stage, scale)) = &far_stage {

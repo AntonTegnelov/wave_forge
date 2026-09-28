@@ -1,0 +1,13 @@
+// The pack of the volume check (verify_volume.gd): ground solid below 6.3 cells with a cave
+// running under all of it, from 1.8 to 4.2 cells up, whose ceiling a height field could not hold.
+(
+    version: 1,
+    stages: [
+        (name: "height", kind: Field(Constant(6.3))),
+        (name: "cave", kind: Volume(
+            density: Min(Sub(Input("height"), Z), Max(Sub(Z, Constant(4.2)), Sub(Constant(1.8), Z))),
+            bottom: -2,
+            top: 10,
+        )),
+    ],
+)
