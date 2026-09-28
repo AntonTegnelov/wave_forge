@@ -106,7 +106,9 @@ thread.
   `VolumeMesh`, relative to `chunk_corner(chunk)`, `VolumeReady(chunk)` and `VolumeDropped(chunk)`
   announce it, `surface_mesh(&surface)` turns it into a Bevy `Mesh`, and its positions and indices
   are what a physics crate's trimesh collider takes, since a height field cannot hold an overhang.
-  `WaveForgeStages::volume(stage, chunk)` gives a chunk's values.
+  `WaveForgeStages::volume(stage, chunk)` gives a chunk's values. For a stage with materials,
+  `materials::coloured_surface_mesh(&surface, &palette)` makes the mesh with each vertex in its
+  material's colour, which a `StandardMaterial` multiplies its base colour by.
 - A pack's noises are given where the runtime is built, `Runtime::with_noise(name, config)`. The
   plugin registers `NoiseConfig` for reflection, so a game edits one as it edits its own
   components.

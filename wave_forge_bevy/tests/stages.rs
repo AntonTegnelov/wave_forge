@@ -5,9 +5,11 @@
 //! bound kinds get an entity per point or piece, which goes with its chunk.
 
 use bevy_app::{App, Startup, Update};
+use bevy_color::{Color, ColorToComponents};
 use bevy_ecs::message::{MessageReader, Messages};
 use bevy_ecs::prelude::{Commands, IntoScheduleConfigs, Query, ResMut, Resource, With};
 use bevy_math::Vec3;
+use bevy_mesh::{Mesh, VertexAttributeValues};
 use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -17,6 +19,7 @@ use wave_forge::stages::{
 };
 use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials, volume_mesh};
 use wave_forge_bevy::GenerationFocus;
+use wave_forge_bevy::materials::coloured_surface_mesh;
 use wave_forge_bevy::stages::{
     FarGroundDropped, GroundDropped, GroundReady, InstanceSpawned, Placed, StageDropped,
     StagePlacements, StageReady, StagesSaved, StagesSettings, VolumeDropped, WaveForgeStages,
@@ -934,6 +937,7 @@ const VOLUME_PACK: &str = r#"(
             density: Max(Min(FastNoise("caves"), Sub(Constant(5.0), Z)), Sub(Constant(-3.0), Z)),
             bottom: -4,
             top: 6,
+            materials: Some((rules: [(category: "high", when: [Greater(Z, Constant(0.0))])], otherwise: "low")),
         )),
     ],
 )"#;
@@ -971,6 +975,18 @@ fn each_chunks_surface_is_the_librarys_and_goes_with_its_volume() {
         surface_mesh(&expected).count_vertices(),
         expected.positions.len()
     );
+    let palette = [Color::srgb(0.2, 0.7, 0.2), Color::srgb(0.5, 0.5, 0.5)];
+    let coloured = coloured_surface_mesh(&expected, &palette);
+    let Some(VertexAttributeValues::Float32x4(colours)) = coloured.attribute(Mesh::ATTRIBUTE_COLOR)
+    else {
+        panic!("a coloured surface has vertex colours");
+    };
+    for (colour, &material) in colours.iter().zip(&expected.materials) {
+        assert_eq!(
+            *colour,
+            palette[usize::from(material)].to_linear().to_f32_array()
+        );
+    }
 
     let mut focus = app
         .world_mut()
