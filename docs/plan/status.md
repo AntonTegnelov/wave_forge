@@ -103,7 +103,7 @@ Each is a gap between the code and the design or the stories, with where it is t
   them yet.
 - **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage,
   and volumes one `f32` per voxel between two levels, whose surface both engines draw and collide
-  with; volumes have no materials, no carving and no edits yet
+  with, materials included; volumes have no carving and no edits yet
   ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71));
   curves from region jobs, networks between sites and tables are drawn into height fields; tables of facts reach stages through a focused row, sites, towns and
   roads

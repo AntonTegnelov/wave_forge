@@ -37,6 +37,10 @@ pub struct VolumeMesh {
     pub normals: Vec<[f32; 3]>,
     /// Triangles into `positions`, counter-clockwise seen from the empty side.
     pub indices: Vec<u32>,
+    /// Each vertex's material, from a stage with materials: the material of the solid voxel of its
+    /// cube nearest it, the lowest along x, then y, then z of equally near ones. Empty for a stage
+    /// without materials.
+    pub materials: Vec<u8>,
 }
 
 /// The surface of `chunk` from a Volume stage whose chunks `volume` looks up, with voxels
@@ -69,19 +73,31 @@ pub fn volume_mesh<'a>(
     }
     // A sample by its place in the engine's axes: x and z are columns relative to this chunk,
     // from -1 to one past the far side, and y is a level from the bottom.
-    let sample = |at: [i64; 3]| -> f32 {
+    let voxel = |at: [i64; 3]| -> (&Volume, [u32; 3]) {
         let (cx, cz) = (
             at[0].div_euclid(i64::from(sx)),
             at[2].div_euclid(i64::from(sy)),
         );
         let neighbour = around[(cz + 1) as usize][(cx + 1) as usize]
             .expect("every neighbour was looked up above");
-        neighbour.get(
-            at[0].rem_euclid(i64::from(sx)) as u32,
-            at[2].rem_euclid(i64::from(sy)) as u32,
-            at[1] as u32,
+        (
+            neighbour,
+            [
+                at[0].rem_euclid(i64::from(sx)) as u32,
+                at[2].rem_euclid(i64::from(sy)) as u32,
+                at[1] as u32,
+            ],
         )
     };
+    let sample = |at: [i64; 3]| -> f32 {
+        let (volume, [x, y, level]) = voxel(at);
+        volume.get(x, y, level)
+    };
+    let material = |at: [i64; 3]| -> u8 {
+        let (volume, [x, y, level]) = voxel(at);
+        volume.material(x, y, level)
+    };
+    let with_materials = !own.materials.is_empty();
     let solid = |at: [i64; 3]| sample(at) > 0.0;
     let bottom = own.bottom as f32;
     let top_cube = i64::from(levels) - 2;
@@ -90,13 +106,18 @@ pub fn volume_mesh<'a>(
         positions: Vec::new(),
         normals: Vec::new(),
         indices: Vec::new(),
+        materials: Vec::new(),
     };
     let mut vertices: HashMap<[i64; 3], u32> = HashMap::new();
     let mut vertex = |cube: [i64; 3], mesh: &mut VolumeMesh| -> u32 {
         *vertices.entry(cube).or_insert_with(|| {
-            let (position, normal) = cube_vertex(cube, &sample, voxel_size, bottom);
+            let (position, normal, offset) = cube_vertex(cube, &sample, voxel_size, bottom);
             mesh.positions.push(position);
             mesh.normals.push(normal);
+            if with_materials {
+                mesh.materials
+                    .push(material(nearest_solid_corner(cube, offset, &sample)));
+            }
             (mesh.positions.len() - 1) as u32
         })
     };
@@ -178,21 +199,48 @@ fn unit_normal([a, b, c]: [[f32; 3]; 3]) -> [f32; 3] {
     }
 }
 
+/// The sample at corner `bits` of the cube whose lowest corner is sample `cube`: bit 0 steps
+/// along x, bit 1 up and bit 2 along z.
+fn corner(cube: [i64; 3], bits: usize) -> [i64; 3] {
+    [
+        cube[0] + (bits & 1) as i64,
+        cube[1] + ((bits >> 1) & 1) as i64,
+        cube[2] + ((bits >> 2) & 1) as i64,
+    ]
+}
+
+/// The solid corner of `cube` nearest the point `offset` within it, the first in corner order of
+/// equally near ones. A cube with a vertex has a solid corner.
+fn nearest_solid_corner(
+    cube: [i64; 3],
+    offset: [f32; 3],
+    sample: &impl Fn([i64; 3]) -> f32,
+) -> [i64; 3] {
+    let distance = |bits: usize| -> f32 {
+        (0..3)
+            .map(|axis| {
+                let d = ((bits >> axis) & 1) as f32 - offset[axis];
+                d * d
+            })
+            .sum()
+    };
+    let bits = (0..8)
+        .filter(|&bits| sample(corner(cube, bits)) > 0.0)
+        .min_by(|&a, &b| distance(a).total_cmp(&distance(b)))
+        .expect("a cube the surface passes through has a solid corner");
+    corner(cube, bits)
+}
+
 /// The vertex of the cube whose lowest corner is sample `cube`: at the average of the points where
-/// its edges cross zero, with a normal down the values' gradient.
+/// its edges cross zero, with a normal down the values' gradient, and that average as an offset
+/// within the cube from 0 to 1 along each axis.
 fn cube_vertex(
     cube: [i64; 3],
     sample: &impl Fn([i64; 3]) -> f32,
     voxel_size: [f32; 3],
     bottom: f32,
-) -> ([f32; 3], [f32; 3]) {
-    let corner = |bits: usize| -> [i64; 3] {
-        [
-            cube[0] + (bits & 1) as i64,
-            cube[1] + ((bits >> 1) & 1) as i64,
-            cube[2] + ((bits >> 2) & 1) as i64,
-        ]
-    };
+) -> ([f32; 3], [f32; 3], [f32; 3]) {
+    let corner = |bits: usize| corner(cube, bits);
     let values: [f32; 8] = std::array::from_fn(|bits| sample(corner(bits)));
     let mut sum = [0.0_f32; 3];
     let mut crossings = 0;
@@ -230,7 +278,7 @@ fn cube_vertex(
     } else {
         [0.0, 1.0, 0.0]
     };
-    (position, normal)
+    (position, normal, offset)
 }
 
 #[cfg(test)]

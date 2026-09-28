@@ -190,11 +190,14 @@ pub enum StageKind {
     Field(Expr),
     /// A value per voxel: `density` at every level from `bottom` up to but not including `top`
     /// of every column, a voxel being as tall as a column is wide. `Z` is the voxel's height;
-    /// where the density is above zero the voxel is solid.
+    /// where the density is above zero the voxel is solid. With `materials`, every voxel also
+    /// takes a material, which are its categories.
     Volume {
         density: Expr,
         bottom: i32,
         top: i32,
+        #[serde(default)]
+        materials: Option<Materials>,
     },
     /// A category per cell column: the first of `rules` whose conditions all hold there, or
     /// `otherwise`. The categories are the names the rules give, in the order they first appear,
@@ -578,6 +581,15 @@ pub struct Rule {
     pub when: Vec<Condition>,
 }
 
+/// A Volume stage's materials: each voxel takes the first of `rules` whose conditions all hold
+/// there, as a Rules stage's column does, or `otherwise`. The rules read `Z` as the density does.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Materials {
+    pub rules: Vec<Rule>,
+    pub otherwise: String,
+}
+
 /// The most categories one Rules stage can name: a category is a byte per column.
 pub const MAX_CATEGORIES: usize = 256;
 
@@ -607,12 +619,16 @@ pub(crate) enum Output {
 }
 
 impl StageKind {
-    /// The categories a Rules or Area stage names, in the order of their indices; none for other
-    /// kinds.
+    /// The categories a Rules or Area stage names, or a Volume stage's materials, in the order of
+    /// their indices; none for other kinds.
     #[must_use]
     pub fn categories(&self) -> Vec<&str> {
         let (rules, otherwise) = match self {
-            Self::Rules { rules, otherwise } => (rules, otherwise),
+            Self::Rules { rules, otherwise }
+            | Self::Volume {
+                materials: Some(Materials { rules, otherwise }),
+                ..
+            } => (rules, otherwise),
             Self::Area { .. } => return vec!["median", "edge"],
             _ => return Vec::new(),
         };
@@ -1516,6 +1532,15 @@ impl Pack {
             match &def.kind {
                 StageKind::Field(expr) | StageKind::Volume { density: expr, .. } => {
                     expr.visit(&mut note);
+                    if let StageKind::Volume {
+                        materials: Some(materials),
+                        ..
+                    } = &def.kind
+                    {
+                        for condition in materials.rules.iter().flat_map(|rule| &rule.when) {
+                            condition.visit(&mut note);
+                        }
+                    }
                 }
                 StageKind::Rules { rules, .. } => {
                     for condition in rules.iter().flat_map(|rule| &rule.when) {
@@ -1624,6 +1649,27 @@ impl Pack {
                     check_categories(&categories, &by_name, &tests).map_err(invalid)?;
                     let mut names = Vec::new();
                     expr.inputs(&mut names);
+                    if let StageKind::Volume {
+                        materials: Some(materials),
+                        ..
+                    } = &def.kind
+                    {
+                        let count = def.kind.categories().len();
+                        if count > MAX_CATEGORIES {
+                            return Err(invalid(format!(
+                                "{count} materials; at most {MAX_CATEGORIES} are allowed"
+                            )));
+                        }
+                        let mut tests = Vec::new();
+                        for condition in materials.rules.iter().flat_map(|rule| &rule.when) {
+                            condition.check().map_err(invalid)?;
+                            check_place(|f| condition.visit(f), Place::Voxel, &columns)
+                                .map_err(invalid)?;
+                            condition.inputs(&mut names);
+                            condition.categories(&mut tests);
+                        }
+                        check_categories(&categories, &by_name, &tests).map_err(invalid)?;
+                    }
                     widest_reads(names)
                 }
                 StageKind::Rules { rules, .. } => {
@@ -2130,6 +2176,15 @@ impl Pack {
             match &def.kind {
                 StageKind::Field(expr) | StageKind::Volume { density: expr, .. } => {
                     expr.visit(&mut note);
+                    if let StageKind::Volume {
+                        materials: Some(materials),
+                        ..
+                    } = &def.kind
+                    {
+                        for condition in materials.rules.iter().flat_map(|rule| &rule.when) {
+                            condition.visit(&mut note);
+                        }
+                    }
                 }
                 StageKind::Scatter { when, .. } => {
                     for condition in when {

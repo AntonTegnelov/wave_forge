@@ -18,11 +18,17 @@ const PACK: &str = r#"(
         "hills": (noise_type: SimplexSmooth, seed: 5, frequency: 0.04, fractal_type: None),
     },
     stages: [
-        (name: "flat", kind: Volume(density: Sub(Constant(4.3), Z), bottom: -2, top: 10)),
+        (name: "flat", kind: Volume(
+            density: Sub(Constant(4.3), Z),
+            bottom: -2,
+            top: 10,
+            materials: Some((rules: [(category: "top", when: [Greater(Z, Constant(3.0))])], otherwise: "deep")),
+        )),
         (name: "caves", kind: Volume(
             density: Max(Min(FastNoise("caves"), Sub(Constant(5.0), Z)), Sub(Constant(-3.0), Z)),
             bottom: -4,
             top: 6,
+            materials: Some((rules: [(category: "banded", when: [Less(Sin(Mul(Add(X, Z), Constant(0.7))), Constant(0.0))])], otherwise: "plain")),
         )),
         (name: "hills", kind: Volume(
             density: Max(Min(FastNoise("hills"), Sub(Constant(5.0), Z)), Sub(Constant(-3.0), Z)),
@@ -59,16 +65,17 @@ fn mesh(runtime: &Runtime, stage: &str, chunk: ChunkCoord) -> VolumeMesh {
     volume_mesh(chunk, |at| runtime.volume(stage, at), CELL).expect("the volumes around it")
 }
 
-/// A mesh's triangles in world units, each rounded and started at its smallest corner with its
-/// winding kept, as a count per triangle.
-fn triangles(mesh: &VolumeMesh, size: u32) -> BTreeMap<[[i64; 3]; 3], u32> {
+/// A mesh's triangles in world units with each corner's material, each rounded and started at its
+/// smallest corner with its winding kept, as a count per triangle.
+fn triangles(mesh: &VolumeMesh, size: u32) -> BTreeMap<[[i64; 4]; 3], u32> {
     let corner = [
         (mesh.chunk.x * size as i32) as f32 * CELL[0],
         (mesh.chunk.y * size as i32) as f32 * CELL[2],
     ];
     let world = |index: u32| {
         let [x, y, z] = mesh.positions[index as usize];
-        [x + corner[0], y, z + corner[1]].map(|axis| (axis * 1e3).round() as i64)
+        let [x, y, z] = [x + corner[0], y, z + corner[1]].map(|axis| (axis * 1e3).round() as i64);
+        [x, y, z, i64::from(mesh.materials[index as usize])]
     };
     let mut counts = BTreeMap::new();
     for triangle in mesh.indices.chunks(3) {
@@ -112,6 +119,11 @@ fn a_volume_solid_below_a_height_is_a_flat_surface_there_facing_up() {
         );
         assert_eq!(*normal, [0.0, 1.0, 0.0]);
     }
+    assert_eq!(
+        mesh.materials,
+        vec![0; mesh.positions.len()],
+        "every vertex takes the solid voxel below it, which is on top"
+    );
     for triangle in mesh.indices.chunks(3) {
         assert!(
             face_normal(&mesh, triangle)[1] > 0.0,
@@ -121,11 +133,11 @@ fn a_volume_solid_below_a_height_is_a_flat_surface_there_facing_up() {
 }
 
 #[test]
-fn four_chunks_mesh_the_same_surface_as_one_chunk_twice_as_wide() {
+fn four_chunks_mesh_the_same_surface_and_materials_as_one_chunk_twice_as_wide() {
     let small = runtime(8, "caves", &square(-1, 2));
     let large = runtime(16, "caves", &square(-1, 1));
 
-    let mut quarters: BTreeMap<[[i64; 3]; 3], u32> = BTreeMap::new();
+    let mut quarters: BTreeMap<[[i64; 4]; 3], u32> = BTreeMap::new();
     for chunk in square(0, 1) {
         for (triangle, count) in triangles(&mesh(&small, "caves", chunk), 8) {
             *quarters.entry(triangle).or_insert(0) += count;

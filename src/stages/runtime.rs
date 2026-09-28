@@ -14,8 +14,8 @@ use super::facts::{Facts, Row, RowId, Table};
 use super::lakes::lake_surface;
 use super::network::SitePaths;
 use super::pack::{
-    Column, Expr, LocationKind, MAX_SCATTER_SLOTS, Output, Pack, Persist, Profile, Reach, Stage,
-    StageKind, TableKind, point_stage_id, salt,
+    Column, Expr, LocationKind, MAX_SCATTER_SLOTS, Output, Pack, Persist, Profile, Reach, Rule,
+    Stage, StageKind, TableKind, point_stage_id, salt,
 };
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use super::rivers::DownhillRivers;
@@ -65,6 +65,9 @@ pub struct Volume {
     pub bottom: i32,
     /// Level by level, each row by row with x fastest.
     pub values: Vec<f32>,
+    /// Every voxel's material, an index into the stage's categories, in the order of `values`;
+    /// empty for a stage without materials.
+    pub materials: Vec<u8>,
 }
 
 impl Volume {
@@ -77,6 +80,17 @@ impl Volume {
         let [sx, sy, sz] = self.size;
         assert!(x < sx && y < sy && level < sz, "voxel ({x}, {y}, {level})");
         self.values[((level * sy + y) * sx + x) as usize]
+    }
+
+    /// The material of the voxel at column `x`, `y` within the chunk and `level` from its bottom.
+    ///
+    /// # Panics
+    /// If the voxel is outside the chunk, or the stage has no materials.
+    #[must_use]
+    pub fn material(&self, x: u32, y: u32, level: u32) -> u8 {
+        let [sx, sy, sz] = self.size;
+        assert!(x < sx && y < sy && level < sz, "voxel ({x}, {y}, {level})");
+        self.materials[((level * sy + y) * sx + x) as usize]
     }
 }
 
@@ -2818,11 +2832,14 @@ impl Runtime {
             density,
             bottom,
             top,
+            materials: kinds,
         } = &stage.kind
         {
             let [sx, sy] = self.size;
             let levels = top.abs_diff(*bottom);
+            let names = stage.kind.categories();
             let mut values = Vec::with_capacity((sx * sy * levels) as usize);
+            let mut materials = Vec::new();
             for level in *bottom..*top {
                 // The voxel's centre in WFC cells, as a column's is.
                 let height = (level as f32 + 0.5) * stage.scale as f32;
@@ -2837,6 +2854,14 @@ impl Runtime {
                             ..self.place(index, column, &read)
                         };
                         values.push(evaluate(density, &place)?);
+                        if let Some(kinds) = kinds {
+                            materials.push(first_rule(
+                                &kinds.rules,
+                                &kinds.otherwise,
+                                &names,
+                                &place,
+                            )?);
+                        }
                     }
                 }
             }
@@ -2845,6 +2870,7 @@ impl Runtime {
                 size: [sx, sy, levels],
                 bottom: *bottom,
                 values,
+                materials,
             }));
         }
         if let StageKind::Rules { .. } | StageKind::Area { .. } = &stage.kind {
@@ -3522,28 +3548,42 @@ impl Runtime {
         let StageKind::Rules { rules, otherwise } = &stage.kind else {
             unreachable!("only Rules stages categorise")
         };
-        let names = stage.kind.categories();
-        let index_of = |name: &str| {
-            names
-                .iter()
-                .position(|known| *known == name)
-                .expect("every category is named") as u8
-        };
-        let place = self.place(index, column, read);
-        for rule in rules {
-            let mut all = true;
-            for condition in &rule.when {
-                if !holds(condition, &place)? {
-                    all = false;
-                    break;
-                }
-            }
-            if all {
-                return Ok(index_of(&rule.category));
+        first_rule(
+            rules,
+            otherwise,
+            &stage.kind.categories(),
+            &self.place(index, column, read),
+        )
+    }
+}
+
+/// The index among `names` of the category of the first of `rules` whose conditions all hold at
+/// `place`, or of `otherwise`.
+fn first_rule(
+    rules: &[Rule],
+    otherwise: &str,
+    names: &[&str],
+    place: &impl Leaves,
+) -> Result<u8, StageError> {
+    let index_of = |name: &str| {
+        names
+            .iter()
+            .position(|known| *known == name)
+            .expect("every category is named") as u8
+    };
+    for rule in rules {
+        let mut all = true;
+        for condition in &rule.when {
+            if !holds(condition, place)? {
+                all = false;
+                break;
             }
         }
-        Ok(index_of(otherwise))
+        if all {
+            return Ok(index_of(&rule.category));
+        }
     }
+    Ok(index_of(otherwise))
 }
 
 /// The average of `input` over the square of `radius` columns around `column`.

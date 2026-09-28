@@ -163,7 +163,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
 | Volume | `volume_stage` | a Volume stage at scale 1 whose surface is drawn and collided with, for overhangs and caves ([packs.md](packs.md#volume)); empty for none |
-| | `volume_material` | the material the volume's surface is drawn with |
+| | `volume_material` | the material the volume's surface is drawn with; empty for Godot's default, or for a stage with materials one that takes its albedo from the vertices' colours |
+| | `volume_palette` | a colour per material of `volume_stage`, by index, which each vertex of the surface carries; materials past its end take colours of their own from their index |
 | Grass | `grass_stage` | a field stage whose value per column, 0 to 1, is how much of it grass covers ([Grass](#grass)); empty for none |
 | | `grass_per_cell` | blades per column where the cover is 1 (default 8) |
 | | `grass_radius` | chunks around the followed position that get grass (default 1) |
@@ -240,8 +241,10 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   space, and `values`.
 - `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body,
   `far_ground_chunks()` the chunks of `far_ground_stage` whose far ground is drawn, and
-  `volume_chunks()` the chunks of `volume_stage` whose surface is built. A chunk's surface is drawn
-  with `volume_material`, and within `collider_radius` its body holds it as a
+  `volume_chunks()` the chunks of `volume_stage` whose surface is built. `volume_surface(chunk)`
+  gives one: its `positions`, `normals`, `indices` in Godot's winding and each vertex's material in
+  `materials`, relative to the chunk's corner; `volume_mesh_of(chunk)` is the `RenderingServer` mesh
+  it is drawn with. A chunk's surface is drawn with `volume_material`, and within `collider_radius` its body holds it as a
   `ConcavePolygonShape3D`, whose front faces, the ones that collide, face from solid to empty:
   a ray from inside a cave meets its ceiling as it meets the ground from the sky.
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame

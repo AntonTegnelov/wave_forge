@@ -12,7 +12,7 @@ use bevy_app::{App, Plugin, Update};
 use bevy_asset::{Asset, AssetEvent, Assets, Handle, RenderAssetUsages, embedded_asset};
 use bevy_camera::primitives::Aabb;
 use bevy_camera::visibility::NoAutoAabb;
-use bevy_color::{Color, ColorToPacked};
+use bevy_color::{Color, ColorToComponents, ColorToPacked};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::prelude::{MessageReader, Res, ResMut, Resource};
 use bevy_image::Image;
@@ -25,7 +25,7 @@ use bevy_render::render_resource::{
 };
 use bevy_shader::ShaderRef;
 use wave_forge::stages::Field;
-use wave_forge::{ChunkCoord, GroundMesh};
+use wave_forge::{ChunkCoord, GroundMesh, VolumeMesh};
 
 /// How many colours a palette holds: one per category a Rules stage can have.
 const PALETTE: usize = 256;
@@ -375,19 +375,22 @@ pub fn grass_bounds_of(mesh: &GroundMesh, cell: Vec3) -> (Aabb, NoAutoAabb) {
     )
 }
 
+/// The colour of category `index` from `colours`, the categories past its end taking colours of
+/// their own from their index.
+#[must_use]
+pub fn palette_colour(colours: &[Color], index: usize) -> Color {
+    colours
+        .get(index)
+        .copied()
+        .unwrap_or_else(|| Color::hsl(index as f32 * 222.5 % 360.0, 0.35, 0.45))
+}
+
 /// A palette for [`GroundMaterial`]: `colours` by category index, the categories past its end
 /// taking colours of their own from their index.
 #[must_use]
 pub fn palette_image(colours: &[Color]) -> Image {
     let texels: Vec<u8> = (0..PALETTE)
-        .flat_map(|index| {
-            colours
-                .get(index)
-                .copied()
-                .unwrap_or_else(|| Color::hsl(index as f32 * 222.5 % 360.0, 0.35, 0.45))
-                .to_srgba()
-                .to_u8_array()
-        })
+        .flat_map(|index| palette_colour(colours, index).to_srgba().to_u8_array())
         .collect();
     Image::new(
         Extent3d {
@@ -400,6 +403,27 @@ pub fn palette_image(colours: &[Color]) -> Image {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     )
+}
+
+/// A chunk's volume surface as a Bevy mesh with each vertex in its material's colour from
+/// `colours` ([`palette_colour`]), which a `StandardMaterial` multiplies its base colour by; the
+/// same as [`crate::stages::surface_mesh`] for a stage without materials.
+#[must_use]
+pub fn coloured_surface_mesh(surface: &VolumeMesh, colours: &[Color]) -> Mesh {
+    let mesh = crate::stages::surface_mesh(surface);
+    if surface.materials.is_empty() {
+        return mesh;
+    }
+    let vertex_colours: Vec<[f32; 4]> = surface
+        .materials
+        .iter()
+        .map(|&material| {
+            palette_colour(colours, usize::from(material))
+                .to_linear()
+                .to_f32_array()
+        })
+        .collect();
+    mesh.with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vertex_colours)
 }
 
 /// The ground material of `chunk`, once its ground is built with materials: `base` for all but
