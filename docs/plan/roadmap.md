@@ -60,8 +60,7 @@ so far:
 
 ## Open work, in order
 
-Each step is a verified pull request that updates the stories it moves. Density volumes come
-first, because G1, G3 and G8 and the maximal worlds all wait on them.
+Each step is a verified pull request that updates the stories it moves.
 
 1. **Engine depth.** Built in both engines: ground materials, grass from a cover field,
    plants in a global wind, and ground levels of detail with skirts
@@ -71,15 +70,22 @@ first, because G1, G3 and G8 and the maximal worlds all wait on them.
    ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)); a far ground from a coarse
    height stage ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)); Bevy's sound and
    place names through `bevy_kira_audio` and Fluent
-   ([#174](https://github.com/AntonTegnelov/wave_forge/issues/174)). Left: reverb and buses for
-   interiors in Bevy, once a crate exposes them on the tracked Bevy
-   ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)), density volumes for G1, G3
-   and G8 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
-2. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
+   ([#174](https://github.com/AntonTegnelov/wave_forge/issues/174)); density volumes with
+   Godot's 3D noise, materials, carved tunnels and rooms, surfaces and colliders, and digs and fills
+   through the edits log ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Left:
+   volume surfaces and colliders built off Godot's thread, to hold P1's 2 ms p99
+   ([#218](https://github.com/AntonTegnelov/wave_forge/issues/218)); ground rebuilt beside a raise
+   ([#216](https://github.com/AntonTegnelov/wave_forge/issues/216)); reverb and buses for interiors
+   in Bevy, once a crate exposes them on the tracked Bevy
+   ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
+2. **The voxel stories' packs:** what G1, G3 and G8 still lack beyond density volumes, and their
+   test packs ([#219](https://github.com/AntonTegnelov/wave_forge/issues/219),
+   [#221](https://github.com/AntonTegnelov/wave_forge/issues/221),
+   [#220](https://github.com/AntonTegnelov/wave_forge/issues/220)).
+3. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
-3. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
-   technique, then played from what it wrote. It needs density volumes
-   ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)), the bake, and a whole-world run
+4. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
+   technique, then played from what it wrote. It needs the bake, and a whole-world run
    with progress, cancelling and resuming, with baked content streamed from disk
    ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)), over the store for chunks
    outside memory that is built ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142));
