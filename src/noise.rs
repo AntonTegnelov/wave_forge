@@ -25,15 +25,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//! Noise as Godot makes it: a port of FastNoiseLite 1.1.0's 2D noise and 2D domain warp.
+//! Noise as Godot makes it: a port of FastNoiseLite 1.1.0's 2D and 3D noise and domain warps.
 //!
 //! [`NoiseConfig`] has the properties of Godot's `FastNoiseLite` resource, with the same names
 //! and defaults, so a noise tuned in Godot's inspector reads the same in a pack.
-//! [`NoiseConfig::sample`] equals Godot 4.7's `FastNoiseLite.get_noise_2d` for the same
-//! properties: it does the same `f32` operations in the same order, with the same wrapping integer
-//! hashes, and `tests/fastnoise.rs` holds it to values Godot itself computed.
-//!
-//! 3D noise comes with density volumes.
+//! [`NoiseConfig::sample`] and [`NoiseConfig::sample_3d`] equal Godot 4.7's
+//! `FastNoiseLite.get_noise_2d` and `get_noise_3d` for the same properties: they do the same `f32`
+//! operations in the same order, with the same wrapping integer hashes, and `tests/fastnoise.rs`
+//! holds them to values Godot itself computed.
 //!
 //! FastNoiseLite is Copyright (c) 2023 Jordan Peck and contributors, and Godot's resource is
 //! Copyright (c) 2014-present Godot Engine contributors; both are MIT licensed, and the notice is
@@ -43,6 +42,8 @@
 #![allow(clippy::excessive_precision)]
 
 use serde::{Deserialize, Serialize};
+
+mod three;
 
 /// The noise algorithm, in the order of Godot's `FastNoiseLite.NoiseType`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -158,8 +159,8 @@ pub struct NoiseConfig {
     pub seed: i32,
     /// Lattice points per unit of the first octave. Default 0.01.
     pub frequency: f32,
-    /// Added to every position before anything else; [`Self::sample`] reads `x` and `y`. Default
-    /// zero.
+    /// Added to every position before anything else; [`Self::sample`] reads `x` and `y`,
+    /// [`Self::sample_3d`] all three. Default zero.
     pub offset: [f32; 3],
     /// How octaves are combined. Default [`FractalType::Fbm`].
     pub fractal_type: FractalType,
@@ -234,9 +235,28 @@ impl NoiseConfig {
         let mut x = x + self.offset[0];
         let mut y = y + self.offset[1];
         if self.domain_warp_enabled {
-            (x, y) = self.warp(x, y);
+            [x, y] = self.warp(
+                [x, y],
+                |[x, y]| self.warp_skew(x, y),
+                |seed, amp, freq, [x, y]| self.warp_single(seed, amp, freq, x, y),
+            );
         }
         self.noise(x, y)
+    }
+
+    /// The noise at `(x, y, z)`, as Godot's `get_noise_3d` gives it: the offset added, the position
+    /// warped if the warp is enabled, then the noise read there. Mostly within -1 to 1, as
+    /// [`Self::sample`] is.
+    pub fn sample_3d(&self, x: f32, y: f32, z: f32) -> f32 {
+        let mut p = [x + self.offset[0], y + self.offset[1], z + self.offset[2]];
+        if self.domain_warp_enabled {
+            p = self.warp(
+                p,
+                |p| self.warp_rotate_3d(p),
+                |seed, amp, freq, p| self.warp_single_3d(seed, amp, freq, p),
+            );
+        }
+        self.noise_3d(p)
     }
 
     /// FastNoiseLite's `GetNoise`: frequency and skew, then the fractal.
@@ -251,19 +271,41 @@ impl NoiseConfig {
             x += t;
             y += t;
         }
+        self.fractal([x, y], |seed, [x, y]| self.single(seed, x, y))
+    }
+
+    /// FastNoiseLite's 3D `GetNoise`: frequency and, for the simplex noises, rotation, then the
+    /// fractal.
+    fn noise_3d(&self, p: [f32; 3]) -> f32 {
+        let p = p.map(|axis| axis * self.frequency);
+        let p = match self.noise_type {
+            NoiseType::Simplex | NoiseType::SimplexSmooth => three::rotate(p),
+            _ => p,
+        };
+        self.fractal(p, |seed, [x, y, z]| self.single_3d(seed, x, y, z))
+    }
+
+    /// FastNoiseLite's fractals over `single`, one octave at a seed and a position, in 2D or 3D.
+    fn fractal<const N: usize>(
+        &self,
+        mut p: [f32; N],
+        single: impl Fn(i32, [f32; N]) -> f32,
+    ) -> f32 {
         if self.fractal_type == FractalType::None {
-            return self.single(self.seed, x, y);
+            return single(self.seed, p);
         }
         let mut seed = self.seed;
         let mut sum = 0.0;
         let mut amp = fractal_bounding(self.fractal_octaves, self.fractal_gain);
         for _ in 0..self.fractal_octaves {
-            let noise = self.single(seed, x, y);
+            let noise = single(seed, p);
             seed = seed.wrapping_add(1);
             // Each fractal's octave term and how much it weighs the next octaves.
             let (term, weight) = match self.fractal_type {
                 FractalType::None => unreachable!("a single octave has returned above"),
-                FractalType::Fbm => (noise, fast_min(noise + 1.0, 2.0) * 0.5),
+                // FastNoiseLite clamps FBm's weight in 2D and not in 3D.
+                FractalType::Fbm if N == 2 => (noise, fast_min(noise + 1.0, 2.0) * 0.5),
+                FractalType::Fbm => (noise, (noise + 1.0) * 0.5),
                 FractalType::Ridged => {
                     let ridge = fast_abs(noise);
                     (ridge * -2.0 + 1.0, 1.0 - ridge)
@@ -275,8 +317,9 @@ impl NoiseConfig {
             };
             sum += term * amp;
             amp *= lerp(1.0, weight, self.fractal_weighted_strength);
-            x *= self.fractal_lacunarity;
-            y *= self.fractal_lacunarity;
+            for axis in &mut p {
+                *axis *= self.fractal_lacunarity;
+            }
             amp *= self.fractal_gain;
         }
         sum
@@ -291,6 +334,28 @@ impl NoiseConfig {
             NoiseType::Perlin => single_perlin(seed, x, y),
             NoiseType::ValueCubic => single_value_cubic(seed, x, y),
             NoiseType::Value => single_value(seed, x, y),
+        }
+    }
+
+    /// FastNoiseLite's 3D `GenNoiseSingle`.
+    fn single_3d(&self, seed: i32, x: f32, y: f32, z: f32) -> f32 {
+        match self.noise_type {
+            NoiseType::Simplex => three::single_simplex(seed, x, y, z),
+            NoiseType::SimplexSmooth => three::single_simplex_smooth(seed, x, y, z),
+            NoiseType::Cellular => {
+                let distance = match self.cellular_distance_function {
+                    CellularDistanceFunction::Euclidean
+                    | CellularDistanceFunction::EuclideanSquared => three::euclidean_squared,
+                    CellularDistanceFunction::Manhattan => three::manhattan,
+                    CellularDistanceFunction::Hybrid => three::hybrid,
+                };
+                let (distance0, distance1, closest_hash) =
+                    three::cellular(seed, x, y, z, self.cellular_jitter, distance);
+                self.cellular_value(distance0, distance1, closest_hash)
+            }
+            NoiseType::Perlin => three::single_perlin(seed, x, y, z),
+            NoiseType::ValueCubic => three::single_value_cubic(seed, x, y, z),
+            NoiseType::Value => three::single_value(seed, x, y, z),
         }
     }
 
@@ -328,7 +393,12 @@ impl NoiseConfig {
             }
             x_primed = x_primed.wrapping_add(PRIME_X);
         }
+        self.cellular_value(distance0, distance1, closest_hash)
+    }
 
+    /// What cellular noise returns, by its return type, from the two smallest distances and the
+    /// nearest point's hash.
+    fn cellular_value(&self, mut distance0: f32, mut distance1: f32, closest_hash: i32) -> f32 {
         if self.cellular_distance_function == CellularDistanceFunction::Euclidean
             && self.cellular_return_type != CellularReturnType::CellValue
         {
@@ -350,8 +420,14 @@ impl NoiseConfig {
     }
 
     /// FastNoiseLite's `DomainWarp` on the separate warp object Godot keeps: it shares the seed and
-    /// has its own frequency, amplitude, type and fractal settings.
-    fn warp(&self, x: f32, y: f32) -> (f32, f32) {
+    /// has its own frequency, amplitude, type and fractal settings. `transform` is where a warp
+    /// octave reads a position, and `single` how far that octave moves it, in 2D or 3D.
+    fn warp<const N: usize>(
+        &self,
+        mut p: [f32; N],
+        transform: impl Fn([f32; N]) -> [f32; N],
+        single: impl Fn(i32, f32, f32, [f32; N]) -> [f32; N],
+    ) -> [f32; N] {
         let mut seed = self.seed;
         // Godot's warp scales by the fractal bounding of its octaves and gain even when its fractal
         // type is none, as FastNoiseLite's `DomainWarpSingle` does.
@@ -361,55 +437,62 @@ impl NoiseConfig {
                 self.domain_warp_fractal_gain,
             );
         let mut freq = self.domain_warp_frequency;
-        let mut x = x;
-        let mut y = y;
+        let add = |p: &mut [f32; N], by: [f32; N]| {
+            for (axis, by) in p.iter_mut().zip(by) {
+                *axis += by;
+            }
+        };
         match self.domain_warp_fractal_type {
             DomainWarpFractalType::None => {
-                let (xs, ys) = self.warp_skew(x, y);
-                let (dx, dy) = self.warp_single(seed, amp, freq, xs, ys);
-                (x + dx, y + dy)
+                let by = single(seed, amp, freq, transform(p));
+                add(&mut p, by);
             }
             DomainWarpFractalType::Progressive => {
                 for _ in 0..self.domain_warp_fractal_octaves {
-                    let (xs, ys) = self.warp_skew(x, y);
-                    let (dx, dy) = self.warp_single(seed, amp, freq, xs, ys);
-                    x += dx;
-                    y += dy;
+                    let by = single(seed, amp, freq, transform(p));
+                    add(&mut p, by);
                     seed = seed.wrapping_add(1);
                     amp *= self.domain_warp_fractal_gain;
                     freq *= self.domain_warp_fractal_lacunarity;
                 }
-                (x, y)
             }
             DomainWarpFractalType::Independent => {
-                let (xs, ys) = self.warp_skew(x, y);
+                let read_at = transform(p);
                 for _ in 0..self.domain_warp_fractal_octaves {
-                    let (dx, dy) = self.warp_single(seed, amp, freq, xs, ys);
-                    x += dx;
-                    y += dy;
+                    let by = single(seed, amp, freq, read_at);
+                    add(&mut p, by);
                     seed = seed.wrapping_add(1);
                     amp *= self.domain_warp_fractal_gain;
                     freq *= self.domain_warp_fractal_lacunarity;
                 }
-                (x, y)
             }
         }
+        p
     }
 
     /// FastNoiseLite's `TransformDomainWarpCoordinate`: the simplex warps read a skewed position.
-    fn warp_skew(&self, x: f32, y: f32) -> (f32, f32) {
+    fn warp_skew(&self, x: f32, y: f32) -> [f32; 2] {
         match self.domain_warp_type {
             DomainWarpType::Simplex | DomainWarpType::SimplexReduced => {
                 let t = (x + y) * F2;
-                (x + t, y + t)
+                [x + t, y + t]
             }
-            DomainWarpType::BasicGrid => (x, y),
+            DomainWarpType::BasicGrid => [x, y],
+        }
+    }
+
+    /// FastNoiseLite's 3D `TransformDomainWarpCoordinate`: the simplex warps read a rotated
+    /// position.
+    fn warp_rotate_3d(&self, p: [f32; 3]) -> [f32; 3] {
+        match self.domain_warp_type {
+            DomainWarpType::Simplex | DomainWarpType::SimplexReduced => three::rotate(p),
+            DomainWarpType::BasicGrid => p,
         }
     }
 
     /// FastNoiseLite's `DoSingleDomainWarp`: how far one warp octave moves a position.
-    fn warp_single(&self, seed: i32, amp: f32, freq: f32, x: f32, y: f32) -> (f32, f32) {
-        match self.domain_warp_type {
+    fn warp_single(&self, seed: i32, amp: f32, freq: f32, x: f32, y: f32) -> [f32; 2] {
+        let (dx, dy) = match self.domain_warp_type {
             DomainWarpType::Simplex => {
                 warp_simplex_gradient(seed, amp * 38.283_687_591_552_734_375, freq, x, y, false)
             }
@@ -417,6 +500,20 @@ impl NoiseConfig {
                 warp_simplex_gradient(seed, amp * 16.0, freq, x, y, true)
             }
             DomainWarpType::BasicGrid => warp_basic_grid(seed, amp, freq, x, y),
+        };
+        [dx, dy]
+    }
+
+    /// FastNoiseLite's 3D `DoSingleDomainWarp`.
+    fn warp_single_3d(&self, seed: i32, amp: f32, freq: f32, p: [f32; 3]) -> [f32; 3] {
+        match self.domain_warp_type {
+            DomainWarpType::Simplex => {
+                three::warp_simplex_gradient(seed, amp * 32.694_282_531_738_28, freq, p, false)
+            }
+            DomainWarpType::SimplexReduced => {
+                three::warp_simplex_gradient(seed, amp * 7.716_049_382_716_05, freq, p, true)
+            }
+            DomainWarpType::BasicGrid => three::warp_basic_grid(seed, amp, freq, p),
         }
     }
 }

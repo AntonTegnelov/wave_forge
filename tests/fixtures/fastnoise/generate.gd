@@ -1,5 +1,5 @@
-## Writes godot.json: Godot's own FastNoiseLite.get_noise_2d over a matrix of configurations, the
-## golden values tests/fastnoise.rs holds the Rust port to.
+## Writes godot.json: Godot's own FastNoiseLite.get_noise_2d and get_noise_3d over a matrix of
+## configurations, the golden values tests/fastnoise.rs holds the Rust port to.
 ##
 ## Run from any folder that holds a project.godot (an empty one will do), with the output path
 ## after `--`:
@@ -7,7 +7,8 @@
 ##     godot --headless --path <folder> --script <this file> -- tests/fixtures/fastnoise/godot.json
 ##
 ## Each case is one configuration: every property of the resource as Godot reports it after the
-## case's settings, enums as their integers, and its values at the shared points in order.
+## case's settings, enums as their integers, its 2D values at the shared points in order, and its 3D
+## values at the shared 3D points.
 extends SceneTree
 
 const PROPERTIES := [
@@ -28,6 +29,14 @@ const CHOSEN_POINTS := [
 	[-12345.6, 789.01], [10000.3, 20000.7], [3.14159, 2.71828], [-99.99, 0.5],
 ]
 
+## The same kinds of point in 3D, heights below zero and far from it included.
+const CHOSEN_POINTS_3D := [
+	[0.0, 0.0, 0.0], [0.5, 0.25, 0.75], [-3.7, 11.2, -8.1], [1.0, -1.0, 1.0], [-2.0, -3.0, -4.0],
+	[100.0, 100.0, 100.0], [-0.001, 0.001, -0.001], [37.5, -1234.5, 64.25],
+	[-250.25, -250.75, 250.5], [12345.6, -6543.21, 321.0], [-12345.6, 789.01, -4567.8],
+	[10000.3, 20000.7, -30000.1], [3.14159, 2.71828, 1.41421], [-99.99, 0.5, 17.0],
+]
+
 const SEEDS := [0, 1337, -1, -987654, 2147483647, -2147483648, 42]
 const FREQUENCIES := [0.01, 0.1, 0.37, 1.0]
 
@@ -39,6 +48,7 @@ func _initialize() -> void:
 		return
 	var lines := PackedStringArray()
 	var points := _points()
+	var points_3d := _points_3d()
 	for settings in _cases():
 		var noise := FastNoiseLite.new()
 		for property in settings:
@@ -50,24 +60,34 @@ func _initialize() -> void:
 		var values := []
 		for point in points:
 			values.append(noise.get_noise_2d(point[0], point[1]))
-		lines.append(JSON.stringify({"config": config, "values": values}, "", true, true))
+		var values_3d := []
+		for point in points_3d:
+			values_3d.append(noise.get_noise_3d(point[0], point[1], point[2]))
+		lines.append(JSON.stringify({"config": config, "values": values, "values_3d": values_3d}, "", true, true))
 	var file := FileAccess.open(args[0], FileAccess.WRITE)
 	if file == null:
 		push_error("cannot write %s: %s" % [args[0], error_string(FileAccess.get_open_error())])
 		quit(1)
 		return
-	file.store_string("{\"godot\": %s,\n\"points\": %s,\n\"cases\": [\n%s\n]}\n" % [
+	file.store_string("{\"godot\": %s,\n\"points\": %s,\n\"points_3d\": %s,\n\"cases\": [\n%s\n]}\n" % [
 		JSON.stringify(Engine.get_version_info()["string"]),
 		JSON.stringify(points, "", true, true),
+		JSON.stringify(points_3d, "", true, true),
 		",\n".join(lines)])
 	file.close()
-	print("generate.gd: %d cases at %d points" % [lines.size(), points.size()])
+	print("generate.gd: %d cases at %d points and %d 3D points" % [lines.size(), points.size(), points_3d.size()])
 	quit(0)
 
 func _points() -> Array:
 	var points := CHOSEN_POINTS.duplicate()
 	for k in 18:
 		points.append([k * 37.77 - 301.3, 123.45 - k * k * 1.913])
+	return points
+
+func _points_3d() -> Array:
+	var points := CHOSEN_POINTS_3D.duplicate()
+	for k in 18:
+		points.append([k * 37.77 - 301.3, 123.45 - k * k * 1.913, k * k * 2.37 - k * 41.3 + 7.7])
 	return points
 
 ## The settings of each case: properties it does not name keep Godot's defaults.

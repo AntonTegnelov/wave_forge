@@ -310,15 +310,15 @@ noises: {
 A noise's properties are the resource's, under the same names and with the same defaults, and any
 left out takes Godot's default: `noise_type` (`Simplex`, `SimplexSmooth`, `Cellular`, `Perlin`,
 `ValueCubic`, `Value`), `seed`, `frequency`, `offset`, the `fractal_` properties, the `cellular_`
-properties and the `domain_warp_` properties. `wave_forge::noise::NoiseConfig::sample` is a port of
-FastNoiseLite 1.1.0, the version Godot bundles, and gives exactly what Godot 4.7's `get_noise_2d`
-gives: `tests/fastnoise.rs` compares 2 560 samples over 80 configurations that Godot computed, with
-no tolerance. A noise keeps its own seed, as a resource does, so the world's seed does not change it.
+properties and the `domain_warp_` properties. `wave_forge::noise::NoiseConfig::sample` and
+`sample_3d` are a port of FastNoiseLite 1.1.0, the version Godot bundles, and give exactly what Godot
+4.7's `get_noise_2d` and `get_noise_3d` give: `tests/fastnoise.rs` compares 2 560 samples of each
+over 80 configurations that Godot computed, with no tolerance. A noise keeps its own seed, as a resource does, so the world's seed does not change it.
 
 `Runtime::with_noise(name, config)` replaces a named noise, which is how an engine hands in a
 resource; the Godot node's `noises` does it ([godot.md](godot.md#waveforgestages)). Loading refuses
 a `FastNoise` of a name the pack's `noises` does not have, and `with_noise` of one fails with
-`StageError::UnknownNoise`. Only 2D noise exists; 3D noise comes with density volumes
+`StageError::UnknownNoise`. Stages read noise in 2D; reading it in 3D comes with density volumes
 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
 
 ### Rules
