@@ -40,8 +40,8 @@ use wave_forge::stages::{
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
-    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, YUpSpace, far_ground,
-    ground, ground_height, ground_materials, ground_readers,
+    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, VolumeMesh, YUpSpace,
+    far_ground, ground, ground_height, ground_materials, ground_readers, volume_mesh,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -119,6 +119,17 @@ pub struct WaveForgeStages {
     /// fields around it, so it reaches one coarse chunk less. It is drawn with `ground_material`.
     #[export]
     far_ground_stage: GString,
+
+    /// A Volume stage at scale 1 whose surface is drawn and, within `collider_radius`, collided
+    /// with, for overhangs and caves; empty for none. It has to be generated, as a target or as
+    /// what a target reads. A chunk's surface needs the volumes of the chunks around it, so it
+    /// reaches one chunk less than the view.
+    #[export_group(name = "Volume")]
+    #[export]
+    volume_stage: GString,
+    /// The material the volume's surface is drawn with; none draws it with Godot's default.
+    #[export]
+    volume_material: Option<Gd<Material>>,
 
     /// A field stage whose value per column, from 0 to 1, is how much of it grass covers; empty for
     /// no grass. Grass stands on the ground, so it needs `ground_stage`.
@@ -202,6 +213,12 @@ pub struct WaveForgeStages {
     /// The chunks of `far_ground_stage` whose far ground is drawn: its `RenderingServer` mesh and
     /// instance.
     far_grounds: HashMap<ChunkCoord, (Rid, Rid)>,
+    /// Chunks whose volume surface may be buildable: a volume around them arrived since they were
+    /// last looked at.
+    volume_due: std::collections::BTreeSet<ChunkCoord>,
+    /// The chunks whose volume surface is built: its mesh, and its `RenderingServer` mesh and
+    /// instance, which a surface without triangles has none of.
+    volumes: HashMap<ChunkCoord, (VolumeMesh, Option<(Rid, Rid)>)>,
     /// Each chunk's copy of the ground material, holding its material ids, while its ground is
     /// built; none without `ground_material_stage`.
     chunk_materials: HashMap<ChunkCoord, Gd<ShaderMaterial>>,
@@ -214,9 +231,9 @@ pub struct WaveForgeStages {
     slowest_frame: FrameCost,
     /// Signals not yet emitted, in the order their events arrived.
     pending: VecDeque<StageEvent>,
-    /// Each chunk's static body and its ground's height map shape, which the body does not own,
-    /// and what it holds, to tell when it has to be built again.
-    bodies: HashMap<ChunkCoord, (Rid, Option<Rid>, BodyContents)>,
+    /// Each chunk's static body and the shapes of its ground and its volume's surface, which the
+    /// body does not own, and what it holds, to tell when it has to be built again.
+    bodies: HashMap<ChunkCoord, (Rid, Vec<Rid>, BodyContents)>,
     /// Chunks within `collider_radius` still waiting for a body after the last frame.
     bodies_pending: usize,
     /// The scenes bound to kinds, and what each stage's chunk placed.
@@ -246,7 +263,7 @@ struct FrameCost {
     /// connected to them included.
     events: usize,
     signals_ms: f64,
-    /// Chunks whose ground was built, and the milliseconds that took.
+    /// Chunks whose ground or volume surface was built, and the milliseconds that took.
     grounds: usize,
     grounds_ms: f64,
     /// Chunks whose body was built, and the milliseconds that took.
@@ -416,6 +433,8 @@ fn elapsed_ms(since: std::time::Instant) -> f64 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BodyContents {
     ground: bool,
+    /// Whether the chunk's volume surface has triangles.
+    volume: bool,
     towns: Vec<String>,
 }
 
@@ -461,6 +480,10 @@ impl INode for WaveForgeStages {
             grounds: HashMap::new(),
             far_due: std::collections::BTreeSet::new(),
             far_grounds: HashMap::new(),
+            volume_stage: GString::new(),
+            volume_material: None,
+            volume_due: std::collections::BTreeSet::new(),
+            volumes: HashMap::new(),
             ground_due: std::collections::BTreeSet::new(),
             bodies: HashMap::new(),
             bodies_pending: 0,
@@ -542,6 +565,19 @@ impl INode for WaveForgeStages {
                 StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
             }
         }
+        let volume_stage = self.volume_stage.to_string();
+        let (mut volume_arrived, mut volume_gone) = (Vec::new(), Vec::new());
+        for event in &events {
+            match event {
+                StageEvent::Generated { stage, chunk } if *stage == volume_stage => {
+                    volume_arrived.push(*chunk);
+                }
+                StageEvent::Dropped { stage, chunk } if *stage == volume_stage => {
+                    volume_gone.push(*chunk);
+                }
+                StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
+            }
+        }
         let far_stage = self.far_ground_stage.to_string();
         let (mut far_arrived, mut far_gone) = (Vec::new(), Vec::new());
         for event in &events {
@@ -602,6 +638,7 @@ impl INode for WaveForgeStages {
             )
             .collect();
         self.update_far_ground(&far_arrived, &far_gone, &near_changed);
+        frame.grounds += self.update_volume(&volume_arrived, &volume_gone);
         frame.grounds_ms = elapsed_ms(grounding);
         let building = std::time::Instant::now();
         frame.bodies = self.update_colliders();
@@ -698,6 +735,18 @@ impl WaveForgeStages {
                 self.far_ground_stage
             );
             return false;
+        }
+        if !self.volume_stage.is_empty() {
+            let stage = self.volume_stage.to_string();
+            if !matches!(pack.kind(&stage), Some(StageKind::Volume { .. }))
+                || pack.scale(&stage) != Some(1)
+            {
+                godot_error!(
+                    "wave forge: volume_stage {} is no Volume stage of the pack at scale 1",
+                    self.volume_stage
+                );
+                return false;
+            }
         }
         if self.grass_stage.is_empty() {
             self.grass = None;
@@ -1394,7 +1443,14 @@ impl WaveForgeStages {
             .collect()
     }
 
-    /// The chunks that have a static body: their ground, and their towns' modules.
+    /// The chunks of `volume_stage` whose surface is built, those without triangles included.
+    #[func]
+    fn volume_chunks(&self) -> Array<Vector3i> {
+        self.volumes.keys().map(|&chunk| to_vector(chunk)).collect()
+    }
+
+    /// The chunks that have a static body: their ground, their volume's surface, and their towns'
+    /// modules.
     #[func]
     fn collider_chunks(&self) -> Array<Vector3i> {
         self.bodies.keys().map(|&chunk| to_vector(chunk)).collect()
@@ -1591,6 +1647,10 @@ impl WaveForgeStages {
         out.set(
             &"pending_grounds".to_variant(),
             &(self.ground_due.len() as i64).to_variant(),
+        );
+        out.set(
+            &"pending_volumes".to_variant(),
+            &(self.volume_due.len() as i64).to_variant(),
         );
         out.set(
             &"pending_far_grounds".to_variant(),
@@ -1819,6 +1879,97 @@ impl WaveForgeStages {
         count
     }
 
+    /// Builds the volume surface of up to [`GROUNDS_PER_FRAME`] chunks a newly arrived volume may
+    /// have completed, nearest the followed position first, and frees the surface of chunks whose
+    /// own volume was dropped.
+    ///
+    /// Returns how many chunks got a surface.
+    fn update_volume(&mut self, arrived: &[ChunkCoord], gone: &[ChunkCoord]) -> usize {
+        let mut rendering = RenderingServer::singleton();
+        for chunk in gone {
+            if let Some((_, Some((mesh, instance)))) = self.volumes.remove(chunk) {
+                rendering.free_rid(instance);
+                rendering.free_rid(mesh);
+            }
+        }
+        let Some(worker) = &self.worker else {
+            return 0;
+        };
+        let Some(scenario) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_scenario())
+        else {
+            return 0;
+        };
+        let stage = self.volume_stage.to_string();
+        let voxel = self.cell_size.to_array();
+        self.volume_due
+            .extend(arrived.iter().copied().flat_map(ground_readers));
+        for chunk in gone {
+            self.volume_due.remove(chunk);
+        }
+        let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
+        let mut due: Vec<ChunkCoord> = self.volume_due.iter().copied().collect();
+        due.sort_by_key(|chunk| {
+            (
+                (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()),
+                *chunk,
+            )
+        });
+        let mut built = Vec::new();
+        for chunk in due {
+            if built.len() == GROUNDS_PER_FRAME {
+                break;
+            }
+            // Looked at now: built, already built, or waiting for a volume around it, whose
+            // arrival makes it due again.
+            self.volume_due.remove(&chunk);
+            if self.volumes.contains_key(&chunk) {
+                continue;
+            }
+            if let Some(mesh) = volume_mesh(chunk, |at| worker.volume(&stage, at), voxel) {
+                built.push(mesh);
+            }
+        }
+        let count = built.len();
+        for mesh in built {
+            let chunk = mesh.chunk;
+            if mesh.indices.is_empty() {
+                self.volumes.insert(chunk, (mesh, None));
+                continue;
+            }
+            let rid = rendering.mesh_create();
+            let mut arrays = VarArray::new();
+            arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
+            let vertices: PackedVector3Array = mesh
+                .positions
+                .iter()
+                .map(|&[x, y, z]| Vector3::new(x, y, z))
+                .collect();
+            let normals: PackedVector3Array = mesh
+                .normals
+                .iter()
+                .map(|&[x, y, z]| Vector3::new(x, y, z))
+                .collect();
+            arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
+            arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+            add_levelled_surface(rid, &mut arrays, &mesh.indices, &[]);
+            if let Some(material) = &self.volume_material {
+                rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+            }
+            let instance = rendering.instance_create2(rid, scenario);
+            rendering.instance_set_transform(
+                instance,
+                Transform3D::new(Basis::IDENTITY, self.chunk_corner(chunk)),
+            );
+            Gi::Static.apply(instance);
+            self.volumes.insert(chunk, (mesh, Some((rid, instance))));
+        }
+        count
+    }
+
     /// Draws the far ground of the coarse chunks that are due, nearest the followed position first
     /// and at most [`FAR_GROUNDS_PER_FRAME`] a frame: one mesh each, leaving out the chunks whose
     /// near ground is drawn and walled off where it meets them ([`far_ground`]). A coarse chunk is
@@ -1952,6 +2103,10 @@ impl WaveForgeStages {
             .collect();
         let contents = |this: &Self, chunk: ChunkCoord| BodyContents {
             ground: this.grounds.contains_key(&chunk),
+            volume: this
+                .volumes
+                .get(&chunk)
+                .is_some_and(|(mesh, _)| !mesh.indices.is_empty()),
             towns: if this.collision_shapes.is_empty() {
                 Vec::new()
             } else {
@@ -1995,7 +2150,7 @@ impl WaveForgeStages {
             })
             .filter(|chunk| radius >= 0 && !self.bodies.contains_key(chunk))
             .map(|chunk| (chunk, contents(self, chunk)))
-            .filter(|(_, held)| held.ground || !held.towns.is_empty())
+            .filter(|(_, held)| held.ground || held.volume || !held.towns.is_empty())
             .collect();
         // Nearest first, and a few a frame, as the city node does.
         wanted.sort_by_key(|(chunk, _)| {
@@ -2011,11 +2166,13 @@ impl WaveForgeStages {
         for (chunk, held) in wanted {
             let body = physics.body_create();
             physics.body_set_mode(body, BodyMode::STATIC);
-            let ground_shape = if held.ground {
-                self.add_ground_shape(&mut physics, body, chunk)
-            } else {
-                None
-            };
+            let mut shapes: Vec<Rid> = Vec::new();
+            if held.ground {
+                shapes.extend(self.add_ground_shape(&mut physics, body, chunk));
+            }
+            if held.volume {
+                shapes.push(self.add_volume_shape(&mut physics, body, chunk));
+            }
             for stage in &held.towns {
                 let shapes = &self.collision_shapes;
                 let Some((sets, lift)) =
@@ -2039,7 +2196,7 @@ impl WaveForgeStages {
             }
             physics.body_attach_object_instance_id(body, owner);
             physics.body_set_space(body, space);
-            self.bodies.insert(chunk, (body, ground_shape, held));
+            self.bodies.insert(chunk, (body, shapes, held));
         }
         count
     }
@@ -2090,6 +2247,35 @@ impl WaveForgeStages {
         );
         physics.body_add_shape_ex(body, shape).transform(at).done();
         Some(shape)
+    }
+
+    /// Adds a chunk's volume surface to `body` as a concave polygon and returns the shape, which the
+    /// caller frees with the body. Only its front faces collide, which face from solid to empty.
+    fn add_volume_shape(
+        &self,
+        physics: &mut Gd<PhysicsServer3D>,
+        body: Rid,
+        chunk: ChunkCoord,
+    ) -> Rid {
+        let (mesh, _) = &self.volumes[&chunk];
+        // Godot's front faces wind clockwise, the library's counter-clockwise.
+        let faces: PackedVector3Array = mesh
+            .indices
+            .chunks(3)
+            .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])
+            .map(|index| {
+                let [x, y, z] = mesh.positions[index as usize];
+                Vector3::new(x, y, z)
+            })
+            .collect();
+        let mut data = VarDictionary::new();
+        data.set(&"faces".to_variant(), &faces.to_variant());
+        data.set(&"backface_collision".to_variant(), &false.to_variant());
+        let shape = physics.concave_polygon_shape_create();
+        physics.shape_set_data(shape, &data.to_variant());
+        let at = Transform3D::new(Basis::IDENTITY, self.chunk_corner(chunk));
+        physics.body_add_shape_ex(body, shape).transform(at).done();
+        shape
     }
 
     fn free_bodies(&mut self) {
@@ -2297,6 +2483,13 @@ impl WaveForgeStages {
         for (_, (_, mesh, instance)) in self.grounds.drain() {
             rendering.free_rid(instance);
             rendering.free_rid(mesh);
+        }
+        self.volume_due.clear();
+        for (_, (_, drawn)) in self.volumes.drain() {
+            if let Some((mesh, instance)) = drawn {
+                rendering.free_rid(instance);
+                rendering.free_rid(mesh);
+            }
         }
         // Freed after the meshes that draw with them.
         self.chunk_materials.clear();

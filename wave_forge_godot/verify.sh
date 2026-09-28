@@ -11,6 +11,7 @@
 # which places a village's pieces, then `godot/verify_scenes.gd`, which binds scenes to them, then
 # `godot/verify_pooling.gd`, which reuses the nodes of scenes that reset themselves, then
 # `godot/verify_ground.gd`, which gives the ground a material per category, then
+# `godot/verify_volume.gd`, which draws a volume's surface and collides with its cave, then
 # `godot/verify_sound.gd`, which checks the city's region tags and sound, then
 # `godot/verify_names.gd`, which names a location through a translation, then
 # `godot/verify_occlusion.gd`, which checks the city's occluders, then `godot/verify_proxies.gd`,
@@ -31,6 +32,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_scenes.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_pooling.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_ground.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_volume.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_sound.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_names.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_occlusion.gd
