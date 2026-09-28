@@ -106,8 +106,8 @@ Each is a gap between the code and the design or the stories, with where it is t
   roads
   ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a frozen chunk no request needs
   leaves memory only for a store the game gives ([packs.md](../reference/packs.md#persistence-and-saves));
-  noise is the library's value noise and Godot's FastNoiseLite in 2D, with 3D noise and density
-  waiting for density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Each has an issue
+  stages read the library's value noise and Godot's FastNoiseLite in 2D, and FastNoiseLite's 3D
+  port waits for density volumes to read it ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Each has an issue
   ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, with levels of detail and skirts
   that Godot and Bevy draw by distance; both draw its materials and grass and sway plants in the

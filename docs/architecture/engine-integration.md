@@ -385,10 +385,11 @@ Bevy gets the same tools once its editor can host them.
 ### Noise that means the same in both engines
 
 This is the design for [#45](https://github.com/AntonTegnelov/wave_forge/issues/45). Built: the configuration, the
-2D port, the golden tests, Godot's conversion ([packs.md](../reference/packs.md#godots-noise)), Bevy's
-`Reflect`, the same stages on every platform, and the ground's height for gameplay. Not built yet: 3D
-noise, which comes with density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)),
-and the WGSL port with quantised decisions, which only fields on the GPU would need
+2D and 3D port, the golden tests, Godot's conversion ([packs.md](../reference/packs.md#godots-noise)),
+Bevy's `Reflect`, the same stages on every platform, and the ground's height for gameplay. Not built
+yet: stages reading noise in 3D, which comes with density volumes
+([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)), and the WGSL port with quantised
+decisions, which only fields on the GPU would need
 ([#205](https://github.com/AntonTegnelov/wave_forge/issues/205)).
 Godot's `FastNoiseLite` is the default noise source in Godot. Its `Noise` base class has no
 overridable sampling, so a custom noise subclass cannot occur.

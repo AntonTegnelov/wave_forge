@@ -1,7 +1,7 @@
 //! `NoiseConfig` against Godot's own `FastNoiseLite`.
 //!
-//! `tests/fixtures/fastnoise/godot.json` holds what Godot 4.7.2's `get_noise_2d` returned for a
-//! matrix of configurations (every noise type, fractal type, cellular distance function and return
+//! `tests/fixtures/fastnoise/godot.json` holds what Godot 4.7.2's `get_noise_2d` and
+//! `get_noise_3d` returned for a matrix of configurations (every noise type, fractal type, cellular distance function and return
 //! type, jitters, weighted strengths, ping pong strengths, offsets, and every domain warp type
 //! under every warp fractal type, over seeds up to both ends of `i32`) at points that are negative,
 //! fractional, on lattice lines and far from the origin. `generate.gd` beside it writes the file.
@@ -166,6 +166,42 @@ fn every_sample_equals_godots() {
             if actual != expected {
                 mismatches.push(format!(
                     "case {case} at ({x}, {y}): Godot {expected}, port {actual}, {config:?}"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        mismatches.is_empty(),
+        "{} of {} samples differ from Godot's:\n{}",
+        mismatches.len(),
+        cases.len() * points.len(),
+        mismatches.join("\n")
+    );
+}
+
+#[test]
+fn every_3d_sample_equals_godots() {
+    let fixture = fixture();
+    let points = fixture["points_3d"].as_array().expect("3D points");
+    let cases = fixture["cases"].as_array().expect("cases");
+
+    let mut mismatches = Vec::new();
+    for (case, entry) in cases.iter().enumerate() {
+        let config = config_from_godot(&entry["config"]);
+        let values = entry["values_3d"].as_array().expect("3D values");
+        assert_eq!(
+            values.len(),
+            points.len(),
+            "case {case} has a value per 3D point"
+        );
+        for (point, expected) in points.iter().zip(values) {
+            let [x, y, z] = [0, 1, 2].map(|axis| float(&point[axis]));
+            let expected = float(expected);
+            let actual = config.sample_3d(x, y, z);
+            if actual != expected {
+                mismatches.push(format!(
+                    "case {case} at ({x}, {y}, {z}): Godot {expected}, port {actual}, {config:?}"
                 ));
             }
         }
