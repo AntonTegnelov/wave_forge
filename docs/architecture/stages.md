@@ -74,7 +74,7 @@ masks ([solver.md](solver.md#the-prior)).
 
 | Type | Contents | Covers | Today |
 |---|---|---|---|
-| **Field** | named channels on a 2D or 3D grid at the stage's cell size | height, climate, masks, density and signed distance, categorical ids such as a biome | one `f32` per cell column, or a category per column from a Rules stage |
+| **Field** | named channels on a 2D or 3D grid at the stage's cell size | height, climate, masks, density and signed distance, categorical ids such as a biome | one `f32` per cell column, or a category per column from a Rules stage; one `f32` per voxel of a column's levels from a Volume stage |
 | **PointSet** | structure of arrays: position, rotation, scale, stable id, kind, attribute columns | sites, anchors, scatter candidates and placements, spawn points | `Sites` and `Points` |
 | **CurveSet** | polylines with per-vertex attributes (radius, flow, profile) and optional connectivity | roads, rivers, tunnels, room and site graphs | `Curves` from region jobs: points and one value per point; connectivity and rasterising are [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas | prefab pieces from an Assemble stage, each with its footprint, floor and turn; carve and fill primitives come with density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)) |

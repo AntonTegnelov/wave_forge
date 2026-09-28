@@ -229,12 +229,14 @@ its row ([Solve](#solve)). Roads from a table's curves are not built yet
 
 ## Stages
 
-Every stage works on a two-dimensional lattice of cell columns at its scale. Every stage produces one of seven types (a field, categories, sites, tiles, points, curves or
-stamps), and loading refuses a stage that reads one type as another.
+Every stage works on a two-dimensional lattice of cell columns at its scale; a Volume stage gives
+each column levels too. Every stage produces one of eight types (a field, a volume, categories,
+sites, tiles, points, curves or stamps), and loading refuses a stage that reads one type as another.
 
 | Kind | Produces | Reads, and how far |
 |---|---|---|
 | `Field` | Field | the fields named by `Input` and the categories named by `Is`, 0 cells; the categories a `Match` names, `blend` cells |
+| `Volume` | Volume | as `Field` |
 | `Rules` | Categories | what its conditions read, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
 | `Delta` | Field | one field, `radius` cells |
@@ -318,8 +320,27 @@ over 80 configurations that Godot computed, with no tolerance. A noise keeps its
 `Runtime::with_noise(name, config)` replaces a named noise, which is how an engine hands in a
 resource; the Godot node's `noises` does it ([godot.md](godot.md#waveforgestages)). Loading refuses
 a `FastNoise` of a name the pack's `noises` does not have, and `with_noise` of one fails with
-`StageError::UnknownNoise`. Stages read noise in 2D; reading it in 3D comes with density volumes
-([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
+`StageError::UnknownNoise`. A Field reads a noise in 2D and a [Volume](#volume) in 3D.
+
+### Volume
+
+`Volume(density: expr, bottom: b, top: t)`: a value per voxel, from an expression at that voxel
+alone, for overhangs and caves ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Each
+column has levels from `b` up to but not including `t`, and a level is as tall as a column is wide,
+so at `scale: 4` a voxel is a cube of four cells a side. The expression is a [Field](#field)'s, with
+one more leaf and one difference:
+
+| Expression | Value in a volume |
+|---|---|
+| `Z` | the height of the voxel's centre in cells, `(level + 0.5) × scale`; loading refuses it anywhere else |
+| `FastNoise("name")` | Godot's `get_noise_3d` at the voxel's centre, with the lattice's x as Godot's x, the height as Godot's y and the lattice's y as Godot's z, as a Godot game samples the same resource at that point of its Y-up world |
+
+Every other leaf reads the voxel's column: `Noise` stays the library's 2D value noise, and `Input`
+reads a field at the column, so `Sub(Input("height"), Z)` is a volume that is solid below a height
+field and empty above it. By convention a voxel whose value is above zero is solid.
+`Runtime::volume(stage, chunk)` gives a chunk's `Volume`: its `size` in columns and levels, its
+`bottom` level and its values level by level, each row by row with x fastest. Nothing reads a volume
+as an input; meshing one comes next ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
 
 ### Rules
 

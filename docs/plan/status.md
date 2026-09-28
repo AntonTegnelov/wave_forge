@@ -101,13 +101,14 @@ Each is a gap between the code and the design or the stories, with where it is t
   CPU oracle and the golden world; its generated source and workgroup budget are unit tested.
 - **Golden worlds cover tiles, not images or products.** Instance sets and chunk hashes are not in
   them yet.
-- **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage;
+- **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage,
+  and volumes one `f32` per voxel between two levels, which nothing meshes yet;
   curves from region jobs, networks between sites and tables are drawn into height fields; tables of facts reach stages through a focused row, sites, towns and
   roads
   ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a frozen chunk no request needs
   leaves memory only for a store the game gives ([packs.md](../reference/packs.md#persistence-and-saves));
-  stages read the library's value noise and Godot's FastNoiseLite in 2D, and FastNoiseLite's 3D
-  port waits for density volumes to read it ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Each has an issue
+  stages read the library's value noise in 2D and Godot's FastNoiseLite in 2D, and in 3D in a
+  volume ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Each has an issue
   ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, with levels of detail and skirts
   that Godot and Bevy draw by distance; both draw its materials and grass and sway plants in the

@@ -55,6 +55,31 @@ impl Field {
     }
 }
 
+/// A value per voxel of one chunk: its columns, each from level `bottom` up.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct Volume {
+    pub chunk: ChunkCoord,
+    /// Columns along the lattice's x and y, and levels.
+    pub size: [u32; 3],
+    /// The level of the lowest voxels; a level is as tall as a column is wide.
+    pub bottom: i32,
+    /// Level by level, each row by row with x fastest.
+    pub values: Vec<f32>,
+}
+
+impl Volume {
+    /// The value of the voxel at column `x`, `y` within the chunk and `level` from its bottom.
+    ///
+    /// # Panics
+    /// If the voxel is outside the chunk.
+    #[must_use]
+    pub fn get(&self, x: u32, y: u32, level: u32) -> f32 {
+        let [sx, sy, sz] = self.size;
+        assert!(x < sx && y < sy && level < sz, "voxel ({x}, {y}, {level})");
+        self.values[((level * sy + y) * sx + x) as usize]
+    }
+}
+
 /// What names a site, and the town on it.
 #[derive(
     Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize,
@@ -265,6 +290,7 @@ impl Categories {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Product {
     Field(Field),
+    Volume(Volume),
     Categories(Categories),
     /// The sites whose footprint overlaps the chunk.
     Sites(Vec<Site>),
@@ -312,6 +338,7 @@ impl Product {
                 })
                 .collect(),
             Self::Field(_)
+            | Self::Volume(_)
             | Self::Categories(_)
             | Self::Tiles(_)
             | Self::Points(_)
@@ -329,6 +356,7 @@ impl Product {
             | Self::Tiles(_)
             | Self::Points(_)
             | Self::Curves(_)
+            | Self::Volume(_)
             | Self::Stamps(_) => {
                 unreachable!("inputs are type checked when the pack loads")
             }
@@ -510,6 +538,7 @@ impl FieldView<'_> {
             | Product::Tiles(_)
             | Product::Points(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => {
                 unreachable!("inputs are type checked when the pack loads")
             }
@@ -1308,6 +1337,7 @@ impl Runtime {
             | Product::Sites(_)
             | Product::Tiles(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_)) => other,
         }
     }
@@ -1713,6 +1743,21 @@ impl Runtime {
         self.products.get(&(index, chunk))
     }
 
+    /// The volume `stage` holds for `chunk`, if it is a Volume stage and the chunk is generated.
+    #[must_use]
+    pub fn volume(&self, stage: &str, chunk: ChunkCoord) -> Option<&Volume> {
+        match self.product(stage, chunk)? {
+            Product::Volume(volume) => Some(volume),
+            Product::Field(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Categories(_)
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
+        }
+    }
+
     /// The field `stage` holds for `chunk`, if it is a field stage and the chunk is generated.
     #[must_use]
     pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
@@ -1723,6 +1768,7 @@ impl Runtime {
             | Product::Points(_)
             | Product::Categories(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -1738,6 +1784,7 @@ impl Runtime {
             | Product::Tiles(_)
             | Product::Points(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -1812,6 +1859,7 @@ impl Runtime {
         };
         let value = match &stage.kind {
             StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
+            StageKind::Volume { .. } => return Err(StageError::NotSampled(stage.name.clone())),
             StageKind::Rules { .. } => f32::from(self.categorise(index, column, &read)?),
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
             StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
@@ -1855,6 +1903,7 @@ impl Runtime {
             | Product::Sites(_)
             | Product::Tiles(_)
             | Product::Points(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -1866,6 +1915,7 @@ impl Runtime {
         match self.product(stage, chunk)? {
             Product::Stamps(stamps) => Some(stamps),
             Product::Field(_)
+            | Product::Volume(_)
             | Product::Categories(_)
             | Product::Sites(_)
             | Product::Tiles(_)
@@ -1884,6 +1934,7 @@ impl Runtime {
             | Product::Points(_)
             | Product::Categories(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -1899,6 +1950,7 @@ impl Runtime {
             | Product::Points(_)
             | Product::Categories(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -1913,6 +1965,7 @@ impl Runtime {
             | Product::Tiles(_)
             | Product::Categories(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -2761,6 +2814,39 @@ impl Runtime {
         let read = |name: &str, x: i64, y: i64| {
             views[&self.pack.index(name).expect("linked when loaded")].get(x, y)
         };
+        if let StageKind::Volume {
+            density,
+            bottom,
+            top,
+        } = &stage.kind
+        {
+            let [sx, sy] = self.size;
+            let levels = top.abs_diff(*bottom);
+            let mut values = Vec::with_capacity((sx * sy * levels) as usize);
+            for level in *bottom..*top {
+                // The voxel's centre in WFC cells, as a column's is.
+                let height = (level as f32 + 0.5) * stage.scale as f32;
+                for y in 0..sy {
+                    for x in 0..sx {
+                        let column = [
+                            i64::from(chunk.x) * i64::from(sx) + i64::from(x),
+                            i64::from(chunk.y) * i64::from(sy) + i64::from(y),
+                        ];
+                        let place = ColumnPlace {
+                            height: Some(height),
+                            ..self.place(index, column, &read)
+                        };
+                        values.push(evaluate(density, &place)?);
+                    }
+                }
+            }
+            return Ok(Product::Volume(Volume {
+                chunk,
+                size: [sx, sy, levels],
+                bottom: *bottom,
+                values,
+            }));
+        }
         if let StageKind::Rules { .. } | StageKind::Area { .. } = &stage.kind {
             let [sx, sy] = self.size;
             let mut values = Vec::with_capacity((sx * sy) as usize);
@@ -2821,6 +2907,7 @@ impl Runtime {
                         }
                     }
                     StageKind::Sites { .. }
+                    | StageKind::Volume { .. }
                     | StageKind::Area { .. }
                     | StageKind::TableSites { .. }
                     | StageKind::Locations { .. }
@@ -3301,17 +3388,20 @@ impl Runtime {
             salt: stage.salt,
             scale: stage.scale,
             column,
+            height: None,
             read,
         }
     }
 }
 
-/// One column of a stage, where its expressions' leaves read noise, inputs and the position.
+/// One column of a stage, where its expressions' leaves read noise, inputs and the position; in
+/// a Volume stage, one voxel of the column, at `height` in cells.
 struct ColumnPlace<'p, 'r> {
     runtime: &'p Runtime,
     salt: u32,
     scale: u32,
     column: [i64; 2],
+    height: Option<f32>,
     read: &'p Read<'r>,
 }
 
@@ -3332,10 +3422,17 @@ impl Leaves for ColumnPlace<'_, '_> {
                 let stream = name.as_deref().map_or(self.salt, noise_stream);
                 value_noise(self.runtime.seed, stream, *frequency, *octaves, centre)
             }
-            Expr::FastNoise(name) => self.runtime.noises[name].sample(centre[0], centre[1]),
+            // In a volume, the noise is Godot's in 3D at the voxel, whose height is Godot's y.
+            Expr::FastNoise(name) => match self.height {
+                Some(height) => self.runtime.noises[name].sample_3d(centre[0], height, centre[1]),
+                None => self.runtime.noises[name].sample(centre[0], centre[1]),
+            },
             Expr::Input(name) => read(name, column[0], column[1])?,
             Expr::X => centre[0],
             Expr::Y => centre[1],
+            Expr::Z => self
+                .height
+                .expect("only a Volume stage reads Z, checked when loaded"),
             Expr::Distance((x, y)) => libm::hypotf(centre[0] - x, centre[1] - y),
             Expr::Angle((x, y)) => {
                 let turn = libm::atan2f(centre[1] - y, centre[0] - x) / std::f32::consts::TAU;

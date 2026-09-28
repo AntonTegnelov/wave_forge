@@ -9,7 +9,7 @@ use super::edits::Edits;
 use super::facts::{Facts, RowId};
 use super::regions::Curve;
 use super::runtime::{
-    Categories, Field, Point, Product, Runtime, Site, StageTiming, Stamp, TownChunk,
+    Categories, Field, Point, Product, Runtime, Site, StageTiming, Stamp, TownChunk, Volume,
 };
 use super::save::Save;
 use crate::ChunkCoord;
@@ -221,6 +221,21 @@ impl StageWorker {
             .map(Arc::as_ref)
     }
 
+    /// The volume `stage` holds for `chunk`, if it is a Volume stage and it has arrived.
+    #[must_use]
+    pub fn volume(&self, stage: &str, chunk: ChunkCoord) -> Option<&Volume> {
+        match self.product(stage, chunk)? {
+            Product::Volume(volume) => Some(volume),
+            Product::Field(_)
+            | Product::Sites(_)
+            | Product::Tiles(_)
+            | Product::Points(_)
+            | Product::Categories(_)
+            | Product::Curves(_)
+            | Product::Stamps(_) => None,
+        }
+    }
+
     /// The field `stage` holds for `chunk`, if it is one and has arrived.
     #[must_use]
     pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {
@@ -231,6 +246,7 @@ impl StageWorker {
             | Product::Points(_)
             | Product::Categories(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -245,6 +261,7 @@ impl StageWorker {
             | Product::Tiles(_)
             | Product::Points(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -259,6 +276,7 @@ impl StageWorker {
             | Product::Sites(_)
             | Product::Tiles(_)
             | Product::Points(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -270,6 +288,7 @@ impl StageWorker {
         match self.product(stage, chunk)? {
             Product::Stamps(stamps) => Some(stamps),
             Product::Field(_)
+            | Product::Volume(_)
             | Product::Categories(_)
             | Product::Sites(_)
             | Product::Tiles(_)
@@ -288,6 +307,7 @@ impl StageWorker {
             | Product::Points(_)
             | Product::Categories(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -302,6 +322,7 @@ impl StageWorker {
             | Product::Points(_)
             | Product::Categories(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }
@@ -316,6 +337,7 @@ impl StageWorker {
             | Product::Tiles(_)
             | Product::Categories(_)
             | Product::Curves(_)
+            | Product::Volume(_)
             | Product::Stamps(_) => None,
         }
     }

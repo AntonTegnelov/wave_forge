@@ -389,6 +389,7 @@ impl Leaves for RowPlace<'_> {
             | Expr::Input(_)
             | Expr::X
             | Expr::Y
+            | Expr::Z
             | Expr::Distance(_)
             | Expr::Angle(_)
             | Expr::Is(..)
