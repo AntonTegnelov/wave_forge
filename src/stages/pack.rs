@@ -188,6 +188,14 @@ const fn base_scale() -> u32 {
 pub enum StageKind {
     /// A value per cell column, computed from an expression at that column alone.
     Field(Expr),
+    /// A value per voxel: `density` at every level from `bottom` up to but not including `top`
+    /// of every column, a voxel being as tall as a column is wide. `Z` is the voxel's height;
+    /// where the density is above zero the voxel is solid.
+    Volume {
+        density: Expr,
+        bottom: i32,
+        top: i32,
+    },
     /// A category per cell column: the first of `rules` whose conditions all hold there, or
     /// `otherwise`. The categories are the names the rules give, in the order they first appear,
     /// then `otherwise`'s.
@@ -588,6 +596,8 @@ const fn always() -> f32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
     Field,
+    /// A value per voxel, which only an engine's mesh reads.
+    Volume,
     Categories,
     Sites,
     Tiles,
@@ -637,6 +647,7 @@ impl StageKind {
             | Self::Flatten { .. }
             | Self::Apply { .. }
             | Self::Lakes { .. } => Output::Field,
+            Self::Volume { .. } => Output::Volume,
             Self::Rules { .. } | Self::Area { .. } => Output::Categories,
             Self::Region { .. }
             | Self::Rivers { .. }
@@ -699,6 +710,8 @@ pub enum Expr {
     /// The column's x and y.
     X,
     Y,
+    /// The height of the voxel's centre in cells, which only a Volume stage has.
+    Z,
     /// How far the column is from a point, in cells.
     Distance((f32, f32)),
     /// The direction from a point to the column, as a fraction of a whole turn from +x towards
@@ -826,6 +839,7 @@ impl Expr {
             | Self::FastNoise(_)
             | Self::X
             | Self::Y
+            | Self::Z
             | Self::Distance(_)
             | Self::Angle(_)
             | Self::Row(..)
@@ -885,6 +899,7 @@ impl Expr {
             | Self::Input(_)
             | Self::X
             | Self::Y
+            | Self::Z
             | Self::Distance(_)
             | Self::Angle(_)
             | Self::Is(..)
@@ -938,6 +953,7 @@ impl Expr {
             | Self::Input(_)
             | Self::X
             | Self::Y
+            | Self::Z
             | Self::Distance(_)
             | Self::Angle(_)
             | Self::Row(..)
@@ -1012,6 +1028,7 @@ impl Expr {
             | Self::FastNoise(_)
             | Self::X
             | Self::Y
+            | Self::Z
             | Self::Row(..)
             | Self::Parent(_)
             | Self::Index
@@ -1135,6 +1152,8 @@ pub enum PackError {
 enum Place<'a> {
     /// A stage's column.
     Column,
+    /// A Volume stage's voxel: a column and a height.
+    Voxel,
     /// How many rows a generated table has for one parent row, or in all; with the parent table's
     /// columns if it has one.
     Count { parent: Option<&'a [String]> },
@@ -1205,14 +1224,25 @@ fn leaf_allowed(
         | Expr::Angle(_)
         | Expr::Is(..)
         | Expr::Match { .. } => match place {
-            Place::Column => Ok(()),
+            Place::Column | Place::Voxel => Ok(()),
             Place::Count { .. } | Place::Row { .. } => Err(format!(
                 "a table's expression reads {node:?}, which is a stage's; a table reads only its \
                  parent and its own hash stream"
             )),
         },
+        Expr::Z => match place {
+            Place::Voxel => Ok(()),
+            Place::Column => {
+                Err("it reads Z, the height of a voxel, which only a Volume stage has".to_owned())
+            }
+            Place::Count { .. } | Place::Row { .. } => Err(
+                "a table's expression reads Z, which is a Volume stage's; a table reads only its \
+                 parent and its own hash stream"
+                    .to_owned(),
+            ),
+        },
         Expr::Row(table, column) => match place {
-            Place::Column => match columns.get(table) {
+            Place::Column | Place::Voxel => match columns.get(table) {
                 None => Err(format!(
                     "it reads a row of {table:?}, which no table is named"
                 )),
@@ -1224,20 +1254,20 @@ fn leaf_allowed(
             }
         },
         Expr::Parent(column) => match place {
-            Place::Column => in_stage(),
+            Place::Column | Place::Voxel => in_stage(),
             Place::Count { parent } | Place::Row { parent } => of_parent(parent, column),
         },
         Expr::Random(..) => match place {
-            Place::Column => in_stage(),
+            Place::Column | Place::Voxel => in_stage(),
             Place::Count { .. } | Place::Row { .. } => Ok(()),
         },
         Expr::Index | Expr::Count => match place {
-            Place::Column => in_stage(),
+            Place::Column | Place::Voxel => in_stage(),
             Place::Count { .. } => in_count(),
             Place::Row { .. } => Ok(()),
         },
         Expr::Share(column) => match place {
-            Place::Column => in_stage(),
+            Place::Column | Place::Voxel => in_stage(),
             Place::Count { .. } => in_count(),
             Place::Row { parent } => of_parent(parent, column),
         },
@@ -1484,7 +1514,9 @@ impl Pack {
                 }
             };
             match &def.kind {
-                StageKind::Field(expr) => expr.visit(&mut note),
+                StageKind::Field(expr) | StageKind::Volume { density: expr, .. } => {
+                    expr.visit(&mut note);
+                }
                 StageKind::Rules { rules, .. } => {
                     for condition in rules.iter().flat_map(|rule| &rule.when) {
                         condition.visit(&mut note);
@@ -1573,9 +1605,20 @@ impl Pack {
                 )));
             }
             let reads: Vec<(&str, Reach, Output)> = match &def.kind {
-                StageKind::Field(expr) => {
+                StageKind::Field(expr) | StageKind::Volume { density: expr, .. } => {
+                    let place = match &def.kind {
+                        StageKind::Volume { bottom, top, .. } => {
+                            if bottom >= top {
+                                return Err(invalid(format!(
+                                    "its levels run from {bottom} up to {top}, so it has none"
+                                )));
+                            }
+                            Place::Voxel
+                        }
+                        _ => Place::Column,
+                    };
                     expr.check().map_err(invalid)?;
-                    check_place(|f| expr.visit(f), Place::Column, &columns).map_err(invalid)?;
+                    check_place(|f| expr.visit(f), place, &columns).map_err(invalid)?;
                     let mut tests = Vec::new();
                     expr.categories(&mut tests);
                     check_categories(&categories, &by_name, &tests).map_err(invalid)?;
@@ -2085,7 +2128,9 @@ impl Pack {
                 }
             };
             match &def.kind {
-                StageKind::Field(expr) => expr.visit(&mut note),
+                StageKind::Field(expr) | StageKind::Volume { density: expr, .. } => {
+                    expr.visit(&mut note);
+                }
                 StageKind::Scatter { when, .. } => {
                     for condition in when {
                         condition.visit(&mut note);

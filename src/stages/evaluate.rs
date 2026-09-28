@@ -54,6 +54,7 @@ pub(crate) fn evaluate(expr: &Expr, leaves: &impl Leaves) -> Result<f32, StageEr
         | Expr::Input(_)
         | Expr::X
         | Expr::Y
+        | Expr::Z
         | Expr::Distance(_)
         | Expr::Angle(_)
         | Expr::Is(..)
