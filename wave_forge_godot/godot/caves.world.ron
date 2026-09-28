@@ -1,0 +1,20 @@
+// The pack of the volume measurement (measure_volume.gd): hills of ground 64 levels deep with
+// caves of Godot's 3D noise through them, grass on top, dirt under it and stone below.
+(
+    version: 1,
+    noises: {
+        "caves": (noise_type: SimplexSmooth, seed: 7, frequency: 0.06, fractal_octaves: 3),
+    },
+    stages: [
+        (name: "height", kind: Field(Add(Mul(Noise(frequency: 0.02, octaves: 3), Constant(24.0)), Constant(8.0)))),
+        (name: "caves", kind: Volume(
+            density: Min(Sub(Input("height"), Z), Add(Mul(FastNoise("caves"), Constant(8.0)), Constant(2.5))),
+            bottom: -24,
+            top: 40,
+            materials: Some((rules: [
+                (category: "grass", when: [Greater(Z, Sub(Input("height"), Constant(1.0)))]),
+                (category: "dirt", when: [Greater(Z, Sub(Input("height"), Constant(4.0)))]),
+            ], otherwise: "stone")),
+        )),
+    ],
+)
