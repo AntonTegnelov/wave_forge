@@ -1873,7 +1873,9 @@ impl Runtime {
         };
         let value = match &stage.kind {
             StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
-            StageKind::Volume { .. } => return Err(StageError::NotSampled(stage.name.clone())),
+            StageKind::Volume { .. } | StageKind::Carve { .. } => {
+                return Err(StageError::NotSampled(stage.name.clone()));
+            }
             StageKind::Rules { .. } => f32::from(self.categorise(index, column, &read)?),
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
             StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
@@ -2814,6 +2816,9 @@ impl Runtime {
         if let StageKind::Apply { .. } = &stage.kind {
             return self.apply(index, chunk).map(Product::Field);
         }
+        if let StageKind::Carve { .. } = &stage.kind {
+            return self.carve(index, chunk).map(Product::Volume);
+        }
         let views: BTreeMap<usize, FieldView<'_>> = stage
             .inputs
             .iter()
@@ -2934,6 +2939,7 @@ impl Runtime {
                     }
                     StageKind::Sites { .. }
                     | StageKind::Volume { .. }
+                    | StageKind::Carve { .. }
                     | StageKind::Area { .. }
                     | StageKind::TableSites { .. }
                     | StageKind::Locations { .. }
@@ -2962,6 +2968,131 @@ impl Runtime {
 
     /// Apply stage `index`'s field for `chunk`: its height with the curves near each column drawn
     /// in.
+    /// Carve stage `index`'s volume for `chunk`: its input volume there, each voxel less than a
+    /// cell outside a tunnel or room, or inside one, lowered to how far outside the nearest it is.
+    fn carve(&self, index: usize, chunk: ChunkCoord) -> Result<Volume, StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Carve {
+            volume,
+            tunnels,
+            rooms,
+        } = &stage.kind
+        else {
+            unreachable!("called for Carve stages")
+        };
+        let input = |name: &str| -> (usize, Reach) {
+            let at = self.pack.index(name).expect("linked when loaded");
+            let (_, reach) = stage
+                .inputs
+                .iter()
+                .find(|(input, _)| *input == at)
+                .expect("read when the pack loads");
+            (at, *reach)
+        };
+        let product = |at: usize| {
+            self.products
+                .get(&(at, chunk))
+                .expect("inputs are generated before the stages that read them")
+                .as_ref()
+        };
+        let Product::Volume(base) = product(input(volume).0) else {
+            unreachable!("inputs are type checked when the pack loads")
+        };
+        let mut carved = base.clone();
+        // Every tunnel within reach once, in the order of their ids.
+        let mut curves: BTreeMap<CurveId, &Curve> = BTreeMap::new();
+        let mut heights = None;
+        if let Some(tunnels) = tunnels {
+            let (at, reach) = input(&tunnels.curves);
+            for (_, product) in self.inputs_within(index, chunk, at, reach.cells(self.size)) {
+                let Product::Curves(near) = product else {
+                    unreachable!("inputs are type checked when the pack loads")
+                };
+                for curve in near {
+                    if let Some(wide) = curve
+                        .values
+                        .iter()
+                        .find(|&&r| !(0.0..=tunnels.max_radius as f32).contains(&r))
+                    {
+                        return Err(StageError::Curve {
+                            stage: stage.name.clone(),
+                            curve: curve.id.clone(),
+                            message: format!(
+                                "a radius of {wide}; 0 to {} are allowed",
+                                tunnels.max_radius
+                            ),
+                        });
+                    }
+                    curves.insert(curve.id.clone(), curve);
+                }
+            }
+            let (at, reach) = input(&tunnels.height);
+            heights = Some((self.view(index, chunk, at, reach), tunnels.depth));
+        }
+        // Each room within reach once, by id, as a box from its lowest corner to its highest, in
+        // cells.
+        let mut boxes: BTreeMap<InstanceId, ([f32; 3], [f32; 3])> = BTreeMap::new();
+        if let Some(rooms) = rooms {
+            let (at, reach) = input(rooms);
+            let StageKind::Assemble { pieces, .. } = &self.pack.stages[at].kind else {
+                unreachable!("inputs are type checked when the pack loads")
+            };
+            let stamps = self
+                .inputs_within(index, chunk, at, reach.cells(self.size))
+                .flat_map(|(_, product)| match product {
+                    Product::Stamps(stamps) => stamps.iter(),
+                    _ => unreachable!("inputs are type checked when the pack loads"),
+                });
+            for stamp in stamps {
+                let piece = pieces
+                    .iter()
+                    .find(|piece| *piece.name == *stamp.piece)
+                    .expect("a stamp is one of its stage's pieces");
+                let floor = stamp.position[2];
+                boxes.insert(
+                    stamp.id,
+                    (
+                        [stamp.min[0] as f32, stamp.min[1] as f32, floor],
+                        [
+                            stamp.max[0] as f32,
+                            stamp.max[1] as f32,
+                            floor + piece.size.2 as f32,
+                        ],
+                    ),
+                );
+            }
+        }
+        let [sx, sy, levels] = carved.size;
+        for level in 0..levels {
+            let z = (carved.bottom + level as i32) as f32 + 0.5;
+            for y in 0..sy {
+                for x in 0..sx {
+                    let column = [
+                        i64::from(chunk.x) * i64::from(sx) + i64::from(x),
+                        i64::from(chunk.y) * i64::from(sy) + i64::from(y),
+                    ];
+                    let at = [column[0] as f32 + 0.5, column[1] as f32 + 0.5, z];
+                    // Only within a cell of a wall, which is all a surface there reads, so a voxel
+                    // reads what is within reach of its column.
+                    let mut outside = CARVE_MARGIN;
+                    if let Some((heights, depth)) = &heights {
+                        for curve in curves.values() {
+                            outside = outside.min(tunnel_distance(curve, at, heights, *depth)?);
+                        }
+                    }
+                    for (low, high) in boxes.values() {
+                        outside = outside.min(box_distance(at, *low, *high));
+                    }
+                    if outside < CARVE_MARGIN {
+                        let value = &mut carved.values[((level * sy + y) * sx + x) as usize];
+                        *value = value.min(outside);
+                    }
+                }
+            }
+        }
+        Ok(carved)
+    }
+
     fn apply(&self, index: usize, chunk: ChunkCoord) -> Result<Field, StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Apply {
@@ -3584,6 +3715,59 @@ fn first_rule(
         }
     }
     Ok(index_of(otherwise))
+}
+
+/// How far outside a tunnel or room, in cells, a Carve stage still lowers a voxel.
+const CARVE_MARGIN: f32 = 1.0;
+
+/// How far `at` is outside the tunnel around `curve`, in cells, negative inside, or
+/// [`CARVE_MARGIN`] if it is at least that far: the tunnel's radius is the curve's value, and its
+/// centre runs `depth` below `heights` at the nearest point of the centre line on the ground plane.
+fn tunnel_distance(
+    curve: &Curve,
+    at: [f32; 3],
+    heights: &FieldView<'_>,
+    depth: f32,
+) -> Result<f32, StageError> {
+    let mut nearest_outside = CARVE_MARGIN;
+    for (i, pair) in curve.points.windows(2).enumerate() {
+        let (a, b) = (pair[0], pair[1]);
+        let along = [b[0] - a[0], b[1] - a[1]];
+        let length = along[0] * along[0] + along[1] * along[1];
+        let t = if length == 0.0 {
+            0.0
+        } else {
+            (((at[0] - a[0]) * along[0] + (at[1] - a[1]) * along[1]) / length).clamp(0.0, 1.0)
+        };
+        let nearest = [a[0] + along[0] * t, a[1] + along[1] * t];
+        let radius = curve.values[i] + (curve.values[i + 1] - curve.values[i]) * t;
+        let across = libm::hypotf(at[0] - nearest[0], at[1] - nearest[1]);
+        if across - radius >= nearest_outside {
+            continue;
+        }
+        let centre = heights.get(nearest[0].floor() as i64, nearest[1].floor() as i64)? - depth;
+        let outside = libm::hypotf(across, at[2] - centre) - radius;
+        nearest_outside = nearest_outside.min(outside);
+    }
+    Ok(nearest_outside)
+}
+
+/// How far `at` is outside the box from `low` to `high`, negative inside.
+fn box_distance(at: [f32; 3], low: [f32; 3], high: [f32; 3]) -> f32 {
+    let beyond: [f32; 3] = std::array::from_fn(|axis| {
+        let (centre, half) = (
+            (low[axis] + high[axis]) / 2.0,
+            (high[axis] - low[axis]) / 2.0,
+        );
+        (at[axis] - centre).abs() - half
+    });
+    let outside = beyond
+        .iter()
+        .map(|b| b.max(0.0) * b.max(0.0))
+        .sum::<f32>()
+        .sqrt();
+    let inside = beyond[0].max(beyond[1]).max(beyond[2]).min(0.0);
+    outside + inside
 }
 
 /// The average of `input` over the square of `radius` columns around `column`.

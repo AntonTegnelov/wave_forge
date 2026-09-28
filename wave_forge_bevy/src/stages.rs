@@ -548,7 +548,8 @@ impl WaveForgeStagesPlugin {
         self
     }
 
-    /// Builds each chunk's surface from the Volume stage `stage` at scale 1, where its values cross
+    /// Builds each chunk's surface from the Volume or Carve stage `stage` at scale 1, where its
+    /// values cross
     /// zero, and announces it with [`VolumeReady`]. The stage has to be generated, as a target or
     /// as what a target reads; a chunk's surface needs the volumes around it, so it reaches one
     /// chunk less than the volumes do.
