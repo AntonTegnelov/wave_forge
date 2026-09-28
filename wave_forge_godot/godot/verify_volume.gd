@@ -5,7 +5,9 @@
 ## surface, a ray down from the sky lands on the ground's top, and from inside the cave a ray up
 ## meets its ceiling and a ray down its floor, each facing into the cave. The ground's top is grass
 ## and the cave rock, and the drawn surface carries each vertex's colour from `volume_palette`. A
-## volume stage that is no Volume stage is refused.
+## ball dug where four chunks meet opens the cave to the sky: a ray from above then falls through
+## the hole to the cave's floor, which every chunk around it has built again. A volume stage that is
+## no Volume stage is refused, and so is digging a field.
 extends SceneTree
 
 const CELLS := 8
@@ -16,6 +18,9 @@ const PALETTE := [Color(0.2, 0.7, 0.2), Color(0.5, 0.5, 0.5)]
 var world: Node
 var started_usec := 0
 var settled_frames := 0
+var digging := false
+## Where four chunks meet, in the middle of the cave's height.
+var hole := Vector3(CELLS * CELL.x, 6.3 * CELL.y, CELLS * CELL.z)
 
 func _initialize() -> void:
 	var wrong := _world("height")
@@ -45,6 +50,8 @@ func _world(volume_stage: String) -> Node:
 	return node
 
 func _process(_delta: float) -> bool:
+	if digging:
+		return _check_hole()
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
 		_fail("the volume had not arrived: %d surfaces, %d bodies" % [world.volume_chunks().size(), world.collider_chunks().size()])
 		return true
@@ -83,8 +90,29 @@ func _check() -> bool:
 	if not _check_materials():
 		return true
 	print("verify_volume: %d chunks have their surface; rays meet the ground's top and the cave's ceiling and floor" % world.volume_chunks().size())
-	quit(0)
-	return true
+	if world.dig("height", hole, 3.0):
+		_fail("digging a field was taken")
+		return true
+	if not world.dig("cave", hole, 3.0):
+		_fail("the dig was refused")
+		return true
+	digging = true
+	started_usec = Time.get_ticks_usec()
+	return false
+
+## Waits for the hole: a ray down from the sky at its centre lands on the cave's floor.
+func _check_hole() -> bool:
+	var from := Vector3(hole.x, 50.0, hole.z)
+	var query := PhysicsRayQueryParameters3D.create(from, from + Vector3.DOWN * 100.0)
+	var hit := root.get_world_3d().direct_space_state.intersect_ray(query)
+	if not hit.is_empty() and absf(hit["position"].y - 1.8 * CELL.y) < 0.001:
+		print("verify_volume: a ball dug where four chunks meet opens the cave to the sky, %.1f s after the dig" % ((Time.get_ticks_usec() - started_usec) / 1e6))
+		quit(0)
+		return true
+	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
+		_fail("a ray into the hole still lands at %s" % (hit["position"] if not hit.is_empty() else "nothing"))
+		return true
+	return false
 
 ## Every vertex on the ground's top is grass and every one in the cave rock, and the drawn mesh has
 ## each vertex in its material's colour.
