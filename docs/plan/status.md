@@ -102,7 +102,8 @@ Each is a gap between the code and the design or the stories, with where it is t
 - **Golden worlds cover tiles, not images or products.** Instance sets and chunk hashes are not in
   them yet.
 - **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage,
-  and volumes one `f32` per voxel between two levels, which nothing meshes yet;
+  and volumes one `f32` per voxel between two levels, whose surface the library meshes and the
+  engines do not draw yet;
   curves from region jobs, networks between sites and tables are drawn into height fields; tables of facts reach stages through a focused row, sites, towns and
   roads
   ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a frozen chunk no request needs
