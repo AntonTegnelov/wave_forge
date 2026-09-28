@@ -354,8 +354,9 @@ triangles as one twice as wide. Positions are relative to the chunk's corner on 
 with the height absolute, in a Y-up engine's axes; normals follow the values' gradient and agree
 with the triangles wherever features are wider than a voxel. The surface is left open where it
 would reach below the lowest level or above the highest, so a volume solid along its lowest level
-and empty along its highest is closed. Drawing and colliding with it in the engines comes next
-([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
+and empty along its highest is closed. Godot draws it and collides with it through
+`volume_stage` ([godot.md](godot.md#waveforgestages)), and Bevy builds it with `.with_volume`
+([bevy.md](bevy.md#packs-of-stages)).
 
 ### Rules
 

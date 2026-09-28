@@ -15,12 +15,12 @@ use std::time::{Duration, Instant};
 use wave_forge::stages::{
     Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, Stamp, Value,
 };
-use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials};
+use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials, volume_mesh};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::stages::{
     FarGroundDropped, GroundDropped, GroundReady, InstanceSpawned, Placed, StageDropped,
-    StagePlacements, StageReady, StagesSaved, StagesSettings, WaveForgeStages,
-    WaveForgeStagesPlugin, WaveForgeStagesSystems, far_ground_mesh, ground_mesh,
+    StagePlacements, StageReady, StagesSaved, StagesSettings, VolumeDropped, WaveForgeStages,
+    WaveForgeStagesPlugin, WaveForgeStagesSystems, far_ground_mesh, ground_mesh, surface_mesh,
 };
 
 const PACK: &str = r#"(
@@ -921,4 +921,74 @@ fn the_noise_configuration_is_reflected_and_registered() {
             .is_some(),
         "the plugin registers the noise configuration"
     );
+}
+
+/// A cave volume, solid along its lowest level and empty along its highest.
+const VOLUME_PACK: &str = r#"(
+    version: 1,
+    noises: {
+        "caves": (noise_type: SimplexSmooth, seed: 11, frequency: 0.12, fractal_octaves: 2),
+    },
+    stages: [
+        (name: "caves", kind: Volume(
+            density: Max(Min(FastNoise("caves"), Sub(Constant(5.0), Z)), Sub(Constant(-3.0), Z)),
+            bottom: -4,
+            top: 6,
+        )),
+    ],
+)"#;
+
+#[test]
+fn each_chunks_surface_is_the_librarys_and_goes_with_its_volume() {
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["caves"], SETTINGS, || {
+            Ok(Runtime::new(
+                Arc::new(Pack::parse(VOLUME_PACK).expect("a valid pack")),
+                4,
+                SETTINGS.chunk,
+            ))
+        })
+        .with_volume("caves"),
+    );
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .surface(origin)
+            .is_some()
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let expected = volume_mesh(
+        origin,
+        |at| stages.volume("caves", at),
+        SETTINGS.cell_size.to_array(),
+    )
+    .expect("the volumes around it arrived");
+    assert!(!expected.indices.is_empty());
+    assert_eq!(stages.surface(origin), Some(&expected));
+    assert_eq!(
+        surface_mesh(&expected).count_vertices(),
+        expected.positions.len()
+    );
+
+    let mut focus = app
+        .world_mut()
+        .query_filtered::<&mut GlobalTransform, With<GenerationFocus>>();
+    for mut at in focus.iter_mut(app.world_mut()) {
+        *at = GlobalTransform::from_translation(Vec3::new(8000.0, 0.0, 8000.0));
+    }
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .surface(origin)
+            .is_none()
+    });
+    let dropped: Vec<ChunkCoord> = app
+        .world_mut()
+        .resource_mut::<Messages<VolumeDropped>>()
+        .drain()
+        .map(|message| message.0)
+        .collect();
+    assert!(dropped.contains(&origin), "{dropped:?}");
 }
