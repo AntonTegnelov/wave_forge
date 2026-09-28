@@ -121,8 +121,8 @@ pub struct WaveForgeStages {
     #[export]
     far_ground_stage: GString,
 
-    /// A Volume stage at scale 1 whose surface is drawn and, within `collider_radius`, collided
-    /// with, for overhangs and caves; empty for none. It has to be generated, as a target or as
+    /// A Volume or Carve stage at scale 1 whose surface is drawn and, within `collider_radius`,
+    /// collided with, for overhangs and caves; empty for none. It has to be generated, as a target or as
     /// what a target reads. A chunk's surface needs the volumes of the chunks around it, so it
     /// reaches one chunk less than the view.
     #[export_group(name = "Volume")]
@@ -749,11 +749,13 @@ impl WaveForgeStages {
         }
         if !self.volume_stage.is_empty() {
             let stage = self.volume_stage.to_string();
-            if !matches!(pack.kind(&stage), Some(StageKind::Volume { .. }))
-                || pack.scale(&stage) != Some(1)
+            if !matches!(
+                pack.kind(&stage),
+                Some(StageKind::Volume { .. } | StageKind::Carve { .. })
+            ) || pack.scale(&stage) != Some(1)
             {
                 godot_error!(
-                    "wave forge: volume_stage {} is no Volume stage of the pack at scale 1",
+                    "wave forge: volume_stage {} is no Volume or Carve stage of the pack at scale 1",
                     self.volume_stage
                 );
                 return false;

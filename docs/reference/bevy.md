@@ -101,7 +101,7 @@ thread.
   and its `heights` are the grid a physics crate's height-field collider takes (the plugin depends
   on no physics crate). `WaveForgeStages::ground_height(translation)` gives the height of the
   ground's surface above a point, what a game stands a player or an object on.
-- `.with_volume(stage)` builds each chunk's surface from a Volume stage at scale 1 once the volumes
+- `.with_volume(stage)` builds each chunk's surface from a Volume or Carve stage at scale 1 once the volumes
   around it have arrived ([packs.md](packs.md#volume)): `WaveForgeStages::surface(chunk)` returns the
   `VolumeMesh`, relative to `chunk_corner(chunk)`, `VolumeReady(chunk)` and `VolumeDropped(chunk)`
   announce it, `surface_mesh(&surface)` turns it into a Bevy `Mesh`, and its positions and indices

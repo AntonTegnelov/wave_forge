@@ -237,6 +237,7 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 |---|---|---|
 | `Field` | Field | the fields named by `Input` and the categories named by `Is`, 0 cells; the categories a `Match` names, `blend` cells |
 | `Volume` | Volume | as `Field` |
+| `Carve` | Volume | a volume, 0 cells; a curves stage and a height field, `max_radius + 1` cells; an Assemble stage, 1 cell |
 | `Rules` | Categories | what its conditions read, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
 | `Delta` | Field | one field, `radius` cells |
@@ -365,6 +366,24 @@ would reach below the lowest level or above the highest, so a volume solid along
 and empty along its highest is closed. Godot draws it and collides with it through
 `volume_stage` ([godot.md](godot.md#waveforgestages)), and Bevy builds it with `.with_volume`
 ([bevy.md](bevy.md#packs-of-stages)).
+
+### Carve
+
+`Carve(volume: "rock", tunnels: Some((curves: "tunnels", height: "ground", depth: 6.0, max_radius: 3)), rooms: Some("dungeon"))`:
+the volume `rock` with tunnels and rooms carved out of it, empty inside them and unchanged elsewhere
+([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Every curve of `tunnels.curves`, a
+[Region](#region), [Rivers](#rivers), [Network](#network) or [TableCurves](#tablecurves) stage, is a
+tube around its centre line whose radius is the curve's value there, of at most `max_radius`
+cells, and whose centre runs `depth` cells below `height` at the nearest point of the centre line.
+Every piece of `rooms`, an [Assemble](#assemble) stage, is a box from its footprint's floor up its
+height in cells, so a dungeon grown with a negative `lift` is a set of rooms under its entrance.
+
+A voxel within a cell of a tunnel or room, or inside one, keeps the lower of its value and how far
+it is outside the nearest, in cells: negative inside, so empty there, and exact wherever a surface
+reads it; every other voxel keeps its value. The lower of the two does not depend on the order
+tunnels and rooms are carved in, so a carve is the same in any order, and a carve keeps its
+volume's materials. It works at the WFC lattice's scale on a volume of that scale; a tunnel wider
+than `max_radius` fails with `StageError::Curve`. Engines draw it as they draw a Volume stage.
 
 ### Rules
 

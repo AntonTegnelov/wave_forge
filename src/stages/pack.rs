@@ -199,6 +199,19 @@ pub enum StageKind {
         #[serde(default)]
         materials: Option<Materials>,
     },
+    /// The Volume stage `volume` with tunnels and rooms carved out of it, at the WFC lattice's
+    /// scale: every voxel within a cell of a tunnel or room, or inside one, keeps the lower of its
+    /// value and how far it is outside the nearest, in cells, so inside them it is empty and
+    /// elsewhere unchanged, whatever order they are carved in. Its voxels keep their materials.
+    Carve {
+        volume: String,
+        #[serde(default)]
+        tunnels: Option<Tunnels>,
+        /// An Assemble stage whose pieces are rooms: each piece's box, its footprint from its
+        /// floor up its height in cells, is carved empty.
+        #[serde(default)]
+        rooms: Option<String>,
+    },
     /// A category per cell column: the first of `rules` whose conditions all hold there, or
     /// `otherwise`. The categories are the names the rules give, in the order they first appear,
     /// then `otherwise`'s.
@@ -581,6 +594,18 @@ pub struct Rule {
     pub when: Vec<Condition>,
 }
 
+/// A Carve stage's tunnels: every curve of the curves stage `curves` is a tube around its centre
+/// line, whose radius is the curve's value there, of at most `max_radius` cells, and whose centre
+/// runs `depth` cells below the `height` field at the nearest point of the centre line.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tunnels {
+    pub curves: String,
+    pub height: String,
+    pub depth: f32,
+    pub max_radius: u32,
+}
+
 /// A Volume stage's materials: each voxel takes the first of `rules` whose conditions all hold
 /// there, as a Rules stage's column does, or `otherwise`. The rules read `Z` as the density does.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -663,7 +688,7 @@ impl StageKind {
             | Self::Flatten { .. }
             | Self::Apply { .. }
             | Self::Lakes { .. } => Output::Field,
-            Self::Volume { .. } => Output::Volume,
+            Self::Volume { .. } | Self::Carve { .. } => Output::Volume,
             Self::Rules { .. } | Self::Area { .. } => Output::Categories,
             Self::Region { .. }
             | Self::Rivers { .. }
@@ -1621,11 +1646,12 @@ impl Pack {
                         | StageKind::Solve { .. }
                         | StageKind::Scatter { .. }
                         | StageKind::Assemble { .. }
+                        | StageKind::Carve { .. }
                 )
             {
                 return Err(invalid(format!(
-                    "a scale of {}; sites, flattening, towns, scatter and assemblies work on the \
-                     WFC lattice, scale 1",
+                    "a scale of {}; sites, flattening, towns, scatter, assemblies and carving work \
+                     on the WFC lattice, scale 1",
                     def.scale
                 )));
             }
@@ -1939,6 +1965,34 @@ impl Pack {
                         (curves.as_str(), reach, Output::Curves),
                     ]
                 }
+                StageKind::Carve {
+                    volume,
+                    tunnels,
+                    rooms,
+                } => {
+                    if let Some(&index) = by_name.get(volume.as_str())
+                        && scales[index] != 1
+                    {
+                        return Err(invalid(format!(
+                            "it carves {volume:?}, which is no stage at the WFC lattice's scale"
+                        )));
+                    }
+                    let mut reads = vec![(volume.as_str(), Reach::Cells(0), Output::Volume)];
+                    if let Some(tunnels) = tunnels {
+                        if !tunnels.depth.is_finite() {
+                            return Err(invalid(format!("tunnels {} deep", tunnels.depth)));
+                        }
+                        // A voxel is carved by any tunnel within a cell of its radius, and reads
+                        // the height at the nearest point of the tunnel's centre line.
+                        let reach = Reach::Cells(tunnels.max_radius + 1);
+                        reads.push((tunnels.curves.as_str(), reach, Output::Curves));
+                        reads.push((tunnels.height.as_str(), reach, Output::Field));
+                    }
+                    if let Some(rooms) = rooms {
+                        reads.push((rooms.as_str(), Reach::Cells(1), Output::Pieces));
+                    }
+                    reads
+                }
                 StageKind::Flatten {
                     height,
                     sites,
@@ -2215,7 +2269,8 @@ impl Pack {
                 | StageKind::Region { .. }
                 | StageKind::Rivers { .. }
                 | StageKind::Network { .. }
-                | StageKind::Lakes { .. } => {}
+                | StageKind::Lakes { .. }
+                | StageKind::Carve { .. } => {}
             }
             stages.push(Stage {
                 tables: read_tables,
