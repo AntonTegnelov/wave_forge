@@ -18,6 +18,15 @@ const PACK: &str = r#"(
         (name: "ground", kind: Volume(density: Sub(Input("height"), Z), bottom: -2, top: 14)),
         (name: "caves", kind: Volume(density: FastNoise("caves"), bottom: -4, top: 4)),
         (name: "coarse", scale: 4, kind: Volume(density: Z, bottom: -1, top: 2)),
+        (name: "layered", kind: Volume(
+            density: Sub(Input("height"), Z),
+            bottom: -2,
+            top: 14,
+            materials: Some((rules: [
+                (category: "grass", when: [Greater(Z, Sub(Input("height"), Constant(1.0)))]),
+                (category: "dirt", when: [Greater(Z, Sub(Input("height"), Constant(3.0)))]),
+            ], otherwise: "stone")),
+        )),
     ],
 )"#;
 
@@ -149,4 +158,49 @@ fn a_volume_is_no_field_for_another_stage_to_read() {
             if stage == "reads" && message.contains("rock")),
         "{result:?}"
     );
+}
+
+#[test]
+fn a_voxel_takes_the_first_material_whose_rules_hold_at_its_height() {
+    let chunk = ChunkCoord::new(2, 0, 0);
+
+    let (runtime, volume) = generate("layered", chunk);
+
+    let height = runtime
+        .field("height", chunk)
+        .expect("an input of the volume");
+    assert_eq!(volume.materials.len(), volume.values.len());
+    for level in 0..volume.size[2] {
+        let z = (volume.bottom + level as i32) as f32 + 0.5;
+        for y in 0..8 {
+            for x in 0..8 {
+                let depth = height.get(x, y) - z;
+                let expected = if depth < 1.0 {
+                    0
+                } else if depth < 3.0 {
+                    1
+                } else {
+                    2
+                };
+                assert_eq!(
+                    volume.material(x, y, level),
+                    expected,
+                    "voxel ({x}, {y}, {level})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_volumes_materials_are_its_categories_and_one_without_has_none() {
+    let pack = Pack::parse(PACK).expect("a valid pack");
+
+    let (_, plain) = generate("ground", ChunkCoord::new(0, 0, 0));
+
+    assert_eq!(
+        pack.kind("layered").expect("a stage").categories(),
+        ["grass", "dirt", "stone"]
+    );
+    assert!(plain.materials.is_empty());
 }

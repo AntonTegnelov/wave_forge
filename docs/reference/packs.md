@@ -338,8 +338,15 @@ one more leaf and one difference:
 Every other leaf reads the voxel's column: `Noise` stays the library's 2D value noise, and `Input`
 reads a field at the column, so `Sub(Input("height"), Z)` is a volume that is solid below a height
 field and empty above it. By convention a voxel whose value is above zero is solid.
+
+`Volume(..., materials: Some((rules: [(category: "grass", when: [...])], otherwise: "stone")))`
+gives every voxel a material as well: the first rule whose conditions all hold at the voxel, or
+`otherwise`, read as a [Rules](#rules) stage reads a column but with `Z` too, so
+`Greater(Z, Sub(Input("height"), Constant(1.0)))` is the top voxel of ground under a height field.
+The materials are the stage's categories, in the order a Rules stage's are.
 `Runtime::volume(stage, chunk)` gives a chunk's `Volume`: its `size` in columns and levels, its
-`bottom` level and its values level by level, each row by row with x fastest. Nothing reads a volume
+`bottom` level, its values level by level, each row by row with x fastest, and its `materials` in
+the same order, empty without materials. Nothing reads a volume
 as an input.
 
 `wave_forge::volume_mesh(chunk, volume, voxel_size)` gives a chunk's surface, where its values
@@ -352,7 +359,8 @@ eight neighbours as well, so it has no surface until all nine have arrived, the 
 ground ([`ground_readers`](#ground)); chunks then meet without a seam, and four chunks mesh the same
 triangles as one twice as wide. Positions are relative to the chunk's corner on the ground plane,
 with the height absolute, in a Y-up engine's axes; normals follow the values' gradient and agree
-with the triangles wherever features are wider than a voxel. The surface is left open where it
+with the triangles wherever features are wider than a voxel. With materials, each vertex takes the
+material of the solid voxel of its cube nearest it, so the chunks on either side of a seam agree. The surface is left open where it
 would reach below the lowest level or above the highest, so a volume solid along its lowest level
 and empty along its highest is closed. Godot draws it and collides with it through
 `volume_stage` ([godot.md](godot.md#waveforgestages)), and Bevy builds it with `.with_volume`
