@@ -55,10 +55,25 @@ pub enum Edit {
         column: (i64, i64),
         by: f32,
     },
+    /// A ball of `radius` cells dug out of a Volume or Carve stage around `at`, in cells along the
+    /// lattice's x and y and up: a voxel within a cell of it, or inside it, keeps the lower of its
+    /// value and how far outside the ball it is, so the ball is empty.
+    Dig {
+        stage: String,
+        at: [f32; 3],
+        radius: f32,
+    },
+    /// A ball filled into a volume, as [`Edit::Dig`] digs one: a voxel keeps the higher of its value
+    /// and how far inside the ball it is, so the ball is solid.
+    Fill {
+        stage: String,
+        at: [f32; 3],
+        radius: f32,
+    },
 }
 
 /// The log of every edit, in the order they were made. Later edits of the same point replace
-/// earlier ones, and raises of the same column add up.
+/// earlier ones, raises of the same column add up, and digs and fills apply in the log's order.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Edits {
     pub log: Vec<Edit>,

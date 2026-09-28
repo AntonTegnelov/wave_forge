@@ -637,6 +637,44 @@ struct Folded {
     raised: BTreeMap<(usize, (i64, i64)), f32>,
     /// Where each removed or moved point stood when it was generated.
     stood: BTreeMap<InstanceId, [f32; 2]>,
+    /// Every dig and fill, by stage index, in the log's order.
+    shaped: Vec<(usize, Ball)>,
+}
+
+/// A ball dug out of a volume or filled into it, in cells.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Ball {
+    at: [f32; 3],
+    radius: f32,
+    fill: bool,
+}
+
+impl Ball {
+    /// The chunks of a stage of `scale` with chunks of `size` columns whose voxels the ball can
+    /// change: those within a cell of it.
+    fn chunks(&self, scale: u32, size: [u32; 2]) -> BTreeSet<ChunkCoord> {
+        let reach = self.radius + CARVE_MARGIN;
+        let chunk =
+            |cells: f32, axis: usize| (cells / scale as f32 / size[axis] as f32).floor() as i32;
+        let (x0, x1) = (chunk(self.at[0] - reach, 0), chunk(self.at[0] + reach, 0));
+        let (y0, y1) = (chunk(self.at[1] - reach, 1), chunk(self.at[1] + reach, 1));
+        (y0..=y1)
+            .flat_map(|y| (x0..=x1).map(move |x| ChunkCoord::new(x, y, 0)))
+            .collect()
+    }
+
+    /// `value` of the voxel centred at `voxel`, in cells, dug or filled by the ball.
+    fn shape(&self, voxel: [f32; 3], value: f32) -> f32 {
+        let outside = libm::hypotf(
+            libm::hypotf(voxel[0] - self.at[0], voxel[1] - self.at[1]),
+            voxel[2] - self.at[2],
+        ) - self.radius;
+        match (outside < CARVE_MARGIN, self.fill) {
+            (false, _) => value,
+            (true, false) => value.min(outside),
+            (true, true) => value.max(-outside),
+        }
+    }
 }
 
 /// Which chunks of a stage no longer hold what they would be generated as now.
@@ -1189,6 +1227,24 @@ impl Runtime {
                     .insert(chunk);
             }
         }
+        // A chunk's voxels depend on the balls that reach it in order, so from the first ball that
+        // differs on, every ball's chunks are stale, the old log's and the new one's.
+        let same = self
+            .edits
+            .shaped
+            .iter()
+            .zip(&folded.shaped)
+            .take_while(|(old, new)| old == new)
+            .count();
+        for &(stage, ball) in self.edits.shaped[same..]
+            .iter()
+            .chain(&folded.shaped[same..])
+        {
+            stale
+                .entry(stage)
+                .or_default()
+                .extend(ball.chunks(self.pack.stages[stage].scale, self.size));
+        }
         self.edits = folded;
         self.log = edits.clone();
         Ok(self.invalidate(
@@ -1208,7 +1264,7 @@ impl Runtime {
             Edit::Remove { point, .. } | Edit::Move { point, .. } => self
                 .point_stage(InstanceId::from(*point))
                 .is_ok_and(|stage| !ephemeral(stage)),
-            Edit::Raise { stage, .. } => self
+            Edit::Raise { stage, .. } | Edit::Dig { stage, .. } | Edit::Fill { stage, .. } => self
                 .pack
                 .index(stage)
                 .is_some_and(|stage| !ephemeral(stage)),
@@ -1299,6 +1355,29 @@ impl Runtime {
                         })?;
                     *folded.raised.entry((index, *column)).or_default() += by;
                 }
+                Edit::Dig { stage, at, radius } | Edit::Fill { stage, at, radius } => {
+                    let index = self
+                        .pack
+                        .index(stage)
+                        .filter(|&index| self.pack.stages[index].kind.output() == Output::Volume)
+                        .ok_or_else(|| {
+                            StageError::Edit(format!("{stage:?} is no volume to dig or fill"))
+                        })?;
+                    if !(radius.is_finite() && *radius > 0.0 && at.iter().all(|a| a.is_finite())) {
+                        return Err(StageError::Edit(format!(
+                            "a ball of radius {radius} at {at:?}"
+                        )));
+                    }
+                    let fill = matches!(edit, Edit::Fill { .. });
+                    folded.shaped.push((
+                        index,
+                        Ball {
+                            at: *at,
+                            radius: *radius,
+                            fill,
+                        },
+                    ));
+                }
             }
         }
         Ok(folded)
@@ -1347,11 +1426,37 @@ impl Runtime {
                     })
                     .collect(),
             ),
+            Product::Volume(mut volume) => {
+                let scale = self.pack.stages[index].scale as f32;
+                let [sx, sy, levels] = volume.size;
+                for &(_, ball) in self
+                    .edits
+                    .shaped
+                    .iter()
+                    .filter(|(stage, _)| *stage == index)
+                {
+                    for level in 0..levels {
+                        let z = ((volume.bottom + level as i32) as f32 + 0.5) * scale;
+                        for y in 0..sy {
+                            for x in 0..sx {
+                                let voxel = [
+                                    ((volume.chunk.x * sx as i32 + x as i32) as f32 + 0.5) * scale,
+                                    ((volume.chunk.y * sy as i32 + y as i32) as f32 + 0.5) * scale,
+                                    z,
+                                ];
+                                let value =
+                                    &mut volume.values[((level * sy + y) * sx + x) as usize];
+                                *value = ball.shape(voxel, *value);
+                            }
+                        }
+                    }
+                }
+                Product::Volume(volume)
+            }
             other @ (Product::Categories(_)
             | Product::Sites(_)
             | Product::Tiles(_)
             | Product::Curves(_)
-            | Product::Volume(_)
             | Product::Stamps(_)) => other,
         }
     }
