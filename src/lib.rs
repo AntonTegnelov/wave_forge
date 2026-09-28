@@ -69,7 +69,9 @@ pub use cell_boxes::CellBox;
 pub use far_ground::{FarGround, far_ground};
 pub use frozen::{DirectoryStore, FrozenStore, StoreError};
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
-pub use ground::{GroundLevel, GroundMesh, ground, ground_materials, ground_readers};
+pub use ground::{
+    GroundLevel, GroundMesh, ground, ground_height, ground_materials, ground_readers,
+};
 pub use occluders::occluders;
 pub use products::{InstanceId, InstanceSet, NavSource, NavSourceError, instance_sets, nav_source};
 pub use proxies::{ProxyLevel, ProxyMesh, proxy_mesh};

@@ -744,6 +744,11 @@ all nine have arrived, and the ground of a view reaches one chunk less than its 
 `ground_readers(chunk)` lists the chunks whose ground may have become buildable when that chunk's
 field arrives.
 
+`wave_forge::ground_height(at, columns, field, cell_size)` gives the height, in engine units, of the
+ground's surface at full detail above any point of the ground plane: on the same triangles, between
+the four column centres around it. A field holds one height per column centre, so this, not a
+column's value, is what a game stands a player or an object on.
+
 `wave_forge::ground_materials(chunk, categories)` gives the category of every vertex of the same
 grid from a Rules or Area stage at the height field's scale, the vertices along the +x and +y edges
 taking the neighbours' first columns as their heights do: the materials an engine's ground shader

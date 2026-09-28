@@ -204,13 +204,13 @@ impl Point {
     /// becomes `up`, and scaled by `scale`.
     #[must_use]
     pub fn y_up_basis(&self) -> [[f32; 3]; 3] {
-        let (sin, cos) = (self.turn * std::f32::consts::TAU).sin_cos();
+        let (sin, cos) = sin_cos(self.turn * std::f32::consts::TAU);
         let turned = [[cos, 0.0, sin], [0.0, 1.0, 0.0], [-sin, 0.0, cos]];
         // The rotation taking the vertical to `up` about the axis perpendicular to both.
         let up = [self.up[0], self.up[2], self.up[1]];
         let (axis, lean_sin, lean_cos) = {
             let cross = [up[2], 0.0, -up[0]];
-            let length = cross[0].hypot(cross[2]);
+            let length = libm::hypotf(cross[0], cross[2]);
             if length < 1e-6 {
                 ([1.0, 0.0, 0.0], 0.0, up[1].signum())
             } else {
@@ -2213,7 +2213,8 @@ impl Runtime {
                 if sites.iter().any(|site| {
                     site.kind.as_deref() == Some(kind.name.as_str()) && {
                         let there = centre(site.min, site.max);
-                        ((here.0 - there.0) as f32).hypot((here.1 - there.1) as f32) < kind.apart
+                        libm::hypotf((here.0 - there.0) as f32, (here.1 - there.1) as f32)
+                            < kind.apart
                     }
                 }) {
                     near += 1;
@@ -2909,7 +2910,7 @@ impl Runtime {
                                 .clamp(0.0, 1.0)
                         };
                         let nearest = [a[0] + along[0] * t, a[1] + along[1] * t];
-                        let distance = (at[0] - nearest[0]).hypot(at[1] - nearest[1]);
+                        let distance = libm::hypotf(at[0] - nearest[0], at[1] - nearest[1]);
                         let radius = curve.values[i] + (curve.values[i + 1] - curve.values[i]) * t;
                         let weight = if distance <= radius {
                             1.0
@@ -3117,10 +3118,9 @@ impl Runtime {
             {
                 return Ok(None);
             }
-            if blockers
-                .iter()
-                .any(|&(point, clearance)| (point[0] - at.0).hypot(point[1] - at.1) < clearance)
-            {
+            if blockers.iter().any(|&(point, clearance)| {
+                libm::hypotf(point[0] - at.0, point[1] - at.1) < clearance
+            }) {
                 return Ok(None);
             }
             Ok(Some(standing))
@@ -3178,7 +3178,7 @@ impl Runtime {
                 let (at, turn) = if member == 0 {
                     (candidate.at, candidate.turn)
                 } else {
-                    let (sin, cos) = (unit(angle) * std::f32::consts::TAU).sin_cos();
+                    let (sin, cos) = sin_cos(unit(angle) * std::f32::consts::TAU);
                     let away = radius * unit(distance).sqrt();
                     (
                         (candidate.at.0 + cos * away, candidate.at.1 + sin * away),
@@ -3207,9 +3207,9 @@ impl Runtime {
                     [-along_x / length, -along_y / length, 1.0 / length]
                 } else {
                     let degrees = tilt.0 + (tilt.1 - tilt.0) * unit(lean);
-                    let (sin, cos) = degrees.to_radians().sin_cos();
+                    let (sin, cos) = sin_cos(degrees.to_radians());
                     let (towards_y, towards_x) =
-                        (unit(lean.rotate_left(16)) * std::f32::consts::TAU).sin_cos();
+                        sin_cos(unit(lean.rotate_left(16)) * std::f32::consts::TAU);
                     [sin * towards_x, sin * towards_y, cos]
                 };
                 points.push(Point {
@@ -3336,9 +3336,9 @@ impl Leaves for ColumnPlace<'_, '_> {
             Expr::Input(name) => read(name, column[0], column[1])?,
             Expr::X => centre[0],
             Expr::Y => centre[1],
-            Expr::Distance((x, y)) => (centre[0] - x).hypot(centre[1] - y),
+            Expr::Distance((x, y)) => libm::hypotf(centre[0] - x, centre[1] - y),
             Expr::Angle((x, y)) => {
-                let turn = (centre[1] - y).atan2(centre[0] - x) / std::f32::consts::TAU;
+                let turn = libm::atan2f(centre[1] - y, centre[0] - x) / std::f32::consts::TAU;
                 turn.rem_euclid(1.0)
             }
             Expr::Is(stage, names) => {
@@ -3548,6 +3548,12 @@ const COUNT_STREAM: u32 = 0x636E_7473;
 const GROUP_STREAM: u32 = 0x6772_7570;
 /// Mixed into a Scatter stage's stream for a point's scale, tilt and alignment.
 const LOOK_STREAM: u32 = 0x6C6F_6F6B;
+
+/// The sine and cosine of `angle` in radians, the same on every platform: a point's place, turn
+/// and lean come from them, and spacing decides by where points stand.
+fn sin_cos(angle: f32) -> (f32, f32) {
+    (libm::sinf(angle), libm::cosf(angle))
+}
 
 /// A hash as a number from 0 up to but not including 1.
 fn unit(hash: u32) -> f32 {

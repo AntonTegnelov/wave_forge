@@ -385,8 +385,11 @@ Bevy gets the same tools once its editor can host them.
 ### Noise that means the same in both engines
 
 This is the design for [#45](https://github.com/AntonTegnelov/wave_forge/issues/45). Built: the configuration, the
-2D port, the golden tests and Godot's conversion ([packs.md](../reference/packs.md#godots-noise)).
-Not built yet: 3D noise, the WGSL port, Bevy's `Reflect`, quantisation and `sample_height()`.
+2D port, the golden tests, Godot's conversion ([packs.md](../reference/packs.md#godots-noise)), Bevy's
+`Reflect`, the same stages on every platform, and the ground's height for gameplay. Not built yet: 3D
+noise, which comes with density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)),
+and the WGSL port with quantised decisions, which only fields on the GPU would need
+([#205](https://github.com/AntonTegnelov/wave_forge/issues/205)).
 Godot's `FastNoiseLite` is the default noise source in Godot. Its `Noise` base class has no
 overridable sampling, so a custom noise subclass cannot occur.
 
@@ -395,10 +398,23 @@ The library defines a `NoiseConfig` that mirrors Godot's resource field for fiel
 SIMPLEX_SMOOTH, FBM, 5 octaves, warp amplitude 30, warp frequency 0.05, warp lacunarity 6), with
 every field always serialised so defaults cannot drift between engines. Godot converts a
 `FastNoiseLite` resource into this configuration on the main thread; Bevy edits it through
-`Reflect`. The evaluator is our own port of FastNoiseLite 1.1.0, the version Godot bundles (whether
+`Reflect`, which the library derives behind its `bevy_reflect` feature and the Bevy plugin turns on
+and registers, so no copy of its twenty fields can drift. The evaluator is our own port of FastNoiseLite 1.1.0, the version Godot bundles (whether
 1.1.0 and the 1.1.1 crate differ is **(unverified)**), plus a WGSL port, since upstream has none. Golden
-tests compare it with Godot's C++ output: the 2D port matches it exactly on every sample. Noise is quantised before any discrete decision, and the
-library offers `sample_height()` so gameplay code does not resample noise itself.
+tests compare it with Godot's C++ output: the 2D port matches it exactly on every sample.
+
+**The same stages on every platform.** Stages run on the CPU, where every operation they decide by
+is either correctly rounded by IEEE 754 or computed by the `libm` crate: a sine, a distance, an angle,
+the place of a group's members. The platform's C library would round those differently in the last
+bit between Windows and Linux, and a comparison against a threshold could then flip for one player
+and not another. `tests/golden_stages.rs` pins a pack that exercises them, bit for bit; CI runs it on
+Linux and `tools/measure_desktop.ps1` on Windows. On Linux, switching to `libm` changed no bit of it.
+Quantising values before discrete decisions belongs to fields on the GPU
+([#205](https://github.com/AntonTegnelov/wave_forge/issues/205)).
+
+**The ground's height** is the library's, so gameplay code does not resample a field:
+`ground_height` gives where the ground mesh at full detail stands above a point
+([packs.md](../reference/packs.md#ground)), and both engines offer it.
 
 Modules and props for Bevy are authored in Blender and exported as glTF, with Wave Forge metadata in
 glTF extras, which Godot's importer reads as well.

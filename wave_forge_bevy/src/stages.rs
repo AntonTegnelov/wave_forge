@@ -32,6 +32,7 @@ use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Mutex;
+use wave_forge::noise::NoiseConfig;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
     Categories, Edits, Facts, Field, Point, RowId, Runtime, Save, Site, StageEvent, StageTiming,
@@ -266,6 +267,21 @@ impl WaveForgeStages {
             .expect("the plugin draws a far ground");
         let scale = *scale as i32;
         self.chunk_corner(ChunkCoord::new(chunk.x * scale, chunk.y * scale, 0))
+    }
+
+    /// The height of the ground at a translation in Bevy's world, where its mesh at full detail
+    /// stands above that point of the ground plane ([`wave_forge::ground_height`]): what a game
+    /// stands a player or an object on. `None` until the fields of the ground's stage around it
+    /// have arrived, or without a ground.
+    #[must_use]
+    pub fn ground_height(&self, translation: Vec3) -> Option<f32> {
+        let stage = self.ground_stage.as_ref()?;
+        wave_forge::ground_height(
+            [translation.x, translation.z],
+            self.settings.chunk,
+            |at| self.worker.field(stage, at),
+            self.settings.cell_size.to_array(),
+        )
     }
 
     /// The category of every vertex of a chunk's ground, in the order of its positions, from the
@@ -535,6 +551,7 @@ impl Plugin for WaveForgeStagesPlugin {
         .add_message::<GroundDropped>()
         .add_message::<FarGroundReady>()
         .add_message::<FarGroundDropped>()
+        .register_type::<NoiseConfig>()
         .add_systems(
             Update,
             (follow_focus, drain, place)

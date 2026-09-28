@@ -18,7 +18,8 @@ On Vulkan and on Direct3D 12:
 | Grass on 25 chunks with and without it, the ground's levels of detail, and the far ground beyond the near ground, each with a check for gaps, on Forward+ | `render_ground.gd`, `render_lods.gd`, `render_far.gd` | E45, E47 and E52 on a desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166), P2) |
 
 Once, headless: the history example's first towns, on the first run after building and on a second
-one, for P3's time into a new world.
+one, for P3's time into a new world; and `tests/golden_stages.rs`, which checks that the stages come
+out on Windows bit for bit as recorded on Linux ([engine-integration.md](../architecture/engine-integration.md#noise-that-means-the-same-in-both-engines)).
 
 Each measured phase lasts 20 seconds and prints the median, 99th percentile and slowest frame. The
 whole run takes about 45 minutes, most of it the first build.
@@ -81,7 +82,7 @@ a non-zero code; the others still ran.
 | Option | Default | Use |
 |---|---|---|
 | `-Apis vulkan` or `-Apis d3d12` | both | measure on one graphics API only |
-| `-Only bevy,godot,ground,history` | all | run only some parts, for example again after a failure |
+| `-Only bevy,godot,ground,history,stages` | all | run only some parts, for example again after a failure |
 | `-Seconds 20` | 20 | how long each measured phase lasts |
 | `-SkipBuild` | | use what the last run built |
 | `-BuildDir D:\wave_forge-build` | `%LOCALAPPDATA%\wave_forge` | where Cargo builds and Godot is downloaded to |

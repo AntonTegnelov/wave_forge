@@ -41,7 +41,7 @@ use wave_forge::stages::{
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, YUpSpace, far_ground,
-    ground, ground_materials, ground_readers,
+    ground, ground_height, ground_materials, ground_readers,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -948,6 +948,32 @@ impl WaveForgeStages {
                 out
             })
             .collect()
+    }
+
+    /// The height of the ground at a position in Godot's world space, where its mesh at full detail
+    /// stands above that point of the ground plane ([`ground_height`]): what a game stands a
+    /// player or an object on. NaN until the fields of `ground_stage` around it have arrived, or
+    /// without a `ground_stage`.
+    #[func]
+    fn ground_height(&self, position: Vector3) -> f32 {
+        let Some(worker) = &self.worker else {
+            return f32::NAN;
+        };
+        if self.ground_stage.is_empty() {
+            return f32::NAN;
+        }
+        let stage = self.ground_stage.to_string();
+        let columns = [
+            self.chunk_cells.x.max(1) as u32,
+            self.chunk_cells.y.max(1) as u32,
+        ];
+        ground_height(
+            [position.x, position.z],
+            columns,
+            |at| worker.field(&stage, at),
+            self.cell_size.to_array(),
+        )
+        .unwrap_or(f32::NAN)
     }
 
     /// A stage's value at a position in Godot's world space, on the ground plane, computed on the

@@ -68,7 +68,7 @@ impl Bound {
                     centre.0.clamp(min[0], max[0]),
                     centre.1.clamp(min[1], max[1]),
                 ];
-                (nearest[0] - centre.0).hypot(nearest[1] - centre.1) <= radius
+                libm::hypotf(nearest[0] - centre.0, nearest[1] - centre.1) <= radius
             }
             Self::Rect {
                 min: low,

@@ -93,6 +93,22 @@ func _check() -> bool:
 	if seen.size() < 2:
 		_fail("only %d materials on the ground" % seen.size())
 		return true
+	# The ground's height at a column centre is the column's; halfway across a square it is on the
+	# diagonal its two triangles share, from the column right of its corner to the one beyond it.
+	for chunk: Vector3i in world.ground_chunks():
+		for j in CELLS:
+			for i in CELLS:
+				var column := Vector2i(chunk.x * CELLS + i, chunk.y * CELLS + j)
+				var centre := Vector3((column.x + 0.5) * CELL.x, 0, (column.y + 0.5) * CELL.z)
+				if absf(world.ground_height(centre) - _height(column)) > 1e-4:
+					_fail("the ground at %s is %f high, its column %f" % [centre, world.ground_height(centre), _height(column)])
+					return true
+				var middle := centre + Vector3(0.5 * CELL.x, 0, 0.5 * CELL.z)
+				var diagonal := (_height(column + Vector2i(1, 0)) + _height(column + Vector2i(0, 1))) / 2.0
+				if absf(world.ground_height(middle) - diagonal) > 1e-4:
+					_fail("the ground at %s is %f high, off its triangles' diagonal %f" % [middle, world.ground_height(middle), diagonal])
+					return true
+	print("verify_ground: the ground's height stands on its mesh at every column centre and on every square's diagonal")
 	print("verify_ground: %d chunks of ground, each with the categories of its %d vertices, %d materials in all" % [world.ground_chunks().size(), (CELLS + 1) * (CELLS + 1), seen.size()])
 	return false
 

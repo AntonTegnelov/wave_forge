@@ -872,3 +872,53 @@ fn moving_away_drops_the_far_ground() {
         .collect();
     assert!(dropped.contains(&origin), "{dropped:?}");
 }
+
+#[test]
+fn the_ground_height_is_the_librarys_where_the_ground_is() {
+    let mut app = app_with(plugin().with_ground("height"));
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .ground(origin)
+            .is_some()
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    for (x, z) in [(1.0, 1.0), (5.3, 9.7), (13.1, 2.2), (15.0, 15.0)] {
+        let got = stages.ground_height(Vec3::new(x, 100.0, z));
+
+        let expected = wave_forge::ground_height(
+            [x, z],
+            SETTINGS.chunk,
+            |at| stages.field("height", at),
+            SETTINGS.cell_size.to_array(),
+        );
+        assert!(got.is_some(), "({x}, {z}) is on the ground");
+        assert_eq!(got, expected, "({x}, {z})");
+    }
+}
+
+#[test]
+fn the_noise_configuration_is_reflected_and_registered() {
+    use bevy_reflect::GetPath;
+    use wave_forge::noise::NoiseConfig;
+    let app = app();
+    let mut noise = NoiseConfig::default();
+
+    *noise
+        .path_mut::<f32>("frequency")
+        .expect("a reflected field") = 0.25;
+
+    assert_eq!(noise.frequency, 0.25);
+    let registry = app
+        .world()
+        .resource::<bevy_ecs::reflect::AppTypeRegistry>()
+        .read();
+    assert!(
+        registry
+            .get(std::any::TypeId::of::<NoiseConfig>())
+            .is_some(),
+        "the plugin registers the noise configuration"
+    );
+}

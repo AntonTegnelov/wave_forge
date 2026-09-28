@@ -46,6 +46,7 @@ use serde::{Deserialize, Serialize};
 
 /// The noise algorithm, in the order of Godot's `FastNoiseLite.NoiseType`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "bevy_reflect", derive(bevy_reflect::Reflect))]
 pub enum NoiseType {
     /// OpenSimplex2 (`TYPE_SIMPLEX`).
     Simplex,
@@ -64,6 +65,7 @@ pub enum NoiseType {
 
 /// How octaves are combined, in the order of Godot's `FastNoiseLite.FractalType`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "bevy_reflect", derive(bevy_reflect::Reflect))]
 pub enum FractalType {
     /// One octave (`FRACTAL_NONE`).
     None,
@@ -79,6 +81,7 @@ pub enum FractalType {
 /// How cellular noise measures distance, in the order of Godot's
 /// `FastNoiseLite.CellularDistanceFunction`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "bevy_reflect", derive(bevy_reflect::Reflect))]
 pub enum CellularDistanceFunction {
     /// `DISTANCE_EUCLIDEAN`.
     #[default]
@@ -94,6 +97,7 @@ pub enum CellularDistanceFunction {
 /// What cellular noise returns, in the order of Godot's `FastNoiseLite.CellularReturnType`.
 /// "Distance" is to the nearest point and "Distance2" to the second nearest.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "bevy_reflect", derive(bevy_reflect::Reflect))]
 pub enum CellularReturnType {
     /// A random value per cell (`RETURN_CELL_VALUE`).
     CellValue,
@@ -114,6 +118,7 @@ pub enum CellularReturnType {
 
 /// The domain warp algorithm, in the order of Godot's `FastNoiseLite.DomainWarpType`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "bevy_reflect", derive(bevy_reflect::Reflect))]
 pub enum DomainWarpType {
     /// Along OpenSimplex2 gradients (`DOMAIN_WARP_SIMPLEX`).
     #[default]
@@ -127,6 +132,7 @@ pub enum DomainWarpType {
 /// How domain warp octaves are combined, in the order of Godot's
 /// `FastNoiseLite.DomainWarpFractalType`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "bevy_reflect", derive(bevy_reflect::Reflect))]
 pub enum DomainWarpFractalType {
     /// One octave (`DOMAIN_WARP_FRACTAL_NONE`).
     None,
@@ -143,6 +149,7 @@ pub enum DomainWarpFractalType {
 /// In a file every property may be left out, and takes Godot's default; written out, every
 /// property is there.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "bevy_reflect", derive(bevy_reflect::Reflect))]
 #[serde(default, deny_unknown_fields)]
 pub struct NoiseConfig {
     /// The algorithm. Default [`NoiseType::SimplexSmooth`].

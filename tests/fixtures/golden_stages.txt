@@ -1,0 +1,4 @@
+# wave_forge golden stages: tests/golden_stages.rs's pack, seed 9, 8x8 columns, 5x5 chunks
+ground d89453d9fd7f4cfa
+ring ad371ced28949978
+trees 21c2d1d87f26b870

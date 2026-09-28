@@ -112,7 +112,7 @@ Each is a gap between the code and the design or the stories, with where it is t
   Beyond it, a far ground from a coarse height stage meets it without a gap
   ([packs.md](../reference/packs.md#far-ground)). Scattered points stand at their
   column's height, which can differ from the mesh between column centres by up to half a column's
-  slope.
+  slope; `ground_height` gives the mesh's own height for what a game places itself.
 - **No levels of detail** for the exported module meshes; they wait for authored models
   ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)).
 - **Scenes bound to points are not pooled** (a decision for the owner,
