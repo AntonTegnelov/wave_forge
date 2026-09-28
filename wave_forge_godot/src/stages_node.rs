@@ -16,12 +16,13 @@ use crate::lods::add_levelled_surface;
 use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
+use godot::classes::base_material_3d::Flags;
 use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::ArrayType;
 use godot::classes::{
     FastNoiseLite, FileAccess, INode, Image, ImageTexture, Material, Node, Node3D, PhysicsServer3D,
-    ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D,
+    ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D, StandardMaterial3D,
 };
 use godot::obj::EngineEnum;
 use godot::prelude::*;
@@ -127,9 +128,14 @@ pub struct WaveForgeStages {
     #[export_group(name = "Volume")]
     #[export]
     volume_stage: GString,
-    /// The material the volume's surface is drawn with; none draws it with Godot's default.
+    /// The material the volume's surface is drawn with; none draws it with Godot's default, or,
+    /// for a stage with materials, with each vertex in its material's colour.
     #[export]
     volume_material: Option<Gd<Material>>,
+    /// A colour per material of `volume_stage`, by index, which each vertex of its surface carries
+    /// as its colour; materials past its end take colours of their own from their index.
+    #[export]
+    volume_palette: PackedColorArray,
 
     /// A field stage whose value per column, from 0 to 1, is how much of it grass covers; empty for
     /// no grass. Grass stands on the ground, so it needs `ground_stage`.
@@ -219,6 +225,9 @@ pub struct WaveForgeStages {
     /// The chunks whose volume surface is built: its mesh, and its `RenderingServer` mesh and
     /// instance, which a surface without triangles has none of.
     volumes: HashMap<ChunkCoord, (VolumeMesh, Option<(Rid, Rid)>)>,
+    /// The material a volume with materials is drawn with when `volume_material` is empty: its
+    /// vertices' colours as albedo.
+    vertex_colours: Option<Gd<StandardMaterial3D>>,
     /// Each chunk's copy of the ground material, holding its material ids, while its ground is
     /// built; none without `ground_material_stage`.
     chunk_materials: HashMap<ChunkCoord, Gd<ShaderMaterial>>,
@@ -482,6 +491,8 @@ impl INode for WaveForgeStages {
             far_grounds: HashMap::new(),
             volume_stage: GString::new(),
             volume_material: None,
+            volume_palette: PackedColorArray::new(),
+            vertex_colours: None,
             volume_due: std::collections::BTreeSet::new(),
             volumes: HashMap::new(),
             ground_due: std::collections::BTreeSet::new(),
@@ -746,6 +757,11 @@ impl WaveForgeStages {
                     self.volume_stage
                 );
                 return false;
+            }
+            if self.vertex_colours.is_none() {
+                let mut colours = StandardMaterial3D::new_gd();
+                colours.set_flag(Flags::ALBEDO_FROM_VERTEX_COLOR, true);
+                self.vertex_colours = Some(colours);
             }
         }
         if self.grass_stage.is_empty() {
@@ -1449,6 +1465,55 @@ impl WaveForgeStages {
         self.volumes.keys().map(|&chunk| to_vector(chunk)).collect()
     }
 
+    /// A chunk's volume surface, relative to the chunk's corner on the ground plane: `positions`
+    /// and `normals` (PackedVector3Array), `indices` (PackedInt32Array, three per triangle,
+    /// clockwise seen from the empty side as Godot's front faces are) and `materials`
+    /// (PackedByteArray, each vertex's material, empty for a stage without materials). Empty if the
+    /// surface is not built.
+    #[func]
+    fn volume_surface(&self, chunk: Vector3i) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        let Some((mesh, _)) = self.volumes.get(&from_vector(chunk)) else {
+            return out;
+        };
+        let vectors = |values: &[[f32; 3]]| -> PackedVector3Array {
+            values
+                .iter()
+                .map(|&[x, y, z]| Vector3::new(x, y, z))
+                .collect()
+        };
+        let indices: PackedInt32Array = mesh
+            .indices
+            .chunks(3)
+            .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])
+            .map(|index| index as i32)
+            .collect();
+        out.set(
+            &"positions".to_variant(),
+            &vectors(&mesh.positions).to_variant(),
+        );
+        out.set(
+            &"normals".to_variant(),
+            &vectors(&mesh.normals).to_variant(),
+        );
+        out.set(&"indices".to_variant(), &indices.to_variant());
+        out.set(
+            &"materials".to_variant(),
+            &PackedByteArray::from(mesh.materials.as_slice()).to_variant(),
+        );
+        out
+    }
+
+    /// The `RenderingServer` mesh a chunk's volume surface is drawn with; an invalid RID if it is
+    /// not drawn.
+    #[func]
+    fn volume_mesh_of(&self, chunk: Vector3i) -> Rid {
+        self.volumes
+            .get(&from_vector(chunk))
+            .and_then(|(_, drawn)| *drawn)
+            .map_or(Rid::Invalid, |(mesh, _)| mesh)
+    }
+
     /// The chunks that have a static body: their ground, their volume's surface, and their towns'
     /// modules.
     #[func]
@@ -1955,9 +2020,22 @@ impl WaveForgeStages {
                 .collect();
             arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
             arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+            if !mesh.materials.is_empty() {
+                let colours: PackedColorArray = mesh
+                    .materials
+                    .iter()
+                    .map(|&material| palette_colour(&self.volume_palette, usize::from(material)))
+                    .collect();
+                arrays.set(ArrayType::COLOR.ord() as usize, &colours.to_variant());
+            }
             add_levelled_surface(rid, &mut arrays, &mesh.indices, &[]);
-            if let Some(material) = &self.volume_material {
-                rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+            let material = match (&self.volume_material, &self.vertex_colours) {
+                (Some(material), _) => Some(material.get_rid()),
+                (None, Some(colours)) if !mesh.materials.is_empty() => Some(colours.get_rid()),
+                (None, _) => None,
+            };
+            if let Some(material) = material {
+                rendering.mesh_surface_set_material(rid, 0, material);
             }
             let instance = rendering.instance_create2(rid, scenario);
             rendering.instance_set_transform(
@@ -2450,10 +2528,7 @@ impl WaveForgeStages {
         };
         let colours: Vec<u8> = (0..MAX_CATEGORIES)
             .flat_map(|index| {
-                let colour = self
-                    .ground_palette
-                    .get(index)
-                    .unwrap_or_else(|| Color::from_hsv(index as f64 * 0.618_034 % 1.0, 0.45, 0.6));
+                let colour = palette_colour(&self.ground_palette, index);
                 [colour.r8(), colour.g8(), colour.b8(), 255]
             })
             .collect();
@@ -2496,6 +2571,14 @@ impl WaveForgeStages {
         self.free_bodies();
         self.placements.clear();
     }
+}
+
+/// The colour of category `index` from `palette`, the categories past its end taking colours of
+/// their own from their index.
+fn palette_colour(palette: &PackedColorArray, index: usize) -> Color {
+    palette
+        .get(index)
+        .unwrap_or_else(|| Color::from_hsv(index as f64 * 0.618_034 % 1.0, 0.45, 0.6))
 }
 
 /// The reference vegetation shader: plants bending in the global wind.

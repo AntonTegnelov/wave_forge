@@ -3,13 +3,15 @@
 ## Run by `../verify.sh` after `verify_ground.gd`. The pack's volume is ground solid below 6.3 cells
 ## with a cave under all of it from 1.8 to 4.2 cells up. Every chunk around the player gets its
 ## surface, a ray down from the sky lands on the ground's top, and from inside the cave a ray up
-## meets its ceiling and a ray down its floor, each facing into the cave. A volume stage that is
-## no Volume stage is refused.
+## meets its ceiling and a ray down its floor, each facing into the cave. The ground's top is grass
+## and the cave rock, and the drawn surface carries each vertex's colour from `volume_palette`. A
+## volume stage that is no Volume stage is refused.
 extends SceneTree
 
 const CELLS := 8
 const CELL := Vector3(2, 1.5, 2)
 const TIMEOUT_S := 30.0
+const PALETTE := [Color(0.2, 0.7, 0.2), Color(0.5, 0.5, 0.5)]
 
 var world: Node
 var started_usec := 0
@@ -38,6 +40,7 @@ func _world(volume_stage: String) -> Node:
 	node.view_radius = 2
 	node.collider_radius = 1
 	node.volume_stage = volume_stage
+	node.volume_palette = PackedColorArray(PALETTE)
 	root.add_child(node)
 	return node
 
@@ -77,8 +80,40 @@ func _check() -> bool:
 		if hit["normal"].dot(Vector3.UP * -ray[2]) < 0.99:
 			_fail("%s faces %s, not back along the ray" % [ray[0], hit["normal"]])
 			return true
+	if not _check_materials():
+		return true
 	print("verify_volume: %d chunks have their surface; rays meet the ground's top and the cave's ceiling and floor" % world.volume_chunks().size())
 	quit(0)
+	return true
+
+## Every vertex on the ground's top is grass and every one in the cave rock, and the drawn mesh has
+## each vertex in its material's colour.
+func _check_materials() -> bool:
+	var surface: Dictionary = world.volume_surface(Vector3i.ZERO)
+	var positions: PackedVector3Array = surface["positions"]
+	var materials: PackedByteArray = surface["materials"]
+	if materials.size() != positions.size():
+		_fail("%d materials for %d vertices" % [materials.size(), positions.size()])
+		return false
+	var grass := 0
+	for i in positions.size():
+		var expected := 0 if positions[i].y > 5.0 * CELL.y else 1
+		if materials[i] != expected:
+			_fail("the vertex at %s is material %d, expected %d" % [positions[i], materials[i], expected])
+			return false
+		grass += 1 - expected
+	var arrays := RenderingServer.mesh_surface_get_arrays(world.volume_mesh_of(Vector3i.ZERO), 0)
+	var colours: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+	# A mesh keeps its colours in 8 bits a channel.
+	for i in colours.size():
+		var wanted: Color = PALETTE[materials[i]]
+		if absf(colours[i].r - wanted.r) > 1.0 / 255.0 or absf(colours[i].g - wanted.g) > 1.0 / 255.0 or absf(colours[i].b - wanted.b) > 1.0 / 255.0:
+			_fail("the drawn vertex %d is %s, its material's colour is %s" % [i, colours[i], PALETTE[materials[i]]])
+			return false
+	if grass == 0 or grass == positions.size() or colours.size() != positions.size():
+		_fail("%d of %d vertices are grass and %d are coloured" % [grass, positions.size(), colours.size()])
+		return false
+	print("verify_volume: %d of the origin's %d vertices are grass on top, the rest rock in the cave, each drawn in its colour" % [grass, positions.size()])
 	return true
 
 func _fail(message: String) -> void:
