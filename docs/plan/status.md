@@ -104,7 +104,10 @@ Each is a gap between the code and the design or the stories, with where it is t
 - **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage;
   curves from region jobs, networks between sites and tables are drawn into height fields; tables of facts reach stages through a focused row, sites, towns and
   roads
-  ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a runtime holds every frozen chunk it has generated for as long as it lives ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)); noise is the library's value noise and Godot's FastNoiseLite in 2D; a Scatter stage has one kind. Each has an issue
+  ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)); a frozen chunk no request needs
+  leaves memory only for a store the game gives ([packs.md](../reference/packs.md#persistence-and-saves));
+  noise is the library's value noise and Godot's FastNoiseLite in 2D, with 3D noise and density
+  waiting for density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Each has an issue
   ([story-coverage.md](story-coverage.md)).
 - **The ground is one mesh per chunk at the field's resolution**, with levels of detail and skirts
   that Godot and Bevy draw by distance; both draw its materials and grass and sway plants in the
@@ -115,13 +118,14 @@ Each is a gap between the code and the design or the stories, with where it is t
   slope; `ground_height` gives the mesh's own height for what a game places itself.
 - **No levels of detail** for the exported module meshes; they wait for authored models
   ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)).
-- **Scenes bound to points are not pooled** (a decision for the owner,
-  [#44](https://github.com/AntonTegnelov/wave_forge/issues/44)), and there are no authoring tools
+- **Scenes bound to points are pooled only when they reset themselves**
+  ([godot.md](../reference/godot.md#scenes)), and there are no authoring tools
   ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). Far proxies, occluders and GI by
   content class are built ([#47](https://github.com/AntonTegnelov/wave_forge/issues/47)); occluders
-  pay only from street level (E50). Region tags reach Bevy as data,
-  and its mapping to an audio crate and Fluent waits for those crates to support its Bevy version
-  ([#174](https://github.com/AntonTegnelov/wave_forge/issues/174)).
+  pay only from street level (E50). A Bevy example maps region tags to `bevy_kira_audio` and place
+  names to Fluent ([bevy.md](../reference/bevy.md#sound-and-names)); interiors that reverb through buses wait for an audio
+  crate that has them on the tracked Bevy
+  ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
 - **Licences for a distributed build.** Everything in both integrations' dependency trees is MIT,
   Apache-2.0, Zlib or Unlicense except godot-rust (0.5.5), which is MPL-2.0: compatible, but a
   distributed extension binary has to say where the MPL-covered source can be obtained.

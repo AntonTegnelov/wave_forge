@@ -42,38 +42,28 @@ so far:
 - a first slice towards G7's island world: height, towns on levelled sites, trees kept apart, and
   a Godot node and a Bevy plugin serving it ([#68](https://github.com/AntonTegnelov/wave_forge/issues/68),
   [#85](https://github.com/AntonTegnelov/wave_forge/pull/85),
-  [#86](https://github.com/AntonTegnelov/wave_forge/pull/86)).
+  [#86](https://github.com/AntonTegnelov/wave_forge/pull/86));
+- G7 itself ([#104](https://github.com/AntonTegnelov/wave_forge/issues/104)): Godot's
+  FastNoiseLite in 2D, the same on every platform ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)), neighbourhood filters, a Scatter modifier chain, blocking across Scatter stages, a
+  location table, curves drawn into the ground, lakes, a world bound, an edits log, persistence
+  modes, a radius per target stage, dungeons through Assemble and paths between sites, with ground
+  meshes and colliders ([#88](https://github.com/AntonTegnelov/wave_forge/issues/88)); the ring
+  world meets every criterion of G7 and verifies it;
+- tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows a game
+  gives or a parent table generates, read by stages as a focused row, sites, towns and roads
+  ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)), with N11's example project
+  (`examples/history`); its first town arrives in about 5 to 6 s, most of it compiling the town's
+  kernels ([measurements.md](../research/measurements.md) E39, E42). With region jobs
+  ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) the strategy game is possible.
 
-The first slice did not reach G7: biomes, per-biome height, rivers, a location table, dungeons
-and edits are still missing; ground meshes and colliders came after it
-([#88](https://github.com/AntonTegnelov/wave_forge/issues/88)). [story-coverage.md](story-coverage.md)
-has the full gap, and [#104](https://github.com/AntonTegnelov/wave_forge/issues/104) tracks it.
+[story-coverage.md](story-coverage.md) has what each story still lacks.
 
 ## Open work, in order
 
-Each step is a verified pull request that updates the stories it moves. The order puts G7's world
-first, which the survival game grows into, then what the strategy game needs.
+Each step is a verified pull request that updates the stories it moves. Density volumes come
+first, because G1, G3 and G8 and the maximal worlds all wait on them.
 
-1. **Tables of facts** ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)): rows the game
-   gives, a simulated history say, or rows generated from a parent table, read by stages; with N11's
-   example project, a toy history in GDScript. Built: given and generated tables, a focused row,
-   sites, towns by a row's names and roads levelled by Apply
-   ([#98](https://github.com/AntonTegnelov/wave_forge/issues/98)), in both engines, and the example
-   (`examples/history`), whose check passes; a person following its README is what is left. Its
-   first town arrives in about 5 to 6 s, most of it compiling the town's kernels
-   ([measurements.md](../research/measurements.md) E39, E42). With region jobs
-   ([#69](https://github.com/AntonTegnelov/wave_forge/issues/69)) and these, the strategy game is
-   possible; [#129](https://github.com/AntonTegnelov/wave_forge/issues/129) asks for its
-   repository.
-2. **The rest of G7**, in the order of [#104](https://github.com/AntonTegnelov/wave_forge/issues/104). Built: Godot's FastNoiseLite
-   noise in 2D ([#45](https://github.com/AntonTegnelov/wave_forge/issues/45)), neighbourhood filters, a Scatter modifier chain, blocking
-   across Scatter stages, a location table, curves drawn into the ground, a world bound, an edits
-   log, persistence modes, a radius per target stage, dungeons through Assemble and a Network stage
-   for paths between sites, and lakes with one water per pack
-   ([#144](https://github.com/AntonTegnelov/wave_forge/issues/144)). The ring world meets every
-   criterion of G7 and verifies it, and scenes bound to points are pooled when they reset themselves
-   ([#44](https://github.com/AntonTegnelov/wave_forge/issues/44)).
-3. **Engine depth, alongside.** Built in both engines: ground materials, grass from a cover field,
+1. **Engine depth.** Built in both engines: ground materials, grass from a cover field,
    plants in a global wind, and ground levels of detail with skirts
    ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)); region tags for sound and
    place names as translation keys ([#43](https://github.com/AntonTegnelov/wave_forge/issues/43));
@@ -85,14 +75,15 @@ first, which the survival game grows into, then what the strategy game needs.
    interiors in Bevy, once a crate exposes them on the tracked Bevy
    ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)), density volumes for G1, G3
    and G8 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
-4. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
+2. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
-5. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
-   technique, then played from what it wrote. It needs a store for chunks outside memory
-   ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)), density volumes
+3. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
+   technique, then played from what it wrote. It needs density volumes
    ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)), the bake, and a whole-world run
    with progress, cancelling and resuming, with baked content streamed from disk
-   ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)); then the maximal preset.
+   ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)), over the store for chunks
+   outside memory that is built ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142));
+   then the maximal preset.
 
 **Waiting on the owner's hardware:** the frame-time measurement of own against shared devices on
 desktops with native drivers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)). It
