@@ -182,8 +182,11 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   pack's noise of that name, so a Field reading `FastNoise(name)` holds exactly what the
   resource's `get_noise_2d` gives at each column's centre in cells.
 - `remove_point(stage, chunk, id)` takes away a Scatter stage's point by the id `point_sets` gave
-  it, and `raise(stage, position, by)` raises a field stage at the column under a position in
-  Godot's world space ([packs.md](packs.md#edits)). `edits_log()` gives the player's edits as text
+  it, `raise(stage, position, by)` raises a field stage at the column under a position in
+  Godot's world space, and `dig(stage, position, radius)` and `fill(stage, position, radius)` dig a
+  ball of `radius` cells out of a Volume or Carve stage around a position or fill one in
+  ([packs.md](packs.md#edits)); every volume surface that reads a chunk an edit changed is built
+  again, its body too. `edits_log()` gives the player's edits as text
   for a save, and `set_edits_log(text)` restores them. A refused edit is reported as an error,
   returns false and changes nothing.
 - `request_save()` asks the stages' thread for a save ([packs.md](packs.md#persistence-and-saves)),

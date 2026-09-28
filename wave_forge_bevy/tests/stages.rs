@@ -1008,3 +1008,70 @@ fn each_chunks_surface_is_the_librarys_and_goes_with_its_volume() {
         .collect();
     assert!(dropped.contains(&origin), "{dropped:?}");
 }
+
+#[test]
+fn a_dig_in_a_neighbour_builds_again_the_surface_that_reads_it() {
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["caves"], SETTINGS, || {
+            Ok(Runtime::new(
+                Arc::new(Pack::parse(VOLUME_PACK).expect("a valid pack")),
+                4,
+                SETTINGS.chunk,
+            ))
+        })
+        .with_volume("caves"),
+    );
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .surface(origin)
+            .is_some()
+    });
+    app.world_mut()
+        .resource_mut::<Messages<VolumeDropped>>()
+        .clear();
+
+    // A ball in the chunk beside the origin that reaches only its first column, which the
+    // origin's surface reads but the origin's volume does not hold.
+    app.world().resource::<WaveForgeStages>().set_edits(Edits {
+        log: vec![Edit::Dig {
+            stage: "caves".to_owned(),
+            at: [10.2, 4.5, 1.5],
+            radius: 1.0,
+        }],
+    });
+    let mut dropped: Vec<ChunkCoord> = Vec::new();
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .volume("caves", ChunkCoord::new(1, 0, 0))
+            .is_some()
+            && app
+                .world()
+                .resource::<WaveForgeStages>()
+                .surface(origin)
+                .is_some()
+            && app
+                .world()
+                .resource::<Messages<VolumeDropped>>()
+                .iter_current_update_messages()
+                .count()
+                == 0
+    });
+    dropped.extend(
+        app.world_mut()
+            .resource_mut::<Messages<VolumeDropped>>()
+            .drain()
+            .map(|message| message.0),
+    );
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let expected = volume_mesh(
+        origin,
+        |at| stages.volume("caves", at),
+        SETTINGS.cell_size.to_array(),
+    );
+    assert!(dropped.contains(&origin), "{dropped:?}");
+    assert_eq!(stages.surface(origin), expected.as_ref());
+}

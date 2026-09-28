@@ -222,9 +222,11 @@ pub struct WaveForgeStages {
     /// Chunks whose volume surface may be buildable: a volume around them arrived since they were
     /// last looked at.
     volume_due: std::collections::BTreeSet<ChunkCoord>,
-    /// The chunks whose volume surface is built: its mesh, and its `RenderingServer` mesh and
-    /// instance, which a surface without triangles has none of.
-    volumes: HashMap<ChunkCoord, (VolumeMesh, Option<(Rid, Rid)>)>,
+    /// The chunks whose volume surface is built.
+    volumes: HashMap<ChunkCoord, Surface>,
+    /// How many surfaces have been built, which numbers each one's revision, so a chunk's body
+    /// tells a surface built again from the one it holds.
+    volume_revisions: u64,
     /// The material a volume with materials is drawn with when `volume_material` is empty: its
     /// vertices' colours as albedo.
     vertex_colours: Option<Gd<StandardMaterial3D>>,
@@ -247,6 +249,15 @@ pub struct WaveForgeStages {
     bodies_pending: usize,
     /// The scenes bound to kinds, and what each stage's chunk placed.
     placements: Placements,
+}
+
+/// A chunk's volume surface as the node holds it.
+struct Surface {
+    mesh: VolumeMesh,
+    /// Its `RenderingServer` mesh and instance, which a surface without triangles has none of.
+    drawn: Option<(Rid, Rid)>,
+    /// The revision it was built as, so a body tells a surface built again from the one it holds.
+    revision: u64,
 }
 
 /// The most `stage_ready` and `stage_dropped` signals one frame emits. A wide request can bring
@@ -442,8 +453,8 @@ fn elapsed_ms(since: std::time::Instant) -> f64 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BodyContents {
     ground: bool,
-    /// Whether the chunk's volume surface has triangles.
-    volume: bool,
+    /// The revision of the chunk's volume surface, if it has triangles.
+    volume: Option<u64>,
     towns: Vec<String>,
 }
 
@@ -495,6 +506,7 @@ impl INode for WaveForgeStages {
             vertex_colours: None,
             volume_due: std::collections::BTreeSet::new(),
             volumes: HashMap::new(),
+            volume_revisions: 0,
             ground_due: std::collections::BTreeSet::new(),
             bodies: HashMap::new(),
             bodies_pending: 0,
@@ -1178,6 +1190,32 @@ impl WaveForgeStages {
         })
     }
 
+    /// Digs a ball of `radius` cells out of a Volume or Carve stage around `position` in Godot's
+    /// world space ([packs.md](packs.md#edits)): the chunks it reaches are generated again with it,
+    /// and it stays through eviction; `edits_log` saves it. Returns whether the stage is a volume;
+    /// if not, that is reported as an error.
+    #[func]
+    fn dig(&mut self, stage: GString, position: Vector3, radius: f32) -> bool {
+        let at = self.cells_at(position);
+        self.edit(Edit::Dig {
+            stage: stage.to_string(),
+            at,
+            radius,
+        })
+    }
+
+    /// Fills a ball of `radius` cells into a Volume or Carve stage around `position`, as `dig`
+    /// digs one.
+    #[func]
+    fn fill(&mut self, stage: GString, position: Vector3, radius: f32) -> bool {
+        let at = self.cells_at(position);
+        self.edit(Edit::Fill {
+            stage: stage.to_string(),
+            at,
+            radius,
+        })
+    }
+
     /// Asks the stages' thread for a save of the world, which arrives as the `saved` signal.
     #[func]
     fn request_save(&self) {
@@ -1475,7 +1513,7 @@ impl WaveForgeStages {
     #[func]
     fn volume_surface(&self, chunk: Vector3i) -> VarDictionary {
         let mut out = VarDictionary::new();
-        let Some((mesh, _)) = self.volumes.get(&from_vector(chunk)) else {
+        let Some(Surface { mesh, .. }) = self.volumes.get(&from_vector(chunk)) else {
             return out;
         };
         let vectors = |values: &[[f32; 3]]| -> PackedVector3Array {
@@ -1512,7 +1550,7 @@ impl WaveForgeStages {
     fn volume_mesh_of(&self, chunk: Vector3i) -> Rid {
         self.volumes
             .get(&from_vector(chunk))
-            .and_then(|(_, drawn)| *drawn)
+            .and_then(|surface| surface.drawn)
             .map_or(Rid::Invalid, |(mesh, _)| mesh)
     }
 
@@ -1824,6 +1862,15 @@ impl WaveForgeStages {
         Some((sets, town.height * self.cell_size.y))
     }
 
+    /// A position in Godot's world space in cells, along the lattice's x and y and up.
+    fn cells_at(&self, position: Vector3) -> [f32; 3] {
+        [
+            position.x / self.cell_size.x,
+            position.z / self.cell_size.z,
+            position.y / self.cell_size.y,
+        ]
+    }
+
     /// Where a chunk's corner sits on Godot's ground plane.
     fn chunk_corner(&self, chunk: ChunkCoord) -> Vector3 {
         let shape = self.chunk_shape();
@@ -1947,14 +1994,14 @@ impl WaveForgeStages {
     }
 
     /// Builds the volume surface of up to [`GROUNDS_PER_FRAME`] chunks a newly arrived volume may
-    /// have completed, nearest the followed position first, and frees the surface of chunks whose
-    /// own volume was dropped.
+    /// have completed, nearest the followed position first, and frees the surface of every chunk
+    /// that reads a volume that was dropped, which an edit's regeneration builds again.
     ///
     /// Returns how many chunks got a surface.
     fn update_volume(&mut self, arrived: &[ChunkCoord], gone: &[ChunkCoord]) -> usize {
         let mut rendering = RenderingServer::singleton();
-        for chunk in gone {
-            if let Some((_, Some((mesh, instance)))) = self.volumes.remove(chunk) {
+        for reader in gone.iter().copied().flat_map(ground_readers) {
+            if let Some((mesh, instance)) = self.volumes.remove(&reader).and_then(|s| s.drawn) {
                 rendering.free_rid(instance);
                 rendering.free_rid(mesh);
             }
@@ -1972,11 +2019,12 @@ impl WaveForgeStages {
         };
         let stage = self.volume_stage.to_string();
         let voxel = self.cell_size.to_array();
-        self.volume_due
-            .extend(arrived.iter().copied().flat_map(ground_readers));
+        // Drops first: an edit drops a chunk and generates it again in one frame, and it is due.
         for chunk in gone {
             self.volume_due.remove(chunk);
         }
+        self.volume_due
+            .extend(arrived.iter().copied().flat_map(ground_readers));
         let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
         let mut due: Vec<ChunkCoord> = self.volume_due.iter().copied().collect();
         due.sort_by_key(|chunk| {
@@ -2003,8 +2051,15 @@ impl WaveForgeStages {
         let count = built.len();
         for mesh in built {
             let chunk = mesh.chunk;
+            self.volume_revisions += 1;
+            let revision = self.volume_revisions;
             if mesh.indices.is_empty() {
-                self.volumes.insert(chunk, (mesh, None));
+                let surface = Surface {
+                    mesh,
+                    drawn: None,
+                    revision,
+                };
+                self.volumes.insert(chunk, surface);
                 continue;
             }
             let rid = rendering.mesh_create();
@@ -2045,7 +2100,12 @@ impl WaveForgeStages {
                 Transform3D::new(Basis::IDENTITY, self.chunk_corner(chunk)),
             );
             Gi::Static.apply(instance);
-            self.volumes.insert(chunk, (mesh, Some((rid, instance))));
+            let surface = Surface {
+                mesh,
+                drawn: Some((rid, instance)),
+                revision,
+            };
+            self.volumes.insert(chunk, surface);
         }
         count
     }
@@ -2186,7 +2246,8 @@ impl WaveForgeStages {
             volume: this
                 .volumes
                 .get(&chunk)
-                .is_some_and(|(mesh, _)| !mesh.indices.is_empty()),
+                .filter(|surface| !surface.mesh.indices.is_empty())
+                .map(|surface| surface.revision),
             towns: if this.collision_shapes.is_empty() {
                 Vec::new()
             } else {
@@ -2230,7 +2291,7 @@ impl WaveForgeStages {
             })
             .filter(|chunk| radius >= 0 && !self.bodies.contains_key(chunk))
             .map(|chunk| (chunk, contents(self, chunk)))
-            .filter(|(_, held)| held.ground || held.volume || !held.towns.is_empty())
+            .filter(|(_, held)| held.ground || held.volume.is_some() || !held.towns.is_empty())
             .collect();
         // Nearest first, and a few a frame, as the city node does.
         wanted.sort_by_key(|(chunk, _)| {
@@ -2250,7 +2311,7 @@ impl WaveForgeStages {
             if held.ground {
                 shapes.extend(self.add_ground_shape(&mut physics, body, chunk));
             }
-            if held.volume {
+            if held.volume.is_some() {
                 shapes.push(self.add_volume_shape(&mut physics, body, chunk));
             }
             for stage in &held.towns {
@@ -2337,7 +2398,7 @@ impl WaveForgeStages {
         body: Rid,
         chunk: ChunkCoord,
     ) -> Rid {
-        let (mesh, _) = &self.volumes[&chunk];
+        let mesh = &self.volumes[&chunk].mesh;
         // Godot's front faces wind clockwise, the library's counter-clockwise.
         let faces: PackedVector3Array = mesh
             .indices
@@ -2562,8 +2623,8 @@ impl WaveForgeStages {
             rendering.free_rid(mesh);
         }
         self.volume_due.clear();
-        for (_, (_, drawn)) in self.volumes.drain() {
-            if let Some((mesh, instance)) = drawn {
+        for (_, surface) in self.volumes.drain() {
+            if let Some((mesh, instance)) = surface.drawn {
                 rendering.free_rid(instance);
                 rendering.free_rid(mesh);
             }

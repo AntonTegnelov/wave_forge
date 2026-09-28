@@ -132,7 +132,8 @@ pub struct FarGroundDropped(pub ChunkCoord);
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolumeReady(pub ChunkCoord);
 
-/// A chunk's volume was dropped, and its surface with it.
+/// A chunk's surface was dropped, since a volume it reads was: its own or a neighbour's. A
+/// neighbour's volume generated again, after an edit say, builds it again with [`VolumeReady`].
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolumeDropped(pub ChunkCoord);
 
@@ -705,9 +706,12 @@ fn drain(
                     near_changed.push(chunk);
                     grounds.dropped.write(GroundDropped(chunk));
                 }
-                if volume_stage.as_ref() == Some(&stage) && stages.surfaces.remove(&chunk).is_some()
-                {
-                    grounds.volume_dropped.write(VolumeDropped(chunk));
+                if volume_stage.as_ref() == Some(&stage) {
+                    for reader in ground_readers(chunk) {
+                        if stages.surfaces.remove(&reader).is_some() {
+                            grounds.volume_dropped.write(VolumeDropped(reader));
+                        }
+                    }
                 }
                 if far_stage.as_ref().is_some_and(|(far, _)| *far == stage) {
                     stages.far_due.remove(&chunk);
