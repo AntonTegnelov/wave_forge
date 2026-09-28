@@ -340,7 +340,22 @@ reads a field at the column, so `Sub(Input("height"), Z)` is a volume that is so
 field and empty above it. By convention a voxel whose value is above zero is solid.
 `Runtime::volume(stage, chunk)` gives a chunk's `Volume`: its `size` in columns and levels, its
 `bottom` level and its values level by level, each row by row with x fastest. Nothing reads a volume
-as an input; meshing one comes next ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
+as an input.
+
+`wave_forge::volume_mesh(chunk, volume, voxel_size)` gives a chunk's surface, where its values
+cross zero, as one `VolumeMesh` for drawing and for a trimesh collider alike, since a height field
+cannot hold an overhang. `voxel_size` is a cell's size times the stage's scale. It is a naive surface
+net: a vertex in every cube of eight voxel centres that the surface passes through, and a quad for
+every edge between two voxels it crosses, facing from the solid voxel to the empty one and split
+along whichever diagonal keeps both triangles facing that way. A chunk reads the volumes of its
+eight neighbours as well, so it has no surface until all nine have arrived, the same chunks as its
+ground ([`ground_readers`](#ground)); chunks then meet without a seam, and four chunks mesh the same
+triangles as one twice as wide. Positions are relative to the chunk's corner on the ground plane,
+with the height absolute, in a Y-up engine's axes; normals follow the values' gradient and agree
+with the triangles wherever features are wider than a voxel. The surface is left open where it
+would reach below the lowest level or above the highest, so a volume solid along its lowest level
+and empty along its highest is closed. Drawing and colliding with it in the engines comes next
+([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
 
 ### Rules
 
