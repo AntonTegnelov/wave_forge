@@ -702,8 +702,9 @@ unit vector along the lattice's x, y and height. `Point::y_up_basis` gives its r
 in a Y-up engine's axes. The id holds the candidate's chunk, 15 bits of the stage's salt, the
 candidate's column, and a slot of the candidate's place in its block times 256 plus the member's
 place in its group, so a group member standing in the next chunk still has an id of its own, and
-one candidate per block with no group gives the ids a Scatter stage always gave. Loading checks that
-no two Scatter stages share a salt.
+one candidate per block with no group gives the ids a Scatter stage always gave. Loading refuses
+two Scatter, Embed or Assemble stages whose ids would carry the same 15 bits of salt; renaming one
+fixes it.
 
 `examples/rings.world.ron` scatters ore rocks in the middle of the woods on gentle ground, ore veins
 high in the peaks along the slope, and groves of three to six birches on the grassland.

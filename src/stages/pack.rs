@@ -2529,7 +2529,8 @@ impl Pack {
         }
         let mut point_ids: BTreeMap<u16, &str> = BTreeMap::new();
         for stage in &stages {
-            if let StageKind::Scatter { .. } | StageKind::Assemble { .. } = stage.kind
+            if let StageKind::Scatter { .. } | StageKind::Embed { .. } | StageKind::Assemble { .. } =
+                stage.kind
                 && let Some(other) = point_ids.insert(point_stage_id(stage.salt), &stage.name)
             {
                 return Err(PackError::Invalid {
@@ -2636,8 +2637,8 @@ impl Pack {
     }
 }
 
-/// The stage number a Scatter stage's points carry in their ids: 15 bits of its salt, never 0,
-/// which is the tiles'.
+/// The stage number a Scatter or Embed stage's points, or an Assemble stage's pieces, carry in
+/// their ids: 15 bits of its salt, never 0, which is the tiles'.
 pub(crate) const fn point_stage_id(salt: u32) -> u16 {
     (salt % 0x7FFF) as u16 + 1
 }
