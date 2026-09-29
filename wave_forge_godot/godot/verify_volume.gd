@@ -6,8 +6,9 @@
 ## meets its ceiling and a ray down its floor, each facing into the cave. The ground's top is grass
 ## and the cave rock, and the drawn surface carries each vertex's colour from `volume_palette`. A
 ## ball dug where four chunks meet opens the cave to the sky: a ray from above then falls through
-## the hole to the cave's floor, which every chunk around it has built again. A volume stage that is
-## no Volume stage is refused, and so is digging a field.
+## the hole to the cave's floor, which every chunk around it has built again. Ore embedded in the
+## rock and bound to a scene is placed as nodes, each inside the rock, none in the cave. A volume
+## stage that is no Volume stage is refused, and so is digging a field.
 extends SceneTree
 
 const CELLS := 8
@@ -19,6 +20,7 @@ var world: Node
 var started_usec := 0
 var settled_frames := 0
 var digging := false
+var ores := {}
 ## Where four chunks meet, in the middle of the cave's height.
 var hole := Vector3(CELLS * CELL.x, 6.3 * CELL.y, CELLS * CELL.z)
 
@@ -38,7 +40,7 @@ func _initialize() -> void:
 func _world(volume_stage: String) -> Node:
 	var node: Node = ClassDB.instantiate("WaveForgeStages")
 	node.pack_file = "res://volume.world.ron"
-	node.targets = PackedStringArray(["cave"])
+	node.targets = PackedStringArray(["cave", "ore"])
 	node.seed = 3
 	node.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	node.cell_size = CELL
@@ -46,7 +48,9 @@ func _world(volume_stage: String) -> Node:
 	node.collider_radius = 1
 	node.volume_stage = volume_stage
 	node.volume_palette = PackedColorArray(PALETTE)
+	node.scenes = {"ore": _ore_scene()}
 	root.add_child(node)
+	node.instance_spawned.connect(func(ore: Node3D, chunk: Vector3i, id: int) -> void: ores[[chunk, id]] = ore)
 	return node
 
 func _process(_delta: float) -> bool:
@@ -87,7 +91,7 @@ func _check() -> bool:
 		if hit["normal"].dot(Vector3.UP * -ray[2]) < 0.99:
 			_fail("%s faces %s, not back along the ray" % [ray[0], hit["normal"]])
 			return true
-	if not _check_materials():
+	if not _check_materials() or not _check_ores():
 		return true
 	print("verify_volume: %d chunks have their surface; rays meet the ground's top and the cave's ceiling and floor" % world.volume_chunks().size())
 	if world.dig("height", hole, 3.0):
@@ -99,6 +103,36 @@ func _check() -> bool:
 	digging = true
 	started_usec = Time.get_ticks_usec()
 	return false
+
+## A Node3D with a mesh child, packed, so each ore is placed as a node.
+func _ore_scene() -> PackedScene:
+	var top := Node3D.new()
+	var child := MeshInstance3D.new()
+	child.mesh = BoxMesh.new()
+	top.add_child(child)
+	child.owner = top
+	var scene := PackedScene.new()
+	scene.pack(top)
+	top.free()
+	return scene
+
+## Every ore node stands inside the rock, under the ground's top and above or below the cave.
+func _check_ores() -> bool:
+	var inside := 0
+	for key in ores:
+		var ore: Node3D = ores[key]
+		if not is_instance_valid(ore):
+			continue
+		var cells := ore.global_position.y / CELL.y
+		if cells >= 6.3 or (cells > 1.8 and cells < 4.2):
+			_fail("an ore stands %.2f cells up, outside the rock" % cells)
+			return false
+		inside += 1
+	if inside < 10:
+		_fail("only %d ores were placed" % inside)
+		return false
+	print("verify_volume: %d ores embedded in the rock are placed as nodes, none in the cave or the sky" % inside)
+	return true
 
 ## Waits for the hole: a ray down from the sky at its centre lands on the cave's floor.
 func _check_hole() -> bool:
