@@ -1,0 +1,44 @@
+// G8's test pack: a finite cave level of 64 by 64 columns, one region planned whole. The level
+// draws a pattern of rooms (a chain, a star or a hub), places caverns, halls and shafts at their
+// depths, joins the linked rooms by tunnels that wander through 3D noise, and carves both into
+// solid rock. Crystal lies in the rock around the rooms, exactly thirty per level, and each room
+// spends a budget of twelve on its enemies. The player digs into a stage of its own, so a dig
+// never moves the crystal. Made for chunks of 16 by 16 columns, so the region of 4 chunks is the
+// whole bound.
+(
+    version: 1,
+    bound: Some(Rect(min: (0.0, 0.0), max: (63.0, 63.0))),
+    noises: {
+        "rock": (noise_type: SimplexSmooth, seed: 3, frequency: 0.06, fractal_octaves: 2),
+        "wander": (noise_type: SimplexSmooth, seed: 7, frequency: 0.08, fractal_octaves: 2),
+    },
+    stages: [
+        // Solid rock from 40 cells down to the surface, with veins of a harder stone.
+        (name: "rock", kind: Volume(
+            density: Add(Constant(4.0), Mul(FastNoise("rock"), Constant(2.0))),
+            bottom: -40,
+            top: 0,
+            materials: Some((rules: [
+                (category: "hard", when: [Greater(FastNoise("rock"), Constant(0.5))]),
+            ], otherwise: "stone")),
+        )),
+        (name: "level", kind: Cave(region: 4, depth: (-32.0, -12.0), patterns: [Linear, Star, Hub],
+            count: (5, 8), apart: 12.0, rerolls: 16, rooms: [
+                (name: "cavern", size: (9, 9, 6), weight: 2),
+                (name: "hall", size: (5, 11, 4), weight: 2),
+                (name: "shaft", size: (4, 4, 10)),
+            ])),
+        (name: "tunnels", kind: Tunnels(cave: "level", noise: "wander", radius: (1.5, 2.5), wander: 2.0)),
+        (name: "caves", kind: Carve(volume: "rock", tunnels: Some((curves: "tunnels", max_radius: 3)),
+            rooms: Some("level"))),
+        // What the player digs into: the carved level as it is, so a dig here moves no crystal.
+        (name: "terrain", kind: Carve(volume: "caves")),
+        (name: "crystal", kind: Deposit(kind: "crystal", cave: "level", volume: "caves", total: 30,
+            depth: 2, apart: 3.0)),
+        (name: "enemies", kind: Spawn(cave: "level", budget: 12, kinds: [
+            (kind: "crawler", cost: 1, weight: 5),
+            (kind: "spitter", cost: 3, weight: 2),
+            (kind: "brute", cost: 8),
+        ])),
+    ],
+)

@@ -75,11 +75,12 @@ Each step is a verified pull request that updates the stories it moves.
    through the edits log ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Left: reverb and buses for interiors
    in Bevy, once a crate exposes them on the tracked Bevy
    ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
-2. **The voxel stories' packs:** what G8 still lacks beyond density volumes, and its test pack
-   ([#220](https://github.com/AntonTegnelov/wave_forge/issues/220)). G3's planet pack and G1's voxel
-   pack are verified ([#221](https://github.com/AntonTegnelov/wave_forge/issues/221),
-   [#219](https://github.com/AntonTegnelov/wave_forge/issues/219)); drawing G1's fluid is
-   [#231](https://github.com/AntonTegnelov/wave_forge/issues/231).
+2. **The voxel stories in the engines:** drawing G1's fluid
+   ([#231](https://github.com/AntonTegnelov/wave_forge/issues/231)) and binding scenes to G8's
+   rooms ([#233](https://github.com/AntonTegnelov/wave_forge/issues/233)). The packs of G1, G3 and
+   G8 are verified ([#219](https://github.com/AntonTegnelov/wave_forge/issues/219),
+   [#221](https://github.com/AntonTegnelov/wave_forge/issues/221),
+   [#220](https://github.com/AntonTegnelov/wave_forge/issues/220)).
 3. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 4. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
