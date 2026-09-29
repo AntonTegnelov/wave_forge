@@ -1,6 +1,6 @@
 // The pack of the volume check (verify_volume.gd): ground solid below 6.3 cells with a cave
 // running under all of it, from 1.8 to 4.2 cells up, whose ceiling a height field could not hold;
-// grass on top and rock below.
+// grass on top and rock below, with ore embedded in the rock.
 (
     version: 1,
     stages: [
@@ -12,5 +12,7 @@
             // Grass on the ground's top, rock in the cave.
             materials: Some((rules: [(category: "grass", when: [Greater(Z, Constant(5.0))])], otherwise: "rock")),
         )),
+        // Ore in the rock above and below the cave, never in it.
+        (name: "ore", kind: Embed(kind: "ore", volume: "cave", spacing: 3, count: (1, 2), between: (-2.0, 6.0))),
     ],
 )

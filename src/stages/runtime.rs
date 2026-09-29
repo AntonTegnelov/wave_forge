@@ -1392,10 +1392,14 @@ impl Runtime {
             .stages
             .iter()
             .position(|stage| {
-                matches!(stage.kind, StageKind::Scatter { .. })
-                    && point_stage_id(stage.salt) == id.stage()
+                matches!(
+                    stage.kind,
+                    StageKind::Scatter { .. } | StageKind::Embed { .. }
+                ) && point_stage_id(stage.salt) == id.stage()
             })
-            .ok_or_else(|| StageError::Edit(format!("no Scatter stage placed the point {id:?}")))
+            .ok_or_else(|| {
+                StageError::Edit(format!("no Scatter or Embed stage placed the point {id:?}"))
+            })
     }
 
     /// `product` of stage `index` with the player's edits applied: raises added to a field, and a
@@ -2058,7 +2062,10 @@ impl Runtime {
         };
         let value = match &stage.kind {
             StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
-            StageKind::Volume { .. } | StageKind::Carve { .. } | StageKind::Top { .. } => {
+            StageKind::Volume { .. }
+            | StageKind::Carve { .. }
+            | StageKind::Top { .. }
+            | StageKind::Embed { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
             StageKind::Rules { .. } | StageKind::Nearest { .. } => {
@@ -2976,6 +2983,9 @@ impl Runtime {
         if let StageKind::Scatter { .. } = &stage.kind {
             return self.scatter(index, chunk).map(Product::Points);
         }
+        if let StageKind::Embed { .. } = &stage.kind {
+            return self.embed(index, chunk).map(Product::Points);
+        }
         if let Some(region) = stage.kind.job_region() {
             let curves = &self.regions[&(index, region_of(chunk, region))];
             let (min, max) = self.chunk_rect(chunk);
@@ -3143,6 +3153,7 @@ impl Runtime {
                     | StageKind::Volume { .. }
                     | StageKind::Carve { .. }
                     | StageKind::Top { .. }
+                    | StageKind::Embed { .. }
                     | StageKind::Area { .. }
                     | StageKind::TableSites { .. }
                     | StageKind::Locations { .. }
@@ -3428,6 +3439,109 @@ impl Runtime {
             size: self.size,
             values,
         })
+    }
+
+    /// Embed stage `index`'s points in `chunk`: each block's candidates whose column lies in the
+    /// chunk, kept where the volume is solid at their height and the stage's conditions hold.
+    fn embed(&self, index: usize, chunk: ChunkCoord) -> Result<Vec<Point>, StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Embed {
+            kind,
+            volume,
+            spacing,
+            count,
+            between,
+            when,
+        } = &stage.kind
+        else {
+            unreachable!("called for Embed stages")
+        };
+        let volume_index = self.pack.index(volume).expect("linked when loaded");
+        let Some(Product::Volume(rock)) =
+            self.products.get(&(volume_index, chunk)).map(Arc::as_ref)
+        else {
+            unreachable!("inputs are generated before the stages that read them")
+        };
+        let views: BTreeMap<usize, FieldView<'_>> = stage
+            .inputs
+            .iter()
+            .filter(|&&(input, _)| {
+                matches!(
+                    self.pack.stages[input].kind.output(),
+                    Output::Field | Output::Categories
+                )
+            })
+            .map(|&(input, reach)| (input, self.view(index, chunk, input, reach)))
+            .collect();
+        let read = |name: &str, x: i64, y: i64| {
+            views[&self.pack.index(name).expect("linked when loaded")].get(x, y)
+        };
+        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+        let spacing = i64::from(*spacing);
+        let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+        let (x0, y0) = (i64::from(chunk.x) * sx, i64::from(chunk.y) * sy);
+        let blocks = |low: i64, high: i64| low.div_euclid(spacing)..=high.div_euclid(spacing);
+        let point_stage = point_stage_id(stage.salt);
+        let kind: Arc<str> = Arc::from(kind.as_str());
+        let mut points = Vec::new();
+        for by in blocks(y0, y0 + sy - 1) {
+            for bx in blocks(x0, x0 + sx - 1) {
+                let many = count.0
+                    + pcg3d([world ^ stage.salt ^ COUNT_STREAM, bx as u32, by as u32])[0]
+                        % (count.1 - count.0 + 1);
+                for slot in 0..many {
+                    let [place, depth, turn] = pcg3d([
+                        world ^ stage.salt,
+                        bx as u32,
+                        (by as u32) ^ 0x5bd1_e995 ^ slot.wrapping_mul(0x9E37_79B9),
+                    ]);
+                    let column = [
+                        bx * spacing + i64::from(place) % spacing,
+                        by * spacing + i64::from(place >> 16) % spacing,
+                    ];
+                    let (x, y) = (column[0] - x0, column[1] - y0);
+                    if !((0..sx).contains(&x) && (0..sy).contains(&y)) {
+                        continue;
+                    }
+                    let z = between.0 + (between.1 - between.0) * unit(depth);
+                    if value_at(rock, x as u32, y as u32, z) <= 0.0 {
+                        continue;
+                    }
+                    let place = ColumnPlace {
+                        height: Some(z),
+                        ..self.place(index, column, &read)
+                    };
+                    let mut holds_all = true;
+                    for condition in when {
+                        if !holds(condition, &place)? {
+                            holds_all = false;
+                            break;
+                        }
+                    }
+                    if !holds_all {
+                        continue;
+                    }
+                    let fraction = (
+                        f32::from((turn & 0xFF) as u8) / 256.0,
+                        f32::from(((turn >> 8) & 0xFF) as u8) / 256.0,
+                    );
+                    let cell = (y * sx + x) as u32;
+                    points.push(Point {
+                        id: InstanceId::new(chunk, point_stage, cell, slot as u16),
+                        kind: Arc::clone(&kind),
+                        position: [
+                            column[0] as f32 + fraction.0,
+                            column[1] as f32 + fraction.1,
+                            z,
+                        ],
+                        turn: unit(turn.rotate_left(16)),
+                        scale: 1.0,
+                        up: [0.0, 0.0, 1.0],
+                    });
+                }
+            }
+        }
+        Ok(points)
     }
 
     /// The points of Scatter stage `index` whose column lies in `chunk`.
@@ -4007,6 +4121,22 @@ fn top(volume: &Volume, scale: u32) -> Field {
         size: [sx, sy],
         values,
     }
+}
+
+/// `volume`'s value at height `z` in cells in the column `x`, `y` of its chunk, at scale 1: between
+/// the voxels whose centres lie below and above it, as a surface drawn from it runs; the lowest or
+/// highest voxel's own beyond them.
+fn value_at(volume: &Volume, x: u32, y: u32, z: f32) -> f32 {
+    let levels = volume.size[2];
+    let along = z - volume.bottom as f32 - 0.5;
+    let below = along.floor();
+    let t = along - below;
+    let clamp = |level: f32| level.clamp(0.0, (levels - 1) as f32) as u32;
+    let (low, high) = (
+        volume.get(x, y, clamp(below)),
+        volume.get(x, y, clamp(below + 1.0)),
+    );
+    low + (high - low) * t
 }
 
 /// How far outside a tunnel or room, in cells, a Carve stage still lowers a voxel.

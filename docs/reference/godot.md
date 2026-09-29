@@ -171,7 +171,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `grass_radius` | chunks around the followed position that get grass (default 1) |
 | | `grass_material` | a `ShaderMaterial` taking the reference grass shader's parameters; empty for that shader |
 | Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
-| Scenes | `scenes` | a kind (a Scatter point's kind or an Assemble piece's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
+| Scenes | `scenes` | a kind (a Scatter or Embed point's kind or an Assemble piece's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
@@ -287,7 +287,7 @@ be placed again as `pooled_nodes` ([Scenes](#scenes)).
 
 ### Scenes
 
-`scenes` binds a kind to a scene: a Scatter point's kind, or an Assemble piece's name, so a
+`scenes` binds a kind to a scene: a Scatter or Embed point's kind, or an Assemble piece's name, so a
 dungeon's rooms bind the same way as trees. A value is a `PackedScene`, or a path the node loads on
 Godot's loader threads when it starts; placing waits until every scene has loaded. A scene holding
 another extension's Rust resource has to be given as a `PackedScene`, since such a resource aborts

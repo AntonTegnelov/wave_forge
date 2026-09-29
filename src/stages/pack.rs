@@ -219,6 +219,22 @@ pub enum StageKind {
     /// column: where its values cross zero going up from its highest solid voxel, or its bottom
     /// for a column with none. Things that stand on the ground of a volume stand on it.
     Top { volume: String },
+    /// Points of `kind` inside the solid voxels of the Volume or Carve stage `volume`, ore in rock
+    /// say: `count` candidates per square block of `spacing` columns, each at a hashed place in the
+    /// block and a hashed height from `between.0` up to `between.1` cells, kept where the volume's
+    /// value there, between the voxels below and above it as its surface runs, is above zero and
+    /// every condition of `when` holds, `Z` read as the point's height.
+    /// A chunk's product is the points whose column lies in it.
+    Embed {
+        kind: String,
+        volume: String,
+        spacing: u32,
+        #[serde(default = "one_each")]
+        count: (u32, u32),
+        between: (f32, f32),
+        #[serde(default)]
+        when: Vec<Condition>,
+    },
     /// A category per cell column: the biome whose `point` lies nearest the column's climate, the
     /// values of the `climate` expressions there in their order, measured straight across that
     /// space; of equally near biomes the first listed. The categories are the biomes' names in the
@@ -734,7 +750,7 @@ impl StageKind {
             | Self::TableCurves { .. } => Output::Curves,
             Self::Sites { .. } | Self::TableSites { .. } | Self::Locations { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
-            Self::Scatter { .. } => Output::Points,
+            Self::Scatter { .. } | Self::Embed { .. } => Output::Points,
             Self::Assemble { .. } => Output::Pieces,
         }
     }
@@ -1615,7 +1631,7 @@ impl Pack {
                         expr.visit(&mut note);
                     }
                 }
-                StageKind::Scatter { when, .. } => {
+                StageKind::Scatter { when, .. } | StageKind::Embed { when, .. } => {
                     for condition in when {
                         condition.visit(&mut note);
                     }
@@ -1690,6 +1706,7 @@ impl Pack {
                         | StageKind::Scatter { .. }
                         | StageKind::Assemble { .. }
                         | StageKind::Carve { .. }
+                        | StageKind::Embed { .. }
                 )
             {
                 return Err(invalid(format!(
@@ -2052,6 +2069,44 @@ impl Pack {
                         (curves.as_str(), reach, Output::Curves),
                     ]
                 }
+                StageKind::Embed {
+                    volume,
+                    spacing,
+                    count,
+                    between,
+                    when,
+                    ..
+                } => {
+                    if *spacing == 0 || count.0 > count.1 || count.1 > MAX_SCATTER_SLOTS {
+                        return Err(invalid(format!(
+                            "a spacing of {spacing} and a count of {count:?}; a spacing from 1 and \
+                             a count range up to {MAX_SCATTER_SLOTS} are allowed"
+                        )));
+                    }
+                    if !(between.0.is_finite() && between.1.is_finite() && between.0 < between.1) {
+                        return Err(invalid(format!("heights between {between:?}")));
+                    }
+                    if let Some(&index) = by_name.get(volume.as_str())
+                        && scales[index] != 1
+                    {
+                        return Err(invalid(format!(
+                            "it embeds in {volume:?}, which is no stage at the WFC lattice's scale"
+                        )));
+                    }
+                    let mut names = Vec::new();
+                    let mut tests = Vec::new();
+                    for condition in when {
+                        condition.check().map_err(invalid)?;
+                        check_place(|f| condition.visit(f), Place::Voxel, &columns)
+                            .map_err(invalid)?;
+                        condition.inputs(&mut names);
+                        condition.categories(&mut tests);
+                    }
+                    check_categories(&categories, &by_name, &tests).map_err(invalid)?;
+                    let mut reads = widest_reads(names);
+                    reads.push((volume.as_str(), Reach::Cells(0), Output::Volume));
+                    reads
+                }
                 StageKind::Top { volume } => {
                     if let Some(&index) = by_name.get(volume.as_str())
                         && scales[index] != def.scale
@@ -2342,7 +2397,7 @@ impl Pack {
                         }
                     }
                 }
-                StageKind::Scatter { when, .. } => {
+                StageKind::Scatter { when, .. } | StageKind::Embed { when, .. } => {
                     for condition in when {
                         condition.visit(&mut note);
                     }

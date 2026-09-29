@@ -617,7 +617,11 @@ impl INode for WaveForgeStages {
             let placing = |stage: &str| {
                 matches!(
                     self.pack.as_ref().and_then(|pack| pack.kind(stage)),
-                    Some(StageKind::Scatter { .. } | StageKind::Assemble { .. })
+                    Some(
+                        StageKind::Scatter { .. }
+                            | StageKind::Embed { .. }
+                            | StageKind::Assemble { .. }
+                    )
                 )
             };
             for event in &events {
@@ -2565,7 +2569,7 @@ impl WaveForgeStages {
                 )
             };
             let items: Vec<Item> = match pack.kind(stage)? {
-                StageKind::Scatter { .. } => worker
+                StageKind::Scatter { .. } | StageKind::Embed { .. } => worker
                     .points(stage, chunk)?
                     .iter()
                     .filter(|point| binds(&point.kind))
