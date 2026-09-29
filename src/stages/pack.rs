@@ -944,19 +944,41 @@ impl StageKind {
 pub(crate) enum Reach {
     Cells(u32),
     Chunks(u32),
-    /// Whole chunks and then cells beyond them.
-    ChunksAndCells(u32, u32),
+    /// The square region of `size` chunks the reader's chunk lies in, counted from the origin,
+    /// grown by `halo` chunks and then `cells` cells: what a stage reads that computes its whole
+    /// region at once and reads nothing outside it. The runtime generates the input over that
+    /// region alone, where a symmetric reach would take in the neighbouring regions too.
+    Region {
+        size: u32,
+        halo: u32,
+        cells: u32,
+    },
 }
 
 impl Reach {
-    /// The reach in cells along each lattice axis, for chunks of `size` cells.
+    /// The reach in cells along each lattice axis, for chunks of `size` cells. A region's is the
+    /// farthest any chunk of it reads: from its first chunk to the far edge of its halo and cells.
     pub(crate) const fn cells(self, size: [u32; 2]) -> [u32; 2] {
         match self {
             Self::Cells(cells) => [cells, cells],
             Self::Chunks(chunks) => [chunks * size[0], chunks * size[1]],
-            Self::ChunksAndCells(chunks, cells) => {
-                [chunks * size[0] + cells, chunks * size[1] + cells]
-            }
+            Self::Region {
+                size: side,
+                halo,
+                cells,
+            } => [
+                (side - 1 + halo) * size[0] + cells,
+                (side - 1 + halo) * size[1] + cells,
+            ],
+        }
+    }
+
+    /// The reach of a stage that reads the region of `size` chunks its chunk lies in.
+    pub(crate) const fn region(size: u32) -> Self {
+        Self::Region {
+            size,
+            halo: 0,
+            cells: 0,
         }
     }
 }
@@ -2124,7 +2146,7 @@ impl Pack {
                     }
                     // A chunk's site lies within the chunk's region, so its footprint is at most
                     // a region away.
-                    vec![(height.as_str(), Reach::Chunks(*region), Output::Field)]
+                    vec![(height.as_str(), Reach::region(*region), Output::Field)]
                 }
                 StageKind::Lakes {
                     height,
@@ -2142,15 +2164,15 @@ impl Pack {
                             "lakes stand above the sea, but the pack declares no water".to_owned(),
                         ));
                     }
-                    // A chunk may lie anywhere in its region, and the lakes fill the whole region.
-                    vec![(height.as_str(), Reach::Chunks(region - 1), Output::Field)]
+                    // The lakes fill the whole region, from its heights alone.
+                    vec![(height.as_str(), Reach::region(*region), Output::Field)]
                 }
                 StageKind::Locations {
                     height,
                     region,
                     kinds,
                 } => {
-                    let mut reads = vec![(height.as_str(), Reach::Chunks(*region), Output::Field)];
+                    let mut reads = vec![(height.as_str(), Reach::region(*region), Output::Field)];
                     for (index, kind) in kinds.iter().enumerate() {
                         let refuse =
                             |message: String| invalid(format!("kind {:?}: {message}", kind.name));
@@ -2205,7 +2227,12 @@ impl Pack {
                             condition.inputs(&mut names);
                             // A footprint's centre lies anywhere in the region.
                             reads.extend(names.into_iter().map(|(name, output, cells)| {
-                                (name, Reach::ChunksAndCells(*region, cells), output)
+                                let reach = Reach::Region {
+                                    size: *region,
+                                    halo: 0,
+                                    cells,
+                                };
+                                (name, reach, output)
                             }));
                         }
                         check_categories(&categories, &by_name, &tests).map_err(refuse)?;
@@ -2264,12 +2291,10 @@ impl Pack {
                     {
                         return Err(invalid(format!("widths of {width:?}")));
                     }
-                    // A chunk may lie anywhere in its region, and the rivers read the whole
-                    // region's height, and its lakes, where they end.
-                    let mut reads =
-                        vec![(height.as_str(), Reach::Chunks(region - 1), Output::Field)];
+                    // The rivers read the whole region's height, and its lakes, where they end.
+                    let mut reads = vec![(height.as_str(), Reach::region(*region), Output::Field)];
                     if let Some(lakes) = lakes {
-                        reads.push((lakes, Reach::Chunks(region - 1), Output::Field));
+                        reads.push((lakes, Reach::region(*region), Output::Field));
                     }
                     reads
                 }
@@ -2291,9 +2316,8 @@ impl Pack {
                             "a width of {width}, a climb of {climb} and dry above {dry:?}"
                         )));
                     }
-                    // A chunk may lie anywhere in its region, and the paths read the whole
-                    // region's height and sites.
-                    let reach = Reach::Chunks(region - 1);
+                    // The paths read the whole region's height and sites.
+                    let reach = Reach::region(*region);
                     vec![
                         (height.as_str(), reach, Output::Field),
                         (sites.as_str(), reach, Output::Sites),
@@ -2576,11 +2600,10 @@ impl Pack {
                             "it deposits in {volume:?}, which is no stage at the WFC lattice's scale"
                         )));
                     }
-                    // A chunk may lie anywhere in its region, and the deposits read the whole
-                    // region's volume.
+                    // The deposits read the whole region's volume.
                     vec![
                         (cave.as_str(), Reach::Cells(0), Output::Pieces),
-                        (volume.as_str(), Reach::Chunks(region - 1), Output::Volume),
+                        (volume.as_str(), Reach::region(region), Output::Volume),
                     ]
                 }
                 StageKind::Spawn {
@@ -2663,9 +2686,12 @@ impl Pack {
                             "a budget of {budget} attempts; 1 to {MAX_BUDGET} are allowed"
                         )));
                     }
-                    // A chunk may lie anywhere in its region, so the job's view of its inputs,
-                    // the region and its halo, reaches that far from any chunk of it.
-                    let reach = Reach::Chunks(region - 1 + halo);
+                    // The job's view of its inputs is the region and its halo.
+                    let reach = Reach::Region {
+                        size: *region,
+                        halo: *halo,
+                        cells: 0,
+                    };
                     inputs
                         .iter()
                         .map(|name| (name.as_str(), reach, Output::Field))
@@ -3400,7 +3426,8 @@ mod tests {
         let reach = pack.reach("level", [8, 8]).expect("a stage");
 
         assert_eq!(reach["towns"], 4);
-        assert_eq!(reach["h"], 4 + 6 * 8);
+        // A site lies in its chunk's region of six chunks, at most five chunks from the chunk.
+        assert_eq!(reach["h"], 4 + 5 * 8);
     }
 
     #[test]
