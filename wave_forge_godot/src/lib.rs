@@ -51,7 +51,7 @@ use godot::classes::mesh::ArrayType as MeshArray;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::{
     FileAccess, INode, MeshLibrary, NavigationMesh, NavigationMeshSourceGeometryData3D,
-    NavigationServer3D, Node, PhysicsServer3D, ProjectSettings, Shape3D,
+    NavigationServer3D, Node, PhysicsServer3D, Shape3D,
 };
 use godot::prelude::*;
 use radius::chunk_distance;
@@ -68,6 +68,7 @@ mod gi;
 mod grass;
 mod lods;
 mod occlusion;
+mod paths;
 mod placements;
 mod proxy;
 mod radius;
@@ -562,11 +563,7 @@ impl WaveForgeWorld {
         let (seed, halo) = (self.seed as u64, self.halo.max(0) as u32);
         let warm = self.warm_kernels.then_some(self.view_radius.max(0) as u32);
         let frozen = (!self.frozen_directory.is_empty()).then(|| {
-            std::path::PathBuf::from(
-                ProjectSettings::singleton()
-                    .globalize_path(&self.frozen_directory)
-                    .to_string(),
-            )
+            std::path::PathBuf::from(crate::paths::directory_path(&self.frozen_directory))
         });
         self.followed = None;
         // Everything here happens on the generating thread, including building the device and

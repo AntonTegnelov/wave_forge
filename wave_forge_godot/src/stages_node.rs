@@ -26,8 +26,8 @@ use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
     ArrayMesh, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
     HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, NavigationMesh,
-    NavigationServer3D, Node, Node3D, PhysicsServer3D, ProjectSettings, RenderingServer, Shader,
-    ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
+    NavigationServer3D, Node, Node3D, PhysicsServer3D, RenderingServer, Shader, ShaderMaterial,
+    Shape3D, StandardMaterial3D, StaticBody3D,
 };
 use godot::global::Error;
 use godot::obj::EngineEnum;
@@ -1175,19 +1175,10 @@ impl WaveForgeStages {
             z: cells.z.max(1) as u32,
         };
         let seed = self.seed as u64;
-        let cache = (!self.kernel_cache.is_empty()).then(|| {
-            std::path::PathBuf::from(
-                ProjectSettings::singleton()
-                    .globalize_path(&self.kernel_cache)
-                    .to_string(),
-            )
-        });
+        let cache = (!self.kernel_cache.is_empty())
+            .then(|| std::path::PathBuf::from(crate::paths::directory_path(&self.kernel_cache)));
         let frozen = (!self.frozen_directory.is_empty()).then(|| {
-            std::path::PathBuf::from(
-                ProjectSettings::singleton()
-                    .globalize_path(&self.frozen_directory)
-                    .to_string(),
-            )
+            std::path::PathBuf::from(crate::paths::directory_path(&self.frozen_directory))
         });
         let mut noises = Vec::new();
         for (name, noise) in self.noises.iter_shared() {
@@ -1305,9 +1296,7 @@ impl WaveForgeStages {
         self.worker = Some(if self.play_directory.is_empty() {
             StageWorker::spawn(move || build())
         } else {
-            let directory = ProjectSettings::singleton()
-                .globalize_path(&self.play_directory)
-                .to_string();
+            let directory = crate::paths::directory_path(&self.play_directory);
             StageWorker::play(
                 Arc::clone(self.pack.as_ref().expect("set above")),
                 [shape.x, shape.y],
@@ -2253,9 +2242,7 @@ impl WaveForgeStages {
             godot_error!("wave forge: a world run is under way");
             return false;
         }
-        let directory = ProjectSettings::singleton()
-            .globalize_path(&directory)
-            .to_string();
+        let directory = crate::paths::directory_path(&directory);
         let targets: Vec<String> = self
             .targets
             .as_slice()
