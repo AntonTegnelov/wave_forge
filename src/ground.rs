@@ -58,6 +58,23 @@ pub struct GroundLevel {
     pub error: f32,
 }
 
+impl GroundMesh {
+    /// The finest level's surface, without its skirt, as triangles in world space for a chunk whose
+    /// corner is at `corner`: three corners each, counter-clockwise seen from above. What agents
+    /// walk on, for [`crate::surface_nav_source`].
+    #[must_use]
+    pub fn surface_triangles(&self, corner: [f32; 3]) -> Vec<[f32; 3]> {
+        let squares = (self.size[0] - 1) as usize * (self.size[1] - 1) as usize;
+        self.levels[0].indices[..squares * 6]
+            .iter()
+            .map(|&index| {
+                let at = self.positions[index as usize];
+                [at[0] + corner[0], at[1] + corner[1], at[2] + corner[2]]
+            })
+            .collect()
+    }
+}
+
 /// The ground of `chunk` from a height field whose chunks `field` looks up, with cells `cell_size`
 /// along the engine's x, y and z; a field's value is a height in cells.
 ///

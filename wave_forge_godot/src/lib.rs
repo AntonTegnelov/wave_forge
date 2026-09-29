@@ -71,6 +71,7 @@ mod occlusion;
 mod placements;
 mod proxy;
 mod radius;
+mod stage_navigation;
 mod stages_node;
 mod timings;
 

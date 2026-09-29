@@ -62,6 +62,14 @@ without chunks, a game builds a `Runtime` of the same pack and seed and calls `s
 stage runs, and the plugin builds the ground, surfaces and entities from them as it does from
 generated ones. A chunk the store lacks, or an edit, stops the stages with a failure.
 
+`WaveForgeStages::nav_source(chunk, in_world, border, cell_height)` gives what a game's navigation
+crate bakes a chunk's navigation mesh from, as `wave_forge::surface_nav_source` gathers it: the
+triangles of the chunk's ground and volume surface and of its neighbours', out to `border`, in
+Bevy's world, with bounds on a whole `cell_height` so neighbouring meshes meet. `in_world` says
+which chunks the world holds, all of them without the pack's bound. The plugin bakes no navigation
+itself, and holds no shapes for a town's modules: a game adds its towns' collider shapes with
+`InstanceSet::placed`.
+
 - `StagesSettings`: `chunk`, columns per chunk as the runtime was built with, and `cell_size`.
 - `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles`, `points` and `stamps` per stage and chunk, `timings()` per stage,
   `translation_of(point)` and `transform_of(point)` (turned, leant and scaled) in Bevy's world,

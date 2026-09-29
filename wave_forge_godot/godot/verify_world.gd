@@ -1,10 +1,13 @@
 ## Runs a finite world whole ahead of time, stopping and resuming, and plays it back.
 ##
 ## Run by `../verify.sh` after `verify_candidates.gd`. A node runs the pack's 30 chunks into a
-## directory, reporting its progress by chunk and by stage; it is cancelled as soon as it starts, so it stops after its
-## first chunk, and run again, which resumes and finishes. A second node given that directory as `play_directory` then plays the world
-## around the player: its fields and trees equal those of a third node that generates as usual, its
-## ground is built from them, and no stage of it ran.
+## directory, reporting its progress by chunk and by stage; it is cancelled as soon as it starts, so
+## it stops after its first chunk, and run again, which resumes and finishes. A second node given
+## that directory as `play_directory` then plays the world around the player: its fields and trees
+## equal those of a third node that generates as usual, in a world of its own, its ground is built
+## from them, and no stage of it ran. Both bake navigation around the player from their ground, and
+## a path across three chunks runs over the ground, the same in the played world as in the generated
+## one.
 extends SceneTree
 
 const CELLS := 8
@@ -19,11 +22,12 @@ var phase := "run"
 var progressed := 0
 var finished := []
 var first_stages := {}
+var navigable_usec := -1
 
 func _initialize() -> void:
 	DirAccess.remove_absolute(DIRECTORY)
 	_clear(ProjectSettings.globalize_path(DIRECTORY))
-	runner = _node("")
+	runner = _node("", root)
 	if not runner.start():
 		_fail("the runner did not start")
 		return
@@ -50,17 +54,19 @@ func _clear(path: String) -> void:
 		DirAccess.remove_absolute(path.path_join(file))
 	DirAccess.remove_absolute(path)
 
-func _node(played: String) -> Node:
+func _node(played: String, parent: Node) -> Node:
 	var node: Node = ClassDB.instantiate("WaveForgeStages")
 	node.pack_file = "res://world.world.ron"
 	node.targets = PackedStringArray(["height", "surface", "trees"])
 	node.seed = 23
 	node.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
-	node.view_radius = 1
+	# Navigation reaches a chunk less far than the ground, so the ground reaches past the area.
+	node.view_radius = 2
+	node.navigation_radius = 1
 	node.collider_radius = -1
 	node.ground_stage = "height"
 	node.play_directory = played
-	root.add_child(node)
+	parent.add_child(node)
 	node.generation_failed.connect(func(reason: String) -> void: _fail(reason))
 	return node
 
@@ -98,8 +104,12 @@ func _process(_delta: float) -> bool:
 			if finished[1] != [30, 30] or progressed < 30:
 				_fail("the resumed run ended at %s after %d reports" % [finished[1], progressed])
 				return true
-			player = _node(DIRECTORY)
-			generator = _node("")
+			player = _node(DIRECTORY, root)
+			# A navigation map of its own, so the two worlds' regions do not overlap.
+			var own := SubViewport.new()
+			own.own_world_3d = true
+			root.add_child(own)
+			generator = _node("", own)
 			if not player.start() or not generator.start():
 				_fail("the player or the generator did not start")
 				return true
@@ -123,10 +133,53 @@ func _process(_delta: float) -> bool:
 			if not player.stats()["stages"].is_empty():
 				_fail("a stage ran in the played world: %s" % player.stats()["stages"])
 				return true
-			print("verify_world: a run of 30 chunks, reporting what each stage generated, cancelled after one and resumed finishes; the played world's fields and trees are the generated ones, its ground built from them, and no stage of it ran")
+			phase = "navigate"
+			return false
+		"navigate":
+			for chunk in _area():
+				if not player.navigation_chunks().has(chunk) or not generator.navigation_chunks().has(chunk):
+					return false
+			# The maps take the new regions in on their next synchronisation.
+			if navigable_usec < 0:
+				navigable_usec = Time.get_ticks_usec()
+			if (Time.get_ticks_usec() - navigable_usec) / 1e6 < 0.5:
+				return false
+			var played := _path(player)
+			var generated := _path(generator)
+			if played.is_empty():
+				return true
+			if played.size() != generated.size():
+				_fail("the played path %s is not the generated one %s" % [played, generated])
+				return true
+			for i in played.size():
+				if played[i].distance_to(generated[i]) > 1e-3:
+					_fail("the played path %s is not the generated one %s" % [played, generated])
+					return true
+			print("verify_world: a run of 30 chunks, reporting what each stage generated, cancelled after one and resumed finishes; the played world's fields and trees are the generated ones, its ground built from them, and no stage of it ran; a path of %d points across three chunks of its navigation is the generated world's" % played.size())
 			quit(0)
 			return true
 	return false
+
+## A path on `node`'s navigation from the middle of chunk (1, 1) to the middle of chunk (3, 3),
+## on the ground; empty, after failing, if it does not get there or leaves the ground.
+func _path(node: Node) -> PackedVector3Array:
+	var on_ground := func(x: float, z: float) -> Vector3:
+		return Vector3(x, node.ground_height(Vector3(x, 0, z)), z)
+	var from: Vector3 = on_ground.call(1.5 * CELLS, 1.5 * CELLS)
+	var to: Vector3 = on_ground.call(3.5 * CELLS, 3.5 * CELLS)
+	var map: RID = node.get_viewport().find_world_3d().navigation_map
+	var path := NavigationServer3D.map_get_path(map, from, to, true)
+	var apart := func(a: Vector3, b: Vector3) -> float: return Vector2(a.x - b.x, a.z - b.z).length()
+	if path.is_empty() or apart.call(path[0], from) > 0.5 or apart.call(path[path.size() - 1], to) > 0.5:
+		_fail("no path from %s to %s: %s" % [from, to, path])
+		return PackedVector3Array()
+	for point: Vector3 in path:
+		var ground: float = on_ground.call(point.x, point.z).y
+		# A navigation mesh follows the ground as closely as its detail sampling's error allows.
+		if absf(point.y - ground) > NavigationMesh.new().detail_sample_max_error + 0.25:
+			_fail("the path runs at height %.2f where the ground is %.2f: %s" % [point.y, ground, path])
+			return PackedVector3Array()
+	return path
 
 func _fail(message: String) -> void:
 	printerr("verify_world: " + message)

@@ -43,6 +43,22 @@ pub struct VolumeMesh {
     pub materials: Vec<u8>,
 }
 
+impl VolumeMesh {
+    /// The surface as triangles in world space for a chunk whose corner is at `corner`: three
+    /// corners each, counter-clockwise seen from the empty side. What agents walk on, for
+    /// [`crate::surface_nav_source`].
+    #[must_use]
+    pub fn triangles(&self, corner: [f32; 3]) -> Vec<[f32; 3]> {
+        self.indices
+            .iter()
+            .map(|&index| {
+                let at = self.positions[index as usize];
+                [at[0] + corner[0], at[1] + corner[1], at[2] + corner[2]]
+            })
+            .collect()
+    }
+}
+
 /// The surface of `chunk` from a Volume stage whose chunks `volume` looks up, with voxels
 /// `voxel_size` along the engine's x, y and z: a cell's size times the stage's scale.
 ///

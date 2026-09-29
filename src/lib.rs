@@ -75,7 +75,10 @@ pub use ground::{
     GroundLevel, GroundMesh, ground, ground_height, ground_materials, ground_readers,
 };
 pub use occluders::occluders;
-pub use products::{InstanceId, InstanceSet, NavSource, NavSourceError, instance_sets, nav_source};
+pub use products::{
+    InstanceId, InstanceSet, NavSource, NavSourceError, instance_sets, nav_source,
+    surface_nav_source,
+};
 pub use proxies::{ProxyLevel, ProxyMesh, proxy_mesh};
 pub use region_tags::{Emitter, RegionTags, region_tags, surface_at};
 pub use scheduler::FocusPoint;
