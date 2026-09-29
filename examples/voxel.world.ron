@@ -1,0 +1,94 @@
+// G1's test pack: an unbounded voxel world. Three climate noises pick each column's biome by the
+// nearest point in climate space, and continentalness raises the land, mountains higher than the
+// rest; the rock is 3D density with overhangs and cheese caves that stay under the ground's skin,
+// its surface materials by first-match rules. Villages of streets and houses grow on a jittered grid
+// and stand on levelled ground; aquifers pool water in the caves, lava in the deepest; coal and iron
+// lie in the rock, and trees grow on the ground's top in the plains and forests.
+(
+    version: 1,
+    noises: {
+        "continent": (noise_type: SimplexSmooth, seed: 1, frequency: 0.012, fractal_octaves: 3),
+        "temperature": (noise_type: SimplexSmooth, seed: 2, frequency: 0.009, fractal_octaves: 2),
+        "humidity": (noise_type: SimplexSmooth, seed: 3, frequency: 0.011, fractal_octaves: 2),
+        "overhang": (noise_type: SimplexSmooth, seed: 4, frequency: 0.07, fractal_octaves: 2),
+        "cheese": (noise_type: SimplexSmooth, seed: 5, frequency: 0.045, fractal_octaves: 2),
+    },
+    stages: [
+        (name: "continent", kind: Field(Add(FastNoise("continent"), Constant(0.15)))),
+        (name: "temperature", kind: Field(FastNoise("temperature"))),
+        (name: "humidity", kind: Field(FastNoise("humidity"))),
+        (name: "biomes", kind: Nearest(
+            climate: [Input("temperature"), Input("humidity"), Input("continent")],
+            biomes: [
+                (category: "plains", point: [0.0, 0.0, 0.0]),
+                (category: "forest", point: [0.0, 0.4, 0.0]),
+                (category: "desert", point: [0.4, -0.4, 0.0]),
+                (category: "snow", point: [-0.4, 0.0, 0.0]),
+                (category: "mountains", point: [0.0, 0.0, 0.3]),
+            ],
+        )),
+        // The land's height in cells: rolling with the continent, and higher and steeper in the
+        // mountains, blended over four cells where they begin.
+        (name: "height", kind: Field(Match(
+            input: "biomes",
+            cases: [("mountains", Add(Mul(Input("continent"), Constant(40.0)), Constant(10.0)))],
+            otherwise: Add(Mul(Input("continent"), Constant(16.0)), Constant(12.0)),
+            blend: 4,
+        ))),
+        // Solid below the height, bent into overhangs by 3D noise, with caves where the cheese noise
+        // is high, never within six cells of the height.
+        (name: "rock", kind: Volume(
+            density: Min(
+                Add(Sub(Input("height"), Z), Mul(FastNoise("overhang"), Constant(10.0))),
+                Max(
+                    Sub(Constant(3.0), Mul(FastNoise("cheese"), Constant(10.0))),
+                    Sub(Z, Sub(Input("height"), Constant(6.0))),
+                ),
+            ),
+            bottom: -48,
+            top: 64,
+            materials: Some((rules: [
+                (category: "snow", when: [
+                    Greater(Z, Sub(Input("height"), Constant(1.5))),
+                    Greater(Is("biomes", ["snow", "mountains"]), Constant(0.5)),
+                ]),
+                (category: "sand", when: [
+                    Greater(Z, Sub(Input("height"), Constant(4.0))),
+                    Greater(Is("biomes", ["desert"]), Constant(0.5)),
+                ]),
+                (category: "grass", when: [Greater(Z, Sub(Input("height"), Constant(1.5)))]),
+                (category: "dirt", when: [Greater(Z, Sub(Input("height"), Constant(4.0)))]),
+            ], otherwise: "stone")),
+        )),
+        (name: "villages", kind: Sites(height: "height", region: 8, size: (2, 3), chance: 0.8)),
+        (name: "village", kind: Assemble(sites: "villages", start: "square", max: 14, min: 5, rerolls: 4, pieces: [
+            (name: "square", size: (4, 4, 1), doors: [
+                (at: (3, 1, 0), facing: East, kind: "street"),
+                (at: (0, 2, 0), facing: West, kind: "street"),
+                (at: (1, 3, 0), facing: North, kind: "street"),
+                (at: (2, 0, 0), facing: South, kind: "street"),
+            ]),
+            (name: "street", size: (1, 4, 1), weight: 3, doors: [
+                (at: (0, 0, 0), facing: South, kind: "street"),
+                (at: (0, 3, 0), facing: North, kind: "street"),
+                (at: (0, 1, 0), facing: East, kind: "house"),
+                (at: (0, 2, 0), facing: West, kind: "house"),
+            ]),
+            (name: "house", size: (3, 3, 1), weight: 2, doors: [(at: (1, 0, 0), facing: South, kind: "house")]),
+            (name: "well", size: (2, 2, 1), doors: [(at: (0, 0, 0), facing: South, kind: "house")]),
+            (name: "wall", size: (1, 1, 1), end: true, doors: [(at: (0, 0, 0), facing: South, kind: "street")]),
+        ])),
+        // The rock with every village piece standing on a slab four cells deep under twelve of air.
+        (name: "terrain", kind: Carve(volume: "rock", level: Some((sites: "village", depth: 4, clear: 12)))),
+        (name: "surface", kind: Top(volume: "terrain")),
+        // Water in the caves in pools of 16 by 16 columns and 12 cells, lava in those below -30.
+        (name: "fluid", kind: Aquifer(volume: "terrain", cell: (16, 12), level: (-44.0, -8.0),
+            materials: Some((rules: [(category: "lava", when: [Less(Z, Constant(-30.0))])], otherwise: "water")))),
+        (name: "coal", kind: Embed(kind: "coal", volume: "terrain", spacing: 4, count: (1, 3), between: (-40.0, 40.0),
+            when: [Less(Z, Sub(Input("height"), Constant(3.0)))])),
+        (name: "iron", kind: Embed(kind: "iron", volume: "terrain", spacing: 6, between: (-44.0, 0.0),
+            when: [Less(Z, Sub(Input("height"), Constant(8.0)))])),
+        (name: "trees", kind: Scatter(kind: "tree", height: "surface", spacing: 4, apart: 3,
+            when: [Greater(Is("biomes", ["plains", "forest"]), Constant(0.5))], avoid: Some(("village", 1)))),
+    ],
+)

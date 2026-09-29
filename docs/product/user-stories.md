@@ -91,7 +91,18 @@ world depend on the travel route, a flaw Wave Forge must not copy.
 
 **Needs.** Field (climate, density with splines), Rules (biomes by nearest point, surface rules),
 3D density volumes, Sites and Assemble (jigsaw), Scatter chains, Apply, the order-diff test.
-**Status:** not started (2026-09-23).
+**Status:** automated criteria verified (2026-09-29), in the library's CI job
+([#219](https://github.com/AntonTegnelov/wave_forge/issues/219)); the walkthrough needs a person
+([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)). The voxel pack
+(`examples/voxel.world.ron`) generates an unbounded world whose biomes are the nearest points to
+three climate noises, with 3D density terrain that has overhangs and caves, snow, sand and grass by
+first-match rules, aquifers that pool water and lava in the caves and leave some dry, coal and iron
+in the rock, trees on the ground's top and villages of streets and houses on levelled ground. The
+same area generated at once and walked backwards chunk by chunk gives every stage's products bit
+for bit, and a changed ore spacing or overhang strength changes only the stages downstream of it
+(`tests/voxel_world.rs`). Godot and Bevy draw and collide with such a volume (`verify_volume.gd`,
+`wave_forge_bevy/tests/stages.rs`); neither draws its fluid yet
+([#231](https://github.com/AntonTegnelov/wave_forge/issues/231)).
 
 ### G2. A Dwarf Fortress-like finite world with history
 
