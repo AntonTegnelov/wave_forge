@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use wave_forge::stages::{Runtime, Value};
+use wave_forge::stages::{Runtime, StageKind, Value};
 use wave_forge::{ChunkCoord, FocusPoint};
 use wfc_devtools::continent::{CULTURES, SEED, SIZE, history, pack, runtime, towns};
 
@@ -363,4 +363,77 @@ fn a_settlement_of_every_culture_gets_a_town_of_its_module_set() {
         firsts.len()
     );
     assert_eq!(firsts.len(), CULTURES.len());
+}
+
+#[test]
+fn the_continent_grows_two_hundred_pieces_in_its_dungeons_and_buildings() {
+    let pack = pack();
+
+    let pieces: usize = pack
+        .stage_names()
+        .filter_map(|name| match pack.kind(name) {
+            Some(StageKind::Assemble { pieces, .. }) => Some(pieces.len()),
+            _ => None,
+        })
+        .sum();
+
+    assert!(pieces >= 200, "{pieces} pieces");
+}
+
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn every_larger_place_of_four_regions_grows_its_pieces() {
+    let pack = pack();
+    let assemblies: Vec<(String, Vec<String>, u32)> = pack
+        .stage_names()
+        .filter_map(|name| match pack.kind(name) {
+            Some(StageKind::Assemble { kinds, min, .. }) => {
+                Some((name.to_owned(), kinds.clone(), *min))
+            }
+            _ => None,
+        })
+        .collect();
+    let mut runtime = runtime();
+    let region = square(64, 192);
+    let focus: Vec<FocusPoint> = region.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    let mut targets = vec!["places"];
+    targets.extend(assemblies.iter().map(|(name, ..)| name.as_str()));
+
+    let started = std::time::Instant::now();
+    runtime.request(&focus, &targets).expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+    let seconds = started.elapsed().as_secs_f64();
+
+    let mut grown: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for (stage, kinds, min) in &assemblies {
+        let mut places = BTreeMap::new();
+        let mut pieces: BTreeMap<_, usize> = BTreeMap::new();
+        for &chunk in &region {
+            for site in runtime.sites("places", chunk).expect("placed") {
+                if site
+                    .kind
+                    .as_deref()
+                    .is_some_and(|kind| kinds.iter().any(|wanted| wanted == kind))
+                {
+                    places.insert(site.id.clone(), ());
+                }
+            }
+            for stamp in runtime.stamps(stage, chunk).expect("grown") {
+                *pieces.entry((stamp.site.clone(), stamp.id)).or_default() += 1;
+            }
+        }
+        let mut per_place: BTreeMap<_, usize> = BTreeMap::new();
+        for (site, _) in pieces.keys() {
+            *per_place.entry(site.clone()).or_default() += 1;
+        }
+        for site in places.keys() {
+            let count = per_place.get(site).copied().unwrap_or(0);
+            assert!(count as u32 >= *min, "{stage} on {site:?}: {count} pieces");
+        }
+        grown.insert(stage.clone(), (places.len(), per_place.values().sum()));
+    }
+    eprintln!(
+        "continent: four regions' assemblies in {seconds:.1} s, places and pieces by stage: {grown:?}"
+    );
+    assert!(grown.values().any(|(places, _)| *places > 0), "{grown:?}");
 }
