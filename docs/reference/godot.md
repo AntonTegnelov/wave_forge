@@ -157,7 +157,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Pack | `pack_file` | the pack, a `*.world.ron` file |
 | | `rules_files` | the rule sets Solve stages name, as name to rule file path |
 | | `targets` | the stages to generate; what they read comes with them |
-| | `params` | values of the pack's parameters, as name to number, which `start` gives the stages; one left out keeps its default ([packs.md](packs.md#parameters)) |
+| | `params/<name>` | a slider per parameter of the pack over its range, listed from `pack_file`, which the scene saves, `start` gives the stages and moving it changes them while they run; reverting gives the pack's default ([packs.md](packs.md#parameters)). From code, `params` is the same values as name to number |
 | | `start_on_ready` | start when the node enters the tree, when the game runs |
 | | `preview_in_editor` | start in the editor too, as a preview the editor plugin follows with the editor's camera and brushes paint on ([Editor](#editor)) |
 | | `edits_text` | the edits of the world as text, `edits_log`'s, which the scene saves and `start` applies: what brushes painted in the editor |
@@ -339,6 +339,8 @@ be placed again as `pooled_nodes` ([Scenes](#scenes)).
 `WaveForgeStages` is a tool class, so it runs in the editor where `preview_in_editor` is on,
 generating around the editor's camera. The editor plugin (`addons/wave_forge`, enabled in the
 project's plugins) adds a Wave Forge dock:
+- a Preset list of the packs shipped in `addons/wave_forge/presets`, which makes the chosen one
+  the selected node's pack as one undo action, its parameters then showing as sliders;
 - a Paint toggle;
 - a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
 - the stage it paints, or the point stages Remove takes from;

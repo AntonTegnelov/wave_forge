@@ -330,9 +330,13 @@ undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Sta
 (`examples/presets/islands.world.ron`) tunes its land amount, roughness and tree density; a sweep
 of every range over a grid of values and seeds finds a sound world at each, more land as `land`
 rises and more trees as `trees` does, and a changed parameter regenerates only what reads it
-(`tests/presets.rs`, `verify_params.gd`). The node previews in the editor, and the editor plugin
-paints strokes as one undo action each; a preset list, and the preview's speed against P6, are
-[#48](https://github.com/AntonTegnelov/wave_forge/issues/48).
+(`tests/presets.rs`, `verify_params.gd`). The inspector shows each parameter as a slider over its
+range that changes the running stages as it moves, reads its default until set and reverts to it
+(`verify_params.gd`), and Godot's inspector makes each change undoable. The editor plugin's dock
+lists the shipped presets and makes the chosen one the node's pack; the node previews in the
+editor. Picking a preset and moving sliders with the mouse is not automated, and the preview's
+speed on a reference desktop is P6's
+([#224](https://github.com/AntonTegnelov/wave_forge/issues/224)).
 
 ### N3. Place my own scene by dragging it in
 
