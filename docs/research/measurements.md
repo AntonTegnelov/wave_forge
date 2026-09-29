@@ -365,6 +365,7 @@ to its end would give.
 | ID | Measurement | Result | Protocol |
 |---|---|---|---|
 | L34 | The continent's terrain (`examples/continent/continent.world.ron`, 22 stages, seed 11, 16×16-column chunks): `ground` and `biome` asked for over 4×4 chunks at its centre, three runs | 25.8 to 25.9 s, since rivers and lakes are region jobs of 32 chunks a side whose reach pulls in the terrain over 132×132 chunks (17 424): `terrain`, a Match of 16 cases blended over 4 cells, 0.800 ms a chunk, `biome`, 50 rules, 0.37 ms, `height` 0.105 ms, every other stage under 0.06 ms. So the terrain costs about 1.5 ms a chunk, some 25 s over the continent's 16 384 chunks | `tests/continent.rs` (`a_part_of_the_continent_generates_with_rivers_and_lakes`), release, the dev container's CPU; `tools/measure_desktop.ps1` runs it on a desktop |
+| L35 | The same, and one chunk of a Volume stage with materials by rules that read `Is`, 104 levels, before and after a runtime lists each stage's category names once rather than for every column and voxel | `biome` 0.373 to 0.208 ms a chunk, `terrain` 0.800 to 0.607 ms, the volume 26.6 to 5.4 ms, of which 4.1 ms is its density; products unchanged (`tests/golden_stages.rs`) | `tests/continent.rs`, release, the dev container's CPU, at [#247] |
 
 ## The engines
 

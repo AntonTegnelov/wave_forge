@@ -596,6 +596,9 @@ pub struct Runtime {
     assembled: BTreeMap<(usize, SiteId), Assembly>,
     /// What each stage has cost, by stage index.
     timings: Vec<StageTiming>,
+    /// Each stage's categories, as [`StageKind::categories`] names them, by stage index: listed
+    /// once, since rules and `Is` look them up at every column and voxel.
+    categories: Vec<Vec<String>>,
     /// The region jobs Region stages name, by name.
     region_jobs: BTreeMap<String, Box<dyn RegionJob>>,
     /// Regions computed, by Region stage and region, kept while a chunk of their region is needed.
@@ -713,6 +716,18 @@ impl Runtime {
     pub fn new(pack: Arc<Pack>, seed: u64, size: [u32; 2]) -> Self {
         Self {
             timings: vec![StageTiming::default(); pack.stages.len()],
+            categories: pack
+                .stages
+                .iter()
+                .map(|stage| {
+                    stage
+                        .kind
+                        .categories()
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .collect(),
             noises: pack.noises.clone(),
             params: pack
                 .params
@@ -3649,7 +3664,7 @@ impl Runtime {
         {
             let [sx, sy] = self.size;
             let levels = top.abs_diff(*bottom);
-            let names = stage.kind.categories();
+            let names = &self.categories[index];
             let mut values = Vec::with_capacity((sx * sy * levels) as usize);
             let mut materials = Vec::new();
             for level in *bottom..*top {
@@ -3670,7 +3685,7 @@ impl Runtime {
                             materials.push(first_rule(
                                 &kinds.rules,
                                 &kinds.otherwise,
-                                &names,
+                                names,
                                 &place,
                             )?);
                         }
@@ -3699,7 +3714,7 @@ impl Runtime {
                 unreachable!("inputs are generated before the stages that read them")
             };
             let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
-            let names = stage.kind.categories();
+            let names = &self.categories[index];
             let [sx, sy, levels] = rock.size;
             let mut values = Vec::with_capacity(rock.values.len());
             let mut materials = Vec::new();
@@ -3721,7 +3736,7 @@ impl Runtime {
                             materials.push(first_rule(
                                 &kinds.rules,
                                 &kinds.otherwise,
-                                &names,
+                                names,
                                 &place,
                             )?);
                         }
@@ -4656,9 +4671,9 @@ impl Leaves for ColumnPlace<'_, '_> {
             }
             Expr::Is(stage, names) => {
                 let index = pack.index(stage).expect("linked when loaded");
-                let known = pack.stages[index].kind.categories();
+                let known = &self.runtime.categories[index];
                 let here = read(stage, column[0], column[1])? as usize;
-                f32::from(u8::from(names.iter().any(|name| name == known[here])))
+                f32::from(u8::from(names.iter().any(|name| *name == known[here])))
             }
             Expr::Match {
                 input: stage,
@@ -4667,7 +4682,7 @@ impl Leaves for ColumnPlace<'_, '_> {
                 blend,
             } => {
                 let index = pack.index(stage).expect("linked when loaded");
-                let names = pack.stages[index].kind.categories();
+                let names = &self.runtime.categories[index];
                 let reach = i64::from(*blend);
                 // A tent in each direction, so a category's weight falls off smoothly with its
                 // distance from the column and the blend moves by a small step per column.
@@ -4687,7 +4702,7 @@ impl Leaves for ColumnPlace<'_, '_> {
                 for (category, weight) in weights {
                     let case = cases
                         .iter()
-                        .find(|(name, _)| name == names[category])
+                        .find(|(name, _)| *name == names[category])
                         .map_or(otherwise.as_ref(), |(_, expr)| expr);
                     blended += weight / total * evaluate(case, self)?;
                 }
@@ -4739,7 +4754,7 @@ impl Runtime {
         let place = self.place(index, column, read);
         match &stage.kind {
             StageKind::Rules { rules, otherwise } => {
-                first_rule(rules, otherwise, &stage.kind.categories(), &place)
+                first_rule(rules, otherwise, &self.categories[index], &place)
             }
             StageKind::Nearest { climate, biomes } => {
                 let here: Vec<f32> = climate
@@ -4771,7 +4786,7 @@ impl Runtime {
 fn first_rule(
     rules: &[Rule],
     otherwise: &str,
-    names: &[&str],
+    names: &[String],
     place: &impl Leaves,
 ) -> Result<u8, StageError> {
     let index_of = |name: &str| {
