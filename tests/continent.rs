@@ -218,3 +218,49 @@ fn the_rock_under_cliffs_holds_caves_overhangs_and_ore() {
         "{ores:?}: {placed:?}"
     );
 }
+
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn a_region_places_its_locations_and_joins_them_by_roads() {
+    let mut runtime = Runtime::new(pack(), 11, SIZE);
+    // The region of 32 chunks a side south-west of the centre, whole.
+    let region: Vec<ChunkCoord> = (32..64)
+        .flat_map(|y| (32..64).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<FocusPoint> = region.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+
+    let started = std::time::Instant::now();
+    runtime
+        .request(&focus, &["places", "roads"])
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+    let seconds = started.elapsed().as_secs_f64();
+
+    let mut places = BTreeMap::new();
+    let mut roads = BTreeMap::new();
+    for &chunk in &region {
+        for site in runtime.sites("places", chunk).expect("placed") {
+            places.insert(site.id.clone(), site.kind.clone());
+        }
+        for road in runtime.curves("roads", chunk).expect("joined") {
+            roads.insert(road.id.clone(), road.points.len());
+        }
+    }
+    let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+    for kind in places.values().flatten() {
+        *kinds.entry(kind.to_string()).or_default() += 1;
+    }
+    eprintln!(
+        "continent: a region of 32x32 chunks in {seconds:.1} s: {} places of {} kinds, {} roads; {kinds:?}",
+        places.len(),
+        kinds.len(),
+        roads.len()
+    );
+    assert!(kinds.len() >= 15, "{kinds:?}");
+    assert!(
+        roads.len() + 1 >= places.len() / 2,
+        "{} roads for {} places",
+        roads.len(),
+        places.len()
+    );
+}

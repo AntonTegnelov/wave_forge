@@ -4,7 +4,8 @@
 // a temperature from latitude and height and a moisture from noise, fifty biomes chosen by rules
 // over those, each shaping the ground its own way, lakes in the hollows and rivers carved from the
 // high ground to the sea. Under the ground lies rock as a density volume, with cheese caves,
-// overhangs on cliffs and ore. Heights are in cells of height, the sea at 0.
+// overhangs on cliffs and ore; a location table of 33 kinds, levelled into the ground and joined
+// by roads. Heights are in cells of height, the sea at 0.
 (
     version: 1,
     bound: Some(Rect(min: (0.0, 0.0), max: (2047.0, 2047.0))),
@@ -139,14 +140,98 @@
             blend: 4,
         ))),
         // Lakes in the terrain's hollows, and rivers from the high ground to the sea or a lake,
-        // in regions of 32 chunks, carved into the ground a player walks.
+        // in regions of 32 chunks, carved into the terrain.
         (name: "lakes", kind: Lakes(height: "terrain", region: 32, min_columns: 12)),
         (name: "rivers", kind: Rivers(height: "terrain", region: 32, sources: 6, width: (0.8, 3.0), step: 2)),
-        (name: "ground", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
+        (name: "carved", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
             profile: Carve(0.8))),
         // How uneven the ground is, and where each biome ends, for what is placed on it.
         (name: "roughness", kind: Delta(input: "terrain", radius: 2)),
         (name: "biome_area", kind: Area(input: "biome", distance: 4)),
+        // The location table: 33 kinds in every region of 32 chunks, each in the biomes it belongs
+        // to, on ground gentle enough and above the sea, with a quota and a distance from its own
+        // kind. The larger and rarer first: towns and castles before farmsteads and camps.
+        (name: "places", persist: Frozen, kind: Locations(height: "carved", region: 32, kinds: [
+            (name: "market_town", priority: 20, quota: 1, size: 3, tries: 200, when: [
+                Greater(Is("biome", ["meadow", "prairie", "broadleaf_forest", "hill_pasture", "mixed_woodland", "savanna"]), Constant(0.5)),
+                Less(Input("roughness"), Constant(2.0)), Greater(Input("carved"), Constant(2.0))]),
+            (name: "harbour_town", priority: 19, quota: 1, size: 2, tries: 200, when: [
+                Greater(Is("biome", ["beach", "shingle"]), Constant(0.5)), Less(Input("roughness"), Constant(2.5))]),
+            (name: "castle", priority: 18, quota: 1, size: 2, tries: 120, when: [
+                Greater(Is("biome", ["hill_pasture", "oak_hills", "upland_heath", "chaparral"]), Constant(0.5)),
+                Less(Input("roughness"), Constant(3.0))]),
+            (name: "monastery", priority: 17, quota: 1, size: 2, tries: 120, when: [
+                Greater(Is("biome", ["alpine_meadow", "cloud_forest", "fir_highland"]), Constant(0.5)),
+                Less(Input("roughness"), Constant(3.0))]),
+            (name: "frost_fort", priority: 16, quota: 1, size: 2, tries: 120, when: [
+                Greater(Is("biome", ["tundra", "polar_desert", "lichen_highland", "rock_plateau"]), Constant(0.5)),
+                Less(Input("roughness"), Constant(3.0))]),
+            (name: "jungle_ziggurat", priority: 15, quota: 1, size: 2, tries: 120, when: [
+                Greater(Is("biome", ["rainforest", "jungle_hills"]), Constant(0.5))]),
+            (name: "desert_ruins", priority: 14, quota: 1, size: 2, tries: 120, when: [
+                Greater(Is("biome", ["desert", "badlands", "dry_scrub"]), Constant(0.5))]),
+            (name: "cliff_dwelling", priority: 13, quota: 2, apart: 96.0, tries: 120, when: [
+                Greater(Is("biome", ["mesa", "badlands"]), Constant(0.5))]),
+            (name: "fishing_village", priority: 12, quota: 3, apart: 128.0, tries: 120, when: [
+                Greater(Is("biome", ["beach", "shingle", "mangrove"]), Constant(0.5))]),
+            (name: "stilt_village", priority: 11, quota: 2, apart: 128.0, tries: 120, when: [
+                Greater(Is("biome", ["fen", "swamp", "mangrove", "highland_marsh"]), Constant(0.5))]),
+            (name: "hamlet", priority: 10, quota: 4, apart: 96.0, tries: 120, when: [
+                Greater(Is("biome", ["meadow", "prairie", "broadleaf_forest", "taiga", "savanna", "mixed_woodland", "hill_pasture"]), Constant(0.5)),
+                Less(Input("roughness"), Constant(2.5)), Greater(Input("carved"), Constant(1.5))]),
+            (name: "nomad_camp", priority: 9, quota: 2, apart: 128.0, tries: 80, when: [
+                Greater(Is("biome", ["cold_steppe", "upland_steppe", "prairie", "savanna"]), Constant(0.5))]),
+            (name: "caravanserai", priority: 9, quota: 1, tries: 80, when: [
+                Greater(Is("biome", ["desert", "dry_scrub", "savanna", "shrubland"]), Constant(0.5))]),
+            (name: "oasis", priority: 9, quota: 2, apart: 160.0, tries: 80, when: [
+                Greater(Is("biome", ["desert"]), Constant(0.5)), Greater(Is("biome_area", ["median"]), Constant(0.5))]),
+            (name: "watchtower", priority: 8, quota: 3, apart: 128.0, tries: 80, when: [
+                Greater(Is("biome", ["hill_pasture", "upland_heath", "pine_highland", "upland_steppe", "chaparral"]), Constant(0.5))]),
+            (name: "lighthouse", priority: 8, quota: 2, apart: 200.0, tries: 80, when: [
+                Greater(Is("biome", ["shingle", "beach"]), Constant(0.5)), Greater(Is("biome_area", ["edge"]), Constant(0.5))]),
+            (name: "mine_entrance", priority: 8, quota: 3, apart: 96.0, tries: 80, when: [
+                Greater(Is("biome", ["scree", "rock_plateau", "mesa", "pine_highland"]), Constant(0.5))]),
+            (name: "quarry", priority: 7, quota: 2, apart: 128.0, tries: 80, when: [
+                Greater(Is("biome", ["rock_plateau", "mesa", "scree", "upland_heath"]), Constant(0.5))]),
+            (name: "farmstead", priority: 7, quota: 6, apart: 64.0, tries: 120, when: [
+                Greater(Is("biome", ["meadow", "prairie", "hill_pasture", "savanna", "mixed_woodland"]), Constant(0.5)),
+                Less(Input("roughness"), Constant(2.0))]),
+            (name: "mill", priority: 7, quota: 2, apart: 128.0, tries: 80, when: [
+                Greater(Is("biome", ["meadow", "prairie", "hill_pasture", "fen"]), Constant(0.5)),
+                Less(Input("roughness"), Constant(2.0))]),
+            (name: "hunters_lodge", priority: 6, quota: 3, apart: 96.0, tries: 80, when: [
+                Greater(Is("biome", ["taiga", "spruce_forest", "pine_highland", "fir_highland"]), Constant(0.5))]),
+            (name: "woodcutter_camp", priority: 6, quota: 3, apart: 96.0, tries: 80, when: [
+                Greater(Is("biome", ["broadleaf_forest", "spruce_forest", "mixed_woodland", "oak_hills"]), Constant(0.5))]),
+            (name: "druid_circle", priority: 5, quota: 1, tries: 80, when: [
+                Greater(Is("biome", ["oak_hills", "broadleaf_forest"]), Constant(0.5)), Greater(Is("biome_area", ["median"]), Constant(0.5))]),
+            (name: "standing_stones", priority: 5, quota: 2, apart: 160.0, tries: 80, when: [
+                Greater(Is("biome", ["upland_heath", "tundra", "lichen_highland", "hill_pasture"]), Constant(0.5))]),
+            (name: "barrow", priority: 5, quota: 3, apart: 96.0, tries: 80, when: [
+                Greater(Is("biome", ["tundra", "bog_tundra", "upland_heath", "cold_steppe"]), Constant(0.5))]),
+            (name: "ice_shrine", priority: 5, quota: 1, tries: 80, when: [
+                Greater(Is("biome", ["glacier", "ice_peaks"]), Constant(0.5))]),
+            (name: "sunken_temple", priority: 5, quota: 1, tries: 80, when: [
+                Greater(Is("biome", ["swamp", "mangrove", "fen", "muskeg"]), Constant(0.5))]),
+            (name: "witch_hut", priority: 4, quota: 2, apart: 160.0, tries: 80, when: [
+                Greater(Is("biome", ["bog_tundra", "muskeg", "upland_bog", "cold_mire", "upland_mire", "frost_marsh"]), Constant(0.5))]),
+            (name: "hot_spring", priority: 4, quota: 1, tries: 80, when: [
+                Greater(Is("biome", ["cloud_forest", "alpine_meadow", "scree"]), Constant(0.5))]),
+            (name: "shipwreck", priority: 4, quota: 2, apart: 200.0, tries: 80, when: [
+                Greater(Is("biome", ["beach", "shingle", "shallows"]), Constant(0.5))]),
+            (name: "bandit_camp", priority: 3, quota: 2, apart: 160.0, tries: 80, when: [
+                Greater(Is("biome", ["chaparral", "shrubland", "dry_scrub", "thorn_highland", "savanna"]), Constant(0.5))]),
+            (name: "ruined_keep", priority: 3, quota: 2, apart: 160.0, tries: 80, when: [
+                Greater(Is("biome", ["hill_pasture", "upland_heath", "oak_hills", "upland_bog"]), Constant(0.5))]),
+            (name: "crypt", priority: 2, quota: 3, apart: 128.0, tries: 120, when: [
+                Greater(Input("carved"), Constant(2.0)), Less(Input("roughness"), Constant(4.0))]),
+        ])),
+        // The ground levelled over every place and blended back over four cells around it.
+        (name: "flattened", kind: Flatten(height: "carved", sites: "places", blend: 4)),
+        // Roads joining the places of each region of 32 chunks, round the ridges and never through
+        // the sea or a lake, levelled across their width into the ground a player walks.
+        (name: "roads", kind: Network(sites: "places", height: "flattened", region: 32, width: 1.5, climb: 4.0, dry: Some(0.5))),
+        (name: "ground", kind: Apply(height: "flattened", curves: "roads", max_radius: 2, blend: 2, profile: Level)),
         // How much a column is cliff: none on ground that climbs under 3 cells within two, all of
         // it from 8.
         (name: "cliffs", kind: Field(Smoothstep(3.0, 8.0, Input("roughness")))),
