@@ -1856,19 +1856,32 @@ impl Runtime {
         &mut self,
         targets: &[&str],
     ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        let focus: Vec<FocusPoint> = self
+            .bound_chunks()?
+            .into_iter()
+            .map(|chunk| FocusPoint::new(chunk, 0))
+            .collect();
+        self.request(&focus, targets)
+    }
+
+    /// Every chunk of the lattice any column of the pack's bound lies in, row by row from its
+    /// lowest corner: the chunks a finite world is made of.
+    ///
+    /// # Errors
+    /// [`StageError::Unbounded`] if the pack has no bound.
+    pub fn bound_chunks(&self) -> Result<Vec<ChunkCoord>, StageError> {
         let bound = *self.pack.bound.as_ref().ok_or(StageError::Unbounded)?;
         let (low, high) = bound.extent();
         let [sx, sy] = self.size.map(|size| size as f32);
         let chunk = |at: f32, side: f32| (at / side).floor() as i32;
-        let focus: Vec<FocusPoint> = (chunk(low[1], sy)..=chunk(high[1], sy))
+        Ok((chunk(low[1], sy)..=chunk(high[1], sy))
             .flat_map(|y| (chunk(low[0], sx)..=chunk(high[0], sx)).map(move |x| (x, y)))
             .filter(|&(x, y)| {
                 let min = [x as f32 * sx, y as f32 * sy];
                 bound.meets(min, [min[0] + sx, min[1] + sy])
             })
-            .map(|(x, y)| FocusPoint::new(ChunkCoord::new(x, y, 0), 0))
-            .collect();
-        self.request(&focus, targets)
+            .map(|(x, y)| ChunkCoord::new(x, y, 0))
+            .collect())
     }
 
     /// Whether any column of `chunk` of stage `index` lies inside the world's bound; every chunk
