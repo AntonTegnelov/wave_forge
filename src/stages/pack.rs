@@ -3084,6 +3084,25 @@ impl Pack {
         self.by_name.get(name).copied()
     }
 
+    /// How many chunks a side the largest regions of the pack's stages are, 1 without any: the
+    /// block a whole-world run generates at once, so a region's inputs are generated once.
+    pub(crate) fn largest_region(&self) -> u32 {
+        self.stages
+            .iter()
+            .filter_map(|stage| match &stage.kind {
+                StageKind::Sites { region, .. }
+                | StageKind::Lakes { region, .. }
+                | StageKind::Locations { region, .. }
+                | StageKind::Region { region, .. }
+                | StageKind::Rivers { region, .. }
+                | StageKind::Network { region, .. }
+                | StageKind::Cave { region, .. } => Some(*region),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(1)
+    }
+
     /// How many chunks a side of the regions a Cave stage plans its levels over, for the Cave
     /// stage `index` or a Tunnels, Deposit or Spawn stage that reads it.
     pub(crate) fn cave_region(&self, index: usize) -> u32 {
