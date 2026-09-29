@@ -1776,14 +1776,16 @@ impl Runtime {
             };
             let scale = self.pack.stages[index].scale;
             for &(input, reach) in &self.pack.stages[index].inputs {
-                let covered: BTreeSet<ChunkCoord> = chunks
+                // Every chunk of a region reads the same box, so the boxes are gathered first: a
+                // region's chunks would otherwise list its whole region once each.
+                let boxes: BTreeSet<([i64; 2], [i64; 2])> = chunks
                     .iter()
-                    .flat_map(|&chunk| {
-                        let (min, max) = self.needed_box(chunk, reach);
-                        self.covering(scale, input, min, max)
-                    })
+                    .map(|&chunk| self.needed_box(chunk, reach))
                     .collect();
-                needed.entry(input).or_default().extend(covered);
+                let covered = needed.entry(input).or_default();
+                for (min, max) in boxes {
+                    covered.extend(self.covering(scale, input, min, max));
+                }
             }
         }
         let mut dropped = Vec::new();
