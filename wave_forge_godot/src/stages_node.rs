@@ -41,8 +41,8 @@ use wave_forge::stages::{
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
-    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, VolumeMesh, YUpSpace,
-    far_ground, ground, ground_height, ground_materials, ground_readers, volume_mesh,
+    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, SurfaceWorker, VolumeMesh,
+    YUpSpace, far_ground, ground, ground_height, ground_materials, ground_readers,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -132,8 +132,8 @@ pub struct WaveForgeStages {
     /// for a stage with materials, with each vertex in its material's colour.
     #[export]
     volume_material: Option<Gd<Material>>,
-    /// How long a frame may spend building volume surfaces, drawing included, in milliseconds;
-    /// one is built a frame whatever it costs.
+    /// How long a frame may spend drawing volume surfaces meshed on the surface thread, in
+    /// milliseconds; one is drawn a frame whatever it costs.
     #[export]
     volume_budget_ms: f64,
     /// A colour per material of `volume_stage`, by index, which each vertex of its surface carries
@@ -228,11 +228,15 @@ pub struct WaveForgeStages {
     volume_due: std::collections::BTreeSet<ChunkCoord>,
     /// The chunks whose volume surface is built.
     volumes: HashMap<ChunkCoord, Surface>,
+    /// The thread volume surfaces are meshed on, while there is a `volume_stage`.
+    surfaces: Option<SurfaceWorker>,
+    /// Surfaces meshed and waiting to be drawn, a frame's budget at a time.
+    meshed: Vec<VolumeMesh>,
     /// How many surfaces have been built, which numbers each one's revision, so a chunk's body
     /// tells a surface built again from the one it holds.
     volume_revisions: u64,
-    /// The milliseconds building every surface so far has taken on Godot's thread, drawing
-    /// included.
+    /// The milliseconds drawing every surface so far has taken on Godot's thread; meshing them
+    /// takes place on the surface thread.
     volume_ms: f64,
     /// The material a volume with materials is drawn with when `volume_material` is empty: its
     /// vertices' colours as albedo.
@@ -520,6 +524,8 @@ impl INode for WaveForgeStages {
             volume_due: std::collections::BTreeSet::new(),
             volumes: HashMap::new(),
             volume_revisions: 0,
+            surfaces: None,
+            meshed: Vec::new(),
             volume_ms: 0.0,
             last_frame_ms: 0.0,
             ground_due: std::collections::BTreeSet::new(),
@@ -775,6 +781,7 @@ impl WaveForgeStages {
             );
             return false;
         }
+        self.surfaces = None;
         if !self.volume_stage.is_empty() {
             let stage = self.volume_stage.to_string();
             if !matches!(
@@ -788,6 +795,7 @@ impl WaveForgeStages {
                 );
                 return false;
             }
+            self.surfaces = Some(SurfaceWorker::spawn());
             if self.vertex_colours.is_none() {
                 let mut colours = StandardMaterial3D::new_gd();
                 colours.set_flag(Flags::ALBEDO_FROM_VERTEX_COLOR, true);
@@ -1769,9 +1777,10 @@ impl WaveForgeStages {
             &"pending_grounds".to_variant(),
             &(self.ground_due.len() as i64).to_variant(),
         );
+        let meshing = self.surfaces.as_ref().map_or(0, SurfaceWorker::building);
         out.set(
             &"pending_volumes".to_variant(),
-            &(self.volume_due.len() as i64).to_variant(),
+            &((self.volume_due.len() + meshing + self.meshed.len()) as i64).to_variant(),
         );
         out.set(
             &"last_frame_ms".to_variant(),
@@ -2021,8 +2030,9 @@ impl WaveForgeStages {
         count
     }
 
-    /// Builds the volume surface of the chunks a newly arrived volume may have completed, nearest
-    /// the followed position first, for `volume_budget_ms` a frame and at least one, and frees the surface of every chunk
+    /// Meshes the volume surface of the chunks a newly arrived volume may have completed on the
+    /// surface thread, and draws those meshed, nearest the followed position first, for
+    /// `volume_budget_ms` a frame and at least one, and frees the surface of every chunk
     /// that reads a volume that was dropped, which an edit's regeneration builds again.
     ///
     /// Returns how many chunks got a surface.
@@ -2033,9 +2043,10 @@ impl WaveForgeStages {
                 rendering.free_rid(instance);
                 rendering.free_rid(mesh);
             }
-        }
-        if self.worker.is_none() {
-            return 0;
+            if let Some(surfaces) = &mut self.surfaces {
+                surfaces.cancel(reader);
+            }
+            self.meshed.retain(|mesh| mesh.chunk != reader);
         }
         let Some(scenario) = self
             .base()
@@ -2043,6 +2054,9 @@ impl WaveForgeStages {
             .and_then(|viewport| viewport.find_world_3d())
             .map(|world| world.get_scenario())
         else {
+            return 0;
+        };
+        let (Some(worker), Some(surfaces)) = (&self.worker, &mut self.surfaces) else {
             return 0;
         };
         let stage = self.volume_stage.to_string();
@@ -2053,30 +2067,34 @@ impl WaveForgeStages {
         }
         self.volume_due
             .extend(arrived.iter().copied().flat_map(ground_readers));
-        let building = std::time::Instant::now();
         let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
+        let distance = |chunk: ChunkCoord| (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs());
         let mut due: Vec<ChunkCoord> = self.volume_due.iter().copied().collect();
-        due.sort_by_key(|chunk| {
-            (
-                (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()),
-                *chunk,
-            )
-        });
-        let mut count = 0;
+        due.sort_by_key(|&chunk| (distance(chunk), chunk));
         for chunk in due {
-            if count > 0 && elapsed_ms(building) >= self.volume_budget_ms {
-                break;
-            }
-            // Looked at now: built, already built, or waiting for a volume around it, whose
-            // arrival makes it due again.
+            // Looked at now: meshing, built, or waiting for a volume around it, whose arrival
+            // makes it due again.
             self.volume_due.remove(&chunk);
-            if self.volumes.contains_key(&chunk) {
+            if self.volumes.contains_key(&chunk) || surfaces.is_building(chunk) {
                 continue;
             }
-            let worker = self.worker.as_ref().expect("checked above");
-            let Some(mesh) = volume_mesh(chunk, |at| worker.volume(&stage, at), voxel) else {
-                continue;
-            };
+            let around: Option<Vec<_>> = (0..9)
+                .map(|i| {
+                    let at = ChunkCoord::new(chunk.x + i % 3 - 1, chunk.y + i / 3 - 1, chunk.z);
+                    worker.shared(&stage, at)
+                })
+                .collect();
+            if let Some(around) = around.and_then(|around| around.try_into().ok()) {
+                surfaces.build(chunk, around, voxel);
+            }
+        }
+        self.meshed.extend(surfaces.drain());
+        self.meshed
+            .sort_by_key(|mesh| std::cmp::Reverse((distance(mesh.chunk), mesh.chunk)));
+        let drawing = std::time::Instant::now();
+        let mut count = 0;
+        while let Some(mesh) = self.meshed.pop() {
+            let chunk = mesh.chunk;
             self.volume_revisions += 1;
             let drawn = (!mesh.indices.is_empty()).then(|| self.draw_surface(&mesh, scenario));
             let surface = Surface {
@@ -2086,8 +2104,11 @@ impl WaveForgeStages {
             };
             self.volumes.insert(chunk, surface);
             count += 1;
+            if elapsed_ms(drawing) >= self.volume_budget_ms {
+                break;
+            }
         }
-        self.volume_ms += elapsed_ms(building);
+        self.volume_ms += elapsed_ms(drawing);
         count
     }
 
@@ -2657,6 +2678,7 @@ impl WaveForgeStages {
             rendering.free_rid(mesh);
         }
         self.volume_due.clear();
+        self.meshed.clear();
         for (_, surface) in self.volumes.drain() {
             if let Some((mesh, instance)) = surface.drawn {
                 rendering.free_rid(instance);
