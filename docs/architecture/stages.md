@@ -23,9 +23,9 @@ masks ([solver.md](solver.md#the-prior)).
 - **Purity.** A stage's output for a key is a pure function of the world seed, the stage's id, the
   key, and read-only outputs of its inputs within a declared reach. Where parameters imply the reach
   (a blur radius, a spacing, a footprint), it is derived from them, and a pack never states one by
-  hand. (G1 to G8, N9.) Reach is in cells or whole chunks on a 2D lattice today; reach in world
-  units and in 3D is **not built yet** ([#93](https://github.com/AntonTegnelov/wave_forge/issues/93),
-  [#71](https://github.com/AntonTegnelov/wave_forge/issues/71)).
+  hand. (G1 to G8, N9.) Reach is in a stage's own cells or whole chunks on a 2D lattice, converted
+  between scales ([levels](../reference/packs.md#levels)); a volume's chunk holds whole columns
+  between its levels, so a volume reads within reach on the ground plane too.
 - **Bounded reads.** A stage reads its inputs through a view bounded by its declared reach. A read
   outside it is an error naming the stage and the reach it would need. The transitive reach, the
   area each stage has to be generated over for a request, is computed when the pack loads. (N5, P2.)
@@ -77,7 +77,7 @@ masks ([solver.md](solver.md#the-prior)).
 | **Field** | named channels on a 2D or 3D grid at the stage's cell size | height, climate, masks, density and signed distance, categorical ids such as a biome | one `f32` per cell column, or a category per column from a Rules stage; one `f32` per voxel of a column's levels from a Volume stage |
 | **PointSet** | structure of arrays: position, rotation, scale, stable id, kind, attribute columns | sites, anchors, scatter candidates and placements, spawn points | `Sites` and `Points` |
 | **CurveSet** | polylines with per-vertex attributes (radius, flow, profile) and optional connectivity | roads, rivers, tunnels, room and site graphs | `Curves` from region jobs: points and one value per point; connectivity and rasterising are [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
-| **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas | prefab pieces from an Assemble stage, each with its footprint, floor and turn; carve and fill primitives come with density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)) |
+| **Stamps** | an ordered list of carve, fill and prefab primitives, each with bounds | jigsaw pieces, cave rooms, flatten areas | prefab pieces from an Assemble stage, each with its footprint, floor and turn; a [Carve](../reference/packs.md#carve) stage carves pieces and curves into a volume as boxes and tubes |
 | **Table** | named rows of facts, each with an id and typed columns; given by the game or generated from a parent table | a history the game simulated, planet or system parameters, a location table | given and generated tables with number and name columns; a position is two columns; curves are [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
 | **Prior** and **TileGrid** | the WFC stage's input and output | tiles | `Tiles`, a town's chunk |
 | **Edits** | an operation log keyed by stable ids and cells | brushes, removed and moved placements, terrain deltas | removed and moved points by id and raises of a field by column; painted masks and tile overrides are not built yet |
@@ -97,8 +97,8 @@ TileGrids for an engine ([engine-integration.md](engine-integration.md#products)
 | **Solve** | WFC over a Prior; Wang tiling later | the solver's halo | G4, G5, N6 | one bounded town per site (below) |
 | **Sites** | owned region-scale points, one candidate per region cell (Minecraft's `random_spread`), with spacing | a region | G1, G3, G7 | one footprint per region, sites from a table's rows, and a location table of kinds with priorities, quotas, distances and conditions per region |
 | **Scatter** | a generator and a chain of modifiers producing a PointSet (below) | its largest spacing or footprint | all G, N3, N5 | one kind per stage, with counts, groups, conditions, water depth, scale, tilt, ground alignment, and clearance from other Scatter stages |
-| **Network** | bounded paths between owned sites (roads, rivers, tunnels) | declared | G7, G8 | paths joining a region's sites by a spanning tree, each the cheapest over a height field for its length and climb; tunnels wait for density volumes ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)) |
-| **Assemble** | a jigsaw or room graph grown from one site into Stamps, with a bounded extent | the extent | G1, G7, G8 | pieces grown from connectors inside the site's footprint, with end pieces and rerolls, which covers jigsaw villages and room graphs of prefabs; graph-first cave layouts wait for density volumes |
+| **Network** | bounded paths between owned sites (roads, rivers, tunnels) | declared | G7, G8 | paths joining a region's sites by a spanning tree, each the cheapest over a height field for its length and climb; tunnels between room entrances in 3D wait for G8's cave level ([#220](https://github.com/AntonTegnelov/wave_forge/issues/220)) |
+| **Assemble** | a jigsaw or room graph grown from one site into Stamps, with a bounded extent | the extent | G1, G7, G8 | pieces grown from connectors inside the site's footprint, with end pieces and rerolls, which covers jigsaw villages and room graphs of prefabs; graph-first cave layouts wait for G8's cave level ([#220](https://github.com/AntonTegnelov/wave_forge/issues/220)) |
 | **Apply** | rasterises curves and stamps into fields or Priors in a stable order | the primitives' bounds | G1, G3, G8 | `Flatten` for the footprints of sites and of stamps, and `Apply` for curves into a height field, levelled or carved; Priors are not built yet |
 | **Region job** | any bounded pure computation over a region, with retries | the region | G2, G4 to G8 | a Region stage running a `RegionJob` the game registers, producing curves, and the built-in Rivers stage |
 | **Table** | rows given by the game, or generated once per parent row by expressions | its parent table | G2, G3, G6 | built; stages read a focused row, a TableSites stage puts a site for every row, and a Solve stage chooses its rule set by a row's names; Apply reading a table's curves is [#98](https://github.com/AntonTegnelov/wave_forge/issues/98) |
