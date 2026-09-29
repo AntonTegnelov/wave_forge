@@ -267,6 +267,8 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Assemble` | Stamps | a sites stage, 0 cells |
 | `Cave` | Stamps | nothing |
 | `Tunnels` | Curves | a Cave stage, 0 cells |
+| `Deposit` | Points | a Cave stage, 0 cells; a volume, `region - 1` chunks |
+| `Spawn` | Points | a Cave stage, 0 cells |
 | `Scatter` | Points | a height field, `apart` cells (one more with `max_slope`); a sites stage or an Assemble stage, `apart + margin` cells |
 | `Embed` | Points | a volume, and what its conditions read, 0 cells |
 
@@ -707,6 +709,29 @@ with `wander: 0.0` runs as straight as the grid allows. A tunnel's radius, its c
 every point, is hashed per tunnel from `radius.0` up to `radius.1` cells. A chunk's product is the
 tunnels passing through it, which a [Carve](#carve) stage carves along their heights. Loading
 refuses a `cave` that is no Cave stage and a noise the pack does not declare.
+
+### Deposit
+
+`Deposit(kind: "gold", cave: "level", volume: "caves", total: 40, depth: 2, apart: 2.0)`: exactly
+`total` points of `kind` (1 to 4096) per level of the Cave stage `cave`, in the rock around its
+rooms, so a level's resources meet its quota whatever its shape. Candidates are drawn by hash, each
+at the centre of a voxel in a hashed room's shell, less than `depth` cells (default 1) outside its
+box. A candidate is kept where the Volume or Carve stage `volume` is solid at that voxel, inside
+the region, outside every room and at least `apart` cells (default 0) from every point kept, until
+`total` are kept; a level whose `tries` candidates (default 4096) run out first fails with
+`StageError::RegionRejected`. A chunk's product is the points whose column lies in it, with
+positional ids. It reads the whole region's volume, so every chunk of a Deposit stage waits for
+the volume across its region: a bounded level's cost, heavy for a region of many chunks.
+
+### Spawn
+
+`Spawn(cave: "level", budget: 10, kinds: [(kind: "grunt", cost: 1, weight: 4), (kind: "brute", cost: 7)])`:
+points standing on the floors of the Cave stage `cave`'s rooms, each room spending its own
+`budget` (at most 1000). Kinds are drawn by weight (default 1) among those whose `cost` (from 1)
+is no more than what the room has left, each at a hashed place on the room's floor, until the room
+can afford none. So what a room spends is at most its budget, and less than the cheapest kind
+short of it: with a kind that costs 1, exactly its budget. A chunk's product is the points whose
+column lies in it, with positional ids.
 
 ### Scatter
 

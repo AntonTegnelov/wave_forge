@@ -608,6 +608,9 @@ pub struct Runtime {
     caves: BTreeMap<RegionKey, Arc<CavePlan>>,
     /// Tunnels found, by Tunnels stage and its cave's region, kept as the cave's plan is.
     tunnels: BTreeMap<RegionKey, Arc<[Curve]>>,
+    /// Points placed by budget, by Deposit or Spawn stage and its cave's region, kept as the
+    /// cave's plan is.
+    budgeted: BTreeMap<RegionKey, Arc<[Point]>>,
     facts: Option<Facts>,
     /// The player's edits, folded from their log, applied to every product as it is generated.
     edits: Folded,
@@ -713,6 +716,7 @@ impl Runtime {
             lakes: BTreeMap::new(),
             caves: BTreeMap::new(),
             tunnels: BTreeMap::new(),
+            budgeted: BTreeMap::new(),
             pack,
             seed,
             size,
@@ -1177,6 +1181,8 @@ impl Runtime {
         self.caves
             .retain(|&(stage, region), _| fresh_cave(stage, region));
         self.tunnels
+            .retain(|&(stage, region), _| fresh_cave(stage, region));
+        self.budgeted
             .retain(|&(stage, region), _| fresh_cave(stage, region));
         dropped
     }
@@ -1735,6 +1741,8 @@ impl Runtime {
             .retain(|&(stage, region), _| needed_cave(stage, region));
         self.tunnels
             .retain(|&(stage, region), _| needed_cave(stage, region));
+        self.budgeted
+            .retain(|&(stage, region), _| needed_cave(stage, region));
         self.needed = needed;
         self.focus = focus.to_vec();
         self.store_unneeded_frozen()?;
@@ -2102,7 +2110,9 @@ impl Runtime {
             | StageKind::Embed { .. }
             | StageKind::Aquifer { .. }
             | StageKind::Cave { .. }
-            | StageKind::Tunnels { .. } => {
+            | StageKind::Tunnels { .. }
+            | StageKind::Deposit { .. }
+            | StageKind::Spawn { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
             StageKind::Rules { .. } | StageKind::Nearest { .. } => {
@@ -2431,7 +2441,9 @@ impl Runtime {
     fn plan_cave_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let cave = match &self.pack.stages[index].kind {
             StageKind::Cave { .. } => index,
-            StageKind::Tunnels { cave, .. } => self.pack.index(cave).expect("linked when loaded"),
+            StageKind::Tunnels { cave, .. }
+            | StageKind::Deposit { cave, .. }
+            | StageKind::Spawn { cave, .. } => self.pack.index(cave).expect("linked when loaded"),
             _ => return Ok(()),
         };
         let stage = &self.pack.stages[cave];
@@ -2478,8 +2490,24 @@ impl Runtime {
             })?;
             vacant.insert(Arc::new(plan));
         }
-        if index == cave || self.tunnels.contains_key(&(index, region)) {
+        if index == cave
+            || self.tunnels.contains_key(&(index, region))
+            || self.budgeted.contains_key(&(index, region))
+        {
             return Ok(());
+        }
+        match &self.pack.stages[index].kind {
+            StageKind::Deposit { .. } => {
+                let points = self.deposit(index, cave, region, (low, high))?;
+                self.budgeted.insert((index, region), Arc::from(points));
+                return Ok(());
+            }
+            StageKind::Spawn { .. } => {
+                let points = self.spawn(index, cave, region);
+                self.budgeted.insert((index, region), Arc::from(points));
+                return Ok(());
+            }
+            _ => {}
         }
         let tunnels = &self.pack.stages[index];
         let StageKind::Tunnels {
@@ -2540,6 +2568,205 @@ impl Runtime {
             .collect();
         self.tunnels.insert((index, region), Arc::from(curves));
         Ok(())
+    }
+
+    /// The points of Deposit stage `index` in `region` of Cave stage `cave`, whose columns run
+    /// from `area.0` to `area.1`, both included: exactly its total, or an error saying how many
+    /// its tries placed.
+    fn deposit(
+        &self,
+        index: usize,
+        cave: usize,
+        region: (i32, i32),
+        area: ([i64; 2], [i64; 2]),
+    ) -> Result<Vec<Point>, StageError> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Deposit {
+            kind,
+            volume,
+            total,
+            depth,
+            apart,
+            tries,
+            ..
+        } = &stage.kind
+        else {
+            unreachable!("called for Deposit stages")
+        };
+        let StageKind::Cave { rooms, .. } = &self.pack.stages[cave].kind else {
+            unreachable!("a Deposit stage reads a Cave stage")
+        };
+        let plan = &self.caves[&(cave, region)];
+        let volume = self.pack.index(volume).expect("linked when loaded");
+        let [sx, sy] = self.size.map(i64::from);
+        let (low, high) = area;
+        // The volume's value at the voxel whose centre is `at`, if it lies in the region and the
+        // volume's levels.
+        let value = |at: [f32; 3]| {
+            let column = [at[0].floor() as i64, at[1].floor() as i64];
+            if (0..2).any(|axis| !(low[axis]..=high[axis]).contains(&column[axis])) {
+                return None;
+            }
+            let chunk = ChunkCoord::new(
+                column[0].div_euclid(sx) as i32,
+                column[1].div_euclid(sy) as i32,
+                0,
+            );
+            let Some(Product::Volume(rock)) = self.products.get(&(volume, chunk)).map(Arc::as_ref)
+            else {
+                unreachable!("a Deposit stage's volume is generated over its region first")
+            };
+            let level = at[2].floor() as i64 - i64::from(rock.bottom);
+            (0..i64::from(rock.size[2])).contains(&level).then(|| {
+                rock.get(
+                    column[0].rem_euclid(sx) as u32,
+                    column[1].rem_euclid(sy) as u32,
+                    level as u32,
+                )
+            })
+        };
+        let boxes: Vec<([f32; 3], [f32; 3])> = plan
+            .rooms
+            .iter()
+            .map(|placed| {
+                let (w, d, h) = rooms[placed.room].size;
+                (
+                    [placed.min[0] as f32, placed.min[1] as f32, placed.floor],
+                    [
+                        (placed.min[0] + i64::from(w)) as f32,
+                        (placed.min[1] + i64::from(d)) as f32,
+                        placed.floor + h as f32,
+                    ],
+                )
+            })
+            .collect();
+        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+        let [stream, ..] = pcg3d([world ^ stage.salt, region.0 as u32, region.1 as u32]);
+        let point_stage = point_stage_id(stage.salt);
+        let kind: Arc<str> = Arc::from(kind.as_str());
+        let reach = *depth as f32;
+        let mut kept: Vec<Point> = Vec::with_capacity(*total as usize);
+        for try_ in 0..*tries {
+            if kept.len() == *total as usize {
+                break;
+            }
+            let [pick, a, b] = pcg3d([stream, try_, 0xD095]);
+            let [c, turn, _] = pcg3d([a, b, try_]);
+            // A voxel centre in the room's box grown by the shell's depth on every side.
+            let (min, max) = boxes[pick as usize % boxes.len()];
+            let at: [f32; 3] = std::array::from_fn(|axis| {
+                let span = max[axis] - min[axis] + 2.0 * reach;
+                let along = [unit(a), unit(b), unit(c)][axis];
+                (min[axis] - reach + span * along).floor() + 0.5
+            });
+            let in_shell = box_distance(at, min, max) < reach
+                && boxes
+                    .iter()
+                    .all(|&(low, high)| box_distance(at, low, high) > 0.0);
+            let apart_from_kept = kept.iter().all(|point| {
+                (0..3)
+                    .map(|axis| (point.position[axis] - at[axis]).powi(2))
+                    .sum::<f32>()
+                    .sqrt()
+                    >= *apart
+            });
+            if !(in_shell && apart_from_kept && value(at).is_some_and(|value| value > 0.0)) {
+                continue;
+            }
+            let column = [at[0].floor() as i64, at[1].floor() as i64];
+            let owner = ChunkCoord::new(
+                column[0].div_euclid(sx) as i32,
+                column[1].div_euclid(sy) as i32,
+                0,
+            );
+            let cell = (column[1].rem_euclid(sy) * sx + column[0].rem_euclid(sx)) as u32;
+            kept.push(Point {
+                id: InstanceId::new(owner, point_stage, cell, kept.len() as u16),
+                kind: Arc::clone(&kind),
+                position: at,
+                turn: unit(turn),
+                scale: 1.0,
+                up: [0.0, 0.0, 1.0],
+            });
+        }
+        if kept.len() < *total as usize {
+            return Err(StageError::RegionRejected {
+                stage: stage.name.clone(),
+                region,
+                log: vec![format!(
+                    "{tries} tries placed {} of its {total} points",
+                    kept.len()
+                )],
+            });
+        }
+        Ok(kept)
+    }
+
+    /// The points of Spawn stage `index` in `region` of Cave stage `cave`: each room's, drawn
+    /// until its budget affords no kind.
+    fn spawn(&self, index: usize, cave: usize, region: (i32, i32)) -> Vec<Point> {
+        let stage = &self.pack.stages[index];
+        let StageKind::Spawn { budget, kinds, .. } = &stage.kind else {
+            unreachable!("called for Spawn stages")
+        };
+        let StageKind::Cave { rooms, .. } = &self.pack.stages[cave].kind else {
+            unreachable!("a Spawn stage reads a Cave stage")
+        };
+        let plan = &self.caves[&(cave, region)];
+        let [sx, sy] = self.size.map(i64::from);
+        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+        let [stream, ..] = pcg3d([world ^ stage.salt, region.0 as u32, region.1 as u32]);
+        let point_stage = point_stage_id(stage.salt);
+        let names: Vec<Arc<str>> = kinds
+            .iter()
+            .map(|kind| Arc::from(kind.kind.as_str()))
+            .collect();
+        let mut points = Vec::new();
+        for (room_index, placed) in plan.rooms.iter().enumerate() {
+            let (w, d, _) = rooms[placed.room].size;
+            let mut left = *budget;
+            for draw in 0.. {
+                let affordable: Vec<usize> = (0..kinds.len())
+                    .filter(|&k| kinds[k].cost <= left)
+                    .collect();
+                if affordable.is_empty() {
+                    break;
+                }
+                let [pick, x, y] = pcg3d([stream, room_index as u32, draw]);
+                let total: u32 = affordable.iter().map(|&k| kinds[k].weight).sum();
+                let mut rest = pick % total;
+                let chosen = *affordable
+                    .iter()
+                    .find(|&&k| {
+                        let here = rest < kinds[k].weight;
+                        rest = rest.saturating_sub(kinds[k].weight);
+                        here
+                    })
+                    .expect("a draw below the total weight falls on a kind");
+                left -= kinds[chosen].cost;
+                let at = [
+                    placed.min[0] as f32 + w as f32 * unit(x),
+                    placed.min[1] as f32 + d as f32 * unit(y),
+                    placed.floor,
+                ];
+                let column = [at[0].floor() as i64, at[1].floor() as i64];
+                let owner = ChunkCoord::new(
+                    column[0].div_euclid(sx) as i32,
+                    column[1].div_euclid(sy) as i32,
+                    0,
+                );
+                let cell = (column[1].rem_euclid(sy) * sx + column[0].rem_euclid(sx)) as u32;
+                points.push(Point {
+                    id: InstanceId::new(owner, point_stage, cell, points.len() as u16),
+                    kind: Arc::clone(&names[chosen]),
+                    position: at,
+                    turn: unit(pick.rotate_left(16)),
+                    scale: 1.0,
+                    up: [0.0, 0.0, 1.0],
+                });
+            }
+        }
+        points
     }
 
     fn place_locations_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
@@ -3127,6 +3354,27 @@ impl Runtime {
                     .collect(),
             ));
         }
+        if let StageKind::Deposit { .. } | StageKind::Spawn { .. } = &stage.kind {
+            let region = region_of(chunk, self.pack.cave_region(index));
+            let [sx, sy] = self.size.map(i64::from);
+            let column = |point: &Point| {
+                [
+                    point.position[0].floor() as i64,
+                    point.position[1].floor() as i64,
+                ]
+            };
+            return Ok(Product::Points(
+                self.budgeted[&(index, region)]
+                    .iter()
+                    .filter(|point| {
+                        let [x, y] = column(point);
+                        x.div_euclid(sx) == i64::from(chunk.x)
+                            && y.div_euclid(sy) == i64::from(chunk.y)
+                    })
+                    .cloned()
+                    .collect(),
+            ));
+        }
         if let StageKind::Tunnels { cave, .. } = &stage.kind {
             let cave = self.pack.index(cave).expect("linked when loaded");
             let StageKind::Cave { region, .. } = self.pack.stages[cave].kind else {
@@ -3424,6 +3672,8 @@ impl Runtime {
                     | StageKind::Aquifer { .. }
                     | StageKind::Cave { .. }
                     | StageKind::Tunnels { .. }
+                    | StageKind::Deposit { .. }
+                    | StageKind::Spawn { .. }
                     | StageKind::Area { .. }
                     | StageKind::TableSites { .. }
                     | StageKind::Locations { .. }
