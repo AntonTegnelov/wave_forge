@@ -19,6 +19,12 @@ pub const ENTRY: &str = "solve_region";
 const CONTROL_BYTES: u32 = 14 * 4 + 4 * 4;
 
 const SOURCE: &str = include_str!("kernel/block.wgsl");
+/// The workgroup copy of the rule table, and the lanes copying it in, in a kernel that shares one.
+const RULES_DECL: &str = "var<workgroup> rules_s: array<u32, RULE_WORDS>;";
+const RULES_LOAD: &str = "let per_lane = (RULE_WORDS + WG - 1u) / WG;
+            for (var i = lane * per_lane; i < min((lane + 1u) * per_lane, RULE_WORDS); i++) {
+                rules_s[i] = rules[i];
+            }";
 
 /// How a solver runs a region.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +44,11 @@ pub struct SolverConfig {
     pub ring: u32,
     /// Regions a batch may hold.
     pub max_batch: u32,
+    /// Whether a kernel copies the rule table into workgroup memory when the region fits beside
+    /// it, where propagation reads it fastest. A region that does not fit with it, or every region
+    /// when this is false, reads the table from the storage buffer it is bound to instead, which
+    /// leaves room for rule sets of more tiles. The result is the same either way.
+    pub shared_rules: bool,
 }
 
 impl Default for SolverConfig {
@@ -49,6 +60,7 @@ impl Default for SolverConfig {
             max_steps: 50_000,
             ring: 32,
             max_batch: 256,
+            shared_rules: true,
         }
     }
 }
@@ -105,6 +117,8 @@ pub struct KernelSpec {
     num_tiles: u32,
     invocations: u32,
     ring: u32,
+    /// Whether the rule table is copied into workgroup memory, rather than read from storage.
+    shared_rules: bool,
 }
 
 impl KernelSpec {
@@ -117,7 +131,33 @@ impl KernelSpec {
             num_tiles: ruleset.num_tiles(),
             invocations: config.invocations,
             ring: config.ring,
+            shared_rules: config.shared_rules,
         }
+    }
+
+    /// This kernel if it fits `limits`, or else the same kernel reading its rule table from
+    /// storage if that fits.
+    ///
+    /// # Errors
+    /// The workgroup memory or invocations the kernel needs and the device's limit, for the
+    /// smallest kernel that still does not fit.
+    pub fn fitted(self, limits: &BackendLimits) -> Result<Self, (u32, u32)> {
+        match self.check(limits) {
+            Err(_) if self.shared_rules => {
+                let unshared = Self {
+                    shared_rules: false,
+                    ..self
+                };
+                unshared.check(limits).map(|()| unshared)
+            }
+            fitted => fitted.map(|()| self),
+        }
+    }
+
+    /// Whether the kernel copies its rule table into workgroup memory.
+    #[must_use]
+    pub const fn shares_rules(&self) -> bool {
+        self.shared_rules
     }
 
     /// The region shape it solves.
@@ -150,12 +190,18 @@ impl KernelSpec {
         self.ring * self.domain_words()
     }
 
-    /// Bytes of workgroup memory one region needs: its domains, a copy of the rule table, a change
-    /// epoch and a selection key per cell, a key per lane, and the control block.
+    /// Bytes of workgroup memory one region needs: its domains, the copy of the rule table when it
+    /// shares one, a change epoch and a selection key per cell, a key per lane, and the control
+    /// block.
     #[must_use]
     pub const fn workgroup_bytes(&self) -> u32 {
         let cells = self.region.cells();
-        (self.domain_words() + self.rule_words() + 2 * cells + self.invocations) * 4 + CONTROL_BYTES
+        let rules = if self.shared_rules {
+            self.rule_words()
+        } else {
+            0
+        };
+        (self.domain_words() + rules + 2 * cells + self.invocations) * 4 + CONTROL_BYTES
     }
 
     /// Whether a device can run this kernel, and why not if it cannot.
@@ -188,7 +234,25 @@ impl KernelSpec {
             .replace("{DOM_WORDS}", &self.domain_words().to_string())
             .replace("{STATS}", &STATS_WORDS.to_string())
             .replace("{RING}", &self.ring.to_string())
-            .replace("{MASK_PRELUDE}", &mask_prelude(self.words_per_cell))
+            .replace(
+                "{RULES_DECL}",
+                if self.shared_rules { RULES_DECL } else { "" },
+            )
+            .replace(
+                "{RULES_LOAD}",
+                if self.shared_rules { RULES_LOAD } else { "" },
+            )
+            .replace(
+                "{MASK_PRELUDE}",
+                &mask_prelude(
+                    self.words_per_cell,
+                    if self.shared_rules {
+                        "rules_s"
+                    } else {
+                        "rules"
+                    },
+                ),
+            )
     }
 }
 
@@ -199,7 +263,7 @@ impl KernelSpec {
 /// loop over `words`, puts it in scratch memory instead, which measured twice the cost per step on
 /// the city (docs/research/measurements.md). Masks up to four words are one `vec4`; wider ones are
 /// two, which is why nothing here loops.
-fn mask_prelude(words: u32) -> String {
+fn mask_prelude(words: u32, rules: &str) -> String {
     assert!(
         (1..=MAX_WORDS as u32).contains(&words),
         "{words} words is outside 1 to 8"
@@ -320,7 +384,7 @@ fn mask_prelude(words: u32) -> String {
     ));
     prelude.push_str(&format!(
         "fn rule_row(row: u32) -> Mask {{ return {}; }}\n",
-        build(&|index| format!("rules_s[row + {index}u]"))
+        build(&|index| format!("{rules}[row + {index}u]"))
     ));
     // The tiles allowed along `axis` of a cell holding any tile of `m`, one word at a time.
     prelude.push_str(
@@ -382,6 +446,55 @@ mod tests {
             .filter_map(|rest| rest.split_once('}'))
             .map(|(name, _)| name.to_owned())
             .collect()
+    }
+
+    fn limits(workgroup_storage: u32) -> BackendLimits {
+        BackendLimits {
+            workgroup_storage,
+            invocations_per_workgroup: 256,
+            workgroups: 65_535,
+        }
+    }
+
+    #[test]
+    fn a_kernel_that_fits_with_its_rule_table_keeps_it_in_workgroup_memory() {
+        let spec = spec(81);
+
+        let fitted = spec.fitted(&limits(32_768)).expect("it fits");
+
+        assert!(fitted.shares_rules());
+        assert_eq!(fitted, spec);
+    }
+
+    #[test]
+    fn a_kernel_whose_rule_table_does_not_fit_reads_it_from_storage() {
+        let shared = spec(135);
+        assert!(
+            shared.workgroup_bytes() > 32_768,
+            "{}",
+            shared.workgroup_bytes()
+        );
+
+        let fitted = shared
+            .fitted(&limits(32_768))
+            .expect("it fits without the table");
+
+        assert!(!fitted.shares_rules());
+        assert_eq!(
+            fitted.workgroup_bytes(),
+            shared.workgroup_bytes() - shared.rule_words() * 4
+        );
+        assert!(!fitted.wgsl().contains("rules_s"));
+    }
+
+    #[test]
+    fn a_kernel_too_large_even_without_its_rule_table_names_what_it_needs() {
+        let spec = spec(135);
+
+        let refused = spec.fitted(&limits(8_192));
+
+        let unshared = spec.workgroup_bytes() - spec.rule_words() * 4;
+        assert_eq!(refused, Err((unshared, 8_192)));
     }
 
     #[test]

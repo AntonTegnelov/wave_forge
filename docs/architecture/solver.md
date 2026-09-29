@@ -194,8 +194,12 @@ library's. Which adapters the dev container and CI use is in
 - **Workgroup memory is the binding limit.** A region's domains, its selection scratch and its
   epochs must fit the device's per-workgroup allowance (32 KiB on the reference devices), so the
   solver refuses a shape that does not fit and names the numbers. The city's 81 tiles in an 8×8×8
-  chunk with a halo of 3 need 38 288 B, so a repair's halo stops at 2 there. Bigger chunks or more
-  tiles would need domains in a storage buffer, which nothing needs yet.
+  chunk with a halo of 3 need 38 288 B, so a repair's halo stops at 2 there. The kernel also copies
+  the rule table into workgroup memory, where propagation reads it about a quarter faster, and
+  reads it from its storage buffer instead when the region does not fit beside the copy
+  (`SolverConfig::shared_rules`, [measurements.md](../research/measurements.md) K37): a culture of
+  the maximal preset, 135 tiles, fits an 8×8×6 chunk with a halo of 1 only that way (K36). Bigger
+  chunks still would need domains in a storage buffer, which nothing needs yet.
 - **A dispatch is capped in steps.** A shader that does not terminate takes the display driver with
   it (Windows resets a device after about two seconds), so a region has a hard step budget and
   reports `StepCap` rather than running on.

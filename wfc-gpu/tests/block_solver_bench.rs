@@ -195,6 +195,47 @@ fn chunk_throughput_against_the_cpu_reference() {
     }
 }
 
+/// What reading the rule table from storage costs a chunk of the city against reading its copy in
+/// workgroup memory: the path a rule set too large to copy takes.
+#[test]
+#[ignore = "benchmark; run with --ignored in release mode"]
+fn the_rule_table_read_from_storage_against_workgroup_memory() {
+    let (ruleset, region, init) = lone_chunk();
+    for shared_rules in [true, false] {
+        let config = SolverConfig {
+            shared_rules,
+            ..SolverConfig::default()
+        };
+        let backend = WgpuBackend::from_env().expect("a compute device");
+        let mut solver = BlockSolver::new(backend, Arc::clone(&ruleset), config).expect("a solver");
+        for chunks in [16u32, 64] {
+            for _ in 0..3 {
+                let job = solver
+                    .start(repeated(&region, &init, chunks, 7))
+                    .expect("a well-formed batch");
+                let _ = solver.wait(job).expect("the dispatch finishes");
+            }
+            let samples = (0..5)
+                .map(|_| {
+                    let started = Instant::now();
+                    let job = solver
+                        .start(repeated(&region, &init, chunks, 7))
+                        .expect("a well-formed batch");
+                    let result = solver.wait(job).expect("the dispatch finishes");
+                    assert!(result.statuses.iter().all(|status| status.is_solved()));
+                    started.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            let wall_ms = median(samples);
+            eprintln!(
+                "block_solver: shared_rules={shared_rules} chunks={chunks} wall_ms={wall_ms:.2} \
+                 ms_per_chunk={:.3}",
+                wall_ms / f64::from(chunks)
+            );
+        }
+    }
+}
+
 /// Every chunk of a many-chunk dispatch that reports success is valid, in every selection and
 /// recovery mode. One chunk can hide a rare failure; 64 different random streams rarely do.
 #[test]
