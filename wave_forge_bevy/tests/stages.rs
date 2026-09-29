@@ -54,6 +54,7 @@ struct Seen {
     dropped: Vec<(String, ChunkCoord)>,
     grounds: Vec<ChunkCoord>,
     grounds_dropped: Vec<ChunkCoord>,
+    volumes_dropped: Vec<ChunkCoord>,
     saves: Vec<Save>,
 }
 
@@ -63,6 +64,7 @@ fn collect(
     mut dropped: MessageReader<StageDropped>,
     mut grounds: MessageReader<GroundReady>,
     mut grounds_dropped: MessageReader<GroundDropped>,
+    mut volumes_dropped: MessageReader<VolumeDropped>,
     mut saves: MessageReader<StagesSaved>,
 ) {
     seen.ready
@@ -72,6 +74,8 @@ fn collect(
     seen.grounds.extend(grounds.read().map(|m| m.0));
     seen.grounds_dropped
         .extend(grounds_dropped.read().map(|m| m.0));
+    seen.volumes_dropped
+        .extend(volumes_dropped.read().map(|m| m.0));
     seen.saves.extend(saves.read().map(|m| m.0.clone()));
 }
 
@@ -1021,15 +1025,19 @@ fn a_dig_in_a_neighbour_builds_again_the_surface_that_reads_it() {
         })
         .with_volume("caves"),
     );
-    let origin = ChunkCoord::new(0, 0, 0);
+    let (origin, beside) = (ChunkCoord::new(0, 0, 0), ChunkCoord::new(1, 0, 0));
     run_until(&mut app, |app| {
-        app.world()
-            .resource::<WaveForgeStages>()
-            .surface(origin)
-            .is_some()
+        let stages = app.world().resource::<WaveForgeStages>();
+        stages.surface(origin).is_some() && stages.volume("caves", beside).is_some()
     });
+    let before = app
+        .world()
+        .resource::<WaveForgeStages>()
+        .volume("caves", beside)
+        .cloned();
     app.world_mut()
-        .resource_mut::<Messages<VolumeDropped>>()
+        .resource_mut::<Seen>()
+        .volumes_dropped
         .clear();
 
     // A ball in the chunk beside the origin that reaches only its first column, which the
@@ -1041,30 +1049,16 @@ fn a_dig_in_a_neighbour_builds_again_the_surface_that_reads_it() {
             radius: 1.0,
         }],
     });
-    let mut dropped: Vec<ChunkCoord> = Vec::new();
     run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
         app.world()
-            .resource::<WaveForgeStages>()
-            .volume("caves", ChunkCoord::new(1, 0, 0))
-            .is_some()
-            && app
-                .world()
-                .resource::<WaveForgeStages>()
-                .surface(origin)
-                .is_some()
-            && app
-                .world()
-                .resource::<Messages<VolumeDropped>>()
-                .iter_current_update_messages()
-                .count()
-                == 0
+            .resource::<Seen>()
+            .volumes_dropped
+            .contains(&origin)
+            && stages.volume("caves", beside).is_some()
+            && stages.volume("caves", beside).cloned() != before
+            && stages.surface(origin).is_some()
     });
-    dropped.extend(
-        app.world_mut()
-            .resource_mut::<Messages<VolumeDropped>>()
-            .drain()
-            .map(|message| message.0),
-    );
 
     let stages = app.world().resource::<WaveForgeStages>();
     let expected = volume_mesh(
@@ -1072,7 +1066,6 @@ fn a_dig_in_a_neighbour_builds_again_the_surface_that_reads_it() {
         |at| stages.volume("caves", at),
         SETTINGS.cell_size.to_array(),
     );
-    assert!(dropped.contains(&origin), "{dropped:?}");
     assert_eq!(stages.surface(origin), expected.as_ref());
 }
 

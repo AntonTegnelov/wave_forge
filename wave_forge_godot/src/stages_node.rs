@@ -132,6 +132,10 @@ pub struct WaveForgeStages {
     /// for a stage with materials, with each vertex in its material's colour.
     #[export]
     volume_material: Option<Gd<Material>>,
+    /// How long a frame may spend building volume surfaces, drawing included, in milliseconds;
+    /// one is built a frame whatever it costs.
+    #[export]
+    volume_budget_ms: f64,
     /// A colour per material of `volume_stage`, by index, which each vertex of its surface carries
     /// as its colour; materials past its end take colours of their own from their index.
     #[export]
@@ -232,6 +236,9 @@ pub struct WaveForgeStages {
     /// How many surfaces have been built, which numbers each one's revision, so a chunk's body
     /// tells a surface built again from the one it holds.
     volume_revisions: u64,
+    /// The milliseconds building every surface so far has taken on Godot's thread, drawing
+    /// included.
+    volume_ms: f64,
     /// The material a volume with materials is drawn with when `volume_material` is empty: its
     /// vertices' colours as albedo.
     vertex_colours: Option<Gd<StandardMaterial3D>>,
@@ -245,6 +252,8 @@ pub struct WaveForgeStages {
     palette: Option<(Gd<ImageTexture>, Gd<ShaderMaterial>)>,
     /// What the node's slowest frame since the start spent Godot's thread on.
     slowest_frame: FrameCost,
+    /// How long the node's last frame took on Godot's thread, in milliseconds.
+    last_frame_ms: f64,
     /// Signals not yet emitted, in the order their events arrived.
     pending: VecDeque<StageEvent>,
     /// Each chunk's static body and the shapes of its ground and its volume's surface, which the
@@ -274,6 +283,9 @@ const SIGNALS_PER_FRAME: usize = 256;
 /// building each takes tenths of a millisecond on Godot's thread, so the rest wait for the next
 /// frames, nearest the followed position first.
 const GROUNDS_PER_FRAME: usize = 8;
+/// How long one frame may spend building bodies, in milliseconds, after its first.
+const BODIES_BUDGET_MS: f64 = 2.0;
+
 /// How many coarse chunks get their far ground built per frame at most.
 const FAR_GROUNDS_PER_FRAME: usize = 4;
 
@@ -511,10 +523,13 @@ impl INode for WaveForgeStages {
             volume_stage: GString::new(),
             volume_material: None,
             volume_palette: PackedColorArray::new(),
+            volume_budget_ms: 2.0,
             vertex_colours: None,
             volume_due: std::collections::BTreeSet::new(),
             volumes: HashMap::new(),
             volume_revisions: 0,
+            volume_ms: 0.0,
+            last_frame_ms: 0.0,
             ground_due: std::collections::BTreeSet::new(),
             bodies: HashMap::new(),
             bodies_pending: 0,
@@ -684,6 +699,7 @@ impl INode for WaveForgeStages {
         frame.placements_ms = elapsed_ms(placing);
         frame.ms = elapsed_ms(processing);
         self.process_ms.push(frame.ms);
+        self.last_frame_ms = frame.ms;
         if frame.ms > self.slowest_frame.ms {
             self.slowest_frame = frame;
         }
@@ -1778,6 +1794,18 @@ impl WaveForgeStages {
             &(self.volume_due.len() as i64).to_variant(),
         );
         out.set(
+            &"last_frame_ms".to_variant(),
+            &self.last_frame_ms.to_variant(),
+        );
+        out.set(
+            &"volume_surfaces".to_variant(),
+            &(self.volume_revisions as i64).to_variant(),
+        );
+        out.set(
+            &"volume_surfaces_ms".to_variant(),
+            &self.volume_ms.to_variant(),
+        );
+        out.set(
             &"pending_far_grounds".to_variant(),
             &(self.far_due.len() as i64).to_variant(),
         );
@@ -2022,8 +2050,8 @@ impl WaveForgeStages {
         count
     }
 
-    /// Builds the volume surface of up to [`GROUNDS_PER_FRAME`] chunks a newly arrived volume may
-    /// have completed, nearest the followed position first, and frees the surface of every chunk
+    /// Builds the volume surface of the chunks a newly arrived volume may have completed, nearest
+    /// the followed position first, for `volume_budget_ms` a frame and at least one, and frees the surface of every chunk
     /// that reads a volume that was dropped, which an edit's regeneration builds again.
     ///
     /// Returns how many chunks got a surface.
@@ -2035,9 +2063,9 @@ impl WaveForgeStages {
                 rendering.free_rid(mesh);
             }
         }
-        let Some(worker) = &self.worker else {
+        if self.worker.is_none() {
             return 0;
-        };
+        }
         let Some(scenario) = self
             .base()
             .get_viewport()
@@ -2054,6 +2082,7 @@ impl WaveForgeStages {
         }
         self.volume_due
             .extend(arrived.iter().copied().flat_map(ground_readers));
+        let building = std::time::Instant::now();
         let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
         let mut due: Vec<ChunkCoord> = self.volume_due.iter().copied().collect();
         due.sort_by_key(|chunk| {
@@ -2062,9 +2091,9 @@ impl WaveForgeStages {
                 *chunk,
             )
         });
-        let mut built = Vec::new();
+        let mut count = 0;
         for chunk in due {
-            if built.len() == GROUNDS_PER_FRAME {
+            if count > 0 && elapsed_ms(building) >= self.volume_budget_ms {
                 break;
             }
             // Looked at now: built, already built, or waiting for a volume around it, whose
@@ -2073,70 +2102,67 @@ impl WaveForgeStages {
             if self.volumes.contains_key(&chunk) {
                 continue;
             }
-            if let Some(mesh) = volume_mesh(chunk, |at| worker.volume(&stage, at), voxel) {
-                built.push(mesh);
-            }
-        }
-        let count = built.len();
-        for mesh in built {
-            let chunk = mesh.chunk;
-            self.volume_revisions += 1;
-            let revision = self.volume_revisions;
-            if mesh.indices.is_empty() {
-                let surface = Surface {
-                    mesh,
-                    drawn: None,
-                    revision,
-                };
-                self.volumes.insert(chunk, surface);
+            let worker = self.worker.as_ref().expect("checked above");
+            let Some(mesh) = volume_mesh(chunk, |at| worker.volume(&stage, at), voxel) else {
                 continue;
-            }
-            let rid = rendering.mesh_create();
-            let mut arrays = VarArray::new();
-            arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
-            let vertices: PackedVector3Array = mesh
-                .positions
-                .iter()
-                .map(|&[x, y, z]| Vector3::new(x, y, z))
-                .collect();
-            let normals: PackedVector3Array = mesh
-                .normals
-                .iter()
-                .map(|&[x, y, z]| Vector3::new(x, y, z))
-                .collect();
-            arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
-            arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
-            if !mesh.materials.is_empty() {
-                let colours: PackedColorArray = mesh
-                    .materials
-                    .iter()
-                    .map(|&material| palette_colour(&self.volume_palette, usize::from(material)))
-                    .collect();
-                arrays.set(ArrayType::COLOR.ord() as usize, &colours.to_variant());
-            }
-            add_levelled_surface(rid, &mut arrays, &mesh.indices, &[]);
-            let material = match (&self.volume_material, &self.vertex_colours) {
-                (Some(material), _) => Some(material.get_rid()),
-                (None, Some(colours)) if !mesh.materials.is_empty() => Some(colours.get_rid()),
-                (None, _) => None,
             };
-            if let Some(material) = material {
-                rendering.mesh_surface_set_material(rid, 0, material);
-            }
-            let instance = rendering.instance_create2(rid, scenario);
-            rendering.instance_set_transform(
-                instance,
-                Transform3D::new(Basis::IDENTITY, self.chunk_corner(chunk)),
-            );
-            Gi::Static.apply(instance);
+            self.volume_revisions += 1;
+            let drawn = (!mesh.indices.is_empty()).then(|| self.draw_surface(&mesh, scenario));
             let surface = Surface {
                 mesh,
-                drawn: Some((rid, instance)),
-                revision,
+                drawn,
+                revision: self.volume_revisions,
             };
             self.volumes.insert(chunk, surface);
+            count += 1;
         }
+        self.volume_ms += elapsed_ms(building);
         count
+    }
+
+    /// Draws a chunk's volume surface in `scenario`, in its materials' colours for a stage with
+    /// materials, and returns its `RenderingServer` mesh and instance.
+    fn draw_surface(&self, mesh: &VolumeMesh, scenario: Rid) -> (Rid, Rid) {
+        let mut rendering = RenderingServer::singleton();
+        let rid = rendering.mesh_create();
+        let mut arrays = VarArray::new();
+        arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
+        let vertices: PackedVector3Array = mesh
+            .positions
+            .iter()
+            .map(|&[x, y, z]| Vector3::new(x, y, z))
+            .collect();
+        let normals: PackedVector3Array = mesh
+            .normals
+            .iter()
+            .map(|&[x, y, z]| Vector3::new(x, y, z))
+            .collect();
+        arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
+        arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+        if !mesh.materials.is_empty() {
+            let colours: PackedColorArray = mesh
+                .materials
+                .iter()
+                .map(|&material| palette_colour(&self.volume_palette, usize::from(material)))
+                .collect();
+            arrays.set(ArrayType::COLOR.ord() as usize, &colours.to_variant());
+        }
+        add_levelled_surface(rid, &mut arrays, &mesh.indices, &[]);
+        let material = match (&self.volume_material, &self.vertex_colours) {
+            (Some(material), _) => Some(material.get_rid()),
+            (None, Some(colours)) if !mesh.materials.is_empty() => Some(colours.get_rid()),
+            (None, _) => None,
+        };
+        if let Some(material) = material {
+            rendering.mesh_surface_set_material(rid, 0, material);
+        }
+        let instance = rendering.instance_create2(rid, scenario);
+        rendering.instance_set_transform(
+            instance,
+            Transform3D::new(Basis::IDENTITY, self.chunk_corner(mesh.chunk)),
+        );
+        Gi::Static.apply(instance);
+        (rid, instance)
     }
 
     /// Draws the far ground of the coarse chunks that are due, nearest the followed position first
@@ -2331,11 +2357,18 @@ impl WaveForgeStages {
                 *chunk,
             )
         });
-        self.bodies_pending = wanted.len().saturating_sub(BODIES_PER_FRAME);
+        let waiting = wanted.len();
         wanted.truncate(BODIES_PER_FRAME);
         let owner = u64::from_ne_bytes(self.base().instance_id().to_i64().to_ne_bytes());
-        let count = wanted.len();
+        let building = std::time::Instant::now();
+        let mut count = 0;
         for (chunk, held) in wanted {
+            // A volume's surface is a concave shape of thousands of triangles, milliseconds to
+            // build, so bodies stop at a time budget too.
+            if count > 0 && elapsed_ms(building) >= BODIES_BUDGET_MS {
+                break;
+            }
+            count += 1;
             let body = physics.body_create();
             physics.body_set_mode(body, BodyMode::STATIC);
             let mut shapes: Vec<Rid> = Vec::new();
@@ -2370,6 +2403,7 @@ impl WaveForgeStages {
             physics.body_set_space(body, space);
             self.bodies.insert(chunk, (body, shapes, held));
         }
+        self.bodies_pending = waiting - count;
         count
     }
 

@@ -164,6 +164,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
 | Volume | `volume_stage` | a Volume or Carve stage at scale 1 whose surface is drawn and collided with, for overhangs and caves ([packs.md](packs.md#volume)); empty for none |
 | | `volume_material` | the material the volume's surface is drawn with; empty for Godot's default, or for a stage with materials one that takes its albedo from the vertices' colours |
+| | `volume_budget_ms` | how long a frame may spend building volume surfaces, drawing included; one is built a frame whatever it costs (default 2 ms) |
 | | `volume_palette` | a colour per material of `volume_stage`, by index, which each vertex of the surface carries; materials past its end take colours of their own from their index |
 | Grass | `grass_stage` | a field stage whose value per column, 0 to 1, is how much of it grass covers ([Grass](#grass)); empty for none |
 | | `grass_per_cell` | blades per column where the cover is 1 (default 8) |
@@ -258,7 +259,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` signals emitted in
   `slowest_frame_signals_ms`, `slowest_frame_grounds` built in `slowest_frame_grounds_ms`,
   `slowest_frame_bodies` built in `slowest_frame_bodies_ms`), and `stages`, each stage's cost on
-  the stages' thread by name (`products`, `ms`, `slowest_ms`).
+  the stages' thread by name (`products`, `ms`, `slowest_ms`); `last_frame_ms`, the node's own time
+  in its last frame; and `volume_surfaces` and `volume_surfaces_ms`, the surfaces built so far and
+  the milliseconds that took.
 
 ### Signals
 
@@ -268,9 +271,11 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, in the order the
 products arrived (nearest first), so after a wide request some come a few frames later; by then a
 product can have been dropped again, and its `stage_dropped` follows. Ground is built for at most
-8 chunks per frame, volume surfaces for at most 8 more, far ground for at most 4 coarse chunks,
-again when ground comes or goes on or beside one, and bodies for at most 3, nearest the player
-first. `stats()` reports what waits as `pending_signals`, `pending_grounds`, `pending_volumes`,
+8 chunks per frame, volume surfaces for `volume_budget_ms`, far ground for at most 4 coarse chunks,
+again when ground comes or goes on or beside one, and bodies for at most 3 and 2 ms, since a
+volume's collider takes milliseconds ([measurements.md](../research/measurements.md) E53), nearest
+the player first, each at least one a frame. `stats()` reports what waits as `pending_signals`,
+`pending_grounds`, `pending_volumes`,
 `pending_far_grounds`, `pending_colliders` and
 `pending_placements`, and
 what is placed as `placed_nodes` and `placed_instances`, and the nodes of pooled scenes waiting to
