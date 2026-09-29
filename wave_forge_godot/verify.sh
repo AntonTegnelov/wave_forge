@@ -15,7 +15,9 @@
 # `godot/verify_volume.gd`, which draws a volume's surface and collides with its cave, then
 # `godot/verify_bake.gd`, which bakes an area into a scene of plain nodes, then
 # `godot/verify_import.gd`, which proposes a module set from a MeshLibrary, then
-# `godot/verify_params.gd`, which tunes a preset's parameters, then
+# `godot/verify_params.gd`, which tunes a preset's parameters, then `godot/verify_paint.gd`, which
+# paints strokes as the editor's brushes do, then the editor itself, headless, which has to load the
+# editor plugin (`godot/addons/wave_forge`) without a script error, then
 # `godot/verify_sound.gd`, which checks the city's region tags and sound, then
 # `godot/verify_names.gd`, which names a location through a translation, then
 # `godot/verify_occlusion.gd`, which checks the city's occluders, then `godot/verify_proxies.gd`,
@@ -41,6 +43,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_bake.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_import.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_params.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_paint.gd
+editor_log="$(mktemp)"
+"${GODOT:-godot}" --headless --editor --path "$here/godot" --quit-after 300 >"$editor_log" 2>&1
+if grep -E "SCRIPT ERROR|Failed to load script" "$editor_log"; then
+	echo "verify: the editor plugin does not load" >&2
+	exit 1
+fi
+echo "verify: the editor loads the plugin without a script error"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_sound.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_names.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_occlusion.gd

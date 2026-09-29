@@ -158,7 +158,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `rules_files` | the rule sets Solve stages name, as name to rule file path |
 | | `targets` | the stages to generate; what they read comes with them |
 | | `params` | values of the pack's parameters, as name to number, which `start` gives the stages; one left out keeps its default ([packs.md](packs.md#parameters)) |
-| | `start_on_ready` | start when the node enters the tree |
+| | `start_on_ready` | start when the node enters the tree, when the game runs |
+| | `preview_in_editor` | start in the editor too, as a preview the editor plugin follows with the editor's camera and brushes paint on ([Editor](#editor)) |
+| | `edits_text` | the edits of the world as text, `edits_log`'s, which the scene saves and `start` applies: what brushes painted in the editor |
 | World | `seed` | every choice derives from it |
 | | `chunk_cells` | columns per chunk along the lattice's x and y, and a town chunk's height along z |
 | | `cell_size` | one cell in Godot's world units |
@@ -325,6 +327,26 @@ the player first, each at least one a frame. `stats()` reports what waits as `pe
 `pending_placements`, and
 what is placed as `placed_nodes` and `placed_instances`, and the nodes of pooled scenes waiting to
 be placed again as `pooled_nodes` ([Scenes](#scenes)).
+
+### Editor
+
+`WaveForgeStages` is a tool class, so it runs in the editor where `preview_in_editor` is on,
+generating around the editor's camera. The editor plugin (`addons/wave_forge`, enabled in the
+project's plugins) adds a Wave Forge dock:
+- a Paint toggle;
+- a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
+- the stage it paints, or the point stages Remove takes from;
+- a radius in cells, and a strength.
+
+With Paint on and the node selected, a drag in the 3D viewport paints a stroke along the ground,
+as one undo action that restores `edits_text`. The ground comes from `ground_height`, so painting
+needs `ground_stage`. What a stroke does is the node's own `paint(brush, path)`:
+- `brush` is a Dictionary with `brush` (`"raise"`, `"smooth"`, `"dig"`, `"fill"` or `"remove"`),
+  `stage` or `stages`, `radius` in cells, and `strength` for raise and smooth;
+- `path` holds points in Godot's world space.
+
+It adds the edits `stages::brushes::stroke` gives ([packs.md](packs.md#edits)), so a game's own
+tools paint the same way.
 
 ### Scenes
 

@@ -22,7 +22,7 @@ use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::ArrayType;
 use godot::classes::{
-    ArrayMesh, CollisionShape3D, ConcavePolygonShape3D, FastNoiseLite, FileAccess,
+    ArrayMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
     HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, Node, Node3D,
     PhysicsServer3D, ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D,
     StandardMaterial3D, StaticBody3D,
@@ -38,10 +38,11 @@ use wave_forge::noise::{
     CellularDistanceFunction, CellularReturnType, DomainWarpFractalType, DomainWarpType,
     FractalType, NoiseConfig, NoiseType,
 };
+use wave_forge::stages::brushes::{Brush, Canvas, stroke};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, PointId, RowId, Runtime, Save,
-    Site, SiteId, StageEvent, StageKind, StageWorker, TableKind, Value,
+    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, Point, PointId, RowId, Runtime,
+    Save, Site, SiteId, StageError, StageEvent, StageKind, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -55,7 +56,7 @@ use wave_forge::{
 /// [`WaveForgeStages::start`], then [`WaveForgeStages::follow`] as the player moves, and read each
 /// chunk the `stage_ready` signal names.
 #[derive(GodotClass)]
-#[class(base = Node)]
+#[class(tool, base = Node)]
 pub struct WaveForgeStages {
     base: Base<Node>,
 
@@ -79,9 +80,18 @@ pub struct WaveForgeStages {
     /// changes them while the stages run.
     #[export]
     params: VarDictionary,
-    /// Whether to start as soon as the node enters the scene tree.
+    /// Whether to start as soon as the node enters the scene tree, when the game runs.
     #[export]
     start_on_ready: bool,
+    /// Whether to start in the editor too, as a preview a brush paints on; the editor plugin
+    /// follows the editor's camera with it.
+    #[export]
+    preview_in_editor: bool,
+    /// The edits of the world as text, `edits_log`'s: what brushes painted in the editor, which
+    /// the scene saves and `start` applies. Setting it replaces the edits, as `set_edits_log` does.
+    #[export(multiline)]
+    #[var(get = edits_log, set = set_edits_text)]
+    edits_text: PhantomVar<GString>,
 
     /// Every choice in the world derives from this.
     #[export_group(name = "World")]
@@ -593,6 +603,8 @@ impl INode for WaveForgeStages {
             targets: PackedStringArray::new(),
             params: VarDictionary::new(),
             start_on_ready: false,
+            preview_in_editor: false,
+            edits_text: PhantomVar::default(),
             seed: 0,
             chunk_cells: Vector3i::new(8, 8, 8),
             cell_size: Vector3::ONE,
@@ -660,7 +672,12 @@ impl INode for WaveForgeStages {
     }
 
     fn ready(&mut self) {
-        if self.start_on_ready {
+        let starts = if Engine::singleton().is_editor_hint() {
+            self.preview_in_editor
+        } else {
+            self.start_on_ready
+        };
+        if starts {
             self.start();
         }
     }
@@ -1062,7 +1079,13 @@ impl WaveForgeStages {
             godot_error!("wave forge: {error}");
             return false;
         }
+        // The edits `edits_text` gave, painted in the editor say.
+        if let Err(error) = sampler.set_edits(&self.edits) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
         let thread_params = values.clone();
+        let thread_edits = self.edits.clone();
         let for_thread = Arc::clone(&pack);
         let thread_facts = facts.clone();
         self.rules = rules.clone();
@@ -1091,6 +1114,9 @@ impl WaveForgeStages {
                 .map_err(|error| error.to_string())?;
             runtime
                 .set_params(&thread_params)
+                .map_err(|error| error.to_string())?;
+            runtime
+                .set_edits(&thread_edits)
                 .map_err(|error| error.to_string())?;
             if !solves {
                 return Ok(runtime);
@@ -1359,6 +1385,41 @@ impl WaveForgeStages {
         })
     }
 
+    /// Paints a stroke of `brush` along `path`, points in Godot's world space, as edits of the
+    /// world ([packs.md](packs.md#edits)): what they reach is generated again, and `edits_log`
+    /// saves them. `brush` is a Dictionary: its `brush` is `"raise"`, `"smooth"`, `"dig"`, `"fill"`
+    /// or `"remove"`; `stage` names the field or volume it paints, or `stages` the point stages a
+    /// remove takes points of; `radius` is in cells; and `strength`, for raise and smooth, is how
+    /// many cells a raise lifts the path by, negative to lower, or from 0 to 1 how far a smooth
+    /// pulls. An editor undoes a stroke by giving back the `edits_log` it had before. Returns
+    /// whether the stroke painted; if not, why is reported as an error and nothing changes.
+    #[func]
+    fn paint(&mut self, brush: VarDictionary, path: PackedVector3Array) -> bool {
+        let Some(brush) = brush_of(&brush) else {
+            godot_error!("wave forge: a brush of {brush}");
+            return false;
+        };
+        let (Some(sampler), Some(worker)) = (&self.sampler, &self.worker) else {
+            godot_error!("wave forge: paint before start");
+            return false;
+        };
+        let cells: Vec<[f32; 3]> = path
+            .as_slice()
+            .iter()
+            .map(|&at| self.cells_at(at))
+            .collect();
+        let edits = match stroke(&NodeCanvas { sampler, worker }, &brush, &cells) {
+            Ok(edits) => edits,
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                return false;
+            }
+        };
+        let mut next = self.edits.clone();
+        next.log.extend(edits);
+        self.set_edits(next)
+    }
+
     /// Raises a field stage's value, the ground's height in cells say, by `by` at the column under
     /// `position` in Godot's world space; a negative `by` digs. Readers of the field within their
     /// reach are generated again, and the raise stays through eviction; `edits_log` saves it.
@@ -1451,6 +1512,18 @@ impl WaveForgeStages {
     #[func]
     fn edits_log(&self) -> GString {
         GString::from(self.edits.to_ron().as_str())
+    }
+
+    /// Sets `edits_text`: before `start`, the edits `start` applies; after, as `set_edits_log`.
+    #[func]
+    fn set_edits_text(&mut self, text: GString) {
+        match Edits::from_ron(&text.to_string()) {
+            Ok(edits) if self.worker.is_none() => self.edits = edits,
+            Ok(edits) => {
+                self.set_edits(edits);
+            }
+            Err(error) => godot_error!("wave forge: edits_text: {error}"),
+        }
     }
 
     /// Replaces the player's edits with a log `edits_log` gave, from a save. Returns whether the
@@ -3298,6 +3371,77 @@ fn ground_levels(mesh: &GroundMesh) -> (&[u32], Vec<(&[u32], f32)>) {
         .map(|level| (level.indices.as_slice(), level.error))
         .collect();
     (&finest.indices, coarser)
+}
+
+/// What a stroke reads in the node: the runtime it samples with, and the products its stages'
+/// thread sent.
+struct NodeCanvas<'a> {
+    sampler: &'a Runtime,
+    worker: &'a StageWorker,
+}
+
+impl Canvas for NodeCanvas<'_> {
+    fn pack(&self) -> &Pack {
+        self.sampler.pack()
+    }
+
+    fn chunk_size(&self) -> [u32; 2] {
+        self.sampler.chunk_size()
+    }
+
+    fn sample(&self, stage: &str, at: [f32; 2]) -> Result<f32, StageError> {
+        self.sampler.sample(stage, at)
+    }
+
+    fn points(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Point]> {
+        self.worker.points(stage, chunk)
+    }
+}
+
+/// The brush a GDScript Dictionary describes ([`WaveForgeStages::paint`]); none if it names no
+/// brush or lacks what its brush needs.
+fn brush_of(brush: &VarDictionary) -> Option<Brush> {
+    let text = |key: &str| Some(brush.get(key)?.try_to::<GString>().ok()?.to_string());
+    let number = |key: &str| {
+        let value = brush.get(key)?;
+        value
+            .try_to::<f64>()
+            .ok()
+            .or_else(|| value.try_to::<i64>().ok().map(|whole| whole as f64))
+            .map(|value| value as f32)
+    };
+    Some(match text("brush")?.as_str() {
+        "raise" => Brush::Raise {
+            stage: text("stage")?,
+            radius: number("radius")?,
+            strength: number("strength")?,
+        },
+        "smooth" => Brush::Smooth {
+            stage: text("stage")?,
+            radius: number("radius")?,
+            strength: number("strength")?,
+        },
+        "dig" => Brush::Dig {
+            stage: text("stage")?,
+            radius: number("radius")?,
+        },
+        "fill" => Brush::Fill {
+            stage: text("stage")?,
+            radius: number("radius")?,
+        },
+        "remove" => Brush::Remove {
+            stages: brush
+                .get("stages")?
+                .try_to::<PackedStringArray>()
+                .ok()?
+                .as_slice()
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            radius: number("radius")?,
+        },
+        _ => return None,
+    })
 }
 
 /// Parameter values from GDScript, name to number; none if any name is not a string or any value

@@ -330,7 +330,8 @@ undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Sta
 (`examples/presets/islands.world.ron`) tunes its land amount, roughness and tree density; a sweep
 of every range over a grid of values and seeds finds a sound world at each, more land as `land`
 rises and more trees as `trees` does, and a changed parameter regenerates only what reads it
-(`tests/presets.rs`, `verify_params.gd`). A preset list, the editor preview and undo are
+(`tests/presets.rs`, `verify_params.gd`). The node previews in the editor, and the editor plugin
+paints strokes as one undo action each; a preset list, and the preview's speed against P6, are
 [#48](https://github.com/AntonTegnelov/wave_forge/issues/48).
 
 ### N3. Place my own scene by dragging it in
