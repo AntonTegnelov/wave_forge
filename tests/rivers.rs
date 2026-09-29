@@ -206,3 +206,22 @@ fn the_ring_worlds_rivers_are_carved_into_its_ground() {
     assert!(rivers.len() >= 4, "{rivers:?}");
     assert!(carved > 100, "only {carved} columns carved");
 }
+
+#[test]
+fn a_chunk_of_rivers_generates_the_height_over_its_region_alone() {
+    let mut runtime = Runtime::new(pack(), 4, SIZE);
+
+    runtime
+        .request(&[FocusPoint::new(ChunkCoord::new(5, 6, 0), 0)], &["rivers"])
+        .expect("a stage");
+    runtime.run_until_idle().expect("the stages run");
+
+    // Its region of 4 chunks a side runs from chunk 4 to chunk 7 each way.
+    for y in -2..12 {
+        for x in -2..12 {
+            let inside = (4..8).contains(&x) && (4..8).contains(&y);
+            let held = runtime.field("ground", ChunkCoord::new(x, y, 0)).is_some();
+            assert_eq!(held, inside, "the height of chunk ({x}, {y})");
+        }
+    }
+}

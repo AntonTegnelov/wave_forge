@@ -1186,9 +1186,8 @@ impl Runtime {
                     None => {}
                     Some(Stale::All) => all = true,
                     Some(Stale::Chunks(inputs)) => {
-                        let cells = reach.cells(self.size);
                         for &chunk in &candidates {
-                            let (min, max) = self.reader_box(chunk, cells);
+                            let (min, max) = self.needed_box(chunk, reach);
                             if self
                                 .covering(stage.scale, input, min, max)
                                 .iter()
@@ -1777,11 +1776,10 @@ impl Runtime {
             };
             let scale = self.pack.stages[index].scale;
             for &(input, reach) in &self.pack.stages[index].inputs {
-                let reach = reach.cells(self.size);
                 let covered: BTreeSet<ChunkCoord> = chunks
                     .iter()
                     .flat_map(|&chunk| {
-                        let (min, max) = self.reader_box(chunk, reach);
+                        let (min, max) = self.needed_box(chunk, reach);
                         self.covering(scale, input, min, max)
                     })
                     .collect();
@@ -2908,22 +2906,17 @@ impl Runtime {
             return Ok(());
         }
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
-        let side = i64::from(*size);
-        // The region's own columns: every footprint lies inside them, and so does its centre.
-        let min = [
-            i64::from(region.0) * side * sx,
-            i64::from(region.1) * side * sy,
-        ];
-        let max = [min[0] + side * sx - 1, min[1] + side * sy - 1];
+        // Every footprint lies inside the region, and so does its centre, which the views of
+        // the region's inputs cover with the cells its conditions read around it.
         let views: BTreeMap<usize, FieldView<'_>> = stage
             .inputs
             .iter()
             .map(|&(input, reach)| {
-                let widen =
-                    |axis: usize| i64::from(reach.cells(self.size)[axis]) - side * [sx, sy][axis];
-                let (wx, wy) = (widen(0).max(0), widen(1).max(0));
-                let area = ([min[0] - wx, min[1] - wy], [max[0] + wx, max[1] + wy]);
-                (input, self.view_over(index, input, area, wx as u32))
+                let area = self.needed_box(chunk, reach);
+                (
+                    input,
+                    self.view_over(index, input, area, reach.cells(self.size)[0]),
+                )
             })
             .collect();
         let read = |name: &str, x: i64, y: i64| {
@@ -3294,6 +3287,28 @@ impl Runtime {
         self.products.len()
     }
 
+    /// The columns of an input a stage's `chunk` reads at `reach`, in the stage's own columns, from
+    /// the lowest corner to the highest, both included: for a region's reach, the region `chunk`
+    /// lies in, grown by its halo and cells; for any other, the columns within the reach of the
+    /// chunk's.
+    fn needed_box(&self, chunk: ChunkCoord, reach: Reach) -> ([i64; 2], [i64; 2]) {
+        let Reach::Region { size, halo, cells } = reach else {
+            return self.reader_box(chunk, reach.cells(self.size));
+        };
+        let region = region_of(chunk, size);
+        let span = |axis: usize, at: i32| {
+            let columns = i64::from(self.size[axis]);
+            let (size, halo, cells) = (i64::from(size), i64::from(halo), i64::from(cells));
+            (
+                (i64::from(at) * size - halo) * columns - cells,
+                ((i64::from(at) + 1) * size + halo) * columns - 1 + cells,
+            )
+        };
+        let (x0, x1) = span(0, region.0);
+        let (y0, y1) = span(1, region.1);
+        ([x0, y0], [x1, y1])
+    }
+
     /// The columns within `reach` columns of `chunk`'s, in the chunk's own stage's columns, from
     /// the lowest corner to the highest, both included.
     fn reader_box(&self, chunk: ChunkCoord, reach: [u32; 2]) -> ([i64; 2], [i64; 2]) {
@@ -3579,7 +3594,12 @@ impl Runtime {
         } = &stage.kind
         {
             let (height, reach) = stage.inputs[0];
-            let view = self.view(index, chunk, height, reach);
+            let view = self.view_over(
+                index,
+                height,
+                self.needed_box(chunk, reach),
+                reach.cells(self.size)[0],
+            );
             let owner = (
                 chunk.x.div_euclid(*region as i32),
                 chunk.y.div_euclid(*region as i32),

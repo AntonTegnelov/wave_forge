@@ -6,7 +6,8 @@
 ## grew gets exactly one node, named by `instance_spawned`, standing at the piece's transform, and
 ## every tree is drawn once. With a promotion radius that puts some pieces inside and some outside,
 ## those outside are freed as nodes and drawn as MultiMeshes of their mesh instead, and become
-## nodes again when promotion is turned off. Moving away frees them all.
+## nodes again when promotion is turned off. Moving away frees every node and MultiMesh instance of
+## the view left behind, while the view moved to places its own.
 extends SceneTree
 
 const CELLS := 8
@@ -23,6 +24,8 @@ var phase := "arrive"
 var pieces := {}
 var trees := 0
 var radius := 0
+## The nodes placed before moving away, which moving away frees.
+var left := []
 
 func _initialize() -> void:
 	var tree := MeshInstance3D.new()
@@ -46,6 +49,7 @@ func _initialize() -> void:
 	root.add_child(world)
 	world.generation_failed.connect(func(reason: String) -> void: _fail(reason))
 	world.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void: ready[[stage, chunk]] = true)
+	world.stage_dropped.connect(func(stage: String, chunk: Vector3i) -> void: ready.erase([stage, chunk]))
 	world.instance_spawned.connect(func(node: Node3D, chunk: Vector3i, id: int) -> void:
 		if spawned.has([chunk, id]) and is_instance_valid(spawned[[chunk, id]]):
 			_fail("%s %d was spawned twice" % [chunk, id])
@@ -102,20 +106,30 @@ func _process(_delta: float) -> bool:
 			if stats["placed_nodes"] != pieces.size() or stats["placed_instances"] != trees:
 				return false
 			print("verify_scenes: without promotion, every piece is a node again")
+			left = spawned.values().duplicate()
 			world.follow(Vector3(2000, 0, 2000))
 			phase = "leave"
 			started_usec = Time.get_ticks_usec()
 			return false
 		"leave":
-			for node in spawned.values():
+			for node in left:
 				if is_instance_valid(node):
 					return false
-			if stats["placed_nodes"] > 0 or stats["placed_instances"] > 0:
+			if stats["pending_placements"] > 0 or stats["placed_instances"] != _held_trees():
 				return false
-			print("verify_scenes: moving away freed every node and MultiMesh")
+			print("verify_scenes: moving away freed every node and MultiMesh instance of the view left, %d trees placed in the new one" % stats["placed_instances"])
 			quit(0)
 			return true
 	return false
+
+## The trees of every chunk the stages hold now, as the MultiMeshes draw them.
+func _held_trees() -> int:
+	var count := 0
+	for key in ready:
+		if key[0] == "trees":
+			for points: Dictionary in world.point_sets("trees", key[1]):
+				count += points["transforms"].size() / 12
+	return count
 
 func _chunk_of(at: Vector3) -> Vector3i:
 	return Vector3i(floori(at.x / CELL.x / CELLS), floori(at.z / CELL.z / CELLS), 0)

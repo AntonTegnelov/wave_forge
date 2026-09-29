@@ -311,22 +311,28 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Blur` | Field | one field, `radius` cells |
 | `Delta` | Field | one field, `radius` cells |
 | `Area` | Categories | one Rules stage, `distance` cells |
-| `Sites` | Sites | a height field, `region` chunks |
+| `Sites` | Sites | a height field, over its region |
 | `TableSites` | Sites | a table's rows; a height field, `max_size` chunks |
-| `Locations` | Sites | a height field, and what its kinds' conditions read, `region` chunks |
+| `Locations` | Sites | a height field, and what its kinds' conditions read, over its region and the cells the conditions read around it |
 | `TableCurves` | Curves | a table's rows |
-| `Rivers` | Curves | a height field, `region - 1` chunks |
-| `Network` | Curves | a height field and a sites stage, `region - 1` chunks |
+| `Rivers` | Curves | a height field, over its region |
+| `Network` | Curves | a height field and a sites stage, over its region |
 | `Apply` | Field | a height field and a Region or TableCurves stage, `max_radius + blend` cells |
 | `Flatten` | Field | a height field, 0 cells; a sites stage or an Assemble stage, `blend` cells |
 | `Solve` | Tiles | a Sites or TableSites stage, 0 cells |
 | `Assemble` | Stamps | a sites stage, 0 cells |
 | `Cave` | Stamps | nothing |
 | `Tunnels` | Curves | a Cave stage, 0 cells |
-| `Deposit` | Points | a Cave stage, 0 cells; a volume, `region - 1` chunks |
+| `Deposit` | Points | a Cave stage, 0 cells; a volume, over its region |
 | `Spawn` | Points | a Cave stage, 0 cells |
 | `Scatter` | Points | a height field, `apart` cells (one more with `max_slope`); a sites stage or an Assemble stage, `apart + margin` cells |
 | `Embed` | Points | a volume, and what its conditions read, 0 cells |
+
+A stage that reads "over its region" computes a whole square region of `region` chunks at once, the
+regions counted from the origin, and reads nothing outside it (and its halo). The runtime generates
+such an input over the region a chunk lies in alone, so asking for one chunk costs its region, not
+the neighbouring ones; from a chunk of it the region reaches up to `region - 1` chunks, which is what
+`Pack::reach` reports. The Lakes and Region stages read theirs the same way.
 
 ### Field
 
@@ -884,8 +890,8 @@ to a Scatter point's. It works at the WFC lattice's scale on a volume of that sc
 `Region(job: "rivers", region: 4, halo: 1, inputs: ["height"], budget: 8)`: curves computed once per
 square region of `region` chunks by a region job, Rust code the game gives the runtime with
 `Runtime::with_region_job(name, job)`. A chunk's product is the region's curves that pass through
-it. `halo` (default 0) and `budget` (default 1) are optional, and the stage reads its inputs as far
-as `region - 1 + halo` chunks from any of its chunks.
+it. `halo` (default 0) and `budget` (default 1) are optional, and the stage reads its inputs over
+its region and `halo` chunks around it.
 
 A job implements `stages::regions::RegionJob`: `run(&RegionInput) -> Attempt`. Through the input it
 reads its fields (`field(stage, x, y)`, refused beyond the region and its halo), the region's
