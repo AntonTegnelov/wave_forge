@@ -207,8 +207,8 @@ pub enum StageKind {
         volume: String,
         #[serde(default)]
         tunnels: Option<Tunnels>,
-        /// An Assemble stage whose pieces are rooms: each piece's box, its footprint from its
-        /// floor up its height in cells, is carved empty.
+        /// An Assemble or Cave stage whose pieces are rooms: each piece's box, its footprint from
+        /// its floor up its height in cells, is carved empty.
         #[serde(default)]
         rooms: Option<String>,
         /// Sites whose ground is levelled in the volume before any tunnel or room is carved.
@@ -460,6 +460,44 @@ pub enum StageKind {
         #[serde(default)]
         align: f32,
     },
+    /// A cave level per square region of `region` chunks, planned once for the whole region: a
+    /// pattern drawn from `patterns` and a room count from `count.0` to `count.1`, then each room,
+    /// a piece of `rooms` drawn by weight, placed with its floor at a hashed height from `depth.0`
+    /// up to `depth.1` cells. The first lies in the middle half of the region; each other lies
+    /// from `apart` to twice `apart` cells from the room it links to, on the ground plane, at least
+    /// `apart` from every room placed and wholly inside the region, `tries` draws at most. A plan
+    /// that cannot place every room is drawn again, `rerolls` times at most. The pattern links the
+    /// rooms: `Linear` in a chain, `Star` each to the first, `Hub` the next three to the first and
+    /// every later one to the room three before it, so three branches. A chunk's product is the
+    /// rooms overlapping it, as pieces a Carve stage carves; a [`StageKind::Tunnels`] stage joins
+    /// the linked rooms. It works at the WFC lattice's scale.
+    Cave {
+        region: u32,
+        depth: (f32, f32),
+        patterns: Vec<Pattern>,
+        count: (u32, u32),
+        apart: f32,
+        rooms: Vec<Room>,
+        #[serde(default = "twenty_tries")]
+        tries: u32,
+        #[serde(default)]
+        rerolls: u32,
+    },
+    /// The tunnels of the Cave stage `cave`: for each pair of rooms its plan links, a curve with
+    /// heights from one room's centre to the other's, found by A* over a 3D grid of `step` cells
+    /// inside the cave's region, where a step costs its length times one plus `wander` times the
+    /// named noise's value there, from 0 to 1, so tunnels bend toward where the noise is low. Each
+    /// tunnel's radius is hashed from `radius.0` up to `radius.1` cells. A chunk's product is the
+    /// tunnels passing through it, which a Carve stage carves.
+    Tunnels {
+        cave: String,
+        noise: String,
+        radius: (f32, f32),
+        #[serde(default = "two_cells")]
+        step: u32,
+        #[serde(default = "one_wander")]
+        wander: f32,
+    },
     /// Pieces grown on each of `sites` (only those of `kinds`, if it names any) from connectors,
     /// as a jigsaw village or a dungeon of rooms is: the piece named `start` at the centre of the
     /// site's footprint, then, for each open door in the order doors opened, a piece drawn by
@@ -503,6 +541,30 @@ pub struct Piece {
     #[serde(default)]
     pub end: bool,
     pub doors: Vec<Door>,
+}
+
+/// How a Cave stage links its rooms ([`StageKind::Cave`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum Pattern {
+    /// Each room to the one placed before it.
+    Linear,
+    /// Every room to the first.
+    Star,
+    /// The next three rooms to the first, and every later one to the room three before it.
+    Hub,
+}
+
+/// A room a Cave stage places ([`StageKind::Cave`]): a box of cells an engine binds a scene to by
+/// its name, with its footprint centred on its place and its floor at its height.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Room {
+    pub name: String,
+    /// Cells along the lattice's x and y, and levels upward.
+    pub size: (u32, u32, u32),
+    /// How often it is drawn against the others.
+    #[serde(default = "one_weight")]
+    pub weight: u32,
 }
 
 /// A connector on a piece's side ([`Piece`]): two doors of one `kind` join when they face each
@@ -577,6 +639,14 @@ pub const MAX_SOURCES: u32 = 64;
 
 const fn one_chunk() -> u32 {
     1
+}
+
+const fn two_cells() -> u32 {
+    2
+}
+
+const fn one_wander() -> f32 {
+    1.0
 }
 
 const fn twenty_tries() -> u32 {
@@ -684,6 +754,9 @@ pub struct Materials {
     pub otherwise: String,
 }
 
+/// The most rooms one Cave stage can plan.
+pub const MAX_CAVE_ROOMS: u32 = 64;
+
 /// The most categories one Rules stage can name: a category is a byte per column.
 pub const MAX_CATEGORIES: usize = 256;
 
@@ -770,11 +843,12 @@ impl StageKind {
             Self::Region { .. }
             | Self::Rivers { .. }
             | Self::Network { .. }
-            | Self::TableCurves { .. } => Output::Curves,
+            | Self::TableCurves { .. }
+            | Self::Tunnels { .. } => Output::Curves,
             Self::Sites { .. } | Self::TableSites { .. } | Self::Locations { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
             Self::Scatter { .. } | Self::Embed { .. } => Output::Points,
-            Self::Assemble { .. } => Output::Pieces,
+            Self::Assemble { .. } | Self::Cave { .. } => Output::Pieces,
         }
     }
 }
@@ -1707,6 +1781,13 @@ impl Pack {
             })
             .collect();
         let mut stages = Vec::with_capacity(file.stages.len());
+        // The Cave stages, which a Tunnels stage joins the rooms of.
+        let caves: BTreeSet<String> = file
+            .stages
+            .iter()
+            .filter(|def| matches!(def.kind, StageKind::Cave { .. }))
+            .map(|def| def.name.clone())
+            .collect();
         // The curves stages whose curves always lie on the ground plane, with no heights.
         let ground_curves: BTreeSet<String> = file
             .stages
@@ -1753,6 +1834,8 @@ impl Pack {
                         | StageKind::Carve { .. }
                         | StageKind::Embed { .. }
                         | StageKind::Aquifer { .. }
+                        | StageKind::Cave { .. }
+                        | StageKind::Tunnels { .. }
                 )
             {
                 return Err(invalid(format!(
@@ -2250,6 +2333,83 @@ impl Pack {
                     }
                     reads
                 }
+                StageKind::Cave {
+                    region,
+                    depth,
+                    patterns,
+                    count,
+                    apart,
+                    rooms,
+                    tries,
+                    ..
+                } => {
+                    if *region == 0 || *tries == 0 {
+                        return Err(invalid(format!(
+                            "a region of {region} chunks and {tries} tries"
+                        )));
+                    }
+                    if !(depth.0.is_finite() && depth.1.is_finite() && depth.0 <= depth.1) {
+                        return Err(invalid(format!("floors between {depth:?}")));
+                    }
+                    if count.0 == 0 || count.0 > count.1 || count.1 > MAX_CAVE_ROOMS {
+                        return Err(invalid(format!(
+                            "a count of {count:?}; from 1 up to {MAX_CAVE_ROOMS} rooms are allowed"
+                        )));
+                    }
+                    if !(apart.is_finite() && *apart > 0.0) {
+                        return Err(invalid(format!("rooms {apart} cells apart")));
+                    }
+                    if patterns.is_empty() || rooms.is_empty() {
+                        return Err(invalid("no patterns or no rooms".to_owned()));
+                    }
+                    for (index, room) in rooms.iter().enumerate() {
+                        if room.size.0 == 0 || room.size.1 == 0 || room.size.2 == 0 {
+                            return Err(invalid(format!(
+                                "room {:?} of size {:?}",
+                                room.name, room.size
+                            )));
+                        }
+                        if room.weight == 0 {
+                            return Err(invalid(format!("room {:?} of weight 0", room.name)));
+                        }
+                        if rooms[..index]
+                            .iter()
+                            .any(|earlier| earlier.name == room.name)
+                        {
+                            return Err(invalid(format!("two rooms named {:?}", room.name)));
+                        }
+                    }
+                    Vec::new()
+                }
+                StageKind::Tunnels {
+                    cave,
+                    noise,
+                    radius,
+                    step,
+                    wander,
+                } => {
+                    if !by_name.get(cave.as_str()).is_some_and(|&index| {
+                        outputs[index] == Output::Pieces && caves.contains(cave)
+                    }) {
+                        return Err(invalid(format!("its cave {cave:?} is no Cave stage")));
+                    }
+                    if !file.noises.contains_key(noise) {
+                        return Err(invalid(format!("its noise {noise:?} is not declared")));
+                    }
+                    if !(radius.0.is_finite()
+                        && radius.1.is_finite()
+                        && 0.0 < radius.0
+                        && radius.0 <= radius.1)
+                    {
+                        return Err(invalid(format!("radii of {radius:?}")));
+                    }
+                    if *step == 0 || !(wander.is_finite() && *wander >= 0.0) {
+                        return Err(invalid(format!(
+                            "steps of {step} cells and a wander of {wander}"
+                        )));
+                    }
+                    vec![(cave.as_str(), Reach::Cells(0), Output::Pieces)]
+                }
                 StageKind::Flatten {
                     height,
                     sites,
@@ -2542,7 +2702,9 @@ impl Pack {
                 | StageKind::Lakes { .. }
                 | StageKind::Carve { .. }
                 | StageKind::Top { .. }
-                | StageKind::Aquifer { .. } => {}
+                | StageKind::Aquifer { .. }
+                | StageKind::Cave { .. }
+                | StageKind::Tunnels { .. } => {}
             }
             stages.push(Stage {
                 tables: read_tables,
@@ -2556,8 +2718,10 @@ impl Pack {
         }
         let mut point_ids: BTreeMap<u16, &str> = BTreeMap::new();
         for stage in &stages {
-            if let StageKind::Scatter { .. } | StageKind::Embed { .. } | StageKind::Assemble { .. } =
-                stage.kind
+            if let StageKind::Scatter { .. }
+            | StageKind::Embed { .. }
+            | StageKind::Assemble { .. }
+            | StageKind::Cave { .. } = stage.kind
                 && let Some(other) = point_ids.insert(point_stage_id(stage.salt), &stage.name)
             {
                 return Err(PackError::Invalid {
@@ -2662,9 +2826,21 @@ impl Pack {
     pub(crate) fn index(&self, name: &str) -> Option<usize> {
         self.by_name.get(name).copied()
     }
+
+    /// How many chunks a side of the regions a Cave stage plans its levels over, for the Cave
+    /// stage `index` or the Tunnels stage that joins its rooms.
+    pub(crate) fn cave_region(&self, index: usize) -> u32 {
+        match &self.stages[index].kind {
+            StageKind::Cave { region, .. } => *region,
+            StageKind::Tunnels { cave, .. } => {
+                self.cave_region(self.index(cave).expect("linked when loaded"))
+            }
+            _ => unreachable!("only Cave and Tunnels stages keep cave levels"),
+        }
+    }
 }
 
-/// The stage number a Scatter or Embed stage's points, or an Assemble stage's pieces, carry in
+/// The stage number a Scatter or Embed stage's points, or an Assemble or Cave stage's pieces, carry in
 /// their ids: 15 bits of its salt, never 0, which is the tiles'.
 pub(crate) const fn point_stage_id(salt: u32) -> u16 {
     (salt % 0x7FFF) as u16 + 1

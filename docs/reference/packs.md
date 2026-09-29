@@ -247,7 +247,7 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 |---|---|---|
 | `Field` | Field | the fields named by `Input` and the categories named by `Is`, 0 cells; the categories a `Match` names, `blend` cells |
 | `Volume` | Volume | as `Field` |
-| `Carve` | Volume | a volume, 0 cells; a curves stage and a height field, `max_radius + 1` cells; an Assemble stage, 1 cell; a sites stage or an Assemble stage to level, 1 cell |
+| `Carve` | Volume | a volume, 0 cells; a curves stage and, for curves on the ground plane, a height field, `max_radius + 1` cells; an Assemble or Cave stage, 1 cell; a sites stage or an Assemble stage to level, 1 cell |
 | `Top` | Field | a volume of its own scale, 0 cells |
 | `Aquifer` | Volume | a volume, and what its materials read, 0 cells |
 | `Rules` | Categories | what its conditions read, 0 cells |
@@ -265,6 +265,8 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Flatten` | Field | a height field, 0 cells; a sites stage or an Assemble stage, `blend` cells |
 | `Solve` | Tiles | a Sites or TableSites stage, 0 cells |
 | `Assemble` | Stamps | a sites stage, 0 cells |
+| `Cave` | Stamps | nothing |
+| `Tunnels` | Curves | a Cave stage, 0 cells |
 | `Scatter` | Points | a height field, `apart` cells (one more with `max_slope`); a sites stage or an Assemble stage, `apart + margin` cells |
 | `Embed` | Points | a volume, and what its conditions read, 0 cells |
 
@@ -395,8 +397,9 @@ centre `depth` cells (default 0) below its heights. A curve on the ground plane 
 centre runs `depth` cells below the field `height` at the nearest point of the centre line; loading
 refuses tunnels along a Rivers, Network or TableCurves stage without `height`, and a region job's
 curve without heights where there is none fails with `StageError::Curve`.
-Every piece of `rooms`, an [Assemble](#assemble) stage, is a box from its footprint's floor up its
-height in cells, so a dungeon grown with a negative `lift` is a set of rooms under its entrance.
+Every piece of `rooms`, an [Assemble](#assemble) or [Cave](#cave) stage, is a box from its
+footprint's floor up its height in cells, so a dungeon grown with a negative `lift` is a set of
+rooms under its entrance.
 
 A voxel within a cell of a tunnel or room, or inside one, keeps the lower of its value and how far
 it is outside the nearest, in cells: negative inside, so empty there, and exact wherever a surface
@@ -662,6 +665,48 @@ rule_file, build_solver)` is the implementation over any `Solver`, one per rule 
 `WfcTowns::solver(name)` shows a rule set's solver, for example what compiling has cost it; `town_prior` builds a bounded
 town's prior, which the city's own prior (`wfc_devtools::city::city_prior`) uses too. A pack with a
 Solve stage needs `Runtime::with_towns`, or generating fails with `StageError::NoTownSolver`.
+
+### Cave
+
+`Cave(region: 8, depth: (-30.0, -10.0), patterns: [Linear, Star, Hub], count: (5, 7), apart: 12.0, rooms: [...])`:
+a cave level per square region of `region` chunks, planned once for the whole region, as a mission
+of a mining game is ([#220](https://github.com/AntonTegnelov/wave_forge/issues/220)). A plan
+draws a pattern from `patterns` and a room count from `count.0` to `count.1` (at most 64), then
+places each room, drawn by weight from `rooms: [(name: "cavern", size: (7, 7, 5), weight: 2)]`,
+with its floor at a hashed height from `depth.0` up to `depth.1` cells. The first room lies in the
+middle half of the region; every other lies from `apart` to twice `apart` cells from the room it
+links to on the ground plane, at least `apart` cells from every room placed and wholly inside the
+region, each room trying `tries` places at most (default 20). A plan that cannot place every room
+is drawn again from a new hash stream, `rerolls` times at most (default 0), and then fails with
+`StageError::RegionRejected`, a line per attempt. The pattern links the rooms:
+
+| Pattern | Links |
+|---|---|
+| `Linear` | each room to the one placed before it, a chain |
+| `Star` | every room to the first |
+| `Hub` | the next three rooms to the first, and every later one to the room three before it, so three branches |
+
+A chunk's product is the rooms overlapping it, as stamps with positional ids, the region as their
+site, their floor's height and no turn. A [Carve](#carve) stage carves them as it carves an
+Assemble stage's rooms, and a [Tunnels](#tunnels) stage joins the linked ones. The plan depends on
+the seed, the stage and the region alone, so a level is the same in any order and a bounded pack
+([World bound](#world-bound)) makes one region the whole level. It works at the WFC lattice's
+scale. Neither engine binds scenes to its rooms yet
+([#233](https://github.com/AntonTegnelov/wave_forge/issues/233)).
+
+### Tunnels
+
+`Tunnels(cave: "level", noise: "wander", radius: (1.5, 2.5), step: 2, wander: 1.0)`: a curve for
+each pair of rooms the Cave stage `cave` links, from one room's centre to the other's, with a
+height per point. Each is the cheapest path found by A* over a grid of `step` cells (default 2)
+filling the cave's region from a cell under its lowest floor to a cell over its highest ceiling,
+between neighbouring grid points in all 26 directions, where a step costs its length times one
+plus `wander` (default 1) times the named noise at its middle, mapped from -1..1 to 0..1 and
+sampled in 3D as a volume reads `FastNoise`. So a tunnel bends toward where the noise is low, and
+with `wander: 0.0` runs as straight as the grid allows. A tunnel's radius, its curve's value at
+every point, is hashed per tunnel from `radius.0` up to `radius.1` cells. A chunk's product is the
+tunnels passing through it, which a [Carve](#carve) stage carves along their heights. Loading
+refuses a `cave` that is no Cave stage and a noise the pack does not declare.
 
 ### Scatter
 

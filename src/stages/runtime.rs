@@ -8,6 +8,7 @@
 //! asked for in, each is computed from the same inputs and comes out the same.
 
 use super::assemble::Growth;
+use super::caves::{self, CavePlan, CaveRules};
 use super::edits::{Edit, Edits};
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId, Table};
@@ -603,6 +604,10 @@ pub struct Runtime {
     /// Lakes filled, by Lakes stage and region: the water's surface over the region's columns, row
     /// by row, kept while a chunk of their region is needed.
     lakes: BTreeMap<RegionKey, Arc<[f32]>>,
+    /// Cave levels planned, by Cave stage and region, kept while a chunk of their region is needed.
+    caves: BTreeMap<RegionKey, Arc<CavePlan>>,
+    /// Tunnels found, by Tunnels stage and its cave's region, kept as the cave's plan is.
+    tunnels: BTreeMap<RegionKey, Arc<[Curve]>>,
     facts: Option<Facts>,
     /// The player's edits, folded from their log, applied to every product as it is generated.
     edits: Folded,
@@ -706,6 +711,8 @@ impl Runtime {
             regions: BTreeMap::new(),
             placed: BTreeMap::new(),
             lakes: BTreeMap::new(),
+            caves: BTreeMap::new(),
+            tunnels: BTreeMap::new(),
             pack,
             seed,
             size,
@@ -1157,6 +1164,20 @@ impl Runtime {
                 }
             }
         });
+        let fresh_cave = |stage: usize, region: (i32, i32)| {
+            let size = pack.cave_region(stage);
+            match stale.get(&stage) {
+                None => true,
+                Some(Stale::All) => false,
+                Some(Stale::Chunks(chunks)) => {
+                    !chunks.iter().any(|&chunk| region_of(chunk, size) == region)
+                }
+            }
+        };
+        self.caves
+            .retain(|&(stage, region), _| fresh_cave(stage, region));
+        self.tunnels
+            .retain(|&(stage, region), _| fresh_cave(stage, region));
         dropped
     }
 
@@ -1703,6 +1724,17 @@ impl Runtime {
                     chunks.iter().any(|&chunk| region_of(chunk, size) == region)
                 })
         });
+        let needed_cave = |stage: usize, region: (i32, i32)| {
+            let size = pack.cave_region(stage);
+            finite
+                || needed.get(&stage).is_some_and(|chunks| {
+                    chunks.iter().any(|&chunk| region_of(chunk, size) == region)
+                })
+        };
+        self.caves
+            .retain(|&(stage, region), _| needed_cave(stage, region));
+        self.tunnels
+            .retain(|&(stage, region), _| needed_cave(stage, region));
         self.needed = needed;
         self.focus = focus.to_vec();
         self.store_unneeded_frozen()?;
@@ -1826,6 +1858,7 @@ impl Runtime {
                         self.run_region_of(index, chunk)?;
                         self.place_locations_of(index, chunk)?;
                         self.fill_lakes_of(index, chunk)?;
+                        self.plan_cave_of(index, chunk)?;
                         let product = self.generate(index, chunk)?;
                         if self.pack.stages[index].persist == Persist::Frozen {
                             self.frozen
@@ -2067,7 +2100,9 @@ impl Runtime {
             | StageKind::Carve { .. }
             | StageKind::Top { .. }
             | StageKind::Embed { .. }
-            | StageKind::Aquifer { .. } => {
+            | StageKind::Aquifer { .. }
+            | StageKind::Cave { .. }
+            | StageKind::Tunnels { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
             StageKind::Rules { .. } | StageKind::Nearest { .. } => {
@@ -2387,6 +2422,123 @@ impl Runtime {
             *min_columns,
         );
         self.lakes.insert((index, region), Arc::from(surface));
+        Ok(())
+    }
+
+    /// Plans the cave level of Cave stage `index`, or of the Cave stage a Tunnels stage `index`
+    /// joins, in the region `chunk` lies in, and finds that Tunnels stage's tunnels there, unless
+    /// they are planned and found already.
+    fn plan_cave_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
+        let cave = match &self.pack.stages[index].kind {
+            StageKind::Cave { .. } => index,
+            StageKind::Tunnels { cave, .. } => self.pack.index(cave).expect("linked when loaded"),
+            _ => return Ok(()),
+        };
+        let stage = &self.pack.stages[cave];
+        let StageKind::Cave {
+            region: side,
+            depth,
+            patterns,
+            count,
+            apart,
+            rooms,
+            tries,
+            rerolls,
+        } = &stage.kind
+        else {
+            unreachable!("matched above")
+        };
+        let region = region_of(chunk, *side);
+        let [sx, sy] = self.size.map(i64::from);
+        let side = i64::from(*side);
+        let low = [
+            i64::from(region.0) * side * sx,
+            i64::from(region.1) * side * sy,
+        ];
+        let high = [low[0] + side * sx - 1, low[1] + side * sy - 1];
+        let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+        if let std::collections::btree_map::Entry::Vacant(vacant) = self.caves.entry((cave, region))
+        {
+            let rules = CaveRules {
+                depth: *depth,
+                patterns,
+                count: *count,
+                apart: *apart,
+                rooms,
+                tries: *tries,
+                rerolls: *rerolls,
+            };
+            let [stream, ..] = pcg3d([world ^ stage.salt, region.0 as u32, region.1 as u32]);
+            let plan = caves::plan(&rules, low, high, stream).map_err(|log| {
+                StageError::RegionRejected {
+                    stage: stage.name.clone(),
+                    region,
+                    log,
+                }
+            })?;
+            vacant.insert(Arc::new(plan));
+        }
+        if index == cave || self.tunnels.contains_key(&(index, region)) {
+            return Ok(());
+        }
+        let tunnels = &self.pack.stages[index];
+        let StageKind::Tunnels {
+            noise,
+            radius,
+            step,
+            wander,
+            ..
+        } = &tunnels.kind
+        else {
+            unreachable!("matched above")
+        };
+        let plan = &self.caves[&(cave, region)];
+        let noise = &self.noises[noise];
+        let tallest = rooms.iter().map(|room| room.size.2).max().unwrap_or(0) as f32;
+        // The region's columns, from a cell under the lowest floor to one over the highest ceiling.
+        let (from, to) = (
+            [low[0] as f32, low[1] as f32, depth.0 - 1.0],
+            [
+                (high[0] + 1) as f32,
+                (high[1] + 1) as f32,
+                depth.1 + tallest + 1.0,
+            ],
+        );
+        // Noise at a point in cells, with the height as Godot's y, as a volume reads it.
+        let cost = |at: [f32; 3]| {
+            1.0 + wander * ((noise.sample_3d(at[0], at[2], at[1]) + 1.0) / 2.0).clamp(0.0, 1.0)
+        };
+        let curves: Vec<Curve> = plan
+            .links
+            .iter()
+            .enumerate()
+            .map(|(link, &(a, b))| {
+                let path = caves::tunnel(
+                    plan.rooms[a].centre(rooms),
+                    plan.rooms[b].centre(rooms),
+                    from,
+                    to,
+                    *step as f32,
+                    cost,
+                );
+                let [hash, ..] = pcg3d([
+                    world ^ tunnels.salt,
+                    region.0 as u32,
+                    (region.1 as u32) ^ (link as u32).wrapping_mul(0x9E37_79B9),
+                ]);
+                let width = radius.0 + (radius.1 - radius.0) * unit(hash);
+                Curve {
+                    id: CurveId::Region {
+                        region,
+                        index: link as u32,
+                    },
+                    points: path.iter().map(|p| [p[0], p[1]]).collect(),
+                    values: vec![width; path.len()],
+                    heights: path.iter().map(|p| p[2]).collect(),
+                }
+            })
+            .collect();
+        self.tunnels.insert((index, region), Arc::from(curves));
         Ok(())
     }
 
@@ -2927,6 +3079,68 @@ impl Runtime {
                 values,
             }));
         }
+        if let StageKind::Cave { region, rooms, .. } = &stage.kind {
+            let region = region_of(chunk, *region);
+            let plan = &self.caves[&(index, region)];
+            let [sx, sy] = self.size.map(i64::from);
+            let (low, high) = (
+                [i64::from(chunk.x) * sx, i64::from(chunk.y) * sy],
+                [i64::from(chunk.x) * sx + sx, i64::from(chunk.y) * sy + sy],
+            );
+            let id_stage = point_stage_id(stage.salt);
+            return Ok(Product::Stamps(
+                plan.rooms
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(slot, placed)| {
+                        let room = &rooms[placed.room];
+                        let [width, depth] = [i64::from(room.size.0), i64::from(room.size.1)];
+                        let max = [placed.min[0] + width, placed.min[1] + depth];
+                        let overlaps = placed.min[0] < high[0]
+                            && low[0] < max[0]
+                            && placed.min[1] < high[1]
+                            && low[1] < max[1];
+                        if !overlaps {
+                            return None;
+                        }
+                        let centre = (placed.min[0] + width / 2, placed.min[1] + depth / 2);
+                        let owner = ChunkCoord::new(
+                            i32::try_from(centre.0.div_euclid(sx)).expect("a chunk coordinate"),
+                            i32::try_from(centre.1.div_euclid(sy)).expect("a chunk coordinate"),
+                            0,
+                        );
+                        let cell = (centre.1.rem_euclid(sy) * sx + centre.0.rem_euclid(sx)) as u32;
+                        Some(Stamp {
+                            id: InstanceId::new(owner, id_stage, cell, slot as u16),
+                            site: SiteId::Region(region.0, region.1),
+                            piece: Arc::from(room.name.as_str()),
+                            position: [
+                                placed.min[0] as f32 + width as f32 / 2.0,
+                                placed.min[1] as f32 + depth as f32 / 2.0,
+                                placed.floor,
+                            ],
+                            turn: 0.0,
+                            min: placed.min,
+                            max,
+                        })
+                    })
+                    .collect(),
+            ));
+        }
+        if let StageKind::Tunnels { cave, .. } = &stage.kind {
+            let cave = self.pack.index(cave).expect("linked when loaded");
+            let StageKind::Cave { region, .. } = self.pack.stages[cave].kind else {
+                unreachable!("a Tunnels stage joins a Cave stage's rooms")
+            };
+            let (min, max) = self.chunk_rect(chunk);
+            return Ok(Product::Curves(
+                self.tunnels[&(index, region_of(chunk, region))]
+                    .iter()
+                    .filter(|curve| curve.touches(min, max))
+                    .cloned()
+                    .collect(),
+            ));
+        }
         if let StageKind::Locations { region, .. } = &stage.kind {
             let placed = &self.placed[&(index, region_of(chunk, *region))];
             return Ok(Product::Sites(
@@ -3208,6 +3422,8 @@ impl Runtime {
                     | StageKind::Top { .. }
                     | StageKind::Embed { .. }
                     | StageKind::Aquifer { .. }
+                    | StageKind::Cave { .. }
+                    | StageKind::Tunnels { .. }
                     | StageKind::Area { .. }
                     | StageKind::TableSites { .. }
                     | StageKind::Locations { .. }
@@ -3325,8 +3541,17 @@ impl Runtime {
         let mut boxes: BTreeMap<InstanceId, ([f32; 3], [f32; 3])> = BTreeMap::new();
         if let Some(rooms) = rooms {
             let (at, reach) = input(rooms);
-            let StageKind::Assemble { pieces, .. } = &self.pack.stages[at].kind else {
-                unreachable!("inputs are type checked when the pack loads")
+            // Each room's height, by its name.
+            let heights: BTreeMap<&str, u32> = match &self.pack.stages[at].kind {
+                StageKind::Assemble { pieces, .. } => pieces
+                    .iter()
+                    .map(|piece| (piece.name.as_str(), piece.size.2))
+                    .collect(),
+                StageKind::Cave { rooms, .. } => rooms
+                    .iter()
+                    .map(|room| (room.name.as_str(), room.size.2))
+                    .collect(),
+                _ => unreachable!("inputs are type checked when the pack loads"),
             };
             let stamps = self
                 .inputs_within(index, chunk, at, reach.cells(self.size))
@@ -3335,10 +3560,7 @@ impl Runtime {
                     _ => unreachable!("inputs are type checked when the pack loads"),
                 });
             for stamp in stamps {
-                let piece = pieces
-                    .iter()
-                    .find(|piece| *piece.name == *stamp.piece)
-                    .expect("a stamp is one of its stage's pieces");
+                let height = heights[&*stamp.piece];
                 let floor = stamp.position[2];
                 boxes.insert(
                     stamp.id,
@@ -3347,7 +3569,7 @@ impl Runtime {
                         [
                             stamp.max[0] as f32,
                             stamp.max[1] as f32,
-                            floor + piece.size.2 as f32,
+                            floor + height as f32,
                         ],
                     ),
                 );
@@ -4456,7 +4678,7 @@ fn sin_cos(angle: f32) -> (f32, f32) {
 }
 
 /// A hash as a number from 0 up to but not including 1.
-fn unit(hash: u32) -> f32 {
+pub(crate) fn unit(hash: u32) -> f32 {
     (hash >> 8) as f32 / (1u32 << 24) as f32
 }
 
