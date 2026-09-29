@@ -104,9 +104,10 @@ Each is a gap between the code and the design or the stories, with where it is t
 - **The stage runtime is a first slice.** Fields are one `f32` per column, at a scale per stage,
   and volumes one `f32` per voxel between two levels, whose surface both engines draw and collide
   with, materials included; Carve stages cut tunnels and rooms into them, and a player digs and
-  fills them through the edits log. Building a surface and its collider on Godot's thread keeps
-  P1's 8 ms bar but leaves its 2 ms p99 borderline (E53,
-  [#218](https://github.com/AntonTegnelov/wave_forge/issues/218))
+  fills them through the edits log. Godot meshes surfaces on a thread of their own and holds P1's
+  bars in the container (E54); a desktop's numbers are
+  [#224](https://github.com/AntonTegnelov/wave_forge/issues/224), and Bevy still meshes on its
+  main thread
   ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71));
   curves from region jobs, networks between sites and tables are drawn into height fields; tables of facts reach stages through a focused row, sites, towns and
   roads

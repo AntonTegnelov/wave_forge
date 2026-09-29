@@ -72,10 +72,7 @@ Each step is a verified pull request that updates the stories it moves.
    place names through `bevy_kira_audio` and Fluent
    ([#174](https://github.com/AntonTegnelov/wave_forge/issues/174)); density volumes with
    Godot's 3D noise, materials, carved tunnels and rooms, surfaces and colliders, and digs and fills
-   through the edits log ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Left:
-   volume surfaces and colliders built off Godot's thread, to hold P1's 2 ms p99
-   ([#218](https://github.com/AntonTegnelov/wave_forge/issues/218)); ground rebuilt beside a raise
-   ([#216](https://github.com/AntonTegnelov/wave_forge/issues/216)); reverb and buses for interiors
+   through the edits log ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Left: reverb and buses for interiors
    in Bevy, once a crate exposes them on the tracked Bevy
    ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
 2. **The voxel stories' packs:** what G1, G3 and G8 still lack beyond density volumes, and their
@@ -95,7 +92,8 @@ Each step is a verified pull request that updates the stories it moves.
 desktops with native drivers ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)). It
 decides the device policy in both engines, whether a backend over Godot's `RenderingDevice` is worth
 building, and whether the P stories' targets hold. Also grass and ground levels on Forward+ on a
-desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166)). One script takes all of
+desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166)), and what a volume costs
+there ([#224](https://github.com/AntonTegnelov/wave_forge/issues/224)). One script takes all of
 them ([desktop-measurements.md](../guides/desktop-measurements.md)).
 
 **Before any release:** builds for every desktop platform the Godot Asset Store expects (Windows,
