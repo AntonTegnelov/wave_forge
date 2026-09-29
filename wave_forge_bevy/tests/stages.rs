@@ -1331,3 +1331,43 @@ fn a_played_world_arrives_as_generated_with_no_stage_run() {
         stages.timings()
     );
 }
+
+#[test]
+fn a_chunks_navigation_source_is_the_librarys_of_the_same_ground() {
+    let mut app = app_with(plugin().with_ground("height"));
+    let mut direct = runtime();
+    direct
+        .request(&[FocusPoint::new(ChunkCoord::new(0, 0, 0), 2)], &["height"])
+        .expect("stages");
+    direct.run_until_idle().expect("the stages run");
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        around_origin().iter().all(|&c| stages.ground(c).is_some())
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let cell = SETTINGS.cell_size.to_array();
+    let side = [
+        SETTINGS.chunk[0] as f32 * cell[0],
+        SETTINGS.chunk[1] as f32 * cell[2],
+    ];
+    let expected = wave_forge::surface_nav_source(
+        ChunkCoord::new(0, 0, 0),
+        side,
+        |_| true,
+        |chunk| {
+            let corner = [chunk.x as f32 * side[0], 0.0, chunk.y as f32 * side[1]];
+            ground(chunk, |at| direct.field("height", at), cell)
+                .map(|mesh| mesh.surface_triangles(corner))
+        },
+        3.0,
+        0.25,
+    )
+    .expect("every neighbour's ground");
+    let source = stages
+        .nav_source(ChunkCoord::new(0, 0, 0), |_| true, 3.0, 0.25)
+        .expect("every neighbour's ground");
+    assert!(!source.triangles.is_empty());
+    assert_eq!(source, expected);
+}

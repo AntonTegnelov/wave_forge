@@ -44,8 +44,9 @@ use wave_forge::stages::{
     StageTiming, StageWorker, Stamp, TownChunk, Volume,
 };
 use wave_forge::{
-    ChunkCoord, FarGround, FocusPoint, FrozenStore, GroundMesh, InstanceId, VolumeMesh, far_ground,
-    ground, ground_materials, ground_readers, volume_mesh,
+    ChunkCoord, FarGround, FocusPoint, FrozenStore, GroundMesh, InstanceId, NavSource,
+    NavSourceError, VolumeMesh, far_ground, ground, ground_materials, ground_readers,
+    surface_nav_source, volume_mesh,
 };
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
@@ -348,6 +349,42 @@ impl WaveForgeStages {
     #[must_use]
     pub const fn settings(&self) -> StagesSettings {
         self.settings
+    }
+
+    /// What a game's navigation crate bakes a chunk's navigation mesh from, as
+    /// [`wave_forge::surface_nav_source`] gathers it: the triangles of the chunk's ground and
+    /// volume surface and of its neighbours', out to `border`, in Bevy's world, counter-clockwise
+    /// seen from where agents walk, with bounds starting on a whole `cell_height`. `in_world`
+    /// says which chunks the world holds (all of them without the pack's bound). A game adds its
+    /// towns' collider shapes itself, with [`wave_forge::InstanceSet::placed`].
+    ///
+    /// # Errors
+    /// [`NavSourceError::Missing`] until the chunk and its neighbours in the world have their
+    /// ground and surface; [`NavSourceError::BorderTooWide`] for a border wider than a chunk.
+    pub fn nav_source(
+        &self,
+        chunk: ChunkCoord,
+        in_world: impl Fn(ChunkCoord) -> bool,
+        border: f32,
+        cell_height: f32,
+    ) -> Result<NavSource, NavSourceError> {
+        let (settings, cell) = (self.settings, self.settings.cell_size);
+        let chunk_size = [
+            settings.chunk[0] as f32 * cell.x,
+            settings.chunk[1] as f32 * cell.z,
+        ];
+        let triangles = |at: ChunkCoord| {
+            let corner = self.chunk_corner(at).to_array();
+            let mut triangles = Vec::new();
+            if self.ground_stage.is_some() {
+                triangles.extend(self.grounds.get(&at)?.surface_triangles(corner));
+            }
+            if self.volume_stage.is_some() {
+                triangles.extend(self.surfaces.get(&at)?.triangles(corner));
+            }
+            Some(triangles)
+        };
+        surface_nav_source(chunk, chunk_size, in_world, triangles, border, cell_height)
     }
 
     /// Where a chunk's corner sits on Bevy's ground plane, which a chunk's ground is relative to.
