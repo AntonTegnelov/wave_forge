@@ -135,8 +135,8 @@ impl<B: ComputeBackend> BlockSolver<B> {
             {
                 continue;
             }
-            let spec = KernelSpec::new(region, &self.ruleset, &self.config);
-            spec.check(&self.backend.limits())
+            let spec = KernelSpec::new(region, &self.ruleset, &self.config)
+                .fitted(&self.backend.limits())
                 .map_err(|(needed, available)| GpuError::WorkgroupStorage { needed, available })?;
             missing.push((region, spec.wgsl()));
         }
@@ -245,7 +245,7 @@ impl<B: ComputeBackend> BlockSolver<B> {
     #[must_use]
     pub fn fits(&self, region: RegionShape) -> bool {
         KernelSpec::new(region, &self.ruleset, &self.config)
-            .check(&self.backend.limits())
+            .fitted(&self.backend.limits())
             .is_ok()
     }
 
@@ -266,8 +266,8 @@ impl<B: ComputeBackend> BlockSolver<B> {
     }
 
     fn build(&mut self, capacity: u32, region: RegionShape) -> Result<Kernel<B>, GpuError> {
-        let spec = KernelSpec::new(region, &self.ruleset, &self.config);
-        spec.check(&self.backend.limits())
+        let spec = KernelSpec::new(region, &self.ruleset, &self.config)
+            .fitted(&self.backend.limits())
             .map_err(|(needed, available)| GpuError::WorkgroupStorage { needed, available })?;
         let pipeline = match self.pipelines.get(&region) {
             Some(pipeline) => Arc::clone(pipeline),

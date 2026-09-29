@@ -188,6 +188,33 @@ fn the_result_does_not_depend_on_invocations_per_workgroup() {
 }
 
 #[test]
+fn the_result_does_not_depend_on_where_the_rule_table_is_read() {
+    let chunk = OneChunk::city(ChunkShape::cube(8));
+    let runs = [(3, 11), (4, 12)];
+
+    let solved = [true, false].map(|shared_rules| {
+        let mut solver = chunk.solver(SolverConfig {
+            shared_rules,
+            ..SolverConfig::default()
+        });
+        let job = solver
+            .start(chunk.batch(&runs))
+            .expect("a well-formed batch");
+        let result = solver.wait(job).expect("the dispatch finishes");
+        assert_eq!(
+            result.statuses,
+            vec![RegionStatus::Solved, RegionStatus::Solved]
+        );
+        result.domains
+    });
+
+    assert_eq!(
+        solved[0], solved[1],
+        "reading the rule table from workgroup memory or from storage must not change the result"
+    );
+}
+
+#[test]
 fn a_portfolio_stops_seeds_above_the_winner_without_changing_the_winner() {
     // One attempt each, so some seeds fail and the winner is not always the first.
     let chunk = OneChunk::city(ChunkShape::cube(8));

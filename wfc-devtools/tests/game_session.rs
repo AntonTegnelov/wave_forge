@@ -445,7 +445,7 @@ fn play() -> Result<Session, String> {
         .filter(|&(x, y, z)| walkable.contains(&grid.get(x, y, z)))
         .count();
     let largest_network_share = (walkable_cells > 0).then(|| {
-        1.0 - disconnected_walkable_cells(&grid, &city).len() as f64 / walkable_cells as f64
+        1.0 - disconnected_walkable_cells(&grid, &city.modules).len() as f64 / walkable_cells as f64
     });
     let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("game_session.png");
     wfc_devtools::render::render_voxel_isometric(&grid, &city.voxels, 2)

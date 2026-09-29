@@ -91,8 +91,10 @@ Each is a gap between the code and the design or the stories, with where it is t
   ([world.md](../architecture/world.md#what-determinism-means-here)). The city needs a repair in
   about one chunk in ten.
 - **A region must fit the device's workgroup memory.** At 81 tiles an 8×8×8 chunk fits a halo of 1
-  or 2, not 3 (38 288 B against 32 768 B), so a repair's halo stops at 2. Bigger regions would need
-  domains in a storage buffer, which nothing needs yet.
+  or 2, not 3 (38 288 B against 32 768 B), so a repair's halo stops at 2. A rule set of 135 tiles
+  fits an 8×8 chunk with a halo of 1 by reading its rule table from storage, a quarter slower
+  ([solver.md](../architecture/solver.md)). Bigger regions would need domains in a storage buffer,
+  which nothing needs yet.
 - **3D only, six fixed axes.** 2D is a world one cell deep; other topologies wait for a game that
   needs one.
 - **No GPU timestamp queries and no `tracing` spans.** Host wall-clock time and the counters a solve

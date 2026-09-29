@@ -114,7 +114,7 @@ struct Ctrl {
 @group(0) @binding(8) var<storage, read> seeds: array<u32>;
 
 var<workgroup> dom: array<atomic<u32>, {DOM_WORDS}>;
-var<workgroup> rules_s: array<u32, {RULE_WORDS}>;
+{RULES_DECL}
 var<workgroup> epoch: array<atomic<u32>, {CELLS}>;
 var<workgroup> keys: array<u32, {WG}>;
 // Each cell's (count << 16 | index) key from the latest sweep, NONE once decided.
@@ -287,10 +287,7 @@ fn solve_region(
     loop {
         // Per-lane work for the current state. No barriers in here.
         if (st.phase == LOAD) {
-            let per_lane = (RULE_WORDS + WG - 1u) / WG;
-            for (var i = lane * per_lane; i < min((lane + 1u) * per_lane, RULE_WORDS); i++) {
-                rules_s[i] = rules[i];
-            }
+            {RULES_LOAD}
             for (var c = lane; c < CELLS; c += WG) {
                 dom_store(c, init_load(base + c * W));
                 atomicStore(&epoch[c], st.sweep);

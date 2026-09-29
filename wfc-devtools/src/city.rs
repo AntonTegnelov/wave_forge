@@ -220,8 +220,7 @@ pub fn walkable_tiles(m: &CompiledModules) -> Vec<usize> {
 
 /// Walkable cells outside the largest walkable network, found by flood fill over [`walk_links`].
 /// Empty means every walkable cell can reach every other.
-pub fn disconnected_walkable_cells(grid: &TileGrid, city: &City) -> Vec<Cell> {
-    let m = &city.modules;
+pub fn disconnected_walkable_cells(grid: &TileGrid, m: &CompiledModules) -> Vec<Cell> {
     let n = m.variants.len();
     let mut linked = vec![false; NUM_AXES * n * n];
     for (axis, from, to) in walk_links(m) {
@@ -738,13 +737,16 @@ mod tests {
         // x: grass, grass, stair or door, building, building; one storey up, the roof sits on x = 3.
         let with_stair = vec![grass, grass, stair, base, base, air, air, head, roof, air];
         assert_eq!(
-            disconnected_walkable_cells(&TileGrid::new(5, 1, 2, with_stair).unwrap(), &city),
+            disconnected_walkable_cells(
+                &TileGrid::new(5, 1, 2, with_stair).unwrap(),
+                &city.modules
+            ),
             vec![]
         );
 
         let with_door = vec![grass, grass, door, base, base, air, air, air, roof, air];
         assert_eq!(
-            disconnected_walkable_cells(&TileGrid::new(5, 1, 2, with_door).unwrap(), &city),
+            disconnected_walkable_cells(&TileGrid::new(5, 1, 2, with_door).unwrap(), &city.modules),
             vec![(3, 0, 1)],
             "a door does not lead up through a solid building"
         );

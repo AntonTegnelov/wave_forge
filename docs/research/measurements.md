@@ -245,6 +245,13 @@ reported was checked by the CPU reference propagating the same domains, which em
 | ~~K34~~ | ~~Live streaming, the walk of K27~~ | ~~192 chunks (98 304 cells) in 1.11 s of dispatches: median tick 32 ms, p90 66 ms, busiest 443 ms (the initial 40-chunk fill), 88k cells/s while generating; 3 of 192 chunks (1.6%) could not be placed after repairs at halo 1 and 2; 14 repaired; 0 seam violations~~ | bench at [#23]. Superseded by L1, the same walk through the library's scheduler |
 | K35 | Stitching an 8×8-chunk world on the library solver | a checkerboard without a halo leaves 30 of 64 chunks unsolved; with halo 1 and repair, both the checkerboard (14 repairs) and the diagonal order (2 repairs) complete it, 0 violations | bench schedule tests at [#23] |
 
+### Rule tables read from storage ([#247], 2026-09-29)
+
+| ID | Measurement | Result | Protocol |
+|---|---|---|---|
+| K36 | Workgroup memory for a culture of the maximal preset, 61 modules and 135 tiles (5 words a cell) | a 12×12×6 region needs 41 488 B, 16 200 of them the rule table's copy, against dozen's 32 768 B; without the copy an 8×8×6 chunk with a halo of 1 needs about 28 KB and solves | `wfc-devtools/tests/cultures.rs`, at [#247] |
+| K37 | One chunk of the city (81 tiles, 8×8×8) with the rule table copied into workgroup memory against read from storage, 256 invocations, radius 1, three runs | copied: 1.37 to 1.40 ms a chunk at 16 chunks, 0.42 at 64; read from storage: 1.74 to 1.94 and 0.54, about a quarter slower. So a kernel copies the table whenever it fits and reads it from storage only when it does not | `wfc-gpu/tests/block_solver_bench.rs` (`the_rule_table_read_from_storage_against_workgroup_memory`), release, dozen on the RTX 3070, at [#247] |
+
 ## The streaming library
 
 `wave_forge::WorldGenerator` solves chunks around focus points in parity batches, with a halo

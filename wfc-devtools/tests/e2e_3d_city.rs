@@ -155,7 +155,7 @@ fn small_city_is_structurally_sound_and_renders() {
         .flat_map(|z| (0..height).flat_map(move |y| (0..width).map(move |x| (x, y, z))))
         .filter(|&(x, y, z)| walkable.contains(&grid.get(x, y, z)))
         .count();
-    let disconnected = city::disconnected_walkable_cells(&grid, &city);
+    let disconnected = city::disconnected_walkable_cells(&grid, &city.modules);
     let share = 1.0 - disconnected.len() as f64 / walkable_cells.max(1) as f64;
     let mut cut_off_by_layer = vec![0usize; depth];
     let mut cut_off_by_module: BTreeMap<&str, usize> = BTreeMap::new();
