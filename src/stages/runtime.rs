@@ -444,6 +444,9 @@ pub enum StageError {
          stage"
     )]
     NotSampled(String),
+    /// Only a Sites stage's sites, a hash of their region, can be found without chunks.
+    #[error("stage {0:?} cannot be searched without chunks: it is not a Sites stage")]
+    NotLocated(String),
     #[error("stage {stage:?} gave up on region {region:?} after {} attempts: {}", log.len(), log.join("; "))]
     RegionRejected {
         stage: String,
@@ -1930,6 +1933,83 @@ impl Runtime {
         self.sample_column(index, column, &RefCell::new(HashMap::new()))
     }
 
+    /// The site of Sites stage `stage` nearest `at`, in cells on the lattice's plane, found without
+    /// generating a chunk: a site's region, size and place are a hash of the world's seed and its
+    /// region, and its levelled height is sampled as [`Runtime::sample`] samples. Distance is to
+    /// the site's footprint, so a site `at` stands on is at no distance; of equally near sites the
+    /// first found wins, searching rings of regions outward, each row by row. Regions up to
+    /// `within` regions from `at`'s own are searched,
+    /// and `None` is returned if none of them holds a site.
+    ///
+    /// # Errors
+    /// [`StageError::UnknownStage`] and [`StageError::NotLocated`] for a stage that is not a
+    /// Sites stage, and what sampling its height field can fail with.
+    pub fn locate(
+        &self,
+        stage: &str,
+        at: [f32; 2],
+        within: u32,
+    ) -> Result<Option<Site>, StageError> {
+        let index = self
+            .pack
+            .index(stage)
+            .ok_or_else(|| StageError::UnknownStage(stage.to_owned()))?;
+        let StageKind::Sites {
+            height,
+            region,
+            size,
+            chance,
+        } = &self.pack.stages[index].kind
+        else {
+            return Err(StageError::NotLocated(stage.to_owned()));
+        };
+        let salt = self.pack.stages[index].salt;
+        let [sx, sy] = [self.size[0] as f32, self.size[1] as f32];
+        let side = [*region as f32 * sx, *region as f32 * sy];
+        let home = (
+            (at[0] / side[0]).floor() as i32,
+            (at[1] / side[1]).floor() as i32,
+        );
+        // How far `at` is from a site's footprint, whose chunks run from `min` up to `max`.
+        let distance = |site: &Site| {
+            let away = |low: f32, high: f32, x: f32| (low - x).max(x - high).max(0.0);
+            let dx = away(site.min.0 as f32 * sx, site.max.0 as f32 * sx, at[0]);
+            let dy = away(site.min.1 as f32 * sy, site.max.1 as f32 * sy, at[1]);
+            libm::hypotf(dx, dy)
+        };
+        let height_index = self.pack.index(height).expect("linked when loaded");
+        let memo = RefCell::new(HashMap::new());
+        let mut best: Option<(f32, Site)> = None;
+        for ring in 0..=within as i32 {
+            // Every site of a ring's regions is at least this far from `at`, which lies in the
+            // ring's middle region.
+            let nearest_possible = (ring - 1).max(0) as f32 * side[0].min(side[1]);
+            if best
+                .as_ref()
+                .is_some_and(|(distance, _)| *distance < nearest_possible)
+            {
+                break;
+            }
+            for y in home.1 - ring..=home.1 + ring {
+                for x in home.0 - ring..=home.0 + ring {
+                    if (x - home.0).abs().max((y - home.1).abs()) != ring {
+                        continue;
+                    }
+                    let site = self.site(salt, (x, y), *region, *size, *chance, |x, y| {
+                        self.sample_column(height_index, [x, y], &memo)
+                    })?;
+                    if let Some(site) = site {
+                        let found = distance(&site);
+                        if best.as_ref().is_none_or(|(known, _)| found < *known) {
+                            best = Some((found, site));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(best.map(|(_, site)| site))
+    }
+
     /// A stage's values over `size` of its own columns from `min`, row by row with x fastest,
     /// sampled as [`Runtime::sample`] samples them: a world map, one value per column of a coarse
     /// stage, for a game to read before play.
@@ -2414,7 +2494,8 @@ impl Runtime {
                     kind: Some(Arc::clone(&name)),
                     min: footprint.0,
                     max: footprint.1,
-                    height: self.footprint_height(footprint.0, footprint.1, heights)?,
+                    height: self
+                        .footprint_height(footprint.0, footprint.1, |x, y| heights.get(x, y))?,
                 });
                 kept += 1;
             }
@@ -2861,7 +2942,7 @@ impl Runtime {
                 };
                 if site.overlaps(chunk) {
                     sites.push(Site {
-                        height: self.footprint_height(site.min, site.max, &view)?,
+                        height: self.footprint_height(site.min, site.max, |x, y| view.get(x, y))?,
                         ..site
                     });
                 }
@@ -2881,7 +2962,9 @@ impl Runtime {
                 chunk.x.div_euclid(*region as i32),
                 chunk.y.div_euclid(*region as i32),
             );
-            let site = self.site(stage.salt, owner, *region, *size, *chance, &view)?;
+            let site = self.site(stage.salt, owner, *region, *size, *chance, |x, y| {
+                view.get(x, y)
+            })?;
             return Ok(Product::Sites(
                 site.filter(|site| site.overlaps(chunk))
                     .into_iter()
@@ -3584,7 +3667,7 @@ impl Runtime {
         region: u32,
         size: (u32, u32),
         chance: f32,
-        height: &FieldView<'_>,
+        height: impl Fn(i64, i64) -> Result<f32, StageError>,
     ) -> Result<Option<Site>, StageError> {
         let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
         let [exists, dims, place] = pcg3d([world ^ salt, owner.0 as u32, owner.1 as u32]);
@@ -3618,7 +3701,7 @@ impl Runtime {
         &self,
         min: (i32, i32),
         max: (i32, i32),
-        height: &FieldView<'_>,
+        height: impl Fn(i64, i64) -> Result<f32, StageError>,
     ) -> Result<f32, StageError> {
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
         let (x0, y0) = (i64::from(min.0) * sx, i64::from(min.1) * sy);
@@ -3632,7 +3715,7 @@ impl Runtime {
         ];
         let mut sum = 0.0;
         for (x, y) in samples {
-            sum += height.get(x, y)?;
+            sum += height(x, y)?;
         }
         Ok(sum / samples.len() as f32)
     }

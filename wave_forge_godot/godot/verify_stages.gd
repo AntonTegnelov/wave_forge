@@ -196,7 +196,8 @@ func _process(_delta: float) -> bool:
 	_start_walk()
 	return false
 
-## A sample and an atlas of the ground give what its chunks hold, without generating any.
+## A sample and an atlas of the ground give what its chunks hold, and locating a town finds the one
+## its chunks hold, without generating any.
 func _check_sampling() -> bool:
 	var level: PackedFloat32Array = world.field_values("hills", centre)
 	var atlas: PackedFloat32Array = world.atlas("hills", Vector2i(centre.x * CELLS, centre.y * CELLS), Vector2i(CELLS, CELLS))
@@ -208,6 +209,13 @@ func _check_sampling() -> bool:
 		_fail("a sample of the hills differs from its chunk")
 		return false
 	print("verify_stages: a sample and an atlas of the hills match their chunk")
+	# From inside the town's chunk, the nearest town is the one generation placed there.
+	var town: Dictionary = world.sites("towns", centre)[0]
+	var located: Dictionary = world.locate("towns", _position_of(centre), 4)
+	if located != town:
+		_fail("locate found %s, the town of %s is %s" % [located, centre, town])
+		return false
+	print("verify_stages: locating the nearest town from inside it finds the town generation placed")
 	return true
 
 ## A chunk has ground exactly when its height field and the eight around it are held, which the

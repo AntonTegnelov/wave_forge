@@ -443,6 +443,13 @@ centre and inner corners.
 A chunk's product lists the sites that overlap it. A `Site` has its `id`, `SiteId::Region` with
 the region that owns it, its footprint `min..max` in chunks, and its `height`.
 
+A region's site, its size and its place are a hash of the world's seed and the region, and its
+height is a sample of the height field, so a site can be found without generating a chunk.
+`Runtime::locate(stage, at, within)` gives the site nearest `at`, in cells on the lattice's plane,
+measured to its footprint, searching regions up to `within` regions from `at`'s own; it is the site
+generation places there, as `tests/locate.rs` checks. Only Sites stages can be located
+(`StageError::NotLocated`).
+
 ### Locations
 
 A location table: sites of several kinds, placed once per square region of `region` chunks.
