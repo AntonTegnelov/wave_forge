@@ -149,7 +149,15 @@ kept as a capped log in the save
 
 **Needs.** Generated tables, Field with derivatives, density volumes, Sites with point queries, Apply
 (flatten), Scatter, Edits. The spherical domain and the universe scale are deferred
-([stages.md](../architecture/stages.md#scope)). **Status:** not started (2026-09-23).
+([stages.md](../architecture/stages.md#scope)). **Status:** verified by automated checks (2026-09-29), in the library's CI job
+([#221](https://github.com/AntonTegnelov/wave_forge/issues/221)). The planet pack
+(`examples/planet.world.ron`) generates a section from a planet's row in generated tables of systems
+and planets: a row decides its section and the same row gives the same one; its terrain is a volume
+of 3D noise with overhangs, carved so every outpost of an offset grid of sites stands on level
+ground under open sky; plants grow in its jungles and rocks in its deserts, standing on the volume's
+top; the nearest outpost is located without generating the chunks between; and a dig is kept in the
+edits log and survives leaving and returning (`tests/planet.rs`). Godot draws and collides with
+such a volume and digs into it (`verify_volume.gd`).
 
 ### G4. A Noita-like cave world from painted tiles
 

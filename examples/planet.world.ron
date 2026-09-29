@@ -1,0 +1,46 @@
+// G3's test pack: a section of a planet whose parameters come from its row in a generated table
+// of systems and planets. Focus a planet's row to generate its section: hills as rough as the
+// planet, overhangs as strong as its caves, outposts on an offset grid standing on levelled ground,
+// and plants in its jungles and rocks in its deserts, both standing on the volume's top.
+(
+    version: 1,
+    tables: [
+        (name: "systems", kind: Generated(count: Constant(16.0), columns: [
+            ("star", Random(0.0, 1.0)),
+        ])),
+        (name: "planets", kind: Generated(parent: Some("systems"), count: Floor(Random(1.0, 6.0)), columns: [
+            // How tall the hills are, in cells.
+            ("roughness", Random(6.0, 16.0)),
+            // How strongly 3D noise bends the ground into overhangs.
+            ("caves", Random(0.3, 0.8)),
+            // How much of the ground is jungle.
+            ("lush", Random(0.2, 0.8)),
+        ])),
+    ],
+    noises: {
+        "shape": (noise_type: SimplexSmooth, seed: 3, frequency: 0.015, fractal_octaves: 4),
+        "overhang": (noise_type: SimplexSmooth, seed: 9, frequency: 0.07, fractal_octaves: 2),
+        "climate": (noise_type: Perlin, seed: 17, frequency: 0.04, fractal_octaves: 2),
+    },
+    stages: [
+        (name: "height", kind: Field(Add(Mul(FastNoise("shape"), Row("planets", "roughness")), Constant(8.0)))),
+        (name: "biomes", kind: Rules(rules: [
+            (category: "jungle", when: [Less(FastNoise("climate"), Sub(Row("planets", "lush"), Constant(0.5)))]),
+        ], otherwise: "desert")),
+        (name: "outposts", kind: Sites(height: "height", region: 6, size: (1, 2), chance: 0.7)),
+        (name: "rock", kind: Volume(
+            density: Add(Sub(Input("height"), Z), Mul(FastNoise("overhang"), Mul(Row("planets", "caves"), Constant(24.0)))),
+            bottom: -24,
+            top: 40,
+            materials: Some((rules: [
+                (category: "soil", when: [Greater(Z, Sub(Input("height"), Constant(2.0)))]),
+            ], otherwise: "stone")),
+        )),
+        (name: "terrain", kind: Carve(volume: "rock", level: Some((sites: "outposts", depth: 4, clear: 64)))),
+        (name: "surface", kind: Top(volume: "terrain")),
+        (name: "plants", kind: Scatter(kind: "plant", height: "surface", spacing: 4, apart: 2,
+            when: [Greater(Is("biomes", ["jungle"]), Constant(0.5))], avoid: Some(("outposts", 1)))),
+        (name: "rocks", kind: Scatter(kind: "rock", height: "surface", spacing: 6, apart: 3,
+            when: [Greater(Is("biomes", ["desert"]), Constant(0.5))], avoid: Some(("outposts", 1)))),
+    ],
+)

@@ -75,10 +75,10 @@ Each step is a verified pull request that updates the stories it moves.
    through the edits log ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Left: reverb and buses for interiors
    in Bevy, once a crate exposes them on the tracked Bevy
    ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
-2. **The voxel stories' packs:** what G1, G3 and G8 still lack beyond density volumes, and their
-   test packs ([#219](https://github.com/AntonTegnelov/wave_forge/issues/219),
-   [#221](https://github.com/AntonTegnelov/wave_forge/issues/221),
-   [#220](https://github.com/AntonTegnelov/wave_forge/issues/220)).
+2. **The voxel stories' packs:** what G1 and G8 still lack beyond density volumes, and their test
+   packs ([#219](https://github.com/AntonTegnelov/wave_forge/issues/219),
+   [#220](https://github.com/AntonTegnelov/wave_forge/issues/220)). G3's planet pack is verified
+   ([#221](https://github.com/AntonTegnelov/wave_forge/issues/221)).
 3. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 4. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
