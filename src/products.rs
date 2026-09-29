@@ -8,7 +8,8 @@
 //!
 //! The same placements, with each module's collision shape as triangles, are what an engine bakes
 //! a chunk's navigation mesh from: [`nav_source`] gathers them for one chunk and the edges of its
-//! neighbours, so every engine bakes chunks that meet.
+//! neighbours, so every engine bakes chunks that meet. A world of stages walks on its ground, its
+//! volume surfaces and its towns instead, which [`surface_nav_source`] gathers the same way.
 
 use crate::loader::RuleFile;
 use crate::space::YUpSpace;
@@ -128,6 +129,29 @@ impl InstanceSet {
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
     }
+
+    /// `corners`, a collision shape as triangles around a cell's centre, unscaled, placed at every
+    /// instance as its collider is, and raised by `lift`: where a town's ground stands.
+    #[must_use]
+    pub fn placed(&self, corners: &[[f32; 3]], lift: f32) -> Vec<[f32; 3]> {
+        self.transforms([1.0; 3])
+            .chunks(12)
+            .flat_map(|row| {
+                corners.iter().map(move |corner| {
+                    let at = place(row, *corner);
+                    [at[0], at[1] + lift, at[2]]
+                })
+            })
+            .collect()
+    }
+}
+
+/// `corner` moved by `row`, one instance's twelve floats of [`InstanceSet::transforms`].
+fn place(row: &[f32], corner: [f32; 3]) -> [f32; 3] {
+    std::array::from_fn(|axis| {
+        let r = &row[axis * 4..axis * 4 + 4];
+        r[0] * corner[0] + r[1] * corner[1] + r[2] * corner[2] + r[3]
+    })
 }
 
 /// The placements of every module `wanted` names in `chunk`, one set per module name in name order:
@@ -265,11 +289,7 @@ pub fn nav_source<'a, 'f>(
                     continue;
                 }
                 for corner in corners {
-                    for axis in 0..3 {
-                        let r = &row[axis * 4..axis * 4 + 4];
-                        triangles
-                            .push(r[0] * corner[0] + r[1] * corner[1] + r[2] * corner[2] + r[3]);
-                    }
+                    triangles.extend(place(row, *corner));
                 }
             }
         }
@@ -278,6 +298,81 @@ pub fn nav_source<'a, 'f>(
         triangles,
         bounds_origin,
         bounds_size,
+        border,
+    })
+}
+
+/// The navigation source of the chunk at `coord` in a world whose walkable geometry comes as
+/// triangles per chunk, as a world of stages gives its ground, its volume surfaces and its towns:
+/// every triangle of the chunk and of its neighbours that reaches within `border` of the chunk.
+///
+/// Chunk `(x, y)` covers `x * chunk_size[0]` onwards along the engine's x and `y * chunk_size[1]`
+/// onwards along its z. `in_world` says which chunks the world holds, and `triangles` gives a
+/// chunk's triangles in world space, three corners each in the winding the engine bakes, or `None`
+/// while the chunk is not built. The bounds reach `border` below the lowest corner gathered and
+/// above the highest.
+///
+/// # Errors
+/// [`NavSourceError::Missing`] until the chunk and every neighbour the world holds are built;
+/// [`NavSourceError::BorderTooWide`] when `border` is wider than a chunk.
+pub fn surface_nav_source(
+    coord: ChunkCoord,
+    chunk_size: [f32; 2],
+    in_world: impl Fn(ChunkCoord) -> bool,
+    triangles: impl Fn(ChunkCoord) -> Option<Vec<[f32; 3]>>,
+    border: f32,
+) -> Result<NavSource, NavSourceError> {
+    let narrowest = chunk_size[0].min(chunk_size[1]);
+    if border > narrowest {
+        return Err(NavSourceError::BorderTooWide {
+            border,
+            chunk: narrowest,
+        });
+    }
+    let low = [
+        coord.x as f32 * chunk_size[0] - border,
+        coord.y as f32 * chunk_size[1] - border,
+    ];
+    let high = [
+        low[0] + chunk_size[0] + 2.0 * border,
+        low[1] + chunk_size[1] + 2.0 * border,
+    ];
+    let mut gathered: Vec<[f32; 3]> = Vec::new();
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            let neighbour = ChunkCoord::new(coord.x + dx, coord.y + dy, coord.z);
+            if !in_world(neighbour) {
+                continue;
+            }
+            let own = triangles(neighbour).ok_or(NavSourceError::Missing(neighbour))?;
+            for triangle in own.as_chunks::<3>().0 {
+                let reaches = (0..2).all(|axis| {
+                    let along = [0, 2][axis];
+                    let least = triangle.iter().map(|at| at[along]).fold(f32::MAX, f32::min);
+                    let most = triangle.iter().map(|at| at[along]).fold(f32::MIN, f32::max);
+                    most >= low[axis] && least <= high[axis]
+                });
+                if reaches {
+                    gathered.extend_from_slice(triangle);
+                }
+            }
+        }
+    }
+    let lowest = gathered.iter().map(|at| at[1]).fold(f32::MAX, f32::min);
+    let highest = gathered.iter().map(|at| at[1]).fold(f32::MIN, f32::max);
+    let (lowest, highest) = if gathered.is_empty() {
+        (0.0, 0.0)
+    } else {
+        (lowest, highest)
+    };
+    Ok(NavSource {
+        triangles: gathered.into_iter().flatten().collect(),
+        bounds_origin: [low[0], lowest - border, low[1]],
+        bounds_size: [
+            high[0] - low[0],
+            highest - lowest + 2.0 * border,
+            high[1] - low[1],
+        ],
         border,
     })
 }
@@ -374,6 +469,28 @@ mod tests {
             assert!((length - 1.0).abs() < 1e-6, "row {row}: {length}");
         }
         assert_eq!([t[3], t[7], t[11]], space.cell_center(chunk.coord, 0));
+    }
+
+    #[test]
+    fn a_placed_shape_stands_where_its_collider_does_raised_by_the_lift() {
+        let rules = rules();
+        let space = space();
+        let chunk = chunk(&rules);
+        let set = &instance_sets(&chunk, &rules, &space, |name| name != "air")[0];
+
+        let placed = set.placed(&[[0.5, 0.0, 0.0], [0.0, 0.5, 0.0]], 2.0);
+
+        // Turned a quarter, (0.5, 0, 0) points along +z; unscaled, it stays half a unit out.
+        let centre = space.cell_center(chunk.coord, 0);
+        let expected = [
+            [centre[0], centre[1] + 2.0, centre[2] + 0.5],
+            [centre[0], centre[1] + 2.5, centre[2]],
+        ];
+        for (at, expected) in placed.iter().zip(expected) {
+            for axis in 0..3 {
+                assert!((at[axis] - expected[axis]).abs() < 1e-5, "{placed:?}");
+            }
+        }
     }
 
     /// A world three chunks along x of 4x1x1 cells one unit wide, every cell an unturned road.
