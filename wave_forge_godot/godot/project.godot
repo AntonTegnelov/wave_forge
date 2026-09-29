@@ -8,3 +8,7 @@ run/main_scene=""
 [physics]
 
 3d/physics_engine="Jolt Physics"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/wave_forge/plugin.cfg")

@@ -16,12 +16,13 @@ use crate::lods::{add_levelled_surface, levelled_mesh};
 use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
+use godot::builtin::math::ApproxEq;
 use godot::classes::base_material_3d::Flags;
 use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::ArrayType;
 use godot::classes::{
-    ArrayMesh, CollisionShape3D, ConcavePolygonShape3D, FastNoiseLite, FileAccess,
+    ArrayMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
     HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, Node, Node3D,
     PhysicsServer3D, ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D,
     StandardMaterial3D, StaticBody3D,
@@ -37,10 +38,11 @@ use wave_forge::noise::{
     CellularDistanceFunction, CellularReturnType, DomainWarpFractalType, DomainWarpType,
     FractalType, NoiseConfig, NoiseType,
 };
+use wave_forge::stages::brushes::{Brush, Canvas, stroke};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, PointId, RowId, Runtime, Save,
-    Site, SiteId, StageEvent, StageKind, StageWorker, TableKind, Value,
+    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, Point, PointId, RowId, Runtime,
+    Save, Site, SiteId, StageError, StageEvent, StageKind, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -54,7 +56,7 @@ use wave_forge::{
 /// [`WaveForgeStages::start`], then [`WaveForgeStages::follow`] as the player moves, and read each
 /// chunk the `stage_ready` signal names.
 #[derive(GodotClass)]
-#[class(base = Node)]
+#[class(tool, base = Node)]
 pub struct WaveForgeStages {
     base: Base<Node>,
 
@@ -73,9 +75,23 @@ pub struct WaveForgeStages {
     /// at each column's centre in cells.
     #[export]
     noises: VarDictionary,
-    /// Whether to start as soon as the node enters the scene tree.
+    /// Values of the pack's parameters, as name to number, which `start` gives the stages; a
+    /// parameter left out keeps its default ([packs.md](packs.md#parameters)). `update_params`
+    /// changes them while the stages run.
+    #[export]
+    params: VarDictionary,
+    /// Whether to start as soon as the node enters the scene tree, when the game runs.
     #[export]
     start_on_ready: bool,
+    /// Whether to start in the editor too, as a preview a brush paints on; the editor plugin
+    /// follows the editor's camera with it.
+    #[export]
+    preview_in_editor: bool,
+    /// The edits of the world as text, `edits_log`'s: what brushes painted in the editor, which
+    /// the scene saves and `start` applies. Setting it replaces the edits, as `set_edits_log` does.
+    #[export(multiline)]
+    #[var(get = edits_log, set = set_edits_text)]
+    edits_text: PhantomVar<GString>,
 
     /// Every choice in the world derives from this.
     #[export_group(name = "World")]
@@ -585,7 +601,10 @@ impl INode for WaveForgeStages {
             noises: VarDictionary::new(),
             target_radii: VarDictionary::new(),
             targets: PackedStringArray::new(),
+            params: VarDictionary::new(),
             start_on_ready: false,
+            preview_in_editor: false,
+            edits_text: PhantomVar::default(),
             seed: 0,
             chunk_cells: Vector3i::new(8, 8, 8),
             cell_size: Vector3::ONE,
@@ -653,7 +672,12 @@ impl INode for WaveForgeStages {
     }
 
     fn ready(&mut self) {
-        if self.start_on_ready {
+        let starts = if Engine::singleton().is_editor_hint() {
+            self.preview_in_editor
+        } else {
+            self.start_on_ready
+        };
+        if starts {
             self.start();
         }
     }
@@ -1045,6 +1069,23 @@ impl WaveForgeStages {
         sampler
             .set_facts(facts.clone())
             .expect("facts made for the sampler's pack and seed");
+        let Some(values) = param_values(&self.params) else {
+            godot_error!(
+                "wave forge: params holds a name or value that is not a string and a number"
+            );
+            return false;
+        };
+        if let Err(error) = sampler.set_params(&values) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        // The edits `edits_text` gave, painted in the editor say.
+        if let Err(error) = sampler.set_edits(&self.edits) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        let thread_params = values.clone();
+        let thread_edits = self.edits.clone();
         let for_thread = Arc::clone(&pack);
         let thread_facts = facts.clone();
         self.rules = rules.clone();
@@ -1070,6 +1111,12 @@ impl WaveForgeStages {
             }
             runtime
                 .set_facts(thread_facts)
+                .map_err(|error| error.to_string())?;
+            runtime
+                .set_params(&thread_params)
+                .map_err(|error| error.to_string())?;
+            runtime
+                .set_edits(&thread_edits)
                 .map_err(|error| error.to_string())?;
             if !solves {
                 return Ok(runtime);
@@ -1338,6 +1385,41 @@ impl WaveForgeStages {
         })
     }
 
+    /// Paints a stroke of `brush` along `path`, points in Godot's world space, as edits of the
+    /// world ([packs.md](packs.md#edits)): what they reach is generated again, and `edits_log`
+    /// saves them. `brush` is a Dictionary: its `brush` is `"raise"`, `"smooth"`, `"dig"`, `"fill"`
+    /// or `"remove"`; `stage` names the field or volume it paints, or `stages` the point stages a
+    /// remove takes points of; `radius` is in cells; and `strength`, for raise and smooth, is how
+    /// many cells a raise lifts the path by, negative to lower, or from 0 to 1 how far a smooth
+    /// pulls. An editor undoes a stroke by giving back the `edits_log` it had before. Returns
+    /// whether the stroke painted; if not, why is reported as an error and nothing changes.
+    #[func]
+    fn paint(&mut self, brush: VarDictionary, path: PackedVector3Array) -> bool {
+        let Some(brush) = brush_of(&brush) else {
+            godot_error!("wave forge: a brush of {brush}");
+            return false;
+        };
+        let (Some(sampler), Some(worker)) = (&self.sampler, &self.worker) else {
+            godot_error!("wave forge: paint before start");
+            return false;
+        };
+        let cells: Vec<[f32; 3]> = path
+            .as_slice()
+            .iter()
+            .map(|&at| self.cells_at(at))
+            .collect();
+        let edits = match stroke(&NodeCanvas { sampler, worker }, &brush, &cells) {
+            Ok(edits) => edits,
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                return false;
+            }
+        };
+        let mut next = self.edits.clone();
+        next.log.extend(edits);
+        self.set_edits(next)
+    }
+
     /// Raises a field stage's value, the ground's height in cells say, by `by` at the column under
     /// `position` in Godot's world space; a negative `by` digs. Readers of the field within their
     /// reach are generated again, and the raise stays through eviction; `edits_log` saves it.
@@ -1432,6 +1514,18 @@ impl WaveForgeStages {
         GString::from(self.edits.to_ron().as_str())
     }
 
+    /// Sets `edits_text`: before `start`, the edits `start` applies; after, as `set_edits_log`.
+    #[func]
+    fn set_edits_text(&mut self, text: GString) {
+        match Edits::from_ron(&text.to_string()) {
+            Ok(edits) if self.worker.is_none() => self.edits = edits,
+            Ok(edits) => {
+                self.set_edits(edits);
+            }
+            Err(error) => godot_error!("wave forge: edits_text: {error}"),
+        }
+    }
+
     /// Replaces the player's edits with a log `edits_log` gave, from a save. Returns whether the
     /// text is such a log for this pack; if not, that is reported as an error and nothing
     /// changes.
@@ -1472,6 +1566,52 @@ impl WaveForgeStages {
         }
         worker.focus(&table.to_string(), id);
         true
+    }
+
+    /// Sets the pack's parameters named in `values`, name to number, while the stages run: what
+    /// reads a changed one is generated again, and nothing else. Returns whether every name is a
+    /// parameter of the pack and every value in its range; if not, that is reported as an error
+    /// and nothing changes.
+    #[func]
+    fn update_params(&mut self, values: VarDictionary) -> bool {
+        let (Some(sampler), Some(worker)) = (&mut self.sampler, &self.worker) else {
+            godot_error!("wave forge: update_params before start");
+            return false;
+        };
+        let Some(parsed) = param_values(&values) else {
+            godot_error!("wave forge: update_params takes names and numbers, not {values}");
+            return false;
+        };
+        if let Err(error) = sampler.set_params(&parsed) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        worker.set_params(parsed);
+        for (name, value) in values.iter_shared() {
+            self.params.set(&name, &value);
+        }
+        true
+    }
+
+    /// The pack's parameters, in the order of their names: each a Dictionary with its `name`, its
+    /// `default`, its range as `min` and `max`, and its `value` now. Empty before `start`.
+    #[func]
+    fn pack_params(&self) -> Array<VarDictionary> {
+        let (Some(pack), Some(sampler)) = (&self.pack, &self.sampler) else {
+            return Array::new();
+        };
+        pack.params()
+            .iter()
+            .map(|(name, param)| {
+                let mut out = VarDictionary::new();
+                out.set(&"name".to_variant(), &name.to_variant());
+                out.set(&"default".to_variant(), &param.default.to_variant());
+                out.set(&"min".to_variant(), &param.range.0.to_variant());
+                out.set(&"max".to_variant(), &param.range.1.to_variant());
+                out.set(&"value".to_variant(), &sampler.params()[name].to_variant());
+                out
+            })
+            .collect()
     }
 
     /// A table's rows, in the order of their ids: each a Dictionary with its `id`, a
@@ -1748,6 +1888,109 @@ impl WaveForgeStages {
                 None
             }
         }
+    }
+
+    /// Turns what a designer changed in a scene [`Self::bake`] gave, `baked` as instanced, into
+    /// edits of the world: a point placed as a node that was moved or turned is moved there, and
+    /// one that was deleted is removed, as `remove_point` removes one. Pieces, the ground, surfaces
+    /// and MultiMeshes are the generator's, and changes to them are not carried. The world is
+    /// generated again with the edits, and a bake after it holds them; `bake_keeping` carries over
+    /// the nodes the designer added as well. Returns whether the edits were taken; if not, that is
+    /// reported as an error.
+    #[func]
+    fn keep_bake_edits(&mut self, baked: Gd<Node3D>) -> bool {
+        let cell = self.cell_size;
+        let mut edits = self.edits.clone();
+        for holder in baked.get_children().iter_shared() {
+            if !holder.has_meta(BAKED_CHUNK) {
+                continue;
+            }
+            // The points still there, by the stage and chunk their id names and their id.
+            let mut present: HashMap<(String, Vector3i, i64), Gd<Node3D>> = HashMap::new();
+            for child in holder.get_children().iter_shared() {
+                if let (true, Ok(node)) = (
+                    child.has_meta(BAKED_POINT),
+                    child.clone().try_cast::<Node3D>(),
+                ) {
+                    let mark: VarDictionary = child.get_meta(BAKED_POINT).to();
+                    present.insert(point_key(&mark), node);
+                }
+            }
+            let listed: VarArray = holder.get_meta(BAKED_POINTS).to();
+            for mark in listed.iter_shared() {
+                let mark: VarDictionary = mark.to();
+                let (_, chunk, id) = point_key(&mark);
+                let point = PointId {
+                    chunk: (chunk.x, chunk.y),
+                    local: u64::try_from(id).expect("an id `bake` gave"),
+                };
+                let at: Vector2 = mark.at("at").to();
+                let placed: Transform3D = mark.at("transform").to();
+                match present.get(&point_key(&mark)) {
+                    None => edits.push(Edit::Remove {
+                        point,
+                        at: [at.x, at.y],
+                    }),
+                    Some(node) if !node.get_transform().approx_eq(&placed) => {
+                        let now = node.get_transform();
+                        let x = now.basis.col_a();
+                        edits.push(Edit::Move {
+                            point,
+                            from: [at.x, at.y],
+                            to: [
+                                now.origin.x / cell.x,
+                                now.origin.z / cell.z,
+                                now.origin.y / cell.y,
+                            ],
+                            // A point's basis turns it about Godot's +Y, taking +X toward -Z.
+                            turn: ((-x.z).atan2(x.x) / std::f32::consts::TAU).rem_euclid(1.0),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        self.set_edits(edits)
+    }
+
+    /// A bake of the chunks from `from` to `to`, as [`Self::bake`] gives, that keeps the nodes a
+    /// designer added under the chunks of `old`, an earlier bake as instanced: every node there
+    /// that `bake` did not make is copied under the same chunk. With `keep_bake_edits` first, a
+    /// linked bake is regenerated with the designer's edits kept. Null, with an error, as `bake`.
+    #[func]
+    fn bake_keeping(
+        &self,
+        from: Vector3i,
+        to: Vector3i,
+        old: Gd<Node3D>,
+    ) -> Option<Gd<PackedScene>> {
+        let scene = self.bake(from, to)?;
+        let root = scene.instantiate_as::<Node3D>();
+        for holder in old.get_children().iter_shared() {
+            if !holder.has_meta(BAKED_CHUNK) {
+                continue;
+            }
+            let Some(mut target) =
+                root.get_node_or_null(&NodePath::from(holder.get_name().to_string().as_str()))
+            else {
+                continue;
+            };
+            for child in holder.get_children().iter_shared() {
+                if child.has_meta(BAKED_PART) || child.has_meta(BAKED_POINT) {
+                    continue;
+                }
+                target.add_child(&child.duplicate_node());
+            }
+        }
+        own(&root.clone().upcast(), &root.clone().upcast());
+        let mut kept = PackedScene::new_gd();
+        let packed = kept.pack(&root);
+        root.free();
+        if packed != Error::OK {
+            godot_error!("wave forge: cannot bake: packing the scene failed: {packed:?}");
+            return None;
+        }
+        Some(kept)
     }
 
     /// The chunks that have a static body: their ground, their volume's surface, and their towns'
@@ -2293,6 +2536,11 @@ impl WaveForgeStages {
                         holder.add_child(&body("SurfaceBody", faces.upcast(), at));
                     }
                 }
+                // Everything so far is the generator's; a point placed as a node is the stage's.
+                for mut part in holder.get_children().iter_shared() {
+                    part.set_meta(BAKED_PART, &true.to_variant());
+                }
+                let mut listed = VarArray::new();
                 if !bound.is_empty() {
                     for stage in pack.stage_names() {
                         let Some(items) =
@@ -2300,11 +2548,45 @@ impl WaveForgeStages {
                         else {
                             continue;
                         };
-                        for node in self.placements.baked(&items)? {
+                        let points = worker.points(stage, chunk).unwrap_or_default();
+                        for (mut node, item) in self.placements.baked(&items)? {
+                            let point = item.and_then(|item| {
+                                points
+                                    .iter()
+                                    .find(|point| local_id(point.id.local) == item.id)
+                            });
+                            match point {
+                                Some(point) => {
+                                    let mut mark = VarDictionary::new();
+                                    mark.set(&"stage".to_variant(), &stage.to_variant());
+                                    mark.set(
+                                        &"chunk".to_variant(),
+                                        &to_vector(point.id.chunk).to_variant(),
+                                    );
+                                    mark.set(
+                                        &"id".to_variant(),
+                                        &local_id(point.id.local).to_variant(),
+                                    );
+                                    mark.set(
+                                        &"at".to_variant(),
+                                        &Vector2::new(point.position[0], point.position[1])
+                                            .to_variant(),
+                                    );
+                                    mark.set(
+                                        &"transform".to_variant(),
+                                        &node.get_transform().to_variant(),
+                                    );
+                                    node.set_meta(BAKED_POINT, &mark.to_variant());
+                                    listed.push(&mark.to_variant());
+                                }
+                                None => node.set_meta(BAKED_PART, &true.to_variant()),
+                            }
                             holder.add_child(&node);
                         }
                     }
                 }
+                holder.set_meta(BAKED_CHUNK, &to_vector(chunk).to_variant());
+                holder.set_meta(BAKED_POINTS, &listed.to_variant());
             }
         }
         Ok(())
@@ -3089,6 +3371,112 @@ fn ground_levels(mesh: &GroundMesh) -> (&[u32], Vec<(&[u32], f32)>) {
         .map(|level| (level.indices.as_slice(), level.error))
         .collect();
     (&finest.indices, coarser)
+}
+
+/// What a stroke reads in the node: the runtime it samples with, and the products its stages'
+/// thread sent.
+struct NodeCanvas<'a> {
+    sampler: &'a Runtime,
+    worker: &'a StageWorker,
+}
+
+impl Canvas for NodeCanvas<'_> {
+    fn pack(&self) -> &Pack {
+        self.sampler.pack()
+    }
+
+    fn chunk_size(&self) -> [u32; 2] {
+        self.sampler.chunk_size()
+    }
+
+    fn sample(&self, stage: &str, at: [f32; 2]) -> Result<f32, StageError> {
+        self.sampler.sample(stage, at)
+    }
+
+    fn points(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Point]> {
+        self.worker.points(stage, chunk)
+    }
+}
+
+/// The brush a GDScript Dictionary describes ([`WaveForgeStages::paint`]); none if it names no
+/// brush or lacks what its brush needs.
+fn brush_of(brush: &VarDictionary) -> Option<Brush> {
+    let text = |key: &str| Some(brush.get(key)?.try_to::<GString>().ok()?.to_string());
+    let number = |key: &str| {
+        let value = brush.get(key)?;
+        value
+            .try_to::<f64>()
+            .ok()
+            .or_else(|| value.try_to::<i64>().ok().map(|whole| whole as f64))
+            .map(|value| value as f32)
+    };
+    Some(match text("brush")?.as_str() {
+        "raise" => Brush::Raise {
+            stage: text("stage")?,
+            radius: number("radius")?,
+            strength: number("strength")?,
+        },
+        "smooth" => Brush::Smooth {
+            stage: text("stage")?,
+            radius: number("radius")?,
+            strength: number("strength")?,
+        },
+        "dig" => Brush::Dig {
+            stage: text("stage")?,
+            radius: number("radius")?,
+        },
+        "fill" => Brush::Fill {
+            stage: text("stage")?,
+            radius: number("radius")?,
+        },
+        "remove" => Brush::Remove {
+            stages: brush
+                .get("stages")?
+                .try_to::<PackedStringArray>()
+                .ok()?
+                .as_slice()
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            radius: number("radius")?,
+        },
+        _ => return None,
+    })
+}
+
+/// Parameter values from GDScript, name to number; none if any name is not a string or any value
+/// not a number.
+fn param_values(values: &VarDictionary) -> Option<BTreeMap<String, f32>> {
+    values
+        .iter_shared()
+        .map(|(name, value)| {
+            let name = name.try_to::<GString>().ok()?.to_string();
+            let value = value
+                .try_to::<f64>()
+                .ok()
+                .or_else(|| value.try_to::<i64>().ok().map(|whole| whole as f64))?;
+            Some((name, value as f32))
+        })
+        .collect()
+}
+
+/// The metadata [`WaveForgeStages::bake`] leaves on a chunk's node: the chunk.
+const BAKED_CHUNK: &str = "wave_forge_chunk";
+/// On a chunk's node: every point it placed as a node, as each one's [`BAKED_POINT`].
+const BAKED_POINTS: &str = "wave_forge_points";
+/// On a node a stage placed as a point: its `stage`, the `chunk` and `id` of its positional id,
+/// where it stood in cells (`at`) and its `transform`.
+const BAKED_POINT: &str = "wave_forge_point";
+/// On every other node the generator made.
+const BAKED_PART: &str = "wave_forge_generated";
+
+/// What names a baked point: its stage, and the chunk and id of its positional id.
+fn point_key(mark: &VarDictionary) -> (String, Vector3i, i64) {
+    (
+        mark.at("stage").to::<GString>().to_string(),
+        mark.at("chunk").to(),
+        mark.at("id").to(),
+    )
 }
 
 /// Makes `root` the owner of every node under `node`, so packing `root` keeps them. An instance of

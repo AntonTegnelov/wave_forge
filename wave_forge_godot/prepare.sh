@@ -20,6 +20,7 @@ cp "$target/$profile/libwave_forge_godot.so" "$here/godot/bin/"
 # The city the library's own tests load, so the project reads the same file, and its models.
 cp "$here/../examples/city.ron" "$here/godot/city.ron"
 cp "$here/../examples/valley.world.ron" "$here/godot/valley.world.ron"
+cp "$here/../examples/presets/islands.world.ron" "$here/godot/islands.world.ron"
 cargo run --quiet --manifest-path "$here/../Cargo.toml" -p wfc-devtools --bin wfc-export-models -- \
 	--out "$here/godot/models"
 

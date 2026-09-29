@@ -90,6 +90,23 @@ below the sea or a lake, whichever is higher, and rivers run down to the sea or 
 not a number, lakes that name no Lakes stage, and a Scatter stage's `water`, a Rivers stage or a
 Lakes stage in a pack that declares no water.
 
+## Parameters
+
+`params: {"land": (default: 0.45, range: (0.0, 1.0))}` declares numbers a user tunes without
+editing the pack, which stages read with `Param("land")`: a preset's handful of sliders, say
+(docs/architecture/stages.md, "Four tiers over one pack"). The default has to lie in the range, and
+the range is what the pack promises gives a sound world: `tests/presets.rs` sweeps every preset's
+ranges over a grid of values and seeds. A stage may read only parameters the pack declares.
+
+`Runtime::set_params(&values)` sets the parameters named in `values`, the others keeping theirs,
+and drops every product that read one whose value changed, with what was generated from it, as
+`request` does; `Runtime::params()` gives the values now. A name the pack does not declare, or a
+value outside its range, fails with `StageError::Param` and changes nothing.
+
+`examples/presets/islands.world.ron` is the first preset: islands whose `land` runs from a sea of
+islets to land with a few lakes, whose `roughness` runs from gentle to rugged, and whose `trees` run
+from bare to dense woods.
+
 ## Edits
 
 What a player changes in a world is a log, `Edits`, which a game keeps and saves beside its facts:
@@ -310,6 +327,7 @@ in cells, measured from the world's origin to the column's centre, along the lat
 | `Remap(a, (from_low, from_high), (to_low, to_high))` | `a` mapped linearly from one range onto the other, not clamped |
 | `Curve(a, [(x, y), ...])` | a piecewise-linear curve through points in increasing x, level beyond its ends |
 | `Row("table", "column")` | a column of the row the runtime is focused on in a table ([Tables of facts](#tables-of-facts)) |
+| `Param("name")` | the value of one of the pack's parameters ([Parameters](#parameters)) |
 | `Select(when: Less(a, b), then: c, otherwise: d)` | `c` where `a < b`, else `d`; `Greater(a, b)` compares the other way, and `Between(a, low, high)` holds where `a` is in the range, both ends included |
 
 An unnamed `Noise` draws from its stage's own stream, keyed by the world seed, the stage's name and

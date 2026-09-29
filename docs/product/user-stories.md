@@ -325,7 +325,14 @@ density) while the editor preview updates.*
 
 **Acceptance criteria.** Each preset's exposed parameters have ranges that never produce a broken
 world (swept by a seed and parameter contact sheet); the preview updates within the P6 target;
-undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Status:** not started (2026-09-23).
+undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Status:** in progress
+(2026-09-29): packs declare parameters with ranges that stages read, and the islands preset
+(`examples/presets/islands.world.ron`) tunes its land amount, roughness and tree density; a sweep
+of every range over a grid of values and seeds finds a sound world at each, more land as `land`
+rises and more trees as `trees` does, and a changed parameter regenerates only what reads it
+(`tests/presets.rs`, `verify_params.gd`). The node previews in the editor, and the editor plugin
+paints strokes as one undo action each; a preset list, and the preview's speed against P6, are
+[#48](https://github.com/AntonTegnelov/wave_forge/issues/48).
 
 ### N3. Place my own scene by dragging it in
 
@@ -369,7 +376,8 @@ set that generates a city with no unplaced chunk in the test world. **Needs.** I
 authoring tools, Solve. **Status:** in progress (2026-09-29): `wfc_rules::import::propose` proposes
 connectors from matching face shapes and writes the module set, and the set proposed from the
 city's own voxel models generates a city with no unplaced chunk (`wfc-devtools/tests/import.rs`);
-reading a `MeshLibrary` and the artist's confirming and renaming wait for the editor
+`WaveForgeWorld.propose_module_set` proposes one from a `MeshLibrary` (`verify_import.gd`). The
+artist's confirming and renaming wait for the editor
 ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 
 ### N7. Use my own noise
@@ -392,10 +400,14 @@ story mission.*
 
 **Acceptance criteria.** Baking writes a scene of plain nodes and resources that opens without the
 plugin; a linked bake can be regenerated with the designer's edits kept. **Needs.** Bake, Edits
-([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). **Status:** in progress
-(2026-09-29): `WaveForgeStages.bake(from, to)` writes an area as a scene of plain nodes, ground,
-volume, fluid and placed scenes with their bodies and materials, that names no Wave Forge class and
-loads back as the node drew it (`verify_bake.gd`); the linked bake is not built yet.
+([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). **Status:** verified by automated
+checks (2026-09-29), in the Godot job of every pull request's CI. `WaveForgeStages.bake(from, to)`
+writes an area as a scene of plain nodes, ground, volume, fluid and placed scenes with their bodies
+and materials; saved, it names no Wave Forge class, opens in a second Godot project that has no
+extension, and loads back as the node drew it. A designer then moves one ore, deletes another and
+adds a node of their own; `keep_bake_edits` makes the moves and deletions edits of the world, and
+`bake_keeping` regenerates the bake with the moved ore where it was put, without the deleted one,
+and with the designer's node (`verify_bake.gd`).
 
 ### N9. Share a world by seed
 

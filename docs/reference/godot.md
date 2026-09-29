@@ -40,6 +40,11 @@ extension needs none of godot-rust's thread-safety features.
 ### Functions
 
 - **Starting:** `load_rules(text)`, `start()`, `is_generating()`.
+- **A kit's rules:** `WaveForgeWorld.propose_module_set(library, cell_size)`, a static function,
+  proposes a module set from a `MeshLibrary`: a module per item, whose faces get connectors from the
+  shapes of the item's mesh on them, taken as a `GridMap` centres it in cells of `cell_size`
+  ([constraints.md](../architecture/constraints.md#what-adjacency-can-express)). It returns the set
+  as text for `load_rules`, for an artist to confirm, rename and mark walkable first.
 - **The prior:** `set_layer_tiles(layers)`, `ban_tiles_on_face(axis, tiles)`.
 - **Streaming:** `follow(position)` asks for the chunks around a position in Godot's world space;
   `generated_chunks()`.
@@ -152,7 +157,10 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Pack | `pack_file` | the pack, a `*.world.ron` file |
 | | `rules_files` | the rule sets Solve stages name, as name to rule file path |
 | | `targets` | the stages to generate; what they read comes with them |
-| | `start_on_ready` | start when the node enters the tree |
+| | `params` | values of the pack's parameters, as name to number, which `start` gives the stages; one left out keeps its default ([packs.md](packs.md#parameters)) |
+| | `start_on_ready` | start when the node enters the tree, when the game runs |
+| | `preview_in_editor` | start in the editor too, as a preview the editor plugin follows with the editor's camera and brushes paint on ([Editor](#editor)) |
+| | `edits_text` | the edits of the world as text, `edits_log`'s, which the scene saves and `start` applies: what brushes painted in the editor |
 | World | `seed` | every choice derives from it |
 | | `chunk_cells` | columns per chunk along the lattice's x and y, and a town chunk's height along z |
 | | `cell_size` | one cell in Godot's world units |
@@ -186,6 +194,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 - `noises`: a Dictionary of a pack's noise names to `FastNoiseLite` resources; each replaces the
   pack's noise of that name, so a Field reading `FastNoise(name)` holds exactly what the
   resource's `get_noise_2d` gives at each column's centre in cells.
+- `update_params(values)` sets the pack's parameters named in a Dictionary of names to numbers
+  while the stages run, generating again only what reads a changed one; `pack_params()` lists them,
+  each with its `name`, `default`, `min`, `max` and `value` now ([packs.md](packs.md#parameters)).
 - `remove_point(stage, chunk, id)` takes away a Scatter stage's point by the id `point_sets` gave
   it, `raise(stage, position, by)` raises a field stage at the column under a position in
   Godot's world space, and `dig(stage, position, radius)` and `fill(stage, position, radius)` dig a
@@ -276,7 +287,20 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
     one.
 
   Grass and the far ground are left out. It returns null, with an error, while a chunk's ground or
-  surfaces are not built, or while a scene is still loading.
+  surfaces are not built, or while a scene is still loading. Its nodes carry metadata a linked
+  bake reads, all plain Godot values:
+  - a chunk's node has `wave_forge_chunk` and the list of its points in `wave_forge_points`;
+  - a point placed as a node has `wave_forge_point`, its stage, the chunk and id of its positional
+    id, where it stood and its transform;
+  - everything else the generator made has `wave_forge_generated`.
+- `keep_bake_edits(baked)` turns what a designer changed in a bake, as instanced, into edits:
+  - a point node moved or turned is moved there with `Edit::Move`;
+  - a point node deleted is removed.
+
+  The world is generated again with them. Pieces, the ground, surfaces and MultiMeshes are the
+  generator's, and changes to them are not carried. `bake_keeping(from, to, old)` then bakes again,
+  copying every node the designer added under a chunk of `old`, so a linked bake is regenerated
+  with the designer's edits kept.
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
   since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` signals emitted in
   `slowest_frame_signals_ms`, `slowest_frame_grounds` built in `slowest_frame_grounds_ms`,
@@ -303,6 +327,26 @@ the player first, each at least one a frame. `stats()` reports what waits as `pe
 `pending_placements`, and
 what is placed as `placed_nodes` and `placed_instances`, and the nodes of pooled scenes waiting to
 be placed again as `pooled_nodes` ([Scenes](#scenes)).
+
+### Editor
+
+`WaveForgeStages` is a tool class, so it runs in the editor where `preview_in_editor` is on,
+generating around the editor's camera. The editor plugin (`addons/wave_forge`, enabled in the
+project's plugins) adds a Wave Forge dock:
+- a Paint toggle;
+- a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
+- the stage it paints, or the point stages Remove takes from;
+- a radius in cells, and a strength.
+
+With Paint on and the node selected, a drag in the 3D viewport paints a stroke along the ground,
+as one undo action that restores `edits_text`. The ground comes from `ground_height`, so painting
+needs `ground_stage`. What a stroke does is the node's own `paint(brush, path)`:
+- `brush` is a Dictionary with `brush` (`"raise"`, `"smooth"`, `"dig"`, `"fill"` or `"remove"`),
+  `stage` or `stages`, `radius` in cells, and `strength` for raise and smooth;
+- `path` holds points in Godot's world space.
+
+It adds the edits `stages::brushes::stroke` gives ([packs.md](packs.md#edits)), so a game's own
+tools paint the same way.
 
 ### Scenes
 

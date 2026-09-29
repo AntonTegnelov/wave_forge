@@ -47,10 +47,11 @@
 //! `xy`, and Godot's `y` is the lattice's `z`. `cell_size` says how large one cell is along each of
 //! Godot's axes, which is what turns a position into a chunk.
 
+use godot::classes::mesh::ArrayType as MeshArray;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::{
-    FileAccess, INode, NavigationMesh, NavigationMeshSourceGeometryData3D, NavigationServer3D,
-    Node, PhysicsServer3D, ProjectSettings, Shape3D,
+    FileAccess, INode, MeshLibrary, NavigationMesh, NavigationMeshSourceGeometryData3D,
+    NavigationServer3D, Node, PhysicsServer3D, ProjectSettings, Shape3D,
 };
 use godot::prelude::*;
 use radius::chunk_distance;
@@ -462,6 +463,52 @@ impl WaveForgeWorld {
     /// Generation stopped altogether, and why. The node reports nothing further after this.
     #[signal]
     fn generation_failed(reason: GString);
+
+    /// A module set proposed from the meshes of `library`, as `load_rules` reads one: a module per
+    /// item, named as the item, whose faces get connectors from the shapes of the item's mesh on
+    /// them (docs/architecture/constraints.md, "What adjacency can express"). Each item's mesh is
+    /// taken as a `GridMap` centres it in a cell of `cell_size`, with the item's mesh transform; an
+    /// item without a mesh is empty on every face. The proposal is for an artist to confirm,
+    /// rename and mark walkable, and to save as the kit's rule file. Two points of a face count as
+    /// one within a sixteenth of the cell.
+    #[func]
+    fn propose_module_set(library: Gd<MeshLibrary>, cell_size: Vector3) -> GString {
+        let items: Vec<(String, Vec<[f32; 3]>)> = library
+            .get_item_list()
+            .as_slice()
+            .iter()
+            .map(|&item| {
+                let name = library.get_item_name(item).to_string();
+                let transform = library.get_item_mesh_transform(item);
+                let mut positions = Vec::new();
+                if let Some(mesh) = library.get_item_mesh(item) {
+                    for surface in 0..mesh.get_surface_count() {
+                        let arrays = mesh.surface_get_arrays(surface);
+                        let vertices = arrays
+                            .get(MeshArray::VERTEX.ord() as usize)
+                            .and_then(|vertices| vertices.try_to::<PackedVector3Array>().ok())
+                            .unwrap_or_default();
+                        for &vertex in vertices.as_slice() {
+                            let at = transform * vertex;
+                            // The lattice's x, y and up from Godot's x, z and y, 0 to 1 across
+                            // the cell.
+                            positions.push([
+                                at.x / cell_size.x + 0.5,
+                                at.z / cell_size.z + 0.5,
+                                at.y / cell_size.y + 0.5,
+                            ]);
+                        }
+                    }
+                }
+                (name, positions)
+            })
+            .collect();
+        let kit: Vec<wave_forge::import::KitModule<'_>> = items
+            .iter()
+            .map(|(name, positions)| wave_forge::import::KitModule { name, positions })
+            .collect();
+        GString::from(wave_forge::import::propose(&kit, 1.0 / 16.0).as_str())
+    }
 
     /// Reads a rule set in Wave Forge's RON format, either tiles with their adjacency or modules
     /// described by connectors, usually read with `FileAccess.get_file_as_string` so that it works

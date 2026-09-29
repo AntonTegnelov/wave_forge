@@ -2,5 +2,9 @@
 bin/
 city.ron
 valley.world.ron
+islands.world.ron
 models/
 .godot/
+# What the editor writes when verify.sh opens it headless to load the plugin.
+*.uid
+*.import

@@ -60,6 +60,7 @@ pub(crate) fn evaluate(expr: &Expr, leaves: &impl Leaves) -> Result<f32, StageEr
         | Expr::Is(..)
         | Expr::Match { .. }
         | Expr::Row(..)
+        | Expr::Param(_)
         | Expr::Parent(_)
         | Expr::Random(..)
         | Expr::Index

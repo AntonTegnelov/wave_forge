@@ -2,11 +2,14 @@
 ##
 ## Run by `../verify.sh` after `verify_volume.gd`. The pack has ground with materials, trees drawn
 ## as a MultiMesh, a cave volume with pools of water, and ore placed as instances of a saved scene.
-## Baking 3 by 3 chunks gives a scene that, saved as text, names no Wave Forge class and refers to
-## no file but the ore's scene. Loaded back, every chunk holds its ground standing where the node's
+## Baking 3 by 3 chunks gives a scene that, saved as text, names no Wave Forge class, refers to no
+## file but the ore's scene, and opens in a second Godot project that has no extension at all. Loaded back, every chunk holds its ground standing where the node's
 ## does with a height-map body, its cave's surface and fluid with the node's vertices and a concave
 ## body, a tree for every point and an ore for every embedded one. Baking a chunk not yet built is
-## refused.
+## refused. Then, linked: a designer moves one ore of the baked scene, deletes another and adds a
+## node of their own; the node keeps those edits, the world is generated again with the ore moved
+## and the other gone, and a bake keeping the old one holds the moved ore where the designer put it,
+## not the deleted one, and the designer's node.
 extends SceneTree
 
 const CELLS := 8
@@ -19,6 +22,14 @@ const TO := Vector3i(1, 1, 0)
 
 var world: Node
 var started_usec := 0
+var phase := "arrive"
+## The first bake, as instanced, which the designer edits.
+var baked: Node3D
+var ores_before := 0
+## The moved ore's key and where it was moved to, and the deleted ore's key.
+var moved := []
+var moved_to := Transform3D()
+var deleted := []
 
 func _initialize() -> void:
 	var tree := MeshInstance3D.new()
@@ -68,8 +79,10 @@ func _area() -> Array[Vector3i]:
 
 func _process(_delta: float) -> bool:
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
-		_fail("the area had not arrived")
+		_fail("the %s phase timed out" % phase)
 		return true
+	if phase == "linked":
+		return _check_linked()
 	var stats: Dictionary = world.stats()
 	for chunk in _area():
 		if not world.ground_chunks().has(chunk) or not world.volume_chunks().has(chunk) or not world.fluid_chunks().has(chunk):
@@ -103,8 +116,10 @@ func _check() -> bool:
 	if files != 1:
 		_fail("the baked scene refers to %d files, not the ore's alone" % files)
 		return true
+	if not _opens_without_the_extension():
+		return true
 	var loaded: PackedScene = ResourceLoader.load(BAKED_PATH, "", ResourceLoader.CACHE_MODE_IGNORE)
-	var baked: Node3D = loaded.instantiate()
+	baked = loaded.instantiate()
 	var trees := 0
 	var ores := 0
 	for chunk in _area():
@@ -122,11 +137,105 @@ func _check() -> bool:
 			baked_trees += node.multimesh.instance_count
 		elif node.scene_file_path == ORE_PATH:
 			baked_ores += 1
-	baked.free()
 	if trees < 20 or ores < 5 or baked_trees != trees or baked_ores != ores:
 		_fail("%d of %d trees and %d of %d ores baked" % [baked_trees, trees, baked_ores, ores])
 		return true
-	print("verify_bake: 9 chunks baked into a scene naming no Wave Forge class, loaded back with their ground, bodies, cave, fluid, %d trees and %d ores" % [trees, ores])
+	print("verify_bake: 9 chunks baked into a scene naming no Wave Forge class, opened in a project without the extension, loaded back with their ground, bodies, cave, fluid, %d trees and %d ores" % [trees, ores])
+	return _edit_as_a_designer(ores)
+
+## Opens the saved bake in a project of its own, with no extension, in a second Godot process: the
+## project has this one's name, so `user://` and the ore's scene there are the same.
+func _opens_without_the_extension() -> bool:
+	var dir := OS.get_user_data_dir().path_join("plugin_free")
+	DirAccess.make_dir_recursive_absolute(dir)
+	var project := FileAccess.open(dir.path_join("project.godot"), FileAccess.WRITE)
+	project.store_string("config_version=5\n\n[application]\nconfig/name=\"wave_forge_verify\"\n")
+	project.close()
+	DirAccess.copy_absolute(ProjectSettings.globalize_path(BAKED_PATH), dir.path_join("baked.tscn"))
+	var opener := FileAccess.open(dir.path_join("open.gd"), FileAccess.WRITE)
+	opener.store_string("\n".join([
+		"extends SceneTree",
+		"func _initialize() -> void:",
+		"\tvar scene: PackedScene = load(\"res://baked.tscn\")",
+		"\tvar baked: Node = scene.instantiate() if scene != null else null",
+		"\tvar chunks := baked.get_child_count() if baked != null else 0",
+		"\tif baked != null: baked.free()",
+		"\tprint(\"opened %d chunks\" % chunks)",
+		"\tquit(0 if chunks == 9 else 1)",
+		"",
+	]))
+	opener.close()
+	var output := []
+	var code := OS.execute(OS.get_executable_path(), ["--headless", "--path", dir, "--script", "res://open.gd"], output, true)
+	if code != 0 or DirAccess.dir_exists_absolute(dir.path_join("bin")):
+		_fail("the bake does not open in a project without the extension (exit %d):\n%s" % [code, "\n".join(output)])
+		return false
+	return true
+
+## Moves one ore of the baked scene a cell along x, deletes another, adds a node of the designer's
+## own, and hands the edits to the node.
+func _edit_as_a_designer(ores: int) -> bool:
+	ores_before = ores
+	var holder: Node3D = baked.get_node("Chunk 0 0")
+	var ore_nodes := []
+	for child in holder.get_children():
+		if child.scene_file_path == ORE_PATH:
+			ore_nodes.append(child)
+	if ore_nodes.size() < 2:
+		_fail("chunk 0 0 holds %d ores" % ore_nodes.size())
+		return true
+	var mark: Dictionary = ore_nodes[0].get_meta("wave_forge_point")
+	moved = [mark["stage"], mark["chunk"], mark["id"]]
+	ore_nodes[0].position += Vector3(CELL.x, 0, 0)
+	moved_to = ore_nodes[0].transform
+	mark = ore_nodes[1].get_meta("wave_forge_point")
+	deleted = [mark["stage"], mark["chunk"], mark["id"]]
+	holder.remove_child(ore_nodes[1])
+	ore_nodes[1].free()
+	var house := Node3D.new()
+	house.name = "Designer house"
+	holder.add_child(house)
+	if not world.keep_bake_edits(baked):
+		_fail("the designer's edits were refused")
+		return true
+	phase = "linked"
+	started_usec = Time.get_ticks_usec()
+	return false
+
+## Waits for the world generated again, then bakes it keeping the old bake.
+func _check_linked() -> bool:
+	var stats: Dictionary = world.stats()
+	if stats["pending_placements"] > 0:
+		return false
+	for set: Dictionary in world.point_sets("ore", deleted[1]):
+		if set["ids"].has(deleted[2]):
+			return false
+	var scene: PackedScene = world.bake_keeping(FROM, TO, baked)
+	if scene == null:
+		_fail("the linked bake failed")
+		return true
+	var kept: Node3D = scene.instantiate()
+	var ores := 0
+	var found_moved := false
+	for node in kept.find_children("*", "", true, false):
+		if node.scene_file_path != ORE_PATH:
+			continue
+		ores += 1
+		var mark: Dictionary = node.get_meta("wave_forge_point")
+		var key := [mark["stage"], mark["chunk"], mark["id"]]
+		if key == deleted:
+			_fail("the deleted ore is baked again")
+			return true
+		if key == moved:
+			# Where the designer put it, turned as it was.
+			found_moved = node.transform.is_equal_approx(moved_to)
+	var house_kept: bool = kept.get_node("Chunk 0 0").has_node("Designer house")
+	kept.free()
+	baked.free()
+	if not found_moved or not house_kept or ores != ores_before - 1:
+		_fail("the linked bake has the moved ore where it was put: %s, the designer's node: %s, and %d ores for %d" % [found_moved, house_kept, ores, ores_before - 1])
+		return true
+	print("verify_bake: a linked bake regenerated with the designer's edits keeps the moved ore where it was put, drops the deleted one and keeps the designer's node")
 	quit(0)
 	return true
 

@@ -7,8 +7,8 @@
 //! edits and gives the runtime the log, and an editor undoes a stroke by taking them out again.
 
 use super::edits::{Edit, PointId};
-use super::pack::{Output, StageKind};
-use super::runtime::{Runtime, StageError};
+use super::pack::{Output, Pack, StageKind};
+use super::runtime::{Point, Runtime, StageError};
 use serde::{Deserialize, Serialize};
 use wfc_core::ChunkCoord;
 
@@ -42,6 +42,41 @@ pub enum Brush {
     Remove { stages: Vec<String>, radius: f32 },
 }
 
+/// What a stroke reads of the world it paints on. A [`Runtime`] is one; an engine that keeps the
+/// products it was sent apart from the runtime it samples with gives both through a canvas of its
+/// own.
+pub trait Canvas {
+    /// The pack the world is generated from.
+    fn pack(&self) -> &Pack;
+    /// Columns per chunk along the lattice's x and y.
+    fn chunk_size(&self) -> [u32; 2];
+    /// A field stage's value at a point in cells, edits included, as [`Runtime::sample`] gives it.
+    ///
+    /// # Errors
+    /// As [`Runtime::sample`].
+    fn sample(&self, stage: &str, at: [f32; 2]) -> Result<f32, StageError>;
+    /// A point stage's points in a chunk the world holds, if it holds that chunk.
+    fn points(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Point]>;
+}
+
+impl Canvas for Runtime {
+    fn pack(&self) -> &Pack {
+        Self::pack(self)
+    }
+
+    fn chunk_size(&self) -> [u32; 2] {
+        Self::chunk_size(self)
+    }
+
+    fn sample(&self, stage: &str, at: [f32; 2]) -> Result<f32, StageError> {
+        Self::sample(self, stage, at)
+    }
+
+    fn points(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Point]> {
+        Self::points(self, stage, chunk)
+    }
+}
+
 /// The edits a stroke of `brush` along `path` makes in the world `runtime` holds: points in cells,
 /// along the lattice's x and y and up, in the order they were painted. A path of one point is a
 /// dab.
@@ -51,7 +86,7 @@ pub enum Brush {
 /// of range, or a stage that is not of the kind the brush paints; and what [`Runtime::sample`]
 /// gives for a smoothed stage it cannot sample.
 pub fn stroke(
-    runtime: &Runtime,
+    runtime: &impl Canvas,
     brush: &Brush,
     path: &[[f32; 3]],
 ) -> Result<Vec<Edit>, StageError> {
@@ -157,7 +192,7 @@ pub fn stroke(
 }
 
 /// The scale of the field stage `stage`, which a field brush paints.
-fn field_scale(runtime: &Runtime, stage: &str) -> Result<u32, StageError> {
+fn field_scale(runtime: &impl Canvas, stage: &str) -> Result<u32, StageError> {
     match runtime.pack().kind(stage).map(StageKind::output) {
         Some(Output::Field) => Ok(runtime.pack().scale(stage).expect("a stage of the pack")),
         _ => Err(StageError::Edit(format!("{stage:?} is no field to paint"))),
