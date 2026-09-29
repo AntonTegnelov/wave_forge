@@ -201,7 +201,9 @@ holds only what one chunk reads, whatever the world's size. After each chunk the
 `RunProgress`:
 - `done` and `total` chunks;
 - `skipped`, those the store already held;
-- `held`, the products the runtime holds now.
+- `held`, the products the runtime holds now;
+- `stages`, what each stage has generated so far and what that cost, as `Runtime::timings` gives
+  it.
 
 Returning `ControlFlow::Break(())` stops the run. A chunk whose every target the store already holds
 is skipped, so a run stopped or cut short picks up where it left off, and the store ends up holding

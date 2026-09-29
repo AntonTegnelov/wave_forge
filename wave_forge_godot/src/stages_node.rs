@@ -45,7 +45,7 @@ use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
     Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, ParamDef, Point, PointId,
     Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId, StageError, StageEvent, StageKind,
-    StageWorker, TableKind, Value,
+    StageTiming, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -977,9 +977,10 @@ impl WaveForgeStages {
     #[signal]
     fn saved(save: GString);
 
-    /// A world run got one chunk further: `done` of `total`.
+    /// A world run got one chunk further: `done` of `total`. `stages` is what each stage has
+    /// generated so far and what that cost, as `stats()` gives it.
     #[signal]
-    fn world_run_progress(done: i64, total: i64);
+    fn world_run_progress(done: i64, total: i64, stages: VarDictionary);
 
     /// A world run ended, finished if `done` is `total`, stopped or failed if not; a failure is
     /// reported as an error too.
@@ -2236,9 +2237,11 @@ impl WaveForgeStages {
         for event in events {
             match event {
                 RunEvent::Progress(state) => {
-                    self.signals()
-                        .world_run_progress()
-                        .emit(state.done as i64, state.total as i64);
+                    self.signals().world_run_progress().emit(
+                        state.done as i64,
+                        state.total as i64,
+                        &stage_costs(&state.stages),
+                    );
                 }
                 RunEvent::Ended(result) => {
                     self.world_run = None;
@@ -2249,6 +2252,7 @@ impl WaveForgeStages {
                             total: 0,
                             skipped: 0,
                             held: 0,
+                            stages: Vec::new(),
                         }
                     });
                     self.signals()
@@ -2438,17 +2442,7 @@ impl WaveForgeStages {
     #[func]
     fn stats(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
-        let mut stages = VarDictionary::new();
-        for (name, timing) in self.worker.iter().flat_map(|worker| worker.timings()) {
-            let mut cost = VarDictionary::new();
-            cost.set(
-                &"products".to_variant(),
-                &(timing.products as i64).to_variant(),
-            );
-            cost.set(&"ms".to_variant(), &timing.ms.to_variant());
-            cost.set(&"slowest_ms".to_variant(), &timing.slowest_ms.to_variant());
-            stages.set(&GString::from(name).to_variant(), &cost.to_variant());
-        }
+        let stages = stage_costs(self.worker.iter().flat_map(|worker| worker.timings()));
         out.set(&"stages".to_variant(), &stages.to_variant());
         out.set(
             &"pending_signals".to_variant(),
@@ -3890,6 +3884,26 @@ fn param_values(values: &VarDictionary) -> Option<BTreeMap<String, f32>> {
 
 /// What builds the runtime a node generates with, on whatever thread calls it.
 type Builder = Arc<dyn Fn() -> Result<Runtime, String> + Send + Sync>;
+
+/// What each stage has generated and cost, by name: `products`, `ms` in all and `slowest_ms` for
+/// one product.
+fn stage_costs<'a>(timings: impl IntoIterator<Item = &'a (String, StageTiming)>) -> VarDictionary {
+    let mut stages = VarDictionary::new();
+    for (name, timing) in timings {
+        let mut cost = VarDictionary::new();
+        cost.set(
+            &"products".to_variant(),
+            &(timing.products as i64).to_variant(),
+        );
+        cost.set(&"ms".to_variant(), &timing.ms.to_variant());
+        cost.set(&"slowest_ms".to_variant(), &timing.slowest_ms.to_variant());
+        stages.set(
+            &GString::from(name.as_str()).to_variant(),
+            &cost.to_variant(),
+        );
+    }
+    stages
+}
 
 /// A world run on a thread of its own ([`WaveForgeStages::run_world`]): what it reports, and the
 /// flag that stops it.

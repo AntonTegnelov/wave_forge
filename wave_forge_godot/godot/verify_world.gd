@@ -1,7 +1,7 @@
 ## Runs a finite world whole ahead of time, stopping and resuming, and plays it back.
 ##
 ## Run by `../verify.sh` after `verify_candidates.gd`. A node runs the pack's 30 chunks into a
-## directory, reporting its progress; it is cancelled as soon as it starts, so it stops after its
+## directory, reporting its progress by chunk and by stage; it is cancelled as soon as it starts, so it stops after its
 ## first chunk, and run again, which resumes and finishes. A second node given that directory as `play_directory` then plays the world
 ## around the player: its fields and trees equal those of a third node that generates as usual, its
 ## ground is built from them, and no stage of it ran.
@@ -18,6 +18,7 @@ var started_usec := 0
 var phase := "run"
 var progressed := 0
 var finished := []
+var first_stages := {}
 
 func _initialize() -> void:
 	DirAccess.remove_absolute(DIRECTORY)
@@ -26,7 +27,10 @@ func _initialize() -> void:
 	if not runner.start():
 		_fail("the runner did not start")
 		return
-	runner.world_run_progress.connect(func(_done: int, _total: int) -> void: progressed += 1)
+	runner.world_run_progress.connect(func(_done: int, _total: int, stages: Dictionary) -> void:
+		if progressed == 0:
+			first_stages = stages
+		progressed += 1)
 	runner.world_run_finished.connect(func(done: int, total: int) -> void: finished.append([done, total]))
 	if not runner.run_world(DIRECTORY):
 		_fail("the world run did not start")
@@ -79,6 +83,10 @@ func _process(_delta: float) -> bool:
 			if finished[0][0] >= finished[0][1] or finished[0][1] != 30:
 				_fail("the cancelled run ended at %s" % [finished[0]])
 				return true
+			for stage in ["height", "surface", "trees"]:
+				if not first_stages.has(stage) or first_stages[stage]["products"] < 1:
+					_fail("the first chunk's report of %s is %s" % [stage, first_stages])
+					return true
 			phase = "resume"
 			if not runner.run_world(DIRECTORY):
 				_fail("the run did not start again")
@@ -115,7 +123,7 @@ func _process(_delta: float) -> bool:
 			if not player.stats()["stages"].is_empty():
 				_fail("a stage ran in the played world: %s" % player.stats()["stages"])
 				return true
-			print("verify_world: a run of 30 chunks cancelled after one and resumed finishes; the played world's fields and trees are the generated ones, its ground built from them, and no stage of it ran")
+			print("verify_world: a run of 30 chunks, reporting what each stage generated, cancelled after one and resumed finishes; the played world's fields and trees are the generated ones, its ground built from them, and no stage of it ran")
 			quit(0)
 			return true
 	return false

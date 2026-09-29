@@ -9,14 +9,14 @@
 //! function of the pack, the seed, the facts and the edits, the store ends up holding the same
 //! bytes whether the run went at once or in pieces.
 
-use super::runtime::{Runtime, StageError};
+use super::runtime::{Runtime, StageError, StageTiming};
 use crate::FocusPoint;
 use crate::frozen::{FrozenStore, StoreError};
 use std::ops::ControlFlow;
 use wfc_core::ChunkCoord;
 
 /// How far a run has got, which it reports after each chunk.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RunProgress {
     /// The chunks done so far, those the store already held included.
     pub done: usize,
@@ -26,6 +26,9 @@ pub struct RunProgress {
     pub skipped: usize,
     /// How many chunks the runtime holds now, over all stages.
     pub held: usize,
+    /// What each stage of the pack has generated so far and what that cost, by name in the pack's
+    /// order, as [`Runtime::timings`] gives it: the targets, and the stages they read.
+    pub stages: Vec<(String, StageTiming)>,
 }
 
 impl Runtime {
@@ -52,6 +55,7 @@ impl Runtime {
             total: chunks.len(),
             skipped: 0,
             held: self.held(),
+            stages: self.timings(),
         };
         for chunk in chunks {
             if !stored(store, targets, chunk)? {
@@ -69,7 +73,8 @@ impl Runtime {
             }
             state.done += 1;
             state.held = self.held();
-            if progress(state).is_break() {
+            state.stages = self.timings();
+            if progress(state.clone()).is_break() {
                 break;
             }
         }
