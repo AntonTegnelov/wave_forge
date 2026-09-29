@@ -3441,15 +3441,6 @@ impl Runtime {
         })
     }
 
-    /// The points of Scatter stage `index` whose column lies in `chunk`.
-    ///
-    /// Every block of `spacing` columns has `count` candidates, each at a hashed column, with a
-    /// hashed priority. A candidate passes its own tests (chance, height, slope, conditions,
-    /// water, sites) from what lies at and around its column, and is kept if it passes and no
-    /// candidate that also passes, of higher priority, lies closer than `apart`. A kept candidate
-    /// is the first point of its group; the others scatter around it and each passes the same tests
-    /// at its own column. Everything a decision reads is within the stage's reach, so a chunk's
-    /// points are the same whatever else has been generated.
     /// Embed stage `index`'s points in `chunk`: each block's candidates whose column lies in the
     /// chunk, kept where the volume is solid at their height and the stage's conditions hold.
     fn embed(&self, index: usize, chunk: ChunkCoord) -> Result<Vec<Point>, StageError> {
@@ -3553,6 +3544,15 @@ impl Runtime {
         Ok(points)
     }
 
+    /// The points of Scatter stage `index` whose column lies in `chunk`.
+    ///
+    /// Every block of `spacing` columns has `count` candidates, each at a hashed column, with a
+    /// hashed priority. A candidate passes its own tests (chance, height, slope, conditions,
+    /// water, sites) from what lies at and around its column, and is kept if it passes and no
+    /// candidate that also passes, of higher priority, lies closer than `apart`. A kept candidate
+    /// is the first point of its group; the others scatter around it and each passes the same tests
+    /// at its own column. Everything a decision reads is within the stage's reach, so a chunk's
+    /// points are the same whatever else has been generated.
     fn scatter(&self, index: usize, chunk: ChunkCoord) -> Result<Vec<Point>, StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Scatter {
