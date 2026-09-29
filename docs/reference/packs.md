@@ -629,6 +629,15 @@ name the list does not give gets `rules`. Loading refuses `by` over a Sites stag
 does not hold names, and a name the column does not list. A row that changes its name is a new fact,
 so its town is solved again with the other rule set.
 
+`mask: Some((field: "town_mask", above: 0.5, outside: Named("air"), ground: Some(Named("ground"))))`
+builds a town only where the field is above `above`: every other column of its site holds only
+the tiles `outside` selects, and on its lowest layer those `ground` selects if it names any, so the
+town stops at the mask's edge. The field is read with `Runtime::sample`, edits included, so it has
+to be one a sample reads without chunks. A mask painted with a brush
+([Edits](#edits)) through a Rules stage is how a designer says where a town goes; since the stage
+reads the field over its sites, painting again solves again exactly the towns whose sites it
+reaches.
+
 A chunk's product is its part of the town (`TownChunk`: the site's id, its levelled height, and
 the chunk's tiles, x fastest, then y, then z), or nothing outside every site. A town is solved once,
 when its first chunk is needed, and kept while a chunk it covers is. Towns are solved on a thread

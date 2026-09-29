@@ -345,6 +345,7 @@ pub enum StageKind {
     /// the site's footprint, solved whole, with `bottom` on its lowest layer and `top` on its
     /// highest. With `by`, sites from a table choose their rule set by a names column of their
     /// row: `(column, [(name, rules), ...])`, and a name the list does not give takes `rules`.
+    /// With `mask`, the town is built only where a field is above a threshold ([`SolveMask`]).
     Solve {
         sites: String,
         rules: String,
@@ -354,6 +355,8 @@ pub enum StageKind {
         bottom: Option<Selector>,
         #[serde(default)]
         top: Option<Selector>,
+        #[serde(default)]
+        mask: Option<SolveMask>,
     },
     /// Curves a region job computes over a whole square region of `region` chunks at a time, from
     /// its `inputs` over the region and `halo` chunks around it: rivers, roads, anything one chunk
@@ -605,6 +608,21 @@ pub struct Spawnable {
     /// How often it is drawn against the others a room can still afford.
     #[serde(default = "one_weight")]
     pub weight: u32,
+}
+
+/// Where inside its site a Solve stage's town is built ([`StageKind::Solve`]): only in the columns
+/// where the field stage `field` is above `above`, a mask painted with brushes say. Every other
+/// column of the site holds only the tiles `outside` selects, and on its lowest layer those
+/// `ground` selects if it names any, so the town stops at the mask's edge. The field has to be one
+/// a sample reads without chunks ([`crate::stages::Runtime::sample`]).
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SolveMask {
+    pub field: String,
+    pub above: f32,
+    pub outside: Selector,
+    #[serde(default)]
+    pub ground: Option<Selector>,
 }
 
 /// A room a Cave stage places ([`StageKind::Cave`]): a box of cells an engine binds a scene to by
@@ -1882,6 +1900,22 @@ impl Pack {
             })
             .collect();
         let mut stages = Vec::with_capacity(file.stages.len());
+        // The sites stages, by name, with how many chunks a side their largest site spans.
+        let site_extents: BTreeMap<String, u32> = file
+            .stages
+            .iter()
+            .filter_map(|def| {
+                let extent = match &def.kind {
+                    StageKind::Sites { size, .. } => size.1,
+                    StageKind::TableSites { max_size, .. } => *max_size,
+                    StageKind::Locations { kinds, .. } => {
+                        kinds.iter().map(|kind| kind.size).max().unwrap_or(1)
+                    }
+                    _ => return None,
+                };
+                Some((def.name.clone(), extent))
+            })
+            .collect();
         // The Cave stages, by name, with the regions they plan levels over.
         let caves: BTreeMap<String, u32> = file
             .stages
@@ -2637,8 +2671,18 @@ impl Pack {
                         .map(|name| (name.as_str(), reach, Output::Field))
                         .collect()
                 }
-                StageKind::Solve { sites, .. } => {
-                    vec![(sites.as_str(), Reach::Cells(0), Output::Sites)]
+                StageKind::Solve { sites, mask, .. } => {
+                    let mut reads = vec![(sites.as_str(), Reach::Cells(0), Output::Sites)];
+                    if let Some(mask) = mask {
+                        if !mask.above.is_finite() {
+                            return Err(invalid(format!("a mask above {}", mask.above)));
+                        }
+                        // A town reads the mask over its whole site, so a chunk of it is stale
+                        // whenever any column of its site is.
+                        let extent = site_extents.get(sites).copied().unwrap_or(1);
+                        reads.push((mask.field.as_str(), Reach::Chunks(extent), Output::Field));
+                    }
+                    reads
                 }
                 StageKind::Scatter {
                     height,

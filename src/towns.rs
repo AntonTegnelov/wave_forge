@@ -107,6 +107,18 @@ pub struct TownRequest<'a> {
     pub size: (u32, u32),
     pub bottom: Option<&'a Selector>,
     pub top: Option<&'a Selector>,
+    /// The columns the town is not built in, if a mask leaves any out.
+    pub outside: Option<Outside<'a>>,
+}
+
+/// The columns of a town a mask leaves out ([`crate::stages::SolveMask`]): each in cells from the
+/// town's lowest corner, holding only the tiles `tiles` selects, and on the lowest layer those
+/// `ground` selects if it names any.
+#[derive(Clone, Copy, Debug)]
+pub struct Outside<'a> {
+    pub columns: &'a [(u32, u32)],
+    pub tiles: &'a Selector,
+    pub ground: Option<&'a Selector>,
 }
 
 /// A solved town: each chunk's tiles, row by row with x fastest, from the town's lowest corner.
@@ -233,7 +245,20 @@ impl<S: Solver + Send> TownSolver for WfcTowns<S> {
             .sets
             .get_mut(request.rules)
             .ok_or_else(|| TownError::UnknownRules(request.rules.to_owned()))?;
-        let prior = town_prior(&set.file, self.chunk.z, request.bottom, request.top)?;
+        let mut prior = town_prior(&set.file, self.chunk.z, request.bottom, request.top)?;
+        if let Some(outside) = &request.outside {
+            let tiles = outside.tiles.mask(&set.file)?;
+            let ground = match outside.ground {
+                Some(ground) => ground.mask(&set.file)?,
+                None => tiles,
+            };
+            prior = prior.with_overrides(outside.columns.iter().flat_map(|&(x, y)| {
+                (0..self.chunk.z).map(move |z| {
+                    let cell = [x as i32, y as i32, z as i32];
+                    (cell, if z == 0 { ground } else { tiles })
+                })
+            }));
+        }
         let (w, h) = request.size;
         let extent = town_extent(self.chunk, request.size);
         let solver = set

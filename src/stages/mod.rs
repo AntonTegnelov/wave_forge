@@ -24,8 +24,8 @@ pub use pack::{
     Biome, Bound, Column, Condition, Door, Expr, Facing, Group, Level, LocationKind, MAX_BLEND,
     MAX_CATEGORIES, MAX_CAVE_ROOMS, MAX_CHILDREN, MAX_DEPOSITS, MAX_PIECES, MAX_SCATTER_SLOTS,
     MAX_SPAWN_BUDGET, MAX_TRIES, Materials, PACK_VERSION, Pack, PackError, PackFile, PackWater,
-    ParamDef, Pattern, Persist, Piece, Profile, Room, Rule, Spawnable, StageDef, StageKind,
-    TableDef, TableKind, Water,
+    ParamDef, Pattern, Persist, Piece, Profile, Room, Rule, SolveMask, Spawnable, StageDef,
+    StageKind, TableDef, TableKind, Water,
 };
 pub use runtime::{
     Categories, Field, FieldView, Judgement, PlaceName, Point, Product, Rejection, Runtime, Site,

@@ -2,7 +2,7 @@
 //! being solved, its kernels compiled included.
 
 use super::runtime::SiteId;
-use crate::towns::{Selector, Town, TownError, TownRequest, TownSolver};
+use crate::towns::{Outside, Selector, Town, TownError, TownRequest, TownSolver};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,15 @@ pub(crate) struct Job {
     pub(crate) size: (u32, u32),
     pub(crate) bottom: Option<Selector>,
     pub(crate) top: Option<Selector>,
+    /// The columns a mask leaves out, with the tiles and ground they hold.
+    pub(crate) outside: Option<Masked>,
+}
+
+/// The columns of a town a mask leaves out, as [`Outside`] names them, owned for the thread.
+pub(crate) struct Masked {
+    pub(crate) columns: Vec<(u32, u32)>,
+    pub(crate) tiles: Selector,
+    pub(crate) ground: Option<Selector>,
 }
 
 /// A town the thread solved, and the milliseconds solving it took.
@@ -56,6 +65,11 @@ impl TownThread {
                         size: job.size,
                         bottom: job.bottom.as_ref(),
                         top: job.top.as_ref(),
+                        outside: job.outside.as_ref().map(|masked| Outside {
+                            columns: &masked.columns,
+                            tiles: &masked.tiles,
+                            ground: masked.ground.as_ref(),
+                        }),
                     });
                     let ms = started.elapsed().as_secs_f64() * 1000.0;
                     if sent

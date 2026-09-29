@@ -354,7 +354,14 @@ there and nowhere else.*
 
 **Acceptance criteria.** A painted mask becomes Edits that a Rules stage reads; the town's WFC
 stage only fills the masked area; repainting regenerates only the affected chunks (checked by
-product hashes). **Needs.** Edits, Rules, Solve inside masks, invalidation. **Status:** not started (2026-09-23).
+product hashes). **Needs.** Edits, Rules, Solve inside masks, invalidation. **Status:** verified by
+automated checks (2026-09-29), in the library's CI job. A raise brush paints a field that a Rules
+stage reads into town and wild districts; a location is placed on the town district, and its Solve
+stage's mask keeps the town inside the painted columns, every other column of the site open
+ground under air. Erasing part of the mask solves that town again, the site staying where it was,
+while every chunk the eraser does not reach keeps its districts exactly (`tests/masks.rs`). The
+editor's plugin paints with the same brushes (`verify_paint.gd`); painting with the mouse in the
+editor is not automated.
 
 ### N5. Understand why nothing spawned
 
