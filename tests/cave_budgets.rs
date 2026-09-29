@@ -4,7 +4,9 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use wave_forge::stages::{Pack, PackError, Point, Runtime, StageError, Stamp};
+use wave_forge::stages::{
+    Edit, Edits, Pack, PackError, Point, PointId, Runtime, StageError, Stamp,
+};
 use wave_forge::{ChunkCoord, FocusPoint};
 
 const SIZE: [u32; 2] = [8, 8];
@@ -273,4 +275,35 @@ fn deposits_and_spawns_out_of_range_are_refused() {
             "{result:?}"
         );
     }
+}
+
+#[test]
+fn a_mined_deposit_and_a_killed_enemy_stay_gone_when_their_chunks_come_back() {
+    let mut runtime = runtime(PACK, 6);
+    generate(&mut runtime, &["gold", "enemies"], &region());
+    let (mined, killed) = (
+        points(&runtime, "gold")[0].clone(),
+        points(&runtime, "enemies")[0].clone(),
+    );
+
+    let log = [&mined, &killed]
+        .map(|point| Edit::Remove {
+            point: PointId::from(point.id),
+            at: [point.position[0], point.position[1]],
+        })
+        .to_vec();
+    runtime
+        .set_edits(&Edits { log })
+        .expect("points of point stages");
+    generate(
+        &mut runtime,
+        &["gold", "enemies"],
+        &[ChunkCoord::new(40, 40, 0)],
+    );
+    generate(&mut runtime, &["gold", "enemies"], &region());
+
+    let (gold, enemies) = (points(&runtime, "gold"), points(&runtime, "enemies"));
+    assert_eq!(gold.len(), 39);
+    assert!(gold.iter().all(|point| point.id != mined.id));
+    assert!(enemies.iter().all(|point| point.id != killed.id));
 }

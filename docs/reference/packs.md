@@ -95,8 +95,8 @@ Lakes stage in a pack that declares no water.
 What a player changes in a world is a log, `Edits`, which a game keeps and saves beside its facts:
 a world is a function of the pack, the seed, the facts and the edits.
 
-- `Edit::Remove { point, at }` takes away a Scatter stage's point, a felled tree say, by its
-  positional id (`PointId`, from its `InstanceId`) and where it stood.
+- `Edit::Remove { point, at }` takes away a point of a Scatter, Embed, Deposit or Spawn stage, a
+  felled tree say, by its positional id (`PointId`, from its `InstanceId`) and where it stood.
 - `Edit::Move { point, from, to, turn }` stands it at `to`, turned to `turn`. It stays in the chunk
   it was generated in, so an engine finds it there wherever it now stands.
 - `Edit::Raise { stage, column, by }` adds `by` to a field stage's value at one of its columns:
@@ -720,8 +720,11 @@ box. A candidate is kept where the Volume or Carve stage `volume` is solid at th
 the region, outside every room and at least `apart` cells (default 0) from every point kept, until
 `total` are kept; a level whose `tries` candidates (default 4096) run out first fails with
 `StageError::RegionRejected`. A chunk's product is the points whose column lies in it, with
-positional ids. It reads the whole region's volume, so every chunk of a Deposit stage waits for
-the volume across its region: a bounded level's cost, heavy for a region of many chunks.
+positional ids, so `Edit::Remove` mines one for good. It reads the whole region's volume, so every
+chunk of a Deposit stage waits for the volume across its region: a bounded level's cost, heavy for
+a region of many chunks. A dig in that volume would place the level's deposits again, so a pack
+whose player digs gives the digs a stage of their own after it, `Carve(volume: "caves")` with
+nothing to carve, and the Deposit stage reads the one before.
 
 ### Spawn
 
@@ -731,7 +734,7 @@ points standing on the floors of the Cave stage `cave`'s rooms, each room spendi
 is no more than what the room has left, each at a hashed place on the room's floor, until the room
 can afford none. So what a room spends is at most its budget, and less than the cheapest kind
 short of it: with a kind that costs 1, exactly its budget. A chunk's product is the points whose
-column lies in it, with positional ids.
+column lies in it, with positional ids, so `Edit::Remove` keeps a killed one gone.
 
 ### Scatter
 

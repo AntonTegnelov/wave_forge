@@ -1422,12 +1422,13 @@ impl Runtime {
             .position(|stage| {
                 matches!(
                     stage.kind,
-                    StageKind::Scatter { .. } | StageKind::Embed { .. }
+                    StageKind::Scatter { .. }
+                        | StageKind::Embed { .. }
+                        | StageKind::Deposit { .. }
+                        | StageKind::Spawn { .. }
                 ) && point_stage_id(stage.salt) == id.stage()
             })
-            .ok_or_else(|| {
-                StageError::Edit(format!("no Scatter or Embed stage placed the point {id:?}"))
-            })
+            .ok_or_else(|| StageError::Edit(format!("no point stage placed the point {id:?}")))
     }
 
     /// `product` of stage `index` with the player's edits applied: raises added to a field, and a
