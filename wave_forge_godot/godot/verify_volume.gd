@@ -10,8 +10,9 @@
 ## rock and bound to a scene is placed as nodes, each inside the rock, none in the cave. Pools of an
 ## Aquifer stage drawn as `fluid_stage` fill the cave's floor up to their levels, water and lava in
 ## `fluid_palette`'s see-through colours, lava glowing as `fluid_glow` says, and the ray to the cave's floor passes through them, since
-## fluid is never collided with. A volume stage that is no Volume stage is refused, and so is
-## digging a field.
+## fluid is never collided with. The navigation baked around the player walks on the ground's top
+## and on the cave's floor, and the dig bakes the chunks around the hole again. A volume stage that
+## is no Volume stage is refused, and so is digging a field.
 extends SceneTree
 
 const CELLS := 8
@@ -31,6 +32,8 @@ var ores := {}
 var fluid_before := RID()
 ## Where four chunks meet, in the middle of the cave's height.
 var hole := Vector3(CELLS * CELL.x, 6.3 * CELL.y, CELLS * CELL.z)
+## The chunks whose navigation went into the map, since the start or the dig.
+var navigable := {}
 
 func _initialize() -> void:
 	var wrong := _world("height")
@@ -54,6 +57,7 @@ func _world(volume_stage: String) -> Node:
 	node.cell_size = CELL
 	node.view_radius = 2
 	node.collider_radius = 1
+	node.navigation_radius = 1
 	node.volume_stage = volume_stage
 	node.volume_palette = PackedColorArray(PALETTE)
 	node.fluid_stage = "water"
@@ -62,6 +66,7 @@ func _world(volume_stage: String) -> Node:
 	node.scenes = {"ore": _ore_scene()}
 	root.add_child(node)
 	node.instance_spawned.connect(func(ore: Node3D, chunk: Vector3i, id: int) -> void: ores[[chunk, id]] = ore)
+	node.navigation_ready.connect(func(chunk: Vector3i) -> void: navigable[chunk] = true)
 	return node
 
 func _process(_delta: float) -> bool:
@@ -73,9 +78,12 @@ func _process(_delta: float) -> bool:
 	var stats: Dictionary = world.stats()
 	if stats["pending_volumes"] > 0 or world.volume_chunks().size() < 9 or world.fluid_chunks().size() < 9 or not world.collider_chunks().has(Vector3i.ZERO):
 		return false
-	# The bodies join the physics space this frame; rays see them from the next.
+	if not world.navigation_chunks().has(Vector3i.ZERO):
+		return false
+	# The bodies join the physics space this frame, and rays see them from the next; the navigation
+	# map takes the new regions in on its next synchronisation.
 	settled_frames += 1
-	if settled_frames < 3:
+	if settled_frames < 30:
 		return false
 	return _check()
 
@@ -102,7 +110,7 @@ func _check() -> bool:
 		if hit["normal"].dot(Vector3.UP * -ray[2]) < 0.99:
 			_fail("%s faces %s, not back along the ray" % [ray[0], hit["normal"]])
 			return true
-	if not _check_materials() or not _check_ores() or not _check_fluid():
+	if not _check_materials() or not _check_ores() or not _check_fluid() or not _check_navigation(x, z):
 		return true
 	print("verify_volume: %d chunks have their surface; rays meet the ground's top and the cave's ceiling and floor" % world.volume_chunks().size())
 	if world.dig("height", hole, 3.0):
@@ -116,8 +124,22 @@ func _check() -> bool:
 		_fail("the dig was refused")
 		return true
 	digging = true
+	navigable.clear()
 	started_usec = Time.get_ticks_usec()
 	return false
+
+## The navigation map holds walkable ground on the ground's top and on the cave's floor at (x, z).
+func _check_navigation(x: float, z: float) -> bool:
+	var map := root.get_world_3d().navigation_map
+	for level in [["the ground's top", 6.3], ["the cave's floor", 1.8]]:
+		var on: Vector3 = Vector3(x, level[1] * CELL.y, z)
+		var nearest := NavigationServer3D.map_get_closest_point(map, on + Vector3.UP * 0.3)
+		# A navigation mesh follows what it was baked from as closely as its detail sampling's error.
+		if nearest.distance_to(on) > NavigationMesh.new().detail_sample_max_error:
+			_fail("the navigation nearest %s is at %s" % [level[0], nearest])
+			return false
+	print("verify_volume: the navigation walks on the ground's top and on the cave's floor")
+	return true
 
 ## A Node3D with a mesh child, packed, so each ore is placed as a node.
 func _ore_scene() -> PackedScene:
@@ -155,12 +177,13 @@ func _check_hole() -> bool:
 	var query := PhysicsRayQueryParameters3D.create(from, from + Vector3.DOWN * 100.0)
 	var hit := root.get_world_3d().direct_space_state.intersect_ray(query)
 	var fluid_after: RID = world.fluid_mesh_of(Vector3i(1, 1, 0))
-	if not hit.is_empty() and absf(hit["position"].y - 1.8 * CELL.y) < 0.001 and fluid_after.is_valid() and fluid_after != fluid_before:
-		print("verify_volume: a ball dug where four chunks meet opens the cave to the sky and builds the fluid beside it again, %.1f s after the dig" % ((Time.get_ticks_usec() - started_usec) / 1e6))
+	var baked_again := navigable.has(Vector3i.ZERO)
+	if not hit.is_empty() and absf(hit["position"].y - 1.8 * CELL.y) < 0.001 and fluid_after.is_valid() and fluid_after != fluid_before and baked_again:
+		print("verify_volume: a ball dug where four chunks meet opens the cave to the sky and builds the fluid and the navigation beside it again, %.1f s after the dig" % ((Time.get_ticks_usec() - started_usec) / 1e6))
 		quit(0)
 		return true
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
-		_fail("a ray into the hole still lands at %s, and the fluid beside it is %s, was %s" % [hit["position"] if not hit.is_empty() else "nothing", fluid_after, fluid_before])
+		_fail("a ray into the hole still lands at %s, the fluid beside it is %s, was %s, and its navigation baked again: %s" % [hit["position"] if not hit.is_empty() else "nothing", fluid_after, fluid_before, baked_again])
 		return true
 	return false
 

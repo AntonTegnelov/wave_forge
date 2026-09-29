@@ -5,7 +5,8 @@
 ## between them. The node runs the stages on its own thread. This first asks for the sites alone over
 ## a wide area and finds a town the way a game would, then asks for everything around it and waits
 ## until every chunk has arrived, then checks that towns stand on level ground at their height, that trees
-## stand on the ground and never on a town, and that Godot's thread stayed free. Then a character with
+## stand on the ground and never on a town, and that Godot's thread stayed free, and that a path on the
+## navigation baked from the ground and the town's shapes crosses the town. Then a character with
 ## gravity walks from the open ground straight through the town and out the other side, and must never
 ## sink below the ground's surface. Then moving away drops what is no longer needed. Last, the node
 ## starts again on the kernels the first start compiled and cached, and the time to the first town
@@ -56,6 +57,8 @@ var towns_asked_usec := 0
 var first_town_usec := 0
 var cold_first_town_s := -1.0
 var warm := false
+## Whether the checks of everything arrived have passed, and the walk waits only for navigation.
+var checked := false
 const KERNEL_CACHE := "user://verify_kernels"
 
 func _initialize() -> void:
@@ -73,6 +76,7 @@ func _initialize() -> void:
 	world.kernel_cache = KERNEL_CACHE
 	world.ground_stage = "level"
 	world.collider_radius = COLLIDER_RADIUS
+	world.navigation_radius = COLLIDER_RADIUS
 	root.add_child(world)
 	world.stage_ready.connect(_on_stage_ready)
 	world.stage_dropped.connect(func(stage: String, chunk: Vector3i) -> void: dropped[[stage, chunk]] = true)
@@ -158,6 +162,10 @@ func _process(_delta: float) -> bool:
 		return _check_dropped(waited)
 	if walking:
 		return false
+	if checked:
+		if _navigation_crosses_town(waited):
+			_start_walk()
+		return false
 	for chunk in _view():
 		for stage: String in TARGETS:
 			if not ready.has([stage, chunk]):
@@ -193,8 +201,77 @@ func _process(_delta: float) -> bool:
 		return true
 	if not _check_ground() or not _check_sampling():
 		return true
-	_start_walk()
+	checked = true
+	started_usec = Time.get_ticks_usec()
 	return false
+
+## Whether a path on the navigation map runs from the open ground west of the town to the open
+## ground east of it along the walk's line, on the ground's surface and the town's streets, and
+## nearly straight, as the walk does; false while the chunks along it are still being baked.
+func _navigation_crosses_town(waited: float) -> bool:
+	var site: Dictionary = world.sites("towns", centre)[0]
+	var chunk_size := CELLS * CELL_SIZE
+	var low: Vector2i = site["min"]
+	var high: Vector2i = site["max"]
+	var z := (low.y + high.y) * 0.5 * chunk_size
+	var row := floori(z / chunk_size)
+	for x in range(low.x - 1, high.x + 1):
+		if not world.navigation_chunks().has(Vector3i(x, row, 0)):
+			if waited > LOAD_TIMEOUT_S:
+				_fail("the chunk %s had no navigation after %.0f s" % [Vector3i(x, row, 0), waited])
+			return false
+	# The map takes the new regions in on its next synchronisation.
+	if waited < 0.5:
+		return false
+	var from := Vector3(low.x * chunk_size - 12.0, 0.0, z)
+	var to := Vector3(high.x * chunk_size + 12.0, 0.0, z)
+	from.y = _surface(from)
+	to.y = _surface(to)
+	var map := root.get_world_3d().navigation_map
+	var path := NavigationServer3D.map_get_path(map, from, to, true)
+	var apart := func(a: Vector3, b: Vector3) -> float: return Vector2(a.x - b.x, a.z - b.z).length()
+	if path.is_empty() or apart.call(path[0], from) > 0.5 or apart.call(path[path.size() - 1], to) > 0.5:
+		_fail("no path across the town from %s to %s: %s" % [from, to, path])
+		return false
+	var length := 0.0
+	for i in path.size():
+		# A navigation mesh follows what it was baked from as closely as its detail sampling's error.
+		if absf(path[i].y - _surface(path[i])) > NavigationMesh.new().detail_sample_max_error + 0.25:
+			_fail("the path across the town runs at height %.2f where the ground is %.2f: %s" % [path[i].y, _surface(path[i]), path])
+			return false
+		if i > 0:
+			length += apart.call(path[i - 1], path[i])
+	if length > 1.5 * apart.call(from, to):
+		_fail("the path across the town is %.1f long for %.1f straight: %s" % [length, apart.call(from, to), path])
+		return false
+	# The town's shapes are in the navigation too: agents walk on the tops of its buildings.
+	var boxes := {}
+	for tag in ["building", "roof", "walkway", "pillar", "stair"]:
+		for module in world.modules_tagged("city", tag):
+			boxes[module] = true
+	var tops := 0
+	var walkable := 0
+	for chunk: Vector3i in world.navigation_chunks():
+		var solid := {}
+		for set: Dictionary in world.town_instance_sets("city", chunk, PackedStringArray()):
+			if not boxes.has(set["name"]):
+				continue
+			var transforms: PackedFloat32Array = set["transforms"]
+			for i in range(0, transforms.size(), 12):
+				solid[Vector3(transforms[i + 3], transforms[i + 7], transforms[i + 11]).round()] = true
+		for centre: Vector3 in solid:
+			if solid.has((centre + Vector3.UP * CELL_SIZE).round()):
+				continue
+			tops += 1
+			var top := centre + Vector3.UP * CELL_SIZE / 2.0
+			var nearest := NavigationServer3D.map_get_closest_point(map, top + Vector3.UP * 0.3)
+			if absf(nearest.y - top.y) <= NavigationMesh.new().detail_sample_max_error and apart.call(nearest, top) < CELL_SIZE / 2.0:
+				walkable += 1
+	if tops == 0 or walkable < tops / 2:
+		_fail("navigation reaches %d of the %d tops of the town's buildings" % [walkable, tops])
+		return false
+	print("verify_stages: a path on the navigation crosses the town, %.1f long for %.1f straight, in %d points, and it reaches %d of the %d tops of the town's buildings; %d bakes" % [length, apart.call(from, to), path.size(), walkable, tops, world.stats()["navigation_baked"]])
+	return true
 
 ## A sample and an atlas of the ground give what its chunks hold, and locating a town finds the one
 ## its chunks hold, without generating any.
