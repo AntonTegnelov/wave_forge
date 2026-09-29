@@ -360,6 +360,12 @@ to its end would give.
 |---|---|---|---|
 | L33 | A parameter of the islands preset changed on a 3×3-chunk preview of 16×16-column chunks, five changes each, three runs: from the change until the preview is generated again, and what each stage regenerated per change | the first preview 1.9 to 2.1 ms. `trees`: median 0.08 to 0.09 ms, only `trees` regenerated (9 chunks, 0.07 ms). `roughness` and `land`: median 1.85 to 1.93 ms, max 1.87 to 2.03 ms, regenerating `height` and `surface` (25 chunks each, the preview and what the trees read around it; 1.35 to 1.41 and 0.37 to 0.41 ms) and `trees` (9 chunks, 0.08 to 0.10 ms). So the stage runtime is two orders under P6's 200 ms; what an engine takes to draw the preview again is its own | `tests/interactive_edit.rs`, release, the dev container's CPU, at [#48]; `tools/measure_desktop.ps1` runs it on a desktop |
 
+### The maximal preset ([#247], 2026-09-29)
+
+| ID | Measurement | Result | Protocol |
+|---|---|---|---|
+| L34 | The continent's terrain (`examples/continent/continent.world.ron`, 22 stages, seed 11, 16×16-column chunks): `ground` and `biome` asked for over 4×4 chunks at its centre, three runs | 25.8 to 25.9 s, since rivers and lakes are region jobs of 32 chunks a side whose reach pulls in the terrain over 132×132 chunks (17 424): `terrain`, a Match of 16 cases blended over 4 cells, 0.800 ms a chunk, `biome`, 50 rules, 0.37 ms, `height` 0.105 ms, every other stage under 0.06 ms. So the terrain costs about 1.5 ms a chunk, some 25 s over the continent's 16 384 chunks | `tests/continent.rs` (`a_part_of_the_continent_generates_with_rivers_and_lakes`), release, the dev container's CPU; `tools/measure_desktop.ps1` runs it on a desktop |
+
 ## The engines
 
 No frame cost has been measured in Bevy yet; its rows are correctness checks with counts.
@@ -570,3 +576,4 @@ Measurements the current code still waits for.
 [#218]: https://github.com/AntonTegnelov/wave_forge/issues/218
 [#224]: https://github.com/AntonTegnelov/wave_forge/issues/224
 [#48]: https://github.com/AntonTegnelov/wave_forge/issues/48
+[#247]: https://github.com/AntonTegnelov/wave_forge/issues/247

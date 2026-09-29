@@ -1,0 +1,145 @@
+// The maximal preset (docs/product/user-stories.md, M1): a finite continent of 2 048 by 2 048
+// cells, 4 by 4 km at cells of 2 m, run whole ahead of time. This part is its terrain: a continent
+// of named noises that falls into the ocean before the bound, mountain ranges of ridged noise,
+// a temperature from latitude and height and a moisture from noise, fifty biomes chosen by rules
+// over those, each shaping the ground its own way, lakes in the hollows and rivers carved from the
+// high ground to the sea. Heights are in cells of height, the sea at 0.
+(
+    version: 1,
+    bound: Some(Rect(min: (0.0, 0.0), max: (2047.0, 2047.0))),
+    water: Some((level: 0.0, lakes: Some("lakes"))),
+    stages: [
+        // The continent's broad shape: low-frequency noise, pulled under the sea from 780 cells
+        // out from the centre to 990, so the coast never reaches the bound.
+        (name: "landmass", scale: 4, kind: Field(Noise(frequency: 0.0016, octaves: 5, name: Some("landmass")))),
+        (name: "falloff", scale: 4, kind: Field(Smoothstep(780.0, 990.0, Distance((1024.0, 1024.0))))),
+        (name: "base", scale: 4, kind: Field(Sub(
+            Mul(Input("landmass"), Constant(1.6)),
+            Add(Constant(0.5), Mul(Input("falloff"), Constant(1.2))),
+        ))),
+        // Where mountain ranges run, and their ridges: one minus the fold of a noise, sharp on top.
+        (name: "ranges", scale: 4, kind: Field(Smoothstep(0.6, 0.75, Noise(frequency: 0.0011, octaves: 2, name: Some("ranges"))))),
+        (name: "ridges", kind: Field(Sub(Constant(1.0),
+            Abs(Sub(Mul(Noise(frequency: 0.006, octaves: 4, name: Some("ridges")), Constant(2.0)), Constant(1.0)))))),
+        (name: "hills", kind: Field(Noise(frequency: 0.02, octaves: 3, name: Some("hills")))),
+        // Plateaus lifted a score of cells, with steep rims, which give the highlands off the ranges.
+        (name: "plateaus", scale: 4, kind: Field(Mul(Smoothstep(0.56, 0.64, Noise(frequency: 0.0018, octaves: 3, name: Some("plateaus"))), Constant(22.0)))),
+        // The height before biomes: the landmass scaled to cells, and on land the ranges' ridges,
+        // the plateaus and hills.
+        (name: "height", kind: Field(Add(
+            Mul(Input("base"), Constant(40.0)),
+            Mul(
+                Clamp(Mul(Input("base"), Constant(8.0)), 0.0, 1.0),
+                Add(
+                    Add(Mul(Mul(Input("ranges"), Input("ridges")), Constant(95.0)), Input("plateaus")),
+                    Mul(Sub(Input("hills"), Constant(0.5)), Constant(8.0)),
+                ),
+            ),
+        ))),
+        // Temperature: warm in the south, cold in the north, with a noise of a fifth either way,
+        // and colder higher up.
+        (name: "temperature", kind: Field(Sub(
+            Add(
+                Remap(Y, (250.0, 1800.0), (1.05, 0.0)),
+                Mul(Sub(Noise(frequency: 0.002, octaves: 3, name: Some("heat")), Constant(0.5)), Constant(0.4)),
+            ),
+            Mul(Max(Input("height"), Constant(0.0)), Constant(0.003)),
+        ))),
+        (name: "moisture", scale: 4, kind: Field(Clamp(Remap(Noise(frequency: 0.0025, octaves: 4, name: Some("moisture")), (0.3, 0.7), (0.0, 1.0)), 0.0, 1.0))),
+        // Fifty biomes: the oceans and coasts by height, the peaks by height and temperature, and
+        // below them five bands of temperature by four of moisture, in the lowlands and the
+        // highlands. First match wins.
+        (name: "biome", kind: Rules(
+            rules: [
+                (category: "deep_ocean", when: [Less(Input("height"), Constant(-15.0))]),
+                (category: "ocean", when: [Less(Input("height"), Constant(-4.0))]),
+                (category: "shallows", when: [Less(Input("height"), Constant(0.0))]),
+                (category: "shingle", when: [Less(Input("height"), Constant(1.5)), Less(Input("temperature"), Constant(0.35))]),
+                (category: "beach", when: [Less(Input("height"), Constant(1.5))]),
+                (category: "glacier", when: [Less(Input("temperature"), Constant(0.02))]),
+                (category: "ice_peaks", when: [Greater(Input("height"), Constant(70.0)), Less(Input("temperature"), Constant(0.35))]),
+                (category: "snow_peaks", when: [Greater(Input("height"), Constant(70.0))]),
+                (category: "alpine_meadow", when: [Greater(Input("height"), Constant(50.0)), Greater(Input("moisture"), Constant(0.5))]),
+                (category: "scree", when: [Greater(Input("height"), Constant(50.0))]),
+
+                (category: "polar_desert", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.2)), Less(Input("moisture"), Constant(0.3))]),
+                (category: "tundra", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.2)), Less(Input("moisture"), Constant(0.5))]),
+                (category: "bog_tundra", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.2)), Less(Input("moisture"), Constant(0.7))]),
+                (category: "frost_marsh", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.2))]),
+                (category: "cold_steppe", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.4)), Less(Input("moisture"), Constant(0.3))]),
+                (category: "taiga", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.4)), Less(Input("moisture"), Constant(0.5))]),
+                (category: "spruce_forest", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.4)), Less(Input("moisture"), Constant(0.7))]),
+                (category: "muskeg", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.4))]),
+                (category: "prairie", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.6)), Less(Input("moisture"), Constant(0.3))]),
+                (category: "meadow", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.6)), Less(Input("moisture"), Constant(0.5))]),
+                (category: "broadleaf_forest", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.6)), Less(Input("moisture"), Constant(0.7))]),
+                (category: "fen", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.6))]),
+                (category: "shrubland", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.8)), Less(Input("moisture"), Constant(0.3))]),
+                (category: "savanna", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.8)), Less(Input("moisture"), Constant(0.5))]),
+                (category: "mixed_woodland", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.8)), Less(Input("moisture"), Constant(0.7))]),
+                (category: "swamp", when: [Less(Input("height"), Constant(25.0)), Less(Input("temperature"), Constant(0.8))]),
+                (category: "desert", when: [Less(Input("height"), Constant(25.0)), Less(Input("moisture"), Constant(0.3))]),
+                (category: "dry_scrub", when: [Less(Input("height"), Constant(25.0)), Less(Input("moisture"), Constant(0.5))]),
+                (category: "rainforest", when: [Less(Input("height"), Constant(25.0)), Less(Input("moisture"), Constant(0.7))]),
+                (category: "mangrove", when: [Less(Input("height"), Constant(25.0))]),
+
+                (category: "rock_plateau", when: [Less(Input("temperature"), Constant(0.2)), Less(Input("moisture"), Constant(0.3))]),
+                (category: "lichen_highland", when: [Less(Input("temperature"), Constant(0.2)), Less(Input("moisture"), Constant(0.5))]),
+                (category: "alpine_tundra", when: [Less(Input("temperature"), Constant(0.2)), Less(Input("moisture"), Constant(0.7))]),
+                (category: "cold_mire", when: [Less(Input("temperature"), Constant(0.2))]),
+                (category: "upland_steppe", when: [Less(Input("temperature"), Constant(0.4)), Less(Input("moisture"), Constant(0.3))]),
+                (category: "pine_highland", when: [Less(Input("temperature"), Constant(0.4)), Less(Input("moisture"), Constant(0.5))]),
+                (category: "fir_highland", when: [Less(Input("temperature"), Constant(0.4)), Less(Input("moisture"), Constant(0.7))]),
+                (category: "upland_mire", when: [Less(Input("temperature"), Constant(0.4))]),
+                (category: "upland_heath", when: [Less(Input("temperature"), Constant(0.6)), Less(Input("moisture"), Constant(0.3))]),
+                (category: "hill_pasture", when: [Less(Input("temperature"), Constant(0.6)), Less(Input("moisture"), Constant(0.5))]),
+                (category: "oak_hills", when: [Less(Input("temperature"), Constant(0.6)), Less(Input("moisture"), Constant(0.7))]),
+                (category: "upland_bog", when: [Less(Input("temperature"), Constant(0.6))]),
+                (category: "mesa", when: [Less(Input("temperature"), Constant(0.8)), Less(Input("moisture"), Constant(0.3))]),
+                (category: "chaparral", when: [Less(Input("temperature"), Constant(0.8)), Less(Input("moisture"), Constant(0.5))]),
+                (category: "cloud_forest", when: [Less(Input("temperature"), Constant(0.8)), Less(Input("moisture"), Constant(0.7))]),
+                (category: "highland_marsh", when: [Less(Input("temperature"), Constant(0.8))]),
+                (category: "badlands", when: [Less(Input("moisture"), Constant(0.3))]),
+                (category: "thorn_highland", when: [Less(Input("moisture"), Constant(0.5))]),
+                (category: "jungle_hills", when: [Less(Input("moisture"), Constant(0.7))]),
+            ],
+            otherwise: "highland_swamp",
+        )),
+        // Each biome's own ground, blended over four cells where biomes meet: the oceans deepen,
+        // the peaks steepen, wetlands lie nearly flat, mesas and badlands rise in terraces, and
+        // deserts in dunes.
+        (name: "dunes", kind: Field(Mul(Sin(Add(Mul(X, Constant(0.09)), Mul(Noise(frequency: 0.01, octaves: 2, name: Some("dunes")), Constant(6.0)))), Constant(1.5)))),
+        (name: "terrain", kind: Field(Match(
+            input: "biome",
+            cases: [
+                ("deep_ocean", Mul(Input("height"), Constant(1.6))),
+                ("ocean", Mul(Input("height"), Constant(1.3))),
+                ("ice_peaks", Add(Constant(70.0), Mul(Sub(Input("height"), Constant(70.0)), Constant(1.8)))),
+                ("snow_peaks", Add(Constant(70.0), Mul(Sub(Input("height"), Constant(70.0)), Constant(1.6)))),
+                ("scree", Add(Input("height"), Mul(Input("ridges"), Constant(4.0)))),
+                ("frost_marsh", Add(Constant(2.0), Mul(Sub(Input("height"), Constant(2.0)), Constant(0.3)))),
+                ("muskeg", Add(Constant(2.0), Mul(Sub(Input("height"), Constant(2.0)), Constant(0.3)))),
+                ("fen", Add(Constant(2.0), Mul(Sub(Input("height"), Constant(2.0)), Constant(0.3)))),
+                ("swamp", Add(Constant(1.5), Mul(Sub(Input("height"), Constant(1.5)), Constant(0.2)))),
+                ("mangrove", Add(Constant(1.0), Mul(Sub(Input("height"), Constant(1.0)), Constant(0.15)))),
+                ("desert", Add(Input("height"), Input("dunes"))),
+                ("mesa", Mul(Floor(Mul(Input("height"), Constant(0.2))), Constant(5.0))),
+                ("badlands", Add(Mul(Floor(Mul(Input("height"), Constant(0.33))), Constant(3.0)), Mul(Input("ridges"), Constant(2.0)))),
+                ("upland_mire", Add(Constant(26.0), Mul(Sub(Input("height"), Constant(26.0)), Constant(0.4)))),
+                ("upland_bog", Add(Constant(26.0), Mul(Sub(Input("height"), Constant(26.0)), Constant(0.4)))),
+                ("highland_marsh", Add(Constant(26.0), Mul(Sub(Input("height"), Constant(26.0)), Constant(0.4)))),
+            ],
+            otherwise: Input("height"),
+            blend: 4,
+        ))),
+        // Lakes in the terrain's hollows, and rivers from the high ground to the sea or a lake,
+        // in regions of 32 chunks, carved into the ground a player walks.
+        (name: "lakes", kind: Lakes(height: "terrain", region: 32, min_columns: 12)),
+        (name: "rivers", kind: Rivers(height: "terrain", region: 32, sources: 6, width: (0.8, 3.0), step: 2)),
+        (name: "ground", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
+            profile: Carve(0.8))),
+        // How uneven the ground is, and where each biome ends, for what is placed on it.
+        (name: "roughness", kind: Delta(input: "terrain", radius: 2)),
+        (name: "biome_area", kind: Area(input: "biome", distance: 4)),
+    ],
+)
