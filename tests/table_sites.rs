@@ -166,6 +166,30 @@ fn a_town_takes_its_rule_set_from_its_rows_names() {
 }
 
 #[test]
+fn every_chunk_of_a_town_names_the_rule_set_its_tiles_come_from() {
+    let (mut runtime, _) = runtime(vec![
+        village(1, (10.0, 10.0), 3.0, "standing"),
+        village(2, (-20.0, 6.5), 1.0, "burned"),
+    ])
+    .expect("villages");
+
+    generate(&mut runtime, &["buildings"]);
+
+    let mut named = BTreeMap::new();
+    for y in -8..=8 {
+        for x in -8..=8 {
+            if let Some(town) = runtime.tiles("buildings", ChunkCoord::new(x, y, 0)) {
+                named.insert(town.site.clone(), town.rules.to_string());
+            }
+        }
+    }
+    assert_eq!(
+        named.into_values().collect::<Vec<_>>(),
+        vec!["blocks".to_owned(), "ruins".to_owned()]
+    );
+}
+
+#[test]
 fn burning_a_village_solves_its_town_again_with_the_other_rule_set() {
     let pack = Arc::new(Pack::parse(PACK).expect("a valid pack"));
     let recorder = Recorder::default();

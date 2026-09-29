@@ -179,6 +179,9 @@ pub struct TownChunk {
     pub site: SiteId,
     /// The site's levelled height, where an engine puts the town's lowest layer.
     pub height: f32,
+    /// The rule set the town was solved with, whose tiles `tiles` holds: the stage's `rules`, or
+    /// the one its row's names column chose.
+    pub rules: Arc<str>,
     /// The chunk's tiles, x fastest, then y, then z, as a WFC chunk stores them.
     pub tiles: Arc<[u16]>,
 }
@@ -3035,17 +3038,31 @@ impl Runtime {
         Some(&placed.log)
     }
 
+    /// The rule set Solve stage `index` solves the town on `site` with: its `rules`, or the one
+    /// its `by` chooses by a names column of the site's row.
+    fn town_rules(&self, index: usize, site: &Site) -> &str {
+        let stage = &self.pack.stages[index];
+        let StageKind::Solve { rules, by, .. } = &stage.kind else {
+            unreachable!("only a Solve stage solves towns")
+        };
+        match (&site.id, by) {
+            (SiteId::Row(row), Some((column, cases))) => {
+                let name = self.name_in_row(stage.inputs[0].0, row, column);
+                cases
+                    .iter()
+                    .find(|(case, _)| *case == name)
+                    .map_or(rules, |(_, rules)| rules)
+            }
+            _ => rules,
+        }
+    }
+
     /// Asks the town thread for the town of `chunk`'s site for Solve stage `index`, unless it is
     /// solved or asked for already, or the chunk lies in no site.
     fn request_town_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Solve {
-            rules,
-            by,
-            bottom,
-            top,
-            mask,
-            ..
+            bottom, top, mask, ..
         } = &stage.kind
         else {
             return Ok(());
@@ -3057,16 +3074,7 @@ impl Runtime {
         if self.solved.contains_key(&key) || self.solving.contains_key(&key) {
             return Ok(());
         }
-        let rules = match (&site.id, by) {
-            (SiteId::Row(row), Some((column, cases))) => {
-                let name = self.name_in_row(stage.inputs[0].0, row, column);
-                cases
-                    .iter()
-                    .find(|(case, _)| *case == name)
-                    .map_or(rules, |(_, rules)| rules)
-            }
-            _ => rules,
-        };
+        let rules = self.town_rules(index, &site).to_owned();
         let towns = self
             .towns
             .as_ref()
@@ -3102,7 +3110,7 @@ impl Runtime {
                 site: site.id.clone(),
                 ticket: self.ticket,
             },
-            rules: rules.clone(),
+            rules,
             seed: (u64::from(high) << 32) | u64::from(low),
             size: (
                 (site.max.0 - site.min.0) as u32,
@@ -3452,6 +3460,7 @@ impl Runtime {
                 TownChunk {
                     site: site.id.clone(),
                     height: site.height,
+                    rules: Arc::from(self.town_rules(index, &site)),
                     tiles: Arc::clone(&town.chunks[(y as u32 * town.size.0 + x as u32) as usize]),
                 }
             })));
