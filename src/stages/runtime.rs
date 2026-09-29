@@ -2065,7 +2065,8 @@ impl Runtime {
             StageKind::Volume { .. }
             | StageKind::Carve { .. }
             | StageKind::Top { .. }
-            | StageKind::Embed { .. } => {
+            | StageKind::Embed { .. }
+            | StageKind::Aquifer { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
             StageKind::Rules { .. } | StageKind::Nearest { .. } => {
@@ -3087,6 +3088,57 @@ impl Runtime {
                 materials,
             }));
         }
+        if let StageKind::Aquifer {
+            volume,
+            cell,
+            level,
+            materials: kinds,
+        } = &stage.kind
+        {
+            let rock_index = self.pack.index(volume).expect("linked when loaded");
+            let Some(Product::Volume(rock)) =
+                self.products.get(&(rock_index, chunk)).map(Arc::as_ref)
+            else {
+                unreachable!("inputs are generated before the stages that read them")
+            };
+            let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+            let names = stage.kind.categories();
+            let [sx, sy, levels] = rock.size;
+            let mut values = Vec::with_capacity(rock.values.len());
+            let mut materials = Vec::new();
+            for step in 0..levels {
+                let z = (rock.bottom + step as i32) as f32 + 0.5;
+                for y in 0..sy {
+                    for x in 0..sx {
+                        let column = [
+                            i64::from(chunk.x) * i64::from(sx) + i64::from(x),
+                            i64::from(chunk.y) * i64::from(sy) + i64::from(y),
+                        ];
+                        let pool = pool_level(world ^ stage.salt, *cell, *level, column, z);
+                        values.push((pool - z).min(-rock.get(x, y, step)));
+                        if let Some(kinds) = kinds {
+                            let place = ColumnPlace {
+                                height: Some(pool),
+                                ..self.place(index, column, &read)
+                            };
+                            materials.push(first_rule(
+                                &kinds.rules,
+                                &kinds.otherwise,
+                                &names,
+                                &place,
+                            )?);
+                        }
+                    }
+                }
+            }
+            return Ok(Product::Volume(Volume {
+                chunk,
+                size: rock.size,
+                bottom: rock.bottom,
+                values,
+                materials,
+            }));
+        }
         if let StageKind::Rules { .. } | StageKind::Area { .. } | StageKind::Nearest { .. } =
             &stage.kind
         {
@@ -3154,6 +3206,7 @@ impl Runtime {
                     | StageKind::Carve { .. }
                     | StageKind::Top { .. }
                     | StageKind::Embed { .. }
+                    | StageKind::Aquifer { .. }
                     | StageKind::Area { .. }
                     | StageKind::TableSites { .. }
                     | StageKind::Locations { .. }
@@ -4137,6 +4190,47 @@ fn value_at(volume: &Volume, x: u32, y: u32, z: f32) -> f32 {
         volume.get(x, y, clamp(below + 1.0)),
     );
     low + (high - low) * t
+}
+
+/// The fluid level, in cells, of the pool that the voxel at `column` and height `z` belongs to.
+///
+/// Space is cut into cells `cell.0` columns wide and `cell.1` cells tall. Each cell has a centre at
+/// a hashed place inside it and a level hashed from `level.0` up to `level.1`, both from `stream`
+/// and the cell alone, and a voxel belongs to the pool of the nearest centre among its own cell and
+/// the 26 around it, as Minecraft's aquifers look no further. A centre two cells away is rarely the
+/// nearest and never decides; the level depends on the voxel's place alone either way.
+fn pool_level(stream: u32, cell: (u32, u32), level: (f32, f32), column: [i64; 2], z: f32) -> f32 {
+    let (wide, tall) = (i64::from(cell.0), i64::from(cell.1));
+    let at = [column[0] as f32 + 0.5, column[1] as f32 + 0.5, z];
+    let home = [
+        column[0].div_euclid(wide),
+        column[1].div_euclid(wide),
+        (z.floor() as i64).div_euclid(tall),
+    ];
+    let mut nearest = (f32::INFINITY, 0.0);
+    for dz in -1..=1 {
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let [cx, cy, cz] = [home[0] + dx, home[1] + dy, home[2] + dz];
+                let [a, b, c] = pcg3d([
+                    stream ^ (cz as u32).wrapping_mul(0x9E37_79B9),
+                    cx as u32,
+                    cy as u32,
+                ]);
+                let centre = [
+                    (cx * wide) as f32 + unit(a) * wide as f32,
+                    (cy * wide) as f32 + unit(b) * wide as f32,
+                    (cz * tall) as f32 + unit(c) * tall as f32,
+                ];
+                let distance: f32 = (0..3).map(|i| (centre[i] - at[i]).powi(2)).sum();
+                if distance < nearest.0 {
+                    let [height, ..] = pcg3d([a, b, c]);
+                    nearest = (distance, level.0 + (level.1 - level.0) * unit(height));
+                }
+            }
+        }
+    }
+    nearest.1
 }
 
 /// How far outside a tunnel or room, in cells, a Carve stage still lowers a voxel.
