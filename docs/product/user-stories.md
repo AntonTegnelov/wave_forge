@@ -597,8 +597,9 @@ times as large, and writes the same bytes stopped and resumed as at once, and a 
 back with nothing generated, holding what a runtime would (`tests/world_run.rs`). The Godot node
 runs a world into a directory on a thread of its own, reporting each chunk, cancels and resumes,
 and plays it back, its fields and trees those a generating node makes and no stage run
-(`verify_world.gd`). Playback in Bevy, the maximal preset and the desktop numbers are
-[#197](https://github.com/AntonTegnelov/wave_forge/issues/197).
+(`verify_world.gd`). The Bevy plugin plays such a world too, its ground and trees those the
+runtime generates and no stage run (`wave_forge_bevy/tests/stages.rs`). The maximal preset and the
+desktop numbers are [#197](https://github.com/AntonTegnelov/wave_forge/issues/197).
 
 ### M2. Generate a maximal world once before play
 

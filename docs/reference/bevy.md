@@ -56,6 +56,12 @@ there too, with `Runtime::with_region_job`. To sample a stage, read an atlas or 
 without chunks, a game builds a `Runtime` of the same pack and seed and calls `sample`, `atlas` or
 `locate` on it, on any thread.
 
+`WaveForgeStagesPlugin::play(targets, settings, pack, store)` plays instead a world
+`Runtime::run_world` wrote to `store` ahead of time
+([packs.md](packs.md#a-whole-world-ahead-of-time)): the targets' chunks come from the store, no
+stage runs, and the plugin builds the ground, surfaces and entities from them as it does from
+generated ones. A chunk the store lacks, or an edit, stops the stages with a failure.
+
 - `StagesSettings`: `chunk`, columns per chunk as the runtime was built with, and `cell_size`.
 - `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles`, `points` and `stamps` per stage and chunk, `timings()` per stage,
   `translation_of(point)` and `transform_of(point)` (turned, leant and scaled) in Bevy's world,
