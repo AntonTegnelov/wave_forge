@@ -3,7 +3,9 @@
 ## Run by `../verify.sh` after `verify_import.gd`. The islands preset starts with much land and no
 ## trees: `pack_params` lists its three parameters with those values, and no tree stands anywhere.
 ## Raising the tree density then grows trees while the ground stays as it was, and a value outside
-## a parameter's range or a name the pack does not declare is refused.
+## a parameter's range or a name the pack does not declare is refused. The inspector lists each
+## parameter as a slider over its range, `params/<name>`, reading its default until set and
+## reverting to it; moving the tree slider back to 0 clears the trees again while they run.
 extends SceneTree
 
 const CELLS := 8
@@ -37,8 +39,31 @@ func _initialize() -> void:
 	if listed.size() != 3 or not is_equal_approx(listed["land"], 0.9) or not is_equal_approx(listed["roughness"], 0.4) or listed["trees"] != 0.0:
 		_fail("pack_params lists %s" % listed)
 		return
+	if not _check_sliders():
+		return
 	world.follow(Vector3(1, 0, 1))
 	started_usec = Time.get_ticks_usec()
+
+## The parameters as the inspector shows them.
+func _check_sliders() -> bool:
+	var sliders := {}
+	for property: Dictionary in world.get_property_list():
+		if property["name"].begins_with("params/"):
+			sliders[property["name"]] = property
+	if sliders.size() != 3:
+		_fail("the inspector lists %s" % sliders.keys())
+		return false
+	var land: Dictionary = sliders["params/land"]
+	if land["hint"] != PROPERTY_HINT_RANGE or land["hint_string"] != "0,1,0.01" or land["type"] != TYPE_FLOAT:
+		_fail("land is listed as %s" % land)
+		return false
+	if not is_equal_approx(world.get("params/land"), 0.9) or not is_equal_approx(world.get("params/roughness"), 0.4):
+		_fail("the sliders read %s and %s" % [world.get("params/land"), world.get("params/roughness")])
+		return false
+	if not is_equal_approx(world.property_get_revert("params/trees"), 0.5):
+		_fail("the tree slider reverts to %s" % world.property_get_revert("params/trees"))
+		return false
+	return true
 
 func _area() -> Array[Vector3i]:
 	var chunks: Array[Vector3i] = []
@@ -82,7 +107,17 @@ func _process(_delta: float) -> bool:
 			if world.field_values("height", Vector3i.ZERO) != height_before:
 				_fail("the ground changed with the tree density")
 				return true
-			print("verify_params: the islands start with no trees, grow %d when the density rises, and keep their ground; out-of-range values and unknown names are refused" % _trees())
+			world.set("params/trees", 0.0)
+			# Wait for every chunk to come back: one being generated holds no trees at all.
+			for chunk in _area():
+				ready.erase(["trees", chunk])
+			phase = "slide"
+			started_usec = Time.get_ticks_usec()
+			return false
+		"slide":
+			if _trees() > 0:
+				return false
+			print("verify_params: the islands start with no trees, grow them when the density rises, and keep their ground; out-of-range values and unknown names are refused; the inspector's sliders read, revert, and clear the trees again as they move")
 			quit(0)
 			return true
 	return false

@@ -21,6 +21,9 @@ cp "$target/$profile/libwave_forge_godot.so" "$here/godot/bin/"
 cp "$here/../examples/city.ron" "$here/godot/city.ron"
 cp "$here/../examples/valley.world.ron" "$here/godot/valley.world.ron"
 cp "$here/../examples/presets/islands.world.ron" "$here/godot/islands.world.ron"
+# The presets the editor plugin lists, shipped with it.
+mkdir -p "$here/godot/addons/wave_forge/presets"
+cp "$here/../examples/presets/"*.world.ron "$here/godot/addons/wave_forge/presets/"
 cargo run --quiet --manifest-path "$here/../Cargo.toml" -p wfc-devtools --bin wfc-export-models -- \
 	--out "$here/godot/models"
 

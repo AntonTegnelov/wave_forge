@@ -15,11 +15,14 @@ const BRUSHES := {
 	"Fill": "fill",
 	"Remove": "remove",
 }
+## Where the presets the dock lists lie: packs with a few parameters, shipped with the plugin.
+const PRESETS := "res://addons/wave_forge/presets"
 ## How far along a ray the plugin looks for the ground, in world units, and in what steps.
 const RAY_LENGTH := 2000.0
 const RAY_STEP := 0.5
 
 var dock: VBoxContainer
+var preset_choice: OptionButton
 var painting_toggle: CheckButton
 var brush_choice: OptionButton
 var stage_edit: LineEdit
@@ -110,6 +113,13 @@ func _brush() -> Dictionary:
 func _make_dock() -> VBoxContainer:
 	var box := VBoxContainer.new()
 	box.name = "Wave Forge"
+	preset_choice = OptionButton.new()
+	preset_choice.add_item("Choose a preset")
+	for preset in presets():
+		preset_choice.add_item(preset.get_file().trim_suffix(".world.ron"))
+		preset_choice.set_item_metadata(preset_choice.item_count - 1, preset)
+	preset_choice.item_selected.connect(_choose_preset)
+	box.add_child(_labelled("Preset", preset_choice))
 	painting_toggle = CheckButton.new()
 	painting_toggle.text = "Paint"
 	box.add_child(painting_toggle)
@@ -125,6 +135,28 @@ func _make_dock() -> VBoxContainer:
 	strength_spin = _spin(0.0, 16.0, 1.0)
 	box.add_child(_labelled("Strength", strength_spin))
 	return box
+
+## The presets shipped with the plugin, by path.
+static func presets() -> PackedStringArray:
+	var paths := PackedStringArray()
+	for file in DirAccess.get_files_at(PRESETS):
+		if file.ends_with(".world.ron"):
+			paths.append(PRESETS.path_join(file))
+	return paths
+
+## Makes the chosen preset the selected node's pack, as one undo action; its parameters then show
+## in the inspector as sliders.
+func _choose_preset(index: int) -> void:
+	if index == 0 or stages == null or not is_instance_valid(stages):
+		return
+	var undo := get_undo_redo()
+	undo.create_action("Wave Forge: %s preset" % preset_choice.get_item_text(index))
+	undo.add_do_property(stages, "pack_file", preset_choice.get_item_metadata(index))
+	undo.add_undo_property(stages, "pack_file", stages.pack_file)
+	undo.add_do_method(stages, "notify_property_list_changed")
+	undo.add_undo_method(stages, "notify_property_list_changed")
+	undo.commit_action()
+	preset_choice.select(0)
 
 func _labelled(text: String, control: Control) -> HBoxContainer:
 	var row := HBoxContainer.new()

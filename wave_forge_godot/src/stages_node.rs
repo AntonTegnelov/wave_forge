@@ -31,6 +31,7 @@ use godot::classes::{
 use godot::global::Error;
 use godot::obj::EngineEnum;
 use godot::prelude::*;
+use godot::register::info::{PropertyHint, PropertyHintInfo, PropertyInfo};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use wave_forge::DirectoryStore;
@@ -42,8 +43,9 @@ use wave_forge::noise::{
 use wave_forge::stages::brushes::{Brush, Canvas, stroke};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, Point, PointId, Rejection, RowId,
-    Runtime, Save, Site, SiteId, StageError, StageEvent, StageKind, StageWorker, TableKind, Value,
+    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, ParamDef, Point, PointId,
+    Rejection, RowId, Runtime, Save, Site, SiteId, StageError, StageEvent, StageKind, StageWorker,
+    TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -77,10 +79,13 @@ pub struct WaveForgeStages {
     #[export]
     noises: VarDictionary,
     /// Values of the pack's parameters, as name to number, which `start` gives the stages; a
-    /// parameter left out keeps its default ([packs.md](packs.md#parameters)). `update_params`
-    /// changes them while the stages run.
-    #[export]
+    /// parameter left out keeps its default ([packs.md](packs.md#parameters)). The inspector shows
+    /// each as a slider over its range, `params/<name>`, which the scene saves and which changes
+    /// the running stages as it moves; `update_params` does the same from code.
+    #[var]
     params: VarDictionary,
+    /// The pack file whose parameters the inspector lists, and them, read when it asks.
+    listed_params: Option<(GString, BTreeMap<String, ParamDef>)>,
     /// Whether to start as soon as the node enters the scene tree, when the game runs.
     #[export]
     start_on_ready: bool,
@@ -615,6 +620,7 @@ impl INode for WaveForgeStages {
             target_radii: VarDictionary::new(),
             targets: PackedStringArray::new(),
             params: VarDictionary::new(),
+            listed_params: None,
             start_on_ready: false,
             preview_in_editor: false,
             edits_text: PhantomVar::default(),
@@ -679,6 +685,57 @@ impl INode for WaveForgeStages {
             slowest_frame: FrameCost::default(),
             pending: VecDeque::new(),
         }
+    }
+
+    /// A slider per parameter of the pack, `params/<name>`, over its range.
+    fn on_get_property_list(&mut self) -> Vec<PropertyInfo> {
+        self.pack_param_defs()
+            .iter()
+            .map(|(name, param)| {
+                PropertyInfo::new_export::<f32>(&format!("{PARAMS}{name}")).with_hint_info(
+                    PropertyHintInfo {
+                        hint: PropertyHint::RANGE,
+                        hint_string: GString::from(
+                            format!("{},{},0.01", param.range.0, param.range.1).as_str(),
+                        ),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn on_get(&self, property: StringName) -> Option<Variant> {
+        let name = property.to_string().strip_prefix(PARAMS)?.to_owned();
+        let (_, defs) = self.listed_params.as_ref()?;
+        let default = defs.get(&name)?.default;
+        Some(
+            self.params
+                .get(name.as_str())
+                .unwrap_or_else(|| default.to_variant()),
+        )
+    }
+
+    fn on_set(&mut self, property: StringName, value: Variant) -> bool {
+        let Some(name) = property
+            .to_string()
+            .strip_prefix(PARAMS)
+            .map(ToOwned::to_owned)
+        else {
+            return false;
+        };
+        self.params.set(name.as_str(), &value);
+        if self.worker.is_some() {
+            let mut change = VarDictionary::new();
+            change.set(name.as_str(), &value);
+            self.update_params(change);
+        }
+        true
+    }
+
+    fn on_property_get_revert(&self, property: StringName) -> Option<Variant> {
+        let name = property.to_string().strip_prefix(PARAMS)?.to_owned();
+        let (_, defs) = self.listed_params.as_ref()?;
+        Some(defs.get(&name)?.default.to_variant())
     }
 
     /// Frees the ground's meshes and the bodies, which belong to the rendering and physics
@@ -1594,6 +1651,24 @@ impl WaveForgeStages {
         }
         worker.focus(&table.to_string(), id);
         true
+    }
+
+    /// The pack's parameters as `pack_file` declares them, read again when the file changes; none
+    /// if it names no pack that loads.
+    fn pack_param_defs(&mut self) -> BTreeMap<String, ParamDef> {
+        let path = self.pack_file.clone();
+        let fresh = !matches!(&self.listed_params, Some((listed, _)) if *listed == path);
+        if fresh {
+            let text = FileAccess::get_file_as_string(&path).to_string();
+            let defs = Pack::parse(&text)
+                .map(|pack| pack.params().clone())
+                .unwrap_or_default();
+            self.listed_params = Some((path, defs));
+        }
+        self.listed_params
+            .as_ref()
+            .map(|(_, defs)| defs.clone())
+            .unwrap_or_default()
     }
 
     /// Sets the pack's parameters named in `values`, name to number, while the stages run: what
@@ -3677,6 +3752,9 @@ fn param_values(values: &VarDictionary) -> Option<BTreeMap<String, f32>> {
         })
         .collect()
 }
+
+/// The prefix of the properties the inspector shows a pack's parameters as.
+const PARAMS: &str = "params/";
 
 /// The metadata [`WaveForgeStages::bake`] leaves on a chunk's node: the chunk.
 const BAKED_CHUNK: &str = "wave_forge_chunk";
