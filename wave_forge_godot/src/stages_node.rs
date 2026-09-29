@@ -2351,7 +2351,8 @@ impl WaveForgeStages {
                 .collect();
             arrays.set(ArrayType::COLOR.ord() as usize, &colours.to_variant());
         }
-        if fluid {
+        // A fluid without materials glows nowhere, and its vertices carry no UV.
+        if fluid && !mesh.materials.is_empty() {
             let glows: PackedVector2Array = mesh
                 .materials
                 .iter()
