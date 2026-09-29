@@ -595,7 +595,8 @@ cancelling and resuming, and streaming baked content from disk
 done, reports its progress by chunk and by stage, stops when told, resumes from the store, holds no more for a world four
 times as large, and writes the same bytes stopped and resumed as at once, and a world it wrote plays
 back with nothing generated, holding what a runtime would (`tests/world_run.rs`). The Godot node
-runs a world into a directory on a thread of its own, reporting each chunk, cancels and resumes,
+runs a world into a directory on a thread of its own, from the editor dock's World run too,
+reporting each chunk and what each stage has generated, cancels and resumes,
 and plays it back, its fields and trees those a generating node makes, no stage run, and a path
 across its navigation the generated world's (`verify_world.gd`). The Bevy plugin plays such a world too, its ground and trees those the
 runtime generates and no stage run (`wave_forge_bevy/tests/stages.rs`). The maximal preset and the

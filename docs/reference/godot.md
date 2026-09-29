@@ -190,7 +190,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
 | | `frozen_directory` | where frozen stages' chunks the request no longer needs are kept, a file each, so they leave memory and come back unchanged ([packs.md](packs.md#persistence-and-saves)); `user://` paths are resolved, and the game keeps the directory with its saves. Empty keeps every frozen chunk in memory, and in the save |
-| | `play_directory` | a directory `run_world` wrote the pack's whole world to, which the node plays instead of generating: its targets' chunks come from there, and no stage runs ([packs.md](packs.md#a-whole-world-ahead-of-time)); empty generates as usual |
+| | `play_directory` | a directory `run_world` wrote the pack's whole world to, which the node plays instead of generating: its targets' chunks come from there, and no stage runs ([packs.md](packs.md#a-whole-world-ahead-of-time)); empty generates as usual. The stages read it on their own thread, where Godot's file API cannot be called, so it has to be a directory in the file system: in an exported game a `res://` directory is looked for beside the executable, and a game ships the run's directory there, outside the exported pack |
 | Debug | `candidates_stage` | a Scatter stage whose candidates are drawn as small boxes over the ground, each coloured by what became of it, kept or the modifier that rejected it ([packs.md](packs.md#scatter)); empty draws none |
 
 ### Functions
@@ -357,7 +357,13 @@ project's plugins) adds a Wave Forge dock:
 - a Paint toggle;
 - a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
 - the stage it paints, or the point stages Remove takes from;
-- a radius in cells, and a strength.
+- a radius in cells, and a strength;
+- a World run: a directory (`res://wave_forge_world` unless changed, so the result ships with the
+  game), Run world and Cancel buttons, a progress bar of chunks, and what each stage has generated
+  so far or how the run ended. Run world is the node's `run_world`, so the node has to have started,
+  with `preview_in_editor` on; running again after a cancel resumes. The panel is
+  `addons/wave_forge/world_run_panel.gd`, which only renders the node's `world_run_progress` and
+  `world_run_finished`.
 
 With Paint on and the node selected, a drag in the 3D viewport paints a stroke along the ground,
 as one undo action that restores `edits_text`. The ground comes from `ground_height`, so painting
