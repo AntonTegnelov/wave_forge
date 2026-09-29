@@ -43,6 +43,8 @@ const PACK: &str = r#"(
             ]),
             (name: "cap", size: (1, 1, 2), end: true, doors: [(at: (0, 0, 0), facing: South, kind: "hall")]),
         ])),
+        (name: "outposts", kind: Sites(height: "ground", region: 4, size: (1, 2), chance: 1.0)),
+        (name: "levelled", kind: Carve(volume: "rock", level: Some((sites: "outposts", depth: 3, clear: 5)))),
         (name: "caves", kind: Carve(
             volume: "rock",
             tunnels: Some((curves: "tunnels", height: "ground", depth: 6.0, max_radius: 3)),
@@ -252,5 +254,52 @@ fn carving_a_volume_of_another_scale_is_refused() {
     assert!(
         matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "carved"),
         "{result:?}"
+    );
+}
+
+#[test]
+fn a_levelled_site_is_solid_under_its_floor_and_open_above_it() {
+    let mut runtime = runtime(2.0).expect("a runtime");
+    let chunks = area();
+    generate(&mut runtime, &["levelled", "outposts"], &chunks);
+
+    let sites: Vec<_> = chunks
+        .iter()
+        .flat_map(|&chunk| {
+            runtime
+                .sites("outposts", chunk)
+                .expect("generated")
+                .to_vec()
+        })
+        .collect();
+    let (mut under, mut over) = (0, 0);
+    for &chunk in &chunks {
+        let levelled = runtime.volume("levelled", chunk).expect("generated");
+        for (column, z, i) in voxels(levelled) {
+            let floor = sites.iter().find_map(|site| {
+                let inside = (i64::from(site.min.0) * 8..i64::from(site.max.0) * 8)
+                    .contains(&column[0])
+                    && (i64::from(site.min.1) * 8..i64::from(site.max.1) * 8).contains(&column[1]);
+                inside.then_some(site.height)
+            });
+            let Some(floor) = floor else { continue };
+            if (floor - 3.0 < z) && (z < floor) {
+                assert!(
+                    levelled.values[i] > 0.0,
+                    "{column:?} at {z} under a floor at {floor}"
+                );
+                under += 1;
+            } else if (floor < z) && (z < floor + 5.0) {
+                assert!(
+                    levelled.values[i] < 0.0,
+                    "{column:?} at {z} over a floor at {floor}"
+                );
+                over += 1;
+            }
+        }
+    }
+    assert!(
+        under > 100 && over > 100,
+        "{under} under and {over} over the floors"
     );
 }

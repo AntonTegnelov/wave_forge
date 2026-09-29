@@ -2058,7 +2058,7 @@ impl Runtime {
         };
         let value = match &stage.kind {
             StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
-            StageKind::Volume { .. } | StageKind::Carve { .. } => {
+            StageKind::Volume { .. } | StageKind::Carve { .. } | StageKind::Top { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
             StageKind::Rules { .. } => f32::from(self.categorise(index, column, &read)?),
@@ -3007,6 +3007,15 @@ impl Runtime {
         if let StageKind::Carve { .. } = &stage.kind {
             return self.carve(index, chunk).map(Product::Volume);
         }
+        if let StageKind::Top { .. } = &stage.kind {
+            let (volume, _) = stage.inputs[0];
+            let Some(Product::Volume(volume)) =
+                self.products.get(&(volume, chunk)).map(Arc::as_ref)
+            else {
+                unreachable!("inputs are generated before the stages that read them")
+            };
+            return Ok(Product::Field(top(volume, stage.scale)));
+        }
         let views: BTreeMap<usize, FieldView<'_>> = stage
             .inputs
             .iter()
@@ -3128,6 +3137,7 @@ impl Runtime {
                     StageKind::Sites { .. }
                     | StageKind::Volume { .. }
                     | StageKind::Carve { .. }
+                    | StageKind::Top { .. }
                     | StageKind::Area { .. }
                     | StageKind::TableSites { .. }
                     | StageKind::Locations { .. }
@@ -3156,14 +3166,16 @@ impl Runtime {
 
     /// Apply stage `index`'s field for `chunk`: its height with the curves near each column drawn
     /// in.
-    /// Carve stage `index`'s volume for `chunk`: its input volume there, each voxel less than a
-    /// cell outside a tunnel or room, or inside one, lowered to how far outside the nearest it is.
+    /// Carve stage `index`'s volume for `chunk`: its input volume there with its levelled sites'
+    /// slabs filled and the air above them emptied, then each voxel less than a cell outside a
+    /// tunnel or room, or inside one, lowered to how far outside the nearest it is.
     fn carve(&self, index: usize, chunk: ChunkCoord) -> Result<Volume, StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Carve {
             volume,
             tunnels,
             rooms,
+            level,
         } = &stage.kind
         else {
             unreachable!("called for Carve stages")
@@ -3250,6 +3262,27 @@ impl Runtime {
                 );
             }
         }
+        // Each levelled site's slab to fill and the open air above it, as boxes in cells.
+        let mut slabs: Vec<([f32; 3], [f32; 3])> = Vec::new();
+        let mut air: Vec<([f32; 3], [f32; 3])> = Vec::new();
+        if let Some(level) = level {
+            let (at, reach) = input(&level.sites);
+            for footprint in self.levelled_near(index, chunk, at, reach) {
+                let (min, max) = (
+                    [footprint.min[0] as f32, footprint.min[1] as f32],
+                    [footprint.max[0] as f32, footprint.max[1] as f32],
+                );
+                let floor = footprint.height;
+                slabs.push((
+                    [min[0], min[1], floor - level.depth as f32],
+                    [max[0], max[1], floor],
+                ));
+                air.push((
+                    [min[0], min[1], floor],
+                    [max[0], max[1], floor + level.clear as f32],
+                ));
+            }
+        }
         let [sx, sy, levels] = carved.size;
         for level in 0..levels {
             let z = (carved.bottom + level as i32) as f32 + 0.5;
@@ -3260,6 +3293,21 @@ impl Runtime {
                         i64::from(chunk.y) * i64::from(sy) + i64::from(y),
                     ];
                     let at = [column[0] as f32 + 0.5, column[1] as f32 + 0.5, z];
+                    let value = &mut carved.values[((level * sy + y) * sx + x) as usize];
+                    // Sites are levelled first, so a tunnel or room still cuts through a site's
+                    // slab; each only within a cell of its box.
+                    for (low, high) in &slabs {
+                        let outside = box_distance(at, *low, *high);
+                        if outside < CARVE_MARGIN {
+                            *value = value.max(-outside);
+                        }
+                    }
+                    for (low, high) in &air {
+                        let outside = box_distance(at, *low, *high);
+                        if outside < CARVE_MARGIN {
+                            *value = value.min(outside);
+                        }
+                    }
                     // Only within a cell of a wall, which is all a surface there reads, so a voxel
                     // reads what is within reach of its column.
                     let mut outside = CARVE_MARGIN;
@@ -3272,7 +3320,6 @@ impl Runtime {
                         outside = outside.min(box_distance(at, *low, *high));
                     }
                     if outside < CARVE_MARGIN {
-                        let value = &mut carved.values[((level * sy + y) * sx + x) as usize];
                         *value = value.min(outside);
                     }
                 }
@@ -3903,6 +3950,40 @@ fn first_rule(
         }
     }
     Ok(index_of(otherwise))
+}
+
+/// The top of `volume` in each of its columns, in cells: where its values cross zero going up
+/// from its highest solid voxel, or its bottom for a column without one. `scale` is its stage's.
+fn top(volume: &Volume, scale: u32) -> Field {
+    let [sx, sy, levels] = volume.size;
+    let scale = scale as f32;
+    let mut values = Vec::with_capacity((sx * sy) as usize);
+    for y in 0..sy {
+        for x in 0..sx {
+            let solid = (0..levels)
+                .rev()
+                .find(|&level| volume.get(x, y, level) > 0.0);
+            values.push(match solid {
+                None => volume.bottom as f32 * scale,
+                Some(level) => {
+                    let centre = (volume.bottom + level as i32) as f32 + 0.5;
+                    let below = volume.get(x, y, level);
+                    let above = if level + 1 < levels {
+                        volume.get(x, y, level + 1)
+                    } else {
+                        // Solid to the top: the surface is the volume's top.
+                        -below
+                    };
+                    (centre + below / (below - above)) * scale
+                }
+            });
+        }
+    }
+    Field {
+        chunk: volume.chunk,
+        size: [sx, sy],
+        values,
+    }
 }
 
 /// How far outside a tunnel or room, in cells, a Carve stage still lowers a voxel.
