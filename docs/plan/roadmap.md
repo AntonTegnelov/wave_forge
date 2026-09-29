@@ -76,8 +76,7 @@ Each step is a verified pull request that updates the stories it moves.
    in Bevy, once a crate exposes them on the tracked Bevy
    ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
 2. **The voxel stories in the engines:** drawing G1's fluid
-   ([#231](https://github.com/AntonTegnelov/wave_forge/issues/231)) and binding scenes to G8's
-   rooms ([#233](https://github.com/AntonTegnelov/wave_forge/issues/233)). The packs of G1, G3 and
+   ([#231](https://github.com/AntonTegnelov/wave_forge/issues/231)). The packs of G1, G3 and
    G8 are verified ([#219](https://github.com/AntonTegnelov/wave_forge/issues/219),
    [#221](https://github.com/AntonTegnelov/wave_forge/issues/221),
    [#220](https://github.com/AntonTegnelov/wave_forge/issues/220)).

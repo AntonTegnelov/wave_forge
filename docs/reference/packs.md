@@ -693,8 +693,8 @@ site, their floor's height and no turn. A [Carve](#carve) stage carves them as i
 Assemble stage's rooms, and a [Tunnels](#tunnels) stage joins the linked ones. The plan depends on
 the seed, the stage and the region alone, so a level is the same in any order and a bounded pack
 ([World bound](#world-bound)) makes one region the whole level. It works at the WFC lattice's
-scale. Neither engine binds scenes to its rooms yet
-([#233](https://github.com/AntonTegnelov/wave_forge/issues/233)).
+scale. Engines bind scenes to its rooms by name, as to an Assemble stage's pieces
+([godot.md](godot.md#scenes), [bevy.md](bevy.md#packs-of-stages)).
 
 ### Tunnels
 
