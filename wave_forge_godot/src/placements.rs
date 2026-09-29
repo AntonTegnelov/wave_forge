@@ -11,9 +11,11 @@
 //! their kind.
 
 use crate::gi::Gi;
+use godot::classes::multi_mesh::TransformFormat;
 use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
-    Mesh, MeshInstance3D, Node, Node3D, PackedScene, RenderingServer, ResourceLoader,
+    Mesh, MeshInstance3D, MultiMesh, MultiMeshInstance3D, Node, Node3D, PackedScene,
+    RenderingServer, ResourceLoader,
 };
 use godot::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -271,6 +273,53 @@ impl Placements {
         Ok(spawned)
     }
 
+    /// Plain nodes standing for `items`, for a scene of their own
+    /// (`WaveForgeStages::bake`): a `MultiMeshInstance3D` per kind drawn as a MultiMesh, holding a
+    /// `MultiMesh` of its mesh with every item's transform and sway, and an instance of its scene
+    /// per item of a kind placed as nodes, wherever the followed position is.
+    ///
+    /// # Errors
+    /// While a kind's scene is still loading, naming it.
+    pub(crate) fn baked(&self, items: &[Item]) -> Result<Vec<Gd<Node3D>>, String> {
+        let mut by_kind: BTreeMap<&str, Vec<&Item>> = BTreeMap::new();
+        for item in items {
+            by_kind.entry(&item.kind).or_default().push(item);
+        }
+        let mut nodes = Vec::new();
+        for (kind, items) in by_kind {
+            match &self.bindings[kind] {
+                Binding::Mesh(mesh) => {
+                    let mut multimesh = MultiMesh::new_gd();
+                    multimesh.set_transform_format(TransformFormat::TRANSFORM_3D);
+                    multimesh.set_use_custom_data(true);
+                    multimesh.set_mesh(mesh);
+                    multimesh.set_instance_count(items.len() as i32);
+                    multimesh.set_buffer(&buffer(&items, Transform3D::IDENTITY));
+                    let mut instance = MultiMeshInstance3D::new_alloc();
+                    instance.set_name(kind);
+                    instance.set_multimesh(&multimesh);
+                    instance.set_gi_mode(items[0].gi.mode());
+                    nodes.push(instance.upcast());
+                }
+                Binding::Nodes { scene, .. } => {
+                    for item in items {
+                        let mut node = scene
+                            .try_instantiate_as::<Node3D>()
+                            .ok_or_else(|| format!("the scene of {kind:?} is not a Node3D"))?;
+                        node.set_transform(item.transform);
+                        nodes.push(node);
+                    }
+                }
+                Binding::Loading(path) => {
+                    return Err(format!(
+                        "the scene of {kind:?} is still loading from {path}"
+                    ));
+                }
+            }
+        }
+        Ok(nodes)
+    }
+
     /// Frees everything placed and every pooled node, and forgets what was due.
     pub(crate) fn clear(&mut self) {
         self.due.clear();
@@ -406,7 +455,16 @@ fn multimesh(
         )
         .custom_data_format(true)
         .done();
-    let buffer: Vec<f32> = items
+    rendering.multimesh_set_buffer(multimesh, &buffer(items, offset));
+    let instance = rendering.instance_create2(multimesh, scenario);
+    items[0].gi.apply(instance);
+    (multimesh, instance, items.len())
+}
+
+/// A MultiMesh's buffer of `items`, each standing at its transform times `offset`: its transform's
+/// rows and each item's sway as custom data.
+fn buffer(items: &[&Item], offset: Transform3D) -> PackedFloat32Array {
+    items
         .iter()
         .flat_map(|item| {
             let Transform3D { basis, origin } = item.transform * offset;
@@ -417,11 +475,7 @@ fn multimesh(
                 stiffness, 0.0, 0.0,
             ]
         })
-        .collect();
-    rendering.multimesh_set_buffer(multimesh, &PackedFloat32Array::from(buffer.as_slice()));
-    let instance = rendering.instance_create2(multimesh, scenario);
-    items[0].gi.apply(instance);
-    (multimesh, instance, items.len())
+        .collect()
 }
 
 /// Frees everything a chunk placed. A node the game freed already is left alone.

@@ -388,7 +388,10 @@ story mission.*
 
 **Acceptance criteria.** Baking writes a scene of plain nodes and resources that opens without the
 plugin; a linked bake can be regenerated with the designer's edits kept. **Needs.** Bake, Edits
-([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). **Status:** not started (2026-09-23).
+([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). **Status:** in progress
+(2026-09-29): `WaveForgeStages.bake(from, to)` writes an area as a scene of plain nodes, ground,
+volume, fluid and placed scenes with their bodies and materials, that names no Wave Forge class and
+loads back as the node drew it (`verify_bake.gd`); the linked bake is not built yet.
 
 ### N9. Share a world by seed
 

@@ -12,7 +12,7 @@
 
 use crate::gi::Gi;
 use crate::grass::{GRASS_SHADER, Grass};
-use crate::lods::add_levelled_surface;
+use crate::lods::{add_levelled_surface, levelled_mesh};
 use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
@@ -21,9 +21,12 @@ use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::ArrayType;
 use godot::classes::{
-    FastNoiseLite, FileAccess, INode, Image, ImageTexture, Material, Node, Node3D, PhysicsServer3D,
-    ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D, StandardMaterial3D,
+    ArrayMesh, CollisionShape3D, ConcavePolygonShape3D, FastNoiseLite, FileAccess,
+    HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, Node, Node3D,
+    PhysicsServer3D, ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D,
+    StandardMaterial3D, StaticBody3D,
 };
+use godot::global::Error;
 use godot::obj::EngineEnum;
 use godot::prelude::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -1728,6 +1731,25 @@ impl WaveForgeStages {
         layer_mesh(self.fluid.as_ref(), chunk)
     }
 
+    /// A scene of plain nodes holding what the node draws over the chunks from `from` to `to`,
+    /// both included, for a game to save and open without the extension. Under a node per chunk:
+    /// its ground as a `MeshInstance3D` and a `StaticBody3D` holding its `HeightMapShape3D`; its
+    /// volume surface and a body holding its `ConcavePolygonShape3D`; its fluid's surface; and
+    /// every bound scene its stages placed, a kind drawn as a MultiMesh as a
+    /// `MultiMeshInstance3D`, any other as an instance of its scene. Each keeps its material.
+    /// Grass and the far ground are left out. Null, with an error, if a chunk's ground or surfaces
+    /// are not built yet, or a scene is still loading.
+    #[func]
+    fn bake(&self, from: Vector3i, to: Vector3i) -> Option<Gd<PackedScene>> {
+        match self.baked(from_vector(from), from_vector(to)) {
+            Ok(scene) => Some(scene),
+            Err(error) => {
+                godot_error!("wave forge: cannot bake: {error}");
+                None
+            }
+        }
+    }
+
     /// The chunks that have a static body: their ground, their volume's surface, and their towns'
     /// modules.
     #[func]
@@ -2138,28 +2160,9 @@ impl WaveForgeStages {
         let count = built.len();
         for (chunk, mesh, ids) in built {
             let rid = rendering.mesh_create();
-            let mut arrays = VarArray::new();
-            arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
-            let vertices: PackedVector3Array = mesh
-                .positions
-                .iter()
-                .map(|&[x, y, z]| Vector3::new(x, y, z))
-                .collect();
-            let normals: PackedVector3Array = mesh
-                .normals
-                .iter()
-                .map(|&[x, y, z]| Vector3::new(x, y, z))
-                .collect();
-            arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
-            arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
-            let [finest, coarser @ ..] = mesh.levels.as_slice() else {
-                unreachable!("a ground has full detail at least");
-            };
-            let coarser: Vec<(&[u32], f32)> = coarser
-                .iter()
-                .map(|level| (level.indices.as_slice(), level.error))
-                .collect();
-            add_levelled_surface(rid, &mut arrays, &finest.indices, &coarser);
+            let mut arrays = ground_arrays(&mesh);
+            let (finest, coarser) = ground_levels(&mesh);
+            add_levelled_surface(rid, &mut arrays, finest, &coarser);
             match (ids, &self.palette) {
                 (Some(ids), Some((palette, template))) => {
                     let material = chunk_material(template, palette, &mesh, &ids, cell);
@@ -2183,6 +2186,128 @@ impl WaveForgeStages {
             self.ground_revisions.insert(chunk, self.ground_builds);
         }
         count
+    }
+
+    /// The scene [`Self::bake`] gives for the chunks from `from` to `to`, or why there is none.
+    fn baked(&self, from: ChunkCoord, to: ChunkCoord) -> Result<Gd<PackedScene>, String> {
+        let (Some(worker), Some(pack)) = (&self.worker, &self.pack) else {
+            return Err("the node has not started".to_owned());
+        };
+        let mut root = Node3D::new_alloc();
+        root.set_name("Baked");
+        let result = self.bake_chunks(worker, pack, &mut root, from, to);
+        let scene = result.and_then(|()| {
+            own(&root.clone().upcast(), &root.clone().upcast());
+            let mut scene = PackedScene::new_gd();
+            match scene.pack(&root) {
+                Error::OK => Ok(scene),
+                error => Err(format!("packing the scene failed: {error:?}")),
+            }
+        });
+        root.free();
+        scene
+    }
+
+    /// Adds under `root` a node per chunk from `from` to `to` holding what [`Self::bake`] bakes.
+    fn bake_chunks(
+        &self,
+        worker: &StageWorker,
+        pack: &Pack,
+        root: &mut Gd<Node3D>,
+        from: ChunkCoord,
+        to: ChunkCoord,
+    ) -> Result<(), String> {
+        let instance = |mesh: Gd<ArrayMesh>, name: &str, at: Vector3| {
+            let mut instance = MeshInstance3D::new_alloc();
+            instance.set_name(name);
+            instance.set_mesh(&mesh);
+            instance.set_position(at);
+            instance
+        };
+        let body = |name: &str, shape: Gd<Shape3D>, at: Transform3D| {
+            let mut body = StaticBody3D::new_alloc();
+            body.set_name(name);
+            let mut collision = CollisionShape3D::new_alloc();
+            collision.set_shape(&shape);
+            collision.set_transform(at);
+            body.add_child(&collision);
+            body
+        };
+        let bound = self.placements.kinds();
+        for y in from.y..=to.y {
+            for x in from.x..=to.x {
+                let chunk = ChunkCoord::new(x, y, 0);
+                let corner = self.chunk_corner(chunk);
+                let mut holder = Node3D::new_alloc();
+                holder.set_name(&format!("Chunk {x} {y}"));
+                root.add_child(&holder);
+                if !self.ground_stage.is_empty() {
+                    let (ground, _, _) = self
+                        .grounds
+                        .get(&chunk)
+                        .ok_or_else(|| format!("the ground of {chunk:?} is not built"))?;
+                    let material = self
+                        .chunk_materials
+                        .get(&chunk)
+                        .map(|material| material.clone().upcast::<Material>())
+                        .or_else(|| self.ground_material.clone());
+                    let (finest, coarser) = ground_levels(ground);
+                    let mesh = levelled_mesh(
+                        &mut ground_arrays(ground),
+                        finest,
+                        &coarser,
+                        material.as_ref(),
+                    );
+                    holder.add_child(&instance(mesh, "Ground", corner));
+                    if let Some((width, depth, heights, at)) = self.ground_height_map(chunk) {
+                        let mut map = HeightMapShape3D::new_gd();
+                        map.set_map_width(width);
+                        map.set_map_depth(depth);
+                        map.set_map_data(&heights);
+                        holder.add_child(&body("GroundBody", map.upcast(), at));
+                    }
+                }
+                for (layer, fluid) in [(&self.rock, false), (&self.fluid, true)] {
+                    let Some(layer) = layer else {
+                        continue;
+                    };
+                    let surface = layer
+                        .built
+                        .get(&chunk)
+                        .ok_or_else(|| format!("the surface of {chunk:?} is not built"))?;
+                    if surface.mesh.indices.is_empty() {
+                        continue;
+                    }
+                    let mesh = levelled_mesh(
+                        &mut self.surface_arrays(&surface.mesh, fluid),
+                        &surface.mesh.indices,
+                        &[],
+                        self.surface_material(&surface.mesh, fluid).as_ref(),
+                    );
+                    let name = if fluid { "Fluid" } else { "Surface" };
+                    holder.add_child(&instance(mesh, name, corner));
+                    if !fluid {
+                        let mut faces = ConcavePolygonShape3D::new_gd();
+                        faces.set_faces(&surface_faces(&surface.mesh));
+                        let at = Transform3D::new(Basis::IDENTITY, corner);
+                        holder.add_child(&body("SurfaceBody", faces.upcast(), at));
+                    }
+                }
+                if !bound.is_empty() {
+                    for stage in pack.stage_names() {
+                        let Some(items) =
+                            placement_items(worker, pack, self.cell_size, &bound, stage, chunk)
+                        else {
+                            continue;
+                        };
+                        for node in self.placements.baked(&items)? {
+                            holder.add_child(&node);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Updates the rock's surfaces, or the fluid's with `fluid`, from the chunks of its stage
@@ -2306,29 +2431,33 @@ impl WaveForgeStages {
     /// materials' colours for a stage with materials, and returns its `RenderingServer` mesh and
     /// instance.
     fn draw_surface(&self, mesh: &VolumeMesh, scenario: Rid, fluid: bool) -> (Rid, Rid) {
-        let (palette, chosen, colours) = if fluid {
-            (
-                &self.fluid_palette,
-                self.fluid_material
-                    .as_ref()
-                    .map(|material| material.get_rid()),
-                self.fluid_colours
-                    .as_ref()
-                    .map(|material| material.get_rid()),
-            )
-        } else {
-            (
-                &self.volume_palette,
-                self.volume_material
-                    .as_ref()
-                    .map(|material| material.get_rid()),
-                self.vertex_colours
-                    .as_ref()
-                    .map(|material| material.get_rid()),
-            )
-        };
         let mut rendering = RenderingServer::singleton();
         let rid = rendering.mesh_create();
+        let mut arrays = self.surface_arrays(mesh, fluid);
+        add_levelled_surface(rid, &mut arrays, &mesh.indices, &[]);
+        if let Some(material) = self.surface_material(mesh, fluid) {
+            rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+        }
+        let instance = rendering.instance_create2(rid, scenario);
+        rendering.instance_set_transform(
+            instance,
+            Transform3D::new(Basis::IDENTITY, self.chunk_corner(mesh.chunk)),
+        );
+        // Fluid is see-through and moves with the rock it fills, so global illumination leaves
+        // it out.
+        if fluid { Gi::Off } else { Gi::Static }.apply(instance);
+        (rid, instance)
+    }
+
+    /// A chunk's rock surface, or with `fluid` its fluid's, as a surface's arrays without its
+    /// triangles: its vertices and normals, each vertex's material's colour from the palette for
+    /// a stage with materials, and for fluid each vertex's glow in its first UV.
+    fn surface_arrays(&self, mesh: &VolumeMesh, fluid: bool) -> VarArray {
+        let palette = if fluid {
+            &self.fluid_palette
+        } else {
+            &self.volume_palette
+        };
         let mut arrays = VarArray::new();
         arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
         let vertices: PackedVector3Array = mesh
@@ -2363,24 +2492,22 @@ impl WaveForgeStages {
                 .collect();
             arrays.set(ArrayType::TEX_UV.ord() as usize, &glows.to_variant());
         }
-        add_levelled_surface(rid, &mut arrays, &mesh.indices, &[]);
-        let material = match (chosen, colours) {
-            (Some(material), _) => Some(material),
-            (None, Some(colours)) if fluid || !mesh.materials.is_empty() => Some(colours),
-            (None, _) => None,
-        };
-        if let Some(material) = material {
-            rendering.mesh_surface_set_material(rid, 0, material);
+        arrays
+    }
+
+    /// The material a chunk's rock surface, or with `fluid` its fluid's, is drawn with: the one
+    /// given, or else the vertex colours for fluid or rock with materials; none for Godot's
+    /// default.
+    fn surface_material(&self, mesh: &VolumeMesh, fluid: bool) -> Option<Gd<Material>> {
+        if fluid {
+            (self.fluid_material.clone()).or_else(|| self.fluid_colours.clone().map(Gd::upcast))
+        } else {
+            (self.volume_material.clone()).or_else(|| {
+                (!mesh.materials.is_empty())
+                    .then(|| self.vertex_colours.clone().map(Gd::upcast))
+                    .flatten()
+            })
         }
-        let instance = rendering.instance_create2(rid, scenario);
-        rendering.instance_set_transform(
-            instance,
-            Transform3D::new(Basis::IDENTITY, self.chunk_corner(mesh.chunk)),
-        );
-        // Fluid is see-through and moves with the rock it fills, so global illumination leaves
-        // it out.
-        if fluid { Gi::Off } else { Gi::Static }.apply(instance);
-        (rid, instance)
     }
 
     /// Draws the far ground of the coarse chunks that are due, nearest the followed position first
@@ -2626,15 +2753,14 @@ impl WaveForgeStages {
         count
     }
 
-    /// Adds a chunk's ground to `body` as a height map and returns the shape, which the caller
-    /// frees with the body. A height map's samples are one unit apart, so the shape is scaled by
-    /// the cell's width, and its heights divided by it, which needs cells as wide as they are deep.
-    fn add_ground_shape(
+    /// A chunk's ground as a height map: its vertices along x and z, each vertex's height in cells
+    /// of the cell's width, and where the map stands in Godot's world, since a height map is
+    /// centred on its origin and spaced a unit apart. None, with an error, for cells not as wide
+    /// as they are deep, which a height map cannot hold.
+    fn ground_height_map(
         &self,
-        physics: &mut Gd<PhysicsServer3D>,
-        body: Rid,
         chunk: ChunkCoord,
-    ) -> Option<Rid> {
+    ) -> Option<(i32, i32, PackedFloat32Array, Transform3D)> {
         let (mesh, _, _) = &self.grounds[&chunk];
         let width = self.cell_size.x;
         if (self.cell_size.z - width).abs() > f32::EPSILON * width {
@@ -2645,22 +2771,7 @@ impl WaveForgeStages {
             return None;
         }
         let heights: PackedFloat32Array = mesh.heights.iter().map(|h| h / width).collect();
-        let (low, high) = heights
-            .as_slice()
-            .iter()
-            .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), &h| {
-                (low.min(h), high.max(h))
-            });
-        let mut data = VarDictionary::new();
-        data.set(&"width".to_variant(), &(mesh.size[0] as i32).to_variant());
-        data.set(&"depth".to_variant(), &(mesh.size[1] as i32).to_variant());
-        data.set(&"heights".to_variant(), &heights.to_variant());
-        data.set(&"min_height".to_variant(), &low.to_variant());
-        data.set(&"max_height".to_variant(), &high.to_variant());
-        let shape = physics.heightmap_shape_create();
-        physics.shape_set_data(shape, &data.to_variant());
-        // A height map is centred on its origin; the first vertex stands over the first column's
-        // centre.
+        // The first vertex stands over the first column's centre.
         let centre = Vector3::new(
             (0.5 + (mesh.size[0] - 1) as f32 / 2.0) * width,
             0.0,
@@ -2670,6 +2781,32 @@ impl WaveForgeStages {
             Basis::from_scale(Vector3::ONE * width),
             self.chunk_corner(chunk) + centre,
         );
+        Some((mesh.size[0] as i32, mesh.size[1] as i32, heights, at))
+    }
+
+    /// Adds a chunk's ground to `body` as a height map and returns the shape, which the caller
+    /// frees with the body; none for cells a height map cannot hold.
+    fn add_ground_shape(
+        &self,
+        physics: &mut Gd<PhysicsServer3D>,
+        body: Rid,
+        chunk: ChunkCoord,
+    ) -> Option<Rid> {
+        let (width, depth, heights, at) = self.ground_height_map(chunk)?;
+        let (low, high) = heights
+            .as_slice()
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), &h| {
+                (low.min(h), high.max(h))
+            });
+        let mut data = VarDictionary::new();
+        data.set(&"width".to_variant(), &width.to_variant());
+        data.set(&"depth".to_variant(), &depth.to_variant());
+        data.set(&"heights".to_variant(), &heights.to_variant());
+        data.set(&"min_height".to_variant(), &low.to_variant());
+        data.set(&"max_height".to_variant(), &high.to_variant());
+        let shape = physics.heightmap_shape_create();
+        physics.shape_set_data(shape, &data.to_variant());
         physics.body_add_shape_ex(body, shape).transform(at).done();
         Some(shape)
     }
@@ -2688,16 +2825,7 @@ impl WaveForgeStages {
             .expect("a volume shape is added while the volume is drawn")
             .built[&chunk]
             .mesh;
-        // Godot's front faces wind clockwise, the library's counter-clockwise.
-        let faces: PackedVector3Array = mesh
-            .indices
-            .chunks(3)
-            .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])
-            .map(|index| {
-                let [x, y, z] = mesh.positions[index as usize];
-                Vector3::new(x, y, z)
-            })
-            .collect();
+        let faces = surface_faces(mesh);
         let mut data = VarDictionary::new();
         data.set(&"faces".to_variant(), &faces.to_variant());
         data.set(&"backface_collision".to_variant(), &false.to_variant());
@@ -2732,53 +2860,8 @@ impl WaveForgeStages {
         };
         let cell = self.cell_size;
         let bound: Vec<String> = self.placements.kinds();
-        let binds = |kind: &str| bound.iter().any(|known| known == kind);
-        let items = |stage: &str, chunk: ChunkCoord| -> Option<Vec<Item>> {
-            let place = |rows: [[f32; 3]; 3], [x, y, height]: [f32; 3]| {
-                Transform3D::new(
-                    Basis::from_rows(
-                        Vector3::from_array(rows[0]),
-                        Vector3::from_array(rows[1]),
-                        Vector3::from_array(rows[2]),
-                    ),
-                    Vector3::new(x * cell.x, height * cell.y, y * cell.z),
-                )
-            };
-            let items: Vec<Item> = match pack.kind(stage)? {
-                StageKind::Scatter { .. }
-                | StageKind::Embed { .. }
-                | StageKind::Deposit { .. }
-                | StageKind::Spawn { .. } => worker
-                    .points(stage, chunk)?
-                    .iter()
-                    .filter(|point| binds(&point.kind))
-                    .map(|point| Item {
-                        kind: point.kind.to_string(),
-                        transform: place(point.y_up_basis(), point.position),
-                        id: local_id(point.id.local),
-                        // The shader bends a plant by the wind over its stiffness in the mesh's
-                        // own units, which its scale then enlarges: a stiffness of its scale moves
-                        // every plant's tip the wind's strength, and a larger plant leans less.
-                        sway: [phase(point.id.local), point.scale],
-                        gi: Gi::Off,
-                    })
-                    .collect(),
-                StageKind::Assemble { .. } | StageKind::Cave { .. } => worker
-                    .stamps(stage, chunk)?
-                    .iter()
-                    // A piece overlapping several chunks is placed by the one its id names.
-                    .filter(|stamp| stamp.id.chunk == chunk && binds(&stamp.piece))
-                    .map(|stamp| Item {
-                        kind: stamp.piece.to_string(),
-                        transform: place(stamp.y_up_basis(), stamp.position),
-                        id: local_id(stamp.id.local),
-                        sway: [phase(stamp.id.local), 1.0],
-                        gi: Gi::Static,
-                    })
-                    .collect(),
-                _ => return None,
-            };
-            Some(items)
+        let items = |stage: &str, chunk: ChunkCoord| {
+            placement_items(worker, pack, cell, &bound, stage, chunk)
         };
         let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
         let budget = self.placement_budget_ms;
@@ -2975,6 +3058,120 @@ fn layer_mesh(layer: Option<&VolumeLayer>, chunk: Vector3i) -> Rid {
         .and_then(|layer| layer.built.get(&from_vector(chunk)))
         .and_then(|surface| surface.drawn)
         .map_or(Rid::Invalid, |(mesh, _)| mesh)
+}
+
+/// A chunk's ground as a surface's arrays without its triangles: its vertices and normals.
+fn ground_arrays(mesh: &GroundMesh) -> VarArray {
+    let mut arrays = VarArray::new();
+    arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
+    let vertices: PackedVector3Array = mesh
+        .positions
+        .iter()
+        .map(|&[x, y, z]| Vector3::new(x, y, z))
+        .collect();
+    let normals: PackedVector3Array = mesh
+        .normals
+        .iter()
+        .map(|&[x, y, z]| Vector3::new(x, y, z))
+        .collect();
+    arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
+    arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+    arrays
+}
+
+/// A chunk's ground's finest triangles, and its coarser levels with how far each strays.
+fn ground_levels(mesh: &GroundMesh) -> (&[u32], Vec<(&[u32], f32)>) {
+    let [finest, coarser @ ..] = mesh.levels.as_slice() else {
+        unreachable!("a ground has full detail at least");
+    };
+    let coarser = coarser
+        .iter()
+        .map(|level| (level.indices.as_slice(), level.error))
+        .collect();
+    (&finest.indices, coarser)
+}
+
+/// Makes `root` the owner of every node under `node`, so packing `root` keeps them. An instance of
+/// a saved scene is kept as a reference to that scene, so its own nodes are left to it; an
+/// instance of a scene made in memory is kept node by node.
+fn own(node: &Gd<Node>, root: &Gd<Node>) {
+    for mut child in node.get_children().iter_shared() {
+        child.set_owner(root);
+        if child.get_scene_file_path().is_empty() {
+            own(&child, root);
+        }
+    }
+}
+
+/// A volume surface's triangles as a concave polygon's faces, three corners each in Godot's
+/// winding: its front faces wind clockwise, the library's counter-clockwise.
+fn surface_faces(mesh: &VolumeMesh) -> PackedVector3Array {
+    mesh.indices
+        .chunks(3)
+        .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])
+        .map(|index| {
+            let [x, y, z] = mesh.positions[index as usize];
+            Vector3::new(x, y, z)
+        })
+        .collect()
+}
+
+/// What `stage` placed in `chunk` of the kinds in `bound`, where each stands in Godot's world with
+/// cells of `cell`; none for a stage that places nothing or a chunk not generated.
+fn placement_items(
+    worker: &StageWorker,
+    pack: &Pack,
+    cell: Vector3,
+    bound: &[String],
+    stage: &str,
+    chunk: ChunkCoord,
+) -> Option<Vec<Item>> {
+    let binds = |kind: &str| bound.iter().any(|known| known == kind);
+    let place = |rows: [[f32; 3]; 3], [x, y, height]: [f32; 3]| {
+        Transform3D::new(
+            Basis::from_rows(
+                Vector3::from_array(rows[0]),
+                Vector3::from_array(rows[1]),
+                Vector3::from_array(rows[2]),
+            ),
+            Vector3::new(x * cell.x, height * cell.y, y * cell.z),
+        )
+    };
+    let items: Vec<Item> = match pack.kind(stage)? {
+        StageKind::Scatter { .. }
+        | StageKind::Embed { .. }
+        | StageKind::Deposit { .. }
+        | StageKind::Spawn { .. } => worker
+            .points(stage, chunk)?
+            .iter()
+            .filter(|point| binds(&point.kind))
+            .map(|point| Item {
+                kind: point.kind.to_string(),
+                transform: place(point.y_up_basis(), point.position),
+                id: local_id(point.id.local),
+                // The shader bends a plant by the wind over its stiffness in the mesh's
+                // own units, which its scale then enlarges: a stiffness of its scale moves
+                // every plant's tip the wind's strength, and a larger plant leans less.
+                sway: [phase(point.id.local), point.scale],
+                gi: Gi::Off,
+            })
+            .collect(),
+        StageKind::Assemble { .. } | StageKind::Cave { .. } => worker
+            .stamps(stage, chunk)?
+            .iter()
+            // A piece overlapping several chunks is placed by the one its id names.
+            .filter(|stamp| stamp.id.chunk == chunk && binds(&stamp.piece))
+            .map(|stamp| Item {
+                kind: stamp.piece.to_string(),
+                transform: place(stamp.y_up_basis(), stamp.position),
+                id: local_id(stamp.id.local),
+                sway: [phase(stamp.id.local), 1.0],
+                gi: Gi::Static,
+            })
+            .collect(),
+        _ => return None,
+    };
+    Some(items)
 }
 
 /// The colour of category `index` from `palette`, the categories past its end taking colours of
