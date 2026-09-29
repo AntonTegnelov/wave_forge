@@ -255,3 +255,44 @@ fn a_run_reports_what_each_stage_has_generated_after_each_chunk() {
         }
     }
 }
+
+const RIVERS: &str = r#"(
+    version: 1,
+    bound: Some(Rect(min: (0.0, 0.0), max: (95.0, 95.0))),
+    water: Some((level: 0.0)),
+    stages: [
+        (name: "height", kind: Field(Sub(Mul(Noise(frequency: 0.04, octaves: 3), Constant(20.0)), Constant(4.0)))),
+        (name: "rivers", kind: Rivers(height: "height", region: 4, sources: 2, step: 2)),
+        (name: "ground", kind: Apply(height: "height", curves: "rivers", max_radius: 3, blend: 1, profile: Carve(1.0))),
+    ],
+)"#;
+
+#[test]
+fn a_run_generates_a_regions_inputs_about_once() {
+    let pack = Arc::new(Pack::parse(RIVERS).expect("a valid pack"));
+    let heights = |runtime: &Runtime| {
+        runtime
+            .timings()
+            .into_iter()
+            .find(|(stage, _)| stage == "height")
+            .map_or(0, |(_, timing)| timing.products)
+    };
+    let mut at_once = Runtime::new(Arc::clone(&pack), 5, SIZE);
+    at_once.request_bound(&["ground"]).expect("a bounded pack");
+    at_once.run_until_idle().expect("the stages run");
+
+    let mut run = Runtime::new(pack, 5, SIZE);
+    run.run_world(&["ground"], &mut Memory::default(), |_| {
+        ControlFlow::Continue(())
+    })
+    .expect("a bounded pack");
+
+    // Twelve chunks a side in regions of four: the run may generate again only what a block's
+    // neighbours read across its edges.
+    assert!(
+        heights(&run) * 2 <= heights(&at_once) * 3,
+        "{} chunks of height for {} at once",
+        heights(&run),
+        heights(&at_once)
+    );
+}
