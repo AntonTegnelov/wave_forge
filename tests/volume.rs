@@ -18,6 +18,8 @@ const PACK: &str = r#"(
         (name: "ground", kind: Volume(density: Sub(Input("height"), Z), bottom: -2, top: 14)),
         (name: "caves", kind: Volume(density: FastNoise("caves"), bottom: -4, top: 4)),
         (name: "coarse", scale: 4, kind: Volume(density: Z, bottom: -1, top: 2)),
+        (name: "surface", kind: Top(volume: "ground")),
+        (name: "roof", scale: 4, kind: Top(volume: "coarse")),
         (name: "layered", kind: Volume(
             density: Sub(Input("height"), Z),
             bottom: -2,
@@ -203,4 +205,54 @@ fn a_volumes_materials_are_its_categories_and_one_without_has_none() {
         ["grass", "dirt", "stone"]
     );
     assert!(plain.materials.is_empty());
+}
+
+fn top_of(stage: &str, chunk: ChunkCoord) -> (Runtime, Vec<f32>) {
+    let mut runtime = Runtime::new(Arc::new(Pack::parse(PACK).expect("a valid pack")), 7, SIZE);
+    runtime
+        .request(&[FocusPoint::new(chunk, 0)], &[stage])
+        .expect("a stage");
+    runtime.run_until_idle().expect("the stages run");
+    let values = runtime
+        .field(stage, chunk)
+        .expect("generated")
+        .values
+        .clone();
+    (runtime, values)
+}
+
+#[test]
+fn the_top_of_a_volume_solid_below_a_height_is_that_height() {
+    let chunk = ChunkCoord::new(2, -1, 0);
+
+    let (runtime, top) = top_of("surface", chunk);
+
+    let height = runtime.field("height", chunk).expect("an input");
+    for (i, value) in top.iter().enumerate() {
+        assert!(
+            (value - height.values[i]).abs() < 1e-4,
+            "column {i}: top {value}, height {}",
+            height.values[i]
+        );
+    }
+}
+
+#[test]
+fn the_top_of_a_column_solid_to_its_highest_voxel_is_the_volumes_top() {
+    let (_, top) = top_of("roof", ChunkCoord::new(0, 0, 0));
+
+    assert!(top.iter().all(|&value| value == 8.0), "{top:?}");
+}
+
+#[test]
+fn the_top_of_a_volume_of_another_scale_is_refused() {
+    let result = load(
+        r#"(name: "rock", scale: 2, kind: Volume(density: Z, bottom: 0, top: 4)),
+            (name: "surface", kind: Top(volume: "rock"))"#,
+    );
+
+    assert!(
+        matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "surface"),
+        "{result:?}"
+    );
 }

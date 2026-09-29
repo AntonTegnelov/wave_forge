@@ -211,7 +211,14 @@ pub enum StageKind {
         /// floor up its height in cells, is carved empty.
         #[serde(default)]
         rooms: Option<String>,
+        /// Sites whose ground is levelled in the volume before any tunnel or room is carved.
+        #[serde(default)]
+        level: Option<Level>,
     },
+    /// A field of the height, in cells, of the top of the Volume or Carve stage `volume` in each
+    /// column: where its values cross zero going up from its highest solid voxel, or its bottom
+    /// for a column with none. Things that stand on the ground of a volume stand on it.
+    Top { volume: String },
     /// A category per cell column: the first of `rules` whose conditions all hold there, or
     /// `otherwise`. The categories are the names the rules give, in the order they first appear,
     /// then `otherwise`'s.
@@ -594,6 +601,17 @@ pub struct Rule {
     pub when: Vec<Condition>,
 }
 
+/// A Carve stage's levelled sites: in the footprint of every site or piece of the stage `sites`,
+/// the `depth` cells under the site's height are filled solid and the `clear` cells above it
+/// emptied, so a building stands on flat ground under open sky however the volume's terrain runs.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Level {
+    pub sites: String,
+    pub depth: u32,
+    pub clear: u32,
+}
+
 /// A Carve stage's tunnels: every curve of the curves stage `curves` is a tube around its centre
 /// line, whose radius is the curve's value there, of at most `max_radius` cells, and whose centre
 /// runs `depth` cells below the `height` field at the nearest point of the centre line.
@@ -689,6 +707,7 @@ impl StageKind {
             | Self::Apply { .. }
             | Self::Lakes { .. } => Output::Field,
             Self::Volume { .. } | Self::Carve { .. } => Output::Volume,
+            Self::Top { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } => Output::Categories,
             Self::Region { .. }
             | Self::Rivers { .. }
@@ -1965,10 +1984,21 @@ impl Pack {
                         (curves.as_str(), reach, Output::Curves),
                     ]
                 }
+                StageKind::Top { volume } => {
+                    if let Some(&index) = by_name.get(volume.as_str())
+                        && scales[index] != def.scale
+                    {
+                        return Err(invalid(format!(
+                            "it reads the top of {volume:?}, whose scale is not its own"
+                        )));
+                    }
+                    vec![(volume.as_str(), Reach::Cells(0), Output::Volume)]
+                }
                 StageKind::Carve {
                     volume,
                     tunnels,
                     rooms,
+                    level,
                 } => {
                     if let Some(&index) = by_name.get(volume.as_str())
                         && scales[index] != 1
@@ -1990,6 +2020,10 @@ impl Pack {
                     }
                     if let Some(rooms) = rooms {
                         reads.push((rooms.as_str(), Reach::Cells(1), Output::Pieces));
+                    }
+                    if let Some(level) = level {
+                        let footprint = footprints(&by_name, &outputs, &level.sites);
+                        reads.push((level.sites.as_str(), Reach::Cells(1), footprint));
                     }
                     reads
                 }
@@ -2270,7 +2304,8 @@ impl Pack {
                 | StageKind::Rivers { .. }
                 | StageKind::Network { .. }
                 | StageKind::Lakes { .. }
-                | StageKind::Carve { .. } => {}
+                | StageKind::Carve { .. }
+                | StageKind::Top { .. } => {}
             }
             stages.push(Stage {
                 tables: read_tables,

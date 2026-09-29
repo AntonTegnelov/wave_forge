@@ -247,7 +247,8 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 |---|---|---|
 | `Field` | Field | the fields named by `Input` and the categories named by `Is`, 0 cells; the categories a `Match` names, `blend` cells |
 | `Volume` | Volume | as `Field` |
-| `Carve` | Volume | a volume, 0 cells; a curves stage and a height field, `max_radius + 1` cells; an Assemble stage, 1 cell |
+| `Carve` | Volume | a volume, 0 cells; a curves stage and a height field, `max_radius + 1` cells; an Assemble stage, 1 cell; a sites stage or an Assemble stage to level, 1 cell |
+| `Top` | Field | a volume of its own scale, 0 cells |
 | `Rules` | Categories | what its conditions read, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
 | `Delta` | Field | one field, `radius` cells |
@@ -396,6 +397,20 @@ reads it; every other voxel keeps its value. The lower of the two does not depen
 tunnels and rooms are carved in, so a carve is the same in any order, and a carve keeps its
 volume's materials. It works at the WFC lattice's scale on a volume of that scale; a tunnel wider
 than `max_radius` fails with `StageError::Curve`. Engines draw it as they draw a Volume stage.
+
+`level: Some((sites: "outposts", depth: 3, clear: 5))` levels the ground of every site or piece of
+a sites or Assemble stage before any tunnel or room is carved: in its footprint, the `depth` cells
+under its height are filled solid and the `clear` cells above it emptied, each voxel within a cell
+of either box keeping the higher of its value and how far inside the slab it is, or the lower of
+its value and how far outside the air it is. So a building stands on flat ground under open sky
+however the volume's terrain runs, and a tunnel or room still cuts through the slab.
+
+### Top
+
+`Top(volume: "caves")`: a field of the height, in cells, of the top of a Volume or Carve stage of the
+same scale in each column: where its values cross zero going up from its highest solid voxel, or
+the volume's bottom for a column with none. A volume of `Sub(Input("height"), Z)` has `height` as
+its top. It is what things stand on over a volume, a [Scatter](#scatter) stage's `height` say.
 
 ### Rules
 
