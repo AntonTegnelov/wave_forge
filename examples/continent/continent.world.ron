@@ -3,11 +3,17 @@
 // of named noises that falls into the ocean before the bound, mountain ranges of ridged noise,
 // a temperature from latitude and height and a moisture from noise, fifty biomes chosen by rules
 // over those, each shaping the ground its own way, lakes in the hollows and rivers carved from the
-// high ground to the sea. Heights are in cells of height, the sea at 0.
+// high ground to the sea. Under the ground lies rock as a density volume, with cheese caves,
+// overhangs on cliffs and ore. Heights are in cells of height, the sea at 0.
 (
     version: 1,
     bound: Some(Rect(min: (0.0, 0.0), max: (2047.0, 2047.0))),
     water: Some((level: 0.0, lakes: Some("lakes"))),
+    // The 3D noises of the rock: cheese caves, and the blobs that overhang cliffs.
+    noises: {
+        "caves": (noise_type: SimplexSmooth, seed: 31, frequency: 0.035, fractal_octaves: 2),
+        "overhangs": (noise_type: SimplexSmooth, seed: 32, frequency: 0.06, fractal_octaves: 2),
+    },
     stages: [
         // The continent's broad shape: low-frequency noise, pulled under the sea from 780 cells
         // out from the centre to 990, so the coast never reaches the bound.
@@ -141,5 +147,52 @@
         // How uneven the ground is, and where each biome ends, for what is placed on it.
         (name: "roughness", kind: Delta(input: "terrain", radius: 2)),
         (name: "biome_area", kind: Area(input: "biome", distance: 4)),
+        // How much a column is cliff: none on ground that climbs under 3 cells within two, all of
+        // it from 8.
+        (name: "cliffs", kind: Field(Smoothstep(3.0, 8.0, Input("roughness")))),
+        // The rock under the ground, as a density volume: solid from three cells under the
+        // ground's surface down, so the ground a player walks stays the height field's; cheese
+        // caves where the cave noise is high, from eight to forty cells down; and on cliffs, blobs
+        // of rock that overhang the ground. Far from the surface a voxel is air above it and rock
+        // below, so the noises are read only near it. It reaches 64 cells up: the peaks above
+        // have no overhangs, and their ground is the height field's.
+        (name: "rock", kind: Volume(
+            density: Select(
+                when: Greater(Z, Add(Input("ground"), Constant(10.0))),
+                then: Sub(Input("ground"), Z),
+                otherwise: Select(
+                    when: Less(Z, Sub(Input("ground"), Constant(40.0))),
+                    then: Sub(Sub(Input("ground"), Constant(3.0)), Z),
+                    otherwise: Select(
+                        when: Less(Z, Sub(Input("ground"), Constant(8.0))),
+                        then: Sub(Constant(3.0), Mul(FastNoise("caves"), Constant(10.0))),
+                        otherwise: Select(
+                            when: Greater(Input("cliffs"), Constant(0.0)),
+                            then: Max(
+                                Sub(Sub(Input("ground"), Constant(3.0)), Z),
+                                Mul(Input("cliffs"), Sub(Mul(FastNoise("overhangs"), Constant(12.0)), Add(Constant(3.0), Abs(Sub(Z, Input("ground")))))),
+                            ),
+                            otherwise: Sub(Sub(Input("ground"), Constant(3.0)), Z),
+                        ),
+                    ),
+                ),
+            ),
+            bottom: -40,
+            top: 64,
+            materials: Some((rules: [
+                (category: "granite", when: [Greater(Is("biome", ["ice_peaks", "snow_peaks", "scree", "alpine_meadow"]), Constant(0.5))]),
+                (category: "sandstone", when: [Greater(Is("biome", ["mesa", "badlands", "desert", "dry_scrub"]), Constant(0.5))]),
+                (category: "limestone", when: [Greater(Z, Sub(Input("ground"), Constant(30.0)))]),
+            ], otherwise: "basalt")),
+        )),
+        // Ore in the rock: coal near the surface, iron and copper deeper, gold deepest and rarest.
+        (name: "coal", kind: Embed(kind: "coal", volume: "rock", spacing: 6, count: (1, 3), between: (-30.0, 60.0),
+            when: [Less(Z, Sub(Input("ground"), Constant(4.0)))])),
+        (name: "iron", kind: Embed(kind: "iron", volume: "rock", spacing: 8, count: (1, 2), between: (-40.0, 40.0),
+            when: [Less(Z, Sub(Input("ground"), Constant(10.0)))])),
+        (name: "copper", kind: Embed(kind: "copper", volume: "rock", spacing: 10, between: (-40.0, 30.0),
+            when: [Less(Z, Sub(Input("ground"), Constant(12.0)))])),
+        (name: "gold", kind: Embed(kind: "gold", volume: "rock", spacing: 16, between: (-40.0, 0.0),
+            when: [Less(Z, Sub(Input("ground"), Constant(20.0)))])),
     ],
 )

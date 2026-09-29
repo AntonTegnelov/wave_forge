@@ -153,3 +153,68 @@ fn a_part_of_the_continent_generates_with_rivers_and_lakes() {
         "{rivers} rivers, {lake_columns} lake columns"
     );
 }
+
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn the_rock_under_cliffs_holds_caves_overhangs_and_ore() {
+    let mut runtime = Runtime::new(pack(), 11, SIZE);
+    // A chunk and its neighbours on a plateau's rim, cliffs 15 to 50 cells up by sampling.
+    let centre = ChunkCoord::new(47, 55, 0);
+    let ores = ["coal", "iron", "copper", "gold"];
+    let mut targets = vec!["ground", "rock"];
+    targets.extend(ores);
+
+    let started = std::time::Instant::now();
+    runtime
+        .request(&[FocusPoint::new(centre, 1)], &targets)
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+    let seconds = started.elapsed().as_secs_f64();
+
+    let (mut caves, mut overhangs) = (0, 0);
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            let chunk = ChunkCoord::new(centre.x + dx, centre.y + dy, 0);
+            let ground = runtime.field("ground", chunk).expect("ground");
+            let rock = runtime.volume("rock", chunk).expect("rock");
+            let [sx, sy, levels] = rock.size;
+            for level in 0..levels {
+                let z = (rock.bottom + level as i32) as f32 + 0.5;
+                for column in 0..(sx * sy) as usize {
+                    let solid = rock.values[level as usize * (sx * sy) as usize + column] > 0.0;
+                    let surface = ground.values[column];
+                    caves += usize::from(!solid && z < surface - 8.0);
+                    overhangs += usize::from(solid && z > surface + 1.0);
+                }
+            }
+        }
+    }
+    let placed: Vec<usize> = ores
+        .iter()
+        .map(|ore| {
+            (-1..=1)
+                .flat_map(|dy| (-1..=1).map(move |dx| (dx, dy)))
+                .map(|(dx, dy)| {
+                    let chunk = ChunkCoord::new(centre.x + dx, centre.y + dy, 0);
+                    runtime.points(ore, chunk).map_or(0, <[_]>::len)
+                })
+                .sum()
+        })
+        .collect();
+    eprintln!(
+        "continent: 3x3 chunks of rock under cliffs in {seconds:.1} s: {caves} cave voxels, {overhangs} overhanging voxels, ores {ores:?} {placed:?}; rock {:.1} ms a chunk",
+        runtime
+            .timings()
+            .iter()
+            .find(|(stage, _)| stage == "rock")
+            .map_or(0.0, |(_, timing)| timing.ms / timing.products.max(1) as f64)
+    );
+    assert!(
+        caves > 0 && overhangs > 0,
+        "{caves} cave voxels, {overhangs} overhanging"
+    );
+    assert!(
+        placed.iter().all(|&count| count > 0),
+        "{ores:?}: {placed:?}"
+    );
+}
