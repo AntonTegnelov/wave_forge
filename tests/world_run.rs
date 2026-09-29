@@ -223,3 +223,35 @@ fn a_played_world_fails_on_a_stage_the_run_did_not_write_or_an_edit() {
         "an edit of a played world was taken"
     );
 }
+
+#[test]
+fn a_run_reports_what_each_stage_has_generated_after_each_chunk() {
+    let mut store = Memory::default();
+    let mut reports: Vec<RunProgress> = Vec::new();
+
+    runtime(PACK)
+        .run_world(&TARGETS, &mut store, |progress| {
+            reports.push(progress);
+            ControlFlow::Continue(())
+        })
+        .expect("a bounded pack");
+
+    let names: Vec<&str> = reports[0]
+        .stages
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(names, ["height", "surface", "shrines", "ground", "trees"]);
+    for pair in reports.windows(2) {
+        for ((name, before), (_, after)) in pair[0].stages.iter().zip(&pair[1].stages) {
+            assert!(after.products >= before.products, "{name} went back");
+        }
+    }
+    // Every target has generated at least every chunk of the world by the end.
+    let last = reports.last().expect("a report per chunk");
+    for (name, timing) in &last.stages {
+        if TARGETS.contains(&name.as_str()) {
+            assert!(timing.products >= 30, "{name}: {timing:?}");
+        }
+    }
+}
