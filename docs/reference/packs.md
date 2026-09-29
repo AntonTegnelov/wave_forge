@@ -208,6 +208,12 @@ is skipped, so a run stopped or cut short picks up where it left off, and the st
 the same bytes as a run that went at once (`tests/world_run.rs`). A pack without a bound fails with
 `StageError::Unbounded`.
 
+`StageWorker::play(pack, size, store)` plays such a world back without generating anything: a
+request's chunks of each target come from the store, and those no longer asked for are dropped, as
+a runtime's would be, so an engine draws a played world as it draws a generated one. A target chunk
+the store lacks, and facts, edits, parameters, reports or a save, which would each need generating,
+stop its thread with a failure.
+
 ## Levels
 
 A stage may declare a `scale`: how many WFC cells one of its columns spans along each axis, 1 by

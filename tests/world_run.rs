@@ -5,7 +5,8 @@
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use std::sync::Arc;
-use wave_forge::stages::{Pack, RunProgress, Runtime, StageError};
+use std::time::{Duration, Instant};
+use wave_forge::stages::{Edits, Pack, RunProgress, Runtime, StageError, StageWorker};
 use wave_forge::{ChunkCoord, FrozenStore, StoreError};
 
 const PACK: &str = r#"(
@@ -29,7 +30,7 @@ const TARGETS: [&str; 3] = ["ground", "surface", "trees"];
 const SIZE: [u32; 2] = [8, 8];
 
 /// A store in memory, by layer and chunk.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Memory(BTreeMap<(String, (i32, i32)), Vec<u8>>);
 
 impl FrozenStore for Memory {
@@ -116,4 +117,90 @@ fn a_world_without_a_bound_cannot_be_run_whole() {
     let result = runtime(&unbounded).run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()));
 
     assert!(matches!(result, Err(StageError::Unbounded)), "{result:?}");
+}
+
+/// Drains `worker` until `done` holds or it fails, for ten seconds at most.
+fn drain_until(worker: &mut StageWorker, done: impl Fn(&StageWorker) -> bool) {
+    let started = Instant::now();
+    while !done(worker) && worker.failure().is_none() {
+        worker.drain();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "nothing arrived"
+        );
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn a_played_world_serves_what_the_run_wrote_and_generates_nothing() {
+    let mut store = Memory::default();
+    runtime(PACK)
+        .run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+    let pack = Arc::new(Pack::parse(PACK).expect("a valid pack"));
+    let mut worker = StageWorker::play(Arc::clone(&pack), SIZE, Box::new(store));
+    let centre = ChunkCoord::new(2, 2, 0);
+    let around: Vec<ChunkCoord> = (1..=3)
+        .flat_map(|y| (1..=3).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+
+    worker.request(&[wave_forge::FocusPoint::new(centre, 1)], &TARGETS);
+    drain_until(&mut worker, |worker| {
+        around
+            .iter()
+            .all(|&chunk| worker.points("trees", chunk).is_some())
+    });
+
+    assert!(worker.failure().is_none(), "{:?}", worker.failure());
+    let mut direct = runtime(PACK);
+    let focus: Vec<wave_forge::FocusPoint> = around
+        .iter()
+        .map(|&chunk| wave_forge::FocusPoint::new(chunk, 0))
+        .collect();
+    direct.request(&focus, &TARGETS).expect("the stages");
+    direct.run_until_idle().expect("the stages run");
+    for &chunk in &around {
+        for target in TARGETS {
+            assert_eq!(
+                worker.shared(target, chunk).as_deref(),
+                direct.product(target, chunk),
+                "{target} at {chunk:?}"
+            );
+        }
+    }
+    assert!(
+        worker.timings().is_empty(),
+        "a stage ran: {:?}",
+        worker.timings()
+    );
+}
+
+#[test]
+fn a_played_world_fails_on_a_stage_the_run_did_not_write_or_an_edit() {
+    let mut store = Memory::default();
+    runtime(PACK)
+        .run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+    let pack = Arc::new(Pack::parse(PACK).expect("a valid pack"));
+    let focus = [wave_forge::FocusPoint::new(ChunkCoord::new(2, 2, 0), 0)];
+
+    let mut unwritten = StageWorker::play(Arc::clone(&pack), SIZE, Box::new(store.clone()));
+    unwritten.request(&focus, &["height"]);
+    drain_until(&mut unwritten, |_| false);
+    let mut edited = StageWorker::play(pack, SIZE, Box::new(store));
+    edited.set_edits(Edits::default());
+    drain_until(&mut edited, |_| false);
+
+    assert!(
+        unwritten
+            .failure()
+            .is_some_and(|reason| reason.contains("height")),
+        "{:?}",
+        unwritten.failure()
+    );
+    assert!(
+        edited.failure().is_some(),
+        "an edit of a played world was taken"
+    );
 }

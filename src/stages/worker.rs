@@ -7,6 +7,7 @@
 
 use super::edits::Edits;
 use super::facts::{Facts, RowId};
+use super::pack::Pack;
 use super::regions::Curve;
 use super::runtime::{
     Categories, Field, Judgement, Point, Product, Runtime, Site, StageTiming, Stamp, TownChunk,
@@ -14,8 +15,9 @@ use super::runtime::{
 };
 use super::save::Save;
 use crate::ChunkCoord;
+use crate::frozen::FrozenStore;
 use crate::scheduler::FocusPoint;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -107,6 +109,31 @@ impl StageWorker {
         std::thread::Builder::new()
             .name("wave forge stages".to_owned())
             .spawn(move || run(build, &taken, &reports))
+            .expect("a thread");
+        Self {
+            orders,
+            reports: Mutex::new(received),
+            products: HashMap::new(),
+            failure: None,
+            saved: None,
+            timings: Vec::new(),
+            judged: HashMap::new(),
+        }
+    }
+
+    /// A worker that plays a world [`Runtime::run_world`] wrote to `store`, generating nothing:
+    /// a request's chunks of each target come from the store, as the run kept them, and those it
+    /// no longer asks for are dropped, as a runtime's would be. `pack` is the pack the world was
+    /// run from, and `size` its chunks' columns. A target chunk the store lacks, facts, edits,
+    /// parameters and scatter reports stop the thread and arrive as a failure, since each would
+    /// need generating; so does a save.
+    #[must_use]
+    pub fn play(pack: Arc<Pack>, size: [u32; 2], store: Box<dyn FrozenStore>) -> Self {
+        let (orders, taken) = channel::<Order>();
+        let (reports, received) = channel::<Report>();
+        std::thread::Builder::new()
+            .name("wave forge playback".to_owned())
+            .spawn(move || play(&pack, size, store, &taken, &reports))
             .expect("a thread");
         Self {
             orders,
@@ -399,6 +426,93 @@ impl Drop for StageWorker {
 }
 
 /// The thread: build, then alternate between taking orders and a step of generation.
+/// The playback thread of [`StageWorker::play`]: each request's chunks of its targets from the
+/// store, those no longer asked for dropped.
+fn play(
+    pack: &Pack,
+    size: [u32; 2],
+    mut store: Box<dyn FrozenStore>,
+    orders: &Receiver<Order>,
+    reports: &Sender<Report>,
+) {
+    let mut held: BTreeSet<(String, ChunkCoord)> = BTreeSet::new();
+    for order in orders {
+        let (focus, targets) = match order {
+            Order::Stop => return,
+            Order::Request { focus, targets } => (focus, targets),
+            Order::Facts(_)
+            | Order::Edits(_)
+            | Order::Params(_)
+            | Order::Focus { .. }
+            | Order::Save
+            | Order::Load(_)
+            | Order::ScatterReport { .. } => {
+                let _ = reports.send(Report::Failed(
+                    "a played world was generated once and changes only by being run again"
+                        .to_owned(),
+                ));
+                return;
+            }
+        };
+        // Each target's chunks around the focus points, in its own lattice, inside the bound.
+        let mut needed: BTreeSet<(String, ChunkCoord)> = BTreeSet::new();
+        for (target, radius) in &targets {
+            let Some(scale) = pack.scale(target) else {
+                let _ = reports.send(Report::Failed(format!("no stage is named {target:?}")));
+                return;
+            };
+            for point in &focus {
+                let radius = radius.unwrap_or(point.radius) as i32;
+                for y in -radius..=radius {
+                    for x in -radius..=radius {
+                        let chunk = ChunkCoord::new(
+                            (point.chunk.x + x).div_euclid(scale as i32),
+                            (point.chunk.y + y).div_euclid(scale as i32),
+                            0,
+                        );
+                        let [sx, sy] = size.map(|side| (side * scale) as f32);
+                        let min = [chunk.x as f32 * sx, chunk.y as f32 * sy];
+                        if pack
+                            .bound()
+                            .is_none_or(|bound| bound.meets(min, [min[0] + sx, min[1] + sy]))
+                        {
+                            needed.insert((target.clone(), chunk));
+                        }
+                    }
+                }
+            }
+        }
+        let gone: Vec<(String, ChunkCoord)> = held.difference(&needed).cloned().collect();
+        let mut arrived = Vec::new();
+        for (stage, chunk) in needed.difference(&held) {
+            let product = match store.fetch(stage, *chunk) {
+                Ok(Some(bytes)) => std::str::from_utf8(&bytes)
+                    .map_err(|error| error.to_string())
+                    .and_then(|text| ron::from_str::<Product>(text).map_err(|e| e.to_string())),
+                Ok(None) => Err(format!(
+                    "the store holds no chunk {chunk:?} of stage {stage:?}; run the world with it \
+                     as a target"
+                )),
+                Err(error) => Err(error.to_string()),
+            };
+            match product {
+                Ok(product) => arrived.push((stage.clone(), *chunk, Arc::new(product))),
+                Err(reason) => {
+                    let _ = reports.send(Report::Failed(reason));
+                    return;
+                }
+            }
+        }
+        held = needed;
+        if !gone.is_empty() {
+            let _ = reports.send(Report::Dropped(gone));
+        }
+        if !arrived.is_empty() {
+            let _ = reports.send(Report::Generated(arrived, Vec::new()));
+        }
+    }
+}
+
 fn run<B>(build: B, orders: &Receiver<Order>, reports: &Sender<Report>)
 where
     B: FnOnce() -> Result<Runtime, String>,
