@@ -1058,6 +1058,32 @@ impl Runtime {
         Ok(self.invalidate(stale))
     }
 
+    /// What became of every candidate of Scatter stage `stage` whose column lies in `chunk`, a
+    /// group's first point for a group: whether it became a point, or which modifier rejected it,
+    /// the first it failed in the order the modifiers run ([packs.md](packs.md#scatter)). It
+    /// decides as generating does, from the inputs the runtime holds, so the chunk has to be
+    /// generated, or at least what it reads.
+    ///
+    /// # Errors
+    /// [`StageError::UnknownStage`] for a stage the pack does not name, [`StageError::Edit`] for
+    /// one that is no Scatter stage, and what reading an input the runtime does not hold gives.
+    pub fn scatter_report(
+        &self,
+        stage: &str,
+        chunk: ChunkCoord,
+    ) -> Result<Vec<Judgement>, StageError> {
+        let index = self
+            .pack
+            .index(stage)
+            .ok_or_else(|| StageError::UnknownStage(stage.to_owned()))?;
+        if !matches!(self.pack.stages[index].kind, StageKind::Scatter { .. }) {
+            return Err(StageError::Edit(format!("{stage:?} is no Scatter stage")));
+        }
+        let mut report = Vec::new();
+        self.scatter(index, chunk, Some(&mut report))?;
+        Ok(report)
+    }
+
     /// Sets the pack's parameters named in `values`, which stages read through
     /// [`crate::stages::Expr::Param`]; the others keep theirs. Drops every product that read a
     /// parameter whose value changed, and what was generated from it, returning them as
@@ -3515,7 +3541,7 @@ impl Runtime {
             ));
         }
         if let StageKind::Scatter { .. } = &stage.kind {
-            return self.scatter(index, chunk).map(Product::Points);
+            return self.scatter(index, chunk, None).map(Product::Points);
         }
         if let StageKind::Embed { .. } = &stage.kind {
             return self.embed(index, chunk).map(Product::Points);
@@ -4176,7 +4202,12 @@ impl Runtime {
     /// is the first point of its group; the others scatter around it and each passes the same tests
     /// at its own column. Everything a decision reads is within the stage's reach, so a chunk's
     /// points are the same whatever else has been generated.
-    fn scatter(&self, index: usize, chunk: ChunkCoord) -> Result<Vec<Point>, StageError> {
+    fn scatter(
+        &self,
+        index: usize,
+        chunk: ChunkCoord,
+        mut report: Option<&mut Vec<Judgement>>,
+    ) -> Result<Vec<Point>, StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Scatter {
             kind,
@@ -4296,62 +4327,63 @@ impl Runtime {
         }
         // The height of a point standing at `at` in `column`, on the ground or on the water if it
         // floats, if it passes the stage's tests there.
-        let passes = |column: (i64, i64), at: (f32, f32)| -> Result<Option<f32>, StageError> {
-            let (x, y) = column;
-            let here = heights.get(x, y)?;
-            if between.is_some_and(|(low, high)| !(low..=high).contains(&here)) {
-                return Ok(None);
-            }
-            if let Some(limit) = max_slope {
-                let along_x = (heights.get(x + 1, y)? - heights.get(x - 1, y)?).abs() / 2.0;
-                let along_y = (heights.get(x, y + 1)? - heights.get(x, y - 1)?).abs() / 2.0;
-                if along_x.max(along_y) > *limit {
-                    return Ok(None);
+        let passes =
+            |column: (i64, i64), at: (f32, f32)| -> Result<Result<f32, Rejection>, StageError> {
+                let (x, y) = column;
+                let here = heights.get(x, y)?;
+                if between.is_some_and(|(low, high)| !(low..=high).contains(&here)) {
+                    return Ok(Err(Rejection::Height));
                 }
-            }
-            let place = self.place(index, [x, y], &read);
-            for condition in when {
-                if !holds(condition, &place)? {
-                    return Ok(None);
+                if let Some(limit) = max_slope {
+                    let along_x = (heights.get(x + 1, y)? - heights.get(x - 1, y)?).abs() / 2.0;
+                    let along_y = (heights.get(x, y + 1)? - heights.get(x, y - 1)?).abs() / 2.0;
+                    if along_x.max(along_y) > *limit {
+                        return Ok(Err(Rejection::Slope));
+                    }
                 }
-            }
-            let mut standing = here;
-            if let Some(water) = water {
-                let pack_water = self
-                    .pack
-                    .water()
-                    .expect("a Scatter stage with water is in a pack with water");
-                // A lake raises the water above the sea where it lies.
-                let level = match &pack_water.lakes {
-                    Some(lakes) => pack_water.level.max(read(lakes, x, y)?),
-                    None => pack_water.level,
-                };
-                if !(water.depth.0..=water.depth.1).contains(&(level - here)) {
-                    return Ok(None);
+                let place = self.place(index, [x, y], &read);
+                for (number, condition) in when.iter().enumerate() {
+                    if !holds(condition, &place)? {
+                        return Ok(Err(Rejection::Condition(number)));
+                    }
                 }
-                if water.float {
-                    standing = standing.max(level);
+                let mut standing = here;
+                if let Some(water) = water {
+                    let pack_water = self
+                        .pack
+                        .water()
+                        .expect("a Scatter stage with water is in a pack with water");
+                    // A lake raises the water above the sea where it lies.
+                    let level = match &pack_water.lakes {
+                        Some(lakes) => pack_water.level.max(read(lakes, x, y)?),
+                        None => pack_water.level,
+                    };
+                    if !(water.depth.0..=water.depth.1).contains(&(level - here)) {
+                        return Ok(Err(Rejection::Water));
+                    }
+                    if water.float {
+                        standing = standing.max(level);
+                    }
                 }
-            }
-            if avoided
-                .iter()
-                .any(|footprint| footprint.distance(x, y) < margin as f32)
-            {
-                return Ok(None);
-            }
-            if blockers.iter().any(|&(point, clearance)| {
-                libm::hypotf(point[0] - at.0, point[1] - at.1) < clearance
-            }) {
-                return Ok(None);
-            }
-            Ok(Some(standing))
-        };
-        let mut heights_of: Vec<Option<f32>> = Vec::with_capacity(candidates.len());
+                if avoided
+                    .iter()
+                    .any(|footprint| footprint.distance(x, y) < margin as f32)
+                {
+                    return Ok(Err(Rejection::Sites));
+                }
+                if blockers.iter().any(|&(point, clearance)| {
+                    libm::hypotf(point[0] - at.0, point[1] - at.1) < clearance
+                }) {
+                    return Ok(Err(Rejection::Blocked));
+                }
+                Ok(Ok(standing))
+            };
+        let mut heights_of: Vec<Result<f32, Rejection>> = Vec::with_capacity(candidates.len());
         for candidate in &candidates {
             heights_of.push(if candidate.exists {
                 passes(candidate.column, candidate.at)?
             } else {
-                None
+                Err(Rejection::Chance)
             });
         }
         let point_stage = point_stage_id(stage.salt);
@@ -4359,21 +4391,33 @@ impl Runtime {
         let inside = |(x, y): (i64, i64)| (x0..x0 + sx).contains(&x) && (y0..y0 + sy).contains(&y);
         let mut points = Vec::new();
         for (i, candidate) in candidates.iter().enumerate() {
-            let Some(anchor_height) = heights_of[i] else {
+            let verdict = heights_of[i].and_then(|height| {
+                let crowded = candidates.iter().enumerate().any(|(j, other)| {
+                    j != i
+                        && heights_of[j].is_ok()
+                        && other.priority > candidate.priority
+                        && ((other.at.0 - candidate.at.0).powi(2)
+                            + (other.at.1 - candidate.at.1).powi(2))
+                        .sqrt()
+                            < apart as f32
+                });
+                if crowded {
+                    Err(Rejection::Spacing)
+                } else {
+                    Ok(height)
+                }
+            });
+            if let Some(report) = report.as_deref_mut()
+                && inside(candidate.column)
+            {
+                report.push(Judgement {
+                    at: [candidate.at.0, candidate.at.1],
+                    verdict: verdict.map(|_| ()),
+                });
+            }
+            let Ok(anchor_height) = verdict else {
                 continue;
             };
-            let crowded = candidates.iter().enumerate().any(|(j, other)| {
-                j != i
-                    && heights_of[j].is_some()
-                    && other.priority > candidate.priority
-                    && ((other.at.0 - candidate.at.0).powi(2)
-                        + (other.at.1 - candidate.at.1).powi(2))
-                    .sqrt()
-                        < apart as f32
-            });
-            if crowded {
-                continue;
-            }
             let (column, stream) = (
                 candidate.column,
                 [candidate.column.0 as u32, candidate.column.1 as u32],
@@ -4414,8 +4458,8 @@ impl Runtime {
                     anchor_height
                 } else {
                     match passes(standing, at)? {
-                        Some(z) => z,
-                        None => continue,
+                        Ok(z) => z,
+                        Err(_) => continue,
                     }
                 };
                 let [size, lean, aligned] =
@@ -4976,6 +5020,35 @@ fn noise_stream(name: &str) -> u32 {
 /// One Scatter candidate: its column, where in it the point stands, its priority (a hash, with the
 /// block and the candidate's place in it breaking ties), that place, its turn, and whether the
 /// chance test lets it exist at all.
+/// Why a Scatter stage's candidate did not become a point ([`Runtime::scatter_report`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Rejection {
+    /// It did not exist: its hash fell outside the stage's `chance`.
+    Chance,
+    /// The ground's height lay outside `between`.
+    Height,
+    /// The ground was steeper than `max_slope`.
+    Slope,
+    /// The condition of `when` at this place in the list did not hold.
+    Condition(usize),
+    /// The water over the ground lay outside the stage's `water` depth.
+    Water,
+    /// It stood within `avoid`'s margin of a site or piece.
+    Sites,
+    /// It stood within a clearance of a point of a stage in `block`.
+    Blocked,
+    /// It passed, but a candidate of higher priority that also passed lay closer than `apart`.
+    Spacing,
+}
+
+/// What became of one of a Scatter stage's candidates: where it stood in cells along the lattice's
+/// x and y, and whether it became a point or why not ([`Runtime::scatter_report`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Judgement {
+    pub at: [f32; 2],
+    pub verdict: Result<(), Rejection>,
+}
+
 struct Candidate {
     column: (i64, i64),
     at: (f32, f32),

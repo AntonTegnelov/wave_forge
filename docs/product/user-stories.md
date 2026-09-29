@@ -363,7 +363,10 @@ one.*
 
 **Acceptance criteria.** Selecting a Scatter stage shows its candidate points in the viewport,
 coloured by the modifier that rejected them, with a legend and counts; hovering a point shows its
-attributes. **Needs.** Point viewer with rejection reasons. **Status:** not started (2026-09-23).
+attributes. **Needs.** Point viewer with rejection reasons. **Status:** in progress (2026-09-29):
+`Runtime::scatter_report` gives every candidate of a chunk with the modifier that rejected it, the
+kept ones exactly the chunk's points (`tests/scatter_report.rs`); the viewer in the engines is
+[#48](https://github.com/AntonTegnelov/wave_forge/issues/48).
 
 ### N6. Turn my building kit into a city
 
