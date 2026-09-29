@@ -36,16 +36,16 @@ use bevy_math::{Mat3, Quat, Vec3};
 use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use wave_forge::noise::NoiseConfig;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
-    Categories, Edits, Facts, Field, Point, RowId, Runtime, Save, Site, StageEvent, StageTiming,
-    StageWorker, Stamp, TownChunk, Volume,
+    Categories, Edits, Facts, Field, Pack, Point, RowId, Runtime, Save, Site, StageEvent,
+    StageTiming, StageWorker, Stamp, TownChunk, Volume,
 };
 use wave_forge::{
-    ChunkCoord, FarGround, FocusPoint, GroundMesh, InstanceId, VolumeMesh, far_ground, ground,
-    ground_materials, ground_readers, volume_mesh,
+    ChunkCoord, FarGround, FocusPoint, FrozenStore, GroundMesh, InstanceId, VolumeMesh, far_ground,
+    ground, ground_materials, ground_readers, volume_mesh,
 };
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
@@ -500,9 +500,18 @@ pub fn ground_levels(ground: &GroundMesh, detail: LevelDetail) -> Vec<GroundLeve
 
 type Build = Box<dyn FnOnce() -> Result<Runtime, String> + Send>;
 
-/// Generates the `targets` stages of a pack around every [`GenerationFocus`].
+/// Where a plugin's stages come from.
+enum Source {
+    /// A runtime the closure builds on the stages' own thread, which generates them.
+    Generate(Build),
+    /// A world [`Runtime::run_world`] wrote to a store, played with nothing generated.
+    Play(Arc<Pack>, Box<dyn FrozenStore>),
+}
+
+/// Generates the `targets` stages of a pack around every [`GenerationFocus`], or plays a world
+/// generated ahead of time.
 pub struct WaveForgeStagesPlugin {
-    build: Mutex<Option<Build>>,
+    source: Mutex<Option<Source>>,
     /// Each target and a radius of its own, if it has one.
     targets: Vec<(String, Option<u32>)>,
     settings: StagesSettings,
@@ -521,8 +530,27 @@ impl WaveForgeStagesPlugin {
         settings: StagesSettings,
         build: impl FnOnce() -> Result<Runtime, String> + Send + 'static,
     ) -> Self {
+        Self::from_source(targets, settings, Source::Generate(Box::new(build)))
+    }
+
+    /// A plugin that plays the world [`Runtime::run_world`] wrote to `store` from `pack`, as
+    /// [`StageWorker::play`] does: the targets' chunks around every focus come from the store,
+    /// nothing is generated, and the plugin builds the ground, surfaces and entities from them as
+    /// it builds a generated world's. A chunk the store lacks stops the stages with
+    /// [`StagesFailed`].
+    #[must_use]
+    pub fn play(
+        targets: &[&str],
+        settings: StagesSettings,
+        pack: Arc<Pack>,
+        store: Box<dyn FrozenStore>,
+    ) -> Self {
+        Self::from_source(targets, settings, Source::Play(pack, store))
+    }
+
+    fn from_source(targets: &[&str], settings: StagesSettings, source: Source) -> Self {
         Self {
-            build: Mutex::new(Some(Box::new(build))),
+            source: Mutex::new(Some(source)),
             targets: targets
                 .iter()
                 .map(|target| ((*target).to_owned(), None))
@@ -612,14 +640,18 @@ pub struct WaveForgeStagesSystems;
 
 impl Plugin for WaveForgeStagesPlugin {
     fn build(&self, app: &mut App) {
-        let build = self
-            .build
+        let source = self
+            .source
             .lock()
             .expect("a plugin is built by one thread")
             .take()
             .expect("a plugin is built once");
+        let worker = match source {
+            Source::Generate(build) => StageWorker::spawn(build),
+            Source::Play(pack, store) => StageWorker::play(pack, self.settings.chunk, store),
+        };
         app.insert_resource(WaveForgeStages {
-            worker: StageWorker::spawn(build),
+            worker,
             targets: self.targets.clone(),
             settings: self.settings,
             asked: Vec::new(),

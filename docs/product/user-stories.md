@@ -590,8 +590,16 @@ chunks outside memory ([#142](https://github.com/AntonTegnelov/wave_forge/issues
 ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)), a far ground
 ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)), and an offline run with progress,
 cancelling and resuming, and streaming baked content from disk
-([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)). **Status:** not started
-(2026-09-25).
+([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)). **Status:** in progress
+(2026-09-29): the library's whole-world run writes every chunk of a finite world to a store as it is
+done, reports its progress, stops when told, resumes from the store, holds no more for a world four
+times as large, and writes the same bytes stopped and resumed as at once, and a world it wrote plays
+back with nothing generated, holding what a runtime would (`tests/world_run.rs`). The Godot node
+runs a world into a directory on a thread of its own, reporting each chunk, cancels and resumes,
+and plays it back, its fields and trees those a generating node makes and no stage run
+(`verify_world.gd`). The Bevy plugin plays such a world too, its ground and trees those the
+runtime generates and no stage run (`wave_forge_bevy/tests/stages.rs`). The maximal preset and the
+desktop numbers are [#197](https://github.com/AntonTegnelov/wave_forge/issues/197).
 
 ### M2. Generate a maximal world once before play
 

@@ -191,6 +191,29 @@ per chunk under a directory. A save then holds only the frozen chunks in memory,
 the store with its saves; a runtime of a changed pack given the same store reads a stored chunk as
 it was first generated.
 
+## A whole world ahead of time
+
+A finite world can be generated whole before it is played, as a maximal world is (M1):
+`runtime.run_world(&targets, &mut store, |progress| ...)` generates the target stages over every
+chunk of the pack's bound (`Runtime::bound_chunks`, row by row) and keeps each chunk's product of
+each target in the store, as a frozen chunk is kept, the moment the chunk is done. So the runtime
+holds only what one chunk reads, whatever the world's size. After each chunk the closure gets a
+`RunProgress`:
+- `done` and `total` chunks;
+- `skipped`, those the store already held;
+- `held`, the products the runtime holds now.
+
+Returning `ControlFlow::Break(())` stops the run. A chunk whose every target the store already holds
+is skipped, so a run stopped or cut short picks up where it left off, and the store ends up holding
+the same bytes as a run that went at once (`tests/world_run.rs`). A pack without a bound fails with
+`StageError::Unbounded`.
+
+`StageWorker::play(pack, size, store)` plays such a world back without generating anything: a
+request's chunks of each target come from the store, and those no longer asked for are dropped, as
+a runtime's would be, so an engine draws a played world as it draws a generated one. A target chunk
+the store lacks, and facts, edits, parameters, reports or a save, which would each need generating,
+stop its thread with a failure.
+
 ## Levels
 
 A stage may declare a `scale`: how many WFC cells one of its columns spans along each axis, 1 by

@@ -1257,3 +1257,77 @@ fn a_raise_in_a_neighbour_builds_again_the_ground_that_reads_it() {
     );
     assert_eq!(stages.ground(origin), expected.as_ref());
 }
+
+/// A store in memory, by layer and chunk.
+#[derive(Default)]
+struct Memory(BTreeMap<(String, (i32, i32)), Vec<u8>>);
+
+impl wave_forge::FrozenStore for Memory {
+    fn keep(
+        &mut self,
+        layer: &str,
+        chunk: ChunkCoord,
+        bytes: Vec<u8>,
+    ) -> Result<(), wave_forge::StoreError> {
+        self.0.insert((layer.to_owned(), (chunk.x, chunk.y)), bytes);
+        Ok(())
+    }
+
+    fn fetch(
+        &mut self,
+        layer: &str,
+        chunk: ChunkCoord,
+    ) -> Result<Option<Vec<u8>>, wave_forge::StoreError> {
+        Ok(self.0.get(&(layer.to_owned(), (chunk.x, chunk.y))).cloned())
+    }
+}
+
+#[test]
+fn a_played_world_arrives_as_generated_with_no_stage_run() {
+    let text = PACK.replace(
+        "version: 1,",
+        "version: 1,\n    bound: Some(Rect(min: (-24.0, -24.0), max: (23.0, 23.0))),",
+    );
+    let pack = Arc::new(Pack::parse(&text).expect("a valid pack"));
+    let targets = ["height", "trees", "cover"];
+    let mut store = Memory::default();
+    Runtime::new(Arc::clone(&pack), 4, SETTINGS.chunk)
+        .run_world(
+            &targets,
+            &mut store,
+            |_| std::ops::ControlFlow::Continue(()),
+        )
+        .expect("a bounded pack");
+    let mut direct = Runtime::new(Arc::clone(&pack), 4, SETTINGS.chunk);
+    direct
+        .request(
+            &[FocusPoint::new(ChunkCoord::new(0, 0, 0), 1)],
+            &["height", "trees"],
+        )
+        .expect("stages");
+    direct.run_until_idle().expect("the stages run");
+    let mut app = app_with(
+        WaveForgeStagesPlugin::play(&targets, SETTINGS, pack, Box::new(store))
+            .with_ground("height"),
+    );
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        around_origin()
+            .iter()
+            .all(|&c| stages.ground(c).is_some() && stages.points("trees", c).is_some())
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let cell = SETTINGS.cell_size.to_array();
+    for chunk in around_origin() {
+        let expected = ground(chunk, |at| direct.field("height", at), cell);
+        assert_eq!(stages.ground(chunk), expected.as_ref(), "chunk {chunk:?}");
+        assert_eq!(stages.points("trees", chunk), direct.points("trees", chunk));
+    }
+    assert!(
+        stages.timings().is_empty(),
+        "a stage ran: {:?}",
+        stages.timings()
+    );
+}

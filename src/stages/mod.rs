@@ -17,6 +17,7 @@ pub mod runtime;
 pub mod save;
 mod town_thread;
 pub mod worker;
+mod world_run;
 
 pub use edits::{Edit, Edits, PointId};
 pub use facts::{Facts, GivenRow, MAX_SHARED, Row, RowId, Table, Value};
@@ -33,3 +34,4 @@ pub use runtime::{
 };
 pub use save::{FrozenChunk, Save};
 pub use worker::{StageEvent, StageWorker};
+pub use world_run::RunProgress;
