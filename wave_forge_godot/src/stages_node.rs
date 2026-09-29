@@ -37,7 +37,7 @@ use wave_forge::noise::{
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
     Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, PointId, RowId, Runtime, Save,
-    SiteId, StageEvent, StageKind, StageWorker, TableKind, Value,
+    Site, SiteId, StageEvent, StageKind, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -426,6 +426,36 @@ fn name_site(out: &mut VarDictionary, site: &SiteId) {
 
 /// A row a game gives from GDScript, checked into the library's form: an `id`, a whole number from
 /// 0, and every other key a column with a number or a name.
+/// A site as `sites` and `locate` give it to GDScript.
+fn site_dictionary(site: &Site) -> VarDictionary {
+    let mut out = VarDictionary::new();
+    name_site(&mut out, &site.id);
+    if let Some(kind) = &site.kind {
+        out.set(&"kind".to_variant(), &GString::from(&**kind).to_variant());
+    }
+    if let Some(name) = site.name() {
+        let mut args = VarDictionary::new();
+        for (arg, value) in &name.args {
+            args.set(&arg.to_variant(), &value.to_variant());
+        }
+        out.set(
+            &"name_key".to_variant(),
+            &GString::from(name.key.as_str()).to_variant(),
+        );
+        out.set(&"name_args".to_variant(), &args.to_variant());
+    }
+    out.set(
+        &"min".to_variant(),
+        &Vector2i::new(site.min.0, site.min.1).to_variant(),
+    );
+    out.set(
+        &"max".to_variant(),
+        &Vector2i::new(site.max.0, site.max.1).to_variant(),
+    );
+    out.set(&"height".to_variant(), &site.height.to_variant());
+    out
+}
+
 fn given_row(row: &VarDictionary) -> Result<GivenRow, String> {
     let id = row
         .get("id")
@@ -1614,37 +1644,29 @@ impl WaveForgeStages {
         else {
             return Array::new();
         };
-        sites
-            .iter()
-            .map(|site| {
-                let mut out = VarDictionary::new();
-                name_site(&mut out, &site.id);
-                if let Some(kind) = &site.kind {
-                    out.set(&"kind".to_variant(), &GString::from(&**kind).to_variant());
-                }
-                if let Some(name) = site.name() {
-                    let mut args = VarDictionary::new();
-                    for (arg, value) in &name.args {
-                        args.set(&arg.to_variant(), &value.to_variant());
-                    }
-                    out.set(
-                        &"name_key".to_variant(),
-                        &GString::from(name.key.as_str()).to_variant(),
-                    );
-                    out.set(&"name_args".to_variant(), &args.to_variant());
-                }
-                out.set(
-                    &"min".to_variant(),
-                    &Vector2i::new(site.min.0, site.min.1).to_variant(),
-                );
-                out.set(
-                    &"max".to_variant(),
-                    &Vector2i::new(site.max.0, site.max.1).to_variant(),
-                );
-                out.set(&"height".to_variant(), &site.height.to_variant());
-                out
-            })
-            .collect()
+        sites.iter().map(site_dictionary).collect()
+    }
+
+    /// The site of a Sites stage nearest a position in Godot's world space, on the ground plane,
+    /// found on Godot's thread without generating chunks ([packs.md](packs.md#sites)), as `sites`
+    /// gives a site; its regions up to `within` regions from the position's are searched. Empty if
+    /// none of them holds a site, or, with an error reported, for a stage that is no Sites stage.
+    #[func]
+    fn locate(&self, stage: GString, position: Vector3, within: i32) -> VarDictionary {
+        let Some(sampler) = &self.sampler else {
+            godot_error!("wave forge: locate before start");
+            return VarDictionary::new();
+        };
+        let at = [position.x / self.cell_size.x, position.z / self.cell_size.z];
+        match sampler.locate(&stage.to_string(), at, within.max(0) as u32) {
+            Ok(site) => site
+                .as_ref()
+                .map_or_else(VarDictionary::new, site_dictionary),
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                VarDictionary::new()
+            }
+        }
     }
 
     /// An Assemble stage's pieces overlapping a chunk, one dictionary each: its `piece` name, what

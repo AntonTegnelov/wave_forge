@@ -231,6 +231,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
   Field, Rules, Blur, Delta and Area stages. An error, and NaN or an empty array, for another
   stage.
+- `locate(stage, position, within)`: the site of a Sites stage nearest a position, as `sites`
+  gives a site, found on Godot's thread without chunks ([packs.md](packs.md#sites)); empty if none
+  lies within `within` regions.
 - `give_table(table, rows)` replaces a given table of facts ([packs.md](packs.md#tables-of-facts)):
   an Array of Dictionaries, typed or not, each with an `id`, a whole number from 0 (a float such as
   JSON reads back is taken if it is whole), and a number or, for a names column, a
