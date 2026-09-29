@@ -603,7 +603,8 @@ runtime generates and no stage run (`wave_forge_bevy/tests/stages.rs`). The maxi
 [#247](https://github.com/AntonTegnelov/wave_forge/issues/247): so far its terrain
 (`examples/continent/continent.world.ron`), a continent of 2 048 by 2 048 cells that falls into the
 ocean before its bound, 50 biomes by rules of which a survey finds 48, per-biome height, lakes and
-rivers (`tests/continent.rs`, [measurements.md](../research/measurements.md) L34). The desktop
+rivers, and rock as a density volume with caves, overhangs on cliffs and four ores
+(`tests/continent.rs`, [measurements.md](../research/measurements.md) L34 to L36). The desktop
 numbers are [#197](https://github.com/AntonTegnelov/wave_forge/issues/197).
 
 ### M2. Generate a maximal world once before play
