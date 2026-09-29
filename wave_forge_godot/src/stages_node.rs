@@ -217,6 +217,11 @@ pub struct WaveForgeStages {
     ground_due: std::collections::BTreeSet<ChunkCoord>,
     /// The chunks whose ground is built: its mesh, and its `RenderingServer` mesh and instance.
     grounds: HashMap<ChunkCoord, (GroundMesh, Rid, Rid)>,
+    /// The revision each built ground was built as, so a chunk's body tells a ground built again
+    /// from the one it holds.
+    ground_revisions: HashMap<ChunkCoord, u64>,
+    /// How many grounds have been built, which numbers each one's revision.
+    ground_builds: u64,
     /// Chunks of `far_ground_stage` whose far ground may have to be built again: a field around
     /// them arrived, or near ground came or went on or beside them.
     far_due: std::collections::BTreeSet<ChunkCoord>,
@@ -468,7 +473,8 @@ fn elapsed_ms(since: std::time::Instant) -> f64 {
 /// What a chunk's body was built from: whether it has the ground, and which Solve stages' towns.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BodyContents {
-    ground: bool,
+    /// The revision of the chunk's ground, if it has one.
+    ground: Option<u64>,
     /// The revision of the chunk's volume surface, if it has triangles.
     volume: Option<u64>,
     towns: Vec<String>,
@@ -514,6 +520,8 @@ impl INode for WaveForgeStages {
             collider_radius: 1,
             collision_shapes: HashMap::new(),
             grounds: HashMap::new(),
+            ground_revisions: HashMap::new(),
+            ground_builds: 0,
             far_due: std::collections::BTreeSet::new(),
             far_grounds: HashMap::new(),
             volume_stage: GString::new(),
@@ -605,7 +613,11 @@ impl INode for WaveForgeStages {
                 {
                     arrived.push(*chunk);
                 }
-                StageEvent::Dropped { stage, chunk } if *stage == ground_stage => gone.push(*chunk),
+                StageEvent::Dropped { stage, chunk }
+                    if *stage == ground_stage || *stage == material_stage =>
+                {
+                    gone.push(*chunk);
+                }
                 StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
             }
         }
@@ -1514,6 +1526,14 @@ impl WaveForgeStages {
         self.grounds.keys().map(|&chunk| to_vector(chunk)).collect()
     }
 
+    /// The `RenderingServer` mesh a chunk's ground is drawn with; an invalid RID if it is not.
+    #[func]
+    fn ground_mesh_of(&self, chunk: Vector3i) -> Rid {
+        self.grounds
+            .get(&from_vector(chunk))
+            .map_or(Rid::Invalid, |&(_, mesh, _)| mesh)
+    }
+
     /// The chunks of `far_ground_stage` whose far ground is drawn.
     #[func]
     fn far_ground_chunks(&self) -> Array<Vector3i> {
@@ -1925,12 +1945,18 @@ impl WaveForgeStages {
     /// Returns how many chunks got ground.
     fn update_ground(&mut self, arrived: &[ChunkCoord], gone: &[ChunkCoord]) -> usize {
         let mut rendering = RenderingServer::singleton();
-        for chunk in gone {
-            if let Some((_, mesh, instance)) = self.grounds.remove(chunk) {
+        // A chunk's ground reads the fields and materials of the chunks around it, so it goes with
+        // any of them, its grass with it, and is built again when they have all arrived again.
+        for reader in gone.iter().copied().flat_map(ground_readers) {
+            if let Some((_, mesh, instance)) = self.grounds.remove(&reader) {
                 rendering.free_rid(instance);
                 rendering.free_rid(mesh);
             }
-            self.chunk_materials.remove(chunk);
+            self.ground_revisions.remove(&reader);
+            self.chunk_materials.remove(&reader);
+            if let Some(grass) = &mut self.grass {
+                grass.remove(reader);
+            }
         }
         let Some(worker) = &self.worker else {
             return 0;
@@ -1946,11 +1972,12 @@ impl WaveForgeStages {
         let stage = self.ground_stage.to_string();
         let material_stage = self.ground_material_stage.to_string();
         let cell = self.cell_size.to_array();
-        self.ground_due
-            .extend(arrived.iter().copied().flat_map(ground_readers));
+        // Drops first: a raise drops a chunk and generates it again in one frame, and it is due.
         for chunk in gone {
             self.ground_due.remove(chunk);
         }
+        self.ground_due
+            .extend(arrived.iter().copied().flat_map(ground_readers));
         let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
         let mut due: Vec<ChunkCoord> = self.ground_due.iter().copied().collect();
         due.sort_by_key(|chunk| {
@@ -2026,6 +2053,8 @@ impl WaveForgeStages {
             );
             Gi::Static.apply(instance);
             self.grounds.insert(chunk, (mesh, rid, instance));
+            self.ground_builds += 1;
+            self.ground_revisions.insert(chunk, self.ground_builds);
         }
         count
     }
@@ -2289,7 +2318,7 @@ impl WaveForgeStages {
             .map(ToOwned::to_owned)
             .collect();
         let contents = |this: &Self, chunk: ChunkCoord| BodyContents {
-            ground: this.grounds.contains_key(&chunk),
+            ground: this.ground_revisions.get(&chunk).copied(),
             volume: this
                 .volumes
                 .get(&chunk)
@@ -2338,7 +2367,9 @@ impl WaveForgeStages {
             })
             .filter(|chunk| radius >= 0 && !self.bodies.contains_key(chunk))
             .map(|chunk| (chunk, contents(self, chunk)))
-            .filter(|(_, held)| held.ground || held.volume.is_some() || !held.towns.is_empty())
+            .filter(|(_, held)| {
+                held.ground.is_some() || held.volume.is_some() || !held.towns.is_empty()
+            })
             .collect();
         // Nearest first, and a few a frame, as the city node does.
         wanted.sort_by_key(|(chunk, _)| {
@@ -2362,7 +2393,7 @@ impl WaveForgeStages {
             let body = physics.body_create();
             physics.body_set_mode(body, BodyMode::STATIC);
             let mut shapes: Vec<Rid> = Vec::new();
-            if held.ground {
+            if held.ground.is_some() {
                 shapes.extend(self.add_ground_shape(&mut physics, body, chunk));
             }
             if held.volume.is_some() {
@@ -2677,6 +2708,7 @@ impl WaveForgeStages {
             rendering.free_rid(instance);
             rendering.free_rid(mesh);
         }
+        self.ground_revisions.clear();
         self.volume_due.clear();
         self.meshed.clear();
         for (_, surface) in self.volumes.drain() {

@@ -157,6 +157,13 @@ impl Grass {
         grown
     }
 
+    /// Frees a chunk's grass, if it has any, to be grown again on its ground built again.
+    pub(crate) fn remove(&mut self, chunk: ChunkCoord) {
+        if let Some((instance, _)) = self.chunks.remove(&chunk) {
+            RenderingServer::singleton().free_rid(instance);
+        }
+    }
+
     /// Frees every chunk's grass, keeping the blades.
     pub(crate) fn clear(&mut self) {
         let mut rendering = RenderingServer::singleton();

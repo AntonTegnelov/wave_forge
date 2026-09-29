@@ -5,7 +5,8 @@
 ## texture holds the category of every vertex of the ground, the chunks beyond the far edges
 ## included, and whose cell is the node's. A material stage that is no Rules or Area stage is
 ## refused. Grass grows on every chunk of ground within its radius, each chunk's grass material
-## holding the chunk's cover per column and the ground's height per vertex.
+## holding the chunk's cover per column and the ground's height per vertex. Last, raising the first
+## column of the chunk beside the origin builds the origin's ground again, which reaches to it.
 extends SceneTree
 
 const CELLS := 8
@@ -16,6 +17,10 @@ const TIMEOUT_S := 30.0
 var world: Node
 var ready := {}
 var started_usec := 0
+var raising := false
+## The first column of the chunk beside the origin, and its height before the raise.
+var raised := Vector2i(CELLS, 3)
+var before := 0.0
 
 func _initialize() -> void:
 	var wrong := _world("height")
@@ -51,6 +56,8 @@ func _world(material_stage: String) -> Node:
 	return node
 
 func _process(_delta: float) -> bool:
+	if raising:
+		return _check_raise()
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
 		_fail("the ground had not arrived: %d grounds, %d grass" % [world.ground_chunks().size(), world.grass_chunks().size()])
 		return true
@@ -147,8 +154,28 @@ func _check_grass() -> bool:
 		_fail("no column has grass")
 		return true
 	print("verify_ground: grass on %d chunks, %d columns covered, each chunk with its cover and the ground's heights" % [world.grass_chunks().size(), covered])
-	quit(0)
-	return true
+	before = _height(raised)
+	var centre := Vector3((raised.x + 0.5) * CELL.x, 0, (raised.y + 0.5) * CELL.z)
+	if not world.raise("height", centre, 4.0):
+		_fail("the raise was refused")
+		return true
+	raising = true
+	started_usec = Time.get_ticks_usec()
+	return false
+
+## Waits for the origin's drawn ground to stand on the raised column, which it reaches to.
+func _check_raise() -> bool:
+	var rid: RID = world.ground_mesh_of(Vector3i.ZERO)
+	if rid.is_valid() and absf(_height(raised) - before - 4.0 * CELL.y) < 1e-4:
+		var vertices: PackedVector3Array = RenderingServer.mesh_surface_get_arrays(rid, 0)[Mesh.ARRAY_VERTEX]
+		if absf(vertices[raised.y * (CELLS + 1) + raised.x].y - _height(raised)) < 1e-4:
+			print("verify_ground: raising the first column of the chunk beside the origin builds the origin's ground again, %.1f s after the raise" % ((Time.get_ticks_usec() - started_usec) / 1e6))
+			quit(0)
+			return true
+	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
+		_fail("the origin's ground still stands at the column's old height beside the raise")
+		return true
+	return false
 
 func _fail(message: String) -> void:
 	printerr("verify_ground: " + message)
