@@ -443,8 +443,11 @@ the deepest pools lava. The product has its volume's size and bottom; it works a
 scale on a volume of that scale.
 
 Pools of two levels meet at a vertical face where their cells meet, which Minecraft walls off with
-stone and an Aquifer stage does not. Neither engine draws an Aquifer stage beside its rock yet
-([#231](https://github.com/AntonTegnelov/wave_forge/issues/231)).
+stone and an Aquifer stage does not ([#236](https://github.com/AntonTegnelov/wave_forge/issues/236)).
+Godot draws it beside the rock as `fluid_stage`, see-through
+and glowing by material, and Bevy builds its surface with `.with_fluid`
+([godot.md](godot.md#waveforgestages), [bevy.md](bevy.md#packs-of-stages)); neither collides with
+it.
 
 ### Rules
 

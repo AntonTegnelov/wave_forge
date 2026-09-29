@@ -100,9 +100,9 @@ first-match rules, aquifers that pool water and lava in the caves and leave some
 in the rock, trees on the ground's top and villages of streets and houses on levelled ground. The
 same area generated at once and walked backwards chunk by chunk gives every stage's products bit
 for bit, and a changed ore spacing or overhang strength changes only the stages downstream of it
-(`tests/voxel_world.rs`). Godot and Bevy draw and collide with such a volume (`verify_volume.gd`,
-`wave_forge_bevy/tests/stages.rs`); neither draws its fluid yet
-([#231](https://github.com/AntonTegnelov/wave_forge/issues/231)).
+(`tests/voxel_world.rs`). Godot and Bevy draw and collide with such a volume, and draw its water
+and lava see-through beside it, never collided with (`verify_volume.gd`,
+`wave_forge_bevy/tests/stages.rs`).
 
 ### G2. A Dwarf Fortress-like finite world with history
 
