@@ -369,7 +369,8 @@ set that generates a city with no unplaced chunk in the test world. **Needs.** I
 authoring tools, Solve. **Status:** in progress (2026-09-29): `wfc_rules::import::propose` proposes
 connectors from matching face shapes and writes the module set, and the set proposed from the
 city's own voxel models generates a city with no unplaced chunk (`wfc-devtools/tests/import.rs`);
-reading a `MeshLibrary` and the artist's confirming and renaming wait for the editor
+`WaveForgeWorld.propose_module_set` proposes one from a `MeshLibrary` (`verify_import.gd`). The
+artist's confirming and renaming wait for the editor
 ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 
 ### N7. Use my own noise

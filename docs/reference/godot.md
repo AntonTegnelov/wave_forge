@@ -40,6 +40,11 @@ extension needs none of godot-rust's thread-safety features.
 ### Functions
 
 - **Starting:** `load_rules(text)`, `start()`, `is_generating()`.
+- **A kit's rules:** `WaveForgeWorld.propose_module_set(library, cell_size)`, a static function,
+  proposes a module set from a `MeshLibrary`: a module per item, whose faces get connectors from the
+  shapes of the item's mesh on them, taken as a `GridMap` centres it in cells of `cell_size`
+  ([constraints.md](../architecture/constraints.md#what-adjacency-can-express)). It returns the set
+  as text for `load_rules`, for an artist to confirm, rename and mark walkable first.
 - **The prior:** `set_layer_tiles(layers)`, `ban_tiles_on_face(axis, tiles)`.
 - **Streaming:** `follow(position)` asks for the chunks around a position in Godot's world space;
   `generated_chunks()`.

@@ -14,6 +14,7 @@
 # `godot/verify_ground.gd`, which gives the ground a material per category, then
 # `godot/verify_volume.gd`, which draws a volume's surface and collides with its cave, then
 # `godot/verify_bake.gd`, which bakes an area into a scene of plain nodes, then
+# `godot/verify_import.gd`, which proposes a module set from a MeshLibrary, then
 # `godot/verify_sound.gd`, which checks the city's region tags and sound, then
 # `godot/verify_names.gd`, which names a location through a translation, then
 # `godot/verify_occlusion.gd`, which checks the city's occluders, then `godot/verify_proxies.gd`,
@@ -37,6 +38,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_ground.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_volume.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_bake.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_import.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_sound.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_names.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_occlusion.gd
