@@ -14,7 +14,7 @@ use super::runtime::{
 use super::save::Save;
 use crate::ChunkCoord;
 use crate::scheduler::FocusPoint;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -39,6 +39,7 @@ enum Order {
         table: String,
         id: RowId,
     },
+    Params(BTreeMap<String, f32>),
     Stop,
 }
 
@@ -163,6 +164,12 @@ impl StageWorker {
             table: table.to_owned(),
             id,
         });
+    }
+
+    /// Sets the pack's parameters, as [`Runtime::set_params`] does, with what that makes stale
+    /// arriving as drops. An error stops the thread and arrives as a failure.
+    pub fn set_params(&self, values: BTreeMap<String, f32>) {
+        let _ = self.orders.send(Order::Params(values));
     }
 
     /// Takes what the thread has produced or dropped since the last call, without blocking.
@@ -399,6 +406,7 @@ where
                 }
                 Order::Load(save) => runtime.load(&save),
                 Order::Focus { table, id } => runtime.focus(&table, id),
+                Order::Params(values) => runtime.set_params(&values),
             };
             match result {
                 Ok(dropped) if dropped.is_empty() => {}

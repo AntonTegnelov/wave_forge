@@ -325,7 +325,13 @@ density) while the editor preview updates.*
 
 **Acceptance criteria.** Each preset's exposed parameters have ranges that never produce a broken
 world (swept by a seed and parameter contact sheet); the preview updates within the P6 target;
-undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Status:** not started (2026-09-23).
+undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Status:** in progress
+(2026-09-29): packs declare parameters with ranges that stages read, and the islands preset
+(`examples/presets/islands.world.ron`) tunes its land amount, roughness and tree density; a sweep
+of every range over a grid of values and seeds finds a sound world at each, more land as `land`
+rises and more trees as `trees` does, and a changed parameter regenerates only what reads it
+(`tests/presets.rs`, `verify_params.gd`). A preset list, the editor preview and undo are
+[#48](https://github.com/AntonTegnelov/wave_forge/issues/48).
 
 ### N3. Place my own scene by dragging it in
 

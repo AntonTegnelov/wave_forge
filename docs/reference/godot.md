@@ -157,6 +157,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Pack | `pack_file` | the pack, a `*.world.ron` file |
 | | `rules_files` | the rule sets Solve stages name, as name to rule file path |
 | | `targets` | the stages to generate; what they read comes with them |
+| | `params` | values of the pack's parameters, as name to number, which `start` gives the stages; one left out keeps its default ([packs.md](packs.md#parameters)) |
 | | `start_on_ready` | start when the node enters the tree |
 | World | `seed` | every choice derives from it |
 | | `chunk_cells` | columns per chunk along the lattice's x and y, and a town chunk's height along z |
@@ -191,6 +192,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 - `noises`: a Dictionary of a pack's noise names to `FastNoiseLite` resources; each replaces the
   pack's noise of that name, so a Field reading `FastNoise(name)` holds exactly what the
   resource's `get_noise_2d` gives at each column's centre in cells.
+- `update_params(values)` sets the pack's parameters named in a Dictionary of names to numbers
+  while the stages run, generating again only what reads a changed one; `pack_params()` lists them,
+  each with its `name`, `default`, `min`, `max` and `value` now ([packs.md](packs.md#parameters)).
 - `remove_point(stage, chunk, id)` takes away a Scatter stage's point by the id `point_sets` gave
   it, `raise(stage, position, by)` raises a field stage at the column under a position in
   Godot's world space, and `dig(stage, position, radius)` and `fill(stage, position, radius)` dig a

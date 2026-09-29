@@ -468,6 +468,8 @@ pub enum StageError {
     NoFocus(String),
     #[error("the runtime was given no facts, which a stage or a focus reads")]
     NoFacts,
+    #[error("a parameter: {0}")]
+    Param(String),
     #[error("the facts were made for another pack or seed than the runtime's")]
     OtherFacts,
     #[error("stage {stage:?} cannot draw curve {curve:?}: {message}")]
@@ -626,6 +628,8 @@ pub struct Runtime {
     noises: BTreeMap<String, NoiseConfig>,
     /// The focused row of each table that has one, by table index.
     focused: BTreeMap<usize, Row>,
+    /// The value of each of the pack's parameters, by name: as given, or its default.
+    params: BTreeMap<String, f32>,
     /// Each TableSites stage's sites, by stage index: the row each stands for and the chunks it
     /// covers, from the facts.
     footprints: BTreeMap<usize, Arc<[Footprint]>>,
@@ -710,6 +714,11 @@ impl Runtime {
         Self {
             timings: vec![StageTiming::default(); pack.stages.len()],
             noises: pack.noises.clone(),
+            params: pack
+                .params
+                .iter()
+                .map(|(name, param)| (name.clone(), param.default))
+                .collect(),
             region_jobs: BTreeMap::new(),
             regions: BTreeMap::new(),
             placed: BTreeMap::new(),
@@ -1047,6 +1056,56 @@ impl Runtime {
             .map(|(reader, _)| (reader, Stale::All))
             .collect();
         Ok(self.invalidate(stale))
+    }
+
+    /// Sets the pack's parameters named in `values`, which stages read through
+    /// [`crate::stages::Expr::Param`]; the others keep theirs. Drops every product that read a
+    /// parameter whose value changed, and what was generated from it, returning them as
+    /// [`Runtime::request`] does.
+    ///
+    /// # Errors
+    /// [`StageError::Param`] for a parameter the pack does not declare or a value outside its
+    /// range, and then nothing changes.
+    pub fn set_params(
+        &mut self,
+        values: &BTreeMap<String, f32>,
+    ) -> Result<Vec<(String, ChunkCoord)>, StageError> {
+        for (name, &value) in values {
+            let param = self
+                .pack
+                .params
+                .get(name)
+                .ok_or_else(|| StageError::Param(format!("the pack declares no {name:?}")))?;
+            let (low, high) = param.range;
+            if !(low..=high).contains(&value) {
+                return Err(StageError::Param(format!(
+                    "{name:?} of {value}, outside its range from {low} to {high}"
+                )));
+            }
+        }
+        let changed: Vec<&String> = values
+            .iter()
+            .filter(|&(name, value)| self.params[name] != *value)
+            .map(|(name, _)| name)
+            .collect();
+        let stale = self
+            .pack
+            .stages
+            .iter()
+            .enumerate()
+            .filter(|(_, stage)| stage.params.iter().any(|read| changed.contains(&read)))
+            .map(|(reader, _)| (reader, Stale::All))
+            .collect();
+        for (name, &value) in values {
+            self.params.insert(name.clone(), value);
+        }
+        Ok(self.invalidate(stale))
+    }
+
+    /// The value of each of the pack's parameters, by name.
+    #[must_use]
+    pub const fn params(&self) -> &BTreeMap<String, f32> {
+        &self.params
     }
 
     /// Drops what `stale` names and everything generated from it, returning the products as
@@ -4552,6 +4611,7 @@ impl Leaves for ColumnPlace<'_, '_> {
                 }
                 blended
             }
+            Expr::Param(name) => self.runtime.params[name],
             Expr::Row(table, column) => {
                 let index = pack.table_by_name[table];
                 let row = self

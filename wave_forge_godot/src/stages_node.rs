@@ -74,6 +74,11 @@ pub struct WaveForgeStages {
     /// at each column's centre in cells.
     #[export]
     noises: VarDictionary,
+    /// Values of the pack's parameters, as name to number, which `start` gives the stages; a
+    /// parameter left out keeps its default ([packs.md](packs.md#parameters)). `update_params`
+    /// changes them while the stages run.
+    #[export]
+    params: VarDictionary,
     /// Whether to start as soon as the node enters the scene tree.
     #[export]
     start_on_ready: bool,
@@ -586,6 +591,7 @@ impl INode for WaveForgeStages {
             noises: VarDictionary::new(),
             target_radii: VarDictionary::new(),
             targets: PackedStringArray::new(),
+            params: VarDictionary::new(),
             start_on_ready: false,
             seed: 0,
             chunk_cells: Vector3i::new(8, 8, 8),
@@ -1046,6 +1052,17 @@ impl WaveForgeStages {
         sampler
             .set_facts(facts.clone())
             .expect("facts made for the sampler's pack and seed");
+        let Some(values) = param_values(&self.params) else {
+            godot_error!(
+                "wave forge: params holds a name or value that is not a string and a number"
+            );
+            return false;
+        };
+        if let Err(error) = sampler.set_params(&values) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        let thread_params = values.clone();
         let for_thread = Arc::clone(&pack);
         let thread_facts = facts.clone();
         self.rules = rules.clone();
@@ -1071,6 +1088,9 @@ impl WaveForgeStages {
             }
             runtime
                 .set_facts(thread_facts)
+                .map_err(|error| error.to_string())?;
+            runtime
+                .set_params(&thread_params)
                 .map_err(|error| error.to_string())?;
             if !solves {
                 return Ok(runtime);
@@ -1473,6 +1493,52 @@ impl WaveForgeStages {
         }
         worker.focus(&table.to_string(), id);
         true
+    }
+
+    /// Sets the pack's parameters named in `values`, name to number, while the stages run: what
+    /// reads a changed one is generated again, and nothing else. Returns whether every name is a
+    /// parameter of the pack and every value in its range; if not, that is reported as an error
+    /// and nothing changes.
+    #[func]
+    fn update_params(&mut self, values: VarDictionary) -> bool {
+        let (Some(sampler), Some(worker)) = (&mut self.sampler, &self.worker) else {
+            godot_error!("wave forge: update_params before start");
+            return false;
+        };
+        let Some(parsed) = param_values(&values) else {
+            godot_error!("wave forge: update_params takes names and numbers, not {values}");
+            return false;
+        };
+        if let Err(error) = sampler.set_params(&parsed) {
+            godot_error!("wave forge: {error}");
+            return false;
+        }
+        worker.set_params(parsed);
+        for (name, value) in values.iter_shared() {
+            self.params.set(&name, &value);
+        }
+        true
+    }
+
+    /// The pack's parameters, in the order of their names: each a Dictionary with its `name`, its
+    /// `default`, its range as `min` and `max`, and its `value` now. Empty before `start`.
+    #[func]
+    fn pack_params(&self) -> Array<VarDictionary> {
+        let (Some(pack), Some(sampler)) = (&self.pack, &self.sampler) else {
+            return Array::new();
+        };
+        pack.params()
+            .iter()
+            .map(|(name, param)| {
+                let mut out = VarDictionary::new();
+                out.set(&"name".to_variant(), &name.to_variant());
+                out.set(&"default".to_variant(), &param.default.to_variant());
+                out.set(&"min".to_variant(), &param.range.0.to_variant());
+                out.set(&"max".to_variant(), &param.range.1.to_variant());
+                out.set(&"value".to_variant(), &sampler.params()[name].to_variant());
+                out
+            })
+            .collect()
     }
 
     /// A table's rows, in the order of their ids: each a Dictionary with its `id`, a
@@ -3232,6 +3298,22 @@ fn ground_levels(mesh: &GroundMesh) -> (&[u32], Vec<(&[u32], f32)>) {
         .map(|level| (level.indices.as_slice(), level.error))
         .collect();
     (&finest.indices, coarser)
+}
+
+/// Parameter values from GDScript, name to number; none if any name is not a string or any value
+/// not a number.
+fn param_values(values: &VarDictionary) -> Option<BTreeMap<String, f32>> {
+    values
+        .iter_shared()
+        .map(|(name, value)| {
+            let name = name.try_to::<GString>().ok()?.to_string();
+            let value = value
+                .try_to::<f64>()
+                .ok()
+                .or_else(|| value.try_to::<i64>().ok().map(|whole| whole as f64))?;
+            Some((name, value as f32))
+        })
+        .collect()
 }
 
 /// The metadata [`WaveForgeStages::bake`] leaves on a chunk's node: the chunk.

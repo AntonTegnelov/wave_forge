@@ -36,6 +36,19 @@ pub struct PackFile {
     /// what an engine fills with water.
     #[serde(default)]
     pub water: Option<PackWater>,
+    /// The numbers a user tunes without editing the pack, by name, which stages read with
+    /// [`Expr::Param`]: a preset's land amount, roughness and tree density, say.
+    #[serde(default)]
+    pub params: BTreeMap<String, ParamDef>,
+}
+
+/// A number a pack exposes for tuning ([`PackFile::params`]): its value when none is given, and
+/// the range a value has to lie in, which is the range the pack promises gives a sound world.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParamDef {
+    pub default: f32,
+    pub range: (f32, f32),
 }
 
 /// A pack's water: the sea's level, in cells of height, below which the ground is under water,
@@ -985,6 +998,9 @@ pub enum Expr {
     /// A column of the row the runtime is focused on in a table
     /// ([`crate::stages::Runtime::focus`]): a planet's radius on its surface, say. Stages only.
     Row(String, String),
+    /// The value of the pack's parameter of this name ([`PackFile::params`]), as the runtime was
+    /// given it ([`crate::stages::Runtime::set_params`]) or its default. Stages only.
+    Param(String),
     /// A column of the parent row. Generated tables only.
     Parent(String),
     /// A number from `low` up to but not including `high`, from the row's own hash stream and its
@@ -1089,6 +1105,7 @@ impl Expr {
             | Self::Distance(_)
             | Self::Angle(_)
             | Self::Row(..)
+            | Self::Param(_)
             | Self::Parent(_)
             | Self::Random(..)
             | Self::Index
@@ -1150,6 +1167,7 @@ impl Expr {
             | Self::Angle(_)
             | Self::Is(..)
             | Self::Row(..)
+            | Self::Param(_)
             | Self::Parent(_)
             | Self::Random(..)
             | Self::Index
@@ -1203,6 +1221,7 @@ impl Expr {
             | Self::Distance(_)
             | Self::Angle(_)
             | Self::Row(..)
+            | Self::Param(_)
             | Self::Parent(_)
             | Self::Random(..)
             | Self::Index
@@ -1276,6 +1295,7 @@ impl Expr {
             | Self::Y
             | Self::Z
             | Self::Row(..)
+            | Self::Param(_)
             | Self::Parent(_)
             | Self::Index
             | Self::Count
@@ -1387,6 +1407,8 @@ pub enum PackError {
     Bound(String),
     #[error("the pack's water: {0}")]
     Water(String),
+    #[error("the pack's parameter {name:?}: {message}")]
+    Param { name: String, message: String },
     #[error("two tables are named {0:?}")]
     DuplicateTable(String),
     #[error("table {table:?}: {message}")]
@@ -1486,6 +1508,12 @@ fn leaf_allowed(
                  parent and its own hash stream"
                     .to_owned(),
             ),
+        },
+        Expr::Param(_) => match place {
+            Place::Column | Place::Voxel => Ok(()),
+            Place::Count { .. } | Place::Row { .. } => {
+                Err("a table's expression reads a parameter, which only stages read".to_owned())
+            }
         },
         Expr::Row(table, column) => match place {
             Place::Column | Place::Voxel => match columns.get(table) {
@@ -1686,6 +1714,8 @@ pub(crate) struct Stage {
     pub(crate) persist: Persist,
     /// The tables whose focused row it reads.
     pub(crate) tables: Vec<usize>,
+    /// The parameters it reads.
+    pub(crate) params: Vec<String>,
 }
 
 /// A pack that loaded: every stage linked to its inputs, in an order where inputs come first.
@@ -1703,6 +1733,7 @@ pub struct Pack {
     pub(crate) noises: BTreeMap<String, NoiseConfig>,
     pub(crate) bound: Option<Bound>,
     pub(crate) water: Option<PackWater>,
+    pub(crate) params: BTreeMap<String, ParamDef>,
     /// FNV-1a of the pack as RON, which a save records.
     pub(crate) digest: u64,
 }
@@ -1732,6 +1763,22 @@ impl Pack {
         }
         if let Some(bound) = &file.bound {
             bound.check().map_err(PackError::Bound)?;
+        }
+        for (name, param) in &file.params {
+            let (low, high) = param.range;
+            if !(low.is_finite()
+                && high.is_finite()
+                && low <= param.default
+                && param.default <= high)
+            {
+                return Err(PackError::Param {
+                    name: name.clone(),
+                    message: format!(
+                        "a default of {} in a range of {:?}; the default lies in the range",
+                        param.default, param.range
+                    ),
+                });
+            }
         }
         if let Some(water) = &file.water {
             if !water.level.is_finite() {
@@ -2753,13 +2800,16 @@ impl Pack {
                     .map_err(invalid)?;
             }
             let mut read_tables: Vec<usize> = Vec::new();
-            let mut note = |node: &Expr| {
-                if let Expr::Row(table, _) = node {
+            let mut read_params: Vec<String> = Vec::new();
+            let mut note = |node: &Expr| match node {
+                Expr::Row(table, _) => {
                     let index = table_by_name[table];
                     if !read_tables.contains(&index) {
                         read_tables.push(index);
                     }
                 }
+                Expr::Param(name) if !read_params.contains(name) => read_params.push(name.clone()),
+                _ => {}
             };
             match &def.kind {
                 StageKind::Field(expr) | StageKind::Volume { density: expr, .. } => {
@@ -2825,8 +2875,17 @@ impl Pack {
                 | StageKind::Deposit { .. }
                 | StageKind::Spawn { .. } => {}
             }
+            if let Some(unknown) = read_params
+                .iter()
+                .find(|name| !file.params.contains_key(*name))
+            {
+                return Err(invalid(format!(
+                    "it reads the parameter {unknown:?}, which the pack does not declare"
+                )));
+            }
             stages.push(Stage {
                 tables: read_tables,
+                params: read_params,
                 salt: salt(&def.name),
                 scale: def.scale,
                 persist: def.persist,
@@ -2864,6 +2923,7 @@ impl Pack {
             noises: file.noises,
             bound: file.bound,
             water: file.water,
+            params: file.params,
             digest,
         })
     }
@@ -2924,6 +2984,12 @@ impl Pack {
     #[must_use]
     pub const fn digest(&self) -> u64 {
         self.digest
+    }
+
+    /// The numbers the pack exposes for tuning, by name.
+    #[must_use]
+    pub const fn params(&self) -> &BTreeMap<String, ParamDef> {
+        &self.params
     }
 
     /// Where the world ends, if the pack gives it an edge.

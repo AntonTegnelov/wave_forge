@@ -394,7 +394,8 @@ impl Leaves for RowPlace<'_> {
             | Expr::Angle(_)
             | Expr::Is(..)
             | Expr::Match { .. }
-            | Expr::Row(..) => unreachable!("a table's expressions are checked when loaded"),
+            | Expr::Row(..)
+            | Expr::Param(_) => unreachable!("a table's expressions are checked when loaded"),
             Expr::Constant(_)
             | Expr::Add(..)
             | Expr::Sub(..)

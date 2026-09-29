@@ -1,0 +1,42 @@
+// The islands preset (docs/product/user-stories.md, N2): islands in a sea, with sand along their
+// shores, grass inland and rock on the heights, and trees on the grass. Three parameters tune it:
+// how much of the world is land, how rough the land is, and how dense the trees grow. Every value
+// in their ranges gives a sound world (tests/presets.rs sweeps them).
+(
+    version: 1,
+    params: {
+        // From a sea with a few islets at 0 to land with a few lakes at 1.
+        "land": (default: 0.45, range: (0.0, 1.0)),
+        // From gentle to rugged.
+        "roughness": (default: 0.4, range: (0.0, 1.0)),
+        // From bare land at 0 to dense woods at 1.
+        "trees": (default: 0.5, range: (0.0, 1.0)),
+    },
+    water: Some((level: 0.0)),
+    noises: {
+        "islands": (noise_type: SimplexSmooth, seed: 11, frequency: 0.015, fractal_octaves: 3),
+        "detail": (noise_type: SimplexSmooth, seed: 12, frequency: 0.08, fractal_octaves: 3),
+        "woods": (noise_type: Perlin, seed: 13, frequency: 0.05, fractal_octaves: 2),
+    },
+    stages: [
+        // The coast lies where the island noise crosses the land amount; the land rises from it and
+        // roughness adds detail, the sea floor falling away below it.
+        (name: "height", kind: Field(Mul(
+            Add(
+                Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))),
+                Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))),
+            ),
+            Constant(14.0),
+        ))),
+        (name: "surface", kind: Rules(rules: [
+            (category: "sand", when: [Less(Input("height"), Constant(1.2))]),
+            (category: "rock", when: [Greater(Input("height"), Constant(9.0))]),
+        ], otherwise: "grass")),
+        // Trees on the grass, where the woods noise lies under the tree density.
+        (name: "trees", kind: Scatter(kind: "tree", height: "height", spacing: 3, apart: 2,
+            when: [
+                Greater(Is("surface", ["grass"]), Constant(0.5)),
+                Less(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("trees")),
+            ])),
+    ],
+)

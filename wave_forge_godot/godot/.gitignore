@@ -2,5 +2,6 @@
 bin/
 city.ron
 valley.world.ron
+islands.world.ron
 models/
 .godot/
