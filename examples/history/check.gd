@@ -93,6 +93,16 @@ func _check_town(chunk: Vector3i, fate: String) -> bool:
 	if sites.is_empty() or not sites[0].has("row") or town.is_empty() or town["row"] != sites[0]["row"]:
 		_fail("the %s village at %s has sites %s and town %s" % [fate, chunk, sites, town.keys()])
 		return true
+	# The town is of the rule set its row chose, and its placements name that set's modules.
+	var rules := "ruins" if fate == "burned" else "city"
+	var modules := _module_names("res://%s.ron" % rules)
+	if town["rules"] != rules:
+		_fail("the %s village's town is of %s, not %s" % [fate, town["rules"], rules])
+		return true
+	for placements: Dictionary in first.town_instance_sets("towns", chunk, PackedStringArray()):
+		if not modules.has(placements["name"]):
+			_fail("the %s village's town places %s, which %s does not have" % [fate, placements["name"], rules])
+			return true
 	print("check: the %s village at %s has its site and its town, after %.1f s" % [fate, chunk, (Time.get_ticks_usec() - started_usec) / 1e6])
 	if fate == "standing":
 		phase = "ruins"
@@ -101,6 +111,14 @@ func _check_town(chunk: Vector3i, fate: String) -> bool:
 	_check_roads()
 	_restore()
 	return false
+
+## The names of the modules a rule set's file lists.
+func _module_names(path: String) -> Array[String]:
+	var names: Array[String] = []
+	var pattern := RegEx.create_from_string("name: \"([^\"]+)\"")
+	for found in pattern.search_all(FileAccess.get_file_as_string(path)):
+		names.append(found.get_string(1))
+	return names
 
 ## Somewhere along a road the paved ground differs from the carved ground under it.
 func _check_roads() -> void:

@@ -672,8 +672,9 @@ to be one a sample reads without chunks. A mask painted with a brush
 reads the field over its sites, painting again solves again exactly the towns whose sites it
 reaches.
 
-A chunk's product is its part of the town (`TownChunk`: the site's id, its levelled height, and
-the chunk's tiles, x fastest, then y, then z), or nothing outside every site. A town is solved once,
+A chunk's product is its part of the town (`TownChunk`: the site's id, its levelled height, the
+rule set it was solved with, `by`'s choice or `rules`, and the chunk's tiles, indices into that
+rule set, x fastest, then y, then z), or nothing outside every site. A town is solved once,
 when its first chunk is needed, and kept while a chunk it covers is. Towns are solved on a thread
 of their own, in the order they are asked for, so every other stage goes on generating meanwhile; a
 chunk in a site arrives once its town is back, a chunk outside every site at once, and

@@ -1871,6 +1871,10 @@ impl WaveForgeStages {
         let tiles: PackedInt32Array = town.tiles.iter().map(|&tile| i32::from(tile)).collect();
         name_site(&mut out, &town.site);
         out.set(&"height".to_variant(), &town.height.to_variant());
+        out.set(
+            &"rules".to_variant(),
+            &GString::from(town.rules.as_ref()).to_variant(),
+        );
         out.set(&"tiles".to_variant(), &tiles.to_variant());
         out
     }
@@ -2619,11 +2623,9 @@ impl WaveForgeStages {
         chunk: ChunkCoord,
         wanted: impl Fn(&str) -> bool,
     ) -> Option<(Vec<InstanceSet>, f32)> {
-        let (pack, worker) = (self.pack.as_ref()?, self.worker.as_ref()?);
-        let Some(StageKind::Solve { rules, .. }) = pack.kind(stage) else {
-            return None;
-        };
-        let (file, town) = (self.rules.get(rules)?, worker.tiles(stage, chunk)?);
+        let town = self.worker.as_ref()?.tiles(stage, chunk)?;
+        // The rule set the town was solved with, which its row may have chosen over the stage's.
+        let file = self.rules.get(town.rules.as_ref())?;
         let space = YUpSpace::new(self.chunk_shape(), self.cell_size.to_array());
         let tiles = Chunk {
             coord: chunk,
