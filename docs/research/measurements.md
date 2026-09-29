@@ -354,6 +354,12 @@ to its end would give.
 | L31 | An 8×4-chunk city (32 chunks) generated whole, then for each cut evicted beyond it from its corner and asked for whole again, seeds 8 and 11; what generating it again cost against the first generation | tile for tile the city generated once at every cut, for both seeds. The whole city at once: 5 and 6 batches, 91 and 78 ms in the solver. Again after evicting 31 chunks: 5 and 6 batches, 79 and 118 ms; 23 chunks: 5 and 6 batches, 117 and 156 ms, one repair replayed; 16 chunks: 3 and 4 batches, 30 and 49 ms, one replayed; 4 chunks: 2 batches, 18 and 24 ms. So a part generated again costs about what it cost the first time | `partial_eviction.rs` with `--nocapture`, release, RTX 3070 through dozen, at [#188] |
 | L32 | The same cuts with replays turned off, and the walk along a 16×4 city and back | 2 to 10 chunks differ at the cuts that evict a repaired chunk's neighbours (cuts 3 to 5), and the walk's settled chunks differ: the views alone do not suffice, the replays are needed | a local mutation of `replay_around`, not committed, at [#188] |
 
+### Interactive editing ([#48], 2026-09-29)
+
+| ID | Measurement | Result | Protocol |
+|---|---|---|---|
+| L33 | A parameter of the islands preset changed on a 3×3-chunk preview of 16×16-column chunks, five changes each, three runs: from the change until the preview is generated again, and what each stage regenerated per change | the first preview 1.9 to 2.1 ms. `trees`: median 0.08 to 0.09 ms, only `trees` regenerated (9 chunks, 0.07 ms). `roughness` and `land`: median 1.85 to 1.93 ms, max 1.87 to 2.03 ms, regenerating `height` and `surface` (25 chunks each, the preview and what the trees read around it; 1.35 to 1.41 and 0.37 to 0.41 ms) and `trees` (9 chunks, 0.08 to 0.10 ms). So the stage runtime is two orders under P6's 200 ms; what an engine takes to draw the preview again is its own | `tests/interactive_edit.rs`, release, the dev container's CPU, at [#48]; `tools/measure_desktop.ps1` runs it on a desktop |
+
 ## The engines
 
 No frame cost has been measured in Bevy yet; its rows are correctness checks with counts.
@@ -563,3 +569,4 @@ Measurements the current code still waits for.
 [#71]: https://github.com/AntonTegnelov/wave_forge/issues/71
 [#218]: https://github.com/AntonTegnelov/wave_forge/issues/218
 [#224]: https://github.com/AntonTegnelov/wave_forge/issues/224
+[#48]: https://github.com/AntonTegnelov/wave_forge/issues/48
