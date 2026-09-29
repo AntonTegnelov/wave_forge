@@ -177,7 +177,8 @@ impl Connectors {
     }
 }
 
-#[cfg(test)]
+// The tests read the proposal back as a rule file, which needs the `serde` feature.
+#[cfg(all(test, feature = "serde"))]
 mod tests {
     use super::*;
     use crate::loader::{RuleFile, parse_rule_file};
