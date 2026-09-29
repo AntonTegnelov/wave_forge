@@ -847,6 +847,7 @@ impl Runtime {
                 [value(&to.0), value(&to.1)],
             ],
             values: vec![radius, radius],
+            heights: Vec::new(),
         }
     }
 
@@ -3278,6 +3279,24 @@ impl Runtime {
                     unreachable!("inputs are type checked when the pack loads")
                 };
                 for curve in near {
+                    let wrong = |message: String| StageError::Curve {
+                        stage: stage.name.clone(),
+                        curve: curve.id.clone(),
+                        message,
+                    };
+                    if curve.heights.is_empty() && tunnels.height.is_none() {
+                        return Err(wrong(
+                            "it lies on the ground plane, and its tunnels name no height field"
+                                .to_owned(),
+                        ));
+                    }
+                    if !curve.heights.is_empty() && curve.heights.len() != curve.points.len() {
+                        return Err(wrong(format!(
+                            "{} heights for {} points",
+                            curve.heights.len(),
+                            curve.points.len()
+                        )));
+                    }
                     if let Some(wide) = curve
                         .values
                         .iter()
@@ -3295,8 +3314,11 @@ impl Runtime {
                     curves.insert(curve.id.clone(), curve);
                 }
             }
-            let (at, reach) = input(&tunnels.height);
-            heights = Some((self.view(index, chunk, at, reach), tunnels.depth));
+            let ground = tunnels.height.as_ref().map(|height| {
+                let (at, reach) = input(height);
+                self.view(index, chunk, at, reach)
+            });
+            heights = Some((ground, tunnels.depth));
         }
         // Each room within reach once, by id, as a box from its lowest corner to its highest, in
         // cells.
@@ -3380,9 +3402,15 @@ impl Runtime {
                     // Only within a cell of a wall, which is all a surface there reads, so a voxel
                     // reads what is within reach of its column.
                     let mut outside = CARVE_MARGIN;
-                    if let Some((heights, depth)) = &heights {
+                    if let Some((ground, depth)) = &heights {
                         for curve in curves.values() {
-                            outside = outside.min(tunnel_distance(curve, at, heights, *depth)?);
+                            let distance = if curve.heights.is_empty() {
+                                let ground = ground.as_ref().expect("checked for every curve");
+                                tunnel_distance(curve, at, ground, *depth)?
+                            } else {
+                                tube_distance(curve, at, *depth)
+                            };
+                            outside = outside.min(distance);
                         }
                     }
                     for (low, high) in boxes.values() {
@@ -4266,6 +4294,41 @@ fn tunnel_distance(
         nearest_outside = nearest_outside.min(outside);
     }
     Ok(nearest_outside)
+}
+
+/// How far `at` is outside the tube around `curve`, a curve with heights, in cells, negative
+/// inside, or [`CARVE_MARGIN`] if it is at least that far: the tube's radius is the curve's value,
+/// and its centre runs `depth` below the curve's heights.
+fn tube_distance(curve: &Curve, at: [f32; 3], depth: f32) -> f32 {
+    let mut nearest_outside = CARVE_MARGIN;
+    for i in 0..curve.points.len().saturating_sub(1) {
+        let point = |i: usize| {
+            [
+                curve.points[i][0],
+                curve.points[i][1],
+                curve.heights[i] - depth,
+            ]
+        };
+        let (a, b) = (point(i), point(i + 1));
+        let along: [f32; 3] = std::array::from_fn(|axis| b[axis] - a[axis]);
+        let length: f32 = along.iter().map(|d| d * d).sum();
+        let t = if length == 0.0 {
+            0.0
+        } else {
+            ((0..3)
+                .map(|axis| (at[axis] - a[axis]) * along[axis])
+                .sum::<f32>()
+                / length)
+                .clamp(0.0, 1.0)
+        };
+        let radius = curve.values[i] + (curve.values[i + 1] - curve.values[i]) * t;
+        let across = (0..3)
+            .map(|axis| (at[axis] - a[axis] - along[axis] * t).powi(2))
+            .sum::<f32>()
+            .sqrt();
+        nearest_outside = nearest_outside.min(across - radius);
+    }
+    nearest_outside
 }
 
 /// How far `at` is outside the box from `low` to `high`, negative inside.

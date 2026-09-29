@@ -199,6 +199,7 @@ impl RegionJob for Rivers {
                 [x1 as f32 + 1.0, row(input.edge_hash(Edge::East, 0))],
             ],
             values: vec![2.0, 1.0, 2.0],
+            heights: Vec::new(),
         }]))
     }
 }

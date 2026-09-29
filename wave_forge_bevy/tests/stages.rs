@@ -412,6 +412,7 @@ impl wave_forge::stages::regions::RegionJob for Lines {
             },
             points: vec![[x0 as f32, row], [x1 as f32 + 1.0, row]],
             values: vec![0.0, 0.0],
+            heights: Vec::new(),
         }]))
     }
 }

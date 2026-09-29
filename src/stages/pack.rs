@@ -9,7 +9,7 @@
 use crate::noise::NoiseConfig;
 use crate::towns::Selector;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The pack format this library reads.
 pub const PACK_VERSION: u32 = 1;
@@ -662,12 +662,15 @@ pub struct Level {
 
 /// A Carve stage's tunnels: every curve of the curves stage `curves` is a tube around its centre
 /// line, whose radius is the curve's value there, of at most `max_radius` cells, and whose centre
-/// runs `depth` cells below the `height` field at the nearest point of the centre line.
+/// runs `depth` cells below the curve's own height where it has heights, a Tunnels stage's say, or
+/// else below the `height` field at the nearest point of the centre line.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tunnels {
     pub curves: String,
-    pub height: String,
+    #[serde(default)]
+    pub height: Option<String>,
+    #[serde(default)]
     pub depth: f32,
     pub max_radius: u32,
 }
@@ -1704,6 +1707,20 @@ impl Pack {
             })
             .collect();
         let mut stages = Vec::with_capacity(file.stages.len());
+        // The curves stages whose curves always lie on the ground plane, with no heights.
+        let ground_curves: BTreeSet<String> = file
+            .stages
+            .iter()
+            .filter(|def| {
+                matches!(
+                    def.kind,
+                    StageKind::Rivers { .. }
+                        | StageKind::Network { .. }
+                        | StageKind::TableCurves { .. }
+                )
+            })
+            .map(|def| def.name.clone())
+            .collect();
         // Which table each TableSites stage reads, for the Solve stages that choose by its rows.
         let site_tables: BTreeMap<String, String> = file
             .stages
@@ -2212,7 +2229,17 @@ impl Pack {
                         // the height at the nearest point of the tunnel's centre line.
                         let reach = Reach::Cells(tunnels.max_radius + 1);
                         reads.push((tunnels.curves.as_str(), reach, Output::Curves));
-                        reads.push((tunnels.height.as_str(), reach, Output::Field));
+                        match &tunnels.height {
+                            Some(height) => reads.push((height.as_str(), reach, Output::Field)),
+                            None if ground_curves.contains(&tunnels.curves) => {
+                                return Err(invalid(format!(
+                                    "the curves of {:?} lie on the ground plane; name a height \
+                                     field for its tunnels",
+                                    tunnels.curves
+                                )));
+                            }
+                            None => {}
+                        }
                     }
                     if let Some(rooms) = rooms {
                         reads.push((rooms.as_str(), Reach::Cells(1), Output::Pieces));

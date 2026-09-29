@@ -385,12 +385,16 @@ engine's thread only draws them. Godot draws it and collides with it through
 
 ### Carve
 
-`Carve(volume: "rock", tunnels: Some((curves: "tunnels", height: "ground", depth: 6.0, max_radius: 3)), rooms: Some("dungeon"))`:
+`Carve(volume: "rock", tunnels: Some((curves: "tunnels", height: Some("ground"), depth: 6.0, max_radius: 3)), rooms: Some("dungeon"))`:
 the volume `rock` with tunnels and rooms carved out of it, empty inside them and unchanged elsewhere
 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Every curve of `tunnels.curves`, a
 [Region](#region), [Rivers](#rivers), [Network](#network) or [TableCurves](#tablecurves) stage, is a
 tube around its centre line whose radius is the curve's value there, of at most `max_radius`
-cells, and whose centre runs `depth` cells below `height` at the nearest point of the centre line.
+cells. A curve with heights of its own, a region job's worm tunnel say, runs through 3D space, its
+centre `depth` cells (default 0) below its heights. A curve on the ground plane has none, so its
+centre runs `depth` cells below the field `height` at the nearest point of the centre line; loading
+refuses tunnels along a Rivers, Network or TableCurves stage without `height`, and a region job's
+curve without heights where there is none fails with `StageError::Curve`.
 Every piece of `rooms`, an [Assemble](#assemble) stage, is a box from its footprint's floor up its
 height in cells, so a dungeon grown with a negative `lift` is a set of rooms under its entrance.
 
@@ -741,7 +745,9 @@ missing job fails with `StageError::NoRegionJob`. A computed region is kept whil
 is needed, so a finite world is one region computed once.
 
 A `Curve` has a positional id, `CurveId::Region` with its region and index, points in world
-columns and one value per point, which an [Apply](#apply) stage reads as its radius. A Bevy game
+columns, one value per point, which an [Apply](#apply) stage reads as its radius, and optionally a
+height in cells per point for a curve through 3D space, which a [Carve](#carve) stage's tunnels
+follow. A Bevy game
 registers its own jobs in the runtime it builds; a Godot game, which cannot, uses the built-in
 [Rivers](#rivers) stage.
 
