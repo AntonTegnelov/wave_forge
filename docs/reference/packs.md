@@ -265,6 +265,7 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Solve` | Tiles | a Sites or TableSites stage, 0 cells |
 | `Assemble` | Stamps | a sites stage, 0 cells |
 | `Scatter` | Points | a height field, `apart` cells (one more with `max_slope`); a sites stage or an Assemble stage, `apart + margin` cells |
+| `Embed` | Points | a volume, and what its conditions read, 0 cells |
 
 ### Field
 
@@ -683,6 +684,19 @@ no two Scatter stages share a salt.
 
 `examples/rings.world.ron` scatters ore rocks in the middle of the woods on gentle ground, ore veins
 high in the peaks along the slope, and groves of three to six birches on the grassland.
+
+### Embed
+
+`Embed(kind: "iron", volume: "rock", spacing: 4, count: (2, 4), between: (-16.0, 20.0), when: [...])`:
+points of `kind` inside a Volume or Carve stage's rock, ore say. Each square block of `spacing`
+columns has `count` candidates (default one), each at a hashed place in the block and a hashed
+height from `between.0` up to `between.1` cells. A candidate is kept where the volume's value at its
+height, between the voxels below and above it as its surface runs, is above zero, so it lies inside
+the drawn rock, and where every condition of `when` holds; the conditions are a Rules stage's, with
+`Z` read as the point's height, so `Less(Z, Sub(Input("height"), Constant(4.0)))` keeps ore at
+least four cells down. A chunk's product is the points whose column lies in it, with positional ids
+as a Scatter stage's, so `Edit::Remove` mines one for good, and engines bind scenes to their kind as
+to a Scatter point's. It works at the WFC lattice's scale on a volume of that scale.
 
 ### Region
 
