@@ -77,8 +77,8 @@ without chunks, a game builds a `Runtime` of the same pack and seed and calls `s
   `StagesSaved(save)` message, and `load(save)` brings a world back from one
   ([packs.md](packs.md#persistence-and-saves)).
 - `StagePlacements`, a resource: `StagePlacements::default().bind(kind, |entity| ...)` binds a
-  kind, a Scatter or Embed point's kind or an Assemble piece's name, to what its entities hold: a
-  `SceneRoot` of a glTF scene, a mesh and a material, anything. Every point or piece of a bound kind
+  kind, a Scatter, Embed, Deposit or Spawn point's kind or an Assemble piece's or Cave room's name,
+  to what its entities hold: a `SceneRoot` of a glTF scene, a mesh and a material, anything. Every point or piece of a bound kind
   in a chunk that arrives gets an entity with its `Transform` (`transform_of` or `stamp_transform`)
   and a `Placed { stage, chunk, id }` component, announced by an `InstanceSpawned { entity, placed }`
   message, and despawned when its chunk is dropped. A piece overlapping several chunks gets one

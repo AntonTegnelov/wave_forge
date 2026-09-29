@@ -7,7 +7,7 @@
 //! with any GPU device it needs, are built on that thread, so a town solver gets a device of its
 //! own there rather than Bevy's.
 //!
-//! A game binds a kind (a Scatter point's kind, or an Assemble piece's name) to what its entities
+//! A game binds a kind (a point's kind, or a piece's or cave room's name) to what its entities
 //! hold through [`StagePlacements`]: every point or piece of a bound kind gets an entity at its
 //! transform with a [`Placed`] component, announced by [`InstanceSpawned`] and despawned with its
 //! chunk.
@@ -68,7 +68,7 @@ pub struct StagesSaved(pub Save);
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct StagesFailed(pub String);
 
-/// What a game gives the entities of a kind, a Scatter point's kind or an Assemble piece's name:
+/// What a game gives the entities of a kind, a point's kind or a piece's or cave room's name:
 /// a `SceneRoot` of a glTF scene, a mesh and a material, a collider, anything.
 type Spawn = Box<dyn Fn(&mut EntityCommands) + Send + Sync>;
 

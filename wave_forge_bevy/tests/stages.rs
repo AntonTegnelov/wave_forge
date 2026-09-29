@@ -2,7 +2,7 @@
 //! arrives is what the library's runtime generates, and moving away drops what was left behind.
 //! The same holds for each chunk's ground, built from the height field, and a save made in one app
 //! brings a player's edits back in another. An assembled piece stands where its stage grew it, and
-//! bound kinds get an entity per point or piece, which goes with its chunk.
+//! bound kinds get an entity per point, piece or cave room, which goes with its chunk.
 
 use bevy_app::{App, Startup, Update};
 use bevy_color::{Color, ColorToComponents};
@@ -792,6 +792,82 @@ fn a_piece_overlapping_several_chunks_gets_one_entity() {
 }
 
 /// A pack with ground at full detail near the focus and at a coarse scale of 8 beyond it.
+const CAVE: &str = r#"(
+    version: 1,
+    stages: [
+        (name: "level", kind: Cave(region: 8, depth: (-30.0, -10.0), patterns: [Star],
+            count: (4, 6), apart: 12.0, rerolls: 8, rooms: [(name: "cavern", size: (7, 7, 5))])),
+        (name: "enemies", kind: Spawn(cave: "level", budget: 4, kinds: [(kind: "grunt", cost: 1)])),
+    ],
+)"#;
+
+#[derive(bevy_ecs::prelude::Component)]
+struct Cavern;
+
+#[derive(bevy_ecs::prelude::Component)]
+struct Grunt;
+
+#[test]
+fn a_caves_rooms_and_its_spawned_points_get_an_entity_each() {
+    let pack = Arc::new(Pack::parse(CAVE).expect("a valid pack"));
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["level", "enemies"], SETTINGS, move || {
+            Ok(Runtime::new(pack, 5, SETTINGS.chunk))
+        })
+        .with_radius("level", 4)
+        .with_radius("enemies", 4),
+    );
+    app.insert_resource(
+        StagePlacements::default()
+            .bind("cavern", |entity| {
+                entity.insert(Cavern);
+            })
+            .bind("grunt", |entity| {
+                entity.insert(Grunt);
+            }),
+    );
+    let area: Vec<ChunkCoord> = (-4..=4)
+        .flat_map(|y| (-4..=4).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        area.iter().all(|&chunk| {
+            stages.stamps("level", chunk).is_some() && stages.points("enemies", chunk).is_some()
+        })
+    });
+
+    let caverns = placed::<Cavern>(&mut app);
+    let grunts = placed::<Grunt>(&mut app);
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let (mut rooms, mut spawns) = (
+        std::collections::BTreeSet::new(),
+        std::collections::BTreeSet::new(),
+    );
+    for &chunk in &area {
+        for stamp in stages.stamps("level", chunk).expect("arrived") {
+            if stamp.id.chunk == chunk {
+                rooms.insert(stamp.id);
+            }
+        }
+        for point in stages.points("enemies", chunk).expect("arrived") {
+            spawns.insert(point.id);
+        }
+    }
+    let ids = |placed: &[(Transform, Placed)]| {
+        placed
+            .iter()
+            .map(|(_, placed)| placed.id)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert!(
+        rooms.len() >= 4 && spawns.len() >= 16,
+        "{rooms:?} {spawns:?}"
+    );
+    assert_eq!((caverns.len(), ids(&caverns)), (rooms.len(), rooms));
+    assert_eq!((grunts.len(), ids(&grunts)), (spawns.len(), spawns));
+}
+
 const FAR_PACK: &str = r#"(
     version: 1,
     stages: [

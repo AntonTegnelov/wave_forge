@@ -620,7 +620,10 @@ impl INode for WaveForgeStages {
                     Some(
                         StageKind::Scatter { .. }
                             | StageKind::Embed { .. }
+                            | StageKind::Deposit { .. }
+                            | StageKind::Spawn { .. }
                             | StageKind::Assemble { .. }
+                            | StageKind::Cave { .. }
                     )
                 )
             };
@@ -2569,7 +2572,10 @@ impl WaveForgeStages {
                 )
             };
             let items: Vec<Item> = match pack.kind(stage)? {
-                StageKind::Scatter { .. } | StageKind::Embed { .. } => worker
+                StageKind::Scatter { .. }
+                | StageKind::Embed { .. }
+                | StageKind::Deposit { .. }
+                | StageKind::Spawn { .. } => worker
                     .points(stage, chunk)?
                     .iter()
                     .filter(|point| binds(&point.kind))
@@ -2584,7 +2590,7 @@ impl WaveForgeStages {
                         gi: Gi::Off,
                     })
                     .collect(),
-                StageKind::Assemble { .. } => worker
+                StageKind::Assemble { .. } | StageKind::Cave { .. } => worker
                     .stamps(stage, chunk)?
                     .iter()
                     // A piece overlapping several chunks is placed by the one its id names.
