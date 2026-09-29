@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use wave_forge::stages::{Runtime, StageKind, Value};
+use wave_forge::stages::{Condition, Expr, Facts, Runtime, StageKind, Value};
 use wave_forge::{ChunkCoord, FocusPoint};
 use wfc_devtools::continent::{CULTURES, SEED, SIZE, history, pack, runtime, towns};
 
@@ -436,4 +436,160 @@ fn every_larger_place_of_four_regions_grows_its_pieces() {
         "continent: four regions' assemblies in {seconds:.1} s, places and pieces by stage: {grown:?}"
     );
     assert!(grown.values().any(|(places, _)| *places > 0), "{grown:?}");
+}
+
+#[test]
+fn the_pack_holds_what_m1_names() {
+    let pack = pack();
+    let kinds: Vec<&StageKind> = pack
+        .stage_names()
+        .map(|name| pack.kind(name).expect("a stage"))
+        .collect();
+    let count = |test: fn(&StageKind) -> bool| kinds.iter().filter(|kind| test(kind)).count();
+
+    let locations: Vec<_> = kinds
+        .iter()
+        .filter_map(|kind| match kind {
+            StageKind::Locations { kinds, .. } => Some(kinds),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let cultures = kinds.iter().find_map(|kind| match kind {
+        StageKind::Solve {
+            by: Some((column, cases)),
+            ..
+        } => Some((column.clone(), cases.len() + 1)),
+        _ => None,
+    });
+
+    assert!(kinds.len() >= 100, "{} stages", kinds.len());
+    assert!(locations.len() >= 30, "{} location kinds", locations.len());
+    assert!(
+        locations
+            .iter()
+            .all(|kind| kind.quota >= 1 && (kind.quota == 1 || kind.apart > 0.0)),
+        "a location kind without a quota, or several without spacing"
+    );
+    assert_eq!(cultures, Some(("culture".to_owned(), CULTURES.len())));
+    let facts = Facts::new(Arc::clone(&pack), SEED).expect("the tables");
+    assert!(
+        facts.table("settlements").is_some(),
+        "no table of settlements"
+    );
+    assert_eq!(count(|kind| matches!(kind, StageKind::Rivers { .. })), 1);
+    assert_eq!(count(|kind| matches!(kind, StageKind::Lakes { .. })), 1);
+    assert_eq!(count(|kind| matches!(kind, StageKind::Network { .. })), 1);
+    assert!(count(|kind| matches!(kind, StageKind::Volume { .. })) >= 1);
+    assert!(count(|kind| matches!(kind, StageKind::Scatter { .. })) >= 40);
+}
+
+#[test]
+fn every_vegetation_and_clutter_stage_grows_in_biomes_the_continent_has() {
+    let pack = pack();
+    let present: std::collections::BTreeSet<String> = biomes(grid(128)).into_iter().collect();
+
+    for name in pack.stage_names() {
+        let Some(StageKind::Scatter { when, .. }) = pack.kind(name) else {
+            continue;
+        };
+        let wanted: Vec<&String> = when
+            .iter()
+            .filter_map(|condition| match condition {
+                Condition::Greater(test, _) => match test.as_ref() {
+                    Expr::Is(stage, names) if stage == "biome" => Some(names),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .flatten()
+            .collect();
+
+        assert!(!wanted.is_empty(), "{name} names no biome");
+        assert!(
+            wanted.iter().any(|biome| present.contains(*biome)),
+            "none of {name}'s biomes {wanted:?} is on the continent"
+        );
+    }
+}
+
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn a_region_grows_its_vegetation_and_clutter() {
+    let pack = pack();
+    let scatters: Vec<String> = pack
+        .stage_names()
+        .filter(|name| matches!(pack.kind(name), Some(StageKind::Scatter { .. })))
+        .map(ToOwned::to_owned)
+        .collect();
+    let mut runtime = runtime();
+    let region = square(64, 128);
+    let focus: Vec<FocusPoint> = region.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    let mut targets: Vec<&str> = scatters.iter().map(String::as_str).collect();
+    targets.push("biome");
+
+    let started = std::time::Instant::now();
+    runtime.request(&focus, &targets).expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+    let seconds = started.elapsed().as_secs_f64();
+
+    let placed: BTreeMap<&str, usize> = scatters
+        .iter()
+        .map(|stage| {
+            let count = region
+                .iter()
+                .map(|&chunk| runtime.points(stage, chunk).map_or(0, <[_]>::len))
+                .sum();
+            (stage.as_str(), count)
+        })
+        .collect();
+    let empty: Vec<&&str> = placed
+        .iter()
+        .filter(|(_, count)| **count == 0)
+        .map(|(stage, _)| stage)
+        .collect();
+    let slowest = runtime
+        .timings()
+        .into_iter()
+        .filter(|(stage, _)| scatters.contains(stage))
+        .map(|(stage, timing)| (timing.ms / timing.products.max(1) as f64, stage))
+        .fold((0.0, String::new()), |a, b| if b.0 > a.0 { b } else { a });
+    eprintln!(
+        "continent: a region's {} vegetation and clutter stages in {seconds:.1} s, {} points; none from {empty:?}; the slowest {:.3} ms a chunk ({}); {placed:?}",
+        scatters.len(),
+        placed.values().sum::<usize>(),
+        slowest.0,
+        slowest.1
+    );
+    // One region holds some of the continent's biomes only: a stage whose biomes cover 500 of
+    // its columns or more places something here. That every stage's biomes are on the continent
+    // is checked by sampling.
+    let names = pack.kind("biome").expect("a biome stage").categories();
+    let mut columns: BTreeMap<&str, usize> = BTreeMap::new();
+    for &chunk in &region {
+        for &index in &runtime.categories("biome", chunk).expect("biomes").values {
+            *columns.entry(names[usize::from(index)]).or_default() += 1;
+        }
+    }
+    for stage in &scatters {
+        let Some(StageKind::Scatter { when, .. }) = pack.kind(stage) else {
+            unreachable!("listed as a Scatter stage");
+        };
+        let covered: usize = when
+            .iter()
+            .filter_map(|condition| match condition {
+                Condition::Greater(test, _) => match test.as_ref() {
+                    Expr::Is(of, names) if of == "biome" => Some(names),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .flatten()
+            .map(|biome| columns.get(biome.as_str()).copied().unwrap_or(0))
+            .sum();
+        assert!(
+            covered < 500 || placed[stage.as_str()] > 0,
+            "{stage}: nothing placed on {covered} columns of its biomes"
+        );
+    }
 }
