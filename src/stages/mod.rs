@@ -28,8 +28,8 @@ pub use pack::{
     TableDef, TableKind, Water,
 };
 pub use runtime::{
-    Categories, Field, FieldView, PlaceName, Point, Product, Runtime, Site, SiteId, StageError,
-    StageTiming, Stamp, TownChunk, Volume,
+    Categories, Field, FieldView, Judgement, PlaceName, Point, Product, Rejection, Runtime, Site,
+    SiteId, StageError, StageTiming, Stamp, TownChunk, Volume,
 };
 pub use save::{FrozenChunk, Save};
 pub use worker::{StageEvent, StageWorker};

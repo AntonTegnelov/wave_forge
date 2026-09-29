@@ -263,6 +263,7 @@ if ($Only -contains "volume") {
 if ($Only -contains "stages") {
     $env:CARGO_TARGET_DIR = $Targets.root
     [void](Invoke-Logged "golden-stages" "cargo" @("test", "--release", "--manifest-path", (Join-Path $Repo "Cargo.toml"), "--test", "golden_stages"))
+    [void](Invoke-Logged "interactive-edit" "cargo" @("test", "--release", "--manifest-path", (Join-Path $Repo "Cargo.toml"), "--test", "interactive_edit", "--", "--ignored", "--nocapture"))
     Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
 }
 

@@ -363,7 +363,12 @@ one.*
 
 **Acceptance criteria.** Selecting a Scatter stage shows its candidate points in the viewport,
 coloured by the modifier that rejected them, with a legend and counts; hovering a point shows its
-attributes. **Needs.** Point viewer with rejection reasons. **Status:** not started (2026-09-23).
+attributes. **Needs.** Point viewer with rejection reasons. **Status:** in progress (2026-09-29):
+`Runtime::scatter_report` gives every candidate of a chunk with the modifier that rejected it, the
+kept ones exactly the chunk's points (`tests/scatter_report.rs`). The Godot node draws a Scatter
+stage's candidates coloured by what became of each, with a legend of colours and counts
+(`verify_candidates.gd`); showing a point's attributes on hover, and the same in Bevy, are
+[#48](https://github.com/AntonTegnelov/wave_forge/issues/48).
 
 ### N6. Turn my building kit into a city
 
@@ -523,7 +528,12 @@ scope. **Status:** not started (2026-09-23).
 
 **Acceptance criteria.** Changing a parameter regenerates only the stages downstream of it and
 updates a 3×3-chunk preview within 200 ms on a reference desktop, measured per stage.
-**Needs.** Cache keyed by stage parameters, invalidation of dependants. **Status:** not started (2026-09-23).
+**Needs.** Cache keyed by stage parameters, invalidation of dependants. **Status:** in progress
+(2026-09-29): a changed pack parameter regenerates only the stages that read it and what reads
+them (`tests/presets.rs`), and in the dev container the islands preset's 3×3-chunk preview is
+generated again in about 2 ms, per stage in [measurements.md](../research/measurements.md) L33.
+The same run on a reference desktop is the measurement script's stages part
+([#224](https://github.com/AntonTegnelov/wave_forge/issues/224)).
 
 ## M: maximal worlds
 

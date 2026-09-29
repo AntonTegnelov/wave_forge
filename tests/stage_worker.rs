@@ -254,3 +254,35 @@ fn a_save_made_on_the_thread_brings_frozen_chunks_back_on_another() {
         trees.as_slice()
     );
 }
+
+#[test]
+fn a_scatter_report_from_the_thread_is_the_runtimes() {
+    let centre = ChunkCoord::new(0, 0, 0);
+    let focus = [FocusPoint::new(centre, 1)];
+    let mut direct = runtime();
+    direct.request(&focus, &["trees"]).expect("stages");
+    direct.run_until_idle().expect("the stages run");
+    let mut worker = StageWorker::spawn(|| Ok(runtime()));
+    worker.request(&focus, &["trees"]);
+    drain_until(&mut worker, |worker| {
+        worker.points("trees", centre).is_some()
+    });
+
+    worker.request_scatter_report("trees", centre);
+    let events = drain_until(&mut worker, |worker| {
+        worker.scatter_report("trees", centre).is_some()
+    });
+
+    assert!(events.contains(&StageEvent::Judged {
+        stage: "trees".to_owned(),
+        chunk: centre,
+    }));
+    let expected = direct
+        .scatter_report("trees", centre)
+        .expect("a Scatter stage");
+    assert!(!expected.is_empty());
+    assert_eq!(
+        worker.scatter_report("trees", centre),
+        Some(expected.as_slice())
+    );
+}

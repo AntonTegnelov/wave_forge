@@ -818,6 +818,17 @@ one candidate per block with no group gives the ids a Scatter stage always gave.
 two Scatter, Embed or Assemble stages whose ids would carry the same 15 bits of salt; renaming one
 fixes it.
 
+`Runtime::scatter_report(stage, chunk)` says what became of every candidate whose column lies in
+a chunk, a group's first point for a group, as a `Judgement`: where it stood, and whether it became
+a point or which modifier rejected it first, as a `Rejection`:
+- `Chance`, `Height`, `Slope`, `Condition(n)` (the `n`th condition of `when`), `Water`, `Sites`
+  or `Blocked` for its own tests;
+- `Spacing` for a candidate that passed but lay too near one of higher priority.
+
+It decides as generating does, from the inputs the runtime holds, so the kept candidates are
+exactly the chunk's points, and it is what a viewer colours candidates by when a rule places
+nothing (N5).
+
 `examples/rings.world.ron` scatters ore rocks in the middle of the woods on gentle ground, ore veins
 high in the peaks along the slope, and groves of three to six birches on the grassland.
 

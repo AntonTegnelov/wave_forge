@@ -17,12 +17,13 @@ use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
 use godot::builtin::math::ApproxEq;
-use godot::classes::base_material_3d::Flags;
+use godot::classes::base_material_3d::{Flags, ShadingMode};
 use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::ArrayType;
+use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
-    ArrayMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
+    ArrayMesh, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
     HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, Node, Node3D,
     PhysicsServer3D, ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D,
     StandardMaterial3D, StaticBody3D,
@@ -41,8 +42,8 @@ use wave_forge::noise::{
 use wave_forge::stages::brushes::{Brush, Canvas, stroke};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, Point, PointId, RowId, Runtime,
-    Save, Site, SiteId, StageError, StageEvent, StageKind, StageWorker, TableKind, Value,
+    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, Point, PointId, Rejection, RowId,
+    Runtime, Save, Site, SiteId, StageError, StageEvent, StageKind, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -233,6 +234,18 @@ pub struct WaveForgeStages {
     /// Empty keeps every frozen chunk in memory, and in the save.
     #[export]
     frozen_directory: GString,
+
+    /// A Scatter stage whose candidates are drawn as small boxes over the ground, each coloured by
+    /// what became of it: kept, or the modifier that rejected it ([`WaveForgeStages::candidate_legend`]),
+    /// to see why a rule places what it places. Empty draws none.
+    #[export_group(name = "Debug")]
+    #[export]
+    candidates_stage: GString,
+
+    /// The candidates drawn, by chunk: the MultiMesh, its instance, and each verdict's count.
+    candidates: HashMap<ChunkCoord, (Rid, Rid, BTreeMap<String, i64>)>,
+    /// The box every candidate is drawn with, kept while any is drawn.
+    candidate_box: Option<Gd<BoxMesh>>,
 
     pack: Option<Arc<Pack>>,
     /// The pack's tables of facts for the seed, as the game last gave them; the sampler and the
@@ -621,6 +634,9 @@ impl INode for WaveForgeStages {
             far_ground_stage: GString::new(),
             kernel_cache: GString::from("user://wave_forge/kernels"),
             frozen_directory: GString::new(),
+            candidates_stage: GString::new(),
+            candidates: HashMap::new(),
+            candidate_box: None,
             ground_material: None,
             ground_material_stage: GString::new(),
             grass_stage: GString::new(),
@@ -728,7 +744,8 @@ impl INode for WaveForgeStages {
                     }
                     StageEvent::Generated { .. }
                     | StageEvent::Dropped { .. }
-                    | StageEvent::Saved => {}
+                    | StageEvent::Saved
+                    | StageEvent::Judged { .. } => {}
                 }
             }
         }
@@ -747,7 +764,10 @@ impl INode for WaveForgeStages {
                 {
                     gone.push(*chunk);
                 }
-                StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
+                StageEvent::Generated { .. }
+                | StageEvent::Dropped { .. }
+                | StageEvent::Saved
+                | StageEvent::Judged { .. } => {}
             }
         }
         // What arrived and went of each volume stage drawn: the rock's, then the fluid's.
@@ -764,7 +784,8 @@ impl INode for WaveForgeStages {
                     }
                     StageEvent::Generated { .. }
                     | StageEvent::Dropped { .. }
-                    | StageEvent::Saved => {}
+                    | StageEvent::Saved
+                    | StageEvent::Judged { .. } => {}
                 }
             }
         }
@@ -778,7 +799,10 @@ impl INode for WaveForgeStages {
                 StageEvent::Dropped { stage, chunk } if *stage == far_stage => {
                     far_gone.push(*chunk);
                 }
-                StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
+                StageEvent::Generated { .. }
+                | StageEvent::Dropped { .. }
+                | StageEvent::Saved
+                | StageEvent::Judged { .. } => {}
             }
         }
         if let Some(save) = save {
@@ -786,10 +810,12 @@ impl INode for WaveForgeStages {
                 .saved()
                 .emit(&GString::from(save.to_ron().as_str()));
         }
+        self.update_candidates(&events);
+        // A save is signalled as it arrives, and a report is drawn as it arrives.
         self.pending.extend(
             events
                 .into_iter()
-                .filter(|event| *event != StageEvent::Saved),
+                .filter(|event| !matches!(event, StageEvent::Saved | StageEvent::Judged { .. })),
         );
         let emitted = self.pending.len().min(SIGNALS_PER_FRAME);
         let mut frame = FrameCost {
@@ -807,7 +833,9 @@ impl INode for WaveForgeStages {
                     .signals()
                     .stage_dropped()
                     .emit(&GString::from(&stage), to_vector(chunk)),
-                StageEvent::Saved => unreachable!("a save is signalled as it arrives"),
+                StageEvent::Saved | StageEvent::Judged { .. } => {
+                    unreachable!("a save and a report are handled as they arrive")
+                }
             }
         }
         frame.signals_ms = elapsed_ms(signalling);
@@ -1993,6 +2021,42 @@ impl WaveForgeStages {
         Some(kept)
     }
 
+    /// The chunks whose candidates of `candidates_stage` are drawn.
+    #[func]
+    fn candidate_chunks(&self) -> Array<Vector3i> {
+        self.candidates
+            .keys()
+            .map(|&chunk| to_vector(chunk))
+            .collect()
+    }
+
+    /// What the drawn candidates of `candidates_stage` came to, over every chunk drawn: each
+    /// verdict's `name` (`"kept"`, or the modifier that rejected it, as `"chance"`, `"height"`,
+    /// `"slope"`, `"condition 0"`, `"water"`, `"sites"`, `"blocked"` or `"spacing"`), the `colour`
+    /// its candidates are drawn in, and their `count`.
+    #[func]
+    fn candidate_legend(&self) -> Array<VarDictionary> {
+        let mut totals: BTreeMap<String, i64> = BTreeMap::new();
+        for (_, _, counts) in self.candidates.values() {
+            for (name, count) in counts {
+                *totals.entry(name.clone()).or_default() += count;
+            }
+        }
+        totals
+            .into_iter()
+            .map(|(name, count)| {
+                let mut out = VarDictionary::new();
+                out.set(
+                    &"colour".to_variant(),
+                    &verdict_colour_of(&name).to_variant(),
+                );
+                out.set(&"name".to_variant(), &name.to_variant());
+                out.set(&"count".to_variant(), &count.to_variant());
+                out
+            })
+            .collect()
+    }
+
     /// The chunks that have a static body: their ground, their volume's surface, and their towns'
     /// modules.
     #[func]
@@ -2590,6 +2654,110 @@ impl WaveForgeStages {
             }
         }
         Ok(())
+    }
+
+    /// Asks the stages' thread for the report of every chunk of `candidates_stage` that arrived,
+    /// draws each report that arrived, and frees those of chunks dropped.
+    fn update_candidates(&mut self, events: &[StageEvent]) {
+        let stage = self.candidates_stage.to_string();
+        if stage.is_empty() {
+            return;
+        }
+        let (Some(worker), Some(pack)) = (&self.worker, &self.pack) else {
+            return;
+        };
+        let Some(StageKind::Scatter { height, .. }) = pack.kind(&stage) else {
+            return;
+        };
+        let Some(scenario) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_scenario())
+        else {
+            return;
+        };
+        let mut rendering = RenderingServer::singleton();
+        for event in events {
+            match event {
+                StageEvent::Generated {
+                    stage: arrived,
+                    chunk,
+                } if *arrived == stage => {
+                    worker.request_scatter_report(&stage, *chunk);
+                }
+                StageEvent::Dropped { stage: gone, chunk } if *gone == stage => {
+                    if let Some((multimesh, instance, _)) = self.candidates.remove(chunk) {
+                        rendering.free_rid(instance);
+                        rendering.free_rid(multimesh);
+                    }
+                }
+                StageEvent::Judged {
+                    stage: judged,
+                    chunk,
+                } if *judged == stage => {
+                    let (Some(report), Some(heights)) = (
+                        worker.scatter_report(&stage, *chunk),
+                        worker.field(height, *chunk),
+                    ) else {
+                        continue;
+                    };
+                    let [sx, sy] = [self.chunk_cells.x as f32, self.chunk_cells.y as f32];
+                    let cell = self.cell_size;
+                    let mut counts: BTreeMap<String, i64> = BTreeMap::new();
+                    let mut buffer: Vec<f32> = Vec::with_capacity(report.len() * 16);
+                    for judged in report {
+                        let name = verdict_name(judged.verdict);
+                        let colour = verdict_colour(judged.verdict);
+                        *counts.entry(name).or_default() += 1;
+                        let local = [
+                            (judged.at[0] - chunk.x as f32 * sx).floor() as u32,
+                            (judged.at[1] - chunk.y as f32 * sy).floor() as u32,
+                        ];
+                        let at = Vector3::new(
+                            judged.at[0] * cell.x,
+                            (heights.get(local[0], local[1]) + 0.5) * cell.y,
+                            judged.at[1] * cell.z,
+                        );
+                        let size = 0.3 * cell.x;
+                        buffer.extend_from_slice(&[
+                            size, 0.0, 0.0, at.x, 0.0, size, 0.0, at.y, 0.0, 0.0, size, at.z,
+                            colour.r, colour.g, colour.b, colour.a,
+                        ]);
+                    }
+                    let multimesh = rendering.multimesh_create();
+                    let mesh = self
+                        .candidate_box
+                        .get_or_insert_with(candidate_mesh)
+                        .get_rid();
+                    rendering.multimesh_set_mesh(multimesh, mesh);
+                    rendering
+                        .multimesh_allocate_data_ex(
+                            multimesh,
+                            report.len() as i32,
+                            MultimeshTransformFormat::TRANSFORM_3D,
+                        )
+                        .color_format(true)
+                        .done();
+                    rendering.multimesh_set_buffer(
+                        multimesh,
+                        &PackedFloat32Array::from(buffer.as_slice()),
+                    );
+                    let instance = rendering.instance_create2(multimesh, scenario);
+                    if let Some((old, old_instance, _)) = self
+                        .candidates
+                        .insert(*chunk, (multimesh, instance, counts))
+                    {
+                        rendering.free_rid(old_instance);
+                        rendering.free_rid(old);
+                    }
+                }
+                StageEvent::Generated { .. }
+                | StageEvent::Dropped { .. }
+                | StageEvent::Saved
+                | StageEvent::Judged { .. } => {}
+            }
+        }
     }
 
     /// Updates the rock's surfaces, or the fluid's with `fluid`, from the chunks of its stage
@@ -3270,6 +3438,10 @@ impl WaveForgeStages {
             grass.clear();
         }
         let mut rendering = RenderingServer::singleton();
+        for (_, (multimesh, instance, _)) in self.candidates.drain() {
+            rendering.free_rid(instance);
+            rendering.free_rid(multimesh);
+        }
         self.far_due.clear();
         for (_, (mesh, instance)) in self.far_grounds.drain() {
             rendering.free_rid(instance);
@@ -3442,6 +3614,52 @@ fn brush_of(brush: &VarDictionary) -> Option<Brush> {
         },
         _ => return None,
     })
+}
+
+/// The box a candidate is drawn with: unshaded, in each instance's colour.
+fn candidate_mesh() -> Gd<BoxMesh> {
+    let mut material = StandardMaterial3D::new_gd();
+    material.set_shading_mode(ShadingMode::UNSHADED);
+    material.set_flag(Flags::ALBEDO_FROM_VERTEX_COLOR, true);
+    let mut mesh = BoxMesh::new_gd();
+    mesh.set_material(&material);
+    mesh
+}
+
+/// What a candidate came to, by name ([`WaveForgeStages::candidate_legend`]).
+fn verdict_name(verdict: Result<(), Rejection>) -> String {
+    match verdict {
+        Ok(()) => "kept".to_owned(),
+        Err(Rejection::Chance) => "chance".to_owned(),
+        Err(Rejection::Height) => "height".to_owned(),
+        Err(Rejection::Slope) => "slope".to_owned(),
+        Err(Rejection::Condition(number)) => format!("condition {number}"),
+        Err(Rejection::Water) => "water".to_owned(),
+        Err(Rejection::Sites) => "sites".to_owned(),
+        Err(Rejection::Blocked) => "blocked".to_owned(),
+        Err(Rejection::Spacing) => "spacing".to_owned(),
+    }
+}
+
+/// The colour a candidate is drawn in, by what it came to.
+fn verdict_colour(verdict: Result<(), Rejection>) -> Color {
+    verdict_colour_of(&verdict_name(verdict))
+}
+
+/// The colour of a verdict by its name: kept green, each modifier its own.
+fn verdict_colour_of(name: &str) -> Color {
+    match name {
+        "kept" => Color::from_rgb(0.2, 0.9, 0.2),
+        "chance" => Color::from_rgb(0.5, 0.5, 0.5),
+        "height" => Color::from_rgb(0.2, 0.4, 1.0),
+        "slope" => Color::from_rgb(1.0, 0.55, 0.1),
+        "water" => Color::from_rgb(0.1, 0.9, 0.9),
+        "sites" => Color::from_rgb(0.9, 0.1, 0.1),
+        "blocked" => Color::from_rgb(0.55, 0.35, 0.15),
+        "spacing" => Color::from_rgb(1.0, 0.9, 0.1),
+        // Every condition of `when`.
+        _ => Color::from_rgb(0.6, 0.2, 0.9),
+    }
 }
 
 /// Parameter values from GDScript, name to number; none if any name is not a string or any value
