@@ -55,6 +55,7 @@ fn source(
                 .map(|ground| ground.surface_triangles(corner(chunk)))
         },
         border,
+        0.25,
     )
 }
 
@@ -101,7 +102,9 @@ fn a_source_covers_its_chunk_and_border_with_the_grounds_triangles_and_nothing_f
             );
         }
     }
-    // No triangle lies wholly beyond the bounds, and every corner is inside them upwards.
+    // The bottom is on a whole cell, and no triangle lies wholly beyond the bounds, every corner
+    // inside them upwards.
+    assert_eq!(source.bounds_origin[1] % 0.25, 0.0);
     let (low, high) = (
         source.bounds_origin[1],
         source.bounds_origin[1] + source.bounds_size[1],

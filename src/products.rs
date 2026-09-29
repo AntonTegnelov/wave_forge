@@ -309,8 +309,10 @@ pub fn nav_source<'a, 'f>(
 /// Chunk `(x, y)` covers `x * chunk_size[0]` onwards along the engine's x and `y * chunk_size[1]`
 /// onwards along its z. `in_world` says which chunks the world holds, and `triangles` gives a
 /// chunk's triangles in world space, three corners each in the winding the engine bakes, or `None`
-/// while the chunk is not built. The bounds reach `border` below the lowest corner gathered and
-/// above the highest.
+/// while the chunk is not built. The bounds reach at least `border` below the lowest corner
+/// gathered and above the highest, and start on a whole number of `cell_height`, the height of the
+/// cells the engine bakes with: neighbouring chunks then round heights to the same cells, so their
+/// meshes meet on the same vertices.
 ///
 /// # Errors
 /// [`NavSourceError::Missing`] until the chunk and every neighbour the world holds are built;
@@ -321,6 +323,7 @@ pub fn surface_nav_source(
     in_world: impl Fn(ChunkCoord) -> bool,
     triangles: impl Fn(ChunkCoord) -> Option<Vec<[f32; 3]>>,
     border: f32,
+    cell_height: f32,
 ) -> Result<NavSource, NavSourceError> {
     let narrowest = chunk_size[0].min(chunk_size[1]);
     if border > narrowest {
@@ -365,12 +368,13 @@ pub fn surface_nav_source(
     } else {
         (lowest, highest)
     };
+    let bottom = ((lowest - border) / cell_height).floor() * cell_height;
     Ok(NavSource {
         triangles: gathered.into_iter().flatten().collect(),
-        bounds_origin: [low[0], lowest - border, low[1]],
+        bounds_origin: [low[0], bottom, low[1]],
         bounds_size: [
             high[0] - low[0],
-            highest - lowest + 2.0 * border,
+            highest + border - bottom,
             high[1] - low[1],
         ],
         border,

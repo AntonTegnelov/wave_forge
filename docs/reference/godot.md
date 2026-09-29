@@ -183,6 +183,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `grass_radius` | chunks around the followed position that get grass (default 1) |
 | | `grass_material` | a `ShaderMaterial` taking the reference grass shader's parameters; empty for that shader |
 | Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
+| Navigation | `navigation_radius` | chunks around the followed position that get a navigation region ([Navigation](#navigation)); below zero, none (the default) |
+| | `navigation_template` | the `NavigationMesh` settings chunks are baked with |
 | Scenes | `scenes` | a kind (a Scatter, Embed, Deposit or Spawn point's kind, or an Assemble piece's or Cave room's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
@@ -319,7 +321,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
   since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` signals emitted in
   `slowest_frame_signals_ms`, `slowest_frame_grounds` built in `slowest_frame_grounds_ms`,
-  `slowest_frame_bodies` built in `slowest_frame_bodies_ms`), and `stages`, each stage's cost on
+  `slowest_frame_bodies` built in `slowest_frame_bodies_ms`, `slowest_frame_navigation_ms` keeping
+  navigation regions), `navigation_baked`, the navigation bakes gone into their regions, and
+  `stages`, each stage's cost on
   the stages' thread by name (`products`, `ms`, `slowest_ms`); `last_frame_ms`, the node's own time
   in its last frame; and `volume_surfaces` and `volume_surfaces_ms`, the surfaces drawn so far and
   the milliseconds drawing them took on Godot's thread, fluid included; `pending_volumes` counts
@@ -328,7 +332,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 ### Signals
 
 `stage_ready(stage, chunk)`, `stage_dropped(stage, chunk)`, `generation_failed(reason)`,
-`saved(text)`, `instance_spawned(node, chunk, id)`.
+`saved(text)`, `instance_spawned(node, chunk, id)`, `navigation_ready(chunk)`.
 
 At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, in the order the
 products arrived (nearest first), so after a wide request some come a few frames later; by then a
@@ -434,6 +438,23 @@ towns' modules as the shapes `set_collision_shape` assigned, every shape added b
 joins the space. A height map's
 samples are one unit apart, so it is scaled by the cell's width, which needs cells as wide as they
 are deep. Ground and bodies go when their chunk's field is dropped or the player moves away.
+
+### Navigation
+
+Within `navigation_radius` of the followed chunk, each chunk gets a navigation region in the
+viewport's navigation map, baked on the navigation server's threads from what its body would hold:
+its ground at full detail, its volume's surface, and its towns' modules with the shapes
+`set_collision_shape` assigned. The source (`wave_forge::surface_nav_source`) holds the chunk's
+triangles and its neighbours' out to a border, the agent's radius in cells and three more, so
+regions baked apart meet on the same vertices, and starts on a whole number of the map's cell
+height for the same reason. A chunk is baked once it and every neighbour inside the world have
+their ground and surface, so navigation reaches a chunk less far than the ground, and again when
+any of them changes, keeping its last mesh until the new one is in; one bake is prepared a frame,
+nearest first. `navigation_template` gives the agent's size, climb and slope; its cell size and
+height are replaced by the map's. `navigation_chunks()` lists the chunks whose mesh is in the map,
+and `navigation_ready(chunk)` names each as it goes in. A played world (`play_directory`) gets the
+same navigation as a generated one. The regions take no asynchronous iterations: a region given
+new meshes while one was under way stopped the map synchronising in Godot 4.7.2.
 
 With `ground_material_stage` set, a chunk's ground also waits for that stage's categories of
 itself and of the chunks beyond its far edges ([packs.md](packs.md#ground)), and gets a copy of

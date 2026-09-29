@@ -14,6 +14,7 @@ use crate::gi::Gi;
 use crate::grass::{GRASS_SHADER, Grass};
 use crate::lods::{add_levelled_surface, levelled_mesh};
 use crate::placements::{Item, Placements};
+use crate::stage_navigation::StageNavigation;
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
 use godot::builtin::math::ApproxEq;
@@ -24,9 +25,9 @@ use godot::classes::rendering_server::ArrayType;
 use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
     ArrayMesh, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
-    HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, Node, Node3D,
-    PhysicsServer3D, ProjectSettings, RenderingServer, Shader, ShaderMaterial, Shape3D,
-    StandardMaterial3D, StaticBody3D,
+    HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, NavigationMesh,
+    NavigationServer3D, Node, Node3D, PhysicsServer3D, ProjectSettings, RenderingServer, Shader,
+    ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
 };
 use godot::global::Error;
 use godot::obj::EngineEnum;
@@ -207,6 +208,19 @@ pub struct WaveForgeStages {
     #[export]
     collider_radius: i32,
 
+    /// How many chunks around the followed position get a navigation region, baked on the
+    /// navigation server's threads from what their colliders hold: the ground, the volume's
+    /// surface, and every town's modules that have a shape. A chunk is baked once it and its
+    /// neighbours inside the world have all of that, so navigation reaches a chunk less far than
+    /// the ground. Below zero, none.
+    #[export_group(name = "Navigation")]
+    #[export]
+    navigation_radius: i32,
+    /// The settings chunks are baked with: agent size, climb, slope, partitioning. Its cell size
+    /// and height are replaced by the navigation map's, which they must match to merge.
+    #[export]
+    navigation_template: Option<Gd<NavigationMesh>>,
+
     /// Scenes placed where Scatter and Assemble stages put things, as a kind (a point's kind or a
     /// piece's name) to a `PackedScene` or a path to one, loaded on Godot's loader threads; give a
     /// scene holding another extension's Rust resource as a `PackedScene`, since such a resource
@@ -329,6 +343,12 @@ pub struct WaveForgeStages {
     bodies: HashMap<ChunkCoord, (Rid, Vec<Rid>, BodyContents)>,
     /// Chunks within `collider_radius` still waiting for a body after the last frame.
     bodies_pending: usize,
+    /// Each chunk's navigation region, and what the colliders of the chunk and its neighbours
+    /// held when it was baked.
+    navigation: StageNavigation<Vec<BodyContents>>,
+    /// The triangles of each module's collision shape, counter-clockwise seen from outside as the
+    /// navigation bake reads them.
+    shape_faces: HashMap<String, Vec<[f32; 3]>>,
     /// The scenes bound to kinds, and what each stage's chunk placed.
     placements: Placements,
 }
@@ -419,6 +439,9 @@ struct FrameCost {
     /// Chunks whose body was built, and the milliseconds that took.
     bodies: usize,
     bodies_ms: f64,
+    /// The milliseconds spent keeping navigation regions: finished bakes put in place, and a bake
+    /// prepared.
+    navigation_ms: f64,
     /// Nodes placed from bound scenes, and the milliseconds placing took, MultiMeshes included.
     placed: usize,
     placements_ms: f64,
@@ -609,6 +632,14 @@ fn elapsed_ms(since: std::time::Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.0
 }
 
+/// The names of the pack's Solve stages, in the pack's order.
+fn solve_stages(pack: &Pack) -> Vec<String> {
+    pack.stage_names()
+        .filter(|name| matches!(pack.kind(name), Some(StageKind::Solve { .. })))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 /// What a chunk's body was built from: whether it has the ground, and which Solve stages' towns.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BodyContents {
@@ -691,6 +722,10 @@ impl INode for WaveForgeStages {
             ground_due: std::collections::BTreeSet::new(),
             bodies: HashMap::new(),
             bodies_pending: 0,
+            navigation_radius: -1,
+            navigation_template: None,
+            navigation: StageNavigation::new(),
+            shape_faces: HashMap::new(),
             scenes: VarDictionary::new(),
             placement_budget_ms: 2.0,
             promotion_radius: -1,
@@ -936,6 +971,11 @@ impl INode for WaveForgeStages {
         let building = std::time::Instant::now();
         frame.bodies = self.update_colliders();
         frame.bodies_ms = elapsed_ms(building);
+        let navigating = std::time::Instant::now();
+        for chunk in self.update_navigation() {
+            self.signals().navigation_ready().emit(to_vector(chunk));
+        }
+        frame.navigation_ms = elapsed_ms(navigating);
         self.update_grass();
         let placing = std::time::Instant::now();
         frame.placed = self.update_placements();
@@ -986,6 +1026,11 @@ impl WaveForgeStages {
     /// reported as an error too.
     #[signal]
     fn world_run_finished(done: i64, total: i64);
+
+    /// A chunk's navigation mesh is baked and in the navigation map; agents can path across it and
+    /// into its neighbours that have theirs.
+    #[signal]
+    fn navigation_ready(chunk: Vector3i);
 
     /// Loads `pack_file` and the rule sets its Solve stages name, and starts the stages' thread.
     /// Returns whether it could start; why not is reported as an error. A town solver builds its
@@ -1881,6 +1926,16 @@ impl WaveForgeStages {
             None => self.collision_shapes.remove(&module.to_string()),
         };
         self.free_bodies();
+        // Navigation is baked again with the new shapes over the next frames.
+        self.shape_faces.clear();
+        self.navigation.clear();
+    }
+
+    /// The chunks whose navigation mesh is in the map. A chunk being baked again keeps its last
+    /// mesh until the new one is in.
+    #[func]
+    fn navigation_chunks(&self) -> Array<Vector3i> {
+        self.navigation.chunks().map(to_vector).collect()
     }
 
     /// The names of the modules in the rule set `rules` (as `rules_files` names it) that carry
@@ -2435,10 +2490,12 @@ impl WaveForgeStages {
     /// `slowest_frame_ms` in all, `slowest_frame_events` signals emitted in
     /// `slowest_frame_signals_ms` (the handlers connected to them included),
     /// `slowest_frame_grounds` chunks given ground in `slowest_frame_grounds_ms`, and
-    /// `slowest_frame_bodies` chunks given a body in `slowest_frame_bodies_ms`. And `stages`: what
+    /// `slowest_frame_bodies` chunks given a body in `slowest_frame_bodies_ms`, and
+    /// `slowest_frame_navigation_ms` keeping navigation regions. And `stages`: what
     /// each stage has cost on the stages' thread, by name, as `products`, `ms` in all and
     /// `slowest_ms` for one product. And `pending_signals`, `pending_grounds` and
-    /// `pending_colliders`: the signals, grounds and bodies waiting for a later frame.
+    /// `pending_colliders`: the signals, grounds and bodies waiting for a later frame. And
+    /// `navigation_baked`, how many navigation bakes have gone into their regions.
     #[func]
     fn stats(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
@@ -2482,6 +2539,10 @@ impl WaveForgeStages {
             &(self.bodies_pending as i64).to_variant(),
         );
         out.set(
+            &"navigation_baked".to_variant(),
+            &self.navigation.baked.to_variant(),
+        );
+        out.set(
             &"pending_placements".to_variant(),
             &(self.placements.pending() as i64).to_variant(),
         );
@@ -2501,6 +2562,7 @@ impl WaveForgeStages {
             ("slowest_frame_signals_ms", slowest.signals_ms),
             ("slowest_frame_grounds_ms", slowest.grounds_ms),
             ("slowest_frame_bodies_ms", slowest.bodies_ms),
+            ("slowest_frame_navigation_ms", slowest.navigation_ms),
             ("slowest_frame_placements_ms", slowest.placements_ms),
         ] {
             out.set(&key.to_variant(), &value.to_variant());
@@ -3290,33 +3352,8 @@ impl WaveForgeStages {
         let within = |chunk: ChunkCoord| {
             radius >= 0 && (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()) <= radius
         };
-        let solves: Vec<String> = pack
-            .stage_names()
-            .filter(|name| matches!(pack.kind(name), Some(StageKind::Solve { .. })))
-            .map(ToOwned::to_owned)
-            .collect();
-        let contents = |this: &Self, chunk: ChunkCoord| BodyContents {
-            ground: this.ground_revisions.get(&chunk).copied(),
-            volume: this
-                .rock
-                .as_ref()
-                .and_then(|rock| rock.built.get(&chunk))
-                .filter(|surface| !surface.mesh.indices.is_empty())
-                .map(|surface| surface.revision),
-            towns: if this.collision_shapes.is_empty() {
-                Vec::new()
-            } else {
-                solves
-                    .iter()
-                    .filter(|stage| {
-                        this.worker
-                            .as_ref()
-                            .is_some_and(|worker| worker.tiles(stage, chunk).is_some())
-                    })
-                    .cloned()
-                    .collect()
-            },
-        };
+        let solves = solve_stages(&pack);
+        let contents = |this: &Self, chunk: ChunkCoord| this.body_contents(&solves, chunk);
         let mut physics = PhysicsServer3D::singleton();
         let stale: Vec<ChunkCoord> = self
             .bodies
@@ -3488,6 +3525,161 @@ impl WaveForgeStages {
         let at = Transform3D::new(Basis::IDENTITY, self.chunk_corner(chunk));
         physics.body_add_shape_ex(body, shape).transform(at).done();
         shape
+    }
+
+    /// What a chunk's body holds: its ground and volume surface as built, and which of `solves`
+    /// have a town there that the node has shapes for.
+    fn body_contents(&self, solves: &[String], chunk: ChunkCoord) -> BodyContents {
+        BodyContents {
+            ground: self.ground_revisions.get(&chunk).copied(),
+            volume: self
+                .rock
+                .as_ref()
+                .and_then(|rock| rock.built.get(&chunk))
+                .filter(|surface| !surface.mesh.indices.is_empty())
+                .map(|surface| surface.revision),
+            towns: if self.collision_shapes.is_empty() {
+                Vec::new()
+            } else {
+                solves
+                    .iter()
+                    .filter(|stage| {
+                        self.worker
+                            .as_ref()
+                            .is_some_and(|worker| worker.tiles(stage, chunk).is_some())
+                    })
+                    .cloned()
+                    .collect()
+            },
+        }
+    }
+
+    /// Keeps a navigation region on every chunk within `navigation_radius` of the followed chunk,
+    /// baked from the triangles its colliders hold and its neighbours', and baked again when
+    /// what they hold changes. Returns the chunks whose mesh went into the map this frame.
+    fn update_navigation(&mut self) -> Vec<ChunkCoord> {
+        let (Some(pack), Some(focus)) = (self.pack.clone(), self.followed) else {
+            return Vec::new();
+        };
+        let Some(map) = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.find_world_3d())
+            .map(|world| world.get_navigation_map())
+        else {
+            return Vec::new();
+        };
+        let radius = self.navigation_radius;
+        let wanted: Vec<ChunkCoord> = (-radius..=radius)
+            .flat_map(|dy| {
+                (-radius..=radius).map(move |dx| ChunkCoord::new(focus.x + dx, focus.y + dy, 0))
+            })
+            .collect();
+        for (name, shape) in &self.collision_shapes {
+            if self.shape_faces.contains_key(name) {
+                continue;
+            }
+            // A shape's filled debug mesh is the one triangle form every Shape3D offers. Godot's
+            // faces are clockwise seen from outside, and Recast's counter-clockwise, as the
+            // ground's and the volume's are.
+            let faces: Vec<[f32; 3]> = shape
+                .get_debug_mesh()
+                .map(|mesh| {
+                    mesh.get_faces()
+                        .as_slice()
+                        .chunks(3)
+                        .flat_map(|corners| [corners[0], corners[2], corners[1]])
+                        .map(|corner| corner.to_array())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if faces.is_empty() {
+                godot_error!(
+                    "wave forge: the collision shape of {name} has no faces to bake navigation \
+                     from; is its debug_fill off?"
+                );
+            }
+            self.shape_faces.insert(name.clone(), faces);
+        }
+        let solves = solve_stages(&pack);
+        let shape = self.chunk_shape();
+        let chunk_size = [
+            shape.x as f32 * self.cell_size.x,
+            shape.y as f32 * self.cell_size.z,
+        ];
+        // The ground and the volume's surface of a chunk are built from its neighbours' too, so a
+        // chunk has them only where the world's bound holds every chunk around it.
+        let in_world = |chunk: ChunkCoord| {
+            pack.bound().is_none_or(|bound| {
+                (-1..=1).all(|dy| {
+                    (-1..=1).all(|dx| {
+                        let min = [
+                            (chunk.x + dx) as f32 * shape.x as f32,
+                            (chunk.y + dy) as f32 * shape.y as f32,
+                        ];
+                        bound.meets(min, [min[0] + shape.x as f32, min[1] + shape.y as f32])
+                    })
+                })
+            })
+        };
+        let cell_height = NavigationServer3D::singleton().map_get_cell_height(map);
+        let mut navigation = std::mem::replace(&mut self.navigation, StageNavigation::new());
+        let result = navigation.update(
+            map,
+            self.navigation_template.as_ref(),
+            wanted,
+            focus,
+            |chunk| {
+                (-1..=1)
+                    .flat_map(|dy| {
+                        (-1..=1).map(move |dx| ChunkCoord::new(chunk.x + dx, chunk.y + dy, 0))
+                    })
+                    .map(|around| self.body_contents(&solves, around))
+                    .collect()
+            },
+            |chunk, border| {
+                wave_forge::surface_nav_source(
+                    chunk,
+                    chunk_size,
+                    in_world,
+                    |around| self.walkable_triangles(&solves, around),
+                    border,
+                    cell_height,
+                )
+            },
+        );
+        self.navigation = navigation;
+        result.unwrap_or_else(|error| {
+            godot_error!("wave forge: navigation turned off: {error}");
+            self.navigation_radius = -1;
+            Vec::new()
+        })
+    }
+
+    /// The triangles a chunk's colliders hold in Godot's world, counter-clockwise seen from where
+    /// agents walk: its ground, its volume's surface, and its towns' shapes. None while its ground
+    /// or surface is not built.
+    fn walkable_triangles(&self, solves: &[String], chunk: ChunkCoord) -> Option<Vec<[f32; 3]>> {
+        let corner = self.chunk_corner(chunk).to_array();
+        let mut triangles = Vec::new();
+        if !self.ground_stage.is_empty() {
+            let (ground, _, _) = self.grounds.get(&chunk)?;
+            triangles.extend(ground.surface_triangles(corner));
+        }
+        if let Some(rock) = &self.rock {
+            triangles.extend(rock.built.get(&chunk)?.mesh.triangles(corner));
+        }
+        let faces = &self.shape_faces;
+        for stage in solves {
+            let Some((sets, lift)) = self.town_sets(stage, chunk, |name| faces.contains_key(name))
+            else {
+                continue;
+            };
+            for set in sets {
+                triangles.extend(set.placed(&faces[&set.name], lift));
+            }
+        }
+        Some(triangles)
     }
 
     fn free_bodies(&mut self) {
@@ -3662,6 +3854,7 @@ impl WaveForgeStages {
         // Freed after the meshes that draw with them.
         self.chunk_materials.clear();
         self.free_bodies();
+        self.navigation.clear();
         self.placements.clear();
     }
 }
