@@ -5,11 +5,21 @@
 // over those, each shaping the ground its own way, lakes in the hollows and rivers carved from the
 // high ground to the sea. Under the ground lies rock as a density volume, with cheese caves,
 // overhangs on cliffs and ore; a location table of 33 kinds, levelled into the ground and joined
-// by roads. Heights are in cells of height, the sea at 0.
+// by roads; and the settlements of a history a game gives as a table, levelled into the ground. Heights are in cells of height, the sea at 0.
 (
     version: 1,
     bound: Some(Rect(min: (0.0, 0.0), max: (2047.0, 2047.0))),
     water: Some((level: 0.0, lakes: Some("lakes"))),
+    // The history a game simulates over the continent's map before play: its settlements, where
+    // each stands, how large it grew, when it was founded, its culture and what became of it.
+    tables: [
+        (name: "settlements", kind: Given(columns: [
+            ("x", Number), ("y", Number), ("size", Number), ("population", Number), ("founded", Number),
+            ("culture", Names(["coastfolk", "steppe_riders", "woodlanders", "sand_dwellers",
+                "highlanders", "marsh_folk", "jungle_folk", "frostfolk"])),
+            ("fate", Names(["thriving", "declining", "ruined", "abandoned"])),
+        ])),
+    ],
     // The 3D noises of the rock: cheese caves, and the blobs that overhang cliffs.
     noises: {
         "caves": (noise_type: SimplexSmooth, seed: 31, frequency: 0.035, fractal_octaves: 2),
@@ -228,10 +238,14 @@
         ])),
         // The ground levelled over every place and blended back over four cells around it.
         (name: "flattened", kind: Flatten(height: "carved", sites: "places", blend: 4)),
+        // The history's settlements, each a site of one to three chunks a side where its row puts
+        // it, levelled into the ground over six cells around it.
+        (name: "settlements", kind: TableSites(table: "settlements", height: "flattened", at: ("x", "y"), size: "size", max_size: 3)),
+        (name: "settled", kind: Flatten(height: "flattened", sites: "settlements", blend: 6)),
         // Roads joining the places of each region of 32 chunks, round the ridges and never through
         // the sea or a lake, levelled across their width into the ground a player walks.
-        (name: "roads", kind: Network(sites: "places", height: "flattened", region: 32, width: 1.5, climb: 4.0, dry: Some(0.5))),
-        (name: "ground", kind: Apply(height: "flattened", curves: "roads", max_radius: 2, blend: 2, profile: Level)),
+        (name: "roads", kind: Network(sites: "places", height: "settled", region: 32, width: 1.5, climb: 4.0, dry: Some(0.5))),
+        (name: "ground", kind: Apply(height: "settled", curves: "roads", max_radius: 2, blend: 2, profile: Level)),
         // How much a column is cliff: none on ground that climbs under 3 cells within two, all of
         // it from 8.
         (name: "cliffs", kind: Field(Smoothstep(3.0, 8.0, Input("roughness")))),
