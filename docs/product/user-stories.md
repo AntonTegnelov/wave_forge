@@ -599,8 +599,12 @@ runs a world into a directory on a thread of its own, from the editor dock's Wor
 reporting each chunk and what each stage has generated, cancels and resumes,
 and plays it back, its fields and trees those a generating node makes, no stage run, and a path
 across its navigation the generated world's (`verify_world.gd`). The Bevy plugin plays such a world too, its ground and trees those the
-runtime generates and no stage run (`wave_forge_bevy/tests/stages.rs`). The maximal preset and the
-desktop numbers are [#197](https://github.com/AntonTegnelov/wave_forge/issues/197).
+runtime generates and no stage run (`wave_forge_bevy/tests/stages.rs`). The maximal preset is
+[#247](https://github.com/AntonTegnelov/wave_forge/issues/247): so far its terrain
+(`examples/continent/continent.world.ron`), a continent of 2 048 by 2 048 cells that falls into the
+ocean before its bound, 50 biomes by rules of which a survey finds 48, per-biome height, lakes and
+rivers (`tests/continent.rs`, [measurements.md](../research/measurements.md) L34). The desktop
+numbers are [#197](https://github.com/AntonTegnelov/wave_forge/issues/197).
 
 ### M2. Generate a maximal world once before play
 
