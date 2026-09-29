@@ -21,9 +21,10 @@ use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials, volume_mesh};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::materials::coloured_surface_mesh;
 use wave_forge_bevy::stages::{
-    FarGroundDropped, GroundDropped, GroundReady, InstanceSpawned, Placed, StageDropped,
-    StagePlacements, StageReady, StagesSaved, StagesSettings, VolumeDropped, WaveForgeStages,
-    WaveForgeStagesPlugin, WaveForgeStagesSystems, far_ground_mesh, ground_mesh, surface_mesh,
+    FarGroundDropped, FluidDropped, FluidReady, GroundDropped, GroundReady, InstanceSpawned,
+    Placed, StageDropped, StagePlacements, StageReady, StagesSaved, StagesSettings, VolumeDropped,
+    WaveForgeStages, WaveForgeStagesPlugin, WaveForgeStagesSystems, far_ground_mesh, ground_mesh,
+    surface_mesh,
 };
 
 const PACK: &str = r#"(
@@ -1084,6 +1085,73 @@ fn each_chunks_surface_is_the_librarys_and_goes_with_its_volume() {
     let dropped: Vec<ChunkCoord> = app
         .world_mut()
         .resource_mut::<Messages<VolumeDropped>>()
+        .drain()
+        .map(|message| message.0)
+        .collect();
+    assert!(dropped.contains(&origin), "{dropped:?}");
+}
+
+#[test]
+fn each_chunks_fluid_surface_is_the_librarys_and_goes_with_its_fluid() {
+    let pack = VOLUME_PACK.replace(
+        "    ],\n)",
+        r#"        (name: "pools", kind: Aquifer(volume: "caves", cell: (6, 4), level: (-3.0, 2.0),
+            materials: Some((rules: [(category: "lava", when: [Less(Z, Constant(-0.5))])], otherwise: "water")))),
+    ],
+)"#,
+    );
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["caves", "pools"], SETTINGS, move || {
+            Ok(Runtime::new(
+                Arc::new(Pack::parse(&pack).expect("a valid pack")),
+                4,
+                SETTINGS.chunk,
+            ))
+        })
+        .with_volume("caves")
+        .with_fluid("pools"),
+    );
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .fluid(origin)
+            .is_some()
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let expected = volume_mesh(
+        origin,
+        |at| stages.volume("pools", at),
+        SETTINGS.cell_size.to_array(),
+    )
+    .expect("the fluid around it arrived");
+    assert!(!expected.indices.is_empty());
+    assert_eq!(stages.fluid(origin), Some(&expected));
+    assert_ne!(stages.fluid(origin), stages.surface(origin));
+    let ready: Vec<ChunkCoord> = app
+        .world_mut()
+        .resource_mut::<Messages<FluidReady>>()
+        .drain()
+        .map(|message| message.0)
+        .collect();
+    assert!(ready.contains(&origin), "{ready:?}");
+
+    let mut focus = app
+        .world_mut()
+        .query_filtered::<&mut GlobalTransform, With<GenerationFocus>>();
+    for mut at in focus.iter_mut(app.world_mut()) {
+        *at = GlobalTransform::from_translation(Vec3::new(8000.0, 0.0, 8000.0));
+    }
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .fluid(origin)
+            .is_none()
+    });
+    let dropped: Vec<ChunkCoord> = app
+        .world_mut()
+        .resource_mut::<Messages<FluidDropped>>()
         .drain()
         .map(|message| message.0)
         .collect();
