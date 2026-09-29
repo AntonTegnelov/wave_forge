@@ -16,7 +16,8 @@
 # `godot/verify_bake.gd`, which bakes an area into a scene of plain nodes, then
 # `godot/verify_import.gd`, which proposes a module set from a MeshLibrary, then
 # `godot/verify_params.gd`, which tunes a preset's parameters, then `godot/verify_paint.gd`, which
-# paints strokes as the editor's brushes do, then the editor itself, headless, which has to load the
+# paints strokes as the editor's brushes do, then `godot/verify_candidates.gd`, which draws a
+# Scatter stage's candidates by what became of each, then the editor itself, headless, which has to load the
 # editor plugin (`godot/addons/wave_forge`) without a script error, then
 # `godot/verify_sound.gd`, which checks the city's region tags and sound, then
 # `godot/verify_names.gd`, which names a location through a translation, then
@@ -44,6 +45,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_import.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_params.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_paint.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_candidates.gd
 editor_log="$(mktemp)"
 "${GODOT:-godot}" --headless --editor --path "$here/godot" --quit-after 300 >"$editor_log" 2>&1
 if grep -E "SCRIPT ERROR|Failed to load script" "$editor_log"; then

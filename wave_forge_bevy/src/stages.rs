@@ -811,6 +811,9 @@ fn drain(
                     .expect("a Saved event carries a save");
                 saved.write(StagesSaved(save));
             }
+            StageEvent::Judged { .. } => {
+                unreachable!("the plugin asks for no Scatter report")
+            }
         }
     }
     if let Some(stage) = &ground_stage {

@@ -188,6 +188,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
 | | `frozen_directory` | where frozen stages' chunks the request no longer needs are kept, a file each, so they leave memory and come back unchanged ([packs.md](packs.md#persistence-and-saves)); `user://` paths are resolved, and the game keeps the directory with its saves. Empty keeps every frozen chunk in memory, and in the save |
+| Debug | `candidates_stage` | a Scatter stage whose candidates are drawn as small boxes over the ground, each coloured by what became of it, kept or the modifier that rejected it ([packs.md](packs.md#scatter)); empty draws none |
 
 ### Functions
 
@@ -293,6 +294,11 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   - a point placed as a node has `wave_forge_point`, its stage, the chunk and id of its positional
     id, where it stood and its transform;
   - everything else the generator made has `wave_forge_generated`.
+- `candidate_legend()` gives what the drawn candidates of `candidates_stage` came to, over every
+  chunk drawn: each verdict's `name` (`"kept"`, or `"chance"`, `"height"`, `"slope"`,
+  `"condition n"`, `"water"`, `"sites"`, `"blocked"` or `"spacing"`), the `colour` it is drawn in
+  and its `count`; `candidate_chunks()` lists the chunks drawn. The node asks the stages' thread
+  for each chunk's `scatter_report` as the chunk arrives.
 - `keep_bake_edits(baked)` turns what a designer changed in a bake, as instanced, into edits:
   - a point node moved or turned is moved there with `Edit::Move`;
   - a point node deleted is removed.
