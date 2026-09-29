@@ -21,7 +21,7 @@ Once, headless: the history example's first towns, on the first run after buildi
 one, for P3's time into a new world; `tests/golden_stages.rs`, which checks that the stages come
 out on Windows bit for bit as recorded on Linux ([engine-integration.md](../architecture/engine-integration.md#noise-that-means-the-same-in-both-engines));
 `tests/interactive_edit.rs`, how long a changed parameter takes to regenerate a 3×3-chunk preview,
-for P6 ([measurements.md](../research/measurements.md) L33); `tests/continent.rs`, what part of
+for P6 ([measurements.md](../research/measurements.md) L33); `wfc-devtools/tests/continent.rs`, what part of
 the maximal preset's continent costs, for M1 (L34); and, three times, `measure_volume.gd`, what a cave volume costs per chunk while a player walks
 through it at 4.2 m/s, for P1 ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71),
 [measurements.md](../research/measurements.md) E53).

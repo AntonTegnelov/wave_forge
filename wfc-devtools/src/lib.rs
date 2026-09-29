@@ -7,6 +7,7 @@
 //! parallel, GPU-driven solver.
 
 pub mod city;
+pub mod continent;
 pub mod fixtures;
 pub mod invariants;
 pub mod models;
