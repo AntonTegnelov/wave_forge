@@ -21,7 +21,7 @@ use super::pack::{
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use super::rivers::DownhillRivers;
 use super::save::{FrozenChunk, Save};
-use super::town_thread::{Done, Job, Stopped, TownKey, TownThread};
+use super::town_thread::{Done, Job, Masked, Stopped, TownKey, TownThread};
 use crate::frozen::{FrozenStore, StoreError};
 use crate::noise::NoiseConfig;
 use crate::products::InstanceId;
@@ -3017,6 +3017,7 @@ impl Runtime {
             by,
             bottom,
             top,
+            mask,
             ..
         } = &stage.kind
         else {
@@ -3043,6 +3044,29 @@ impl Runtime {
             .towns
             .as_ref()
             .ok_or_else(|| StageError::NoTownSolver(stage.name.clone()))?;
+        // The site's columns the mask leaves out, from the town's lowest corner.
+        let outside = match mask {
+            Some(mask) => {
+                let [sx, sy] = self.size.map(i64::from);
+                let (x0, y0) = (i64::from(site.min.0) * sx, i64::from(site.min.1) * sy);
+                let (x1, y1) = (i64::from(site.max.0) * sx, i64::from(site.max.1) * sy);
+                let mut columns = Vec::new();
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let centre = [x as f32 + 0.5, y as f32 + 0.5];
+                        if self.sample(&mask.field, centre)? <= mask.above {
+                            columns.push(((x - x0) as u32, (y - y0) as u32));
+                        }
+                    }
+                }
+                Some(Masked {
+                    columns,
+                    tiles: mask.outside.clone(),
+                    ground: mask.ground.clone(),
+                })
+            }
+            None => None,
+        };
         let [high, low, _] = site_hash(self.seed, stage.salt, &site.id);
         self.ticket += 1;
         towns.send(Job {
@@ -3059,6 +3083,7 @@ impl Runtime {
             ),
             bottom: bottom.clone(),
             top: top.clone(),
+            outside,
         });
         self.solving
             .insert((index, site.id.clone()), (self.ticket, site));
