@@ -290,7 +290,17 @@ names from community header dumps, unverified).
 - Carving at runtime goes through the edits log and survives reload.
 
 **Needs.** Region jobs, Assemble, Network, Apply into density volumes, Scatter with budgets, Edits.
-**Status:** not started (2026-09-23).
+**Status:** verified by automated checks (2026-09-29), in the library's CI job
+([#220](https://github.com/AntonTegnelov/wave_forge/issues/220)). The cave level pack
+(`examples/cave_level.world.ron`) is a finite level that one region plans whole: a pattern of
+rooms (a chain, a star or a hub) drawn by hash, caverns, halls and shafts placed at their depths as
+stamps, tunnels found through 3D noise between linked rooms as curves, both carved into solid rock.
+Its crystal meets the level's quota of thirty exactly in the rock around the rooms, every room
+spends its budget of twelve on enemies, the level is the same in any order, and a dig goes through
+the edits log and survives a save and a reload without moving the crystal
+(`tests/cave_level.rs`). The stages are checked on their own in `tests/caves.rs` and
+`tests/cave_budgets.rs`. Engines draw the carved rock as any volume; they do not bind scenes to its
+rooms yet ([#233](https://github.com/AntonTegnelov/wave_forge/issues/233)).
 
 ## N: newcomers and beginners
 

@@ -498,6 +498,35 @@ pub enum StageKind {
         #[serde(default = "one_wander")]
         wander: f32,
     },
+    /// Exactly `total` points of `kind` per level of the Cave stage `cave`, in the rock around its
+    /// rooms, ore say. Candidates are drawn by hash, each in a hashed room's shell, less than
+    /// `depth` cells outside its box, at the centre of a voxel of the Volume or Carve stage
+    /// `volume`; one is kept where that voxel is solid, inside the region, outside every room and
+    /// at least `apart` cells from every point kept, until `total` are kept. A level that runs out
+    /// of its `tries` candidates first fails. A chunk's product is the points whose column lies
+    /// in it.
+    Deposit {
+        kind: String,
+        cave: String,
+        volume: String,
+        total: u32,
+        #[serde(default = "one_cell")]
+        depth: u32,
+        #[serde(default)]
+        apart: f32,
+        #[serde(default = "many_tries")]
+        tries: u32,
+    },
+    /// Points standing on the floors of the Cave stage `cave`'s rooms, enemies say, each room
+    /// spending its own `budget`: kinds are drawn by weight among those of `kinds` that cost no
+    /// more than what is left, each at a hashed place on the room's floor, until none is
+    /// affordable, so what a room spends is at most its budget and less than the cheapest kind
+    /// short of it. A chunk's product is the points whose column lies in it.
+    Spawn {
+        cave: String,
+        budget: u32,
+        kinds: Vec<Spawnable>,
+    },
     /// Pieces grown on each of `sites` (only those of `kinds`, if it names any) from connectors,
     /// as a jigsaw village or a dungeon of rooms is: the piece named `start` at the centre of the
     /// site's footprint, then, for each open door in the order doors opened, a piece drawn by
@@ -552,6 +581,17 @@ pub enum Pattern {
     Star,
     /// The next three rooms to the first, and every later one to the room three before it.
     Hub,
+}
+
+/// A kind of point a Spawn stage places ([`StageKind::Spawn`]), and what it costs a room.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Spawnable {
+    pub kind: String,
+    pub cost: u32,
+    /// How often it is drawn against the others a room can still afford.
+    #[serde(default = "one_weight")]
+    pub weight: u32,
 }
 
 /// A room a Cave stage places ([`StageKind::Cave`]): a box of cells an engine binds a scene to by
@@ -639,6 +679,10 @@ pub const MAX_SOURCES: u32 = 64;
 
 const fn one_chunk() -> u32 {
     1
+}
+
+const fn many_tries() -> u32 {
+    4096
 }
 
 const fn two_cells() -> u32 {
@@ -757,6 +801,13 @@ pub struct Materials {
 /// The most rooms one Cave stage can plan.
 pub const MAX_CAVE_ROOMS: u32 = 64;
 
+/// The most points one Deposit stage can place in a level.
+pub const MAX_DEPOSITS: u32 = 4096;
+
+/// The largest budget a Spawn stage can give each room: a level's points are numbered in their
+/// ids, and 64 rooms spending this on kinds that cost 1 still fit.
+pub const MAX_SPAWN_BUDGET: u32 = 1000;
+
 /// The most categories one Rules stage can name: a category is a byte per column.
 pub const MAX_CATEGORIES: usize = 256;
 
@@ -847,7 +898,10 @@ impl StageKind {
             | Self::Tunnels { .. } => Output::Curves,
             Self::Sites { .. } | Self::TableSites { .. } | Self::Locations { .. } => Output::Sites,
             Self::Solve { .. } => Output::Tiles,
-            Self::Scatter { .. } | Self::Embed { .. } => Output::Points,
+            Self::Scatter { .. }
+            | Self::Embed { .. }
+            | Self::Deposit { .. }
+            | Self::Spawn { .. } => Output::Points,
             Self::Assemble { .. } | Self::Cave { .. } => Output::Pieces,
         }
     }
@@ -1781,12 +1835,14 @@ impl Pack {
             })
             .collect();
         let mut stages = Vec::with_capacity(file.stages.len());
-        // The Cave stages, which a Tunnels stage joins the rooms of.
-        let caves: BTreeSet<String> = file
+        // The Cave stages, by name, with the regions they plan levels over.
+        let caves: BTreeMap<String, u32> = file
             .stages
             .iter()
-            .filter(|def| matches!(def.kind, StageKind::Cave { .. }))
-            .map(|def| def.name.clone())
+            .filter_map(|def| match def.kind {
+                StageKind::Cave { region, .. } => Some((def.name.clone(), region)),
+                _ => None,
+            })
             .collect();
         // The curves stages whose curves always lie on the ground plane, with no heights.
         let ground_curves: BTreeSet<String> = file
@@ -1836,6 +1892,8 @@ impl Pack {
                         | StageKind::Aquifer { .. }
                         | StageKind::Cave { .. }
                         | StageKind::Tunnels { .. }
+                        | StageKind::Deposit { .. }
+                        | StageKind::Spawn { .. }
                 )
             {
                 return Err(invalid(format!(
@@ -2388,9 +2446,7 @@ impl Pack {
                     step,
                     wander,
                 } => {
-                    if !by_name.get(cave.as_str()).is_some_and(|&index| {
-                        outputs[index] == Output::Pieces && caves.contains(cave)
-                    }) {
+                    if !caves.contains_key(cave) {
                         return Err(invalid(format!("its cave {cave:?} is no Cave stage")));
                     }
                     if !file.noises.contains_key(noise) {
@@ -2406,6 +2462,67 @@ impl Pack {
                     if *step == 0 || !(wander.is_finite() && *wander >= 0.0) {
                         return Err(invalid(format!(
                             "steps of {step} cells and a wander of {wander}"
+                        )));
+                    }
+                    vec![(cave.as_str(), Reach::Cells(0), Output::Pieces)]
+                }
+                StageKind::Deposit {
+                    cave,
+                    volume,
+                    total,
+                    depth,
+                    apart,
+                    tries,
+                    ..
+                } => {
+                    let Some(&region) = caves.get(cave) else {
+                        return Err(invalid(format!("its cave {cave:?} is no Cave stage")));
+                    };
+                    if !(1..=MAX_DEPOSITS).contains(total) || *depth == 0 || *tries < *total {
+                        return Err(invalid(format!(
+                            "a total of {total} in a shell {depth} cells deep from {tries} tries; \
+                             1 to {MAX_DEPOSITS} points, a depth from 1 and at least as many \
+                             tries as points are allowed"
+                        )));
+                    }
+                    if !(apart.is_finite() && *apart >= 0.0) {
+                        return Err(invalid(format!("points {apart} cells apart")));
+                    }
+                    if let Some(&index) = by_name.get(volume.as_str())
+                        && scales[index] != 1
+                    {
+                        return Err(invalid(format!(
+                            "it deposits in {volume:?}, which is no stage at the WFC lattice's scale"
+                        )));
+                    }
+                    // A chunk may lie anywhere in its region, and the deposits read the whole
+                    // region's volume.
+                    vec![
+                        (cave.as_str(), Reach::Cells(0), Output::Pieces),
+                        (volume.as_str(), Reach::Chunks(region - 1), Output::Volume),
+                    ]
+                }
+                StageKind::Spawn {
+                    cave,
+                    budget,
+                    kinds,
+                } => {
+                    if !caves.contains_key(cave) {
+                        return Err(invalid(format!("its cave {cave:?} is no Cave stage")));
+                    }
+                    if *budget > MAX_SPAWN_BUDGET {
+                        return Err(invalid(format!(
+                            "a budget of {budget}; at most {MAX_SPAWN_BUDGET} is allowed"
+                        )));
+                    }
+                    if kinds.is_empty() {
+                        return Err(invalid("no kinds to spawn".to_owned()));
+                    }
+                    if let Some(kind) = kinds.iter().find(|kind| kind.cost == 0 || kind.weight == 0)
+                    {
+                        return Err(invalid(format!(
+                            "{:?} costs {} with a weight of {}; both from 1",
+                            kind.kind, kind.cost, kind.weight
                         )));
                     }
                     vec![(cave.as_str(), Reach::Cells(0), Output::Pieces)]
@@ -2704,7 +2821,9 @@ impl Pack {
                 | StageKind::Top { .. }
                 | StageKind::Aquifer { .. }
                 | StageKind::Cave { .. }
-                | StageKind::Tunnels { .. } => {}
+                | StageKind::Tunnels { .. }
+                | StageKind::Deposit { .. }
+                | StageKind::Spawn { .. } => {}
             }
             stages.push(Stage {
                 tables: read_tables,
@@ -2721,7 +2840,9 @@ impl Pack {
             if let StageKind::Scatter { .. }
             | StageKind::Embed { .. }
             | StageKind::Assemble { .. }
-            | StageKind::Cave { .. } = stage.kind
+            | StageKind::Cave { .. }
+            | StageKind::Deposit { .. }
+            | StageKind::Spawn { .. } = stage.kind
                 && let Some(other) = point_ids.insert(point_stage_id(stage.salt), &stage.name)
             {
                 return Err(PackError::Invalid {
@@ -2828,14 +2949,16 @@ impl Pack {
     }
 
     /// How many chunks a side of the regions a Cave stage plans its levels over, for the Cave
-    /// stage `index` or the Tunnels stage that joins its rooms.
+    /// stage `index` or a Tunnels, Deposit or Spawn stage that reads it.
     pub(crate) fn cave_region(&self, index: usize) -> u32 {
         match &self.stages[index].kind {
             StageKind::Cave { region, .. } => *region,
-            StageKind::Tunnels { cave, .. } => {
+            StageKind::Tunnels { cave, .. }
+            | StageKind::Deposit { cave, .. }
+            | StageKind::Spawn { cave, .. } => {
                 self.cave_region(self.index(cave).expect("linked when loaded"))
             }
-            _ => unreachable!("only Cave and Tunnels stages keep cave levels"),
+            _ => unreachable!("only Cave stages and the stages that read them keep cave levels"),
         }
     }
 }
