@@ -195,9 +195,12 @@ it was first generated.
 
 A finite world can be generated whole before it is played, as a maximal world is (M1):
 `runtime.run_world(&targets, &mut store, |progress| ...)` generates the target stages over every
-chunk of the pack's bound (`Runtime::bound_chunks`, row by row) and keeps each chunk's product of
-each target in the store, as a frozen chunk is kept, the moment the chunk is done. So the runtime
-holds only what one chunk reads, whatever the world's size. After each chunk the closure gets a
+chunk of the pack's bound (`Runtime::bound_chunks`), a block at a time: square blocks as wide as the
+pack's largest regions and aligned with them, each asked for whole, so a region's inputs are
+generated once, not once for each row of chunks that crosses it. It keeps each chunk's product of
+each target in the store, as a frozen chunk is kept, the moment its block is done. So the runtime
+holds only what one block reads, whatever the world's size. A region a stage has computed is all
+its chunks read, so a later block does not ask for that region's inputs again. After each chunk the closure gets a
 `RunProgress`:
 - `done` and `total` chunks;
 - `skipped`, those the store already held;

@@ -593,3 +593,100 @@ fn a_region_grows_its_vegetation_and_clutter() {
         );
     }
 }
+
+/// A store that keeps only how many bytes each layer was given, to measure a whole run without
+/// writing it.
+#[derive(Default)]
+struct Measure(BTreeMap<String, (usize, usize)>);
+
+impl wave_forge::FrozenStore for Measure {
+    fn keep(
+        &mut self,
+        layer: &str,
+        _chunk: ChunkCoord,
+        bytes: Vec<u8>,
+    ) -> Result<(), wave_forge::StoreError> {
+        let entry = self.0.entry(layer.to_owned()).or_default();
+        entry.0 += 1;
+        entry.1 += bytes.len();
+        Ok(())
+    }
+
+    fn fetch(
+        &mut self,
+        _layer: &str,
+        _chunk: ChunkCoord,
+    ) -> Result<Option<Vec<u8>>, wave_forge::StoreError> {
+        Ok(None)
+    }
+}
+
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn the_whole_continent_runs_ahead_of_time() {
+    let pack = pack();
+    // What an engine draws and places: the ground and its materials, the rock, the water, the
+    // towns, the places and every point and piece.
+    let mut targets = vec![
+        "ground",
+        "biome",
+        "rock",
+        "lakes",
+        "towns",
+        "places",
+        "settlements",
+    ];
+    targets.extend(pack.stage_names().filter(|name| {
+        matches!(
+            pack.kind(name),
+            Some(StageKind::Scatter { .. } | StageKind::Embed { .. } | StageKind::Assemble { .. })
+        )
+    }));
+    let mut runtime = runtime()
+        .with_towns(Box::new(towns().expect("the cultures compile")))
+        .expect("matching chunks");
+    let mut store = Measure::default();
+
+    let started = std::time::Instant::now();
+    let end = runtime
+        .run_world(&targets, &mut store, |progress| {
+            if progress.done % 2048 == 0 {
+                eprintln!(
+                    "continent: {} of {} chunks after {:.0} s, {} held",
+                    progress.done,
+                    progress.total,
+                    started.elapsed().as_secs_f64(),
+                    progress.held
+                );
+            }
+            std::ops::ControlFlow::Continue(())
+        })
+        .expect("the whole run");
+    let seconds = started.elapsed().as_secs_f64();
+
+    let bytes: usize = store.0.values().map(|(_, bytes)| bytes).sum();
+    let mut heaviest: Vec<(usize, &String)> = store
+        .0
+        .iter()
+        .map(|(layer, (_, bytes))| (*bytes, layer))
+        .collect();
+    heaviest.sort_unstable_by(|a, b| b.cmp(a));
+    eprintln!(
+        "continent: {} chunks of {} targets in {seconds:.0} s, {:.1} GB as RON; the heaviest {:?}",
+        end.done,
+        targets.len(),
+        bytes as f64 / 1e9,
+        &heaviest[..5]
+    );
+    let mut costs: Vec<(f64, String)> = runtime
+        .timings()
+        .into_iter()
+        .map(|(stage, timing)| (timing.ms / 1000.0, stage))
+        .collect();
+    costs.sort_by(|a, b| b.0.total_cmp(&a.0));
+    eprintln!(
+        "continent: the costliest stages in seconds {:?}",
+        &costs[..8]
+    );
+    assert_eq!(end.done, end.total);
+}

@@ -611,7 +611,8 @@ the ground with a town of its culture, each culture a WFC module set of 61 modul
 grown on the larger places, and 59 stages of vegetation and clutter by rule chains, 102 stages in
 all, in chunks of 8 by 8 columns
 (`wfc-devtools/tests/continent.rs` and `cultures.rs`, [measurements.md](../research/measurements.md)
-L34 to L41). The desktop
+L34 to L41). The whole continent runs ahead of time in 1 025 s in the dev container, into 5.7 GB of
+RON text, 5.36 GB of it the rock's (L43). The desktop
 numbers are [#197](https://github.com/AntonTegnelov/wave_forge/issues/197).
 
 ### M2. Generate a maximal world once before play

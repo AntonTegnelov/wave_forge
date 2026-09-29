@@ -1777,9 +1777,13 @@ impl Runtime {
             let scale = self.pack.stages[index].scale;
             for &(input, reach) in &self.pack.stages[index].inputs {
                 // Every chunk of a region reads the same box, so the boxes are gathered first: a
-                // region's chunks would otherwise list its whole region once each.
+                // region's chunks would otherwise list its whole region once each. A region the
+                // stage has computed already is all its chunks read, so its inputs are not needed.
                 let boxes: BTreeSet<([i64; 2], [i64; 2])> = chunks
                     .iter()
+                    .filter(|&&chunk| {
+                        !matches!(reach, Reach::Region { .. }) || !self.region_held(index, chunk)
+                    })
                     .map(|&chunk| self.needed_box(chunk, reach))
                     .collect();
                 let covered = needed.entry(input).or_default();
@@ -3287,6 +3291,24 @@ impl Runtime {
     #[must_use]
     pub fn held(&self) -> usize {
         self.products.len()
+    }
+
+    /// Whether stage `index` holds the result of the region `chunk` lies in, which every chunk of
+    /// it is cut from: a Lakes stage's water, a location table, a region job's curves, or a Deposit
+    /// stage's points. A Sites stage keeps none, since each chunk finds its region's site itself.
+    fn region_held(&self, index: usize, chunk: ChunkCoord) -> bool {
+        let key = |size: u32| (index, region_of(chunk, size));
+        match &self.pack.stages[index].kind {
+            StageKind::Lakes { region, .. } => self.lakes.contains_key(&key(*region)),
+            StageKind::Locations { region, .. } => self.placed.contains_key(&key(*region)),
+            StageKind::Region { region, .. }
+            | StageKind::Rivers { region, .. }
+            | StageKind::Network { region, .. } => self.regions.contains_key(&key(*region)),
+            StageKind::Deposit { .. } => self
+                .budgeted
+                .contains_key(&key(self.pack.cave_region(index))),
+            _ => false,
+        }
     }
 
     /// The columns of an input a stage's `chunk` reads at `reach`, in the stage's own columns, from

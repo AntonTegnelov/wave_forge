@@ -2,9 +2,9 @@
 //!
 //! A maximal world is not generated while it is played: it is generated whole, before play, and
 //! played from what that wrote. [`Runtime::run_world`] generates the target stages over every
-//! chunk of the pack's bound, one chunk at a time, and hands each chunk's products to a store as
-//! soon as the chunk is done, so the runtime holds only what one chunk reads while the world is as
-//! large as the store. A chunk whose products the store already holds is skipped, so a run that
+//! chunk of the pack's bound, a block of chunks as wide as its largest regions at a time, and
+//! hands each chunk's products to a store as soon as its block is done, so the runtime holds only
+//! what one block reads while the world is as large as the store. A chunk whose products the store already holds is skipped, so a run that
 //! was stopped, or cut short by a crash, picks up where it left off; and since a product is a
 //! function of the pack, the seed, the facts and the edits, the store ends up holding the same
 //! bytes whether the run went at once or in pieces.
@@ -12,6 +12,7 @@
 use super::runtime::{Runtime, StageError, StageTiming};
 use crate::FocusPoint;
 use crate::frozen::{FrozenStore, StoreError};
+use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use wfc_core::ChunkCoord;
 
@@ -32,11 +33,13 @@ pub struct RunProgress {
 }
 
 impl Runtime {
-    /// Generates `targets` over every chunk of the pack's bound ([`Runtime::bound_chunks`]), row
-    /// by row, and keeps each chunk's product of each target in `store`, as the product's RON
-    /// text under the stage's name, as soon as the chunk is done. A chunk whose every target the
-    /// store already holds is skipped. After each chunk, `progress` is told how far the run has
-    /// got, and the run stops if it breaks.
+    /// Generates `targets` over every chunk of the pack's bound ([`Runtime::bound_chunks`]), a
+    /// block at a time: square blocks as wide as the pack's largest regions and aligned with them,
+    /// row by row, each asked for whole, so a region's inputs are generated once. It keeps each
+    /// chunk's product of each target in `store`, as the product's RON text under the stage's
+    /// name, as soon as its block is done. A chunk whose every target the store already holds is
+    /// skipped. After each chunk, `progress` is told how far the run has got, and the run stops
+    /// if it breaks.
     ///
     /// Returns the progress when the run ended: `done == total` if it finished.
     ///
@@ -57,25 +60,46 @@ impl Runtime {
             held: self.held(),
             stages: self.timings(),
         };
+        // The world is generated a block at a time, as wide as its largest regions and aligned
+        // with them, so each region's inputs are generated once rather than once for each row of
+        // chunks that crosses it.
+        let side = i32::try_from(self.pack().largest_region()).expect("a region fits i32");
+        let block_of = |chunk: &ChunkCoord| (chunk.y.div_euclid(side), chunk.x.div_euclid(side));
+        let mut blocks: BTreeMap<(i32, i32), Vec<ChunkCoord>> = BTreeMap::new();
         for chunk in chunks {
-            if !stored(store, targets, chunk)? {
-                self.request(&[FocusPoint::new(chunk, 0)], targets)?;
-                self.run_until_idle()?;
-                for &target in targets {
-                    let product = self
-                        .product(target, chunk)
-                        .expect("a target is generated over the chunk it was asked for");
-                    let text = ron::to_string(product).expect("a product is plain data");
-                    store.keep(target, chunk, text.into_bytes())?;
+            blocks.entry(block_of(&chunk)).or_default().push(chunk);
+        }
+        for block in blocks.into_values() {
+            let mut due = Vec::with_capacity(block.len());
+            for &chunk in &block {
+                if !stored(store, targets, chunk)? {
+                    due.push(chunk);
                 }
-            } else {
-                state.skipped += 1;
             }
-            state.done += 1;
-            state.held = self.held();
-            state.stages = self.timings();
-            if progress(state.clone()).is_break() {
-                break;
+            if !due.is_empty() {
+                let focus: Vec<FocusPoint> =
+                    due.iter().map(|&chunk| FocusPoint::new(chunk, 0)).collect();
+                self.request(&focus, targets)?;
+                self.run_until_idle()?;
+            }
+            for chunk in block {
+                if due.contains(&chunk) {
+                    for &target in targets {
+                        let product = self
+                            .product(target, chunk)
+                            .expect("a target is generated over the chunk it was asked for");
+                        let text = ron::to_string(product).expect("a product is plain data");
+                        store.keep(target, chunk, text.into_bytes())?;
+                    }
+                } else {
+                    state.skipped += 1;
+                }
+                state.done += 1;
+                state.held = self.held();
+                state.stages = self.timings();
+                if progress(state.clone()).is_break() {
+                    return Ok(state);
+                }
             }
         }
         Ok(state)
