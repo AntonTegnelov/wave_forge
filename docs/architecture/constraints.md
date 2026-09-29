@@ -31,6 +31,14 @@ That gives, for free:
   facade and open air), so different connectors may be declared compatible (`ModuleSet::connect`).
   marian42 avoids this by putting modules on grid corners instead.
 
+A kit of meshes can propose its own connectors, as marian42's editor tool does:
+`wfc_rules::import::propose` outlines each face from the mesh's vertices that lie on it and gives
+matching outlines one connector. A side's outline is seen from outside, so it fits its mirror image,
+and a top's is taken up to quarter turns. The result is a module set file for an artist to confirm,
+rename and mark walkable, since geometry says nothing about walking
+([#48](https://github.com/AntonTegnelov/wave_forge/issues/48), N6). The city's own voxel stand-ins,
+imported this way, generate a city (`wfc-devtools/tests/import.rs`).
+
 Two further tools sit next to the rules:
 
 - **Weights** shape *how much* of each thing appears, not what is legal. Note they apply per rotated

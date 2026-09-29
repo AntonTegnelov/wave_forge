@@ -366,7 +366,11 @@ hand.*
 **Acceptance criteria.** A guided import reads a `MeshLibrary` or a folder of scenes, proposes
 connectors from matching face shapes, lets the artist confirm or rename them, and writes a module
 set that generates a city with no unplaced chunk in the test world. **Needs.** Import, module-set
-authoring tools, Solve. **Status:** not started (2026-09-23).
+authoring tools, Solve. **Status:** in progress (2026-09-29): `wfc_rules::import::propose` proposes
+connectors from matching face shapes and writes the module set, and the set proposed from the
+city's own voxel models generates a city with no unplaced chunk (`wfc-devtools/tests/import.rs`);
+reading a `MeshLibrary` and the artist's confirming and renaming wait for the editor
+([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 
 ### N7. Use my own noise
 
@@ -388,7 +392,10 @@ story mission.*
 
 **Acceptance criteria.** Baking writes a scene of plain nodes and resources that opens without the
 plugin; a linked bake can be regenerated with the designer's edits kept. **Needs.** Bake, Edits
-([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). **Status:** not started (2026-09-23).
+([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). **Status:** in progress
+(2026-09-29): `WaveForgeStages.bake(from, to)` writes an area as a scene of plain nodes, ground,
+volume, fluid and placed scenes with their bodies and materials, that names no Wave Forge class and
+loads back as the node drew it (`verify_bake.gd`); the linked bake is not built yet.
 
 ### N9. Share a world by seed
 

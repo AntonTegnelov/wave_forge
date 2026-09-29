@@ -6,6 +6,7 @@ use thiserror::Error;
 pub mod formats;
 /// Contains logic for generating expanded rules based on symmetry.
 pub mod generator;
+pub mod import;
 /// Contains the main rule loading functions.
 pub mod loader;
 pub mod modules;

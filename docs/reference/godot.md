@@ -262,14 +262,29 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   it is drawn with. A chunk's surface is drawn with `volume_material`, and within `collider_radius` its body holds it as a
   `ConcavePolygonShape3D`, whose front faces, the ones that collide, face from solid to empty:
   a ray from inside a cave meets its ceiling as it meets the ground from the sky.
+  `fluid_chunks()`, `fluid_surface(chunk)` and `fluid_mesh_of(chunk)` give the same of
+  `fluid_stage`, which has no body, and `fluid_shader_code()` the reference fluid shader's code.
+- `bake(from, to)` returns a `PackedScene` of plain nodes holding what the node draws over the
+  chunks from `from` to `to`, both included, for a game to save as `.tscn` and open without the
+  extension. It has a node per chunk (`Chunk x y`) holding:
+  - its ground (`Ground`, with its levels of detail and material) and a `GroundBody` with its
+    `HeightMapShape3D`;
+  - its volume surface (`Surface`) and a `SurfaceBody` with its `ConcavePolygonShape3D`;
+  - its fluid (`Fluid`);
+  - every bound scene its stages placed: a kind drawn as a MultiMesh as a `MultiMeshInstance3D`,
+    any other as an instance of its scene, which the saved file refers to by path if the scene has
+    one.
+
+  Grass and the far ground are left out. It returns null, with an error, while a chunk's ground or
+  surfaces are not built, or while a scene is still loading.
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
   since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` signals emitted in
   `slowest_frame_signals_ms`, `slowest_frame_grounds` built in `slowest_frame_grounds_ms`,
   `slowest_frame_bodies` built in `slowest_frame_bodies_ms`), and `stages`, each stage's cost on
   the stages' thread by name (`products`, `ms`, `slowest_ms`); `last_frame_ms`, the node's own time
   in its last frame; and `volume_surfaces` and `volume_surfaces_ms`, the surfaces drawn so far and
-  the milliseconds drawing them took on Godot's thread; `pending_volumes` counts those due, those
-  being meshed and those meshed and waiting to be drawn.
+  the milliseconds drawing them took on Godot's thread, fluid included; `pending_volumes` counts
+  those due, those being meshed and those meshed and waiting to be drawn.
 
 ### Signals
 

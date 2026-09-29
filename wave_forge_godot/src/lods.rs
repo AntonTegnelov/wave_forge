@@ -2,8 +2,9 @@
 //! coarser levels as its `lods`, which Godot picks from by distance (docs/reference/godot.md,
 //! "Ground and colliders").
 
-use godot::classes::RenderingServer;
+use godot::classes::mesh::PrimitiveType as MeshPrimitive;
 use godot::classes::rendering_server::{ArrayType, PrimitiveType};
+use godot::classes::{ArrayMesh, Material, RenderingServer};
 use godot::obj::EngineEnum;
 use godot::prelude::*;
 
@@ -16,6 +17,34 @@ pub(crate) fn add_levelled_surface(
     finest: &[u32],
     coarser: &[(&[u32], f32)],
 ) {
+    let lods = levels(arrays, finest, coarser);
+    RenderingServer::singleton()
+        .mesh_add_surface_from_arrays_ex(rid, PrimitiveType::TRIANGLES, &*arrays)
+        .lods(&lods)
+        .done();
+}
+
+/// A mesh resource of one surface as [`add_levelled_surface`] adds it, with `material`.
+pub(crate) fn levelled_mesh(
+    arrays: &mut VarArray,
+    finest: &[u32],
+    coarser: &[(&[u32], f32)],
+    material: Option<&Gd<Material>>,
+) -> Gd<ArrayMesh> {
+    let lods = levels(arrays, finest, coarser);
+    let mut mesh = ArrayMesh::new_gd();
+    mesh.add_surface_from_arrays_ex(MeshPrimitive::TRIANGLES, &*arrays)
+        .lods(&lods)
+        .done();
+    if let Some(material) = material {
+        mesh.surface_set_material(0, material);
+    }
+    mesh
+}
+
+/// Sets `arrays`' index array to the `finest` triangles in Godot's winding and returns the
+/// `coarser` levels as a surface's `lods`.
+fn levels(arrays: &mut VarArray, finest: &[u32], coarser: &[(&[u32], f32)]) -> VarDictionary {
     arrays.set(
         ArrayType::INDEX.ord() as usize,
         &godot_triangles(finest).to_variant(),
@@ -27,10 +56,7 @@ pub(crate) fn add_levelled_surface(
     for (key, &(indices, _)) in lod_keys(&errors).into_iter().zip(coarser) {
         lods.set(key, &godot_triangles(indices).to_variant());
     }
-    RenderingServer::singleton()
-        .mesh_add_surface_from_arrays_ex(rid, PrimitiveType::TRIANGLES, &*arrays)
-        .lods(&lods)
-        .done();
+    lods
 }
 
 /// Triangles for Godot: the library's are counter-clockwise seen from their front, Godot's

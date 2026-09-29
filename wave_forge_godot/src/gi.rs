@@ -4,6 +4,7 @@
 //! many, small and swaying.
 
 use godot::classes::RenderingServer;
+use godot::classes::geometry_instance_3d::GiMode;
 use godot::classes::rendering_server::InstanceFlags;
 use godot::prelude::*;
 
@@ -23,6 +24,14 @@ impl Gi {
         match self {
             Self::Static => (true, false),
             Self::Off => (false, false),
+        }
+    }
+
+    /// The `GeometryInstance3D` mode a node of this content class takes.
+    pub(crate) const fn mode(self) -> GiMode {
+        match self {
+            Self::Static => GiMode::STATIC,
+            Self::Off => GiMode::DISABLED,
         }
     }
 

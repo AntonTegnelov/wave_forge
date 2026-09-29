@@ -1,0 +1,20 @@
+// The pack of the bake check (verify_bake.gd): rolling ground with sand, grass and rock by height,
+// trees on it, a cave under it with pools of water, and ore in the cave's rock.
+(
+    version: 1,
+    stages: [
+        (name: "height", kind: Field(Add(Mul(Noise(frequency: 0.05, octaves: 3), Constant(6.0)), Constant(12.0)))),
+        (name: "surface", kind: Rules(rules: [
+            (category: "sand", when: [Less(Input("height"), Constant(11.0))]),
+            (category: "rock", when: [Greater(Input("height"), Constant(15.0))]),
+        ], otherwise: "grass")),
+        (name: "trees", kind: Scatter(kind: "tree", height: "height", spacing: 3, apart: 2)),
+        (name: "cave", kind: Volume(
+            density: Max(Sub(Z, Constant(4.2)), Sub(Constant(1.8), Z)),
+            bottom: -2,
+            top: 8,
+        )),
+        (name: "water", kind: Aquifer(volume: "cave", cell: (6, 4), level: (2.4, 3.4))),
+        (name: "ore", kind: Embed(kind: "ore", volume: "cave", spacing: 3, between: (-2.0, 1.5))),
+    ],
+)
