@@ -439,23 +439,6 @@ joins the space. A height map's
 samples are one unit apart, so it is scaled by the cell's width, which needs cells as wide as they
 are deep. Ground and bodies go when their chunk's field is dropped or the player moves away.
 
-### Navigation
-
-Within `navigation_radius` of the followed chunk, each chunk gets a navigation region in the
-viewport's navigation map, baked on the navigation server's threads from what its body would hold:
-its ground at full detail, its volume's surface, and its towns' modules with the shapes
-`set_collision_shape` assigned. The source (`wave_forge::surface_nav_source`) holds the chunk's
-triangles and its neighbours' out to a border, the agent's radius in cells and three more, so
-regions baked apart meet on the same vertices, and starts on a whole number of the map's cell
-height for the same reason. A chunk is baked once it and every neighbour inside the world have
-their ground and surface, so navigation reaches a chunk less far than the ground, and again when
-any of them changes, keeping its last mesh until the new one is in; one bake is prepared a frame,
-nearest first. `navigation_template` gives the agent's size, climb and slope; its cell size and
-height are replaced by the map's. `navigation_chunks()` lists the chunks whose mesh is in the map,
-and `navigation_ready(chunk)` names each as it goes in. A played world (`play_directory`) gets the
-same navigation as a generated one. The regions take no asynchronous iterations: a region given
-new meshes while one was under way stopped the map synchronising in Godot 4.7.2.
-
 With `ground_material_stage` set, a chunk's ground also waits for that stage's categories of
 itself and of the chunks beyond its far edges ([packs.md](packs.md#ground)), and gets a copy of
 its material of its own. The copy takes three shader parameters: `wave_forge_materials`, a texture
@@ -469,6 +452,25 @@ to start a game's own shader from; a game's `ground_material` has to be a `Shade
 the same parameters. `ground_material_of(chunk)` gives a chunk's copy. Loading refuses a
 `ground_material_stage` that is no Rules, Area or Nearest stage, and a `ground_material` that is no
 `ShaderMaterial` beside it.
+
+### Navigation
+
+Within `navigation_radius` of the followed chunk, each chunk gets a navigation region in the
+viewport's navigation map, baked on the navigation server's threads from what its body would hold:
+its ground at full detail, its volume's surface, and its towns' modules with the shapes
+`set_collision_shape` assigned. The source (`wave_forge::surface_nav_source`) holds the chunk's
+triangles and its neighbours' out to a border, the agent's radius in cells and three more, so
+regions baked apart meet on the same vertices, and starts on a whole number of the map's cell
+height for the same reason. A chunk is baked once it and every neighbour inside the world have
+their ground and surface, so navigation reaches a chunk less far than the ground, and again when
+any of them changes, keeping its last mesh until the new one is in. One bake is started a frame,
+nearest first, and only on a frame that has spent under 2 ms of Godot's thread so far, since
+starting one costs up to a millisecond. `navigation_template` gives the agent's size, climb and
+slope; its cell size and height are replaced by the map's. `navigation_chunks()` lists the chunks
+whose mesh is in the map, and `navigation_ready(chunk)` names each as it goes in. A played world
+(`play_directory`) gets the same navigation as a generated one. The regions take no asynchronous
+iterations: a region given new meshes while one was under way stopped the map synchronising in
+Godot 4.7.2.
 
 ### Grass
 

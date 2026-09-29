@@ -180,11 +180,11 @@ func _process(_delta: float) -> bool:
 	if not _check_towns() or not _check_trees() or not _check_cover():
 		return true
 	var stats: Dictionary = world.stats()
-	print("verify_stages: the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms; its slowest frame: %d events in %.3f ms, %d grounds in %.3f ms, %d bodies in %.3f ms" % [
+	print("verify_stages: the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms; its slowest frame: %d events in %.3f ms, %d grounds in %.3f ms, %d bodies in %.3f ms, navigation %.3f ms" % [
 		stats["process_ms_median"], stats["process_ms_p99"], stats["process_ms_max"],
 		stats["slowest_frame_events"], stats["slowest_frame_signals_ms"],
 		stats["slowest_frame_grounds"], stats["slowest_frame_grounds_ms"],
-		stats["slowest_frame_bodies"], stats["slowest_frame_bodies_ms"]])
+		stats["slowest_frame_bodies"], stats["slowest_frame_bodies_ms"], stats["slowest_frame_navigation_ms"]])
 	var costs: Dictionary = stats["stages"]
 	for stage: String in costs:
 		var cost: Dictionary = costs[stage]
@@ -496,13 +496,14 @@ func _check_dropped(waited: float) -> bool:
 				return true
 			return false
 	var grounds: Array = world.ground_chunks()
+	var navigable: Array = world.navigation_chunks()
 	for chunk in _view():
-		if grounds.has(chunk):
+		if grounds.has(chunk) or navigable.has(chunk):
 			if waited > 30.0:
-				_fail("the ground of %s was not freed after moving away" % chunk)
+				_fail("the ground or the navigation of %s was not freed after moving away" % chunk)
 				return true
 			return false
-	print("verify_stages: moving away dropped the first view and its ground")
+	print("verify_stages: moving away dropped the first view, its ground and its navigation")
 	cold_first_town_s = (first_town_usec - towns_asked_usec) / 1e6
 	# Start again, on the kernels the first start compiled into the cache.
 	warm = true

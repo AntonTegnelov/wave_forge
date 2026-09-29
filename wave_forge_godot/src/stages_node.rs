@@ -632,6 +632,10 @@ fn elapsed_ms(since: std::time::Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.0
 }
 
+/// How long a frame may already have spent on Godot's thread, in milliseconds, for a navigation
+/// bake to be started in it.
+const NAVIGATION_START_MS: f64 = 2.0;
+
 /// The names of the pack's Solve stages, in the pack's order.
 fn solve_stages(pack: &Pack) -> Vec<String> {
     pack.stage_names()
@@ -972,7 +976,10 @@ impl INode for WaveForgeStages {
         frame.bodies = self.update_colliders();
         frame.bodies_ms = elapsed_ms(building);
         let navigating = std::time::Instant::now();
-        for chunk in self.update_navigation() {
+        // A bake is started only on a frame that has not already spent much of Godot's time, so
+        // it does not land on one that built grounds or bodies.
+        let may_start = elapsed_ms(processing) < NAVIGATION_START_MS;
+        for chunk in self.update_navigation(may_start) {
             self.signals().navigation_ready().emit(to_vector(chunk));
         }
         frame.navigation_ms = elapsed_ms(navigating);
@@ -3556,8 +3563,9 @@ impl WaveForgeStages {
 
     /// Keeps a navigation region on every chunk within `navigation_radius` of the followed chunk,
     /// baked from the triangles its colliders hold and its neighbours', and baked again when
-    /// what they hold changes. Returns the chunks whose mesh went into the map this frame.
-    fn update_navigation(&mut self) -> Vec<ChunkCoord> {
+    /// what they hold changes; a bake is started only if `may_start`. Returns the chunks whose
+    /// mesh went into the map this frame.
+    fn update_navigation(&mut self, may_start: bool) -> Vec<ChunkCoord> {
         let (Some(pack), Some(focus)) = (self.pack.clone(), self.followed) else {
             return Vec::new();
         };
@@ -3575,6 +3583,10 @@ impl WaveForgeStages {
                 (-radius..=radius).map(move |dx| ChunkCoord::new(focus.x + dx, focus.y + dy, 0))
             })
             .collect();
+        let ready = self.navigation.settle(&wanted);
+        if !may_start {
+            return ready;
+        }
         for (name, shape) in &self.collision_shapes {
             if self.shape_faces.contains_key(name) {
                 continue;
@@ -3624,7 +3636,7 @@ impl WaveForgeStages {
         };
         let cell_height = NavigationServer3D::singleton().map_get_cell_height(map);
         let mut navigation = std::mem::replace(&mut self.navigation, StageNavigation::new());
-        let result = navigation.update(
+        let result = navigation.start_bake(
             map,
             self.navigation_template.as_ref(),
             wanted,
@@ -3649,11 +3661,11 @@ impl WaveForgeStages {
             },
         );
         self.navigation = navigation;
-        result.unwrap_or_else(|error| {
+        if let Err(error) = result {
             godot_error!("wave forge: navigation turned off: {error}");
             self.navigation_radius = -1;
-            Vec::new()
-        })
+        }
+        ready
     }
 
     /// The triangles a chunk's colliders hold in Godot's world, counter-clockwise seen from where

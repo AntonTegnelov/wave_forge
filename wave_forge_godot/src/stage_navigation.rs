@@ -50,22 +50,10 @@ impl<S: PartialEq> StageNavigation<S> {
         }
     }
 
-    /// Keeps a region on every chunk of `wanted`, nearest `focus` first, baked from the source
-    /// `source` gathers with a border as wide as the template needs, and baked again when what
-    /// `from` says it was built from changes; frees the others. One bake is prepared a frame,
-    /// since preparing one costs Godot's thread milliseconds. A chunk whose source is missing a
-    /// neighbour waits for it.
+    /// Frees the regions of chunks no longer `wanted`, and puts every finished bake in its region.
     ///
-    /// Returns the chunks whose mesh went into the map this frame.
-    pub(crate) fn update(
-        &mut self,
-        map: Rid,
-        template: Option<&Gd<NavigationMesh>>,
-        mut wanted: Vec<ChunkCoord>,
-        focus: ChunkCoord,
-        from: impl Fn(ChunkCoord) -> S,
-        source: impl Fn(ChunkCoord, f32) -> Result<NavSource, NavSourceError>,
-    ) -> Result<Vec<ChunkCoord>, NavSourceError> {
+    /// Returns the chunks whose mesh went into the map.
+    pub(crate) fn settle(&mut self, wanted: &[ChunkCoord]) -> Vec<ChunkCoord> {
         let mut server = NavigationServer3D::singleton();
         let gone: Vec<ChunkCoord> = self
             .chunks
@@ -88,6 +76,27 @@ impl<S: PartialEq> StageNavigation<S> {
                 ready.push(coord);
             }
         }
+        ready
+    }
+
+    /// Starts one bake, of the chunk of `wanted` nearest `focus` that is not being baked and has
+    /// no mesh, or one baked from something other than what `from` says the chunk holds now: from
+    /// the source `source` gathers with a border as wide as the template needs. A chunk whose
+    /// source is missing a neighbour waits for it. One bake at a time, since preparing one costs
+    /// Godot's thread up to a millisecond.
+    ///
+    /// # Errors
+    /// What `source` gives other than a missing neighbour.
+    pub(crate) fn start_bake(
+        &mut self,
+        map: Rid,
+        template: Option<&Gd<NavigationMesh>>,
+        mut wanted: Vec<ChunkCoord>,
+        focus: ChunkCoord,
+        from: impl Fn(ChunkCoord) -> S,
+        source: impl Fn(ChunkCoord, f32) -> Result<NavSource, NavSourceError>,
+    ) -> Result<(), NavSourceError> {
+        let mut server = NavigationServer3D::singleton();
         server.map_set_use_edge_connections(map, false);
         let distance =
             |chunk: &ChunkCoord| (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs());
@@ -150,6 +159,6 @@ impl<S: PartialEq> StageNavigation<S> {
             );
             break;
         }
-        Ok(ready)
+        Ok(())
     }
 }
