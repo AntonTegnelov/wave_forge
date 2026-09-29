@@ -221,6 +221,12 @@ impl StageWorker {
             .map(Arc::as_ref)
     }
 
+    /// A stage's product for a chunk, shared, to hand to another thread, if it has arrived.
+    #[must_use]
+    pub fn shared(&self, stage: &str, chunk: ChunkCoord) -> Option<Arc<Product>> {
+        self.products.get(&(stage.to_owned(), chunk)).cloned()
+    }
+
     /// The volume `stage` holds for `chunk`, if it is a Volume stage and it has arrived.
     #[must_use]
     pub fn volume(&self, stage: &str, chunk: ChunkCoord) -> Option<&Volume> {
