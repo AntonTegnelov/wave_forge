@@ -393,10 +393,14 @@ story mission.*
 
 **Acceptance criteria.** Baking writes a scene of plain nodes and resources that opens without the
 plugin; a linked bake can be regenerated with the designer's edits kept. **Needs.** Bake, Edits
-([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). **Status:** in progress
-(2026-09-29): `WaveForgeStages.bake(from, to)` writes an area as a scene of plain nodes, ground,
-volume, fluid and placed scenes with their bodies and materials, that names no Wave Forge class and
-loads back as the node drew it (`verify_bake.gd`); the linked bake is not built yet.
+([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)). **Status:** verified by automated
+checks (2026-09-29), in the Godot job of every pull request's CI. `WaveForgeStages.bake(from, to)`
+writes an area as a scene of plain nodes, ground, volume, fluid and placed scenes with their bodies
+and materials; saved, it names no Wave Forge class, opens in a second Godot project that has no
+extension, and loads back as the node drew it. A designer then moves one ore, deletes another and
+adds a node of their own; `keep_bake_edits` makes the moves and deletions edits of the world, and
+`bake_keeping` regenerates the bake with the moved ore where it was put, without the deleted one,
+and with the designer's node (`verify_bake.gd`).
 
 ### N9. Share a world by seed
 

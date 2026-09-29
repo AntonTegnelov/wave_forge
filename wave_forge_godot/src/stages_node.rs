@@ -16,6 +16,7 @@ use crate::lods::{add_levelled_surface, levelled_mesh};
 use crate::placements::{Item, Placements};
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
+use godot::builtin::math::ApproxEq;
 use godot::classes::base_material_3d::Flags;
 use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
@@ -1750,6 +1751,109 @@ impl WaveForgeStages {
         }
     }
 
+    /// Turns what a designer changed in a scene [`Self::bake`] gave, `baked` as instanced, into
+    /// edits of the world: a point placed as a node that was moved or turned is moved there, and
+    /// one that was deleted is removed, as `remove_point` removes one. Pieces, the ground, surfaces
+    /// and MultiMeshes are the generator's, and changes to them are not carried. The world is
+    /// generated again with the edits, and a bake after it holds them; `bake_keeping` carries over
+    /// the nodes the designer added as well. Returns whether the edits were taken; if not, that is
+    /// reported as an error.
+    #[func]
+    fn keep_bake_edits(&mut self, baked: Gd<Node3D>) -> bool {
+        let cell = self.cell_size;
+        let mut edits = self.edits.clone();
+        for holder in baked.get_children().iter_shared() {
+            if !holder.has_meta(BAKED_CHUNK) {
+                continue;
+            }
+            // The points still there, by the stage and chunk their id names and their id.
+            let mut present: HashMap<(String, Vector3i, i64), Gd<Node3D>> = HashMap::new();
+            for child in holder.get_children().iter_shared() {
+                if let (true, Ok(node)) = (
+                    child.has_meta(BAKED_POINT),
+                    child.clone().try_cast::<Node3D>(),
+                ) {
+                    let mark: VarDictionary = child.get_meta(BAKED_POINT).to();
+                    present.insert(point_key(&mark), node);
+                }
+            }
+            let listed: VarArray = holder.get_meta(BAKED_POINTS).to();
+            for mark in listed.iter_shared() {
+                let mark: VarDictionary = mark.to();
+                let (_, chunk, id) = point_key(&mark);
+                let point = PointId {
+                    chunk: (chunk.x, chunk.y),
+                    local: u64::try_from(id).expect("an id `bake` gave"),
+                };
+                let at: Vector2 = mark.at("at").to();
+                let placed: Transform3D = mark.at("transform").to();
+                match present.get(&point_key(&mark)) {
+                    None => edits.push(Edit::Remove {
+                        point,
+                        at: [at.x, at.y],
+                    }),
+                    Some(node) if !node.get_transform().approx_eq(&placed) => {
+                        let now = node.get_transform();
+                        let x = now.basis.col_a();
+                        edits.push(Edit::Move {
+                            point,
+                            from: [at.x, at.y],
+                            to: [
+                                now.origin.x / cell.x,
+                                now.origin.z / cell.z,
+                                now.origin.y / cell.y,
+                            ],
+                            // A point's basis turns it about Godot's +Y, taking +X toward -Z.
+                            turn: ((-x.z).atan2(x.x) / std::f32::consts::TAU).rem_euclid(1.0),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        self.set_edits(edits)
+    }
+
+    /// A bake of the chunks from `from` to `to`, as [`Self::bake`] gives, that keeps the nodes a
+    /// designer added under the chunks of `old`, an earlier bake as instanced: every node there
+    /// that `bake` did not make is copied under the same chunk. With `keep_bake_edits` first, a
+    /// linked bake is regenerated with the designer's edits kept. Null, with an error, as `bake`.
+    #[func]
+    fn bake_keeping(
+        &self,
+        from: Vector3i,
+        to: Vector3i,
+        old: Gd<Node3D>,
+    ) -> Option<Gd<PackedScene>> {
+        let scene = self.bake(from, to)?;
+        let root = scene.instantiate_as::<Node3D>();
+        for holder in old.get_children().iter_shared() {
+            if !holder.has_meta(BAKED_CHUNK) {
+                continue;
+            }
+            let Some(mut target) =
+                root.get_node_or_null(&NodePath::from(holder.get_name().to_string().as_str()))
+            else {
+                continue;
+            };
+            for child in holder.get_children().iter_shared() {
+                if child.has_meta(BAKED_PART) || child.has_meta(BAKED_POINT) {
+                    continue;
+                }
+                target.add_child(&child.duplicate_node());
+            }
+        }
+        own(&root.clone().upcast(), &root.clone().upcast());
+        let mut kept = PackedScene::new_gd();
+        let packed = kept.pack(&root);
+        root.free();
+        if packed != Error::OK {
+            godot_error!("wave forge: cannot bake: packing the scene failed: {packed:?}");
+            return None;
+        }
+        Some(kept)
+    }
+
     /// The chunks that have a static body: their ground, their volume's surface, and their towns'
     /// modules.
     #[func]
@@ -2293,6 +2397,11 @@ impl WaveForgeStages {
                         holder.add_child(&body("SurfaceBody", faces.upcast(), at));
                     }
                 }
+                // Everything so far is the generator's; a point placed as a node is the stage's.
+                for mut part in holder.get_children().iter_shared() {
+                    part.set_meta(BAKED_PART, &true.to_variant());
+                }
+                let mut listed = VarArray::new();
                 if !bound.is_empty() {
                     for stage in pack.stage_names() {
                         let Some(items) =
@@ -2300,11 +2409,45 @@ impl WaveForgeStages {
                         else {
                             continue;
                         };
-                        for node in self.placements.baked(&items)? {
+                        let points = worker.points(stage, chunk).unwrap_or_default();
+                        for (mut node, item) in self.placements.baked(&items)? {
+                            let point = item.and_then(|item| {
+                                points
+                                    .iter()
+                                    .find(|point| local_id(point.id.local) == item.id)
+                            });
+                            match point {
+                                Some(point) => {
+                                    let mut mark = VarDictionary::new();
+                                    mark.set(&"stage".to_variant(), &stage.to_variant());
+                                    mark.set(
+                                        &"chunk".to_variant(),
+                                        &to_vector(point.id.chunk).to_variant(),
+                                    );
+                                    mark.set(
+                                        &"id".to_variant(),
+                                        &local_id(point.id.local).to_variant(),
+                                    );
+                                    mark.set(
+                                        &"at".to_variant(),
+                                        &Vector2::new(point.position[0], point.position[1])
+                                            .to_variant(),
+                                    );
+                                    mark.set(
+                                        &"transform".to_variant(),
+                                        &node.get_transform().to_variant(),
+                                    );
+                                    node.set_meta(BAKED_POINT, &mark.to_variant());
+                                    listed.push(&mark.to_variant());
+                                }
+                                None => node.set_meta(BAKED_PART, &true.to_variant()),
+                            }
                             holder.add_child(&node);
                         }
                     }
                 }
+                holder.set_meta(BAKED_CHUNK, &to_vector(chunk).to_variant());
+                holder.set_meta(BAKED_POINTS, &listed.to_variant());
             }
         }
         Ok(())
@@ -3089,6 +3232,25 @@ fn ground_levels(mesh: &GroundMesh) -> (&[u32], Vec<(&[u32], f32)>) {
         .map(|level| (level.indices.as_slice(), level.error))
         .collect();
     (&finest.indices, coarser)
+}
+
+/// The metadata [`WaveForgeStages::bake`] leaves on a chunk's node: the chunk.
+const BAKED_CHUNK: &str = "wave_forge_chunk";
+/// On a chunk's node: every point it placed as a node, as each one's [`BAKED_POINT`].
+const BAKED_POINTS: &str = "wave_forge_points";
+/// On a node a stage placed as a point: its `stage`, the `chunk` and `id` of its positional id,
+/// where it stood in cells (`at`) and its `transform`.
+const BAKED_POINT: &str = "wave_forge_point";
+/// On every other node the generator made.
+const BAKED_PART: &str = "wave_forge_generated";
+
+/// What names a baked point: its stage, and the chunk and id of its positional id.
+fn point_key(mark: &VarDictionary) -> (String, Vector3i, i64) {
+    (
+        mark.at("stage").to::<GString>().to_string(),
+        mark.at("chunk").to(),
+        mark.at("id").to(),
+    )
 }
 
 /// Makes `root` the owner of every node under `node`, so packing `root` keeps them. An instance of

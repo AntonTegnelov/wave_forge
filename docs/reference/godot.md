@@ -281,7 +281,20 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
     one.
 
   Grass and the far ground are left out. It returns null, with an error, while a chunk's ground or
-  surfaces are not built, or while a scene is still loading.
+  surfaces are not built, or while a scene is still loading. Its nodes carry metadata a linked
+  bake reads, all plain Godot values:
+  - a chunk's node has `wave_forge_chunk` and the list of its points in `wave_forge_points`;
+  - a point placed as a node has `wave_forge_point`, its stage, the chunk and id of its positional
+    id, where it stood and its transform;
+  - everything else the generator made has `wave_forge_generated`.
+- `keep_bake_edits(baked)` turns what a designer changed in a bake, as instanced, into edits:
+  - a point node moved or turned is moved there with `Edit::Move`;
+  - a point node deleted is removed.
+
+  The world is generated again with them. Pieces, the ground, surfaces and MultiMeshes are the
+  generator's, and changes to them are not carried. `bake_keeping(from, to, old)` then bakes again,
+  copying every node the designer added under a chunk of `old`, so a linked bake is regenerated
+  with the designer's edits kept.
 - `stage_names()`, and `stats()`: `process_ms_median`, `_p99` and `_max`, and what the slowest frame
   since the start spent its time on (`slowest_frame_ms`, `slowest_frame_events` signals emitted in
   `slowest_frame_signals_ms`, `slowest_frame_grounds` built in `slowest_frame_grounds_ms`,

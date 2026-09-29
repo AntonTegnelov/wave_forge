@@ -80,6 +80,9 @@ pub(crate) struct Placements {
     pools: HashMap<String, Vec<Gd<Node3D>>>,
 }
 
+/// A node a bake made, with the item it stands for; none for a MultiMesh of many.
+pub(crate) type Baked<'a> = (Gd<Node3D>, Option<&'a Item>);
+
 /// A node placed: the node, its chunk and its id, for `instance_spawned`.
 pub(crate) type Spawned = (Gd<Node3D>, ChunkCoord, i64);
 
@@ -276,11 +279,12 @@ impl Placements {
     /// Plain nodes standing for `items`, for a scene of their own
     /// (`WaveForgeStages::bake`): a `MultiMeshInstance3D` per kind drawn as a MultiMesh, holding a
     /// `MultiMesh` of its mesh with every item's transform and sway, and an instance of its scene
-    /// per item of a kind placed as nodes, wherever the followed position is.
+    /// per item of a kind placed as nodes, wherever the followed position is, with the item it
+    /// stands for.
     ///
     /// # Errors
     /// While a kind's scene is still loading, naming it.
-    pub(crate) fn baked(&self, items: &[Item]) -> Result<Vec<Gd<Node3D>>, String> {
+    pub(crate) fn baked<'a>(&self, items: &'a [Item]) -> Result<Vec<Baked<'a>>, String> {
         let mut by_kind: BTreeMap<&str, Vec<&Item>> = BTreeMap::new();
         for item in items {
             by_kind.entry(&item.kind).or_default().push(item);
@@ -299,7 +303,7 @@ impl Placements {
                     instance.set_name(kind);
                     instance.set_multimesh(&multimesh);
                     instance.set_gi_mode(items[0].gi.mode());
-                    nodes.push(instance.upcast());
+                    nodes.push((instance.upcast(), None));
                 }
                 Binding::Nodes { scene, .. } => {
                     for item in items {
@@ -307,7 +311,7 @@ impl Placements {
                             .try_instantiate_as::<Node3D>()
                             .ok_or_else(|| format!("the scene of {kind:?} is not a Node3D"))?;
                         node.set_transform(item.transform);
-                        nodes.push(node);
+                        nodes.push((node, Some(item)));
                     }
                 }
                 Binding::Loading(path) => {
