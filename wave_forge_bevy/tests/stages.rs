@@ -1068,3 +1068,47 @@ fn a_dig_in_a_neighbour_builds_again_the_surface_that_reads_it() {
     );
     assert_eq!(stages.surface(origin), expected.as_ref());
 }
+
+#[test]
+fn a_raise_in_a_neighbour_builds_again_the_ground_that_reads_it() {
+    let mut app = app_with(plugin().with_ground("height"));
+    let (origin, beside) = (ChunkCoord::new(0, 0, 0), ChunkCoord::new(1, 0, 0));
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        stages.ground(origin).is_some() && stages.field("height", beside).is_some()
+    });
+    let before = app
+        .world()
+        .resource::<WaveForgeStages>()
+        .field("height", beside)
+        .expect("arrived")
+        .get(0, 3);
+
+    // The first column of the chunk beside the origin, which the origin's ground reaches to but
+    // does not hold.
+    app.world().resource::<WaveForgeStages>().set_edits(Edits {
+        log: vec![Edit::Raise {
+            stage: "height".to_owned(),
+            column: (8, 3),
+            by: 5.0,
+        }],
+    });
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        stages
+            .field("height", beside)
+            .is_some_and(|field| field.get(0, 3) == before + 5.0)
+            && stages.ground(origin).is_some_and(|mesh| {
+                mesh.positions[3 * mesh.size[0] as usize + 8][1]
+                    == (before + 5.0) * SETTINGS.cell_size.y
+            })
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let expected = ground(
+        origin,
+        |at| stages.field("height", at),
+        SETTINGS.cell_size.to_array(),
+    );
+    assert_eq!(stages.ground(origin), expected.as_ref());
+}

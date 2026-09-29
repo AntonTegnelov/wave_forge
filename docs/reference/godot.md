@@ -243,6 +243,10 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 - `curves(stage, chunk)`: a Region or TableCurves stage's curves through a chunk, each with what
   names it (its `region` and `index`, or its `row`), `points` on the ground plane in Godot's world
   space, and `values`.
+- `ground_mesh_of(chunk)` is the `RenderingServer` mesh a chunk's ground is drawn with. A chunk's
+  ground reads the fields and materials of the chunks around it, so when one of them is dropped and
+  generated again, after a raise say, every ground that reads it is built again, its grass and
+  body too.
 - `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body,
   `far_ground_chunks()` the chunks of `far_ground_stage` whose far ground is drawn, and
   `volume_chunks()` the chunks of `volume_stage` whose surface is built. `volume_surface(chunk)`
