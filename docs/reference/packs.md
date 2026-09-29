@@ -120,8 +120,22 @@ everything that reads them within its reach, then returns the drops as `request`
 kept per chunk, so a raise regenerates a reader's neighbouring chunks when their reach covers the
 raised chunk, even where it does not cover the column. An edit that raises a stage that is no
 field, digs or fills one that is no volume, has a ball without a positive radius, or names a point
-no Scatter stage placed, fails with `StageError::Edit` and changes nothing.
+no point stage placed, fails with `StageError::Edit` and changes nothing.
 `Edits::to_ron` and `from_ron` save and load the log.
+
+`stages::brushes::stroke(&runtime, &brush, &path)` gives the edits a brush makes dragged along
+`path`, points in cells, so an editor's brush and a player's tool paint the same way in every
+engine; the caller appends them to the log, and undoes a stroke by taking them out again.
+
+| Brush | Edits |
+|---|---|
+| `Raise { stage, radius, strength }` | a raise of every column of a field stage within `radius` of the path by `strength` times how near it lies, 1 on the path falling smoothly to 0 at the radius; a negative strength lowers |
+| `Smooth { stage, radius, strength }` | a raise of each such column toward the average of the nine around it, by `strength` (0 to 1) times how near it lies, read with `Runtime::sample` |
+| `Dig { stage, radius }`, `Fill { stage, radius }` | balls of `radius` dug out of or filled into a volume along the path, half a radius apart |
+| `Remove { stages, radius }` | the removal of every point of the point stages `stages` within `radius` of the path, in the chunks the runtime holds |
+
+A stroke without a path, a radius that is not positive, a smoothing strength outside 0 to 1, or a
+stage of the wrong kind fails with `StageError::Edit`.
 
 ## Persistence and saves
 

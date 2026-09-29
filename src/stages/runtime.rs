@@ -1286,6 +1286,16 @@ impl Runtime {
         ))
     }
 
+    /// The pack the runtime generates.
+    pub(crate) fn pack(&self) -> &Pack {
+        &self.pack
+    }
+
+    /// Columns per chunk along the lattice's x and y.
+    pub(crate) const fn chunk_size(&self) -> [u32; 2] {
+        self.size
+    }
+
     /// What a save keeps of the world: the edits, less those of ephemeral stages, and every chunk
     /// of a frozen stage generated so far, with the Wave Forge version and the pack's digest.
     #[must_use]

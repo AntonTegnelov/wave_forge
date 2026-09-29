@@ -3,6 +3,7 @@
 //! focus points, providers first.
 
 mod assemble;
+pub mod brushes;
 mod caves;
 pub mod edits;
 mod evaluate;
