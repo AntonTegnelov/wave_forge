@@ -72,18 +72,15 @@ Each step is a verified pull request that updates the stories it moves.
    place names through `bevy_kira_audio` and Fluent
    ([#174](https://github.com/AntonTegnelov/wave_forge/issues/174)); density volumes with
    Godot's 3D noise, materials, carved tunnels and rooms, surfaces and colliders, and digs and fills
-   through the edits log ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)). Left: reverb and buses for interiors
+   through the edits log ([#71](https://github.com/AntonTegnelov/wave_forge/issues/71)); fluid
+   from aquifers drawn beside the rock ([#231](https://github.com/AntonTegnelov/wave_forge/issues/231))
+   and scenes bound to cave rooms ([#233](https://github.com/AntonTegnelov/wave_forge/issues/233)).
+   Left: reverb and buses for interiors
    in Bevy, once a crate exposes them on the tracked Bevy
    ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
-2. **The voxel stories in the engines:** drawing G1's fluid
-   ([#231](https://github.com/AntonTegnelov/wave_forge/issues/231)) and binding scenes to G8's
-   rooms ([#233](https://github.com/AntonTegnelov/wave_forge/issues/233)). The packs of G1, G3 and
-   G8 are verified ([#219](https://github.com/AntonTegnelov/wave_forge/issues/219),
-   [#221](https://github.com/AntonTegnelov/wave_forge/issues/221),
-   [#220](https://github.com/AntonTegnelov/wave_forge/issues/220)).
-3. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
+2. **Authoring:** presets, the stage stack, viewers, brushes and bake, in Godot first because Bevy
    has no editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
-4. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
+3. **Maximal worlds** (M1, M2): a whole finite world generated ahead of time with nearly every
    technique, then played from what it wrote. It needs the bake, and a whole-world run
    with progress, cancelling and resuming, with baked content streamed from disk
    ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)), over the store for chunks

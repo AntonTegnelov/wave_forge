@@ -7,7 +7,7 @@
 //! with any GPU device it needs, are built on that thread, so a town solver gets a device of its
 //! own there rather than Bevy's.
 //!
-//! A game binds a kind (a Scatter point's kind, or an Assemble piece's name) to what its entities
+//! A game binds a kind (a point's kind, or a piece's or cave room's name) to what its entities
 //! hold through [`StagePlacements`]: every point or piece of a bound kind gets an entity at its
 //! transform with a [`Placed`] component, announced by [`InstanceSpawned`] and despawned with its
 //! chunk.
@@ -18,7 +18,9 @@
 //! height-field collider of its physics crate. With [`WaveForgeStagesPlugin::with_volume`], it
 //! builds each chunk's surface from a Volume stage the same way and says so with [`VolumeReady`]: a
 //! [`VolumeMesh`] a game turns into a [`Mesh`] with [`surface_mesh`] and hands to the trimesh
-//! collider of its physics crate, since a height field cannot hold an overhang.
+//! collider of its physics crate, since a height field cannot hold an overhang. With
+//! [`WaveForgeStagesPlugin::with_fluid`], it builds a fluid's surface as well and says so with
+//! [`FluidReady`], for a game to draw see-through and never collide with.
 
 use crate::GenerationFocus;
 use crate::levels::{LevelDetail, bounds_radius, level_ranges, visibility};
@@ -68,7 +70,7 @@ pub struct StagesSaved(pub Save);
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct StagesFailed(pub String);
 
-/// What a game gives the entities of a kind, a Scatter point's kind or an Assemble piece's name:
+/// What a game gives the entities of a kind, a point's kind or a piece's or cave room's name:
 /// a `SceneRoot` of a glTF scene, a mesh and a material, a collider, anything.
 type Spawn = Box<dyn Fn(&mut EntityCommands) + Send + Sync>;
 
@@ -139,6 +141,15 @@ pub struct VolumeReady(pub ChunkCoord);
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolumeDropped(pub ChunkCoord);
 
+/// A chunk's fluid surface is ready to read from [`WaveForgeStages::fluid`].
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FluidReady(pub ChunkCoord);
+
+/// A chunk's fluid surface was dropped, since a fluid volume it reads was, as [`VolumeDropped`]
+/// says of the volume's.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FluidDropped(pub ChunkCoord);
+
 /// How chunks and cells sit in Bevy's world.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StagesSettings {
@@ -171,6 +182,9 @@ pub struct WaveForgeStages {
     /// The Volume stage the surface is built from, if any.
     volume_stage: Option<String>,
     surfaces: HashMap<ChunkCoord, VolumeMesh>,
+    /// The fluid stage the fluid's surface is built from, if any.
+    fluid_stage: Option<String>,
+    fluids: HashMap<ChunkCoord, VolumeMesh>,
 }
 
 impl WaveForgeStages {
@@ -275,6 +289,13 @@ impl WaveForgeStages {
     #[must_use]
     pub fn surface(&self, chunk: ChunkCoord) -> Option<&VolumeMesh> {
         self.surfaces.get(&chunk)
+    }
+
+    /// A chunk's fluid surface, as [`WaveForgeStages::surface`] gives the volume's: each vertex's
+    /// material is its pool's, water or lava say, and it faces from the fluid out.
+    #[must_use]
+    pub fn fluid(&self, chunk: ChunkCoord) -> Option<&VolumeMesh> {
+        self.fluids.get(&chunk)
     }
 
     /// A chunk of the coarse stage's far ground, if it is built: drawn at
@@ -489,6 +510,7 @@ pub struct WaveForgeStagesPlugin {
     ground_material_stage: Option<String>,
     far_ground_stage: Option<(String, u32)>,
     volume_stage: Option<String>,
+    fluid_stage: Option<String>,
 }
 
 impl WaveForgeStagesPlugin {
@@ -510,6 +532,7 @@ impl WaveForgeStagesPlugin {
             ground_material_stage: None,
             far_ground_stage: None,
             volume_stage: None,
+            fluid_stage: None,
         }
     }
 
@@ -562,6 +585,16 @@ impl WaveForgeStagesPlugin {
         self
     }
 
+    /// Builds each chunk's fluid surface from the Volume, Carve or Aquifer stage `stage` at scale
+    /// 1, water and lava in a volume's caves say, as [`WaveForgeStagesPlugin::with_volume`] builds
+    /// the volume's, and announces it with [`FluidReady`]. A game draws it see-through, by its
+    /// vertices' materials, and gives it no collider.
+    #[must_use]
+    pub fn with_fluid(mut self, stage: &str) -> Self {
+        self.fluid_stage = Some(stage.to_owned());
+        self
+    }
+
     /// Gives the ground the categories of the Rules or Area stage `stage` as materials: a chunk's
     /// ground then also waits for them, and [`WaveForgeStages::ground_materials`] gives them per
     /// vertex, for [`crate::materials::ground_material`]. The stage has to be generated too, one
@@ -599,6 +632,8 @@ impl Plugin for WaveForgeStagesPlugin {
             far_due: BTreeSet::new(),
             volume_stage: self.volume_stage.clone(),
             surfaces: HashMap::new(),
+            fluid_stage: self.fluid_stage.clone(),
+            fluids: HashMap::new(),
         })
         .add_message::<StageReady>()
         .add_message::<StageDropped>()
@@ -611,6 +646,8 @@ impl Plugin for WaveForgeStagesPlugin {
         .add_message::<FarGroundDropped>()
         .add_message::<VolumeReady>()
         .add_message::<VolumeDropped>()
+        .add_message::<FluidReady>()
+        .add_message::<FluidDropped>()
         .register_type::<NoiseConfig>()
         .add_systems(
             Update,
@@ -619,6 +656,30 @@ impl Plugin for WaveForgeStagesPlugin {
                 .in_set(WaveForgeStagesSystems),
         );
     }
+}
+
+/// Builds into `built` the surface of `stage` of every chunk that reads a volume that `arrived`
+/// and has none yet, once the volumes around it have all arrived, and returns those it built. A
+/// chunk still waiting for a volume around it is looked at again when that volume arrives.
+fn build_surfaces(
+    worker: &StageWorker,
+    stage: &str,
+    arrived: &[ChunkCoord],
+    voxel: [f32; 3],
+    built: &mut HashMap<ChunkCoord, VolumeMesh>,
+) -> Vec<ChunkCoord> {
+    let mut ready = Vec::new();
+    for chunk in arrived.iter().copied().flat_map(ground_readers) {
+        if built.contains_key(&chunk) {
+            continue;
+        }
+        let Some(surface) = volume_mesh(chunk, |at| worker.volume(stage, at), voxel) else {
+            continue;
+        };
+        built.insert(chunk, surface);
+        ready.push(chunk);
+    }
+    ready
 }
 
 /// Asks for the chunks around every focus when they change.
@@ -651,7 +712,7 @@ fn follow_focus(
     stages.asked = wanted;
 }
 
-/// What [`drain`] says about the ground, the far ground and the volume's surface.
+/// What [`drain`] says about the ground, the far ground, and the volume's and fluid's surfaces.
 #[derive(SystemParam)]
 struct GroundWriters<'w> {
     ready: MessageWriter<'w, GroundReady>,
@@ -660,6 +721,8 @@ struct GroundWriters<'w> {
     far_dropped: MessageWriter<'w, FarGroundDropped>,
     volume_ready: MessageWriter<'w, VolumeReady>,
     volume_dropped: MessageWriter<'w, VolumeDropped>,
+    fluid_ready: MessageWriter<'w, FluidReady>,
+    fluid_dropped: MessageWriter<'w, FluidDropped>,
 }
 
 /// Takes what the stages' thread finished, as messages, and builds the ground it completed.
@@ -676,8 +739,10 @@ fn drain(
     let material_stage = stages.ground_material_stage.clone();
     let far_stage = stages.far_ground_stage.clone();
     let volume_stage = stages.volume_stage.clone();
+    let fluid_stage = stages.fluid_stage.clone();
     let mut arrived = Vec::new();
     let mut volumes_arrived = Vec::new();
+    let mut fluids_arrived = Vec::new();
     // Chunks whose ground came or went, which changes the far ground over and beside them.
     let mut near_changed = Vec::new();
     for event in stages.worker.drain() {
@@ -699,6 +764,9 @@ fn drain(
                 if volume_stage.as_ref() == Some(&stage) {
                     volumes_arrived.push(chunk);
                 }
+                if fluid_stage.as_ref() == Some(&stage) {
+                    fluids_arrived.push(chunk);
+                }
                 ready.write(StageReady { stage, chunk });
             }
             StageEvent::Dropped { stage, chunk } => {
@@ -718,6 +786,13 @@ fn drain(
                     for reader in ground_readers(chunk) {
                         if stages.surfaces.remove(&reader).is_some() {
                             grounds.volume_dropped.write(VolumeDropped(reader));
+                        }
+                    }
+                }
+                if fluid_stage.as_ref() == Some(&stage) {
+                    for reader in ground_readers(chunk) {
+                        if stages.fluids.remove(&reader).is_some() {
+                            grounds.fluid_dropped.write(FluidDropped(reader));
                         }
                     }
                 }
@@ -760,19 +835,28 @@ fn drain(
             grounds.ready.write(GroundReady(chunk));
         }
     }
+    let voxel = stages.settings.cell_size.to_array();
+    let stages = &mut *stages;
     if let Some(stage) = &volume_stage {
-        let voxel = stages.settings.cell_size.to_array();
-        for chunk in volumes_arrived.into_iter().flat_map(ground_readers) {
-            if stages.surfaces.contains_key(&chunk) {
-                continue;
-            }
-            // Waits for a volume around it, whose arrival looks at it again.
-            let Some(surface) = volume_mesh(chunk, |at| stages.worker.volume(stage, at), voxel)
-            else {
-                continue;
-            };
-            stages.surfaces.insert(chunk, surface);
+        for chunk in build_surfaces(
+            &stages.worker,
+            stage,
+            &volumes_arrived,
+            voxel,
+            &mut stages.surfaces,
+        ) {
             grounds.volume_ready.write(VolumeReady(chunk));
+        }
+    }
+    if let Some(stage) = &fluid_stage {
+        for chunk in build_surfaces(
+            &stages.worker,
+            stage,
+            &fluids_arrived,
+            voxel,
+            &mut stages.fluids,
+        ) {
+            grounds.fluid_ready.write(FluidReady(chunk));
         }
     }
     if let Some((stage, scale)) = &far_stage {

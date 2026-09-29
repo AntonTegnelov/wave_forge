@@ -9,6 +9,7 @@
 # `godot/verify_edits.gd`, which fells a tree and raises the ground, then `godot/verify_frozen.gd`,
 # which keeps frozen chunks in a directory while they are out of memory, then `godot/verify_assemble.gd`,
 # which places a village's pieces, then `godot/verify_scenes.gd`, which binds scenes to them, then
+# `godot/verify_cave_scenes.gd`, which binds scenes to a cave's rooms and spawns, then
 # `godot/verify_pooling.gd`, which reuses the nodes of scenes that reset themselves, then
 # `godot/verify_ground.gd`, which gives the ground a material per category, then
 # `godot/verify_volume.gd`, which draws a volume's surface and collides with its cave, then
@@ -30,6 +31,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_frozen.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_assemble.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_scenes.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_cave_scenes.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_pooling.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_ground.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_volume.gd

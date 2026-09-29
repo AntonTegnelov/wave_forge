@@ -1,0 +1,10 @@
+// The pack of the cave scenes check (verify_cave_scenes.gd): a level of caverns planned per region
+// of 8 chunks, and enemies spending each cavern's budget of four on its floor.
+(
+    version: 1,
+    stages: [
+        (name: "level", kind: Cave(region: 8, depth: (-30.0, -10.0), patterns: [Star],
+            count: (4, 6), apart: 12.0, rerolls: 8, rooms: [(name: "cavern", size: (7, 7, 5))])),
+        (name: "enemies", kind: Spawn(cave: "level", budget: 4, kinds: [(kind: "grunt", cost: 1)])),
+    ],
+)

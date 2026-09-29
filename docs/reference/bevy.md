@@ -77,8 +77,8 @@ without chunks, a game builds a `Runtime` of the same pack and seed and calls `s
   `StagesSaved(save)` message, and `load(save)` brings a world back from one
   ([packs.md](packs.md#persistence-and-saves)).
 - `StagePlacements`, a resource: `StagePlacements::default().bind(kind, |entity| ...)` binds a
-  kind, a Scatter or Embed point's kind or an Assemble piece's name, to what its entities hold: a
-  `SceneRoot` of a glTF scene, a mesh and a material, anything. Every point or piece of a bound kind
+  kind, a Scatter, Embed, Deposit or Spawn point's kind or an Assemble piece's or Cave room's name,
+  to what its entities hold: a `SceneRoot` of a glTF scene, a mesh and a material, anything. Every point or piece of a bound kind
   in a chunk that arrives gets an entity with its `Transform` (`transform_of` or `stamp_transform`)
   and a `Placed { stage, chunk, id }` component, announced by an `InstanceSpawned { entity, placed }`
   message, and despawned when its chunk is dropped. A piece overlapping several chunks gets one
@@ -112,6 +112,11 @@ without chunks, a game builds a `Runtime` of the same pack and seed and calls `s
   reads a volume dropped for it is dropped with `VolumeDropped` and built again. For a stage with materials,
   `materials::coloured_surface_mesh(&surface, &palette)` makes the mesh with each vertex in its
   material's colour, which a `StandardMaterial` multiplies its base colour by.
+- `.with_fluid(stage)` builds a fluid's surface from a Volume, Carve or Aquifer stage at scale 1 the
+  same way, the water and lava of an [Aquifer](packs.md#aquifer) stage say:
+  `WaveForgeStages::fluid(chunk)` returns it, and `FluidReady(chunk)` and `FluidDropped(chunk)`
+  announce it. A game draws it with `coloured_surface_mesh` and a palette whose alphas are each
+  fluid's opacity, under a `StandardMaterial` with `AlphaMode::Blend`, and gives it no collider.
 - A pack's noises are given where the runtime is built, `Runtime::with_noise(name, config)`. The
   plugin registers `NoiseConfig` for reflection, so a game edits one as it edits its own
   components.

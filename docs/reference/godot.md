@@ -166,12 +166,16 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `volume_material` | the material the volume's surface is drawn with; empty for Godot's default, or for a stage with materials one that takes its albedo from the vertices' colours |
 | | `volume_budget_ms` | how long a frame may spend drawing volume surfaces, which are meshed on a thread of their own; one is drawn a frame whatever it costs (default 2 ms) |
 | | `volume_palette` | a colour per material of `volume_stage`, by index, which each vertex of the surface carries; materials past its end take colours of their own from their index |
+| | `fluid_stage` | a Volume, Carve or Aquifer stage at scale 1 whose surface is drawn as fluid and never collided with, the water and lava of an [Aquifer](packs.md#aquifer) stage say; meshed and drawn as the volume's, within the same `volume_budget_ms`; empty for none |
+| | `fluid_material` | the material the fluid's surface is drawn with; empty for one that takes its albedo and opacity from the vertices' colours, seen from both sides |
+| | `fluid_palette` | a colour per material of `fluid_stage`, by index, its alpha the fluid's opacity, as `volume_palette` is for the volume |
+| | `fluid_glow` | how brightly each material of `fluid_stage` glows, by index, as a multiple of its colour, lava's say; materials past its end do not glow. The reference fluid shader reads it from each vertex's first UV (`fluid_shader_code()`) |
 | Grass | `grass_stage` | a field stage whose value per column, 0 to 1, is how much of it grass covers ([Grass](#grass)); empty for none |
 | | `grass_per_cell` | blades per column where the cover is 1 (default 8) |
 | | `grass_radius` | chunks around the followed position that get grass (default 1) |
 | | `grass_material` | a `ShaderMaterial` taking the reference grass shader's parameters; empty for that shader |
 | Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
-| Scenes | `scenes` | a kind (a Scatter or Embed point's kind or an Assemble piece's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
+| Scenes | `scenes` | a kind (a Scatter, Embed, Deposit or Spawn point's kind, or an Assemble piece's or Cave room's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
@@ -287,8 +291,9 @@ be placed again as `pooled_nodes` ([Scenes](#scenes)).
 
 ### Scenes
 
-`scenes` binds a kind to a scene: a Scatter or Embed point's kind, or an Assemble piece's name, so a
-dungeon's rooms bind the same way as trees. A value is a `PackedScene`, or a path the node loads on
+`scenes` binds a kind to a scene: a Scatter, Embed, Deposit or Spawn point's kind, or an Assemble
+piece's or Cave room's name, so a dungeon's rooms bind the same way as trees. A value is a
+`PackedScene`, or a path the node loads on
 Godot's loader threads when it starts; placing waits until every scene has loaded. A scene holding
 another extension's Rust resource has to be given as a `PackedScene`, since such a resource aborts
 the process when loaded on a loader thread
@@ -297,8 +302,8 @@ the process when loaded on a loader thread
 Each scene is drawn one of two ways, chosen when it is bound:
 
 - **A lone mesh:** a scene whose root is a `MeshInstance3D` without children or a script is drawn as
-  one `RenderingServer` MultiMesh per chunk and kind, never as nodes. A Scatter point's MultiMesh
-  takes no global illumination, as a prop's; an Assemble piece's is static, as a building's, so
+  one `RenderingServer` MultiMesh per chunk and kind, never as nodes. A point's MultiMesh takes no
+  global illumination, as a prop's; an Assemble piece's or Cave room's is static, as a building's, so
   SDFGI and baked lighting take it in ([Global illumination](#global-illumination)).
 - **Nodes:** any other scene is instantiated as nodes under the `WaveForgeStages` node, at the
   point's or piece's transform, and `instance_spawned(node, chunk, id)` names each, with the id
