@@ -159,7 +159,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Streaming | `view_radius` | chunks kept generated around the followed position |
 | Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
 | | `ground_material` | the material the ground is drawn with |
-| | `ground_material_stage` | a Rules or Area stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
+| | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
 | Volume | `volume_stage` | a Volume or Carve stage at scale 1 whose surface is drawn and collided with, for overhangs and caves ([packs.md](packs.md#volume)); empty for none |
@@ -229,7 +229,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   object on; NaN until the fields around it have arrived.
 - `sample(stage, position)` and `atlas(stage, min, size)`: a stage's value at a position on the
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
-  Field, Rules, Blur, Delta and Area stages. An error, and NaN or an empty array, for another
+  Field, Rules, Nearest, Blur, Delta and Area stages. An error, and NaN or an empty array, for another
   stage.
 - `locate(stage, position, within)`: the site of a Sites stage nearest a position, as `sites`
   gives a site, found on Godot's thread without chunks ([packs.md](packs.md#sites)); empty if none
@@ -365,7 +365,7 @@ which blends the colours of the four vertices around every fragment, so material
 band a cell wide on every renderer, Compatibility included. `ground_shader_code()` gives its code,
 to start a game's own shader from; a game's `ground_material` has to be a `ShaderMaterial` taking
 the same parameters. `ground_material_of(chunk)` gives a chunk's copy. Loading refuses a
-`ground_material_stage` that is no Rules or Area stage, and a `ground_material` that is no
+`ground_material_stage` that is no Rules, Area or Nearest stage, and a `ground_material` that is no
 `ShaderMaterial` beside it.
 
 ### Grass

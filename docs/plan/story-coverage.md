@@ -56,7 +56,7 @@ Stories not listed have nothing built towards them yet beyond the shared runtime
 
 | Story | What exists | What is missing |
 |---|---|---|
-| G1 Minecraft-like | fields, categories by rules, sites, scatter, jigsaw villages by Assemble, the order-diff test, 3D density volumes with Godot's 3D noise, surface materials by rule and carved tunnels, drawn and collided with in both engines | biomes by nearest point, aquifers, ores in the rock, the test pack ([#219](https://github.com/AntonTegnelov/wave_forge/issues/219)) |
+| G1 Minecraft-like | fields, categories by rules, biomes by nearest point in a climate space, sites, scatter, jigsaw villages by Assemble, the order-diff test, 3D density volumes with Godot's 3D noise, surface materials by rule and carved tunnels, drawn and collided with in both engines | aquifers, ores in the rock, the test pack ([#219](https://github.com/AntonTegnelov/wave_forge/issues/219)) |
 | G2 Dwarf Fortress-like | fields, region jobs with retries and curves, levels, the atlas and point queries, given tables whose rows become sites with towns of each row's rule set and roads levelled into the ground, rivers carved by region jobs, roads between sites by a Network stage | the test pack |
 | G3 No Man's Sky-like | generated tables of planet parameters read through a focused row, density volumes with overhangs, sites levelled into them, props standing on a volume's top by biome, `locate` for the nearest site without chunks, digs kept in the edits log, the planet pack and its check | nothing for its criteria; the sphere and the universe's scale are deferred ([stages.md](../architecture/stages.md#scope)) |
 | G4 Noita-like | WFC, positional ids | image import, Wang tiles, region jobs with path checks, stamps |
