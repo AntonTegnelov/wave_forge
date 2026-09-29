@@ -9,7 +9,8 @@ use super::edits::Edits;
 use super::facts::{Facts, RowId};
 use super::regions::Curve;
 use super::runtime::{
-    Categories, Field, Point, Product, Runtime, Site, StageTiming, Stamp, TownChunk, Volume,
+    Categories, Field, Judgement, Point, Product, Runtime, Site, StageTiming, Stamp, TownChunk,
+    Volume,
 };
 use super::save::Save;
 use crate::ChunkCoord;
@@ -40,6 +41,10 @@ enum Order {
         id: RowId,
     },
     Params(BTreeMap<String, f32>),
+    ScatterReport {
+        stage: String,
+        chunk: ChunkCoord,
+    },
     Stop,
 }
 
@@ -52,6 +57,7 @@ enum Report {
     Dropped(Vec<(String, ChunkCoord)>),
     Failed(String),
     Saved(Box<Save>),
+    Judged(String, ChunkCoord, Vec<Judgement>),
 }
 
 /// What changed about a stage's chunk.
@@ -64,6 +70,9 @@ pub enum StageEvent {
     /// The save [`StageWorker::request_save`] asked for is ready to take
     /// ([`StageWorker::take_save`]).
     Saved,
+    /// The report [`StageWorker::request_scatter_report`] asked for is ready to read
+    /// ([`StageWorker::scatter_report`]).
+    Judged { stage: String, chunk: ChunkCoord },
 }
 
 /// A runtime on its own thread. Dropping it asks the thread to stop and does not wait for it.
@@ -77,6 +86,8 @@ pub struct StageWorker {
     /// The save the thread last made, until it is taken.
     saved: Option<Save>,
     timings: Vec<(String, StageTiming)>,
+    /// The Scatter reports the thread sent, by stage and chunk, until the chunk is dropped.
+    judged: HashMap<(String, ChunkCoord), Vec<Judgement>>,
 }
 
 impl StageWorker {
@@ -104,6 +115,7 @@ impl StageWorker {
             failure: None,
             saved: None,
             timings: Vec::new(),
+            judged: HashMap::new(),
         }
     }
 
@@ -166,6 +178,25 @@ impl StageWorker {
         });
     }
 
+    /// Asks the thread what became of the candidates of Scatter stage `stage` in `chunk`, as
+    /// [`Runtime::scatter_report`] says; it arrives as a [`StageEvent::Judged`] from
+    /// [`StageWorker::drain`], to read with [`StageWorker::scatter_report`]. A chunk the runtime
+    /// no longer holds, dropped since it was asked for, gets no report.
+    pub fn request_scatter_report(&self, stage: &str, chunk: ChunkCoord) {
+        let _ = self.orders.send(Order::ScatterReport {
+            stage: stage.to_owned(),
+            chunk,
+        });
+    }
+
+    /// The report of a Scatter stage's chunk the thread sent, until the chunk is dropped.
+    #[must_use]
+    pub fn scatter_report(&self, stage: &str, chunk: ChunkCoord) -> Option<&[Judgement]> {
+        self.judged
+            .get(&(stage.to_owned(), chunk))
+            .map(Vec::as_slice)
+    }
+
     /// Sets the pack's parameters, as [`Runtime::set_params`] does, with what that makes stale
     /// arriving as drops. An error stops the thread and arrives as a failure.
     pub fn set_params(&self, values: BTreeMap<String, f32>) {
@@ -194,6 +225,7 @@ impl StageWorker {
                 Ok(Report::Dropped(dropped)) => {
                     for (stage, chunk) in dropped {
                         self.products.remove(&(stage.clone(), chunk));
+                        self.judged.remove(&(stage.clone(), chunk));
                         events.push(StageEvent::Dropped { stage, chunk });
                     }
                 }
@@ -201,6 +233,10 @@ impl StageWorker {
                 Ok(Report::Saved(save)) => {
                     self.saved = Some(*save);
                     events.push(StageEvent::Saved);
+                }
+                Ok(Report::Judged(stage, chunk, report)) => {
+                    self.judged.insert((stage.clone(), chunk), report);
+                    events.push(StageEvent::Judged { stage, chunk });
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => return events,
             }
@@ -407,6 +443,18 @@ where
                 Order::Load(save) => runtime.load(&save),
                 Order::Focus { table, id } => runtime.focus(&table, id),
                 Order::Params(values) => runtime.set_params(&values),
+                Order::ScatterReport { stage, chunk } => {
+                    // A chunk dropped since it was asked for has no inputs left to decide from.
+                    if runtime.product(&stage, chunk).is_some() {
+                        let report = runtime.scatter_report(&stage, chunk);
+                        report.map(|report| {
+                            let _ = reports.send(Report::Judged(stage, chunk, report));
+                            Vec::new()
+                        })
+                    } else {
+                        Ok(Vec::new())
+                    }
+                }
             };
             match result {
                 Ok(dropped) if dropped.is_empty() => {}
