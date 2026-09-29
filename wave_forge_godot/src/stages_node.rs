@@ -44,8 +44,8 @@ use wave_forge::stages::brushes::{Brush, Canvas, stroke};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
     Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, ParamDef, Point, PointId,
-    Rejection, RowId, Runtime, Save, Site, SiteId, StageError, StageEvent, StageKind, StageWorker,
-    TableKind, Value,
+    Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId, StageError, StageEvent, StageKind,
+    StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -233,6 +233,12 @@ pub struct WaveForgeStages {
     #[export]
     kernel_cache: GString,
 
+    /// A directory `run_world` wrote the pack's whole world to, which the node plays instead of
+    /// generating: its targets' chunks come from there, and nothing is generated. Empty
+    /// generates as usual.
+    #[export(dir)]
+    play_directory: GString,
+
     /// Where the chunks of frozen stages that the request no longer needs are kept, one file each,
     /// so they leave memory and come back unchanged; `user://` paths are resolved. The game keeps
     /// the directory with its saves, since a save then holds only the frozen chunks in memory.
@@ -247,6 +253,10 @@ pub struct WaveForgeStages {
     #[export]
     candidates_stage: GString,
 
+    /// What builds the runtime the node generates with, from its settings when it started.
+    builder: Option<Builder>,
+    /// The world run under way, if one is.
+    world_run: Option<WorldRunning>,
     /// The candidates drawn, by chunk: the MultiMesh, its instance, and each verdict's count.
     candidates: HashMap<ChunkCoord, (Rid, Rid, BTreeMap<String, i64>)>,
     /// The box every candidate is drawn with, kept while any is drawn.
@@ -640,6 +650,9 @@ impl INode for WaveForgeStages {
             far_ground_stage: GString::new(),
             kernel_cache: GString::from("user://wave_forge/kernels"),
             frozen_directory: GString::new(),
+            play_directory: GString::new(),
+            builder: None,
+            world_run: None,
             candidates_stage: GString::new(),
             candidates: HashMap::new(),
             candidate_box: None,
@@ -757,6 +770,7 @@ impl INode for WaveForgeStages {
 
     /// Hands the frame whatever the stages' thread finished, as signals.
     fn process(&mut self, _delta: f64) {
+        self.update_world_run();
         let processing = std::time::Instant::now();
         let Some(worker) = &mut self.worker else {
             return;
@@ -962,6 +976,15 @@ impl WaveForgeStages {
     /// and the pack's digest.
     #[signal]
     fn saved(save: GString);
+
+    /// A world run got one chunk further: `done` of `total`.
+    #[signal]
+    fn world_run_progress(done: i64, total: i64);
+
+    /// A world run ended, finished if `done` is `total`, stopped or failed if not; a failure is
+    /// reported as an error too.
+    #[signal]
+    fn world_run_finished(done: i64, total: i64);
 
     /// Loads `pack_file` and the rule sets its Solve stages name, and starts the stages' thread.
     /// Returns whether it could start; why not is reported as an error. A town solver builds its
@@ -1189,13 +1212,18 @@ impl WaveForgeStages {
             }
         };
         // The towns' device is built on the stages' thread, which is where it is used.
-        self.worker = Some(StageWorker::spawn(move || {
-            let mut runtime = with_noises(Runtime::new(for_thread, seed, [shape.x, shape.y]))?;
-            if let Some(directory) = frozen {
-                runtime = runtime.with_store(Box::new(DirectoryStore::new(directory)));
+        // The runtime the stages' thread generates with, and a world run too.
+        let build: Builder = Arc::new(move || {
+            let mut runtime = with_noises.clone()(Runtime::new(
+                Arc::clone(&for_thread),
+                seed,
+                [shape.x, shape.y],
+            ))?;
+            if let Some(directory) = &frozen {
+                runtime = runtime.with_store(Box::new(DirectoryStore::new(directory.clone())));
             }
             runtime
-                .set_facts(thread_facts)
+                .set_facts(thread_facts.clone())
                 .map_err(|error| error.to_string())?;
             runtime
                 .set_params(&thread_params)
@@ -1207,19 +1235,32 @@ impl WaveForgeStages {
                 return Ok(runtime);
             }
             let mut towns = WfcTowns::new(shape);
-            for (name, file) in rules {
+            for (name, file) in &rules {
                 towns = match &cache {
-                    Some(dir) => towns.with_rules(&name, file, |rules| {
+                    Some(dir) => towns.with_rules(name, file.clone(), |rules| {
                         wave_forge::towns::gpu_solver_cached(rules, dir)
                     }),
-                    None => towns.with_rules(&name, file, wave_forge::towns::gpu_solver),
+                    None => towns.with_rules(name, file.clone(), wave_forge::towns::gpu_solver),
                 }
                 .map_err(|error| error.to_string())?;
             }
             runtime
                 .with_towns(Box::new(towns))
                 .map_err(|error| error.to_string())
-        }));
+        });
+        self.builder = Some(Arc::clone(&build));
+        self.worker = Some(if self.play_directory.is_empty() {
+            StageWorker::spawn(move || build())
+        } else {
+            let directory = ProjectSettings::singleton()
+                .globalize_path(&self.play_directory)
+                .to_string();
+            StageWorker::play(
+                Arc::clone(self.pack.as_ref().expect("set above")),
+                [shape.x, shape.y],
+                Box::new(DirectoryStore::new(directory)),
+            )
+        });
         true
     }
 
@@ -2130,6 +2171,100 @@ impl WaveForgeStages {
                 out
             })
             .collect()
+    }
+
+    /// Generates the whole world of the pack's bound ahead of time, on a thread of its own: the
+    /// node's `targets` over every chunk, each chunk's products kept under `directory` the moment
+    /// it is done, which `play_directory` then plays ([packs.md](packs.md#a-whole-world-ahead-of-time)).
+    /// Progress arrives as `world_run_progress`, the end as `world_run_finished`;
+    /// `cancel_world_run` stops it, and running it again resumes from what `directory` holds. The
+    /// node has to have started, since the run generates as the node does. Returns whether it
+    /// started; not if the node has not, or a run is under way.
+    #[func]
+    fn run_world(&mut self, directory: GString) -> bool {
+        let Some(build) = self.builder.clone() else {
+            godot_error!("wave forge: run_world before start");
+            return false;
+        };
+        if self.world_run.is_some() {
+            godot_error!("wave forge: a world run is under way");
+            return false;
+        }
+        let directory = ProjectSettings::singleton()
+            .globalize_path(&directory)
+            .to_string();
+        let targets: Vec<String> = self
+            .targets
+            .as_slice()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let (sent, progress) = std::sync::mpsc::channel();
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = Arc::clone(&cancel);
+        std::thread::Builder::new()
+            .name("wave forge world run".to_owned())
+            .spawn(move || {
+                let run = build().and_then(|mut runtime| {
+                    let targets: Vec<&str> = targets.iter().map(String::as_str).collect();
+                    let mut store = DirectoryStore::new(directory);
+                    runtime
+                        .run_world(&targets, &mut store, |state| {
+                            let _ = sent.send(RunEvent::Progress(state));
+                            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                                std::ops::ControlFlow::Break(())
+                            } else {
+                                std::ops::ControlFlow::Continue(())
+                            }
+                        })
+                        .map_err(|error| error.to_string())
+                });
+                let _ = sent.send(RunEvent::Ended(run));
+            })
+            .expect("a thread");
+        self.world_run = Some(WorldRunning { progress, cancel });
+        true
+    }
+
+    /// Signals what the world run under way reported since the last frame, and forgets it once
+    /// it has ended.
+    fn update_world_run(&mut self) {
+        let Some(run) = &self.world_run else {
+            return;
+        };
+        let events: Vec<RunEvent> = run.progress.try_iter().collect();
+        for event in events {
+            match event {
+                RunEvent::Progress(state) => {
+                    self.signals()
+                        .world_run_progress()
+                        .emit(state.done as i64, state.total as i64);
+                }
+                RunEvent::Ended(result) => {
+                    self.world_run = None;
+                    let state = result.unwrap_or_else(|reason| {
+                        godot_error!("wave forge: the world run failed: {reason}");
+                        RunProgress {
+                            done: 0,
+                            total: 0,
+                            skipped: 0,
+                            held: 0,
+                        }
+                    });
+                    self.signals()
+                        .world_run_finished()
+                        .emit(state.done as i64, state.total as i64);
+                }
+            }
+        }
+    }
+
+    /// Stops the world run under way after the chunk it is on; `run_world` again resumes it.
+    #[func]
+    fn cancel_world_run(&mut self) {
+        if let Some(run) = &self.world_run {
+            run.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     /// The chunks that have a static body: their ground, their volume's surface, and their towns'
@@ -3751,6 +3886,24 @@ fn param_values(values: &VarDictionary) -> Option<BTreeMap<String, f32>> {
             Some((name, value as f32))
         })
         .collect()
+}
+
+/// What builds the runtime a node generates with, on whatever thread calls it.
+type Builder = Arc<dyn Fn() -> Result<Runtime, String> + Send + Sync>;
+
+/// A world run on a thread of its own ([`WaveForgeStages::run_world`]): what it reports, and the
+/// flag that stops it.
+struct WorldRunning {
+    progress: std::sync::mpsc::Receiver<RunEvent>,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// What a world run's thread reports.
+enum RunEvent {
+    /// One more chunk done.
+    Progress(RunProgress),
+    /// The run is over: where it got to, or why it failed.
+    Ended(Result<RunProgress, String>),
 }
 
 /// The prefix of the properties the inspector shows a pack's parameters as.

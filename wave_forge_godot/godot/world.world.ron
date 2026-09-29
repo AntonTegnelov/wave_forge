@@ -1,0 +1,13 @@
+// The pack of the world run check (verify_world.gd): a finite world of 6 by 5 chunks of 8 columns,
+// with ground, its materials and trees, run whole ahead of time and then played back.
+(
+    version: 1,
+    bound: Some(Rect(min: (0.0, 0.0), max: (47.0, 39.0))),
+    stages: [
+        (name: "height", kind: Field(Mul(Noise(frequency: 0.05, octaves: 3), Constant(12.0)))),
+        (name: "surface", kind: Rules(rules: [
+            (category: "rock", when: [Greater(Input("height"), Constant(8.0))]),
+        ], otherwise: "grass")),
+        (name: "trees", kind: Scatter(kind: "tree", height: "height", spacing: 3, apart: 2)),
+    ],
+)

@@ -122,8 +122,9 @@ impl StageWorker {
     }
 
     /// A worker that plays a world [`Runtime::run_world`] wrote to `store`, generating nothing:
-    /// a request's chunks of each target come from the store, as the run kept them, and those it
-    /// no longer asks for are dropped, as a runtime's would be. `pack` is the pack the world was
+    /// a request's chunks of each target come from the store, as the run kept them, with the
+    /// chunks of every other target a target reads within its reach, as a runtime would hold them,
+    /// and those it no longer asks for are dropped, as a runtime's would be. `pack` is the pack the world was
     /// run from, and `size` its chunks' columns. A target chunk the store lacks, facts, edits,
     /// parameters and scatter reports stop the thread and arrive as a failure, since each would
     /// need generating; so does a save.
@@ -454,29 +455,37 @@ fn play(
                 return;
             }
         };
-        // Each target's chunks around the focus points, in its own lattice, inside the bound.
+        // Each target's chunks around the focus points, in its own lattice, inside the bound, and
+        // as a runtime would hold them, every other target a target reads within its reach of it.
         let mut needed: BTreeSet<(String, ChunkCoord)> = BTreeSet::new();
         for (target, radius) in &targets {
-            let Some(scale) = pack.scale(target) else {
+            let Some(reach) = pack.reach(target, size) else {
                 let _ = reports.send(Report::Failed(format!("no stage is named {target:?}")));
                 return;
             };
-            for point in &focus {
-                let radius = radius.unwrap_or(point.radius) as i32;
-                for y in -radius..=radius {
-                    for x in -radius..=radius {
-                        let chunk = ChunkCoord::new(
-                            (point.chunk.x + x).div_euclid(scale as i32),
-                            (point.chunk.y + y).div_euclid(scale as i32),
-                            0,
-                        );
-                        let [sx, sy] = size.map(|side| (side * scale) as f32);
-                        let min = [chunk.x as f32 * sx, chunk.y as f32 * sy];
-                        if pack
-                            .bound()
-                            .is_none_or(|bound| bound.meets(min, [min[0] + sx, min[1] + sy]))
-                        {
-                            needed.insert((target.clone(), chunk));
+            for (stage, _) in &targets {
+                let Some(&cells) = reach.get(stage) else {
+                    continue;
+                };
+                let scale = pack.scale(stage).expect("a stage the pack names");
+                let beyond = cells.div_ceil(size[0] * scale) as i32;
+                for point in &focus {
+                    let radius = radius.unwrap_or(point.radius) as i32 + beyond;
+                    for y in -radius..=radius {
+                        for x in -radius..=radius {
+                            let chunk = ChunkCoord::new(
+                                (point.chunk.x + x).div_euclid(scale as i32),
+                                (point.chunk.y + y).div_euclid(scale as i32),
+                                0,
+                            );
+                            let [sx, sy] = size.map(|side| (side * scale) as f32);
+                            let min = [chunk.x as f32 * sx, chunk.y as f32 * sy];
+                            if pack
+                                .bound()
+                                .is_none_or(|bound| bound.meets(min, [min[0] + sx, min[1] + sy]))
+                            {
+                                needed.insert((stage.clone(), chunk));
+                            }
                         }
                     }
                 }

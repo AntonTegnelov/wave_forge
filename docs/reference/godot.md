@@ -188,6 +188,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
 | | `frozen_directory` | where frozen stages' chunks the request no longer needs are kept, a file each, so they leave memory and come back unchanged ([packs.md](packs.md#persistence-and-saves)); `user://` paths are resolved, and the game keeps the directory with its saves. Empty keeps every frozen chunk in memory, and in the save |
+| | `play_directory` | a directory `run_world` wrote the pack's whole world to, which the node plays instead of generating: its targets' chunks come from there, and no stage runs ([packs.md](packs.md#a-whole-world-ahead-of-time)); empty generates as usual |
 | Debug | `candidates_stage` | a Scatter stage whose candidates are drawn as small boxes over the ground, each coloured by what became of it, kept or the modifier that rejected it ([packs.md](packs.md#scatter)); empty draws none |
 
 ### Functions
@@ -299,6 +300,13 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   `"condition n"`, `"water"`, `"sites"`, `"blocked"` or `"spacing"`), the `colour` it is drawn in
   and its `count`; `candidate_chunks()` lists the chunks drawn. The node asks the stages' thread
   for each chunk's `scatter_report` as the chunk arrives.
+- `run_world(directory)` generates the pack's whole finite world ahead of time on a thread of its
+  own, the node's `targets` over every chunk of the bound, keeping each chunk's products under
+  `directory` as it is done; `world_run_progress(done, total)` reports each chunk,
+  `world_run_finished(done, total)` the end, and `cancel_world_run()` stops it, which running
+  again resumes. It runs as the node generates, so the node has to have started; in the editor,
+  with `preview_in_editor`, it is the bake of M1. A node whose `play_directory` is that directory
+  then plays the world with nothing generated.
 - `keep_bake_edits(baked)` turns what a designer changed in a bake, as instanced, into edits:
   - a point node moved or turned is moved there with `Edit::Move`;
   - a point node deleted is removed.

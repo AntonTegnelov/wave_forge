@@ -174,6 +174,25 @@ fn a_played_world_serves_what_the_run_wrote_and_generates_nothing() {
         "a stage ran: {:?}",
         worker.timings()
     );
+    // As a runtime asked the same holds them: each target where the request and its readers
+    // need it, and nowhere else.
+    let mut asked = runtime(PACK);
+    asked
+        .request(&[wave_forge::FocusPoint::new(centre, 1)], &TARGETS)
+        .expect("the stages");
+    asked.run_until_idle().expect("the stages run");
+    for y in -2..8 {
+        for x in -2..8 {
+            let chunk = ChunkCoord::new(x, y, 0);
+            for target in TARGETS {
+                assert_eq!(
+                    worker.shared(target, chunk).is_some(),
+                    asked.product(target, chunk).is_some(),
+                    "{target} at {chunk:?}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
