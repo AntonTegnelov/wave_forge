@@ -1,7 +1,9 @@
 // The pack of the scenes check (verify_scenes.gd): a village of streets and houses grown on each
-// site, the ground levelled under it, and trees kept clear of it.
+// site, the ground levelled under it, and trees kept clear of it. The world ends 400 cells from the
+// origin, so a check that moves far away leaves it and nothing is placed where it arrives.
 (
     version: 1,
+    bound: Some(Rect(min: (-400.0, -400.0), max: (400.0, 400.0))),
     stages: [
         (name: "ground", kind: Field(Mul(Noise(frequency: 0.03, octaves: 2), Constant(12.0)))),
         (name: "villages", kind: Sites(height: "ground", region: 6, size: (2, 3), chance: 1.0)),
