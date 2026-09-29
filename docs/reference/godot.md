@@ -357,7 +357,13 @@ project's plugins) adds a Wave Forge dock:
 - a Paint toggle;
 - a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
 - the stage it paints, or the point stages Remove takes from;
-- a radius in cells, and a strength.
+- a radius in cells, and a strength;
+- a World run: a directory (`res://wave_forge_world` unless changed, so the result ships with the
+  game), Run world and Cancel buttons, a progress bar of chunks, and what each stage has generated
+  so far or how the run ended. Run world is the node's `run_world`, so the node has to have started,
+  with `preview_in_editor` on; running again after a cancel resumes. The panel is
+  `addons/wave_forge/world_run_panel.gd`, which only renders the node's `world_run_progress` and
+  `world_run_finished`.
 
 With Paint on and the node selected, a drag in the 3D viewport paints a stroke along the ground,
 as one undo action that restores `edits_text`. The ground comes from `ground_height`, so painting

@@ -4,7 +4,10 @@ extends EditorPlugin
 ## selected WaveForgeStages node's world as edits, one undo action per stroke, and a preview that
 ## follows the editor's camera while the node's `preview_in_editor` is on. What a stroke does is the
 ## node's `paint`, so the editor and a game paint the same way; the plugin only turns the mouse into
-## a path along the ground.
+## a path along the ground. Below the brushes, the world run of M1: the node's whole finite world
+## run ahead of time into a directory (`world_run_panel.gd`).
+
+const WorldRunPanel := preload("res://addons/wave_forge/world_run_panel.gd")
 
 ## The brushes of the dock, as `paint` names them, with how each is shown.
 const BRUSHES := {
@@ -28,6 +31,7 @@ var brush_choice: OptionButton
 var stage_edit: LineEdit
 var radius_spin: SpinBox
 var strength_spin: SpinBox
+var world_run: VBoxContainer
 ## The node being edited, while one is selected.
 var stages: Node
 ## The stroke under way: its path along the ground, and the edits before it, for undo.
@@ -48,6 +52,7 @@ func _handles(object: Object) -> bool:
 
 func _edit(object: Object) -> void:
 	stages = object
+	world_run.bind(object)
 
 func _process(_delta: float) -> void:
 	if stages == null or not is_instance_valid(stages) or not stages.preview_in_editor:
@@ -134,6 +139,9 @@ func _make_dock() -> VBoxContainer:
 	box.add_child(_labelled("Radius (cells)", radius_spin))
 	strength_spin = _spin(0.0, 16.0, 1.0)
 	box.add_child(_labelled("Strength", strength_spin))
+	box.add_child(HSeparator.new())
+	world_run = WorldRunPanel.new()
+	box.add_child(world_run)
 	return box
 
 ## The presets shipped with the plugin, by path.

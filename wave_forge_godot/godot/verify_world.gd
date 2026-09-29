@@ -1,8 +1,9 @@
 ## Runs a finite world whole ahead of time, stopping and resuming, and plays it back.
 ##
 ## Run by `../verify.sh` after `verify_candidates.gd`. A node runs the pack's 30 chunks into a
-## directory, reporting its progress by chunk and by stage; it is cancelled as soon as it starts, so
-## it stops after its first chunk, and run again, which resumes and finishes. A second node given
+## directory, reporting its progress by chunk and by stage, driven by the editor dock's world run
+## panel as a designer's clicks would; it is cancelled as soon as it starts, so it stops after its
+## first chunk, and run again, which resumes and finishes, the panel showing each end. A second node given
 ## that directory as `play_directory` then plays the world around the player: its fields and trees
 ## equal those of a third node that generates as usual, in a world of its own, its ground is built
 ## from them, and no stage of it ran. Both bake navigation around the player from their ground, and
@@ -23,6 +24,7 @@ var progressed := 0
 var finished := []
 var first_stages := {}
 var navigable_usec := -1
+var panel: Node
 
 func _initialize() -> void:
 	DirAccess.remove_absolute(DIRECTORY)
@@ -36,12 +38,16 @@ func _initialize() -> void:
 			first_stages = stages
 		progressed += 1)
 	runner.world_run_finished.connect(func(done: int, total: int) -> void: finished.append([done, total]))
-	if not runner.run_world(DIRECTORY):
-		_fail("the world run did not start")
+	panel = load("res://addons/wave_forge/world_run_panel.gd").new()
+	root.add_child(panel)
+	panel.directory_edit.text = DIRECTORY
+	panel.bind(runner)
+	if not panel.run():
+		_fail("the world run did not start: %s" % panel.status.text)
 		return
 	# The run checks for a cancel after each chunk, so cancelling at once stops it after its first
 	# whatever the machine's speed.
-	runner.cancel_world_run()
+	panel.cancel()
 	started_usec = Time.get_ticks_usec()
 
 ## Deletes what an earlier run left in `path`.
@@ -93,9 +99,12 @@ func _process(_delta: float) -> bool:
 				if not first_stages.has(stage) or first_stages[stage]["products"] < 1:
 					_fail("the first chunk's report of %s is %s" % [stage, first_stages])
 					return true
+			if panel.status.text != "Stopped at %d of 30 chunks; run again to resume." % finished[0][0] or panel.run_button.disabled:
+				_fail("the panel shows the cancelled run as %s" % panel.status.text)
+				return true
 			phase = "resume"
-			if not runner.run_world(DIRECTORY):
-				_fail("the run did not start again")
+			if not panel.run():
+				_fail("the run did not start again: %s" % panel.status.text)
 				return true
 			return false
 		"resume":
@@ -103,6 +112,9 @@ func _process(_delta: float) -> bool:
 				return false
 			if finished[1] != [30, 30] or progressed < 30:
 				_fail("the resumed run ended at %s after %d reports" % [finished[1], progressed])
+				return true
+			if not panel.status.text.begins_with("Finished: 30 chunks") or panel.progress.value != 30 or not panel.cancel_button.disabled:
+				_fail("the panel shows the finished run as %s, %d of %d" % [panel.status.text, panel.progress.value, panel.progress.max_value])
 				return true
 			player = _node(DIRECTORY, root)
 			# A navigation map of its own, so the two worlds' regions do not overlap.
