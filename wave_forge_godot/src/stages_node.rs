@@ -141,6 +141,24 @@ pub struct WaveForgeStages {
     /// as its colour; materials past its end take colours of their own from their index.
     #[export]
     volume_palette: PackedColorArray,
+    /// A Volume, Carve or Aquifer stage at scale 1 whose surface is drawn as fluid, never collided
+    /// with: water and lava in the caves of `volume_stage`, say; empty for none. Its surfaces are
+    /// meshed and drawn as the volume's are, within the same `volume_budget_ms`.
+    #[export]
+    fluid_stage: GString,
+    /// The material the fluid's surface is drawn with; none draws it with the reference fluid
+    /// shader, each vertex in its material's colour from `fluid_palette`, its alpha the fluid's
+    /// opacity, glowing as `fluid_glow` says, seen from both sides.
+    #[export]
+    fluid_material: Option<Gd<Material>>,
+    /// A colour per material of `fluid_stage`, by index, as `volume_palette` is for the volume.
+    #[export]
+    fluid_palette: PackedColorArray,
+    /// How brightly each material of `fluid_stage` glows, by index, as a multiple of its colour:
+    /// lava's glow, say. Each vertex carries its material's in its first UV; materials past its
+    /// end do not glow.
+    #[export]
+    fluid_glow: PackedFloat32Array,
 
     /// A field stage whose value per column, from 0 to 1, is how much of it grass covers; empty for
     /// no grass. Grass stands on the ground, so it needs `ground_stage`.
@@ -229,15 +247,10 @@ pub struct WaveForgeStages {
     /// The chunks of `far_ground_stage` whose far ground is drawn: its `RenderingServer` mesh and
     /// instance.
     far_grounds: HashMap<ChunkCoord, (Rid, Rid)>,
-    /// Chunks whose volume surface may be buildable: a volume around them arrived since they were
-    /// last looked at.
-    volume_due: std::collections::BTreeSet<ChunkCoord>,
-    /// The chunks whose volume surface is built.
-    volumes: HashMap<ChunkCoord, Surface>,
-    /// The thread volume surfaces are meshed on, while there is a `volume_stage`.
-    surfaces: Option<SurfaceWorker>,
-    /// Surfaces meshed and waiting to be drawn, a frame's budget at a time.
-    meshed: Vec<VolumeMesh>,
+    /// The surfaces of `volume_stage`, while there is one.
+    rock: Option<VolumeLayer>,
+    /// The surfaces of `fluid_stage`, while there is one.
+    fluid: Option<VolumeLayer>,
     /// How many surfaces have been built, which numbers each one's revision, so a chunk's body
     /// tells a surface built again from the one it holds.
     volume_revisions: u64,
@@ -247,6 +260,9 @@ pub struct WaveForgeStages {
     /// The material a volume with materials is drawn with when `volume_material` is empty: its
     /// vertices' colours as albedo.
     vertex_colours: Option<Gd<StandardMaterial3D>>,
+    /// The material the fluid is drawn with when `fluid_material` is empty: the reference fluid
+    /// shader.
+    fluid_colours: Option<Gd<ShaderMaterial>>,
     /// Each chunk's copy of the ground material, holding its material ids, while its ground is
     /// built; none without `ground_material_stage`.
     chunk_materials: HashMap<ChunkCoord, Gd<ShaderMaterial>>,
@@ -277,6 +293,51 @@ struct Surface {
     drawn: Option<(Rid, Rid)>,
     /// The revision it was built as, so a body tells a surface built again from the one it holds.
     revision: u64,
+}
+
+/// A volume stage drawn as surfaces meshed on a thread of their own: the rock of `volume_stage`,
+/// or the fluid of `fluid_stage`.
+struct VolumeLayer {
+    stage: String,
+    /// Chunks whose surface may be buildable: a volume around them arrived since they were last
+    /// looked at.
+    due: std::collections::BTreeSet<ChunkCoord>,
+    /// The chunks whose surface is built.
+    built: HashMap<ChunkCoord, Surface>,
+    /// The thread its surfaces are meshed on.
+    surfaces: SurfaceWorker,
+    /// Surfaces meshed and waiting to be drawn, a frame's budget at a time.
+    meshed: Vec<VolumeMesh>,
+}
+
+impl VolumeLayer {
+    fn new(stage: String) -> Self {
+        Self {
+            stage,
+            due: std::collections::BTreeSet::new(),
+            built: HashMap::new(),
+            surfaces: SurfaceWorker::spawn(),
+            meshed: Vec::new(),
+        }
+    }
+
+    /// How many chunks wait for their surface: due, meshing, or meshed and not drawn yet.
+    fn pending(&self) -> usize {
+        self.due.len() + self.surfaces.building() + self.meshed.len()
+    }
+
+    /// Frees every surface it drew and forgets what waits.
+    fn clear(&mut self) {
+        let mut rendering = RenderingServer::singleton();
+        self.due.clear();
+        self.meshed.clear();
+        for (_, surface) in self.built.drain() {
+            if let Some((mesh, instance)) = surface.drawn {
+                rendering.free_rid(instance);
+                rendering.free_rid(mesh);
+            }
+        }
+    }
 }
 
 /// The most `stage_ready` and `stage_dropped` signals one frame emits. A wide request can bring
@@ -560,11 +621,14 @@ impl INode for WaveForgeStages {
             volume_palette: PackedColorArray::new(),
             volume_budget_ms: 2.0,
             vertex_colours: None,
-            volume_due: std::collections::BTreeSet::new(),
-            volumes: HashMap::new(),
+            fluid_stage: GString::new(),
+            fluid_material: None,
+            fluid_palette: PackedColorArray::new(),
+            fluid_glow: PackedFloat32Array::new(),
+            fluid_colours: None,
+            rock: None,
+            fluid: None,
             volume_revisions: 0,
-            surfaces: None,
-            meshed: Vec::new(),
             volume_ms: 0.0,
             last_frame_ms: 0.0,
             ground_due: std::collections::BTreeSet::new(),
@@ -659,17 +723,22 @@ impl INode for WaveForgeStages {
                 StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
             }
         }
-        let volume_stage = self.volume_stage.to_string();
-        let (mut volume_arrived, mut volume_gone) = (Vec::new(), Vec::new());
+        // What arrived and went of each volume stage drawn: the rock's, then the fluid's.
+        let mut layers: [(Vec<ChunkCoord>, Vec<ChunkCoord>); 2] = Default::default();
+        let stages = [self.volume_stage.to_string(), self.fluid_stage.to_string()];
         for event in &events {
-            match event {
-                StageEvent::Generated { stage, chunk } if *stage == volume_stage => {
-                    volume_arrived.push(*chunk);
+            for (layer, stage_drawn) in stages.iter().enumerate() {
+                match event {
+                    StageEvent::Generated { stage, chunk } if stage == stage_drawn => {
+                        layers[layer].0.push(*chunk);
+                    }
+                    StageEvent::Dropped { stage, chunk } if stage == stage_drawn => {
+                        layers[layer].1.push(*chunk);
+                    }
+                    StageEvent::Generated { .. }
+                    | StageEvent::Dropped { .. }
+                    | StageEvent::Saved => {}
                 }
-                StageEvent::Dropped { stage, chunk } if *stage == volume_stage => {
-                    volume_gone.push(*chunk);
-                }
-                StageEvent::Generated { .. } | StageEvent::Dropped { .. } | StageEvent::Saved => {}
             }
         }
         let far_stage = self.far_ground_stage.to_string();
@@ -732,7 +801,11 @@ impl INode for WaveForgeStages {
             )
             .collect();
         self.update_far_ground(&far_arrived, &far_gone, &near_changed);
-        frame.grounds += self.update_volume(&volume_arrived, &volume_gone);
+        let drawing = std::time::Instant::now();
+        frame.grounds +=
+            self.update_layer(false, &layers[0].0, &layers[0].1, self.volume_budget_ms);
+        let left = self.volume_budget_ms - elapsed_ms(drawing);
+        frame.grounds += self.update_layer(true, &layers[1].0, &layers[1].1, left);
         frame.grounds_ms = elapsed_ms(grounding);
         let building = std::time::Instant::now();
         frame.bodies = self.update_colliders();
@@ -831,7 +904,33 @@ impl WaveForgeStages {
             );
             return false;
         }
-        self.surfaces = None;
+        self.rock = None;
+        self.fluid = None;
+        if !self.fluid_stage.is_empty() {
+            let stage = self.fluid_stage.to_string();
+            if !matches!(
+                pack.kind(&stage),
+                Some(
+                    StageKind::Volume { .. } | StageKind::Carve { .. } | StageKind::Aquifer { .. }
+                )
+            ) || pack.scale(&stage) != Some(1)
+            {
+                godot_error!(
+                    "wave forge: fluid_stage {} is no Volume, Carve or Aquifer stage of the pack at \
+                     scale 1",
+                    self.fluid_stage
+                );
+                return false;
+            }
+            self.fluid = Some(VolumeLayer::new(stage));
+            if self.fluid_colours.is_none() {
+                let mut shader = Shader::new_gd();
+                shader.set_code(FLUID_SHADER);
+                let mut material = ShaderMaterial::new_gd();
+                material.set_shader(&shader);
+                self.fluid_colours = Some(material);
+            }
+        }
         if !self.volume_stage.is_empty() {
             let stage = self.volume_stage.to_string();
             if !matches!(
@@ -845,7 +944,7 @@ impl WaveForgeStages {
                 );
                 return false;
             }
-            self.surfaces = Some(SurfaceWorker::spawn());
+            self.rock = Some(VolumeLayer::new(stage));
             if self.vertex_colours.is_none() {
                 let mut colours = StandardMaterial3D::new_gd();
                 colours.set_flag(Flags::ALBEDO_FROM_VERTEX_COLOR, true);
@@ -1552,6 +1651,12 @@ impl WaveForgeStages {
         GString::from(VEGETATION_SHADER)
     }
 
+    /// The reference fluid shader's code, to copy into a shader of a game's own.
+    #[func]
+    fn fluid_shader_code(&self) -> GString {
+        GString::from(FLUID_SHADER)
+    }
+
     /// The reference grass shader's code, to copy into a shader of a game's own.
     #[func]
     fn grass_shader_code(&self) -> GString {
@@ -1584,7 +1689,7 @@ impl WaveForgeStages {
     /// The chunks of `volume_stage` whose surface is built, those without triangles included.
     #[func]
     fn volume_chunks(&self) -> Array<Vector3i> {
-        self.volumes.keys().map(|&chunk| to_vector(chunk)).collect()
+        layer_chunks(self.rock.as_ref())
     }
 
     /// A chunk's volume surface, relative to the chunk's corner on the ground plane: `positions`
@@ -1594,46 +1699,33 @@ impl WaveForgeStages {
     /// surface is not built.
     #[func]
     fn volume_surface(&self, chunk: Vector3i) -> VarDictionary {
-        let mut out = VarDictionary::new();
-        let Some(Surface { mesh, .. }) = self.volumes.get(&from_vector(chunk)) else {
-            return out;
-        };
-        let vectors = |values: &[[f32; 3]]| -> PackedVector3Array {
-            values
-                .iter()
-                .map(|&[x, y, z]| Vector3::new(x, y, z))
-                .collect()
-        };
-        let indices: PackedInt32Array = mesh
-            .indices
-            .chunks(3)
-            .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])
-            .map(|index| index as i32)
-            .collect();
-        out.set(
-            &"positions".to_variant(),
-            &vectors(&mesh.positions).to_variant(),
-        );
-        out.set(
-            &"normals".to_variant(),
-            &vectors(&mesh.normals).to_variant(),
-        );
-        out.set(&"indices".to_variant(), &indices.to_variant());
-        out.set(
-            &"materials".to_variant(),
-            &PackedByteArray::from(mesh.materials.as_slice()).to_variant(),
-        );
-        out
+        layer_surface(self.rock.as_ref(), chunk)
     }
 
     /// The `RenderingServer` mesh a chunk's volume surface is drawn with; an invalid RID if it is
     /// not drawn.
     #[func]
     fn volume_mesh_of(&self, chunk: Vector3i) -> Rid {
-        self.volumes
-            .get(&from_vector(chunk))
-            .and_then(|surface| surface.drawn)
-            .map_or(Rid::Invalid, |(mesh, _)| mesh)
+        layer_mesh(self.rock.as_ref(), chunk)
+    }
+
+    /// The chunks of `fluid_stage` whose surface is built, those without triangles included.
+    #[func]
+    fn fluid_chunks(&self) -> Array<Vector3i> {
+        layer_chunks(self.fluid.as_ref())
+    }
+
+    /// A chunk's fluid surface, as `volume_surface` gives the volume's.
+    #[func]
+    fn fluid_surface(&self, chunk: Vector3i) -> VarDictionary {
+        layer_surface(self.fluid.as_ref(), chunk)
+    }
+
+    /// The `RenderingServer` mesh a chunk's fluid surface is drawn with; an invalid RID if it is
+    /// not drawn.
+    #[func]
+    fn fluid_mesh_of(&self, chunk: Vector3i) -> Rid {
+        layer_mesh(self.fluid.as_ref(), chunk)
     }
 
     /// The chunks that have a static body: their ground, their volume's surface, and their towns'
@@ -1827,10 +1919,14 @@ impl WaveForgeStages {
             &"pending_grounds".to_variant(),
             &(self.ground_due.len() as i64).to_variant(),
         );
-        let meshing = self.surfaces.as_ref().map_or(0, SurfaceWorker::building);
+        let pending = [&self.rock, &self.fluid]
+            .into_iter()
+            .flatten()
+            .map(VolumeLayer::pending)
+            .sum::<usize>();
         out.set(
             &"pending_volumes".to_variant(),
-            &((self.volume_due.len() + meshing + self.meshed.len()) as i64).to_variant(),
+            &(pending as i64).to_variant(),
         );
         out.set(
             &"last_frame_ms".to_variant(),
@@ -2089,23 +2185,56 @@ impl WaveForgeStages {
         count
     }
 
-    /// Meshes the volume surface of the chunks a newly arrived volume may have completed on the
-    /// surface thread, and draws those meshed, nearest the followed position first, for
-    /// `volume_budget_ms` a frame and at least one, and frees the surface of every chunk
-    /// that reads a volume that was dropped, which an edit's regeneration builds again.
+    /// Updates the rock's surfaces, or the fluid's with `fluid`, from the chunks of its stage
+    /// that `arrived` and are `gone`, drawing for `budget_ms` ([`Self::update_surfaces`]).
     ///
     /// Returns how many chunks got a surface.
-    fn update_volume(&mut self, arrived: &[ChunkCoord], gone: &[ChunkCoord]) -> usize {
+    fn update_layer(
+        &mut self,
+        fluid: bool,
+        arrived: &[ChunkCoord],
+        gone: &[ChunkCoord],
+        budget_ms: f64,
+    ) -> usize {
+        let taken = if fluid {
+            self.fluid.take()
+        } else {
+            self.rock.take()
+        };
+        let Some(mut layer) = taken else {
+            return 0;
+        };
+        let count = self.update_surfaces(&mut layer, fluid, arrived, gone, budget_ms);
+        if fluid {
+            self.fluid = Some(layer);
+        } else {
+            self.rock = Some(layer);
+        }
+        count
+    }
+
+    /// Meshes the surface of the chunks a newly arrived volume of `layer` may have completed on
+    /// its surface thread, and draws those meshed, nearest the followed position first, for
+    /// `budget_ms` and at least one, and frees the surface of every chunk that reads a volume that
+    /// was dropped, which an edit's regeneration builds again.
+    ///
+    /// Returns how many chunks got a surface.
+    fn update_surfaces(
+        &mut self,
+        layer: &mut VolumeLayer,
+        fluid: bool,
+        arrived: &[ChunkCoord],
+        gone: &[ChunkCoord],
+        budget_ms: f64,
+    ) -> usize {
         let mut rendering = RenderingServer::singleton();
         for reader in gone.iter().copied().flat_map(ground_readers) {
-            if let Some((mesh, instance)) = self.volumes.remove(&reader).and_then(|s| s.drawn) {
+            if let Some((mesh, instance)) = layer.built.remove(&reader).and_then(|s| s.drawn) {
                 rendering.free_rid(instance);
                 rendering.free_rid(mesh);
             }
-            if let Some(surfaces) = &mut self.surfaces {
-                surfaces.cancel(reader);
-            }
-            self.meshed.retain(|mesh| mesh.chunk != reader);
+            layer.surfaces.cancel(reader);
+            layer.meshed.retain(|mesh| mesh.chunk != reader);
         }
         let Some(scenario) = self
             .base()
@@ -2115,55 +2244,57 @@ impl WaveForgeStages {
         else {
             return 0;
         };
-        let (Some(worker), Some(surfaces)) = (&self.worker, &mut self.surfaces) else {
+        let Some(worker) = &self.worker else {
             return 0;
         };
-        let stage = self.volume_stage.to_string();
         let voxel = self.cell_size.to_array();
         // Drops first: an edit drops a chunk and generates it again in one frame, and it is due.
         for chunk in gone {
-            self.volume_due.remove(chunk);
+            layer.due.remove(chunk);
         }
-        self.volume_due
+        layer
+            .due
             .extend(arrived.iter().copied().flat_map(ground_readers));
         let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
         let distance = |chunk: ChunkCoord| (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs());
-        let mut due: Vec<ChunkCoord> = self.volume_due.iter().copied().collect();
+        let mut due: Vec<ChunkCoord> = layer.due.iter().copied().collect();
         due.sort_by_key(|&chunk| (distance(chunk), chunk));
         for chunk in due {
             // Looked at now: meshing, built, or waiting for a volume around it, whose arrival
             // makes it due again.
-            self.volume_due.remove(&chunk);
-            if self.volumes.contains_key(&chunk) || surfaces.is_building(chunk) {
+            layer.due.remove(&chunk);
+            if layer.built.contains_key(&chunk) || layer.surfaces.is_building(chunk) {
                 continue;
             }
             let around: Option<Vec<_>> = (0..9)
                 .map(|i| {
                     let at = ChunkCoord::new(chunk.x + i % 3 - 1, chunk.y + i / 3 - 1, chunk.z);
-                    worker.shared(&stage, at)
+                    worker.shared(&layer.stage, at)
                 })
                 .collect();
             if let Some(around) = around.and_then(|around| around.try_into().ok()) {
-                surfaces.build(chunk, around, voxel);
+                layer.surfaces.build(chunk, around, voxel);
             }
         }
-        self.meshed.extend(surfaces.drain());
-        self.meshed
+        layer.meshed.extend(layer.surfaces.drain());
+        layer
+            .meshed
             .sort_by_key(|mesh| std::cmp::Reverse((distance(mesh.chunk), mesh.chunk)));
         let drawing = std::time::Instant::now();
         let mut count = 0;
-        while let Some(mesh) = self.meshed.pop() {
+        while let Some(mesh) = layer.meshed.pop() {
             let chunk = mesh.chunk;
             self.volume_revisions += 1;
-            let drawn = (!mesh.indices.is_empty()).then(|| self.draw_surface(&mesh, scenario));
+            let drawn =
+                (!mesh.indices.is_empty()).then(|| self.draw_surface(&mesh, scenario, fluid));
             let surface = Surface {
                 mesh,
                 drawn,
                 revision: self.volume_revisions,
             };
-            self.volumes.insert(chunk, surface);
+            layer.built.insert(chunk, surface);
             count += 1;
-            if elapsed_ms(drawing) >= self.volume_budget_ms {
+            if elapsed_ms(drawing) >= budget_ms {
                 break;
             }
         }
@@ -2171,9 +2302,31 @@ impl WaveForgeStages {
         count
     }
 
-    /// Draws a chunk's volume surface in `scenario`, in its materials' colours for a stage with
-    /// materials, and returns its `RenderingServer` mesh and instance.
-    fn draw_surface(&self, mesh: &VolumeMesh, scenario: Rid) -> (Rid, Rid) {
+    /// Draws a chunk's surface of the rock, or of the fluid with `fluid`, in `scenario`, in its
+    /// materials' colours for a stage with materials, and returns its `RenderingServer` mesh and
+    /// instance.
+    fn draw_surface(&self, mesh: &VolumeMesh, scenario: Rid, fluid: bool) -> (Rid, Rid) {
+        let (palette, chosen, colours) = if fluid {
+            (
+                &self.fluid_palette,
+                self.fluid_material
+                    .as_ref()
+                    .map(|material| material.get_rid()),
+                self.fluid_colours
+                    .as_ref()
+                    .map(|material| material.get_rid()),
+            )
+        } else {
+            (
+                &self.volume_palette,
+                self.volume_material
+                    .as_ref()
+                    .map(|material| material.get_rid()),
+                self.vertex_colours
+                    .as_ref()
+                    .map(|material| material.get_rid()),
+            )
+        };
         let mut rendering = RenderingServer::singleton();
         let rid = rendering.mesh_create();
         let mut arrays = VarArray::new();
@@ -2194,14 +2347,25 @@ impl WaveForgeStages {
             let colours: PackedColorArray = mesh
                 .materials
                 .iter()
-                .map(|&material| palette_colour(&self.volume_palette, usize::from(material)))
+                .map(|&material| palette_colour(palette, usize::from(material)))
                 .collect();
             arrays.set(ArrayType::COLOR.ord() as usize, &colours.to_variant());
         }
+        if fluid {
+            let glows: PackedVector2Array = mesh
+                .materials
+                .iter()
+                .map(|&material| {
+                    let glow = self.fluid_glow.get(usize::from(material)).unwrap_or(0.0);
+                    Vector2::new(glow, 0.0)
+                })
+                .collect();
+            arrays.set(ArrayType::TEX_UV.ord() as usize, &glows.to_variant());
+        }
         add_levelled_surface(rid, &mut arrays, &mesh.indices, &[]);
-        let material = match (&self.volume_material, &self.vertex_colours) {
-            (Some(material), _) => Some(material.get_rid()),
-            (None, Some(colours)) if !mesh.materials.is_empty() => Some(colours.get_rid()),
+        let material = match (chosen, colours) {
+            (Some(material), _) => Some(material),
+            (None, Some(colours)) if fluid || !mesh.materials.is_empty() => Some(colours),
             (None, _) => None,
         };
         if let Some(material) = material {
@@ -2212,7 +2376,9 @@ impl WaveForgeStages {
             instance,
             Transform3D::new(Basis::IDENTITY, self.chunk_corner(mesh.chunk)),
         );
-        Gi::Static.apply(instance);
+        // Fluid is see-through and moves with the rock it fills, so global illumination leaves
+        // it out.
+        if fluid { Gi::Off } else { Gi::Static }.apply(instance);
         (rid, instance)
     }
 
@@ -2350,8 +2516,9 @@ impl WaveForgeStages {
         let contents = |this: &Self, chunk: ChunkCoord| BodyContents {
             ground: this.ground_revisions.get(&chunk).copied(),
             volume: this
-                .volumes
-                .get(&chunk)
+                .rock
+                .as_ref()
+                .and_then(|rock| rock.built.get(&chunk))
                 .filter(|surface| !surface.mesh.indices.is_empty())
                 .map(|surface| surface.revision),
             towns: if this.collision_shapes.is_empty() {
@@ -2514,7 +2681,12 @@ impl WaveForgeStages {
         body: Rid,
         chunk: ChunkCoord,
     ) -> Rid {
-        let mesh = &self.volumes[&chunk].mesh;
+        let mesh = &self
+            .rock
+            .as_ref()
+            .expect("a volume shape is added while the volume is drawn")
+            .built[&chunk]
+            .mesh;
         // Godot's front faces wind clockwise, the library's counter-clockwise.
         let faces: PackedVector3Array = mesh
             .indices
@@ -2742,19 +2914,66 @@ impl WaveForgeStages {
             rendering.free_rid(mesh);
         }
         self.ground_revisions.clear();
-        self.volume_due.clear();
-        self.meshed.clear();
-        for (_, surface) in self.volumes.drain() {
-            if let Some((mesh, instance)) = surface.drawn {
-                rendering.free_rid(instance);
-                rendering.free_rid(mesh);
-            }
+        for layer in [&mut self.rock, &mut self.fluid].into_iter().flatten() {
+            layer.clear();
         }
         // Freed after the meshes that draw with them.
         self.chunk_materials.clear();
         self.free_bodies();
         self.placements.clear();
     }
+}
+
+/// The chunks of `layer` whose surface is built; none without the layer.
+fn layer_chunks(layer: Option<&VolumeLayer>) -> Array<Vector3i> {
+    layer.map_or_else(Array::new, |layer| {
+        layer.built.keys().map(|&chunk| to_vector(chunk)).collect()
+    })
+}
+
+/// A chunk's surface in `layer` for GDScript (`WaveForgeStages::volume_surface`); empty if it is
+/// not built.
+fn layer_surface(layer: Option<&VolumeLayer>, chunk: Vector3i) -> VarDictionary {
+    let mut out = VarDictionary::new();
+    let Some(Surface { mesh, .. }) = layer.and_then(|layer| layer.built.get(&from_vector(chunk)))
+    else {
+        return out;
+    };
+    let vectors = |values: &[[f32; 3]]| -> PackedVector3Array {
+        values
+            .iter()
+            .map(|&[x, y, z]| Vector3::new(x, y, z))
+            .collect()
+    };
+    let indices: PackedInt32Array = mesh
+        .indices
+        .chunks(3)
+        .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])
+        .map(|index| index as i32)
+        .collect();
+    out.set(
+        &"positions".to_variant(),
+        &vectors(&mesh.positions).to_variant(),
+    );
+    out.set(
+        &"normals".to_variant(),
+        &vectors(&mesh.normals).to_variant(),
+    );
+    out.set(&"indices".to_variant(), &indices.to_variant());
+    out.set(
+        &"materials".to_variant(),
+        &PackedByteArray::from(mesh.materials.as_slice()).to_variant(),
+    );
+    out
+}
+
+/// The `RenderingServer` mesh a chunk's surface in `layer` is drawn with; an invalid RID if it is
+/// not drawn.
+fn layer_mesh(layer: Option<&VolumeLayer>, chunk: Vector3i) -> Rid {
+    layer
+        .and_then(|layer| layer.built.get(&from_vector(chunk)))
+        .and_then(|surface| surface.drawn)
+        .map_or(Rid::Invalid, |(mesh, _)| mesh)
 }
 
 /// The colour of category `index` from `palette`, the categories past its end taking colours of
@@ -2776,6 +2995,8 @@ fn phase(local: u64) -> f32 {
 
 /// The reference ground shader: a chunk's material ids per vertex, blended through a palette.
 const GROUND_SHADER: &str = include_str!("shaders/ground.gdshader");
+
+const FLUID_SHADER: &str = include_str!("shaders/fluid.gdshader");
 
 /// A chunk's copy of `template` holding the material `ids` of its ground's vertices, one texel each.
 fn chunk_material(
