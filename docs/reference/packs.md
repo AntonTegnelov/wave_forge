@@ -250,6 +250,7 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Carve` | Volume | a volume, 0 cells; a curves stage and a height field, `max_radius + 1` cells; an Assemble stage, 1 cell; a sites stage or an Assemble stage to level, 1 cell |
 | `Top` | Field | a volume of its own scale, 0 cells |
 | `Rules` | Categories | what its conditions read, 0 cells |
+| `Nearest` | Categories | what its climate reads, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
 | `Delta` | Field | one field, `radius` cells |
 | `Area` | Categories | one Rules stage, `distance` cells |
@@ -425,6 +426,16 @@ A field reads categories only through `Is`, and a category test names categories
 loading refuses reading a category stage as a field, a field as categories, and a name the rules do
 not give. `examples/rings.world.ron` sorts an island into ten biomes by height, distance from the
 centre with a wobble around it, and noise.
+
+### Nearest
+
+`Nearest(climate: [Input("heat"), Input("wet")], biomes: [(category: "tundra", point: [0.1, 0.2]),
+...])`: a category per column, the biome whose `point` lies nearest the column's climate, the values
+of the `climate` expressions there in their order, measured straight across that space; of equally
+near biomes the first listed. This is how Minecraft's multi-noise biome source picks biomes from six
+climate noises. Each point has one value per climate expression, and the biomes' names, each listed
+once, are the stage's categories in their order, which a field reads through `Is` as it reads a
+Rules stage's. A Nearest stage can be sampled without chunks.
 
 ### Blur
 
@@ -790,7 +801,7 @@ let trees = runtime.points("trees", chunk);
   between; `is_idle` says whether anything is left.
 - `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
   its values over an area of its own columns, row by row with x fastest, without generating any
-  chunk: exactly what the chunks would hold. Field, Rules, Blur, Delta and Area stages whose
+  chunk: exactly what the chunks would hold. Field, Rules, Nearest, Blur, Delta and Area stages whose
   inputs are too can be sampled; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
   takes `&self` and holds no products, so a game can build a runtime just to sample, on any thread:
   an atlas of 256 by 256 world tiles takes 50 ms in release on the dev container. This is how a
@@ -848,7 +859,7 @@ the four column centres around it. A field holds one height per column centre, s
 column's value, is what a game stands a player or an object on.
 
 `wave_forge::ground_materials(chunk, categories)` gives the category of every vertex of the same
-grid from a Rules or Area stage at the height field's scale, the vertices along the +x and +y edges
+grid from a Rules, Area or Nearest stage at the height field's scale, the vertices along the +x and +y edges
 taking the neighbours' first columns as their heights do: the materials an engine's ground shader
 tells apart. It returns `None` until the categories of the chunk and of the chunks beyond its +x
 edge, its +y edge and its +x+y corner have arrived.

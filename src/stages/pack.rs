@@ -219,6 +219,14 @@ pub enum StageKind {
     /// column: where its values cross zero going up from its highest solid voxel, or its bottom
     /// for a column with none. Things that stand on the ground of a volume stand on it.
     Top { volume: String },
+    /// A category per cell column: the biome whose `point` lies nearest the column's climate, the
+    /// values of the `climate` expressions there in their order, measured straight across that
+    /// space; of equally near biomes the first listed. The categories are the biomes' names in the
+    /// order they are listed, as Minecraft's multi-noise biome source picks its biomes.
+    Nearest {
+        climate: Vec<Expr>,
+        biomes: Vec<Biome>,
+    },
     /// A category per cell column: the first of `rules` whose conditions all hold there, or
     /// `otherwise`. The categories are the names the rules give, in the order they first appear,
     /// then `otherwise`'s.
@@ -601,6 +609,14 @@ pub struct Rule {
     pub when: Vec<Condition>,
 }
 
+/// A biome of a Nearest stage: its name and its point in the stage's climate space.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Biome {
+    pub category: String,
+    pub point: Vec<f32>,
+}
+
 /// A Carve stage's levelled sites: in the footprint of every site or piece of the stage `sites`,
 /// the `depth` cells under the site's height are filled solid and the `clear` cells above it
 /// emptied, so a building stands on flat ground under open sky however the volume's terrain runs.
@@ -673,6 +689,9 @@ impl StageKind {
                 ..
             } => (rules, otherwise),
             Self::Area { .. } => return vec!["median", "edge"],
+            Self::Nearest { biomes, .. } => {
+                return biomes.iter().map(|biome| biome.category.as_str()).collect();
+            }
             _ => return Vec::new(),
         };
         let mut names: Vec<&str> = Vec::new();
@@ -708,7 +727,7 @@ impl StageKind {
             | Self::Lakes { .. } => Output::Field,
             Self::Volume { .. } | Self::Carve { .. } => Output::Volume,
             Self::Top { .. } => Output::Field,
-            Self::Rules { .. } | Self::Area { .. } => Output::Categories,
+            Self::Rules { .. } | Self::Area { .. } | Self::Nearest { .. } => Output::Categories,
             Self::Region { .. }
             | Self::Rivers { .. }
             | Self::Network { .. }
@@ -1591,6 +1610,11 @@ impl Pack {
                         condition.visit(&mut note);
                     }
                 }
+                StageKind::Nearest { climate, .. } => {
+                    for expr in climate {
+                        expr.visit(&mut note);
+                    }
+                }
                 StageKind::Scatter { when, .. } => {
                     for condition in when {
                         condition.visit(&mut note);
@@ -1734,6 +1758,50 @@ impl Pack {
                             condition.inputs(&mut names);
                             condition.categories(&mut tests);
                         }
+                    }
+                    check_categories(&categories, &by_name, &tests).map_err(invalid)?;
+                    widest_reads(names)
+                }
+                StageKind::Nearest { climate, biomes } => {
+                    if climate.is_empty() || biomes.is_empty() {
+                        return Err(invalid(
+                            "a Nearest stage needs a climate and a biome".to_owned(),
+                        ));
+                    }
+                    if biomes.len() > MAX_CATEGORIES {
+                        return Err(invalid(format!(
+                            "{} biomes; at most {MAX_CATEGORIES} are allowed",
+                            biomes.len()
+                        )));
+                    }
+                    for (i, biome) in biomes.iter().enumerate() {
+                        if biome.point.len() != climate.len()
+                            || !biome.point.iter().all(|value| value.is_finite())
+                        {
+                            return Err(invalid(format!(
+                                "biome {:?} has the point {:?}, not {} finite values",
+                                biome.category,
+                                biome.point,
+                                climate.len()
+                            )));
+                        }
+                        if biomes[..i]
+                            .iter()
+                            .any(|other| other.category == biome.category)
+                        {
+                            return Err(invalid(format!(
+                                "biome {:?} is listed twice",
+                                biome.category
+                            )));
+                        }
+                    }
+                    let mut names = Vec::new();
+                    let mut tests = Vec::new();
+                    for expr in climate {
+                        expr.check().map_err(invalid)?;
+                        check_place(|f| expr.visit(f), Place::Column, &columns).map_err(invalid)?;
+                        expr.inputs(&mut names);
+                        expr.categories(&mut tests);
                     }
                     check_categories(&categories, &by_name, &tests).map_err(invalid)?;
                     widest_reads(names)
@@ -2287,6 +2355,11 @@ impl Pack {
                 StageKind::Rules { rules, .. } => {
                     for condition in rules.iter().flat_map(|rule| &rule.when) {
                         condition.visit(&mut note);
+                    }
+                }
+                StageKind::Nearest { climate, .. } => {
+                    for expr in climate {
+                        expr.visit(&mut note);
                     }
                 }
                 StageKind::TableSites { table, .. } | StageKind::TableCurves { table, .. } => {

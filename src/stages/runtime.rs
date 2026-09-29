@@ -437,11 +437,11 @@ pub enum StageError {
     NoTownSolver(String),
     #[error("stage {0:?} names a region job the runtime was not given")]
     NoRegionJob(String),
-    /// Only stages computed column by column from what they read (Field, Rules, Blur, Delta and
-    /// Area stages over such stages) can be sampled without chunks.
+    /// Only stages computed column by column from what they read (Field, Rules, Nearest, Blur,
+    /// Delta and Area stages over such stages) can be sampled without chunks.
     #[error(
-        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, blur, delta or area \
-         stage"
+        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, nearest, blur, delta \
+         or area stage"
     )]
     NotSampled(String),
     /// Only a Sites stage's sites, a hash of their region, can be found without chunks.
@@ -2061,7 +2061,9 @@ impl Runtime {
             StageKind::Volume { .. } | StageKind::Carve { .. } | StageKind::Top { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
-            StageKind::Rules { .. } => f32::from(self.categorise(index, column, &read)?),
+            StageKind::Rules { .. } | StageKind::Nearest { .. } => {
+                f32::from(self.categorise(index, column, &read)?)
+            }
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
             StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
             StageKind::Area { input, distance } => {
@@ -3075,7 +3077,9 @@ impl Runtime {
                 materials,
             }));
         }
-        if let StageKind::Rules { .. } | StageKind::Area { .. } = &stage.kind {
+        if let StageKind::Rules { .. } | StageKind::Area { .. } | StageKind::Nearest { .. } =
+            &stage.kind
+        {
             let [sx, sy] = self.size;
             let mut values = Vec::with_capacity((sx * sy) as usize);
             for y in 0..sy {
@@ -3135,6 +3139,7 @@ impl Runtime {
                         }
                     }
                     StageKind::Sites { .. }
+                    | StageKind::Nearest { .. }
                     | StageKind::Volume { .. }
                     | StageKind::Carve { .. }
                     | StageKind::Top { .. }
@@ -3902,8 +3907,8 @@ impl Leaves for ColumnPlace<'_, '_> {
 }
 
 impl Runtime {
-    /// The category Rules stage `index` gives `column`: the first rule whose conditions all hold,
-    /// or its fallback.
+    /// The category Rules or Nearest stage `index` gives `column`: the first rule whose conditions
+    /// all hold, or its fallback; or the biome nearest the column's climate.
     fn categorise(
         &self,
         index: usize,
@@ -3911,15 +3916,33 @@ impl Runtime {
         read: &Read<'_>,
     ) -> Result<u8, StageError> {
         let stage = &self.pack.stages[index];
-        let StageKind::Rules { rules, otherwise } = &stage.kind else {
-            unreachable!("only Rules stages categorise")
-        };
-        first_rule(
-            rules,
-            otherwise,
-            &stage.kind.categories(),
-            &self.place(index, column, read),
-        )
+        let place = self.place(index, column, read);
+        match &stage.kind {
+            StageKind::Rules { rules, otherwise } => {
+                first_rule(rules, otherwise, &stage.kind.categories(), &place)
+            }
+            StageKind::Nearest { climate, biomes } => {
+                let here: Vec<f32> = climate
+                    .iter()
+                    .map(|expr| evaluate(expr, &place))
+                    .collect::<Result<_, _>>()?;
+                let distance = |point: &[f32]| -> f32 {
+                    point
+                        .iter()
+                        .zip(&here)
+                        .map(|(a, b)| (a - b) * (a - b))
+                        .sum()
+                };
+                let mut nearest = 0;
+                for (i, biome) in biomes.iter().enumerate().skip(1) {
+                    if distance(&biome.point) < distance(&biomes[nearest].point) {
+                        nearest = i;
+                    }
+                }
+                Ok(nearest as u8)
+            }
+            _ => unreachable!("only Rules and Nearest stages categorise"),
+        }
     }
 }
 

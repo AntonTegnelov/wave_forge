@@ -104,8 +104,9 @@ pub struct WaveForgeStages {
     /// The material the ground is drawn with; none draws it with Godot's default.
     #[export]
     ground_material: Option<Gd<Material>>,
-    /// A Rules or Area stage at the ground's scale whose categories are the ground's materials;
-    /// empty for none. Each chunk's ground then gets its own copy of `ground_material`, which has to
+    /// A Rules, Area or Nearest stage at the ground's scale whose categories are the ground's
+    /// materials; empty for none. Each chunk's ground then gets its own copy of `ground_material`,
+    /// which has to
     /// be a `ShaderMaterial` taking `wave_forge_materials`, `wave_forge_cell` and
     /// `wave_forge_palette`, or of the reference ground shader when `ground_material` is empty.
     #[export]
@@ -2677,10 +2678,10 @@ impl WaveForgeStages {
     ) -> Result<(Gd<ImageTexture>, Gd<ShaderMaterial>), String> {
         let stage = self.ground_material_stage.to_string();
         match pack.kind(&stage) {
-            Some(StageKind::Rules { .. } | StageKind::Area { .. }) => {}
+            Some(StageKind::Rules { .. } | StageKind::Area { .. } | StageKind::Nearest { .. }) => {}
             _ => {
                 return Err(format!(
-                    "ground_material_stage {stage:?} is no Rules or Area stage of the pack"
+                    "ground_material_stage {stage:?} is no Rules, Area or Nearest stage of the pack"
                 ));
             }
         }
