@@ -219,6 +219,22 @@ pub enum StageKind {
     /// column: where its values cross zero going up from its highest solid voxel, or its bottom
     /// for a column with none. Things that stand on the ground of a volume stand on it.
     Top { volume: String },
+    /// Fluid in the caves of the Volume or Carve stage `volume`, as Minecraft's aquifers hold it:
+    /// space is cut into cells `cell.0` columns wide and `cell.1` cells tall, each with a hashed
+    /// centre inside it and a hashed fluid level from `level.0` up to `level.1` cells; a voxel takes
+    /// the level of the nearest cell centre, and its value is the lower of how far it lies under that
+    /// level and how empty the rock is there, so it is above zero only in empty rock under its
+    /// level. Open air under a pool's level fills too. With `materials`, each voxel takes one by
+    /// rules read at its column with `Z` as its pool's level, so rules on `Z` alone give each pool
+    /// one fluid, lava in the deepest say. Pools of two levels meet at a vertical face where their
+    /// cells meet; Minecraft walls that face off with stone, which an Aquifer stage does not.
+    Aquifer {
+        volume: String,
+        cell: (u32, u32),
+        level: (f32, f32),
+        #[serde(default)]
+        materials: Option<Materials>,
+    },
     /// Points of `kind` inside the solid voxels of the Volume or Carve stage `volume`, ore in rock
     /// say: `count` candidates per square block of `spacing` columns, each at a hashed place in the
     /// block and a hashed height from `between.0` up to `between.1` cells, kept where the volume's
@@ -703,6 +719,10 @@ impl StageKind {
             | Self::Volume {
                 materials: Some(Materials { rules, otherwise }),
                 ..
+            }
+            | Self::Aquifer {
+                materials: Some(Materials { rules, otherwise }),
+                ..
             } => (rules, otherwise),
             Self::Area { .. } => return vec!["median", "edge"],
             Self::Nearest { biomes, .. } => {
@@ -741,7 +761,7 @@ impl StageKind {
             | Self::Flatten { .. }
             | Self::Apply { .. }
             | Self::Lakes { .. } => Output::Field,
-            Self::Volume { .. } | Self::Carve { .. } => Output::Volume,
+            Self::Volume { .. } | Self::Carve { .. } | Self::Aquifer { .. } => Output::Volume,
             Self::Top { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } | Self::Nearest { .. } => Output::Categories,
             Self::Region { .. }
@@ -1621,6 +1641,14 @@ impl Pack {
                         }
                     }
                 }
+                StageKind::Aquifer {
+                    materials: Some(materials),
+                    ..
+                } => {
+                    for condition in materials.rules.iter().flat_map(|rule| &rule.when) {
+                        condition.visit(&mut note);
+                    }
+                }
                 StageKind::Rules { rules, .. } => {
                     for condition in rules.iter().flat_map(|rule| &rule.when) {
                         condition.visit(&mut note);
@@ -1707,6 +1735,7 @@ impl Pack {
                         | StageKind::Assemble { .. }
                         | StageKind::Carve { .. }
                         | StageKind::Embed { .. }
+                        | StageKind::Aquifer { .. }
                 )
             {
                 return Err(invalid(format!(
@@ -2107,6 +2136,50 @@ impl Pack {
                     reads.push((volume.as_str(), Reach::Cells(0), Output::Volume));
                     reads
                 }
+                StageKind::Aquifer {
+                    volume,
+                    cell,
+                    level,
+                    materials,
+                } => {
+                    if cell.0 == 0 || cell.1 == 0 {
+                        return Err(invalid(format!("cells of {cell:?}")));
+                    }
+                    if !(level.0.is_finite() && level.1.is_finite() && level.0 <= level.1) {
+                        return Err(invalid(format!(
+                            "fluid levels from {} to {}",
+                            level.0, level.1
+                        )));
+                    }
+                    if let Some(&index) = by_name.get(volume.as_str())
+                        && scales[index] != 1
+                    {
+                        return Err(invalid(format!(
+                            "it fills {volume:?}, which is no stage at the WFC lattice's scale"
+                        )));
+                    }
+                    let mut names = Vec::new();
+                    if let Some(materials) = materials {
+                        let count = def.kind.categories().len();
+                        if count > MAX_CATEGORIES {
+                            return Err(invalid(format!(
+                                "{count} materials; at most {MAX_CATEGORIES} are allowed"
+                            )));
+                        }
+                        let mut tests = Vec::new();
+                        for condition in materials.rules.iter().flat_map(|rule| &rule.when) {
+                            condition.check().map_err(invalid)?;
+                            check_place(|f| condition.visit(f), Place::Voxel, &columns)
+                                .map_err(invalid)?;
+                            condition.inputs(&mut names);
+                            condition.categories(&mut tests);
+                        }
+                        check_categories(&categories, &by_name, &tests).map_err(invalid)?;
+                    }
+                    let mut reads = widest_reads(names);
+                    reads.push((volume.as_str(), Reach::Cells(0), Output::Volume));
+                    reads
+                }
                 StageKind::Top { volume } => {
                     if let Some(&index) = by_name.get(volume.as_str())
                         && scales[index] != def.scale
@@ -2397,6 +2470,14 @@ impl Pack {
                         }
                     }
                 }
+                StageKind::Aquifer {
+                    materials: Some(materials),
+                    ..
+                } => {
+                    for condition in materials.rules.iter().flat_map(|rule| &rule.when) {
+                        condition.visit(&mut note);
+                    }
+                }
                 StageKind::Scatter { when, .. } | StageKind::Embed { when, .. } => {
                     for condition in when {
                         condition.visit(&mut note);
@@ -2433,7 +2514,8 @@ impl Pack {
                 | StageKind::Network { .. }
                 | StageKind::Lakes { .. }
                 | StageKind::Carve { .. }
-                | StageKind::Top { .. } => {}
+                | StageKind::Top { .. }
+                | StageKind::Aquifer { .. } => {}
             }
             stages.push(Stage {
                 tables: read_tables,

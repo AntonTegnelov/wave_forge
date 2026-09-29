@@ -249,6 +249,7 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Volume` | Volume | as `Field` |
 | `Carve` | Volume | a volume, 0 cells; a curves stage and a height field, `max_radius + 1` cells; an Assemble stage, 1 cell; a sites stage or an Assemble stage to level, 1 cell |
 | `Top` | Field | a volume of its own scale, 0 cells |
+| `Aquifer` | Volume | a volume, and what its materials read, 0 cells |
 | `Rules` | Categories | what its conditions read, 0 cells |
 | `Nearest` | Categories | what its climate reads, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
@@ -360,8 +361,8 @@ gives every voxel a material as well: the first rule whose conditions all hold a
 The materials are the stage's categories, in the order a Rules stage's are.
 `Runtime::volume(stage, chunk)` gives a chunk's `Volume`: its `size` in columns and levels, its
 `bottom` level, its values level by level, each row by row with x fastest, and its `materials` in
-the same order, empty without materials. Nothing reads a volume
-as an input.
+the same order, empty without materials. [Carve](#carve), [Top](#top), [Aquifer](#aquifer) and
+[Embed](#embed) stages read a volume; nothing else does.
 
 `wave_forge::volume_mesh(chunk, volume, voxel_size)` gives a chunk's surface, where its values
 cross zero, as one `VolumeMesh` for drawing and for a trimesh collider alike, since a height field
@@ -413,6 +414,28 @@ however the volume's terrain runs, and a tunnel or room still cuts through the s
 same scale in each column: where its values cross zero going up from its highest solid voxel, or
 the volume's bottom for a column with none. A volume of `Sub(Input("height"), Z)` has `height` as
 its top. It is what things stand on over a volume, a [Scatter](#scatter) stage's `height` say.
+
+### Aquifer
+
+`Aquifer(volume: "caves", cell: (16, 12), level: (-40.0, -4.0), materials: Some(...))`: fluid in the
+empty space of a Volume or Carve stage, as Minecraft's aquifers decide it, so caves below one pool's
+level are not all flooded. Space is cut into cells `cell.0` columns wide and `cell.1` cells tall.
+Each cell has a centre at a hashed place inside it and a level hashed from `level.0` up to
+`level.1` cells, and a voxel belongs to the pool of the nearest centre among its own cell and the
+26 around it. A voxel's value is the lower of how far it lies under its pool's level and how empty
+the volume is there, so it is above zero, fluid, only in empty space under its pool's level. Open
+air under a pool's level fills too, so a pack keeps `level.1` below the lowest open ground it
+wants dry.
+
+With `materials`, each voxel takes one by rules as a [Volume](#volume) stage's, read at its column
+with `Z` as its pool's level rather than its own height, so rules on `Z` alone give a pool one
+fluid: `(rules: [(category: "lava", when: [Less(Z, Constant(-30.0))])], otherwise: "water")` makes
+the deepest pools lava. The product has its volume's size and bottom; it works at the WFC lattice's
+scale on a volume of that scale.
+
+Pools of two levels meet at a vertical face where their cells meet, which Minecraft walls off with
+stone and an Aquifer stage does not. Neither engine draws an Aquifer stage beside its rock yet
+([#231](https://github.com/AntonTegnelov/wave_forge/issues/231)).
 
 ### Rules
 
