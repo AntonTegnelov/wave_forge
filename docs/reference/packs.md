@@ -373,7 +373,9 @@ with the height absolute, in a Y-up engine's axes; normals follow the values' gr
 with the triangles wherever features are wider than a voxel. With materials, each vertex takes the
 material of the solid voxel of its cube nearest it, so the chunks on either side of a seam agree. The surface is left open where it
 would reach below the lowest level or above the highest, so a volume solid along its lowest level
-and empty along its highest is closed. Godot draws it and collides with it through
+and empty along its highest is closed. `wave_forge::SurfaceWorker` builds surfaces on a thread of its own from the nine volumes around a
+chunk, shared rather than copied, and hands back only the answer to a chunk's newest request, so an
+engine's thread only draws them. Godot draws it and collides with it through
 `volume_stage` ([godot.md](godot.md#waveforgestages)), and Bevy builds it with `.with_volume`
 ([bevy.md](bevy.md#packs-of-stages)).
 

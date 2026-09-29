@@ -62,6 +62,7 @@ pub mod region_tags;
 pub mod scheduler;
 pub mod space;
 pub mod stages;
+pub mod surface_worker;
 pub mod towns;
 pub mod volume_mesh;
 pub mod worker;
@@ -79,6 +80,7 @@ pub use proxies::{ProxyLevel, ProxyMesh, proxy_mesh};
 pub use region_tags::{Emitter, RegionTags, region_tags, surface_at};
 pub use scheduler::FocusPoint;
 pub use space::YUpSpace;
+pub use surface_worker::SurfaceWorker;
 pub use volume_mesh::{VolumeMesh, volume_mesh};
 pub use worker::Worker;
 
