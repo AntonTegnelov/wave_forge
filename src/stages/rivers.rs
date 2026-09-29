@@ -97,6 +97,7 @@ impl RegionJob for DownhillRivers<'_> {
                 values: (0..path.len())
                     .map(|i| self.width.0 + (self.width.1 - self.width.0) * i as f32 / last)
                     .collect(),
+                heights: Vec::new(),
             });
         }
         Ok(Attempt::Accepted(curves))

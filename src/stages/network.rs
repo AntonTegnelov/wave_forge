@@ -84,6 +84,7 @@ impl RegionJob for SitePaths<'_> {
                 },
                 values: vec![self.width; points.len()],
                 points,
+                heights: Vec::new(),
             });
         }
         Ok(Attempt::Accepted(curves))

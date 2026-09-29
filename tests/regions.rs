@@ -44,6 +44,7 @@ impl RegionJob for Rivers {
             },
             points: vec![enter, [middle as f32 + 0.5, lowest.1 as f32 + 0.5], leave],
             values: vec![1.0, 2.0, 3.0],
+            heights: Vec::new(),
         }]))
     }
 }

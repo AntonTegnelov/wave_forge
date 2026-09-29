@@ -25,6 +25,10 @@ pub struct Curve {
     pub id: CurveId,
     pub points: Vec<[f32; 2]>,
     pub values: Vec<f32>,
+    /// A height in cells per point, for a curve that runs through 3D space, a tunnel say; empty
+    /// for a curve on the ground plane, which takes its height from a field where it needs one.
+    #[serde(default)]
+    pub heights: Vec<f32>,
 }
 
 /// Which curve it is. Positional, so the same in every run and whatever order curves are computed

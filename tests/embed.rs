@@ -149,3 +149,21 @@ fn a_spacing_of_nothing_heights_the_wrong_way_or_a_coarse_volume_are_refused() {
         );
     }
 }
+
+#[test]
+fn an_embed_stage_whose_ids_would_share_a_scatter_stages_stage_number_is_refused() {
+    // Two names whose salts give the same 15-bit stage number in their points' ids.
+    let text = r#"(version: 1, stages: [
+        (name: "height", kind: Field(Constant(4.0))),
+        (name: "rock", kind: Volume(density: Sub(Input("height"), Z), bottom: 0, top: 8)),
+        (name: "ore1169", kind: Scatter(kind: "rock", height: "height", spacing: 4)),
+        (name: "ore1486", kind: Embed(kind: "ore", volume: "rock", spacing: 4, between: (0.0, 4.0))),
+    ])"#;
+
+    let result = Pack::parse(text);
+
+    assert!(
+        matches!(&result, Err(PackError::Invalid { message, .. }) if message.contains("stage number")),
+        "{result:?}"
+    );
+}

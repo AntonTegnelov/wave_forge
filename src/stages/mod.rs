@@ -3,6 +3,7 @@
 //! focus points, providers first.
 
 mod assemble;
+mod caves;
 pub mod edits;
 mod evaluate;
 pub mod facts;
@@ -20,9 +21,9 @@ pub use edits::{Edit, Edits, PointId};
 pub use facts::{Facts, GivenRow, MAX_SHARED, Row, RowId, Table, Value};
 pub use pack::{
     Biome, Bound, Column, Condition, Door, Expr, Facing, Group, Level, LocationKind, MAX_BLEND,
-    MAX_CATEGORIES, MAX_CHILDREN, MAX_PIECES, MAX_SCATTER_SLOTS, MAX_TRIES, Materials,
-    PACK_VERSION, Pack, PackError, PackFile, PackWater, Persist, Piece, Profile, Rule, StageDef,
-    StageKind, TableDef, TableKind, Water,
+    MAX_CATEGORIES, MAX_CAVE_ROOMS, MAX_CHILDREN, MAX_PIECES, MAX_SCATTER_SLOTS, MAX_TRIES,
+    Materials, PACK_VERSION, Pack, PackError, PackFile, PackWater, Pattern, Persist, Piece,
+    Profile, Room, Rule, StageDef, StageKind, TableDef, TableKind, Water,
 };
 pub use runtime::{
     Categories, Field, FieldView, PlaceName, Point, Product, Runtime, Site, SiteId, StageError,

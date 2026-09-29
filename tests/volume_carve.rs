@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use wave_forge::stages::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob};
 use wave_forge::stages::{Facts, GivenRow, Pack, PackError, Runtime, StageError, Value, Volume};
 use wave_forge::{ChunkCoord, FocusPoint};
 
@@ -47,7 +48,7 @@ const PACK: &str = r#"(
         (name: "levelled", kind: Carve(volume: "rock", level: Some((sites: "outposts", depth: 3, clear: 5)))),
         (name: "caves", kind: Carve(
             volume: "rock",
-            tunnels: Some((curves: "tunnels", height: "ground", depth: 6.0, max_radius: 3)),
+            tunnels: Some((curves: "tunnels", height: Some("ground"), depth: 6.0, max_radius: 3)),
             rooms: Some("dungeon"),
         )),
     ],
@@ -301,5 +302,95 @@ fn a_levelled_site_is_solid_under_its_floor_and_open_above_it() {
     assert!(
         under > 100 && over > 100,
         "{under} under and {over} over the floors"
+    );
+}
+
+/// A worm tunnel through 3D space: from (4, 4) at height 2 down to (40, 20) at height -4.
+const WORM: [[f32; 3]; 2] = [[4.0, 4.0, 2.0], [40.0, 20.0, -4.0]];
+
+/// Gives one curve with heights, [`WORM`], in the region at the origin.
+struct Worm;
+
+impl RegionJob for Worm {
+    fn run(&self, input: &RegionInput<'_>) -> Result<Attempt, StageError> {
+        if input.region() != (0, 0) {
+            return Ok(Attempt::Accepted(Vec::new()));
+        }
+        Ok(Attempt::Accepted(vec![Curve {
+            id: CurveId::Region {
+                region: (0, 0),
+                index: 0,
+            },
+            points: WORM.iter().map(|p| [p[0], p[1]]).collect(),
+            values: vec![1.5, 1.5],
+            heights: WORM.iter().map(|p| p[2]).collect(),
+        }]))
+    }
+}
+
+/// How far `at` is from the worm's centre line in 3D.
+fn from_worm(at: [f32; 3]) -> f32 {
+    let [a, b] = WORM;
+    let along: [f32; 3] = std::array::from_fn(|i| b[i] - a[i]);
+    let length: f32 = along.iter().map(|d| d * d).sum();
+    let t = ((0..3).map(|i| (at[i] - a[i]) * along[i]).sum::<f32>() / length).clamp(0.0, 1.0);
+    (0..3)
+        .map(|i| (at[i] - a[i] - along[i] * t).powi(2))
+        .sum::<f32>()
+        .sqrt()
+}
+
+#[test]
+fn a_curve_with_heights_carves_a_tube_along_them() {
+    let pack = r#"(version: 1, stages: [
+        (name: "rock", kind: Volume(density: Sub(Constant(20.0), Z), bottom: -12, top: 12)),
+        (name: "worm", kind: Region(job: "worm", region: 8, inputs: [])),
+        (name: "caves", kind: Carve(volume: "rock", tunnels: Some((curves: "worm", max_radius: 2)))),
+    ])"#;
+    let mut runtime = Runtime::new(Arc::new(Pack::parse(pack).expect("a valid pack")), 3, SIZE)
+        .with_region_job("worm", Worm);
+    let chunks: Vec<ChunkCoord> = (-1..4)
+        .flat_map(|y| (-1..7).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+
+    generate(&mut runtime, &["caves"], &chunks);
+
+    let (mut inside, mut outside) = (0, 0);
+    for &chunk in &chunks {
+        let caves = runtime.volume("caves", chunk).expect("generated");
+        for (column, z, i) in voxels(caves) {
+            let away = from_worm([column[0] as f32 + 0.5, column[1] as f32 + 0.5, z]);
+            if away < 1.0 {
+                assert!(caves.values[i] < 0.0, "{column:?} at {z} in the tube");
+                inside += 1;
+            } else if away > 1.5 + 1.0 {
+                assert!(caves.values[i] > 0.0, "{column:?} at {z} beyond the tube");
+                outside += 1;
+            }
+        }
+    }
+    assert!(
+        inside > 50 && outside > 1000,
+        "{inside} inside and {outside} outside"
+    );
+}
+
+#[test]
+fn tunnels_along_curves_on_the_ground_plane_without_a_height_field_are_refused() {
+    let result = Pack::parse(
+        r#"(version: 1,
+            tables: [(name: "tunnels", kind: Given(columns: [
+                ("x0", Number), ("y0", Number), ("x1", Number), ("y1", Number), ("width", Number),
+            ]))],
+            stages: [
+                (name: "rock", kind: Volume(density: Sub(Constant(20.0), Z), bottom: 0, top: 4)),
+                (name: "tunnels", kind: TableCurves(table: "tunnels", from: ("x0", "y0"), to: ("x1", "y1"), radius: "width")),
+                (name: "caves", kind: Carve(volume: "rock", tunnels: Some((curves: "tunnels", max_radius: 2)))),
+            ])"#,
+    );
+
+    assert!(
+        matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "caves"),
+        "{result:?}"
     );
 }
