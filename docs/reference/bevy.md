@@ -96,7 +96,8 @@ thread.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
   have arrived ([packs.md](packs.md#ground)): `WaveForgeStages::ground(chunk)` returns the
   `GroundMesh`, relative to `chunk_corner(chunk)`, `GroundReady(chunk)` and `GroundDropped(chunk)`
-  announce it, `ground_mesh(&ground)` turns it into a Bevy `Mesh` at full detail, skirt included,
+  announce it, again when a field or material around it is generated again after a raise,
+  `ground_mesh(&ground)` turns it into a Bevy `Mesh` at full detail, skirt included,
   or `ground_levels` into one per level of detail ([Ground levels of detail](#ground-levels-of-detail)),
   and its `heights` are the grid a physics crate's height-field collider takes (the plugin depends
   on no physics crate). `WaveForgeStages::ground_height(translation)` gives the height of the

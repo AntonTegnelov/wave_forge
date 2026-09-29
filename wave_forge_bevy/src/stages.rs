@@ -115,7 +115,9 @@ pub struct InstanceSpawned {
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GroundReady(pub ChunkCoord);
 
-/// A chunk's height field was dropped, and its ground with it.
+/// A chunk's ground was dropped, since a field or material it reads was: its own or a
+/// neighbour's. A neighbour's generated again, after a raise say, builds it again with
+/// [`GroundReady`].
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GroundDropped(pub ChunkCoord);
 
@@ -700,11 +702,17 @@ fn drain(
                 ready.write(StageReady { stage, chunk });
             }
             StageEvent::Dropped { stage, chunk } => {
-                if ground_stage.as_ref() == Some(&stage) && stages.grounds.remove(&chunk).is_some()
+                // A chunk's ground reads the fields and materials of the chunks around it, so it goes
+                // with any of them, and comes back when they have all arrived again.
+                if ground_stage.as_ref() == Some(&stage) || material_stage.as_ref() == Some(&stage)
                 {
-                    stages.ground_ids.remove(&chunk);
-                    near_changed.push(chunk);
-                    grounds.dropped.write(GroundDropped(chunk));
+                    for reader in ground_readers(chunk) {
+                        if stages.grounds.remove(&reader).is_some() {
+                            stages.ground_ids.remove(&reader);
+                            near_changed.push(reader);
+                            grounds.dropped.write(GroundDropped(reader));
+                        }
+                    }
                 }
                 if volume_stage.as_ref() == Some(&stage) {
                     for reader in ground_readers(chunk) {
