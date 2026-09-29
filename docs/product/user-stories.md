@@ -606,7 +606,10 @@ ocean before its bound, 50 biomes by rules of which a survey finds 48, per-biome
 rivers, rock as a density volume with caves, overhangs on cliffs and four ores, and a location
 table of 33 kinds with quotas and spacing whose footprints are levelled and joined by roads, and a
 history of settlements of eight cultures that a game gives as a table of facts, each levelled into
-the ground (`tests/continent.rs`, [measurements.md](../research/measurements.md) L34 to L37). The desktop
+the ground with a town of its culture, each culture a WFC module set of 61 modules
+(`examples/continent/cultures`), in chunks of 8 by 8 columns
+(`wfc-devtools/tests/continent.rs` and `cultures.rs`, [measurements.md](../research/measurements.md)
+L34 to L39). The desktop
 numbers are [#197](https://github.com/AntonTegnelov/wave_forge/issues/197).
 
 ### M2. Generate a maximal world once before play

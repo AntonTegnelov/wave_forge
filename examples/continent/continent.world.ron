@@ -1,11 +1,14 @@
 // The maximal preset (docs/product/user-stories.md, M1): a finite continent of 2 048 by 2 048
-// cells, 4 by 4 km at cells of 2 m, run whole ahead of time. This part is its terrain: a continent
+// cells, 4 by 4 km at cells of 2 m, run whole ahead of time, in chunks of 8 by 8 columns: a town's
+// region, a chunk and its halo, has to fit a GPU's workgroup memory with a culture's 135 tiles.
+// Regions and footprints are counted in those chunks. This part is its terrain: a continent
 // of named noises that falls into the ocean before the bound, mountain ranges of ridged noise,
 // a temperature from latitude and height and a moisture from noise, fifty biomes chosen by rules
 // over those, each shaping the ground its own way, lakes in the hollows and rivers carved from the
 // high ground to the sea. Under the ground lies rock as a density volume, with cheese caves,
 // overhangs on cliffs and ore; a location table of 33 kinds, levelled into the ground and joined
-// by roads; and the settlements of a history a game gives as a table, levelled into the ground. Heights are in cells of height, the sea at 0.
+// by roads; and the settlements of a history a game gives as a table, levelled into the ground,
+// each with a town of its culture's WFC module set (examples/continent/cultures). Heights are in cells of height, the sea at 0.
 (
     version: 1,
     bound: Some(Rect(min: (0.0, 0.0), max: (2047.0, 2047.0))),
@@ -150,35 +153,35 @@
             blend: 4,
         ))),
         // Lakes in the terrain's hollows, and rivers from the high ground to the sea or a lake,
-        // in regions of 32 chunks, carved into the terrain.
-        (name: "lakes", kind: Lakes(height: "terrain", region: 32, min_columns: 12)),
-        (name: "rivers", kind: Rivers(height: "terrain", region: 32, sources: 6, width: (0.8, 3.0), step: 2)),
+        // in regions of 64 chunks, carved into the terrain.
+        (name: "lakes", kind: Lakes(height: "terrain", region: 64, min_columns: 12)),
+        (name: "rivers", kind: Rivers(height: "terrain", region: 64, sources: 6, width: (0.8, 3.0), step: 2)),
         (name: "carved", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
             profile: Carve(0.8))),
         // How uneven the ground is, and where each biome ends, for what is placed on it.
         (name: "roughness", kind: Delta(input: "terrain", radius: 2)),
         (name: "biome_area", kind: Area(input: "biome", distance: 4)),
-        // The location table: 33 kinds in every region of 32 chunks, each in the biomes it belongs
+        // The location table: 33 kinds in every region of 64 chunks, each in the biomes it belongs
         // to, on ground gentle enough and above the sea, with a quota and a distance from its own
         // kind. The larger and rarer first: towns and castles before farmsteads and camps.
-        (name: "places", persist: Frozen, kind: Locations(height: "carved", region: 32, kinds: [
-            (name: "market_town", priority: 20, quota: 1, size: 3, tries: 200, when: [
+        (name: "places", persist: Frozen, kind: Locations(height: "carved", region: 64, kinds: [
+            (name: "market_town", priority: 20, quota: 1, size: 6, tries: 200, when: [
                 Greater(Is("biome", ["meadow", "prairie", "broadleaf_forest", "hill_pasture", "mixed_woodland", "savanna"]), Constant(0.5)),
                 Less(Input("roughness"), Constant(2.0)), Greater(Input("carved"), Constant(2.0))]),
-            (name: "harbour_town", priority: 19, quota: 1, size: 2, tries: 200, when: [
+            (name: "harbour_town", priority: 19, quota: 1, size: 4, tries: 200, when: [
                 Greater(Is("biome", ["beach", "shingle"]), Constant(0.5)), Less(Input("roughness"), Constant(2.5))]),
-            (name: "castle", priority: 18, quota: 1, size: 2, tries: 120, when: [
+            (name: "castle", priority: 18, quota: 1, size: 4, tries: 120, when: [
                 Greater(Is("biome", ["hill_pasture", "oak_hills", "upland_heath", "chaparral"]), Constant(0.5)),
                 Less(Input("roughness"), Constant(3.0))]),
-            (name: "monastery", priority: 17, quota: 1, size: 2, tries: 120, when: [
+            (name: "monastery", priority: 17, quota: 1, size: 4, tries: 120, when: [
                 Greater(Is("biome", ["alpine_meadow", "cloud_forest", "fir_highland"]), Constant(0.5)),
                 Less(Input("roughness"), Constant(3.0))]),
-            (name: "frost_fort", priority: 16, quota: 1, size: 2, tries: 120, when: [
+            (name: "frost_fort", priority: 16, quota: 1, size: 4, tries: 120, when: [
                 Greater(Is("biome", ["tundra", "polar_desert", "lichen_highland", "rock_plateau"]), Constant(0.5)),
                 Less(Input("roughness"), Constant(3.0))]),
-            (name: "jungle_ziggurat", priority: 15, quota: 1, size: 2, tries: 120, when: [
+            (name: "jungle_ziggurat", priority: 15, quota: 1, size: 4, tries: 120, when: [
                 Greater(Is("biome", ["rainforest", "jungle_hills"]), Constant(0.5))]),
-            (name: "desert_ruins", priority: 14, quota: 1, size: 2, tries: 120, when: [
+            (name: "desert_ruins", priority: 14, quota: 1, size: 4, tries: 120, when: [
                 Greater(Is("biome", ["desert", "badlands", "dry_scrub"]), Constant(0.5))]),
             (name: "cliff_dwelling", priority: 13, quota: 2, apart: 96.0, tries: 120, when: [
                 Greater(Is("biome", ["mesa", "badlands"]), Constant(0.5))]),
@@ -238,14 +241,23 @@
         ])),
         // The ground levelled over every place and blended back over four cells around it.
         (name: "flattened", kind: Flatten(height: "carved", sites: "places", blend: 4)),
-        // The history's settlements, each a site of one to three chunks a side where its row puts
+        // The history's settlements, each a site of two to six chunks a side where its row puts
         // it, levelled into the ground over six cells around it.
-        (name: "settlements", kind: TableSites(table: "settlements", height: "flattened", at: ("x", "y"), size: "size", max_size: 3)),
+        (name: "settlements", kind: TableSites(table: "settlements", height: "flattened", at: ("x", "y"), size: "size", max_size: 6)),
         (name: "settled", kind: Flatten(height: "flattened", sites: "settlements", blend: 6)),
-        // Roads joining the places of each region of 32 chunks, round the ridges and never through
+        // Roads joining the places of each region of 64 chunks, round the ridges and never through
         // the sea or a lake, levelled across their width into the ground a player walks.
-        (name: "roads", kind: Network(sites: "places", height: "settled", region: 32, width: 1.5, climb: 4.0, dry: Some(0.5))),
+        (name: "roads", kind: Network(sites: "places", height: "settled", region: 64, width: 1.5, climb: 4.0, dry: Some(0.5))),
         (name: "ground", kind: Apply(height: "settled", curves: "roads", max_radius: 2, blend: 2, profile: Level)),
+        // Every settlement's town, of its culture's module set: streets on the levelled ground,
+        // buildings with one roof each, air above.
+        (name: "towns", kind: Solve(sites: "settlements", rules: "woodlanders",
+            by: Some(("culture", [
+                ("coastfolk", "coastfolk"), ("steppe_riders", "steppe_riders"),
+                ("sand_dwellers", "sand_dwellers"), ("highlanders", "highlanders"),
+                ("marsh_folk", "marsh_folk"), ("jungle_folk", "jungle_folk"), ("frostfolk", "frostfolk"),
+            ])),
+            bottom: Some(Tagged("street_level")), top: Some(Named("air")))),
         // How much a column is cliff: none on ground that climbs under 3 cells within two, all of
         // it from 8.
         (name: "cliffs", kind: Field(Smoothstep(3.0, 8.0, Input("roughness")))),
