@@ -13,11 +13,13 @@ use bevy_mesh::{Mesh, VertexAttributeValues};
 use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use wave_forge::stages::{
     Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, Stamp, Value,
 };
-use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials, volume_mesh};
+use wave_forge::towns::{Town, TownError, TownRequest, TownSolver};
+use wave_forge::{ChunkCoord, ChunkShape, FocusPoint, ground, ground_materials, volume_mesh};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::materials::coloured_surface_mesh;
 use wave_forge_bevy::stages::{
@@ -1370,4 +1372,46 @@ fn a_chunks_navigation_source_is_the_librarys_of_the_same_ground() {
         .expect("every neighbour's ground");
     assert!(!source.triangles.is_empty());
     assert_eq!(source, expected);
+}
+
+/// A town solver that is slow to drop, as a GPU solver's device is, and says when it has been.
+struct SlowToDrop(Arc<AtomicBool>);
+
+impl TownSolver for SlowToDrop {
+    fn chunk_shape(&self) -> ChunkShape {
+        ChunkShape { x: 8, y: 8, z: 2 }
+    }
+
+    fn solve(&mut self, _request: &TownRequest<'_>) -> Result<Town, TownError> {
+        unreachable!("no town is asked for")
+    }
+}
+
+impl Drop for SlowToDrop {
+    fn drop(&mut self) {
+        std::thread::sleep(Duration::from_millis(100));
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+// An app ends as its process is about to, and a device still being torn down on the stages'
+// thread when the process exits faults in the driver.
+#[test]
+fn a_dropped_app_has_dropped_its_stages_town_solver() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let solver = SlowToDrop(Arc::clone(&dropped));
+    let mut app = app_with(WaveForgeStagesPlugin::new(
+        &["height"],
+        SETTINGS,
+        move || {
+            runtime()
+                .with_towns(Box::new(solver))
+                .map_err(|error| error.to_string())
+        },
+    ));
+    app.update();
+
+    drop(app);
+
+    assert!(dropped.load(Ordering::SeqCst));
 }
