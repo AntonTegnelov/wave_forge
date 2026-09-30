@@ -584,6 +584,10 @@ pub struct Runtime {
     size: [u32; 2],
     /// Which chunks of each stage the current request needs.
     needed: BTreeMap<usize, BTreeSet<ChunkCoord>>,
+    /// Each stage's needed chunks not generated yet, farthest first so the nearest is last, which
+    /// `step` takes from; `None` once the request or the products held have changed, and sorted
+    /// again when `step` next needs it, so a step of a few products costs no sort of them all.
+    queued: Option<BTreeMap<usize, Vec<ChunkCoord>>>,
     focus: Vec<FocusPoint>,
     products: BTreeMap<(usize, ChunkCoord), Arc<Product>>,
     towns: Option<TownThread>,
@@ -748,6 +752,7 @@ impl Runtime {
             seed,
             size,
             needed: BTreeMap::new(),
+            queued: None,
             focus: Vec::new(),
             products: BTreeMap::new(),
             towns: None,
@@ -1214,6 +1219,7 @@ impl Runtime {
             Some(Stale::Chunks(chunks)) => chunks.contains(&chunk),
         };
         let mut dropped = Vec::new();
+        self.queued = None;
         self.products.retain(|&(stage, chunk), _| {
             let gone = is_stale(stage, chunk);
             if gone {
@@ -1862,6 +1868,7 @@ impl Runtime {
         self.budgeted
             .retain(|&(stage, region), _| needed_cave(stage, region));
         self.needed = needed;
+        self.queued = None;
         self.focus = focus.to_vec();
         self.store_unneeded_frozen()?;
         Ok(dropped)
@@ -1936,11 +1943,18 @@ impl Runtime {
     /// Whether everything the request needs is generated.
     #[must_use]
     pub fn is_idle(&self) -> bool {
-        self.needed.iter().all(|(&index, chunks)| {
-            chunks
+        // A queue holds every needed chunk still missing, and a stage's generated chunks leave it,
+        // so it is far shorter than the needed set a worker would otherwise scan every step.
+        let held = |index: usize, chunk: &ChunkCoord| self.products.contains_key(&(index, *chunk));
+        match &self.queued {
+            Some(queued) => queued
                 .iter()
-                .all(|chunk| self.products.contains_key(&(index, *chunk)))
-        })
+                .all(|(&index, chunks)| chunks.iter().all(|chunk| held(index, chunk))),
+            None => self
+                .needed
+                .iter()
+                .all(|(&index, chunks)| chunks.iter().all(|chunk| held(index, chunk))),
+        }
     }
 
     /// Generates at most `budget` of the missing products, stage by stage with inputs first and
@@ -1951,33 +1965,27 @@ impl Runtime {
     /// A [`StageError`] from a stage, which is a bug in that stage.
     pub fn step(&mut self, budget: usize) -> Result<Vec<(String, ChunkCoord)>, StageError> {
         self.receive_towns(Duration::ZERO)?;
+        let mut queued = match self.queued.take() {
+            Some(queued) => queued,
+            None => self.queue_missing(),
+        };
         let mut generated = Vec::new();
         for &index in &self.pack.order.clone() {
             if generated.len() >= budget {
                 break;
             }
-            let Some(chunks) = self.needed.get(&index) else {
+            let Some(queue) = queued.get_mut(&index) else {
                 continue;
             };
-            let mut missing: Vec<ChunkCoord> = chunks
-                .iter()
-                .copied()
-                .filter(|chunk| !self.products.contains_key(&(index, *chunk)))
-                .collect();
-            let scale = self.pack.stages[index].scale as i32;
-            missing.sort_by_key(|chunk| {
-                // Focus points are in the WFC lattice's chunks, so a coarse chunk is measured from
-                // its first one.
-                let first = ChunkCoord::new(chunk.x * scale, chunk.y * scale, 0);
-                let distance = self
-                    .focus
-                    .iter()
-                    .map(|focus| focus.distance(first))
-                    .min()
-                    .unwrap_or(u32::MAX);
-                (distance, *chunk)
-            });
-            for chunk in missing.into_iter().take(budget - generated.len()) {
+            // From the nearest down, past the chunks that wait for their towns, which stay queued.
+            let mut at = queue.len();
+            while at > 0 && generated.len() < budget {
+                at -= 1;
+                let chunk = queue[at];
+                if self.products.contains_key(&(index, chunk)) {
+                    queue.remove(at);
+                    continue;
+                }
                 let frozen = if self.pack.stages[index].persist == Persist::Frozen {
                     self.frozen_product(index, chunk)?
                 } else {
@@ -2014,9 +2022,40 @@ impl Runtime {
                 timing.slowest_ms = timing.slowest_ms.max(ms);
                 self.products.insert((index, chunk), Arc::new(product));
                 generated.push((self.pack.stages[index].name.clone(), chunk));
+                queue.remove(at);
             }
         }
+        self.queued = Some(queued);
         Ok(generated)
+    }
+
+    /// Each stage's needed chunks that are not generated yet, farthest from the focus first, so
+    /// the nearest is last.
+    fn queue_missing(&self) -> BTreeMap<usize, Vec<ChunkCoord>> {
+        self.needed
+            .iter()
+            .map(|(&index, chunks)| {
+                let scale = self.pack.stages[index].scale as i32;
+                let mut missing: Vec<ChunkCoord> = chunks
+                    .iter()
+                    .copied()
+                    .filter(|chunk| !self.products.contains_key(&(index, *chunk)))
+                    .collect();
+                missing.sort_by_key(|chunk| {
+                    // Focus points are in the WFC lattice's chunks, so a coarse chunk is measured
+                    // from its first one.
+                    let first = ChunkCoord::new(chunk.x * scale, chunk.y * scale, 0);
+                    let distance = self
+                        .focus
+                        .iter()
+                        .map(|focus| focus.distance(first))
+                        .min()
+                        .unwrap_or(u32::MAX);
+                    std::cmp::Reverse((distance, *chunk))
+                });
+                (index, missing)
+            })
+            .collect()
     }
 
     /// What each stage has cost since the runtime was made, in the order the pack lists them.

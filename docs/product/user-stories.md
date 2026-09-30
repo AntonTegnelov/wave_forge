@@ -591,7 +591,7 @@ chunks outside memory ([#142](https://github.com/AntonTegnelov/wave_forge/issues
 ([#183](https://github.com/AntonTegnelov/wave_forge/issues/183)), and an offline run with progress,
 cancelling and resuming, and streaming baked content from disk
 ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197)). **Status:** in progress
-(2026-09-29): the library's whole-world run writes every chunk of a finite world to a store as it is
+(2026-09-30): the library's whole-world run writes every chunk of a finite world to a store as it is
 done, reports its progress by chunk and by stage, stops when told, resumes from the store, holds no more for a world four
 times as large, and writes the same bytes stopped and resumed as at once, and a world it wrote plays
 back with nothing generated, holding what a runtime would (`tests/world_run.rs`). The Godot node
@@ -612,8 +612,11 @@ grown on the larger places, and 59 stages of vegetation and clutter by rule chai
 all, in chunks of 8 by 8 columns
 (`wfc-devtools/tests/continent.rs` and `cultures.rs`, [measurements.md](../research/measurements.md)
 L34 to L41). The whole continent runs ahead of time in 1 025 s in the dev container, into 5.7 GB of
-RON text, 5.36 GB of it the rock's (L43). The desktop
-numbers are [#197](https://github.com/AntonTegnelov/wave_forge/issues/197).
+RON text, 5.36 GB of it the rock's (L43). In Godot the preset is a scene set up for the dock's World
+run, `continent.tscn`, whose script gives the node the history; the first settlement's town arrives
+of its culture's module set in 25 to 31 s (`verify_continent.gd`, L44). A whole bake of it in the
+editor is not measured yet. The desktop numbers are the owner's run of `tools/measure_desktop.ps1`,
+and the store's size is [#258](https://github.com/AntonTegnelov/wave_forge/issues/258).
 
 ### M2. Generate a maximal world once before play
 

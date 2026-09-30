@@ -372,6 +372,13 @@ project's plugins) adds a Wave Forge dock:
   `addons/wave_forge/world_run_panel.gd`, which only renders the node's `world_run_progress` and
   `world_run_finished`.
 
+The project's `continent.tscn` is the maximal preset set up to bake this way
+([M1](../product/user-stories.md#m1-bake-a-maximal-world-in-the-editor)). Its `WaveForgeStages` node
+holds the continent's pack, its eight cultures as `rules_files` and the 81 targets a game draws, and
+the scene's script (`continent.gd`) gives the node the history a game would simulate,
+`continent/history.json`, as its `settlements` table whenever it has started without one.
+`prepare.sh` copies the pack, the cultures and the history into `continent/`.
+
 With Paint on and the node selected, a drag in the 3D viewport paints a stroke along the ground,
 as one undo action that restores `edits_text`. The ground comes from `ground_height`, so painting
 needs `ground_stage`. What a stroke does is the node's own `paint(brush, path)`:
