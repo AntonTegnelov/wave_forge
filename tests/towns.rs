@@ -1,12 +1,14 @@
 //! Solve stages: a town per site, solved whole, the same whatever order its chunks are asked for in,
-//! on a thread of their own while other stages generate.
+//! on a thread of their own while other stages generate, whose solver is gone once the runtime is.
 //!
 //! These run on the CPU reference solver with a small module set of ground and air, so they need no
 //! GPU; the city on a GPU is checked in `wfc-devtools`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
+use std::time::Duration;
 use wave_forge::loader::parse_rule_file;
 use wave_forge::stages::{Pack, Runtime, StageError};
 use wave_forge::towns::{Town, TownError, TownRequest, TownSolver, WfcTowns};
@@ -227,4 +229,46 @@ fn every_other_stage_generates_while_a_town_is_being_solved() {
     assert!(waiting);
     assert!(rest.iter().any(in_a_town));
     assert!(runtime.is_idle());
+}
+
+/// A town solver that is slow to drop, as a GPU solver's device is, and says when it has been.
+struct SlowToDrop {
+    dropped: Arc<AtomicBool>,
+}
+
+impl TownSolver for SlowToDrop {
+    fn chunk_shape(&self) -> ChunkShape {
+        CHUNK
+    }
+
+    fn solve(&mut self, _request: &TownRequest<'_>) -> Result<Town, TownError> {
+        unreachable!("no town is asked for")
+    }
+}
+
+impl Drop for SlowToDrop {
+    fn drop(&mut self) {
+        std::thread::sleep(Duration::from_millis(100));
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+// A process may end as soon as its runtime is dropped, and a device still being torn down on
+// another thread then faults in the driver.
+#[test]
+fn a_dropped_runtime_has_dropped_its_town_solver() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let runtime = Runtime::new(
+        Arc::new(Pack::parse(PACK).expect("a valid pack")),
+        5,
+        [CHUNK.x, CHUNK.y],
+    )
+    .with_towns(Box::new(SlowToDrop {
+        dropped: Arc::clone(&dropped),
+    }))
+    .expect("matching chunks");
+
+    drop(runtime);
+
+    assert!(dropped.load(Ordering::SeqCst));
 }

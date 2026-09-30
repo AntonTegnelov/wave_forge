@@ -136,6 +136,10 @@ engines is where the waiting happens, so the library offers two ways to wait:
   thread that created it. The engine drains events on its own thread. The Godot node uses both
   workers, and the Bevy stages plugin uses `StageWorker`.
 
+A runtime with towns solves them on one more thread, which it joins when it is dropped, so the
+towns' GPU device is torn down before the drop returns. A device still being torn down on a thread
+of its own when the process exits faults in the driver.
+
 CPU parallelism beyond that is the integration's choice: a game already has a thread budget, so the
 library shares it rather than spawning a pool of its own.
 
