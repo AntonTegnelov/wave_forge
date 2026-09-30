@@ -294,7 +294,7 @@ pub struct WaveForgeStages {
     sampler: Option<Runtime>,
     /// The rule sets Solve stages name, kept here too, to say what a town's tiles are.
     rules: BTreeMap<String, RuleFile>,
-    worker: Option<StageWorker>,
+    worker: Option<crate::ending::Ending<StageWorker>>,
     followed: Option<ChunkCoord>,
     process_ms: Timings,
     /// Each town module's collision shape, by module name, for every Solve stage.
@@ -1323,16 +1323,18 @@ impl WaveForgeStages {
                 .map_err(|error| error.to_string())
         });
         self.builder = Some(Arc::clone(&build));
-        self.worker = Some(if self.play_directory.is_empty() {
-            StageWorker::spawn(move || build())
-        } else {
-            let directory = crate::paths::directory_path(&self.play_directory);
-            StageWorker::play(
-                Arc::clone(self.pack.as_ref().expect("set above")),
-                [shape.x, shape.y],
-                Box::new(DirectoryStore::new(directory)),
-            )
-        });
+        self.worker = Some(crate::ending::Ending::new(
+            if self.play_directory.is_empty() {
+                StageWorker::spawn(move || build())
+            } else {
+                let directory = crate::paths::directory_path(&self.play_directory);
+                StageWorker::play(
+                    Arc::clone(self.pack.as_ref().expect("set above")),
+                    [shape.x, shape.y],
+                    Box::new(DirectoryStore::new(directory)),
+                )
+            },
+        ));
         true
     }
 
@@ -2316,7 +2318,7 @@ impl WaveForgeStages {
         let (sent, progress) = std::sync::mpsc::channel();
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop = Arc::clone(&cancel);
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("wave forge world run".to_owned())
             .spawn(move || {
                 let run = build().and_then(|mut runtime| {
@@ -2341,6 +2343,7 @@ impl WaveForgeStages {
                 let _ = sent.send(RunEvent::Ended(run));
             })
             .expect("a thread");
+        crate::ending::join_before_exit(thread);
         self.world_run = Some(WorldRunning { progress, cancel });
         true
     }
@@ -4244,10 +4247,18 @@ fn stage_costs<'a>(timings: impl IntoIterator<Item = &'a (String, StageTiming)>)
 }
 
 /// A world run on a thread of its own ([`WaveForgeStages::run_world`]): what it reports, and the
-/// flag that stops it.
+/// flag that stops it. The thread is joined before the process exits.
 struct WorldRunning {
     progress: std::sync::mpsc::Receiver<RunEvent>,
     cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
+// Nothing reads a dropped run's progress, and the process waits for its thread before exiting.
+impl Drop for WorldRunning {
+    fn drop(&mut self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// What a world run's thread reports.
