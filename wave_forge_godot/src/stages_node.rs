@@ -13,6 +13,7 @@
 use crate::gi::Gi;
 use crate::grass::{GRASS_SHADER, Grass};
 use crate::lods::{add_levelled_surface, levelled_mesh};
+use crate::occlusion::Occluders;
 use crate::placements::{Item, Placements};
 use crate::stage_navigation::StageNavigation;
 use crate::timings::Timings;
@@ -221,6 +222,12 @@ pub struct WaveForgeStages {
     #[export]
     navigation_template: Option<Gd<NavigationMesh>>,
 
+    /// How many chunks around the followed position get occluders of their towns' solid cells, as
+    /// the rule sets' `solid` modules say, for Godot's occlusion culling. Below zero, none.
+    #[export_group(name = "Occlusion")]
+    #[export]
+    occluder_radius: i32,
+
     /// Scenes placed where Scatter and Assemble stages put things, as a kind (a point's kind or a
     /// piece's name) to a `PackedScene` or a path to one, loaded on Godot's loader threads; give a
     /// scene holding another extension's Rust resource as a `PackedScene`, since such a resource
@@ -349,6 +356,10 @@ pub struct WaveForgeStages {
     /// The triangles of each module's collision shape, counter-clockwise seen from outside as the
     /// navigation bake reads them.
     shape_faces: HashMap<String, Vec<[f32; 3]>>,
+    /// The occluders of the town chunks within `occluder_radius`, and the chunks whose towns
+    /// arrived since they were built.
+    occluders: Occluders,
+    occluders_due: std::collections::BTreeSet<ChunkCoord>,
     /// The scenes bound to kinds, and what each stage's chunk placed.
     placements: Placements,
 }
@@ -730,6 +741,9 @@ impl INode for WaveForgeStages {
             navigation_template: None,
             navigation: StageNavigation::new(),
             shape_faces: HashMap::new(),
+            occluder_radius: -1,
+            occluders: Occluders::default(),
+            occluders_due: std::collections::BTreeSet::new(),
             scenes: VarDictionary::new(),
             placement_budget_ms: 2.0,
             promotion_radius: -1,
@@ -828,6 +842,21 @@ impl INode for WaveForgeStages {
                 .emit(&GString::from(&reason));
             return;
         }
+        // The chunks whose towns arrived this frame, which get their occluders built again.
+        let towns: Vec<ChunkCoord> = events
+            .iter()
+            .filter_map(|event| match event {
+                StageEvent::Generated { stage, chunk }
+                    if matches!(
+                        self.pack.as_ref().and_then(|pack| pack.kind(stage)),
+                        Some(StageKind::Solve { .. })
+                    ) =>
+                {
+                    Some(*chunk)
+                }
+                _ => None,
+            })
+            .collect();
         let ground_stage = self.ground_stage.to_string();
         let (mut arrived, mut gone) = (Vec::new(), Vec::new());
         if self.placements.any() {
@@ -983,6 +1012,7 @@ impl INode for WaveForgeStages {
             self.signals().navigation_ready().emit(to_vector(chunk));
         }
         frame.navigation_ms = elapsed_ms(navigating);
+        self.update_occluders(&towns);
         self.update_grass();
         let placing = std::time::Instant::now();
         frame.placed = self.update_placements();
@@ -1929,6 +1959,26 @@ impl WaveForgeStages {
         // Navigation is baked again with the new shapes over the next frames.
         self.shape_faces.clear();
         self.navigation.clear();
+    }
+
+    /// The chunks within `occluder_radius` that have occluders, of their towns' solid cells.
+    #[func]
+    fn occluder_chunks(&self) -> Array<Vector3i> {
+        self.occluders.chunks().map(to_vector).collect()
+    }
+
+    /// The boxes that occlude for a chunk: an `AABB` per box of its towns' solid cells in Godot's
+    /// world, raised to each town's site, the boxes together covering each solid cell once. Empty
+    /// for a chunk without a town.
+    #[func]
+    fn town_occluders(&self, chunk: Vector3i) -> Array<Aabb> {
+        self.town_occluder_boxes(from_vector(chunk))
+            .iter()
+            .map(|cell_box| {
+                let min = Vector3::from_array(cell_box.min);
+                Aabb::new(min, Vector3::from_array(cell_box.max) - min)
+            })
+            .collect()
     }
 
     /// The chunks whose navigation mesh is in the map. A chunk being baked again keeps its last
@@ -3657,6 +3707,82 @@ impl WaveForgeStages {
         ready
     }
 
+    /// The boxes of a chunk's towns' solid cells in Godot's world, each town's raised to its site.
+    fn town_occluder_boxes(&self, chunk: ChunkCoord) -> Vec<wave_forge::CellBox> {
+        let (Some(pack), Some(worker)) = (&self.pack, &self.worker) else {
+            return Vec::new();
+        };
+        let space = YUpSpace::new(self.chunk_shape(), self.cell_size.to_array());
+        let mut boxes = Vec::new();
+        for stage in solve_stages(pack) {
+            let Some(town) = worker.tiles(&stage, chunk) else {
+                continue;
+            };
+            let file = self
+                .rules
+                .get(town.rules.as_ref())
+                .expect("the node loaded every rule set its Solve stages use");
+            let tiles = Chunk {
+                coord: chunk,
+                tiles: town.tiles.to_vec().into_boxed_slice(),
+                version: 1,
+            };
+            let lift = town.height * self.cell_size.y;
+            boxes.extend(wave_forge::occluders(&tiles, file, &space).into_iter().map(
+                |mut cell_box| {
+                    cell_box.min[1] += lift;
+                    cell_box.max[1] += lift;
+                    cell_box
+                },
+            ));
+        }
+        boxes
+    }
+
+    /// Keeps occluders on every town chunk within `occluder_radius` of the followed chunk, building
+    /// a few a frame, nearest first, and again when a chunk's town arrives anew; frees the others.
+    fn update_occluders(&mut self, towns: &[ChunkCoord]) {
+        let (Some(pack), Some(worker), Some(focus)) = (&self.pack, &self.worker, self.followed)
+        else {
+            return;
+        };
+        let radius = self.occluder_radius;
+        let solves = solve_stages(pack);
+        let held: std::collections::HashSet<ChunkCoord> = (-radius.max(0)..=radius.max(0))
+            .flat_map(|dy| {
+                (-radius.max(0)..=radius.max(0))
+                    .map(move |dx| ChunkCoord::new(focus.x + dx, focus.y + dy, 0))
+            })
+            .filter(|&chunk| {
+                solves
+                    .iter()
+                    .any(|stage| worker.tiles(stage, chunk).is_some())
+            })
+            .collect();
+        let built: std::collections::HashSet<ChunkCoord> = self.occluders.chunks().collect();
+        let plan = crate::radius::plan(
+            radius,
+            focus,
+            &held,
+            &built,
+            &mut self.occluders_due,
+            towns,
+            BODIES_PER_FRAME,
+        );
+        let boxes: Vec<(ChunkCoord, Vec<wave_forge::CellBox>)> = plan
+            .build
+            .iter()
+            .map(|&chunk| (chunk, self.town_occluder_boxes(chunk)))
+            .collect();
+        for chunk in plan.gone {
+            self.occluders.drop_chunk(chunk);
+        }
+        let mut owner = self.base().clone();
+        for (chunk, boxes) in boxes {
+            self.occluders.build(&mut owner, chunk, &boxes);
+        }
+    }
+
     /// The triangles a chunk's colliders hold in Godot's world, counter-clockwise seen from where
     /// agents walk: its ground, its volume's surface, and its towns' shapes. None while its ground
     /// or surface is not built.
@@ -3856,6 +3982,9 @@ impl WaveForgeStages {
         self.chunk_materials.clear();
         self.free_bodies();
         self.navigation.clear();
+        for chunk in self.occluders.chunks().collect::<Vec<_>>() {
+            self.occluders.drop_chunk(chunk);
+        }
         self.placements.clear();
     }
 }

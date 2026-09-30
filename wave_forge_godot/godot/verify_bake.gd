@@ -30,6 +30,9 @@ var ores_before := 0
 var moved := []
 var moved_to := Transform3D()
 var deleted := []
+## The products dropped since the designer's edits were kept and not generated again yet: the
+## linked bake waits for every one of them.
+var regenerating := {}
 
 func _initialize() -> void:
 	var tree := MeshInstance3D.new()
@@ -63,6 +66,10 @@ func _initialize() -> void:
 	world.fluid_stage = "water"
 	world.scenes = {"tree": trees, "ore": ORE_PATH}
 	root.add_child(world)
+	world.stage_dropped.connect(func(stage: String, chunk: Vector3i) -> void:
+		if phase == "linked":
+			regenerating[[stage, chunk]] = true)
+	world.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void: regenerating.erase([stage, chunk]))
 	world.generation_failed.connect(func(reason: String) -> void: _fail(reason))
 	if not world.start():
 		_fail("the stages did not start")
@@ -202,10 +209,11 @@ func _edit_as_a_designer(ores: int) -> bool:
 	started_usec = Time.get_ticks_usec()
 	return false
 
-## Waits for the world generated again, then bakes it keeping the old bake.
+## Waits for the world generated again, every product the edits dropped back and placed, then
+## bakes it keeping the old bake.
 func _check_linked() -> bool:
 	var stats: Dictionary = world.stats()
-	if stats["pending_placements"] > 0:
+	if stats["pending_placements"] > 0 or stats["pending_signals"] > 0 or not regenerating.is_empty():
 		return false
 	for set: Dictionary in world.point_sets("ore", deleted[1]):
 		if set["ids"].has(deleted[2]):

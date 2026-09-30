@@ -77,6 +77,7 @@ func _initialize() -> void:
 	world.ground_stage = "level"
 	world.collider_radius = COLLIDER_RADIUS
 	world.navigation_radius = COLLIDER_RADIUS
+	world.occluder_radius = COLLIDER_RADIUS
 	root.add_child(world)
 	world.stage_ready.connect(_on_stage_ready)
 	world.stage_dropped.connect(func(stage: String, chunk: Vector3i) -> void: dropped[[stage, chunk]] = true)
@@ -163,7 +164,7 @@ func _process(_delta: float) -> bool:
 	if walking:
 		return false
 	if checked:
-		if _navigation_crosses_town(waited):
+		if _navigation_crosses_town(waited) and _occluders_stand_in_the_towns():
 			_start_walk()
 		return false
 	for chunk in _view():
@@ -204,6 +205,31 @@ func _process(_delta: float) -> bool:
 	checked = true
 	started_usec = Time.get_ticks_usec()
 	return false
+
+## Whether every town chunk within the occluder radius of the town's centre has occluders of its
+## solid cells, each box inside the town's layers above its site; false while they are built.
+func _occluders_stand_in_the_towns() -> bool:
+	var boxes := 0
+	var occluded: Array = world.occluder_chunks()
+	for y in range(centre.y - COLLIDER_RADIUS, centre.y + COLLIDER_RADIUS + 1):
+		for x in range(centre.x - COLLIDER_RADIUS, centre.x + COLLIDER_RADIUS + 1):
+			var chunk := Vector3i(x, y, 0)
+			var town: Dictionary = world.town("city", chunk)
+			if town.is_empty():
+				continue
+			if not occluded.has(chunk):
+				return false
+			var ground: float = town["height"] * CELL_SIZE
+			for cell_box: AABB in world.town_occluders(chunk):
+				if cell_box.position.y < ground - 0.001 or cell_box.end.y > ground + CELLS * CELL_SIZE + 0.001:
+					_fail("an occluder of %s runs from %.2f to %.2f, outside the town above %.2f" % [chunk, cell_box.position.y, cell_box.end.y, ground])
+					return false
+				boxes += 1
+	if boxes == 0:
+		_fail("no occluder in the towns around %s" % centre)
+		return false
+	print("verify_stages: %d occluder boxes over the town's chunks, each inside its layers" % boxes)
+	return true
 
 ## Whether a path on the navigation map runs from the open ground west of the town to the open
 ## ground east of it along the walk's line, on the ground's surface and the town's streets, and
@@ -497,13 +523,14 @@ func _check_dropped(waited: float) -> bool:
 			return false
 	var grounds: Array = world.ground_chunks()
 	var navigable: Array = world.navigation_chunks()
+	var occluded: Array = world.occluder_chunks()
 	for chunk in _view():
-		if grounds.has(chunk) or navigable.has(chunk):
+		if grounds.has(chunk) or navigable.has(chunk) or occluded.has(chunk):
 			if waited > 30.0:
-				_fail("the ground or the navigation of %s was not freed after moving away" % chunk)
+				_fail("the ground, the navigation or the occluders of %s were not freed after moving away" % chunk)
 				return true
 			return false
-	print("verify_stages: moving away dropped the first view, its ground and its navigation")
+	print("verify_stages: moving away dropped the first view, its ground, its navigation and its occluders")
 	cold_first_town_s = (first_town_usec - towns_asked_usec) / 1e6
 	# Start again, on the kernels the first start compiled into the cache.
 	warm = true

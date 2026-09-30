@@ -185,6 +185,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Physics | `collider_radius` | chunks around the followed position that get a body; below zero, none |
 | Navigation | `navigation_radius` | chunks around the followed position that get a navigation region ([Navigation](#navigation)); below zero, none (the default) |
 | | `navigation_template` | the `NavigationMesh` settings chunks are baked with |
+| Occlusion | `occluder_radius` | chunks around the followed position whose towns get occluders of their solid cells, for Godot's occlusion culling; below zero, none (the default) |
 | Scenes | `scenes` | a kind (a Scatter, Embed, Deposit or Spawn point's kind, or an Assemble piece's or Cave room's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
@@ -230,6 +231,10 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   in the `wave_forge` context.
 - `water()`: the pack's water ([packs.md](packs.md#water)), its `level` in cells of height, or an
   empty dictionary if the pack declares none.
+- `occluder_chunks()` and `town_occluders(chunk)`: the chunks within `occluder_radius` that have
+  an `OccluderInstance3D` of their towns' solid cells, as `WaveForgeWorld` gives its city's
+  ([Occlusion](#occlusion)), and a chunk's boxes as `AABB`s, each town's raised to its site; a few
+  chunks are built a frame, nearest first, and again when a town arrives anew.
 - `town(stage, chunk)`: a town's `region` or `row`, `height`, `rules` (the rule set it was solved
   with, whose modules its `tiles` index) and `tiles` in a chunk. `town_instance_sets`, colliders
   and navigation read a town's tiles with that rule set.
