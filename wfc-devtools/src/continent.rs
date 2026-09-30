@@ -161,6 +161,35 @@ pub fn history(pack: &Arc<Pack>) -> Vec<GivenRow> {
         .collect()
 }
 
+/// `rows` as the JSON an engine gives a table from: an array of objects, each with its `id` and a
+/// value per column, a number or a name, as Godot's `give_table` takes them.
+///
+/// # Panics
+/// If a number is not finite, which the history never gives.
+#[must_use]
+pub fn history_json(rows: &[GivenRow]) -> String {
+    let rows: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|row| {
+            let mut object = serde_json::Map::new();
+            object.insert("id".to_owned(), row.id.into());
+            for (column, value) in &row.values {
+                let value = match value {
+                    Value::Number(number) => serde_json::Number::from_f64(f64::from(*number))
+                        .expect("a finite number")
+                        .into(),
+                    Value::Name(name) => name.clone().into(),
+                };
+                object.insert(column.clone(), value);
+            }
+            serde_json::Value::Object(object)
+        })
+        .collect();
+    let mut text = serde_json::to_string_pretty(&rows).expect("plain values");
+    text.push('\n');
+    text
+}
+
 /// A runtime of the continent, given its history, without towns.
 ///
 /// # Panics

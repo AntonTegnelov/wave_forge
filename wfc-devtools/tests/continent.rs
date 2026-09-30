@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::{Condition, Expr, Facts, Runtime, StageKind, Value};
 use wave_forge::{ChunkCoord, FocusPoint};
-use wfc_devtools::continent::{CULTURES, SEED, SIZE, history, pack, runtime, towns};
+use wfc_devtools::continent::{CULTURES, SEED, SIZE, history, history_json, pack, runtime, towns};
 
 const SIDE: f32 = 2048.0;
 const CENTRE: [f32; 2] = [1024.0, 1024.0];
@@ -689,4 +689,24 @@ fn the_whole_continent_runs_ahead_of_time() {
         &costs[..8]
     );
     assert_eq!(end.done, end.total);
+}
+
+#[test]
+fn the_history_engines_give_is_the_simulations() {
+    let path = format!(
+        "{}/../examples/continent/history.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let simulated = history_json(&history(&pack()));
+
+    if std::env::var_os("WAVE_FORGE_BLESS").is_some() {
+        std::fs::write(&path, &simulated).expect("write the history");
+    }
+    let committed = std::fs::read_to_string(&path)
+        .expect("examples/continent/history.json; record it with WAVE_FORGE_BLESS=1");
+
+    assert!(
+        committed.replace("\r\n", "\n") == simulated,
+        "examples/continent/history.json is not the simulation's; record it with WAVE_FORGE_BLESS=1"
+    );
 }
