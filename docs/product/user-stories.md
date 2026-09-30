@@ -614,8 +614,10 @@ all, in chunks of 8 by 8 columns
 L34 to L41). The whole continent runs ahead of time in 1 025 s in the dev container, into 5.7 GB of
 RON text, 5.36 GB of it the rock's (L43). In Godot the preset is a scene set up for the dock's World
 run, `continent.tscn`, whose script gives the node the history; the first settlement's town arrives
-of its culture's module set in 25 to 31 s (`verify_continent.gd`, L44). A whole bake of it in the
-editor is not measured yet. The desktop numbers are the owner's run of `tools/measure_desktop.ps1`,
+of its culture's module set in 25 to 31 s (`verify_continent.gd`, L44). Baked from that scene
+through the node's world run, the whole continent takes 1 290 s in the dev container, holds at most
+1.87 GB, gives the same bytes in every file as a bake made before, and quits cleanly part way or
+after (L45). The desktop numbers are the owner's run of `tools/measure_desktop.ps1`,
 and the store's size is [#258](https://github.com/AntonTegnelov/wave_forge/issues/258).
 
 ### M2. Generate a maximal world once before play
