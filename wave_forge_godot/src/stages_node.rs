@@ -2303,6 +2303,16 @@ impl WaveForgeStages {
             .iter()
             .map(ToString::to_string)
             .collect();
+        // The world as the node has it now: the tables given, the edits made and the parameters
+        // set since it started, which the builder, made at the start, does not hold.
+        let facts = self.facts.clone().expect("set when the node started");
+        let edits = self.edits.clone();
+        let params = self
+            .sampler
+            .as_ref()
+            .expect("set when the node started")
+            .params()
+            .clone();
         let (sent, progress) = std::sync::mpsc::channel();
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop = Arc::clone(&cancel);
@@ -2310,6 +2320,11 @@ impl WaveForgeStages {
             .name("wave forge world run".to_owned())
             .spawn(move || {
                 let run = build().and_then(|mut runtime| {
+                    runtime
+                        .set_facts(facts)
+                        .and_then(|_| runtime.set_params(&params))
+                        .and_then(|_| runtime.set_edits(&edits))
+                        .map_err(|error| error.to_string())?;
                     let targets: Vec<&str> = targets.iter().map(String::as_str).collect();
                     let mut store = DirectoryStore::new(directory);
                     runtime
