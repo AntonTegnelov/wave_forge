@@ -1,0 +1,28 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://continent.gd" id="1"]
+
+[node name="ContinentScene" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Continent" type="WaveForgeStages" parent="."]
+pack_file = "res://continent/continent.world.ron"
+rules_files = {
+"coastfolk": "res://continent/cultures/coastfolk.ron",
+"steppe_riders": "res://continent/cultures/steppe_riders.ron",
+"woodlanders": "res://continent/cultures/woodlanders.ron",
+"sand_dwellers": "res://continent/cultures/sand_dwellers.ron",
+"highlanders": "res://continent/cultures/highlanders.ron",
+"marsh_folk": "res://continent/cultures/marsh_folk.ron",
+"jungle_folk": "res://continent/cultures/jungle_folk.ron",
+"frostfolk": "res://continent/cultures/frostfolk.ron"
+}
+targets = PackedStringArray("ground", "biome", "rock", "lakes", "towns", "places", "settlements", "boulders", "stone_piles", "tide_rocks", "ice_blocks", "oaks", "beeches", "birch_groves", "pines", "spruces", "firs", "larches", "willows", "cypresses", "mangrove_trees", "palms", "date_palms", "acacias", "baobabs", "jungle_giants", "cloud_trees", "tree_ferns", "bamboo_stands", "bottle_trees", "hazels", "brambles", "junipers", "heather_bushes", "sagebrush", "creosote_bushes", "fern_clumps", "bog_myrtles", "dwarf_willows", "thornbushes", "berry_bushes", "saltbushes", "agaves", "cacti", "grass_tufts", "tall_grass", "wildflowers", "poppies", "lupines", "cotton_grass", "moss_patches", "lichen_patches", "mushrooms", "dune_grass", "fallen_logs", "stumps", "driftwood", "shells", "bones", "termite_mounds", "snow_drifts", "reeds", "cattails", "lily_pads", "kelp", "coral", "crypt_dungeon", "mine_tunnels", "castle_grounds", "monastery_cloister", "market_quarter", "harbour_front", "frost_hold", "ziggurat_halls", "ruined_courts", "drowned_halls", "cliff_rooms", "coal", "iron", "copper", "gold")
+seed = 11
+chunk_cells = Vector3i(8, 8, 6)
+cell_size = Vector3(2, 2, 2)
+view_radius = 4
+ground_stage = "ground"
+ground_material_stage = "biome"
+volume_stage = "rock"
+collider_radius = 1

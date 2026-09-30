@@ -3,6 +3,7 @@ bin/
 city.ron
 valley.world.ron
 islands.world.ron
+continent/
 addons/wave_forge/presets/
 models/
 .godot/
