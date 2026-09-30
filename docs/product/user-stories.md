@@ -611,8 +611,8 @@ the ground with a town of its culture, each culture a WFC module set of 61 modul
 grown on the larger places, and 59 stages of vegetation and clutter by rule chains, 102 stages in
 all, in chunks of 8 by 8 columns
 (`wfc-devtools/tests/continent.rs` and `cultures.rs`, [measurements.md](../research/measurements.md)
-L34 to L41). The whole continent runs ahead of time in 1 025 s in the dev container, into 5.7 GB of
-RON text, 5.36 GB of it the rock's (L43). In Godot the preset is a scene set up for the dock's World
+L34 to L41). The whole continent runs ahead of time in 499 s in the dev container, into 5.7 GB of
+RON text, 5.36 GB of it the rock's (L46). In Godot the preset is a scene set up for the dock's World
 run, `continent.tscn`, whose script gives the node the history; the first settlement's town arrives
 of its culture's module set in 25 to 31 s (`verify_continent.gd`, L44). Baked from that scene
 through the node's world run, the whole continent takes 1 290 s in the dev container, holds at most
