@@ -29,9 +29,9 @@ const PACK: &str = r#"(
 const TARGETS: [&str; 3] = ["ground", "surface", "trees"];
 const SIZE: [u32; 2] = [8, 8];
 
-/// A store in memory, by layer and chunk.
+/// A store in memory, by layer and chunk, counting the chunks it has been asked to give back.
 #[derive(Clone, Default)]
-struct Memory(BTreeMap<(String, (i32, i32)), Vec<u8>>);
+struct Memory(BTreeMap<(String, (i32, i32)), Vec<u8>>, usize);
 
 impl FrozenStore for Memory {
     fn keep(&mut self, layer: &str, chunk: ChunkCoord, bytes: Vec<u8>) -> Result<(), StoreError> {
@@ -40,7 +40,12 @@ impl FrozenStore for Memory {
     }
 
     fn fetch(&mut self, layer: &str, chunk: ChunkCoord) -> Result<Option<Vec<u8>>, StoreError> {
+        self.1 += 1;
         Ok(self.0.get(&(layer.to_owned(), (chunk.x, chunk.y))).cloned())
+    }
+
+    fn holds(&mut self, layer: &str, chunk: ChunkCoord) -> Result<bool, StoreError> {
+        Ok(self.0.contains_key(&(layer.to_owned(), (chunk.x, chunk.y))))
     }
 }
 
@@ -107,6 +112,24 @@ fn a_run_stopped_and_resumed_writes_the_same_bytes_as_one_at_once() {
     assert_eq!((stopped.done, stopped.total), (11, 30));
     assert_eq!((resumed.done, resumed.skipped), (30, 11));
     assert_eq!(pieces.0, at_once.0);
+}
+
+// A finished continent's store is gigabytes, and reading it all back only to skip it made
+// resuming a done run take most of the time the run did.
+#[test]
+fn a_resumed_run_skips_what_the_store_holds_without_reading_it_back() {
+    let mut store = Memory::default();
+    runtime(PACK)
+        .run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+    store.1 = 0;
+
+    let resumed = runtime(PACK)
+        .run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+
+    assert_eq!((resumed.done, resumed.skipped), (30, 30));
+    assert_eq!(store.1, 0);
 }
 
 #[test]

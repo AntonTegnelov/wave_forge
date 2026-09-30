@@ -210,7 +210,11 @@ its chunks read, so a later block does not ask for that region's inputs again. A
 
 Returning `ControlFlow::Break(())` stops the run. A chunk whose every target the store already holds
 is skipped, so a run stopped or cut short picks up where it left off, and the store ends up holding
-the same bytes as a run that went at once (`tests/world_run.rs`). A pack without a bound fails with
+the same bytes as a run that went at once (`tests/world_run.rs`). The run asks the store's `holds`,
+which by default reads the chunk back with `fetch`; a store that can tell without reading, as
+`DirectoryStore` does from the file's existence, should implement it. `DirectoryStore` writes each
+chunk beside its file and renames it over, so a process that ends mid-write leaves no chunk half
+written. A pack without a bound fails with
 `StageError::Unbounded`.
 
 `StageWorker::play(pack, size, store)` plays such a world back without generating anything: a

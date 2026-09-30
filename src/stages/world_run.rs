@@ -113,7 +113,7 @@ fn stored(
     chunk: ChunkCoord,
 ) -> Result<bool, StoreError> {
     for target in targets {
-        if store.fetch(target, chunk)?.is_none() {
+        if !store.holds(target, chunk)? {
             return Ok(false);
         }
     }

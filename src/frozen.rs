@@ -21,6 +21,15 @@ pub trait FrozenStore: Send + Sync {
     /// # Errors
     /// If the store could not be read.
     fn fetch(&mut self, layer: &str, chunk: ChunkCoord) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Whether anything is kept for `chunk` of `layer`. A resumed world run asks this of every
+    /// chunk of its targets, so a store that can tell without reading the bytes back should.
+    ///
+    /// # Errors
+    /// If the store could not be read.
+    fn holds(&mut self, layer: &str, chunk: ChunkCoord) -> Result<bool, StoreError> {
+        Ok(self.fetch(layer, chunk)?.is_some())
+    }
 }
 
 /// A store that could not keep or give back a chunk, with its reason.
@@ -73,6 +82,12 @@ impl FrozenStore for DirectoryStore {
             Err(error) => Err(StoreError(format!("{}: {error}", path.display()))),
         }
     }
+
+    fn holds(&mut self, layer: &str, chunk: ChunkCoord) -> Result<bool, StoreError> {
+        let path = self.path(layer, chunk);
+        path.try_exists()
+            .map_err(|error| StoreError(format!("{}: {error}", path.display())))
+    }
 }
 
 #[cfg(test)]
@@ -97,6 +112,26 @@ mod tests {
         assert_eq!(kept, Some(vec![1, 2, 3]));
         assert_eq!(other_layer, None);
         assert_eq!(other_chunk, None);
+    }
+
+    #[test]
+    fn a_directory_store_holds_what_it_kept_and_nothing_else() {
+        let directory =
+            std::env::temp_dir().join(format!("wave_forge_store_holds_{}", std::process::id()));
+        let mut store = DirectoryStore::new(&directory);
+        let chunk = ChunkCoord::new(-1, 4, 0);
+
+        store.keep("trees", chunk, vec![7]).expect("kept");
+        let held = store.holds("trees", chunk).expect("looked");
+        let other_layer = store.holds("rock", chunk).expect("looked");
+        let other_chunk = store
+            .holds("trees", ChunkCoord::new(4, -1, 0))
+            .expect("looked");
+        std::fs::remove_dir_all(&directory).expect("cleaned up");
+
+        assert!(held);
+        assert!(!other_layer);
+        assert!(!other_chunk);
     }
 
     #[test]
