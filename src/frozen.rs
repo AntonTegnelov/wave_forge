@@ -56,8 +56,12 @@ impl FrozenStore for DirectoryStore {
         let parent = path
             .parent()
             .expect("a chunk's file is inside its layer's directory");
+        // Written beside the chunk and renamed over it, so a process that ends part way through
+        // leaves the chunk as it was, never half written and then read back as whole.
+        let partial = path.with_extension("part");
         std::fs::create_dir_all(parent)
-            .and_then(|()| std::fs::write(&path, bytes))
+            .and_then(|()| std::fs::write(&partial, bytes))
+            .and_then(|()| std::fs::rename(&partial, &path))
             .map_err(|error| StoreError(format!("{}: {error}", path.display())))
     }
 
@@ -93,5 +97,31 @@ mod tests {
         assert_eq!(kept, Some(vec![1, 2, 3]));
         assert_eq!(other_layer, None);
         assert_eq!(other_chunk, None);
+    }
+
+    #[test]
+    fn a_chunk_kept_again_reads_back_new_with_nothing_left_beside_it() {
+        let directory =
+            std::env::temp_dir().join(format!("wave_forge_store_again_{}", std::process::id()));
+        let mut store = DirectoryStore::new(&directory);
+        let chunk = ChunkCoord::new(1, 2, 0);
+
+        store.keep("rock", chunk, vec![1, 2, 3]).expect("kept");
+        store.keep("rock", chunk, vec![4, 5]).expect("kept again");
+        let kept = store.fetch("rock", chunk).expect("read");
+        let files: Vec<String> = std::fs::read_dir(directory.join("rock"))
+            .expect("the layer's directory")
+            .map(|entry| {
+                entry
+                    .expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        std::fs::remove_dir_all(&directory).expect("cleaned up");
+
+        assert_eq!(kept, Some(vec![4, 5]));
+        assert_eq!(files, vec!["1_2_0".to_owned()]);
     }
 }
