@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 use wave_forge::loader::parse_rule_file;
-use wave_forge::stages::{Pack, Runtime, StageError};
+use wave_forge::stages::{Pack, Runtime, StageError, StageWorker};
 use wave_forge::towns::{Town, TownError, TownRequest, TownSolver, WfcTowns};
 use wave_forge::{ChunkCoord, ChunkShape, FocusPoint};
 use wfc_core::reference::ReferenceSolver;
@@ -269,6 +269,27 @@ fn a_dropped_runtime_has_dropped_its_town_solver() {
     .expect("matching chunks");
 
     drop(runtime);
+
+    assert!(dropped.load(Ordering::SeqCst));
+}
+
+#[test]
+fn a_finished_workers_thread_has_dropped_its_town_solver() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let solver_dropped = Arc::clone(&dropped);
+    let worker = StageWorker::spawn(move || {
+        Runtime::new(
+            Arc::new(Pack::parse(PACK).expect("a valid pack")),
+            5,
+            [CHUNK.x, CHUNK.y],
+        )
+        .with_towns(Box::new(SlowToDrop {
+            dropped: solver_dropped,
+        }))
+        .map_err(|error| error.to_string())
+    });
+
+    worker.finish().join().expect("the thread ends");
 
     assert!(dropped.load(Ordering::SeqCst));
 }

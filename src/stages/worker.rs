@@ -20,6 +20,7 @@ use crate::scheduler::FocusPoint;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 /// Products generated between two looks for new requests: small, so a request waits little.
@@ -80,6 +81,7 @@ pub enum StageEvent {
 /// A runtime on its own thread. Dropping it asks the thread to stop and does not wait for it.
 pub struct StageWorker {
     orders: Sender<Order>,
+    thread: Option<JoinHandle<()>>,
     /// Behind a mutex only so the worker can live where Sync is required (a Bevy resource);
     /// `drain` takes `&mut self` and reaches it without locking.
     reports: Mutex<Receiver<Report>>,
@@ -104,14 +106,15 @@ impl StageWorker {
     {
         let (orders, taken) = channel::<Order>();
         let (reports, received) = channel::<Report>();
-        // Not joined: a thread still building (a device, kernels) takes seconds, and an engine
-        // drops its worker on its main thread.
-        std::thread::Builder::new()
+        // Not joined when dropped: a thread still building (a device, kernels) takes seconds, and
+        // an engine drops its worker on its main thread. `finish` gives the thread to wait for.
+        let thread = std::thread::Builder::new()
             .name("wave forge stages".to_owned())
             .spawn(move || run(build, &taken, &reports))
             .expect("a thread");
         Self {
             orders,
+            thread: Some(thread),
             reports: Mutex::new(received),
             products: HashMap::new(),
             failure: None,
@@ -132,12 +135,13 @@ impl StageWorker {
     pub fn play(pack: Arc<Pack>, size: [u32; 2], store: Box<dyn FrozenStore>) -> Self {
         let (orders, taken) = channel::<Order>();
         let (reports, received) = channel::<Report>();
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("wave forge playback".to_owned())
             .spawn(move || play(&pack, size, store, &taken, &reports))
             .expect("a thread");
         Self {
             orders,
+            thread: Some(thread),
             reports: Mutex::new(received),
             products: HashMap::new(),
             failure: None,
@@ -145,6 +149,18 @@ impl StageWorker {
             timings: Vec::new(),
             judged: HashMap::new(),
         }
+    }
+
+    /// Stops the thread, as dropping the worker does, and gives the thread to wait for where
+    /// waiting is acceptable, such as before the process exits. Once it has ended, the runtime and
+    /// its towns' devices are gone; a device still being torn down on its own thread when the
+    /// process exits faults in the driver. Waiting can take as long as the step or the build the
+    /// thread is on.
+    #[must_use]
+    pub fn finish(mut self) -> JoinHandle<()> {
+        self.thread
+            .take()
+            .expect("taken only here, which consumes the worker")
     }
 
     /// Asks for the `targets` stages around `focus`, replacing the previous request.

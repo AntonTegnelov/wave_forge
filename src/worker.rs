@@ -10,6 +10,7 @@ use crate::scheduler::FocusPoint;
 use crate::{Chunk, ChunkCoord, Error, Solver};
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::thread::JoinHandle;
 
 /// What the worker's thread is asked to do.
 enum Command {
@@ -42,9 +43,11 @@ enum Report {
 /// Dropping a worker asks its thread to stop and does not wait for it. A thread still building the
 /// generator (creating a device, compiling kernels) takes seconds, and a game drops its worker on
 /// its main thread; the thread finishes what it is doing, sees the request, and exits, freeing the
-/// generator and its device there.
+/// generator and its device there. [`Worker::finish`] gives the thread to wait for before the
+/// process exits.
 pub struct Worker {
     commands: Sender<Command>,
+    thread: Option<JoinHandle<()>>,
     reports: Receiver<Report>,
     chunks: HashMap<ChunkCoord, Chunk>,
     stats: GeneratorStats,
@@ -70,18 +73,31 @@ impl Worker {
     {
         let (commands, orders) = channel::<Command>();
         let (reports, results) = channel::<Report>();
-        // Not joined: see the type's documentation.
-        std::thread::Builder::new()
+        // Not joined when dropped: see the type's documentation.
+        let thread = std::thread::Builder::new()
             .name("wave forge".to_owned())
             .spawn(move || run(build, &orders, &reports))
             .expect("a thread");
         Self {
             commands,
+            thread: Some(thread),
             reports: results,
             chunks: HashMap::new(),
             stats: GeneratorStats::default(),
             failure: None,
         }
+    }
+
+    /// Stops the thread, as dropping the worker does, and gives the thread to wait for where
+    /// waiting is acceptable, such as before the process exits. Once it has ended, the generator
+    /// and its device are gone; a device still being torn down on its own thread when the process
+    /// exits faults in the driver. Waiting can take as long as the build or the dispatch the
+    /// thread is on.
+    #[must_use]
+    pub fn finish(mut self) -> JoinHandle<()> {
+        self.thread
+            .take()
+            .expect("taken only here, which consumes the worker")
     }
 
     /// Asks for the chunks around these focus points.

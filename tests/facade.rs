@@ -177,6 +177,25 @@ fn dropping_a_worker_does_not_wait_for_its_thread() {
     );
 }
 
+#[test]
+fn a_finished_workers_thread_ends_once_its_build_is_done() {
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let worker = Worker::spawn(move || {
+        held.recv().expect("the test releases the build");
+        Ok(world(false))
+    });
+
+    let thread = worker.finish();
+    release.send(()).expect("the build is still waiting");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !thread.is_finished() && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+
+    assert!(thread.is_finished(), "the thread went on after finish");
+    thread.join().expect("the thread ends without a panic");
+}
+
 /// The chunk the scripted solver refuses to place on its first attempt.
 const STUBBORN: ChunkCoord = ChunkCoord::new(1, 0, 0);
 
