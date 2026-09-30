@@ -5,13 +5,16 @@
 ## panel as a designer's clicks would; it is cancelled as soon as it starts, so it stops after its
 ## first chunk, and run again, which resumes and finishes, the panel showing each end. A second node given
 ## that directory as `play_directory` then plays the world around the player: its fields and trees
-## equal those of a third node that generates as usual, in a world of its own, its ground is built
+## equal those of a third node that generates as usual, with the tree density the run was given
+## after its node started, in a world of its own, its ground is built
 ## from them, and no stage of it ran. Both bake navigation around the player from their ground, and
 ## a path across three chunks runs over the ground, the same in the played world as in the generated
 ## one.
 extends SceneTree
 
 const CELLS := 8
+## The density of trees the world is run and generated with, which is not the pack's default.
+const DENSITY := 0.5
 const TIMEOUT_S := 60.0
 const DIRECTORY := "user://wave_forge_world_run"
 
@@ -32,6 +35,10 @@ func _initialize() -> void:
 	runner = _node("", root)
 	if not runner.start():
 		_fail("the runner did not start")
+		return
+	# Set after the start, as a designer tunes a slider before baking: the run has to take it.
+	if not runner.update_params({"density": DENSITY}):
+		_fail("the density was refused")
 		return
 	runner.world_run_progress.connect(func(_done: int, _total: int, stages: Dictionary) -> void:
 		if progressed == 0:
@@ -122,7 +129,7 @@ func _process(_delta: float) -> bool:
 			own.own_world_3d = true
 			root.add_child(own)
 			generator = _node("", own)
-			if not player.start() or not generator.start():
+			if not player.start() or not generator.start() or not generator.update_params({"density": DENSITY}):
 				_fail("the player or the generator did not start")
 				return true
 			player.follow(Vector3(2 * CELLS + 1, 0, 2 * CELLS + 1))
