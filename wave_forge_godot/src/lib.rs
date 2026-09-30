@@ -64,6 +64,7 @@ use wave_forge::{
 };
 
 mod audio;
+mod ending;
 mod gi;
 mod grass;
 mod lods;
@@ -90,6 +91,13 @@ unsafe impl ExtensionLibrary for WaveForgeExtension {
         // anywhere finds the wind.
         if stage == InitStage::MainLoop {
             grass::ensure_wind();
+        }
+    }
+
+    fn on_stage_deinit(stage: InitStage) {
+        // The classes go at this stage, so every node of theirs has dropped its workers by now.
+        if stage == InitStage::Scene {
+            ending::join_all();
         }
     }
 }
@@ -224,7 +232,7 @@ pub struct WaveForgeWorld {
     /// The rule set [`WaveForgeWorld::load_rules`] read, which also says what each tile is.
     rules: Option<RuleFile>,
     /// The generating thread, once [`WaveForgeWorld::start`] has built it.
-    worker: Option<Worker>,
+    worker: Option<ending::Ending<Worker>>,
     /// The chunk the last [`WaveForgeWorld::follow`] landed in, so an unmoved player asks nothing.
     followed: Option<ChunkCoord>,
     /// The collision shape of each module that has one, by module name.
@@ -568,7 +576,7 @@ impl WaveForgeWorld {
         self.followed = None;
         // Everything here happens on the generating thread, including building the device and
         // compiling the kernels, so Godot's own thread never waits for either.
-        self.worker = Some(Worker::spawn(move || {
+        self.worker = Some(ending::Ending::new(Worker::spawn(move || {
             let mut world = Builder::new(ruleset, prior)
                 .seed(seed)
                 .extent(extent)
@@ -582,7 +590,7 @@ impl WaveForgeWorld {
                 world.solver_mut().warm(&shapes)?;
             }
             Ok(world)
-        }));
+        })));
         true
     }
 

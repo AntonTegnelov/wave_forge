@@ -311,10 +311,11 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   for each chunk's `scatter_report` as the chunk arrives.
 - `run_world(directory)` generates the pack's whole finite world ahead of time on a thread of its
   own, the node's `targets` over every chunk of the bound, keeping each chunk's products under
-  `directory` as it is done; `world_run_progress(done, total, stages)` reports each chunk, with
-  what each stage has generated so far in the form of `stats()["stages"]`,
-  `world_run_finished(done, total)` the end, and `cancel_world_run()` stops it, which running
-  again resumes. It runs as the node generates, with the tables given, the edits made and the parameters set since it started, so the node has to have started; in the editor,
+  `directory` as it is done; `world_run_progress(done, total, stages)` reports each chunk, and
+  every second while a block generates, with what each stage has generated so far in the form of
+  `stats()["stages"]`, `world_run_finished(done, total)` the end, and `cancel_world_run()` stops
+  it within about a second, which running again resumes. The process waits for a run under way,
+  and for the node's generating thread, before it exits. It runs as the node generates, with the tables given, the edits made and the parameters set since it started, so the node has to have started; in the editor,
   with `preview_in_editor`, it is the bake of M1. A node whose `play_directory` is that directory
   then plays the world with nothing generated.
 - `keep_bake_edits(baked)` turns what a designer changed in a bake, as instanced, into edits:

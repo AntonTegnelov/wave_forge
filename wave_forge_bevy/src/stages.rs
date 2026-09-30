@@ -160,10 +160,11 @@ pub struct StagesSettings {
     pub cell_size: Vec3,
 }
 
-/// The stages' products, as of the last frame.
+/// The stages' products, as of the last frame. Dropping it, as the app ends, waits for the stages'
+/// thread to end, so the runtime's devices are gone before the process exits.
 #[derive(Resource)]
 pub struct WaveForgeStages {
-    worker: StageWorker,
+    worker: JoinedWorker,
     /// Each target and a radius of its own, if it has one.
     targets: Vec<(String, Option<u32>)>,
     settings: StagesSettings,
@@ -671,6 +672,32 @@ impl WaveForgeStagesPlugin {
     }
 }
 
+/// The stages' worker, whose thread is joined when it drops: a device still being torn down on it
+/// when the process exits faults in the driver, and an app is dropped as it ends.
+struct JoinedWorker(Option<StageWorker>);
+
+impl std::ops::Deref for JoinedWorker {
+    type Target = StageWorker;
+
+    fn deref(&self) -> &StageWorker {
+        self.0.as_ref().expect("taken only when dropped")
+    }
+}
+
+impl std::ops::DerefMut for JoinedWorker {
+    fn deref_mut(&mut self) -> &mut StageWorker {
+        self.0.as_mut().expect("taken only when dropped")
+    }
+}
+
+impl Drop for JoinedWorker {
+    fn drop(&mut self) {
+        let worker = self.0.take().expect("taken only here");
+        // A thread that panicked was reported through the worker already.
+        let _ = worker.finish().join();
+    }
+}
+
 /// The set both of the plugin's systems run in, so a game can order its own work around them.
 #[derive(bevy_ecs::schedule::SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WaveForgeStagesSystems;
@@ -688,7 +715,7 @@ impl Plugin for WaveForgeStagesPlugin {
             Source::Play(pack, store) => StageWorker::play(pack, self.settings.chunk, store),
         };
         app.insert_resource(WaveForgeStages {
-            worker,
+            worker: JoinedWorker(Some(worker)),
             targets: self.targets.clone(),
             settings: self.settings,
             asked: Vec::new(),

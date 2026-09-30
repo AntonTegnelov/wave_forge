@@ -200,8 +200,9 @@ pack's largest regions and aligned with them, each asked for whole, so a region'
 generated once, not once for each row of chunks that crosses it. It keeps each chunk's product of
 each target in the store, as a frozen chunk is kept, the moment its block is done. So the runtime
 holds only what one block reads, whatever the world's size. A region a stage has computed is all
-its chunks read, so a later block does not ask for that region's inputs again. After each chunk the closure gets a
-`RunProgress`:
+its chunks read, so a later block does not ask for that region's inputs again. After each chunk,
+and every second while a block generates (a block of a large world takes minutes), the closure gets
+a `RunProgress`:
 - `done` and `total` chunks;
 - `skipped`, those the store already held;
 - `held`, the products the runtime holds now;
@@ -210,7 +211,11 @@ its chunks read, so a later block does not ask for that region's inputs again. A
 
 Returning `ControlFlow::Break(())` stops the run. A chunk whose every target the store already holds
 is skipped, so a run stopped or cut short picks up where it left off, and the store ends up holding
-the same bytes as a run that went at once (`tests/world_run.rs`). A pack without a bound fails with
+the same bytes as a run that went at once (`tests/world_run.rs`). The run asks the store's `holds`,
+which by default reads the chunk back with `fetch`; a store that can tell without reading, as
+`DirectoryStore` does from the file's existence, should implement it. `DirectoryStore` writes each
+chunk beside its file and renames it over, so a process that ends mid-write leaves no chunk half
+written. A pack without a bound fails with
 `StageError::Unbounded`.
 
 `StageWorker::play(pack, size, store)` plays such a world back without generating anything: a

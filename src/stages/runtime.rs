@@ -2041,7 +2041,9 @@ impl Runtime {
                     .copied()
                     .filter(|chunk| !self.products.contains_key(&(index, *chunk)))
                     .collect();
-                missing.sort_by_key(|chunk| {
+                // Cached: the key is a minimum over every focus point, and a world run's block has
+                // thousands of them over millions of chunks.
+                missing.sort_by_cached_key(|chunk| {
                     // Focus points are in the WFC lattice's chunks, so a coarse chunk is measured
                     // from its first one.
                     let first = ChunkCoord::new(chunk.x * scale, chunk.y * scale, 0);

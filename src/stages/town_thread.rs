@@ -4,6 +4,7 @@
 use super::runtime::SiteId;
 use crate::towns::{Outside, Selector, Town, TownError, TownRequest, TownSolver};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// Which town a request is for: a Solve stage's index and a site, and a ticket that tells a
@@ -42,19 +43,18 @@ pub(crate) struct Done {
 }
 
 /// The runtime's end of the town thread, which solves the jobs it is sent in order until the
-/// runtime drops its end.
+/// runtime drops its end, and then drops the solver before the drop returns.
 pub(crate) struct TownThread {
     jobs: Sender<Job>,
     done: Receiver<Done>,
+    thread: Option<JoinHandle<()>>,
 }
 
 impl TownThread {
     pub(crate) fn spawn(mut solver: Box<dyn TownSolver>) -> Self {
         let (jobs, taken) = channel::<Job>();
         let (sent, done) = channel::<Done>();
-        // Not joined: dropping a GPU solver's device takes time, and a runtime is dropped on
-        // whatever thread held it.
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("wave forge towns".to_owned())
             .spawn(move || {
                 for job in taken {
@@ -85,7 +85,11 @@ impl TownThread {
                 }
             })
             .expect("a thread");
-        Self { jobs, done }
+        Self {
+            jobs,
+            done,
+            thread: Some(thread),
+        }
     }
 
     pub(crate) fn send(&self, job: Job) {
@@ -113,6 +117,22 @@ impl TownThread {
                 Err(TryRecvError::Disconnected) if done.is_empty() => return Err(Stopped),
                 Err(TryRecvError::Disconnected) => return Ok(done),
             }
+        }
+    }
+}
+
+// A GPU solver's device is torn down when the solver drops. Waiting for it here keeps it from
+// running on after the thread that dropped the runtime, where a process that then exits faults
+// in the driver. Runtimes with towns are dropped on the stages' threads, never an engine's main
+// thread.
+impl Drop for TownThread {
+    fn drop(&mut self) {
+        // Closing the channel ends the thread's loop once the job it is on is solved.
+        let (closed, _) = channel::<Job>();
+        drop(std::mem::replace(&mut self.jobs, closed));
+        if let Some(thread) = self.thread.take() {
+            // A solver that panicked has already been reported by `take`.
+            let _ = thread.join();
         }
     }
 }

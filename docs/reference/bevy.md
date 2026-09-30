@@ -83,7 +83,8 @@ itself, and holds no shapes for a town's modules: a game adds its towns' collide
   ([Sound and names](#sound-and-names)). The
   pack's water is the game's own `Pack::water()` ([packs.md](packs.md#water)). A frozen stage's
   store is given where the runtime is built, `Runtime::with_store`, in the plugin's `build` closure
-  ([packs.md](packs.md#persistence-and-saves)).
+  ([packs.md](packs.md#persistence-and-saves)). Dropping the resource, as the app ends, waits for
+  the stages' thread, so the runtime's devices are gone before the process exits.
 - `StageReady { stage, chunk }`, `StageDropped { stage, chunk }`, `StagesFailed(reason)`: messages.
 - `WaveForgeStagesSystems`: the system set.
 - `WaveForgeStages::set_edits(edits)` hands the stages the player's edits
