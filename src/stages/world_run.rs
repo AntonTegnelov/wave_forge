@@ -14,9 +14,15 @@ use crate::FocusPoint;
 use crate::frozen::{FrozenStore, StoreError};
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
+use std::time::{Duration, Instant};
 use wfc_core::ChunkCoord;
 
-/// How far a run has got, which it reports after each chunk.
+/// Products a block generates between looks at the time.
+const BLOCK_STEP: usize = 64;
+/// How often a block being generated reports, so a run can be stopped part way through one.
+const REPORT_EVERY: Duration = Duration::from_secs(1);
+
+/// How far a run has got, which it reports after each chunk and while a block generates.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunProgress {
     /// The chunks done so far, those the store already held included.
@@ -38,8 +44,9 @@ impl Runtime {
     /// row by row, each asked for whole, so a region's inputs are generated once. It keeps each
     /// chunk's product of each target in `store`, as the product's RON text under the stage's
     /// name, as soon as its block is done. A chunk whose every target the store already holds is
-    /// skipped. After each chunk, `progress` is told how far the run has got, and the run stops
-    /// if it breaks.
+    /// skipped. After each chunk, and every second while a block generates, `progress` is told
+    /// how far the run has got, and the run stops if it breaks: a block of a large world takes
+    /// minutes.
     ///
     /// Returns the progress when the run ended: `done == total` if it finished.
     ///
@@ -80,7 +87,21 @@ impl Runtime {
                 let focus: Vec<FocusPoint> =
                     due.iter().map(|&chunk| FocusPoint::new(chunk, 0)).collect();
                 self.request(&focus, targets)?;
-                self.run_until_idle()?;
+                let mut reported = Instant::now();
+                while !self.is_idle() {
+                    // Nothing generated means what is left waits for towns.
+                    if self.step(BLOCK_STEP)?.is_empty() {
+                        self.wait_for_towns(REPORT_EVERY)?;
+                    }
+                    if reported.elapsed() >= REPORT_EVERY {
+                        reported = Instant::now();
+                        state.held = self.held();
+                        state.stages = self.timings();
+                        if progress(state.clone()).is_break() {
+                            return Ok(state);
+                        }
+                    }
+                }
             }
             for chunk in block {
                 if due.contains(&chunk) {

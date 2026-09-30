@@ -5,14 +5,15 @@
 //! GPU; the city on a GPU is checked in `wfc-devtools`.
 
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use wave_forge::loader::parse_rule_file;
 use wave_forge::stages::{Pack, Runtime, StageError, StageWorker};
 use wave_forge::towns::{Town, TownError, TownRequest, TownSolver, WfcTowns};
-use wave_forge::{ChunkCoord, ChunkShape, FocusPoint};
+use wave_forge::{ChunkCoord, ChunkShape, FocusPoint, FrozenStore, StoreError};
 use wfc_core::reference::ReferenceSolver;
 
 const RULES: &str = r#"(
@@ -292,4 +293,69 @@ fn a_finished_workers_thread_has_dropped_its_town_solver() {
     worker.finish().join().expect("the thread ends");
 
     assert!(dropped.load(Ordering::SeqCst));
+}
+
+/// A town solver as slow as a large town on a GPU.
+struct SlowTowns;
+
+impl TownSolver for SlowTowns {
+    fn chunk_shape(&self) -> ChunkShape {
+        CHUNK
+    }
+
+    fn solve(&mut self, request: &TownRequest<'_>) -> Result<Town, TownError> {
+        std::thread::sleep(Duration::from_secs(3));
+        let (w, h) = request.size;
+        let cells = (CHUNK.x * CHUNK.y * CHUNK.z) as usize;
+        Ok(Town {
+            size: request.size,
+            chunks: vec![Arc::from(vec![0u16; cells]); (w * h) as usize],
+        })
+    }
+}
+
+/// A store that keeps nothing.
+struct Nowhere;
+
+impl FrozenStore for Nowhere {
+    fn keep(
+        &mut self,
+        _layer: &str,
+        _chunk: ChunkCoord,
+        _bytes: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn fetch(&mut self, _layer: &str, _chunk: ChunkCoord) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(None)
+    }
+}
+
+// A block of a large world takes minutes, and an engine quitting part way waits for its run.
+#[test]
+fn a_world_run_told_to_stop_while_a_block_generates_stops_before_the_block_is_done() {
+    let bounded = PACK.replace(
+        "version: 1,",
+        "version: 1, bound: Some(Rect(min: (0.0, 0.0), max: (19.0, 19.0))),",
+    );
+    let mut runtime = Runtime::new(
+        Arc::new(Pack::parse(&bounded).expect("a valid pack")),
+        5,
+        [CHUNK.x, CHUNK.y],
+    )
+    .with_towns(Box::new(SlowTowns))
+    .expect("matching chunks");
+    let started = Instant::now();
+
+    let stopped = runtime
+        .run_world(&["buildings"], &mut Nowhere, |_| ControlFlow::Break(()))
+        .expect("a bounded pack");
+
+    assert_eq!(stopped.done, 0);
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
 }

@@ -59,11 +59,12 @@ fn run(bound: &str) -> (RunProgress, usize, usize) {
     let text = PACK.replace("Rect(min: (0.0, 0.0), max: (47.0, 39.0))", bound);
     let mut store = Memory::default();
     let mut most = 0;
-    let mut reports = 0;
+    let mut done = 0;
     let end = runtime(&text)
         .run_world(&TARGETS, &mut store, |progress| {
-            reports += 1;
-            assert_eq!(progress.done, reports);
+            // One chunk more after each chunk, and none more while a block generates.
+            assert!(progress.done == done || progress.done == done + 1);
+            done = progress.done;
             most = most.max(progress.held);
             ControlFlow::Continue(())
         })
