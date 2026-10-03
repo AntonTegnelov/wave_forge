@@ -135,6 +135,25 @@ fn a_resumed_run_reads_what_the_store_holds_once_a_chunk() {
 }
 
 #[test]
+fn a_run_with_another_target_reads_each_chunks_entry_once() {
+    let mut store = Memory::default();
+    runtime(PACK)
+        .run_world(&["ground", "surface"], &mut store, |_| {
+            ControlFlow::Continue(())
+        })
+        .expect("a bounded pack");
+    store.1 = 0;
+
+    runtime(PACK)
+        .run_world(&["ground", "trees"], &mut store, |_| {
+            ControlFlow::Continue(())
+        })
+        .expect("a bounded pack");
+
+    assert_eq!(store.1, 30);
+}
+
+#[test]
 fn a_run_with_another_target_adds_it_to_every_chunk_and_keeps_the_rest() {
     let mut store = Memory::default();
     runtime(PACK)
