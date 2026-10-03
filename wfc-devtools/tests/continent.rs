@@ -664,19 +664,15 @@ fn the_whole_continent_runs_ahead_of_time() {
         .expect("the whole run");
     let seconds = started.elapsed().as_secs_f64();
 
-    let bytes: usize = store.0.values().map(|(_, bytes)| bytes).sum();
-    let mut heaviest: Vec<(usize, &String)> = store
+    let (entries, bytes) = store
         .0
-        .iter()
-        .map(|(layer, (_, bytes))| (*bytes, layer))
-        .collect();
-    heaviest.sort_unstable_by(|a, b| b.cmp(a));
+        .values()
+        .fold((0, 0), |(entries, bytes), (n, b)| (entries + n, bytes + b));
     eprintln!(
-        "continent: {} chunks of {} targets in {seconds:.0} s, {:.1} GB as RON; the heaviest {:?}",
+        "continent: {} chunks of {} targets in {seconds:.0} s, {entries} entries, {:.2} GB",
         end.done,
         targets.len(),
         bytes as f64 / 1e9,
-        &heaviest[..5]
     );
     let mut costs: Vec<(f64, String)> = runtime
         .timings()

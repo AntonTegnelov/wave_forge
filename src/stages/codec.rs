@@ -92,6 +92,31 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Product, String> {
     Ok(product)
 }
 
+/// A chunk's products, each named and as [`encode`] made it, as the bytes of one store entry: a
+/// world run keeps every target of a chunk together, so a world is a file per chunk rather than
+/// one per chunk and target.
+pub(crate) fn encode_chunk(products: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let mut bytes = vec![FORMAT];
+    bytes.extend(postcard::to_allocvec(products).expect("names and bytes are plain data"));
+    bytes
+}
+
+/// The named products `bytes` hold, as [`encode_chunk`] made them, each still to [`decode`].
+///
+/// # Errors
+/// If the bytes are not an entry [`encode_chunk`] made, with why.
+pub(crate) fn decode_chunk(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let Some((&format, entry)) = bytes.split_first() else {
+        return Err("no bytes".to_owned());
+    };
+    if format != FORMAT {
+        return Err(format!(
+            "format {format}, where this version of Wave Forge keeps format {FORMAT}"
+        ));
+    }
+    postcard::from_bytes(entry).map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::runtime::Field;
@@ -142,6 +167,18 @@ mod tests {
         let back = decode(&encode(&field)).expect("bytes encode made");
 
         assert_eq!(back, field);
+    }
+
+    #[test]
+    fn a_chunks_products_come_back_by_name() {
+        let products = vec![
+            ("trees".to_owned(), encode(&Product::Points(Vec::new()))),
+            ("rock".to_owned(), vec![1, 2, 3]),
+        ];
+
+        let back = decode_chunk(&encode_chunk(&products)).expect("bytes encode_chunk made");
+
+        assert_eq!(back, products);
     }
 
     #[test]

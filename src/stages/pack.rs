@@ -1907,6 +1907,13 @@ impl Pack {
             if by_name.insert(stage.name.clone(), index).is_some() {
                 return Err(PackError::DuplicateName(stage.name.clone()));
             }
+            // A frozen stage of that name would share a store's layer with a world run's chunks.
+            if stage.name == super::world_run::RUN_LAYER {
+                return Err(PackError::Invalid {
+                    stage: stage.name.clone(),
+                    message: "the name is a world run's in a store".to_owned(),
+                });
+            }
         }
         let outputs: Vec<Output> = file.stages.iter().map(|def| def.kind.output()).collect();
         let scales: Vec<u32> = file.stages.iter().map(|def| def.scale).collect();
@@ -3395,6 +3402,16 @@ mod tests {
         let mut stages = stages;
         stages.sort();
         assert_eq!(stages, vec!["a".to_owned(), "b".to_owned()]);
+    }
+
+    #[test]
+    fn a_stage_named_as_a_world_runs_chunks_are_kept_is_refused() {
+        let result = pack_with(r#"(name: "world run", kind: Field(Constant(1.0)))"#);
+
+        assert!(
+            matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "world run"),
+            "{result:?}"
+        );
     }
 
     #[test]
