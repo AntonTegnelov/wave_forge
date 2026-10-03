@@ -131,6 +131,11 @@ pub struct WaveForgeStages {
     #[export_group(name = "Streaming")]
     #[export]
     view_radius: i32,
+    /// Whether to follow the viewport's current camera each frame while the game runs, so a world
+    /// generates around the player with no code. A script that calls `follow` takes over, turning
+    /// it off; in the editor the plugin follows the editor's camera instead.
+    #[export]
+    follow_camera: bool,
     /// A radius of its own for some targets, as stage name to chunks, the others keeping
     /// `view_radius`: ground far out, locations nearer and clutter nearest, say.
     #[export]
@@ -710,6 +715,7 @@ impl INode for WaveForgeStages {
             chunk_cells: Vector3i::new(8, 8, 8),
             cell_size: Vector3::ONE,
             view_radius: 2,
+            follow_camera: true,
             pack: None,
             facts: None,
             edits: Edits::default(),
@@ -863,6 +869,15 @@ impl INode for WaveForgeStages {
             }
         }
         self.update_world_run();
+        if self.follow_camera && !Engine::singleton().is_editor_hint() {
+            let camera = self
+                .base()
+                .get_viewport()
+                .and_then(|viewport| viewport.get_camera_3d());
+            if let Some(camera) = camera {
+                self.follow_position(camera.get_global_position());
+            }
+        }
         let processing = std::time::Instant::now();
         let Some(worker) = &mut self.worker else {
             return;
@@ -1353,9 +1368,18 @@ impl WaveForgeStages {
     }
 
     /// Generates around `position`, in Godot's world space. Call it as the player moves; it asks
-    /// for new chunks only when the position enters another chunk.
+    /// for new chunks only when the position enters another chunk. Called while the game runs, it
+    /// turns `follow_camera` off: the script follows from then on.
     #[func]
     fn follow(&mut self, position: Vector3) {
+        if !Engine::singleton().is_editor_hint() {
+            self.follow_camera = false;
+        }
+        self.follow_position(position);
+    }
+
+    /// What `follow` does, without turning `follow_camera` off.
+    fn follow_position(&mut self, position: Vector3) {
         let Some(worker) = &self.worker else {
             return;
         };
@@ -4232,6 +4256,9 @@ impl WaveForgeStages {
         }
         warnings.extend(crate::warnings::physics(self.collider_radius));
         warnings.extend(crate::warnings::occlusion(self.occluder_radius));
+        if self.follow_camera {
+            warnings.extend(crate::warnings::camera(&self.to_gd().upcast()));
+        }
         warnings
     }
 

@@ -22,6 +22,7 @@ extension needs none of godot-rust's thread-safety features.
 | | `cell_size` | one cell in Godot's world units, along Godot's axes |
 | | `world_chunks` | the world's size in chunks along each lattice axis; 0 is unbounded |
 | Streaming | `view_radius` | chunks kept generated around the followed position |
+| | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off. In the editor the plugin follows the editor's camera instead |
 | | `evict_margin` | chunks further than `view_radius` plus this are dropped |
 | Physics | `collider_radius` | chunks around the player that get colliders |
 | Navigation | `navigation_radius` | chunks around the player that get navigation meshes |
@@ -175,6 +176,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `chunk_cells` | columns per chunk along the lattice's x and y, and a town chunk's height along z |
 | | `cell_size` | one cell in Godot's world units |
 | Streaming | `view_radius` | chunks kept generated around the followed position |
+| | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off. In the editor the plugin follows the editor's camera instead |
 | Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
 | | `ground_material` | the material the ground is drawn with |
 | | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
@@ -407,7 +409,12 @@ project's plugins) adds a Wave Forge dock:
   targets, no ground) takes the default preset, islands, when it is first selected. The copying is
   `addons/wave_forge/presets.gd`. The presets bind `tree` to the plugin's built-in tree
   (`addons/wave_forge/tree.tscn`, one vertex-coloured mesh written by `tools/make_tree.gd`) and draw
-  the sea with `addons/wave_forge/sea.tres`;
+  the sea with `addons/wave_forge/sea.tres`. To walk a world with no code, drop the plugin's walker
+  (`addons/wave_forge/walker.tscn`, a first-person `CharacterBody3D` with a camera) into the scene:
+  the node follows its camera, and it holds still until the ground and its body are there under it,
+  then stands on the ground. WASD or the arrow keys walk, Space jumps, a click captures the mouse
+  to look and Escape releases it; it adds those actions to the input map unless the project has
+  its own;
 - a Paint toggle;
 - a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
 - the stage it paints, or the point stages Remove takes from;
