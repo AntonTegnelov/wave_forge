@@ -1,6 +1,6 @@
 //! Presets and their parameters (docs/product/user-stories.md, N2): a pack's parameters change
 //! what reads them and nothing else, and every value in each preset's ranges gives a sound world,
-//! swept over a grid of values and seeds: islands, and hills and forests.
+//! swept over a grid of values and seeds: islands, hills and forests, and the canyon desert.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -291,4 +291,116 @@ fn more_hills_make_taller_hills_and_more_forest_more_trees() {
         "{reliefs:?}"
     );
     assert!(trees.windows(2).all(|pair| pair[0] < pair[1]), "{trees:?}");
+}
+
+/// The canyon desert's sand share of the area, how many cacti stand in it, its relief, and the
+/// share of its columns on level ground, checking on the way that every height is finite and above
+/// the ground's zero and every cactus stands on sand.
+fn survey_canyon(runtime: &Runtime, pack: &Pack) -> (f32, usize, f32, f32) {
+    let names = pack.kind("surface").expect("a surface stage").categories();
+    let sand = names.iter().position(|&name| name == "sand").expect("sand") as u8;
+    let (mut sands, mut level, mut columns, mut cacti) = (0, 0, 0, 0);
+    let (mut low, mut high) = (f32::MAX, f32::MIN);
+    for chunk in area() {
+        let height = runtime.field("height", chunk).expect("generated");
+        for &value in &height.values {
+            assert!(
+                value.is_finite() && (0.0..20.0).contains(&value),
+                "a height of {value}"
+            );
+            low = low.min(value);
+            high = high.max(value);
+        }
+        for &value in &runtime.field("steep", chunk).expect("generated").values {
+            level += usize::from(value < 0.3);
+            columns += 1;
+        }
+        let surface = runtime.categories("surface", chunk).expect("generated");
+        sands += (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .filter(|&(x, y)| surface.get(x, y) == sand)
+            .count();
+        for cactus in runtime.points("cacti", chunk).expect("generated") {
+            let [x, y] = [cactus.position[0], cactus.position[1]].map(|at| at.floor() as i64);
+            let local =
+                [x - i64::from(chunk.x) * 8, y - i64::from(chunk.y) * 8].map(|at| at as u32);
+            assert_eq!(
+                surface.get(local[0], local[1]),
+                sand,
+                "a cactus off the sand at {:?}",
+                cactus.position
+            );
+            cacti += 1;
+        }
+    }
+    let columns = columns as f32;
+    (
+        sands as f32 / columns,
+        cacti,
+        high - low,
+        level as f32 / columns,
+    )
+}
+
+#[test]
+fn every_value_in_the_canyon_ranges_gives_a_sound_world() {
+    let pack = preset("canyon");
+    let grid = [0.0, 0.5, 1.0];
+
+    for seed in [1, 2] {
+        for canyons in grid {
+            for strata in grid {
+                for cacti in grid {
+                    let mut runtime = Runtime::new(Arc::clone(&pack), seed, SIZE);
+                    let values =
+                        params([("canyons", canyons), ("strata", strata), ("cacti", cacti)]);
+                    runtime.set_params(&values).expect("values in range");
+
+                    generate(&mut runtime, &["height", "surface", "cacti"]);
+
+                    let (sand, count, relief, level) = survey_canyon(&runtime, &pack);
+                    let at =
+                        format!("seed {seed}, canyons {canyons}, strata {strata}, cacti {cacti}");
+                    assert!(relief > 8.0, "a flat world of relief {relief} at {at}");
+                    assert!((0.05..0.95).contains(&sand), "{sand} sand at {at}");
+                    assert!(level > 0.1, "only {level} of the ground level at {at}");
+                    if cacti == 0.0 {
+                        assert_eq!(count, 0, "cacti at {at}");
+                    }
+                    if cacti == 1.0 {
+                        assert!(count > 20, "only {count} cacti at {at}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn wider_canyons_more_strata_and_more_cacti_each_make_more_of_theirs() {
+    let pack = preset("canyon");
+    let survey_at = |canyons: f32, strata: f32, cacti: f32| {
+        let mut runtime = Runtime::new(Arc::clone(&pack), 3, SIZE);
+        runtime
+            .set_params(&params([
+                ("canyons", canyons),
+                ("strata", strata),
+                ("cacti", cacti),
+            ]))
+            .expect("values in range");
+        generate(&mut runtime, &["height", "surface", "cacti"]);
+        survey_canyon(&runtime, &pack)
+    };
+    let amounts = [0.0, 0.5, 1.0];
+
+    let sands: Vec<f32> = amounts.iter().map(|&a| survey_at(a, 0.7, 0.5).0).collect();
+    let levels: Vec<f32> = amounts.iter().map(|&a| survey_at(0.4, a, 0.5).3).collect();
+    let cacti: Vec<usize> = amounts.iter().map(|&a| survey_at(0.4, 0.7, a).1).collect();
+
+    assert!(sands.windows(2).all(|pair| pair[0] < pair[1]), "{sands:?}");
+    assert!(
+        levels.windows(2).all(|pair| pair[0] < pair[1]),
+        "{levels:?}"
+    );
+    assert!(cacti.windows(2).all(|pair| pair[0] < pair[1]), "{cacti:?}");
 }

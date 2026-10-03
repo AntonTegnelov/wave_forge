@@ -4,8 +4,8 @@
 ## a warning. For each preset: a fresh WaveForgeStages node is given the preset's settings and
 ## added to a scene with a sun and an environment, and it starts on its own, as on a first play.
 ## Once nothing is pending around the followed point it warns of nothing, stands ground there,
-## has bodies and navigation, draws its sea when it has one, draws its trees as MultiMesh instances,
-## and has a palette colour per material of its ground.
+## has bodies and navigation, draws its sea when it has one, draws its props (trees, cacti) as
+## MultiMesh instances, and has a palette colour per material of its ground.
 extends SceneTree
 
 const Presets := preload("res://addons/wave_forge/presets.gd")
@@ -27,7 +27,7 @@ func _process(_delta: float) -> bool:
 	if stages == null:
 		index += 1
 		if index >= paths.size():
-			print("verify_presets: %d presets each take, start, and stand a lit ground with bodies, navigation and trees, warning of nothing" % paths.size())
+			print("verify_presets: %d presets each take, start, and stand a lit ground with bodies, navigation and props, warning of nothing" % paths.size())
 			quit(0)
 			return true
 		_take(paths[index])
@@ -40,7 +40,7 @@ func _process(_delta: float) -> bool:
 	var problem = _settled(paths[index], stats)
 	if problem != "ok":
 		return _fail(problem)
-	print("verify_presets: %s: %d grounds, %d bodies, %d navigation regions, %d trees" % [paths[index].get_file(), stages.ground_chunks().size(), stages.collider_chunks().size(), stages.navigation_chunks().size(), stats["placed_instances"]])
+	print("verify_presets: %s: %d grounds, %d bodies, %d navigation regions, %d props" % [paths[index].get_file(), stages.ground_chunks().size(), stages.collider_chunks().size(), stages.navigation_chunks().size(), stats["placed_instances"]])
 	scene.queue_free()
 	stages = null
 	return false
@@ -72,7 +72,7 @@ func _settled(path: String, stats: Dictionary) -> String:
 	if stages.sea_material != null and not stages.water().is_empty() and not stats["sea_drawn"]:
 		return "%s has a sea and water but draws no sea" % path
 	if stats["placed_instances"] == 0:
-		return "%s draws no trees as MultiMesh instances: %s" % [path, stats]
+		return "%s draws no props as MultiMesh instances: %s" % [path, stats]
 	var materials: PackedStringArray = stages.category_names(stages.ground_material_stage)
 	if materials.size() != stages.ground_palette.size():
 		return "%s has %d palette colours for the materials %s" % [path, stages.ground_palette.size(), materials]
