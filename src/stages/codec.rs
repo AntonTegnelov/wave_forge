@@ -1,6 +1,6 @@
 //! How a product is kept in a store (docs/reference/packs.md, "Persistence and saves"): binary,
-//! with a volume's values laid out byte by byte, and compressed. A whole continent's products came
-//! to 5.7 GB as RON text; this keeps the same products, exactly, in about a seventh of that.
+//! with a volume's values laid out byte by byte, and compressed, so it comes back exactly as it was
+//! generated. What that saves is measured in docs/research/measurements.md (L47).
 
 use super::runtime::{Product, Volume};
 use flate2::Compression;
@@ -17,7 +17,7 @@ pub(crate) fn encode(product: &Product) -> Vec<u8> {
     let plain = match product {
         // A volume's values are smooth, so its floats' bytes repeat across neighbours far more than
         // within a float: laid out as four planes, the first byte of every value, then the second,
-        // they compress to about two thirds of what the floats in order do.
+        // they compress better than the floats in order (L47).
         Product::Volume(volume) => {
             let head = Product::Volume(Volume {
                 chunk: volume.chunk,

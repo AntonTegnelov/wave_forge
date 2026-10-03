@@ -202,8 +202,8 @@ pack's largest regions and aligned with them, each asked for whole, so a region'
 generated once, not once for each row of chunks that crosses it. It keeps each chunk's products of
 its targets in the store the moment its block is done, together in one entry under the layer
 `world run`, each product as a frozen chunk is kept. A world is then a file per chunk in a
-`DirectoryStore`, not one per chunk and target: the continent's 81 targets as one file each made 5.3
-million files, and every file rounds up to a filesystem block. No stage may be named `world run`
+`DirectoryStore`, not one per chunk and target, since every file rounds up to a filesystem block
+([measurements.md](../research/measurements.md) L47). No stage may be named `world run`
 (`PackError::Invalid`). So the runtime
 holds only what one block reads, whatever the world's size. A region a stage has computed is all
 its chunks read, so a later block does not ask for that region's inputs again. After each chunk,
