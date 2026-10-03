@@ -483,41 +483,66 @@ impl WaveForgeWorld {
     /// one within a sixteenth of the cell.
     #[func]
     fn propose_module_set(library: Gd<MeshLibrary>, cell_size: Vector3) -> GString {
-        let items: Vec<(String, Vec<[f32; 3]>)> = library
-            .get_item_list()
+        let items = kit_items(&library, cell_size);
+        GString::from(wave_forge::import::propose(&kit(&items), KIT_TOLERANCE).as_str())
+    }
+
+    /// The connectors `propose_module_set` finds in `library`'s meshes, for an artist to rename and
+    /// mark walkable: each a Dictionary of the `name` the proposal gives it (`"side n"` or
+    /// `"top n"`), whether it joins tops and bottoms (`top`), and the `modules` that have a face of
+    /// it.
+    #[func]
+    fn kit_connectors(library: Gd<MeshLibrary>, cell_size: Vector3) -> Array<VarDictionary> {
+        let items = kit_items(&library, cell_size);
+        wave_forge::import::connectors(&kit(&items), KIT_TOLERANCE)
+            .into_iter()
+            .map(|connector| {
+                let mut out = VarDictionary::new();
+                out.set(&"name".to_variant(), &connector.name.to_variant());
+                out.set(&"top".to_variant(), &connector.top.to_variant());
+                let modules: PackedStringArray =
+                    connector.modules.iter().map(GString::from).collect();
+                out.set(&"modules".to_variant(), &modules.to_variant());
+                out
+            })
+            .collect()
+    }
+
+    /// The module set `propose_module_set` proposes from `library`'s meshes, with the connectors
+    /// `names` maps, from the proposal's name to the artist's, under their new names, and walkable
+    /// sides on the side connectors `walkable` lists by the proposal's names. Empty, with the
+    /// reason as an error, if the naming is refused: a connector the proposal does not find, an
+    /// empty name or `"empty"`, one name for two connectors or two faces, or a walkable top.
+    #[func]
+    fn name_module_set(
+        library: Gd<MeshLibrary>,
+        cell_size: Vector3,
+        names: VarDictionary,
+        walkable: PackedStringArray,
+    ) -> GString {
+        let mut naming = wave_forge::import::Naming::default();
+        for (from, to) in names.iter_shared() {
+            let (Ok(from), Ok(to)) = (from.try_to::<GString>(), to.try_to::<GString>()) else {
+                godot_error!(
+                    "wave forge: names maps a connector's name to a new name, both strings"
+                );
+                return GString::new();
+            };
+            naming.names.insert(from.to_string(), to.to_string());
+        }
+        naming.walkable = walkable
             .as_slice()
             .iter()
-            .map(|&item| {
-                let name = library.get_item_name(item).to_string();
-                let transform = library.get_item_mesh_transform(item);
-                let mut positions = Vec::new();
-                if let Some(mesh) = library.get_item_mesh(item) {
-                    for surface in 0..mesh.get_surface_count() {
-                        let arrays = mesh.surface_get_arrays(surface);
-                        let vertices = arrays
-                            .get(MeshArray::VERTEX.ord() as usize)
-                            .and_then(|vertices| vertices.try_to::<PackedVector3Array>().ok())
-                            .unwrap_or_default();
-                        for &vertex in vertices.as_slice() {
-                            let at = transform * vertex;
-                            // The lattice's x, y and up from Godot's x, z and y, 0 to 1 across
-                            // the cell.
-                            positions.push([
-                                at.x / cell_size.x + 0.5,
-                                at.z / cell_size.z + 0.5,
-                                at.y / cell_size.y + 0.5,
-                            ]);
-                        }
-                    }
-                }
-                (name, positions)
-            })
+            .map(ToString::to_string)
             .collect();
-        let kit: Vec<wave_forge::import::KitModule<'_>> = items
-            .iter()
-            .map(|(name, positions)| wave_forge::import::KitModule { name, positions })
-            .collect();
-        GString::from(wave_forge::import::propose(&kit, 1.0 / 16.0).as_str())
+        let items = kit_items(&library, cell_size);
+        match wave_forge::import::propose_named(&kit(&items), KIT_TOLERANCE, &naming) {
+            Ok(text) => GString::from(text.as_str()),
+            Err(reason) => {
+                godot_error!("wave forge: the kit's naming is refused: {reason}");
+                GString::new()
+            }
+        }
     }
 
     /// Reads a rule set in Wave Forge's RON format, either tiles with their adjacency or modules
@@ -1579,4 +1604,51 @@ const fn status_name(status: RegionStatus) -> &'static str {
         RegionStatus::BorderContradiction => "border_contradiction",
         RegionStatus::Superseded => "superseded",
     }
+}
+
+/// Two points of a kit's face count as one within this fraction of a cell.
+const KIT_TOLERANCE: f32 = 1.0 / 16.0;
+
+/// Each item of `library` by name, with its mesh's vertices in the lattice's frame: taken as a
+/// `GridMap` centres it in a cell of `cell_size`, with the item's mesh transform, from 0 to 1 across
+/// the cell; no vertices for an item without a mesh.
+fn kit_items(library: &Gd<MeshLibrary>, cell_size: Vector3) -> Vec<(String, Vec<[f32; 3]>)> {
+    library
+        .get_item_list()
+        .as_slice()
+        .iter()
+        .map(|&item| {
+            let name = library.get_item_name(item).to_string();
+            let transform = library.get_item_mesh_transform(item);
+            let mut positions = Vec::new();
+            if let Some(mesh) = library.get_item_mesh(item) {
+                for surface in 0..mesh.get_surface_count() {
+                    let arrays = mesh.surface_get_arrays(surface);
+                    let vertices = arrays
+                        .get(MeshArray::VERTEX.ord() as usize)
+                        .and_then(|vertices| vertices.try_to::<PackedVector3Array>().ok())
+                        .unwrap_or_default();
+                    for &vertex in vertices.as_slice() {
+                        let at = transform * vertex;
+                        // The lattice's x, y and up from Godot's x, z and y, 0 to 1 across the
+                        // cell.
+                        positions.push([
+                            at.x / cell_size.x + 0.5,
+                            at.z / cell_size.z + 0.5,
+                            at.y / cell_size.y + 0.5,
+                        ]);
+                    }
+                }
+            }
+            (name, positions)
+        })
+        .collect()
+}
+
+/// `items` as the kit the import reads.
+fn kit(items: &[(String, Vec<[f32; 3]>)]) -> Vec<wave_forge::import::KitModule<'_>> {
+    items
+        .iter()
+        .map(|(name, positions)| wave_forge::import::KitModule { name, positions })
+        .collect()
 }

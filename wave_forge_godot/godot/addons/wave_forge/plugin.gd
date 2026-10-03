@@ -7,10 +7,12 @@ extends EditorPlugin
 ## a path along the ground. While not painting, the candidate of the node's `candidates_stage`
 ## under the mouse, and what its stage's modifiers read there (`candidate_panel.gd`, N5). Below
 ## them, the world run of M1: the node's whole finite world run ahead of time into a directory
-## (`world_run_panel.gd`).
+## (`world_run_panel.gd`), and the kit import of N6: a MeshLibrary's connectors proposed, named
+## by the artist and saved as a module set (`kit_import_panel.gd`).
 
 const WorldRunPanel := preload("res://addons/wave_forge/world_run_panel.gd")
 const CandidatePanel := preload("res://addons/wave_forge/candidate_panel.gd")
+const KitImportPanel := preload("res://addons/wave_forge/kit_import_panel.gd")
 
 ## The brushes of the dock, as `paint` names them, with how each is shown.
 const BRUSHES := {
@@ -36,6 +38,7 @@ var radius_spin: SpinBox
 var strength_spin: SpinBox
 var world_run: VBoxContainer
 var candidate: VBoxContainer
+var kit_import: VBoxContainer
 ## The node being edited, while one is selected.
 var stages: Node
 ## The stroke under way: its path along the ground, and the edits before it, for undo.
@@ -161,6 +164,9 @@ func _make_dock() -> VBoxContainer:
 	box.add_child(HSeparator.new())
 	world_run = WorldRunPanel.new()
 	box.add_child(world_run)
+	box.add_child(HSeparator.new())
+	kit_import = KitImportPanel.new()
+	box.add_child(kit_import)
 	return box
 
 ## The presets shipped with the plugin, by path.

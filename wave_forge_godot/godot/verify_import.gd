@@ -5,7 +5,10 @@
 ## 2 by 1 by 2 as a GridMap centres them. The block's four sides share one symmetric connector, the
 ## empty item's faces are empty, the wall's ends are the plain and flipped faces of one asymmetric
 ## connector, its back is the block's side and its front is empty; and the proposal loads as a rule
-## set.
+## set. The dock's kit import (N6) lists the four connectors, with the modules that have them;
+## named by the artist, with the block's side walkable, it saves a module set under those names
+## that loads as a rule set, refuses one name for two connectors, and offers no walkable tick for
+## a top.
 extends SceneTree
 
 const CELL := Vector3(2, 1, 2)
@@ -44,7 +47,49 @@ func _initialize() -> void:
 		return
 	world.free()
 	print("verify_import: a MeshLibrary's block, empty item and wall get the connectors their faces' shapes give, and load as a rule set")
+	var problem := _named(library)
+	if not problem.is_empty():
+		_fail(problem)
+		return
+	print("verify_import: the kit import lists the four connectors, saves the artist's names and walkable side as a rule set that loads, and refuses a name for two connectors")
 	quit(0)
+
+## What is wrong with naming the proposal through the dock's kit import, or nothing.
+func _named(library: MeshLibrary) -> String:
+	var found: Array = ClassDB.class_call_static("WaveForgeWorld", "kit_connectors", library, CELL)
+	var listed := {}
+	for connector: Dictionary in found:
+		listed[connector["name"]] = Array(connector["modules"])
+	if listed.keys() != ["side 0", "side 1", "top 0", "top 1"] or listed["side 0"] != ["block", "wall"]:
+		return "the connectors listed: %s" % listed
+	var panel: VBoxContainer = (load("res://addons/wave_forge/kit_import_panel.gd") as GDScript).new()
+	var problem := _through(panel, library)
+	panel.free()
+	return problem
+
+func _through(panel: VBoxContainer, library: MeshLibrary) -> String:
+	if panel.propose(library, CELL) != 4:
+		return "the panel listed %d connectors" % panel.rows.size()
+	if not panel.rows["top 0"][1].disabled or panel.rows["side 0"][1].disabled:
+		return "a walkable tick on a top, or none on a side"
+	panel.rows["side 0"][0].text = "brick"
+	panel.rows["side 1"][0].text = "wall end"
+	panel.rows["side 0"][1].button_pressed = true
+	if not panel.save_to("user://kit.ron"):
+		return "the named set was not saved: %s" % panel.status.text
+	var saved := FileAccess.get_file_as_string("user://kit.ron")
+	for line in ['"brick": Side(connector: "brick", symmetry: Symmetric, walkable: true)', '"wall end plain"', 'sides: ["wall end plain", "wall end flipped", "empty side", "brick"]']:
+		if not saved.contains(line):
+			return "the saved set has no %s:\n%s" % [line, saved]
+	var world: Node = ClassDB.instantiate("WaveForgeWorld")
+	var loads: bool = world.load_rules(saved)
+	world.free()
+	if not loads:
+		return "the saved set does not load as a rule set:\n%s" % saved
+	panel.rows["side 1"][0].text = "brick"
+	if panel.save_to("user://clash.ron"):
+		return "one name for two connectors was saved"
+	return ""
 
 func _fail(message: String) -> void:
 	printerr("verify_import: " + message)
