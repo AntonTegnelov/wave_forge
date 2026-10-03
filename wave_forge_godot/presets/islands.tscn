@@ -1,0 +1,20 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://addons/wave_forge/tree.tscn" id="1_tree"]
+[ext_resource type="StandardMaterial3D" path="res://addons/wave_forge/sea.tres" id="2_sea"]
+
+[node name="Islands" type="WaveForgeStages"]
+pack_file = "res://addons/wave_forge/presets/islands.world.ron"
+targets = PackedStringArray("height", "surface", "trees")
+start_on_ready = true
+preview_in_editor = true
+view_radius = 3
+ground_stage = "height"
+ground_material_stage = "surface"
+sea_material = ExtResource("2_sea")
+ground_palette = PackedColorArray(0.86, 0.8, 0.58, 1, 0.52, 0.5, 0.47, 1, 0.33, 0.55, 0.25, 1)
+collider_radius = 1
+navigation_radius = 1
+scenes = {
+"tree": ExtResource("1_tree")
+}
