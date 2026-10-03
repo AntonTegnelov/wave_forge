@@ -374,12 +374,13 @@ one.*
 
 **Acceptance criteria.** Selecting a Scatter stage shows its candidate points in the viewport,
 coloured by the modifier that rejected them, with a legend and counts; hovering a point shows its
-attributes. **Needs.** Point viewer with rejection reasons. **Status:** in progress (2026-09-29):
+attributes. **Needs.** Point viewer with rejection reasons. **Status:** in progress (2026-10-03):
 `Runtime::scatter_report` gives every candidate of a chunk with the modifier that rejected it, the
-kept ones exactly the chunk's points (`tests/scatter_report.rs`). The Godot node draws a Scatter
-stage's candidates coloured by what became of each, with a legend of colours and counts
-(`verify_candidates.gd`); showing a point's attributes on hover, and the same in Bevy, are
-[#48](https://github.com/AntonTegnelov/wave_forge/issues/48).
+kept ones exactly the chunk's points, and what the modifiers read there, every verdict agreeing
+with its readings (`tests/scatter_report.rs`). The Godot node draws a Scatter stage's candidates
+coloured by what became of each, with a legend of colours and counts, and the editor dock shows the
+candidate under the mouse with its readings (`candidate_near`, `verify_candidates.gd`). The same in
+Bevy waits on Bevy's editor ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 
 ### N6. Turn my building kit into a city
 

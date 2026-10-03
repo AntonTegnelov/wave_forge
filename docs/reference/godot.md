@@ -308,7 +308,12 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   chunk drawn: each verdict's `name` (`"kept"`, or `"chance"`, `"height"`, `"slope"`,
   `"condition n"`, `"water"`, `"sites"`, `"blocked"` or `"spacing"`), the `colour` it is drawn in
   and its `count`; `candidate_chunks()` lists the chunks drawn. The node asks the stages' thread
-  for each chunk's `scatter_report` as the chunk arrives.
+  for each chunk's `scatter_report` as the chunk arrives. `candidate_near(position, radius)` gives
+  the drawn candidate nearest a point in world space, no farther than `radius` along the ground:
+  its `verdict` and `colour`, its `position`, and what the stage's modifiers read there, `height`,
+  `slope` and `water_depth` when the stage has those modifiers, and `conditions`, each with the
+  `value` it tests and whether it `holds` ([packs.md](packs.md#scatter)); empty when none lies that
+  near.
 - `run_world(directory)` generates the pack's whole finite world ahead of time on a thread of its
   own, the node's `targets` over every chunk of the bound, keeping each chunk's products under
   `directory` as it is done; `world_run_progress(done, total, stages)` reports each chunk, and
@@ -366,6 +371,10 @@ project's plugins) adds a Wave Forge dock:
 - a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
 - the stage it paints, or the point stages Remove takes from;
 - a radius in cells, and a strength;
+- with Paint off, the candidate of the node's `candidates_stage` under the mouse, what became of it
+  and what its stage's modifiers read there, as `candidate_near` gives it within a cell of the
+  ground under the mouse; the panel is `addons/wave_forge/candidate_panel.gd`, which only renders
+  that Dictionary;
 - a World run: a directory (`res://wave_forge_world` unless changed, so the result ships with the
   game), Run world and Cancel buttons, a progress bar of chunks, and what each stage has generated
   so far or how the run ended. Run world is the node's `run_world`, so the node has to have started,
