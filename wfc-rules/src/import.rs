@@ -4,8 +4,9 @@
 //! does, the vertices of a module's mesh that lie on one of its cell's faces outline what that face
 //! looks like, and two faces whose outlines match get the same connector, so modules whose meshes
 //! meet without a seam may touch there ([`crate::modules`]). [`propose`] writes the proposal as a
-//! module set file ([`crate::formats::module_format`]) for the artist to confirm, rename and mark
-//! walkable, which geometry cannot say.
+//! module set file ([`crate::formats::module_format`]); [`connectors`] lists the connectors it found,
+//! for the artist to confirm, rename and mark walkable, which geometry cannot say, and
+//! [`propose_named`] writes it with their names.
 //!
 //! A side face's outline is drawn looking at it from outside its cell, so the faces of two modules
 //! that touch see each other mirrored: an outline that is its own mirror image is `Symmetric`, and
@@ -25,6 +26,25 @@ pub struct KitModule<'a> {
     pub positions: &'a [[f32; 3]],
 }
 
+/// A connector a proposal found ([`connectors`]): the name the proposal gives it, `"side n"` or
+/// `"top n"` numbered in the order found, whether it joins tops and bottoms rather than sides, and
+/// the modules with a face of it, in the kit's order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProposedConnector {
+    pub name: String,
+    pub top: bool,
+    pub modules: Vec<String>,
+}
+
+/// How an artist confirmed a proposal ([`propose_named`]): a name of their own for any of its
+/// connectors, by the name the proposal gives it, and the side connectors walkers may cross, also
+/// by the proposal's names.
+#[derive(Clone, Debug, Default)]
+pub struct Naming {
+    pub names: BTreeMap<String, String>,
+    pub walkable: BTreeSet<String>,
+}
+
 /// An outline: the points of a face, each coordinate in steps of the tolerance.
 type Outline = BTreeSet<(i64, i64)>;
 
@@ -39,112 +59,342 @@ type Outline = BTreeSet<(i64, i64)>;
 /// a step, which would make outlines round differently on opposite faces.
 #[must_use]
 pub fn propose(modules: &[KitModule<'_>], tolerance: f32) -> String {
-    let steps = 1.0 / tolerance;
-    assert!(
-        tolerance > 0.0 && (steps - steps.round()).abs() < 0.01,
-        "a tolerance of {tolerance} divides a cell into whole steps"
-    );
-    let steps = steps.round() as i64;
-    let mut sides = Connectors::default();
-    let mut tops = Connectors::default();
-    let mut modules_text = String::new();
-    for module in modules {
-        let outline = |axis: usize, at: f32, point: fn([f32; 3]) -> [f32; 2]| -> Outline {
-            module
-                .positions
+    Proposal::new(modules, tolerance)
+        .write(&Naming::default())
+        .expect("the proposal's own names never clash")
+}
+
+/// The connectors the proposal of `modules` finds, as [`propose`] finds them, in the order it
+/// numbers them: sides first, then tops. The empty faces' connector is not among them.
+///
+/// # Panics
+/// As [`propose`] does.
+#[must_use]
+pub fn connectors(modules: &[KitModule<'_>], tolerance: f32) -> Vec<ProposedConnector> {
+    let proposal = Proposal::new(modules, tolerance);
+    proposal
+        .connectors
+        .iter()
+        .enumerate()
+        .map(|(number, (name, top))| ProposedConnector {
+            name: name.clone(),
+            top: *top,
+            modules: proposal
+                .modules
                 .iter()
-                .filter(|p| (p[axis] - at).abs() <= tolerance)
-                .map(|&p| {
-                    let [u, v] = point(p);
+                .filter(|(_, faces)| faces.iter().any(|face| face.connector() == Some(number)))
+                .map(|(module, _)| module.clone())
+                .collect(),
+        })
+        .collect()
+}
+
+/// The module set `modules` propose, as [`propose`] writes it, with each connector `naming` names
+/// under its new name, and walkable sides on the side connectors it lists as walkable.
+///
+/// # Errors
+/// If `naming` names a connector the proposal does not find, gives an empty name, `"empty"` (the
+/// empty faces' connector) or a name two connectors would share, lists a top connector as
+/// walkable, or names connectors so that two faces would take one name; with what is wrong.
+///
+/// # Panics
+/// As [`propose`] does.
+pub fn propose_named(
+    modules: &[KitModule<'_>],
+    tolerance: f32,
+    naming: &Naming,
+) -> Result<String, String> {
+    Proposal::new(modules, tolerance).write(naming)
+}
+
+/// How an asymmetric side face lies against the connector's first outline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Symmetry {
+    Symmetric,
+    Plain,
+    Flipped,
+}
+
+/// A face of a proposed module: empty, or of a connector the proposal found, by its number, with
+/// how it lies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Face {
+    EmptySide,
+    EmptyTop,
+    Side {
+        connector: usize,
+        symmetry: Symmetry,
+    },
+    Top {
+        connector: usize,
+        rotation: Option<u8>,
+    },
+}
+
+impl Face {
+    const fn connector(self) -> Option<usize> {
+        match self {
+            Self::EmptySide | Self::EmptyTop => None,
+            Self::Side { connector, .. } | Self::Top { connector, .. } => Some(connector),
+        }
+    }
+}
+
+/// What the meshes of a kit propose: the connectors found and each module's faces.
+struct Proposal {
+    /// Each connector's proposed name, and whether it joins tops, in the order found.
+    connectors: Vec<(String, bool)>,
+    /// Each module's name and its faces: `+x`, `-x`, `+y`, `-y`, up and down.
+    modules: Vec<(String, [Face; 6])>,
+}
+
+impl Proposal {
+    fn new(modules: &[KitModule<'_>], tolerance: f32) -> Self {
+        let steps = 1.0 / tolerance;
+        assert!(
+            tolerance > 0.0 && (steps - steps.round()).abs() < 0.01,
+            "a tolerance of {tolerance} divides a cell into whole steps"
+        );
+        let steps = steps.round() as i64;
+        let mut found = Found::default();
+        let modules = modules
+            .iter()
+            .map(|module| {
+                let outline = |axis: usize, at: f32, point: fn([f32; 3]) -> [f32; 2]| -> Outline {
+                    module
+                        .positions
+                        .iter()
+                        .filter(|p| (p[axis] - at).abs() <= tolerance)
+                        .map(|&p| {
+                            let [u, v] = point(p);
+                            (
+                                (u / tolerance).round() as i64,
+                                (v / tolerance).round() as i64,
+                            )
+                        })
+                        .collect()
+                };
+                // Each side seen from outside its cell, left to right and upward.
+                let faces = [
+                    found.side(&outline(0, 1.0, |p| [p[1], p[2]]), steps),
+                    found.side(&outline(0, 0.0, |p| [1.0 - p[1], p[2]]), steps),
+                    found.side(&outline(1, 1.0, |p| [1.0 - p[0], p[2]]), steps),
+                    found.side(&outline(1, 0.0, |p| [p[0], p[2]]), steps),
+                    found.top(&outline(2, 1.0, |p| [p[0], p[1]]), steps),
+                    found.top(&outline(2, 0.0, |p| [p[0], p[1]]), steps),
+                ];
+                (module.name.to_owned(), faces)
+            })
+            .collect::<Vec<_>>();
+        // Sides first, then tops, each in the order found.
+        let mut connectors: Vec<(usize, String, bool)> = found
+            .sides
+            .values()
+            .map(|&number| (number, format!("side {number}"), false))
+            .chain(
+                found
+                    .tops
+                    .values()
+                    .map(|&number| (number, format!("top {number}"), true)),
+            )
+            .collect();
+        connectors.sort_by_key(|&(number, _, top)| (top, number));
+        let sides = found.sides.len();
+        let modules = modules
+            .into_iter()
+            .map(|(name, faces)| {
+                // Tops are numbered after the sides in the one list.
+                let faces = faces.map(|face| match face {
+                    Face::Top {
+                        connector,
+                        rotation,
+                    } => Face::Top {
+                        connector: sides + connector,
+                        rotation,
+                    },
+                    other => other,
+                });
+                (name, faces)
+            })
+            .collect();
+        Self {
+            connectors: connectors
+                .into_iter()
+                .map(|(_, name, top)| (name, top))
+                .collect(),
+            modules,
+        }
+    }
+
+    /// The proposal as a module set file, with `naming`'s names and walkable sides.
+    fn write(&self, naming: &Naming) -> Result<String, String> {
+        let proposed: BTreeMap<&str, bool> = self
+            .connectors
+            .iter()
+            .map(|(name, top)| (name.as_str(), *top))
+            .collect();
+        for (from, to) in &naming.names {
+            if !proposed.contains_key(from.as_str()) {
+                return Err(format!("the proposal has no connector {from:?}"));
+            }
+            if to.trim().is_empty() || to == "empty" {
+                return Err(format!("{from:?} cannot be named {to:?}"));
+            }
+        }
+        for name in &naming.walkable {
+            match proposed.get(name.as_str()) {
+                None => return Err(format!("the proposal has no connector {name:?}")),
+                Some(true) => {
+                    return Err(format!("{name:?} joins tops, which walkers do not cross"));
+                }
+                Some(false) => {}
+            }
+        }
+        let shown: Vec<&str> = self
+            .connectors
+            .iter()
+            .map(|(name, _)| naming.names.get(name).map_or(name.as_str(), String::as_str))
+            .collect();
+        let mut distinct = BTreeSet::new();
+        for name in &shown {
+            if !distinct.insert(*name) {
+                return Err(format!("two connectors would be named {name:?}"));
+            }
+        }
+        let mut side_faces: BTreeMap<String, String> = BTreeMap::new();
+        let mut top_faces: BTreeMap<String, String> = BTreeMap::new();
+        let mut name_of = |face: Face| -> Result<String, String> {
+            let (faces, name, definition) = match face {
+                Face::EmptySide => (
+                    &mut side_faces,
+                    "empty side".to_owned(),
+                    "Side(connector: \"empty\")".to_owned(),
+                ),
+                Face::EmptyTop => (
+                    &mut top_faces,
+                    "empty top".to_owned(),
+                    "Top(connector: \"empty\")".to_owned(),
+                ),
+                Face::Side {
+                    connector,
+                    symmetry,
+                } => {
+                    let shown = shown[connector];
+                    let walkable = if naming.walkable.contains(&self.connectors[connector].0) {
+                        ", walkable: true"
+                    } else {
+                        ""
+                    };
+                    let (name, symmetry) = match symmetry {
+                        Symmetry::Symmetric => (shown.to_owned(), "Symmetric"),
+                        Symmetry::Plain => (format!("{shown} plain"), "Plain"),
+                        Symmetry::Flipped => (format!("{shown} flipped"), "Flipped"),
+                    };
+                    let definition =
+                        format!("Side(connector: {shown:?}, symmetry: {symmetry}{walkable})");
+                    (&mut side_faces, name, definition)
+                }
+                Face::Top {
+                    connector,
+                    rotation: None,
+                } => {
+                    let shown = shown[connector];
                     (
-                        (u / tolerance).round() as i64,
-                        (v / tolerance).round() as i64,
+                        &mut top_faces,
+                        shown.to_owned(),
+                        format!("Top(connector: {shown:?})"),
                     )
-                })
-                .collect()
+                }
+                Face::Top {
+                    connector,
+                    rotation: Some(rotation),
+                } => {
+                    let shown = shown[connector];
+                    (
+                        &mut top_faces,
+                        format!("{shown} r{rotation}"),
+                        format!("Top(connector: {shown:?}, rotation: Some({rotation}))"),
+                    )
+                }
+            };
+            match faces.get(&name) {
+                Some(kept) if *kept != definition => {
+                    Err(format!("two faces would be named {name:?}"))
+                }
+                _ => {
+                    faces.insert(name.clone(), definition);
+                    Ok(name)
+                }
+            }
         };
-        // Each side seen from outside its cell, left to right and upward.
-        let side_faces = [
-            outline(0, 1.0, |p| [p[1], p[2]]),
-            outline(0, 0.0, |p| [1.0 - p[1], p[2]]),
-            outline(1, 1.0, |p| [1.0 - p[0], p[2]]),
-            outline(1, 0.0, |p| [p[0], p[2]]),
-        ]
-        .map(|face| sides.side(&face, steps));
-        let up = tops.top(&outline(2, 1.0, |p| [p[0], p[1]]), steps);
-        let down = tops.top(&outline(2, 0.0, |p| [p[0], p[1]]), steps);
-        writeln!(
-            modules_text,
-            "        (name: {:?}, sides: [{:?}, {:?}, {:?}, {:?}], up: {up:?}, down: {down:?}),",
-            module.name, side_faces[0], side_faces[1], side_faces[2], side_faces[3],
-        )
-        .expect("writing to a string");
+        let mut modules_text = String::new();
+        for (module, faces) in &self.modules {
+            let [px, nx, py, ny, up, down] = faces.map(&mut name_of);
+            let (px, nx, py, ny, up, down) = (px?, nx?, py?, ny?, up?, down?);
+            writeln!(
+                modules_text,
+                "        (name: {module:?}, sides: [{px:?}, {nx:?}, {py:?}, {ny:?}], up: {up:?}, down: {down:?}),",
+            )
+            .expect("writing to a string");
+        }
+        // Names clash only across sides and tops if a side and a top share one.
+        if let Some(name) = side_faces.keys().find(|name| top_faces.contains_key(*name)) {
+            return Err(format!("two faces would be named {name:?}"));
+        }
+        let mut text = String::from("(\n    faces: {\n");
+        for (name, definition) in side_faces.iter().chain(&top_faces) {
+            writeln!(text, "        {name:?}: {definition},").expect("writing to a string");
+        }
+        text.push_str("    },\n    modules: [\n");
+        text.push_str(&modules_text);
+        text.push_str("    ],\n)\n");
+        Ok(text)
     }
-    let mut text = String::from("(\n    faces: {\n");
-    for (name, definition) in sides.faces.iter().chain(&tops.faces) {
-        writeln!(text, "        {name:?}: {definition},").expect("writing to a string");
-    }
-    text.push_str("    },\n    modules: [\n");
-    text.push_str(&modules_text);
-    text.push_str("    ],\n)\n");
-    text
 }
 
-/// The connectors found so far, one per outline up to mirroring or turning, numbered in the order
-/// they were found, and the faces named from them.
+/// The connectors found so far, one per outline up to mirroring or turning, sides and tops each
+/// numbered in the order they were found.
 #[derive(Default)]
-struct Connectors {
-    by_outline: BTreeMap<Vec<(i64, i64)>, usize>,
-    /// Each face's name and its definition in the file.
-    faces: BTreeMap<String, String>,
+struct Found {
+    sides: BTreeMap<Vec<(i64, i64)>, usize>,
+    tops: BTreeMap<Vec<(i64, i64)>, usize>,
 }
 
-impl Connectors {
-    /// The number of the connector of `canonical`, the first outline of its kind.
-    fn number(&mut self, canonical: &Outline) -> usize {
-        let next = self.by_outline.len();
-        *self
-            .by_outline
+impl Found {
+    /// The number of the connector of `canonical` among `found`, the first outline of its kind.
+    fn number(found: &mut BTreeMap<Vec<(i64, i64)>, usize>, canonical: &Outline) -> usize {
+        let next = found.len();
+        *found
             .entry(canonical.iter().copied().collect())
             .or_insert(next)
     }
 
-    /// The name of the side face with `outline`, seen from outside a cell of `steps` a side,
-    /// defined once.
-    fn side(&mut self, outline: &Outline, steps: i64) -> String {
+    /// The side face with `outline`, seen from outside a cell of `steps` a side.
+    fn side(&mut self, outline: &Outline, steps: i64) -> Face {
         if outline.is_empty() {
-            self.faces.insert(
-                "empty side".to_owned(),
-                "Side(connector: \"empty\")".to_owned(),
-            );
-            return "empty side".to_owned();
+            return Face::EmptySide;
         }
         let mirror: Outline = outline.iter().map(|&(u, v)| (steps - u, v)).collect();
         let canonical = outline.clone().min(mirror.clone());
-        let connector = format!("side {}", self.number(&canonical));
-        let (name, symmetry) = if mirror == *outline {
-            (connector.clone(), "Symmetric")
+        let connector = Self::number(&mut self.sides, &canonical);
+        let symmetry = if mirror == *outline {
+            Symmetry::Symmetric
         } else if *outline == canonical {
-            (format!("{connector} plain"), "Plain")
+            Symmetry::Plain
         } else {
-            (format!("{connector} flipped"), "Flipped")
+            Symmetry::Flipped
         };
-        self.faces.insert(
-            name.clone(),
-            format!("Side(connector: {connector:?}, symmetry: {symmetry})"),
-        );
-        name
+        Face::Side {
+            connector,
+            symmetry,
+        }
     }
 
-    /// The name of the top or bottom face with `outline`, seen from above in a cell of `steps` a
-    /// side, defined once.
-    fn top(&mut self, outline: &Outline, steps: i64) -> String {
+    /// The top or bottom face with `outline`, seen from above in a cell of `steps` a side; its
+    /// connector is numbered among the tops.
+    fn top(&mut self, outline: &Outline, steps: i64) -> Face {
         if outline.is_empty() {
-            self.faces.insert(
-                "empty top".to_owned(),
-                "Top(connector: \"empty\")".to_owned(),
-            );
-            return "empty top".to_owned();
+            return Face::EmptyTop;
         }
         // A quarter turn counter-clockwise about +z, as a module's variants turn.
         let turn = |outline: &Outline| -> Outline {
@@ -156,9 +406,9 @@ impl Connectors {
             turns.push(next);
         }
         let canonical = turns.iter().min().expect("four turns").clone();
-        let connector = format!("top {}", self.number(&canonical));
-        let (name, definition) = if turns.iter().all(|turned| *turned == canonical) {
-            (connector.clone(), format!("Top(connector: {connector:?})"))
+        let connector = Self::number(&mut self.tops, &canonical);
+        let rotation = if turns.iter().all(|turned| *turned == canonical) {
+            None
         } else {
             // The quarter turns that take the canonical outline to this one.
             let mut from = canonical.clone();
@@ -167,13 +417,12 @@ impl Connectors {
                 from = turn(&from);
                 rotation += 1;
             }
-            (
-                format!("{connector} r{rotation}"),
-                format!("Top(connector: {connector:?}, rotation: Some({rotation}))"),
-            )
+            Some(rotation)
         };
-        self.faces.insert(name.clone(), definition);
-        name
+        Face::Top {
+            connector,
+            rotation,
+        }
     }
 }
 
@@ -203,6 +452,127 @@ mod tests {
         match parse_rule_file(&propose(modules, 0.125)).expect("a valid module set") {
             RuleFile::Modules(modules) => modules,
             RuleFile::Tiles { .. } => panic!("a module set"),
+        }
+    }
+
+    #[test]
+    fn the_connectors_found_are_listed_with_the_modules_that_have_them() {
+        let block = cuboid([0.0; 3], [1.0; 3]);
+        let slab = cuboid([0.0; 3], [1.0, 1.0, 0.5]);
+        let kit = [
+            KitModule {
+                name: "block",
+                positions: &block,
+            },
+            KitModule {
+                name: "slab",
+                positions: &slab,
+            },
+        ];
+
+        let found = connectors(&kit, 0.125);
+
+        let listed: Vec<(&str, bool, Vec<&str>)> = found
+            .iter()
+            .map(|c| {
+                let modules = c.modules.iter().map(String::as_str).collect();
+                (c.name.as_str(), c.top, modules)
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                ("side 0", false, vec!["block"]),
+                ("side 1", false, vec!["slab"]),
+                ("top 0", true, vec!["block", "slab"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_named_proposal_fits_as_the_proposal_does_under_the_artists_names() {
+        let block = cuboid([0.0; 3], [1.0; 3]);
+        let slab = cuboid([0.0; 3], [1.0, 1.0, 0.5]);
+        let kit = [
+            KitModule {
+                name: "block",
+                positions: &block,
+            },
+            KitModule {
+                name: "slab",
+                positions: &slab,
+            },
+        ];
+        let naming = Naming {
+            names: BTreeMap::from([
+                ("side 0".to_owned(), "wall".to_owned()),
+                ("side 1".to_owned(), "low wall".to_owned()),
+            ]),
+            walkable: BTreeSet::from(["side 1".to_owned()]),
+        };
+
+        let named = propose_named(&kit, 0.125, &naming).expect("a valid naming");
+
+        assert!(named.contains(r#""wall": Side(connector: "wall", symmetry: Symmetric),"#));
+        assert!(named.contains(
+            r#""low wall": Side(connector: "low wall", symmetry: Symmetric, walkable: true),"#
+        ));
+        assert!(
+            !named.contains("side 0") && !named.contains("side 1"),
+            "{named}"
+        );
+        let RuleFile::Modules(modules) = parse_rule_file(&named).expect("a valid module set")
+        else {
+            panic!("a module set");
+        };
+        let (block, slab) = (
+            modules.variants_of("block")[0],
+            modules.variants_of("slab")[0],
+        );
+        assert!(modules.rules.check(block, block, crate::modules::POS_X));
+        assert!(!modules.rules.check(block, slab, crate::modules::POS_X));
+    }
+
+    #[test]
+    fn a_naming_that_would_lose_or_merge_connectors_is_refused() {
+        let block = cuboid([0.0; 3], [1.0; 3]);
+        let slab = cuboid([0.0; 3], [1.0, 1.0, 0.5]);
+        let kit = [
+            KitModule {
+                name: "block",
+                positions: &block,
+            },
+            KitModule {
+                name: "slab",
+                positions: &slab,
+            },
+        ];
+        let named = |names: &[(&str, &str)], walkable: &[&str]| {
+            propose_named(
+                &kit,
+                0.125,
+                &Naming {
+                    names: names
+                        .iter()
+                        .map(|&(from, to)| (from.to_owned(), to.to_owned()))
+                        .collect(),
+                    walkable: walkable.iter().map(|&name| name.to_owned()).collect(),
+                },
+            )
+        };
+
+        let refusals = [
+            named(&[("side 9", "wall")], &[]),
+            named(&[("side 0", "")], &[]),
+            named(&[("side 0", "empty")], &[]),
+            named(&[("side 0", "wall"), ("side 1", "wall")], &[]),
+            named(&[("side 0", "side 1")], &[]),
+            named(&[], &["top 0"]),
+            named(&[], &["side 9"]),
+        ];
+
+        for refusal in refusals {
+            assert!(refusal.is_err(), "{refusal:?}");
         }
     }
 
