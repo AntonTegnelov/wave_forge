@@ -1,0 +1,20 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://addons/wave_forge/tree.tscn" id="1_tree"]
+
+[node name="Hills" type="WaveForgeStages"]
+pack_file = "res://addons/wave_forge/presets/hills.world.ron"
+targets = PackedStringArray("height", "surface", "cover", "trees")
+start_on_ready = true
+preview_in_editor = true
+view_radius = 3
+ground_stage = "height"
+ground_material_stage = "surface"
+ground_palette = PackedColorArray(0.55, 0.53, 0.5, 1, 0.24, 0.33, 0.17, 1, 0.38, 0.6, 0.27, 1)
+grass_stage = "cover"
+grass_radius = 2
+collider_radius = 1
+navigation_radius = 1
+scenes = {
+"tree": ExtResource("1_tree")
+}

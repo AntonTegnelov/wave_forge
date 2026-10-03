@@ -1,6 +1,6 @@
 //! Presets and their parameters (docs/product/user-stories.md, N2): a pack's parameters change
-//! what reads them and nothing else, and every value in a preset's ranges gives a sound world,
-//! swept over a grid of values and seeds.
+//! what reads them and nothing else, and every value in each preset's ranges gives a sound world,
+//! swept over a grid of values and seeds: islands, and hills and forests.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -9,13 +9,18 @@ use wave_forge::{ChunkCoord, FocusPoint};
 
 const SIZE: [u32; 2] = [8, 8];
 
-fn islands() -> Arc<Pack> {
+/// The preset `examples/presets/<name>.world.ron`.
+fn preset(name: &str) -> Arc<Pack> {
     let text = std::fs::read_to_string(format!(
-        "{}/examples/presets/islands.world.ron",
+        "{}/examples/presets/{name}.world.ron",
         env!("CARGO_MANIFEST_DIR")
     ))
-    .expect("the islands preset");
+    .expect("the preset");
     Arc::new(Pack::parse(&text).expect("a valid pack"))
+}
+
+fn islands() -> Arc<Pack> {
+    preset("islands")
 }
 
 fn area() -> Vec<ChunkCoord> {
@@ -178,4 +183,112 @@ fn a_parameter_undeclared_or_out_of_range_is_refused() {
         matches!(default_outside, Err(PackError::Param { .. })),
         "{default_outside:?}"
     );
+}
+
+/// The hills' relief over the area (its highest column less its lowest), how many trees stand in
+/// it, and the largest grass cover, checking on the way that every height is finite and above the
+/// ground's zero, every tree stands in the woods and every cover is between 0 and 1.
+fn survey_hills(runtime: &Runtime, pack: &Pack) -> (f32, usize, f32) {
+    let names = pack.kind("surface").expect("a surface stage").categories();
+    let woods = names
+        .iter()
+        .position(|&name| name == "forest_floor")
+        .expect("woods") as u8;
+    let (mut low, mut high, mut trees, mut cover) = (f32::MAX, f32::MIN, 0, 0.0_f32);
+    for chunk in area() {
+        let height = runtime.field("height", chunk).expect("generated");
+        for &value in &height.values {
+            assert!(
+                value.is_finite() && (0.0..30.0).contains(&value),
+                "a height of {value}"
+            );
+            low = low.min(value);
+            high = high.max(value);
+        }
+        for &value in &runtime.field("cover", chunk).expect("generated").values {
+            assert!((0.0..=1.0).contains(&value), "a cover of {value}");
+            cover = cover.max(value);
+        }
+        let surface = runtime.categories("surface", chunk).expect("generated");
+        for tree in runtime.points("trees", chunk).expect("generated") {
+            let [x, y] = [tree.position[0], tree.position[1]].map(|at| at.floor() as i64);
+            let local =
+                [x - i64::from(chunk.x) * 8, y - i64::from(chunk.y) * 8].map(|at| at as u32);
+            assert_eq!(
+                surface.get(local[0], local[1]),
+                woods,
+                "a tree out of the woods at {:?}",
+                tree.position
+            );
+            trees += 1;
+        }
+    }
+    (high - low, trees, cover)
+}
+
+#[test]
+fn every_value_in_the_hills_ranges_gives_a_sound_world() {
+    let pack = preset("hills");
+    let grid = [0.0, 0.5, 1.0];
+
+    for seed in [1, 2] {
+        for hills in grid {
+            for forest in grid {
+                for meadows in grid {
+                    let mut runtime = Runtime::new(Arc::clone(&pack), seed, SIZE);
+                    let values =
+                        params([("hills", hills), ("forest", forest), ("meadows", meadows)]);
+                    runtime.set_params(&values).expect("values in range");
+
+                    generate(&mut runtime, &["height", "surface", "cover", "trees"]);
+
+                    let (relief, trees, cover) = survey_hills(&runtime, &pack);
+                    let at =
+                        format!("seed {seed}, hills {hills}, forest {forest}, meadows {meadows}");
+                    assert!(relief > 1.0, "a flat world of relief {relief} at {at}");
+                    if forest == 0.0 {
+                        assert_eq!(trees, 0, "trees at {at}");
+                    }
+                    if forest == 1.0 {
+                        assert!(trees > 50, "only {trees} trees at {at}");
+                    }
+                    if meadows == 0.0 {
+                        assert_eq!(cover, 0.0, "grass at {at}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn more_hills_make_taller_hills_and_more_forest_more_trees() {
+    let pack = preset("hills");
+    let survey_at = |hills: f32, forest: f32| {
+        let mut runtime = Runtime::new(Arc::clone(&pack), 3, SIZE);
+        runtime
+            .set_params(&params([
+                ("hills", hills),
+                ("forest", forest),
+                ("meadows", 0.6),
+            ]))
+            .expect("values in range");
+        generate(&mut runtime, &["height", "surface", "cover", "trees"]);
+        survey_hills(&runtime, &pack)
+    };
+
+    let reliefs: Vec<f32> = [0.0, 0.5, 1.0]
+        .iter()
+        .map(|&hills| survey_at(hills, 0.45).0)
+        .collect();
+    let trees: Vec<usize> = [0.0, 0.5, 1.0]
+        .iter()
+        .map(|&forest| survey_at(0.5, forest).1)
+        .collect();
+
+    assert!(
+        reliefs.windows(2).all(|pair| pair[0] < pair[1]),
+        "{reliefs:?}"
+    );
+    assert!(trees.windows(2).all(|pair| pair[0] < pair[1]), "{trees:?}");
 }
