@@ -2,9 +2,7 @@
 //! a `MeshLibrary`'s items, and a `MeshLibrary` made from a folder of scenes.
 
 use godot::classes::mesh::{ArrayType as MeshArray, PrimitiveType};
-use godot::classes::{
-    DirAccess, Mesh, MeshInstance3D, MeshLibrary, Node, Node3D, PackedScene, SurfaceTool,
-};
+use godot::classes::{DirAccess, Mesh, MeshLibrary, PackedScene, SurfaceTool};
 use godot::prelude::*;
 
 /// Two points of a kit's face count as one within this fraction of a cell.
@@ -79,8 +77,7 @@ pub(crate) fn library_from_scenes(directory: &str) -> Result<Gd<MeshLibrary>, St
         let root = scene
             .instantiate()
             .ok_or_else(|| format!("{path} does not instantiate"))?;
-        let mut meshes = Vec::new();
-        collect_meshes(&root, Transform3D::IDENTITY, &mut meshes);
+        let meshes = crate::placements::meshes(&root, Transform3D::IDENTITY);
         root.free();
         let name = file
             .rsplit_once('.')
@@ -103,21 +100,4 @@ pub(crate) fn library_from_scenes(directory: &str) -> Result<Gd<MeshLibrary>, St
         library.set_item_mesh(id, &merged.upcast::<Mesh>());
     }
     Ok(library)
-}
-
-/// Every mesh under `node`, depth first, with where it sits relative to the scene's root, given
-/// that `node` sits at `at`.
-fn collect_meshes(node: &Gd<Node>, at: Transform3D, into: &mut Vec<(Gd<Mesh>, Transform3D)>) {
-    if let Ok(instance) = node.clone().try_cast::<MeshInstance3D>()
-        && let Some(mesh) = instance.get_mesh()
-    {
-        into.push((mesh, at));
-    }
-    for child in node.get_children().iter_shared() {
-        let placed = child
-            .clone()
-            .try_cast::<Node3D>()
-            .map_or(at, |child| at * child.get_transform());
-        collect_meshes(&child, placed, into);
-    }
 }

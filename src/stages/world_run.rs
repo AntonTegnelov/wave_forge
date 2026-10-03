@@ -87,9 +87,16 @@ impl Runtime {
         }
         for block in blocks.into_values() {
             let mut due = Vec::with_capacity(block.len());
+            // The other targets of a chunk a run of the same digest kept, read once, to keep.
+            let mut others: BTreeMap<ChunkCoord, Vec<(String, Vec<u8>)>> = BTreeMap::new();
             for &chunk in &block {
-                if !stored(store, targets, chunk, digest)? {
-                    due.push(chunk);
+                match held(store, targets, chunk, digest)? {
+                    Held::All => {}
+                    Held::Others(products) => {
+                        others.insert(chunk, products);
+                        due.push(chunk);
+                    }
+                    Held::Nothing => due.push(chunk),
                 }
             }
             if !due.is_empty() {
@@ -114,16 +121,7 @@ impl Runtime {
             }
             for chunk in block {
                 if due.contains(&chunk) {
-                    // A chunk a run of the same digest kept with other targets keeps them too;
-                    // one of another digest holds products other inputs decided.
-                    let mut products: Vec<(String, Vec<u8>)> = match kept(store, chunk)? {
-                        Some(entry) if entry.digest == digest => entry
-                            .products
-                            .into_iter()
-                            .filter(|(name, _)| !targets.contains(&name.as_str()))
-                            .collect(),
-                        _ => Vec::new(),
-                    };
+                    let mut products = others.remove(&chunk).unwrap_or_default();
                     for &target in targets {
                         let product = self
                             .product(target, chunk)
@@ -149,22 +147,46 @@ impl Runtime {
     }
 }
 
-/// Whether `store` holds every one of `targets` at `chunk`, kept by a run of `digest`.
-fn stored(
+/// What a store holds of a world run's targets at one chunk ([`held`]).
+enum Held {
+    /// Every target, kept by a run of the same digest.
+    All,
+    /// Not every target, but the other targets a run of the same digest kept there, to keep; it
+    /// may hold none.
+    Others(Vec<(String, Vec<u8>)>),
+    /// No entry, or one a run of another digest kept, whose products other inputs decided.
+    Nothing,
+}
+
+/// What `store` holds of `targets` at `chunk`, for a run of `digest`.
+fn held(
     store: &mut dyn FrozenStore,
     targets: &[&str],
     chunk: ChunkCoord,
     digest: u64,
-) -> Result<bool, StoreError> {
+) -> Result<Held, StoreError> {
     if !store.holds(RUN_LAYER, chunk)? {
-        return Ok(false);
+        return Ok(Held::Nothing);
     }
-    Ok(kept(store, chunk)?.is_some_and(|entry| {
-        entry.digest == digest
-            && targets
+    Ok(match kept(store, chunk)? {
+        Some(entry) if entry.digest == digest => {
+            if targets
                 .iter()
                 .all(|target| entry.products.iter().any(|(name, _)| name == target))
-    }))
+            {
+                Held::All
+            } else {
+                Held::Others(
+                    entry
+                        .products
+                        .into_iter()
+                        .filter(|(name, _)| !targets.contains(&name.as_str()))
+                        .collect(),
+                )
+            }
+        }
+        _ => Held::Nothing,
+    })
 }
 
 /// What `store` holds for `chunk` as a run kept it; none if it holds no entry.

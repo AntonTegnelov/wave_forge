@@ -415,7 +415,7 @@ fn classify(scene: &Gd<PackedScene>) -> Binding {
         Some(mesh) if lone => Binding::Mesh(mesh),
         _ => Binding::Nodes {
             scene: scene.clone(),
-            proxy: first_mesh(&root, Transform3D::IDENTITY),
+            proxy: meshes(&root, Transform3D::IDENTITY).into_iter().next(),
             pooled: root.has_method(RESET),
         },
     };
@@ -423,21 +423,23 @@ fn classify(scene: &Gd<PackedScene>) -> Binding {
     binding
 }
 
-/// The first mesh under `node`, depth first, and where it sits relative to the scene's root, given
+/// Every mesh under `node`, depth first, with where it sits relative to the scene's root, given
 /// that `node` sits at `at`.
-fn first_mesh(node: &Gd<Node>, at: Transform3D) -> Option<(Gd<Mesh>, Transform3D)> {
+pub(crate) fn meshes(node: &Gd<Node>, at: Transform3D) -> Vec<(Gd<Mesh>, Transform3D)> {
+    let mut found = Vec::new();
     if let Ok(instance) = node.clone().try_cast::<MeshInstance3D>()
         && let Some(mesh) = instance.get_mesh()
     {
-        return Some((mesh, at));
+        found.push((mesh, at));
     }
-    node.get_children().iter_shared().find_map(|child| {
+    for child in node.get_children().iter_shared() {
         let placed = child
             .clone()
             .try_cast::<Node3D>()
             .map_or(at, |child| at * child.get_transform());
-        first_mesh(&child, placed)
-    })
+        found.extend(meshes(&child, placed));
+    }
+    found
 }
 
 /// A MultiMesh of `mesh` at every item's transform, placed at `offset` within it, drawn in
