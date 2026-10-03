@@ -179,6 +179,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_material` | the material the ground is drawn with |
 | | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
+| | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view; empty, or a pack without water, draws none. Lakes above the sea level are not drawn |
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
 | Volume | `volume_stage` | a Volume or Carve stage at scale 1 whose surface is drawn and collided with, for overhangs and caves ([packs.md](packs.md#volume)); empty for none |
 | | `volume_material` | the material the volume's surface is drawn with; empty for Godot's default, or for a stage with materials one that takes its albedo from the vertices' colours |
