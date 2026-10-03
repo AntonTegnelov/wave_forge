@@ -1,6 +1,7 @@
 ## Writes the plugin's built-in props, the scenes the presets bind to their Scatter kinds: a tree
-## (`addons/wave_forge/tree.tres` and `tree.tscn`), a trunk and a cone of a crown, and a cactus
-## (`cactus.tres` and `cactus.tscn`), a column with two arms. Each is one mesh coloured by its
+## (`addons/wave_forge/tree.tres` and `tree.tscn`), a trunk and a cone of a crown; a cactus
+## (`cactus.tres` and `cactus.tscn`), a column with two arms; and a palm (`palm.tres` and
+## `palm.tscn`), a curving trunk under a flat crown. Each is one mesh coloured by its
 ## vertices, its base at the origin so it stands on the point a Scatter stage gives it, with no
 ## script, so the node draws it as a MultiMesh. Run from `wave_forge_godot/godot`:
 ## `godot --headless --path . --script tools/make_props.gd`.
@@ -9,6 +10,8 @@ extends SceneTree
 const TRUNK := Color(0.42, 0.29, 0.18)
 const CROWN := Color(0.20, 0.45, 0.18)
 const CACTUS := Color(0.31, 0.49, 0.23)
+const PALM_TRUNK := Color(0.55, 0.42, 0.28)
+const FRONDS := Color(0.27, 0.55, 0.2)
 const SIDES := 8
 
 func _initialize() -> void:
@@ -23,6 +26,12 @@ func _initialize() -> void:
 		[Vector3(0.6, 0.9, 0), Vector3(0.6, 1.8, 0), 0.15, 0.12, CACTUS],
 		[Vector3(0, 1.4, 0), Vector3(0, 1.4, -0.5), 0.14, 0.14, CACTUS],
 		[Vector3(0, 1.3, -0.5), Vector3(0, 2.0, -0.5), 0.14, 0.11, CACTUS],
+	])
+	_write("Palm", "palm", [
+		[Vector3(0, 0, 0), Vector3(0.1, 1.5, 0), 0.15, 0.13, PALM_TRUNK],
+		[Vector3(0.1, 1.5, 0), Vector3(0.35, 3.0, 0), 0.13, 0.11, PALM_TRUNK],
+		[Vector3(0.35, 3.0, 0), Vector3(0.7, 4.2, 0), 0.11, 0.09, PALM_TRUNK],
+		[Vector3(0.7, 3.9, 0), Vector3(0.7, 4.5, 0), 1.7, 0.0, FRONDS],
 	])
 	quit()
 
