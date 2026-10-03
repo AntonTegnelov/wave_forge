@@ -18,6 +18,10 @@ thiserror = "2.0.20"
 # Packs are RON files read into serde types; the same versions wfc-rules reads rule files with.
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 ron = "0.12.2"
+# Products kept in a store: postcard is the compact binary serde format, so a product is kept
+# exactly; flate2 compresses it, in pure Rust, and is already in the tree through the tools.
+postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
+flate2 = "1.1.10"
 # The math functions stages decide by (a sine, an angle, a distance), computed the same on every
 # platform, where the platform's C library would differ in the last bit; already in the tree
 # through naga.

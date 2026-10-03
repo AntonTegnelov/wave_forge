@@ -509,17 +509,32 @@ fn play(
         }
         let gone: Vec<(String, ChunkCoord)> = held.difference(&needed).cloned().collect();
         let mut arrived = Vec::new();
+        // A run kept each chunk's targets together: read each chunk's entry once.
+        let mut entries: BTreeMap<ChunkCoord, Vec<(String, Vec<u8>)>> = BTreeMap::new();
         for (stage, chunk) in needed.difference(&held) {
-            let product = match store.fetch(stage, *chunk) {
-                Ok(Some(bytes)) => std::str::from_utf8(&bytes)
-                    .map_err(|error| error.to_string())
-                    .and_then(|text| ron::from_str::<Product>(text).map_err(|e| e.to_string())),
-                Ok(None) => Err(format!(
-                    "the store holds no chunk {chunk:?} of stage {stage:?}; run the world with it \
-                     as a target"
-                )),
-                Err(error) => Err(error.to_string()),
-            };
+            if !entries.contains_key(chunk) {
+                match super::world_run::kept(store.as_mut(), *chunk) {
+                    Ok(entry) => entries.insert(*chunk, entry),
+                    Err(error) => {
+                        let _ = reports.send(Report::Failed(error.to_string()));
+                        return;
+                    }
+                };
+            }
+            let product = entries[chunk]
+                .iter()
+                .find(|(name, _)| name == stage)
+                .ok_or_else(|| {
+                    format!(
+                        "the store holds no chunk {chunk:?} of stage {stage:?}; run the world \
+                         with it as a target"
+                    )
+                })
+                .and_then(|(_, bytes)| {
+                    super::codec::decode(bytes).map_err(|error| {
+                        format!("the store's chunk {chunk:?} of stage {stage:?}: {error}")
+                    })
+                });
             match product {
                 Ok(product) => arrived.push((stage.clone(), *chunk, Arc::new(product))),
                 Err(reason) => {

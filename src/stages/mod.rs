@@ -5,6 +5,7 @@
 mod assemble;
 pub mod brushes;
 mod caves;
+mod codec;
 pub mod edits;
 mod evaluate;
 pub mod facts;

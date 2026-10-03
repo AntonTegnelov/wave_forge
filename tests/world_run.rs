@@ -69,7 +69,8 @@ fn run(bound: &str) -> (RunProgress, usize, usize) {
             ControlFlow::Continue(())
         })
         .expect("a bounded pack");
-    assert_eq!(store.0.len(), end.total * TARGETS.len());
+    // A chunk's targets are kept together, in one entry.
+    assert_eq!(store.0.len(), end.total);
     (end, most, store.0.len())
 }
 
@@ -115,10 +116,10 @@ fn a_run_stopped_and_resumed_writes_the_same_bytes_as_one_at_once() {
     assert_eq!(pieces.0, at_once.0);
 }
 
-// A finished continent's store is gigabytes, and reading it all back only to skip it made
-// resuming a done run take most of the time the run did.
+// A finished continent's store is gigabytes, and reading it back once for every target only to
+// skip it made resuming a done run take most of the time the run did.
 #[test]
-fn a_resumed_run_skips_what_the_store_holds_without_reading_it_back() {
+fn a_resumed_run_reads_what_the_store_holds_once_a_chunk() {
     let mut store = Memory::default();
     runtime(PACK)
         .run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()))
@@ -130,7 +131,40 @@ fn a_resumed_run_skips_what_the_store_holds_without_reading_it_back() {
         .expect("a bounded pack");
 
     assert_eq!((resumed.done, resumed.skipped), (30, 30));
-    assert_eq!(store.1, 0);
+    assert_eq!(store.1, 30);
+}
+
+#[test]
+fn a_run_with_another_target_adds_it_to_every_chunk_and_keeps_the_rest() {
+    let mut store = Memory::default();
+    runtime(PACK)
+        .run_world(&["ground", "surface"], &mut store, |_| {
+            ControlFlow::Continue(())
+        })
+        .expect("a bounded pack");
+
+    let again = runtime(PACK)
+        .run_world(&["ground", "trees"], &mut store, |_| {
+            ControlFlow::Continue(())
+        })
+        .expect("a bounded pack");
+    let mut played = StageWorker::play(
+        Arc::new(Pack::parse(PACK).expect("a valid pack")),
+        SIZE,
+        Box::new(store),
+    );
+    played.request(
+        &[wave_forge::FocusPoint::new(ChunkCoord::new(2, 2, 0), 0)],
+        &TARGETS,
+    );
+    drain_until(&mut played, |worker| {
+        TARGETS
+            .iter()
+            .all(|target| worker.product(target, ChunkCoord::new(2, 2, 0)).is_some())
+    });
+
+    assert_eq!((again.done, again.skipped), (30, 0));
+    assert!(played.failure().is_none(), "{:?}", played.failure());
 }
 
 #[test]

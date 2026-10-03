@@ -9,6 +9,7 @@
 //! function of the pack, the seed, the facts and the edits, the store ends up holding the same
 //! bytes whether the run went at once or in pieces.
 
+use super::codec;
 use super::runtime::{Runtime, StageError, StageTiming};
 use crate::FocusPoint;
 use crate::frozen::{FrozenStore, StoreError};
@@ -16,6 +17,10 @@ use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use std::time::{Duration, Instant};
 use wfc_core::ChunkCoord;
+
+/// The layer of a store a world run keeps each chunk's targets under, together, so a world is a
+/// file per chunk rather than one per chunk and target; no stage may take its name.
+pub(crate) const RUN_LAYER: &str = "world run";
 
 /// Products a block generates between looks at the time.
 const BLOCK_STEP: usize = 64;
@@ -42,7 +47,7 @@ impl Runtime {
     /// Generates `targets` over every chunk of the pack's bound ([`Runtime::bound_chunks`]), a
     /// block at a time: square blocks as wide as the pack's largest regions and aligned with them,
     /// row by row, each asked for whole, so a region's inputs are generated once. It keeps each
-    /// chunk's product of each target in `store`, as the product's RON text under the stage's
+    /// chunk's product of each target in `store`, as a frozen chunk is kept, under the stage's
     /// name, as soon as its block is done. A chunk whose every target the store already holds is
     /// skipped. After each chunk, and every second while a block generates, `progress` is told
     /// how far the run has got, and the run stops if it breaks: a block of a large world takes
@@ -105,13 +110,18 @@ impl Runtime {
             }
             for chunk in block {
                 if due.contains(&chunk) {
+                    // A chunk a run with other targets kept keeps them too.
+                    let mut products: Vec<(String, Vec<u8>)> = kept(store, chunk)?
+                        .into_iter()
+                        .filter(|(name, _)| !targets.contains(&name.as_str()))
+                        .collect();
                     for &target in targets {
                         let product = self
                             .product(target, chunk)
                             .expect("a target is generated over the chunk it was asked for");
-                        let text = ron::to_string(product).expect("a product is plain data");
-                        store.keep(target, chunk, text.into_bytes())?;
+                        products.push((target.to_owned(), codec::encode(product)));
                     }
+                    store.keep(RUN_LAYER, chunk, codec::encode_chunk(&products))?;
                 } else {
                     state.skipped += 1;
                 }
@@ -133,10 +143,29 @@ fn stored(
     targets: &[&str],
     chunk: ChunkCoord,
 ) -> Result<bool, StoreError> {
-    for target in targets {
-        if !store.holds(target, chunk)? {
-            return Ok(false);
-        }
+    if !store.holds(RUN_LAYER, chunk)? {
+        return Ok(false);
     }
-    Ok(true)
+    let kept = kept(store, chunk)?;
+    Ok(targets
+        .iter()
+        .all(|target| kept.iter().any(|(name, _)| name == target)))
+}
+
+/// The named products `store` holds for `chunk`, as a run kept them; none if it holds no entry.
+///
+/// # Errors
+/// If the store fails, or its entry for the chunk is not one a run kept.
+pub(crate) fn kept(
+    store: &mut dyn FrozenStore,
+    chunk: ChunkCoord,
+) -> Result<Vec<(String, Vec<u8>)>, StoreError> {
+    let Some(bytes) = store.fetch(RUN_LAYER, chunk)? else {
+        return Ok(Vec::new());
+    };
+    codec::decode_chunk(&bytes).map_err(|error| {
+        StoreError(format!(
+            "the store's chunk {chunk:?} is not one a world run kept: {error}"
+        ))
+    })
 }

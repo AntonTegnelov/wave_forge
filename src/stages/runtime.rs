@@ -1641,15 +1641,12 @@ impl Runtime {
         let Some(bytes) = store.fetch(stage, chunk)? else {
             return Ok(None);
         };
-        let product: Product = std::str::from_utf8(&bytes)
-            .map_err(|error| error.to_string())
-            .and_then(|text| ron::from_str(text).map_err(|error| error.to_string()))
-            .map_err(|error| {
-                StoreError(format!(
-                    "the store's chunk {chunk:?} of stage {stage:?} is not one Wave Forge kept: \
+        let product = super::codec::decode(&bytes).map_err(|error| {
+            StoreError(format!(
+                "the store's chunk {chunk:?} of stage {stage:?} is not one Wave Forge kept: \
                      {error}"
-                ))
-            })?;
+            ))
+        })?;
         let product = Arc::new(product);
         self.frozen.insert((index, chunk), Arc::clone(&product));
         Ok(Some(product))
@@ -1676,8 +1673,11 @@ impl Runtime {
                 .frozen
                 .remove(&key)
                 .expect("listed from the frozen chunks");
-            let text = ron::to_string(product.as_ref()).expect("a product is plain data");
-            store.keep(&self.pack.stages[key.0].name, key.1, text.into_bytes())?;
+            store.keep(
+                &self.pack.stages[key.0].name,
+                key.1,
+                super::codec::encode(&product),
+            )?;
         }
         Ok(())
     }

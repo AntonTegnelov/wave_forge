@@ -187,7 +187,9 @@ save holds them all, so freezing suits stages with few products, like locations.
 and comes back from it, unchanged, when a request needs it again, so a walk across an infinite world
 holds a bounded number of them (`tests/frozen_store.rs`). A store is anything that implements
 `FrozenStore`, which keeps bytes by stage name and chunk; `DirectoryStore::new(path)` keeps a file
-per chunk under a directory. A save then holds only the frozen chunks in memory, and the game keeps
+per chunk under a directory. A product goes into a store exactly as it was generated, in a binary
+form compressed with deflate, a volume's values laid out byte by byte so they compress well; the
+first byte names the form, and a store written in another is refused rather than misread. A save then holds only the frozen chunks in memory, and the game keeps
 the store with its saves; a runtime of a changed pack given the same store reads a stored chunk as
 it was first generated.
 
@@ -197,8 +199,12 @@ A finite world can be generated whole before it is played, as a maximal world is
 `runtime.run_world(&targets, &mut store, |progress| ...)` generates the target stages over every
 chunk of the pack's bound (`Runtime::bound_chunks`), a block at a time: square blocks as wide as the
 pack's largest regions and aligned with them, each asked for whole, so a region's inputs are
-generated once, not once for each row of chunks that crosses it. It keeps each chunk's product of
-each target in the store, as a frozen chunk is kept, the moment its block is done. So the runtime
+generated once, not once for each row of chunks that crosses it. It keeps each chunk's products of
+its targets in the store the moment its block is done, together in one entry under the layer
+`world run`, each product as a frozen chunk is kept. A world is then a file per chunk in a
+`DirectoryStore`, not one per chunk and target: the continent's 81 targets as one file each made 5.3
+million files, and every file rounds up to a filesystem block. No stage may be named `world run`
+(`PackError::Invalid`). So the runtime
 holds only what one block reads, whatever the world's size. A region a stage has computed is all
 its chunks read, so a later block does not ask for that region's inputs again. After each chunk,
 and every second while a block generates (a block of a large world takes minutes), the closure gets
@@ -211,15 +217,18 @@ a `RunProgress`:
 
 Returning `ControlFlow::Break(())` stops the run. A chunk whose every target the store already holds
 is skipped, so a run stopped or cut short picks up where it left off, and the store ends up holding
-the same bytes as a run that went at once (`tests/world_run.rs`). The run asks the store's `holds`,
-which by default reads the chunk back with `fetch`; a store that can tell without reading, as
-`DirectoryStore` does from the file's existence, should implement it. `DirectoryStore` writes each
+the same bytes as a run that went at once (`tests/world_run.rs`). The run asks the store's `holds`
+first, which by default reads the chunk back with `fetch`, so a store that can tell without reading,
+as `DirectoryStore` does from the file's existence, should implement it; it reads a held chunk's
+entry once, for the names of the targets in it. A run with another target generates the chunks
+again whose entry lacks it, and keeps the targets they had that it does not name. `DirectoryStore` writes each
 chunk beside its file and renames it over, so a process that ends mid-write leaves no chunk half
 written. A pack without a bound fails with
 `StageError::Unbounded`.
 
 `StageWorker::play(pack, size, store)` plays such a world back without generating anything: a
-request's chunks of each target come from the store, and those no longer asked for are dropped, as
+request's chunks of each target come from the store, each chunk's entry read once for all its
+targets, and those no longer asked for are dropped, as
 a runtime's would be, so an engine draws a played world as it draws a generated one. A target chunk
 the store lacks, and facts, edits, parameters, reports or a save, which would each need generating,
 stop its thread with a failure.
