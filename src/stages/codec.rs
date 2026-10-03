@@ -64,17 +64,19 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Product, String> {
         postcard::take_from_bytes::<Product>(&plain).map_err(|error| error.to_string())?;
     match &mut product {
         Product::Volume(volume) => {
+            // The size comes from the store, so it may be anything.
             let count = volume
                 .size
                 .iter()
-                .map(|&side| side as usize)
-                .product::<usize>();
-            if rest.len() != count * 4 {
-                return Err(format!(
-                    "{} bytes of values for a volume of {count}",
-                    rest.len()
-                ));
-            }
+                .try_fold(1_usize, |count, &side| count.checked_mul(side as usize))
+                .filter(|count| count.checked_mul(4) == Some(rest.len()))
+                .ok_or_else(|| {
+                    format!(
+                        "{} bytes of values for a volume of {:?}",
+                        rest.len(),
+                        volume.size
+                    )
+                })?;
             volume.values = (0..count)
                 .map(|at| {
                     f32::from_le_bytes([
@@ -92,26 +94,37 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Product, String> {
     Ok(product)
 }
 
-/// A chunk's products, each named and as [`encode`] made it, as the bytes of one store entry: a
-/// world run keeps every target of a chunk together, so a world is a file per chunk rather than
-/// one per chunk and target.
-pub(crate) fn encode_chunk(products: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let mut bytes = vec![FORMAT];
-    bytes.extend(postcard::to_allocvec(products).expect("names and bytes are plain data"));
+/// The format of the entries [`encode_chunk`] makes, first among their bytes.
+const ENTRY_FORMAT: u8 = 2;
+
+/// What a world run keeps for one chunk ([`encode_chunk`]): the digest of what decided its products
+/// (`Runtime::content_digest`), and each product named by its stage and as [`encode`] made it, in
+/// the order of their names.
+#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct Entry {
+    pub(crate) digest: u64,
+    pub(crate) products: Vec<(String, Vec<u8>)>,
+}
+
+/// `entry` as the bytes of one store entry: a world run keeps every target of a chunk together, so
+/// a world is a file per chunk rather than one per chunk and target.
+pub(crate) fn encode_chunk(entry: &Entry) -> Vec<u8> {
+    let mut bytes = vec![ENTRY_FORMAT];
+    bytes.extend(postcard::to_allocvec(entry).expect("names and bytes are plain data"));
     bytes
 }
 
-/// The named products `bytes` hold, as [`encode_chunk`] made them, each still to [`decode`].
+/// The entry `bytes` hold, as [`encode_chunk`] made it, its products still to [`decode`].
 ///
 /// # Errors
 /// If the bytes are not an entry [`encode_chunk`] made, with why.
-pub(crate) fn decode_chunk(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+pub(crate) fn decode_chunk(bytes: &[u8]) -> Result<Entry, String> {
     let Some((&format, entry)) = bytes.split_first() else {
         return Err("no bytes".to_owned());
     };
-    if format != FORMAT {
+    if format != ENTRY_FORMAT {
         return Err(format!(
-            "format {format}, where this version of Wave Forge keeps format {FORMAT}"
+            "format {format}, where this version of Wave Forge keeps format {ENTRY_FORMAT}"
         ));
     }
     postcard::from_bytes(entry).map_err(|error| error.to_string())
@@ -171,14 +184,33 @@ mod tests {
 
     #[test]
     fn a_chunks_products_come_back_by_name() {
-        let products = vec![
-            ("trees".to_owned(), encode(&Product::Points(Vec::new()))),
-            ("rock".to_owned(), vec![1, 2, 3]),
-        ];
+        let entry = Entry {
+            digest: 0x1234_5678_9abc_def0,
+            products: vec![
+                ("rock".to_owned(), vec![1, 2, 3]),
+                ("trees".to_owned(), encode(&Product::Points(Vec::new()))),
+            ],
+        };
 
-        let back = decode_chunk(&encode_chunk(&products)).expect("bytes encode_chunk made");
+        let back = decode_chunk(&encode_chunk(&entry)).expect("bytes encode_chunk made");
 
-        assert_eq!(back, products);
+        assert_eq!(back, entry);
+    }
+
+    // A store's bytes come from outside the program.
+    #[test]
+    fn a_volume_whose_size_overflows_is_refused() {
+        let huge = Product::Volume(Volume {
+            chunk: ChunkCoord::new(0, 0, 0),
+            size: [u32::MAX, u32::MAX, u32::MAX],
+            bottom: 0,
+            values: Vec::new(),
+            materials: Vec::new(),
+        });
+
+        let refused = decode(&encode(&huge));
+
+        assert!(refused.is_err());
     }
 
     #[test]

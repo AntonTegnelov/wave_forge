@@ -3268,7 +3268,7 @@ fn check_solve_by(
 }
 
 /// FNV-1a over 64 bits.
-fn digest(text: &str) -> u64 {
+pub(crate) fn digest(text: &str) -> u64 {
     text.bytes().fold(0xCBF2_9CE4_8422_2325_u64, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01B3)
     })

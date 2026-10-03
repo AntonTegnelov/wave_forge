@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wave_forge::stages::{Edits, Pack, RunProgress, Runtime, StageError, StageWorker};
+use wave_forge::stages::{Edit, Edits, Pack, RunProgress, Runtime, StageError, StageWorker};
 use wave_forge::{ChunkCoord, FrozenStore, StoreError};
 
 const PACK: &str = r#"(
@@ -165,6 +165,72 @@ fn a_run_with_another_target_adds_it_to_every_chunk_and_keeps_the_rest() {
 
     assert_eq!((again.done, again.skipped), (30, 0));
     assert!(played.failure().is_none(), "{:?}", played.failure());
+}
+
+// M1: the same pack and seed give the same bake byte for byte, however its targets are listed.
+#[test]
+fn the_order_of_the_targets_changes_no_byte() {
+    let mut listed = Memory::default();
+    let mut reversed = Memory::default();
+    let backwards: Vec<&str> = TARGETS.iter().rev().copied().collect();
+
+    runtime(PACK)
+        .run_world(&TARGETS, &mut listed, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+    runtime(PACK)
+        .run_world(&backwards, &mut reversed, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+
+    assert_eq!(listed.0, reversed.0);
+}
+
+// A chunk kept by a run of other edits, facts or parameters holds products those decided, so it
+// is not the world this run asks for.
+#[test]
+fn a_run_with_other_edits_generates_again_what_a_run_without_them_kept() {
+    let mut edits = Edits::default();
+    edits.push(Edit::Raise {
+        stage: "height".to_owned(),
+        column: (20, 20),
+        by: 30.0,
+    });
+    let edited = || {
+        let mut runtime = runtime(PACK);
+        runtime.set_edits(&edits).expect("edits of the pack");
+        runtime
+    };
+    let mut store = Memory::default();
+    runtime(PACK)
+        .run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+    let mut fresh = Memory::default();
+    edited()
+        .run_world(&TARGETS, &mut fresh, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+
+    let again = edited()
+        .run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+
+    assert_eq!(again.skipped, 0);
+    assert_eq!(store.0, fresh.0);
+}
+
+// A store an older Wave Forge wrote, a file per target, would otherwise look empty and be run
+// again from the start beside the old files.
+#[test]
+fn a_store_of_the_older_layout_is_refused() {
+    let mut store = Memory::default();
+    store
+        .keep("ground", ChunkCoord::new(0, 0, 0), b"(Field(...))".to_vec())
+        .expect("kept");
+
+    let result = runtime(PACK).run_world(&TARGETS, &mut store, |_| ControlFlow::Continue(()));
+
+    assert!(
+        matches!(&result, Err(StageError::Store(error)) if error.0.contains("older")),
+        "{result:?}"
+    );
 }
 
 #[test]

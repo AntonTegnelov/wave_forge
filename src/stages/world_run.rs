@@ -65,6 +65,10 @@ impl Runtime {
         mut progress: impl FnMut(RunProgress) -> ControlFlow<()>,
     ) -> Result<RunProgress, StageError> {
         let chunks = self.bound_chunks()?;
+        if let Some(&first) = chunks.first() {
+            refuse_older_layout(store, targets, first)?;
+        }
+        let digest = self.content_digest();
         let mut state = RunProgress {
             done: 0,
             total: chunks.len(),
@@ -84,7 +88,7 @@ impl Runtime {
         for block in blocks.into_values() {
             let mut due = Vec::with_capacity(block.len());
             for &chunk in &block {
-                if !stored(store, targets, chunk)? {
+                if !stored(store, targets, chunk, digest)? {
                     due.push(chunk);
                 }
             }
@@ -110,18 +114,26 @@ impl Runtime {
             }
             for chunk in block {
                 if due.contains(&chunk) {
-                    // A chunk a run with other targets kept keeps them too.
-                    let mut products: Vec<(String, Vec<u8>)> = kept(store, chunk)?
-                        .into_iter()
-                        .filter(|(name, _)| !targets.contains(&name.as_str()))
-                        .collect();
+                    // A chunk a run of the same digest kept with other targets keeps them too;
+                    // one of another digest holds products other inputs decided.
+                    let mut products: Vec<(String, Vec<u8>)> = match kept(store, chunk)? {
+                        Some(entry) if entry.digest == digest => entry
+                            .products
+                            .into_iter()
+                            .filter(|(name, _)| !targets.contains(&name.as_str()))
+                            .collect(),
+                        _ => Vec::new(),
+                    };
                     for &target in targets {
                         let product = self
                             .product(target, chunk)
                             .expect("a target is generated over the chunk it was asked for");
                         products.push((target.to_owned(), codec::encode(product)));
                     }
-                    store.keep(RUN_LAYER, chunk, codec::encode_chunk(&products))?;
+                    // By name, so the bytes do not depend on the order the targets were listed in.
+                    products.sort_by(|a, b| a.0.cmp(&b.0));
+                    let entry = codec::Entry { digest, products };
+                    store.keep(RUN_LAYER, chunk, codec::encode_chunk(&entry))?;
                 } else {
                     state.skipped += 1;
                 }
@@ -137,35 +149,62 @@ impl Runtime {
     }
 }
 
-/// Whether `store` holds every one of `targets` at `chunk`.
+/// Whether `store` holds every one of `targets` at `chunk`, kept by a run of `digest`.
 fn stored(
     store: &mut dyn FrozenStore,
     targets: &[&str],
     chunk: ChunkCoord,
+    digest: u64,
 ) -> Result<bool, StoreError> {
     if !store.holds(RUN_LAYER, chunk)? {
         return Ok(false);
     }
-    let kept = kept(store, chunk)?;
-    Ok(targets
-        .iter()
-        .all(|target| kept.iter().any(|(name, _)| name == target)))
+    Ok(kept(store, chunk)?.is_some_and(|entry| {
+        entry.digest == digest
+            && targets
+                .iter()
+                .all(|target| entry.products.iter().any(|(name, _)| name == target))
+    }))
 }
 
-/// The named products `store` holds for `chunk`, as a run kept them; none if it holds no entry.
+/// What `store` holds for `chunk` as a run kept it; none if it holds no entry.
 ///
 /// # Errors
 /// If the store fails, or its entry for the chunk is not one a run kept.
 pub(crate) fn kept(
     store: &mut dyn FrozenStore,
     chunk: ChunkCoord,
-) -> Result<Vec<(String, Vec<u8>)>, StoreError> {
+) -> Result<Option<codec::Entry>, StoreError> {
     let Some(bytes) = store.fetch(RUN_LAYER, chunk)? else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
-    codec::decode_chunk(&bytes).map_err(|error| {
+    codec::decode_chunk(&bytes).map(Some).map_err(|error| {
         StoreError(format!(
             "the store's chunk {chunk:?} is not one a world run kept: {error}"
         ))
     })
+}
+
+/// Refuses a store an older Wave Forge wrote a world run into, a file per target, which would
+/// otherwise look empty: its chunks would be generated again beside the old files.
+///
+/// # Errors
+/// A [`StoreError`] saying so if `chunk` has a target of its own but no world run's entry.
+pub(crate) fn refuse_older_layout(
+    store: &mut dyn FrozenStore,
+    targets: &[&str],
+    chunk: ChunkCoord,
+) -> Result<(), StoreError> {
+    if store.holds(RUN_LAYER, chunk)? {
+        return Ok(());
+    }
+    for target in targets {
+        if store.holds(target, chunk)? {
+            return Err(StoreError(format!(
+                "the store holds a world run an older Wave Forge kept, a file per target \
+                 ({target:?} of chunk {chunk:?}); run the world into an empty store"
+            )));
+        }
+    }
+    Ok(())
 }
