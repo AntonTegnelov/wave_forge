@@ -1,5 +1,6 @@
 //! A Scatter stage's report (docs/product/user-stories.md, N5): every candidate of a chunk with
-//! whether it became a point or which modifier rejected it, decided as generating decides.
+//! whether it became a point or which modifier rejected it, decided as generating decides, with
+//! what the modifiers read there.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -140,6 +141,47 @@ fn every_rejection_names_the_modifier_that_failed() {
     ] {
         assert!(counts.get(&reason).copied().unwrap_or(0) > 0, "{counts:?}");
     }
+}
+
+// A viewer shows the readings to say why a candidate went; they have to be the ones it was judged by.
+#[test]
+fn every_verdict_agrees_with_what_the_modifiers_read() {
+    let runtime = runtime();
+    let mut seen = BTreeMap::new();
+
+    for chunk in area() {
+        for judged in runtime
+            .scatter_report("trees", chunk)
+            .expect("a Scatter stage")
+        {
+            let column = (judged.at[0].floor() as i64, judged.at[1].floor() as i64);
+            let readings = &judged.readings;
+            let slope = readings.slope.expect("the stage has a max_slope");
+            let (mask, mask_holds) = readings.conditions[0];
+            let in_range = (2.0..=8.0).contains(&readings.height);
+
+            assert_eq!(readings.height, value(&runtime, "height", column));
+            assert_eq!(mask, value(&runtime, "mask", column));
+            assert_eq!(mask_holds, mask > 0.35);
+            assert_eq!(readings.water_depth, None);
+            match judged.verdict {
+                Err(Rejection::Height) => assert!(!in_range, "{judged:?}"),
+                Err(Rejection::Slope) => assert!(in_range && slope > 1.5, "{judged:?}"),
+                Err(Rejection::Condition(0)) => {
+                    assert!(in_range && slope <= 1.5 && !mask_holds, "{judged:?}");
+                }
+                Ok(()) | Err(Rejection::Spacing) => {
+                    assert!(in_range && slope <= 1.5 && mask_holds, "{judged:?}");
+                }
+                Err(Rejection::Chance) => {}
+                Err(other) => panic!("a stage without it rejected by {other:?}"),
+            }
+            *seen.entry(format!("{:?}", judged.verdict)).or_insert(0) += 1;
+        }
+    }
+
+    // Every verdict the stage can reach was checked, not only a few.
+    assert!(seen.len() >= 6, "{seen:?}");
 }
 
 #[test]

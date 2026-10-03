@@ -3,7 +3,10 @@
 ## Run by `../verify.sh` after `verify_paint.gd`. With `candidates_stage` set to the islands
 ## preset's trees, every chunk around the player gets its candidates drawn, and the legend counts
 ## as many kept as there are trees, each in its colour, and candidates rejected by the tree's
-## conditions: off the grass, or outside the woods.
+## conditions: off the grass, or outside the woods. Hovering (N5): the candidate under a tree is a
+## kept one with both conditions holding and no slope or water read, one off the grass reads 0 for
+## its first condition, which fails, nothing lies far away, and the dock's panel shows what the
+## node gives.
 extends SceneTree
 
 const CELLS := 8
@@ -57,8 +60,48 @@ func _process(_delta: float) -> bool:
 		_fail("no candidate rejected off the grass or outside the woods: %s" % counts)
 		return true
 	print("verify_candidates: %d chunks drawn, the legend %s, the kept ones exactly the trees" % [drawn.size(), counts])
+	var problem := _hovering(drawn)
+	if not problem.is_empty():
+		_fail(problem)
+		return true
+	print("verify_candidates: hovering a tree shows a kept candidate, both conditions holding; one off the grass reads 0 and fails its first; the panel shows it")
 	quit(0)
 	return true
+
+## What is wrong with hovering over the drawn candidates, or nothing.
+func _hovering(drawn: Array) -> String:
+	# The first tree drawn, from its transform's origin.
+	var buffer := PackedFloat32Array()
+	for chunk in drawn:
+		for set: Dictionary in world.point_sets("trees", chunk):
+			if buffer.is_empty():
+				buffer = set["transforms"]
+	var tree := Vector3(buffer[3], buffer[7], buffer[11])
+	var under: Dictionary = world.candidate_near(tree, 0.01)
+	if under.get("verdict") != "kept" or under["conditions"].size() != 2:
+		return "under the tree at %s: %s" % [tree, under]
+	for condition: Dictionary in under["conditions"]:
+		if not condition["holds"]:
+			return "a kept candidate with a condition failing: %s" % under
+	if under.has("slope") or under.has("water_depth"):
+		return "a slope or water read by a stage with neither: %s" % under
+	var off := {}
+	for x in range(-RADIUS * CELLS, (RADIUS + 1) * CELLS):
+		for z in range(-RADIUS * CELLS, (RADIUS + 1) * CELLS):
+			var near: Dictionary = world.candidate_near(Vector3(x + 0.5, 0, z + 0.5), 0.75)
+			if near.get("verdict") == "condition 0":
+				off = near
+	if off.is_empty() or off["conditions"][0]["holds"] or off["conditions"][0]["value"] != 0.0:
+		return "a candidate off the grass: %s" % off
+	if not world.candidate_near(Vector3(10000, 0, 10000), 1.0).is_empty():
+		return "a candidate far from every chunk drawn"
+	var panel: VBoxContainer = (load("res://addons/wave_forge/candidate_panel.gd") as GDScript).new()
+	panel.show_candidate(off)
+	var shown: String = panel.title.text + "\n" + panel.details.text
+	panel.free()
+	if not shown.contains("condition 0") or not shown.contains("condition 0: 0.000, fails"):
+		return "the panel shows %s" % shown
+	return ""
 
 func _fail(message: String) -> void:
 	printerr("verify_candidates: " + message)

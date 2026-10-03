@@ -4472,6 +4472,25 @@ impl Runtime {
                 }
             }
         }
+        // The ground's steeper rise per column there, along x or y; read only by a stage with
+        // `max_slope`, whose height reaches the neighbours.
+        let slope = |x: i64, y: i64| -> Result<f32, StageError> {
+            let along_x = (heights.get(x + 1, y)? - heights.get(x - 1, y)?).abs() / 2.0;
+            let along_y = (heights.get(x, y + 1)? - heights.get(x, y - 1)?).abs() / 2.0;
+            Ok(along_x.max(along_y))
+        };
+        // The water's level there; read only by a stage with `water`, in a pack with water.
+        let water_level = |x: i64, y: i64| -> Result<f32, StageError> {
+            let pack_water = self
+                .pack
+                .water()
+                .expect("a Scatter stage with water is in a pack with water");
+            // A lake raises the water above the sea where it lies.
+            Ok(match &pack_water.lakes {
+                Some(lakes) => pack_water.level.max(read(lakes, x, y)?),
+                None => pack_water.level,
+            })
+        };
         // The height of a point standing at `at` in `column`, on the ground or on the water if it
         // floats, if it passes the stage's tests there.
         let passes =
@@ -4481,12 +4500,10 @@ impl Runtime {
                 if between.is_some_and(|(low, high)| !(low..=high).contains(&here)) {
                     return Ok(Err(Rejection::Height));
                 }
-                if let Some(limit) = max_slope {
-                    let along_x = (heights.get(x + 1, y)? - heights.get(x - 1, y)?).abs() / 2.0;
-                    let along_y = (heights.get(x, y + 1)? - heights.get(x, y - 1)?).abs() / 2.0;
-                    if along_x.max(along_y) > *limit {
-                        return Ok(Err(Rejection::Slope));
-                    }
+                if let Some(limit) = max_slope
+                    && slope(x, y)? > *limit
+                {
+                    return Ok(Err(Rejection::Slope));
                 }
                 let place = self.place(index, [x, y], &read);
                 for (number, condition) in when.iter().enumerate() {
@@ -4496,15 +4513,7 @@ impl Runtime {
                 }
                 let mut standing = here;
                 if let Some(water) = water {
-                    let pack_water = self
-                        .pack
-                        .water()
-                        .expect("a Scatter stage with water is in a pack with water");
-                    // A lake raises the water above the sea where it lies.
-                    let level = match &pack_water.lakes {
-                        Some(lakes) => pack_water.level.max(read(lakes, x, y)?),
-                        None => pack_water.level,
-                    };
+                    let level = water_level(x, y)?;
                     if !(water.depth.0..=water.depth.1).contains(&(level - here)) {
                         return Ok(Err(Rejection::Water));
                     }
@@ -4557,9 +4566,28 @@ impl Runtime {
             if let Some(report) = report.as_deref_mut()
                 && inside(candidate.column)
             {
+                let (x, y) = candidate.column;
+                let here = heights.get(x, y)?;
+                let place = self.place(index, [x, y], &read);
+                let mut conditions = Vec::with_capacity(when.len());
+                for condition in when {
+                    conditions.push((
+                        evaluate(condition.tested(), &place)?,
+                        holds(condition, &place)?,
+                    ));
+                }
                 report.push(Judgement {
                     at: [candidate.at.0, candidate.at.1],
                     verdict: verdict.map(|_| ()),
+                    readings: Readings {
+                        height: here,
+                        slope: max_slope.map(|_| slope(x, y)).transpose()?,
+                        conditions,
+                        water_depth: water
+                            .as_ref()
+                            .map(|_| water_level(x, y).map(|level| level - here))
+                            .transpose()?,
+                    },
                 });
             }
             let Ok(anchor_height) = verdict else {
@@ -5189,11 +5217,27 @@ pub enum Rejection {
 }
 
 /// What became of one of a Scatter stage's candidates: where it stood in cells along the lattice's
-/// x and y, and whether it became a point or why not ([`Runtime::scatter_report`]).
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// x and y, whether it became a point or why not, and what the stage's modifiers read there
+/// ([`Runtime::scatter_report`]).
+#[derive(Clone, Debug, PartialEq)]
 pub struct Judgement {
     pub at: [f32; 2],
     pub verdict: Result<(), Rejection>,
+    pub readings: Readings,
+}
+
+/// What a Scatter stage's modifiers read at a candidate's column, each the stage has, whatever
+/// became of the candidate: what a viewer shows to say why ([`Judgement`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Readings {
+    /// The ground's height, in cells.
+    pub height: f32,
+    /// The ground's steeper rise per column, along x or y, for a stage with `max_slope`.
+    pub slope: Option<f32>,
+    /// Each condition of `when`, in order: the value it tests, its left side, and whether it held.
+    pub conditions: Vec<(f32, bool)>,
+    /// How deep the water lay over the ground, for a stage with `water`.
+    pub water_depth: Option<f32>,
 }
 
 struct Candidate {

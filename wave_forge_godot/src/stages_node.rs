@@ -45,9 +45,9 @@ use wave_forge::noise::{
 use wave_forge::stages::brushes::{Brush, Canvas, stroke};
 use wave_forge::stages::regions::CurveId;
 use wave_forge::stages::{
-    Column, Edit, Edits, Facts, GivenRow, MAX_CATEGORIES, Pack, ParamDef, Point, PointId,
-    Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId, StageError, StageEvent, StageKind,
-    StageTiming, StageWorker, TableKind, Value,
+    Column, Edit, Edits, Facts, GivenRow, Judgement, MAX_CATEGORIES, Pack, ParamDef, Point,
+    PointId, Rejection, RowId, RunProgress, Runtime, Save, Site, SiteId, StageError, StageEvent,
+    StageKind, StageTiming, StageWorker, TableKind, Value,
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
@@ -2279,6 +2279,73 @@ impl WaveForgeStages {
                 out
             })
             .collect()
+    }
+
+    /// The drawn candidate of `candidates_stage` nearest `position`, in Godot's world space, no
+    /// farther than `radius` along the ground, for a viewer to say why it went as it did: its
+    /// `verdict` and `colour` as [`WaveForgeStages::candidate_legend`] names them, its `position` on
+    /// the ground, and what the stage's modifiers read there
+    /// ([packs.md](packs.md#scatter)): the ground's `height` in cells, its `slope` and the
+    /// `water_depth` for a stage with those modifiers, and `conditions`, each condition of `when`
+    /// in order with the `value` it tests and whether it `holds`. Empty when none lies that near.
+    #[func]
+    fn candidate_near(&self, position: Vector3, radius: f32) -> VarDictionary {
+        let stage = self.candidates_stage.to_string();
+        let mut out = VarDictionary::new();
+        let Some(worker) = &self.worker else {
+            return out;
+        };
+        let cell = self.cell_size;
+        let mut nearest: Option<(f32, &Judgement)> = None;
+        for chunk in self.candidates.keys() {
+            for judged in worker.scatter_report(&stage, *chunk).unwrap_or_default() {
+                let distance =
+                    (judged.at[0] * cell.x - position.x).hypot(judged.at[1] * cell.z - position.z);
+                if distance <= radius && nearest.is_none_or(|(best, _)| distance < best) {
+                    nearest = Some((distance, judged));
+                }
+            }
+        }
+        let Some((_, judged)) = nearest else {
+            return out;
+        };
+        let readings = &judged.readings;
+        out.set(
+            &"verdict".to_variant(),
+            &verdict_name(judged.verdict).to_variant(),
+        );
+        out.set(
+            &"colour".to_variant(),
+            &verdict_colour(judged.verdict).to_variant(),
+        );
+        out.set(
+            &"position".to_variant(),
+            &Vector3::new(
+                judged.at[0] * cell.x,
+                (readings.height + 0.5) * cell.y,
+                judged.at[1] * cell.z,
+            )
+            .to_variant(),
+        );
+        out.set(&"height".to_variant(), &readings.height.to_variant());
+        if let Some(slope) = readings.slope {
+            out.set(&"slope".to_variant(), &slope.to_variant());
+        }
+        if let Some(depth) = readings.water_depth {
+            out.set(&"water_depth".to_variant(), &depth.to_variant());
+        }
+        let conditions: Array<VarDictionary> = readings
+            .conditions
+            .iter()
+            .map(|&(value, holds)| {
+                let mut condition = VarDictionary::new();
+                condition.set(&"value".to_variant(), &value.to_variant());
+                condition.set(&"holds".to_variant(), &holds.to_variant());
+                condition
+            })
+            .collect();
+        out.set(&"conditions".to_variant(), &conditions.to_variant());
+        out
     }
 
     /// Generates the whole world of the pack's bound ahead of time, on a thread of its own: the

@@ -4,10 +4,13 @@ extends EditorPlugin
 ## selected WaveForgeStages node's world as edits, one undo action per stroke, and a preview that
 ## follows the editor's camera while the node's `preview_in_editor` is on. What a stroke does is the
 ## node's `paint`, so the editor and a game paint the same way; the plugin only turns the mouse into
-## a path along the ground. Below the brushes, the world run of M1: the node's whole finite world
-## run ahead of time into a directory (`world_run_panel.gd`).
+## a path along the ground. While not painting, the candidate of the node's `candidates_stage`
+## under the mouse, and what its stage's modifiers read there (`candidate_panel.gd`, N5). Below
+## them, the world run of M1: the node's whole finite world run ahead of time into a directory
+## (`world_run_panel.gd`).
 
 const WorldRunPanel := preload("res://addons/wave_forge/world_run_panel.gd")
+const CandidatePanel := preload("res://addons/wave_forge/candidate_panel.gd")
 
 ## The brushes of the dock, as `paint` names them, with how each is shown.
 const BRUSHES := {
@@ -32,6 +35,7 @@ var stage_edit: LineEdit
 var radius_spin: SpinBox
 var strength_spin: SpinBox
 var world_run: VBoxContainer
+var candidate: VBoxContainer
 ## The node being edited, while one is selected.
 var stages: Node
 ## The stroke under way: its path along the ground, and the edits before it, for undo.
@@ -62,7 +66,13 @@ func _process(_delta: float) -> void:
 		stages.follow(camera.global_position)
 
 func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
-	if stages == null or not is_instance_valid(stages) or not painting_toggle.button_pressed:
+	if stages == null or not is_instance_valid(stages):
+		return AFTER_GUI_INPUT_PASS
+	if not painting_toggle.button_pressed:
+		if event is InputEventMouseMotion and not String(stages.candidates_stage).is_empty():
+			var ground = _ground_under(camera, event.position)
+			# Within a cell of the mouse, along the ground.
+			candidate.show_candidate({} if ground == null else stages.candidate_near(ground, stages.cell_size.x))
 		return AFTER_GUI_INPUT_PASS
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -81,15 +91,21 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 
 ## Adds the ground under the mouse to the stroke's path, if the ray from the camera meets it.
 func _add_point(camera: Camera3D, screen: Vector2) -> void:
+	var ground = _ground_under(camera, screen)
+	if ground != null:
+		path.append(ground)
+
+## Where the ray from the camera through `screen` first meets the ground, or null if it does not.
+func _ground_under(camera: Camera3D, screen: Vector2) -> Variant:
 	var from := camera.project_ray_origin(screen)
 	var along := camera.project_ray_normal(screen)
 	var travelled := 0.0
 	while travelled < RAY_LENGTH:
 		var at := from + along * travelled
 		if at.y <= stages.ground_height(at):
-			path.append(at)
-			return
+			return at
 		travelled += RAY_STEP
+	return null
 
 ## Paints the stroke and records it as one undo action.
 func _finish_stroke() -> void:
@@ -139,6 +155,9 @@ func _make_dock() -> VBoxContainer:
 	box.add_child(_labelled("Radius (cells)", radius_spin))
 	strength_spin = _spin(0.0, 16.0, 1.0)
 	box.add_child(_labelled("Strength", strength_spin))
+	box.add_child(HSeparator.new())
+	candidate = CandidatePanel.new()
+	box.add_child(candidate)
 	box.add_child(HSeparator.new())
 	world_run = WorldRunPanel.new()
 	box.add_child(world_run)

@@ -1086,6 +1086,13 @@ pub enum Condition {
 }
 
 impl Condition {
+    /// The expression the condition tests: its left side.
+    pub(crate) fn tested(&self) -> &Expr {
+        match self {
+            Self::Less(a, _) | Self::Greater(a, _) | Self::Between(a, ..) => a,
+        }
+    }
+
     fn inputs<'a>(&'a self, into: &mut Vec<(&'a str, Output, u32)>) {
         match self {
             Self::Less(a, b) | Self::Greater(a, b) => {

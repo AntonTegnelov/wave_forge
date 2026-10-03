@@ -883,6 +883,13 @@ a point or which modifier rejected it first, as a `Rejection`:
   or `Blocked` for its own tests;
 - `Spacing` for a candidate that passed but lay too near one of higher priority.
 
+Each judgement also holds its `Readings`, what the stage's modifiers read at the candidate's column
+whatever became of it: the ground's `height` in cells, its `slope` (the steeper rise per column,
+along x or y) for a stage with `max_slope`, `conditions`, each condition of `when` in order with the
+value it tests (its left side) and whether it held, and the `water_depth` over the ground for a
+stage with `water`. They are what a viewer shows to say why a candidate went as it did
+(`tests/scatter_report.rs`).
+
 It decides as generating does, from the inputs the runtime holds, so the kept candidates are
 exactly the chunk's points, and it is what a viewer colours candidates by when a rule places
 nothing (N5).
