@@ -12,6 +12,9 @@ use godot::prelude::*;
 use std::collections::{HashMap, HashSet};
 use wave_forge::{ChunkCoord, RegionTags};
 
+/// The physics layer of the interiors' areas, which the node's emitters listen to.
+const INTERIOR_LAYER: u32 = 1;
+
 /// What a chunk has in the scene: its interiors' areas and the players of its emitters.
 struct ChunkSound {
     areas: Vec<Gd<Area3D>>,
@@ -65,6 +68,7 @@ impl RegionAudio {
                 // Areas only change the sounds inside them; they detect nothing.
                 area.set_monitoring(false);
                 area.set_collision_mask(0);
+                area.set_collision_layer(INTERIOR_LAYER);
                 if !buses.reverb.is_empty() {
                     area.set_use_reverb_bus(true);
                     area.set_reverb_bus_name(&buses.reverb);
@@ -100,6 +104,8 @@ impl RegionAudio {
                 player
             });
             player.set_stream(&stream);
+            // Since Godot 4.7 a player's default `area_mask` is empty, so no area reverbs it.
+            player.set_area_mask(INTERIOR_LAYER);
             player.set_position(Vector3::from_array(emitter.at));
             player.play();
             players.push(player);

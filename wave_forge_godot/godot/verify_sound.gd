@@ -5,8 +5,8 @@
 ## (`sounds`). Every cell's surface is its module's; a chunk's interiors hold every building cell
 ## once and no other; its emitters sit in its fountains' cells. Within `audio_radius` the node gives
 ## each interior an `Area3D` reverbing on `interior_reverb_bus` and playing the sounds inside it on
-## `interior_audio_bus`, and each emitter a playing
-## `AudioStreamPlayer3D`, and once the player has moved away, it frees the areas and stops the
+## `interior_audio_bus`, and each emitter a playing `AudioStreamPlayer3D` whose `area_mask` holds
+## the interiors' layer, so they reverb and reroute it, and once the player has moved away, it frees the areas and stops the
 ## players.
 extends SceneTree
 
@@ -161,6 +161,13 @@ func _check_nodes() -> bool:
 	if areas.size() != interiors or playing.size() != emitters:
 		_fail("%d areas for %d interiors, %d players playing for %d emitters" % [areas.size(), interiors, playing.size(), emitters])
 		return false
+	# A player is reverbed and rerouted only by an area on a layer its area_mask holds, which since
+	# Godot 4.7 is none by default.
+	for player: AudioStreamPlayer3D in playing:
+		for area: Area3D in areas:
+			if player.area_mask & area.collision_layer == 0:
+				_fail("an emitter's area_mask %d misses its interiors' layer %d" % [player.area_mask, area.collision_layer])
+				return false
 	for area: Area3D in areas:
 		if not area.reverb_bus_enabled or area.reverb_bus_name != BUS:
 			_fail("an interior reverbs on %s" % area.reverb_bus_name)

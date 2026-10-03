@@ -114,12 +114,13 @@ string, which is what a game's footsteps ask. `region_tags(chunk)` gives a gener
 and its `emitters`, a dictionary per sound with its `position` in Godot's world and its `key`.
 
 Within `audio_radius` of the followed chunk, the node gives each chunk's interiors an `Area3D`, on
-collision layer 1 as a player's default `area_mask` expects, that reverbs the sounds inside it on
+collision layer 1, which its emitters' `area_mask` holds, that reverbs the sounds inside it on
 `interior_reverb_bus` and plays them on `interior_audio_bus` (a muffled indoor mix, say), each when
 set, and each emitter whose key `sounds` maps an `AudioStreamPlayer3D`, playing,
 all as children of the node; a key `sounds` does not map plays nothing, with a warning once per key.
 At most three chunks get their sound per frame, nearest first, and again when their tiles change.
-A chunk leaving the radius frees its areas and stops its players, which a pool keeps for the next
+Since Godot 4.7 an `AudioStreamPlayer3D`'s default `area_mask` is empty, so a game's own players
+need layer 1 in theirs for the interiors to reverb them. A chunk leaving the radius frees its areas and stops its players, which a pool keeps for the next
 chunk, and the node stops them all when it leaves the tree. A game that wants its own mapping
 leaves `audio_radius` below zero and reads `region_tags`.
 
