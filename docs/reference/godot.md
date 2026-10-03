@@ -385,6 +385,11 @@ sound, or that name no fitting stage; `configuration_warnings()` gives the same 
   `ground_material_stage`, `far_ground_stage`, `fluid_stage`, `volume_stage`) names no stage of
   the kind it needs, which `start` refuses with the same words.
 
+`WaveForgeStages`' inspector has three buttons: Start or regenerate, the same as `start`; Reroll
+seed, which takes a new `seed` at random and starts again if the node is running; and Bake the view,
+which bakes the chunks within `view_radius` of the followed one, as `bake` does, into a scene saved
+at `bake_path` (`res://wave_forge_bake.tscn` unless changed).
+
 `WaveForgeWorld` warns when `start_on_ready` is set with no `rules_file`, or when an interior bus it
 names is not in the project's bus layout. Both warn when `collider_radius` builds bodies while the
 project's 3D physics is not Jolt, and when `occluder_radius` builds occluders while occlusion culling

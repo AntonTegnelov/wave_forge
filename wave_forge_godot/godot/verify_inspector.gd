@@ -1,30 +1,94 @@
-## The nodes' configuration warnings, which the editor shows on them (#273).
+## What the editor's inspector shows on the nodes (#273): their configuration warnings, and the
+## buttons of WaveForgeStages.
 ##
 ## Run by `../verify.sh` after `verify_continent.gd`. A WaveForgeStages node in a scene with no
 ## light, no environment and no pack warns of all three, and of none once the scene has them and
 ## the node a pack. A target or a stage setting naming the wrong stage warns, and `start` refuses
 ## it with the same words. Colliders without Jolt, occluders without occlusion culling, and a
 ## WaveForgeWorld that starts with no rules or names an interior bus the project lacks warn too.
+## Then the buttons: "Start or regenerate" starts the node, "Reroll seed" takes another seed and
+## keeps it running, and "Bake the view" refuses with nothing followed, then saves a scene of the
+## nine chunks of a view of radius 1.
 extends SceneTree
 
-var scene: Node3D
+const BAKED := "user://inspector_bake.tscn"
+const TIMEOUT_S := 60.0
 
-# On the first frame, when nodes added to the root are inside the tree.
+var scene: Node3D
+var stages: Node
+var phase := 0
+var started_usec := 0
+
 func _process(_delta: float) -> bool:
-	# A script error aborts _check, which then gives null, so only "ok" passes.
-	var problem = _check()
-	if problem != "ok":
-		printerr("verify_warnings: %s" % [problem])
-		quit(1)
-		return true
-	print("verify_warnings: a dark scene and a node without a pack warn, a lit scene with a pack does not; a target or setting naming the wrong stage warns and is refused at start; colliders without Jolt, occluders without culling, a start with no rules and a missing interior bus warn")
+	# A script error aborts a check, which then gives null, so only "ok" passes.
+	if phase == 0:
+		# On the first frame, when nodes added to the root are inside the tree.
+		var problem = _check()
+		if problem != "ok":
+			return _fail(problem)
+		print("verify_inspector: a dark scene and a node without a pack warn, a lit scene with a pack does not; a target or setting naming the wrong stage warns and is refused at start; colliders without Jolt, occluders without culling, a start with no rules and a missing interior bus warn")
+		var problem_buttons = _buttons()
+		if problem_buttons != "ok":
+			return _fail(problem_buttons)
+		phase = 1
+		started_usec = Time.get_ticks_usec()
+		return false
+	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
+		return _fail("the view did not generate in %.0f s" % TIMEOUT_S)
+	for y in range(-1, 2):
+		for x in range(-1, 2):
+			if stages.field_values("height", Vector3i(x, y, 0)).is_empty():
+				return false
+	var baked = _baked()
+	if baked != "ok":
+		return _fail(baked)
+	print("verify_inspector: the buttons start the node, reroll its seed and keep it running, refuse to bake with nothing followed, and bake the view's nine chunks into a scene")
 	quit(0)
 	return true
+
+func _fail(problem) -> bool:
+	printerr("verify_inspector: %s" % [problem])
+	quit(1)
+	return true
+
+## The buttons that act at once: regenerate and reroll, and baking with nothing followed.
+func _buttons() -> String:
+	stages.seed = 5
+	stages.view_radius = 1
+	stages.collider_radius = -1
+	stages.occluder_radius = -1
+	(stages.regenerate_button as Callable).call()
+	if stages.stage_names().is_empty():
+		return "Start or regenerate did not start the node"
+	(stages.reroll_button as Callable).call()
+	if stages.seed == 5 or stages.stage_names().is_empty():
+		return "Reroll seed kept seed %d, or stopped the node" % stages.seed
+	if FileAccess.file_exists(BAKED):
+		DirAccess.remove_absolute(BAKED)
+	(stages.bake_button as Callable).call()
+	if FileAccess.file_exists(BAKED):
+		return "Bake the view saved a scene with nothing followed"
+	stages.bake_path = BAKED
+	stages.follow(Vector3(1, 0, 1))
+	return "ok"
+
+## The scene "Bake the view" saves once the view has generated.
+func _baked() -> String:
+	(stages.bake_button as Callable).call()
+	var packed := load(BAKED) as PackedScene
+	if packed == null:
+		return "Bake the view saved no scene at %s" % BAKED
+	var baked := packed.instantiate()
+	var chunks := baked.get_child_count()
+	baked.free()
+	if chunks != 9:
+		return "the baked view holds %d chunks, not 9" % chunks
+	return "ok"
 
 func _check() -> String:
 	scene = Node3D.new()
 	root.add_child(scene)
-	var stages: Node = ClassDB.instantiate("WaveForgeStages")
+	stages = ClassDB.instantiate("WaveForgeStages")
 	stages.collider_radius = -1
 	scene.add_child(stages)
 

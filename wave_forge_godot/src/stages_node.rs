@@ -27,8 +27,8 @@ use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
     ArrayMesh, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
     HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, NavigationMesh,
-    NavigationServer3D, Node, Node3D, PhysicsServer3D, RenderingServer, Shader, ShaderMaterial,
-    Shape3D, StandardMaterial3D, StaticBody3D,
+    NavigationServer3D, Node, Node3D, PhysicsServer3D, RenderingServer, ResourceSaver, Shader,
+    ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
 };
 use godot::global::Error;
 use godot::obj::EngineEnum;
@@ -100,6 +100,20 @@ pub struct WaveForgeStages {
     #[export(multiline)]
     #[var(get = edits_log, set = set_edits_text)]
     edits_text: PhantomVar<GString>,
+    /// Starts the node, or starts it again with its settings as they are now: in the editor, the
+    /// preview. The same as `start`.
+    #[export_tool_button(fn = Self::regenerate, name = "Start or regenerate", icon = "Reload")]
+    regenerate_button: PhantomVar<Callable>,
+    /// Takes a new `seed` at random, and starts again if the node is running.
+    #[export_tool_button(fn = Self::reroll_seed, name = "Reroll seed", icon = "RandomNumberGenerator")]
+    reroll_button: PhantomVar<Callable>,
+    /// Bakes the chunks within `view_radius` of the followed one, as `bake` does, into a scene saved
+    /// at `bake_path`.
+    #[export_tool_button(fn = Self::bake_view, name = "Bake the view", icon = "PackedScene")]
+    bake_button: PhantomVar<Callable>,
+    /// Where "Bake the view" saves the scene it bakes.
+    #[export(file = "*.tscn")]
+    bake_path: GString,
 
     /// Every choice in the world derives from this.
     #[export_group(name = "World")]
@@ -673,6 +687,10 @@ impl INode for WaveForgeStages {
         Self {
             base,
             pack_file: GString::new(),
+            regenerate_button: PhantomVar::default(),
+            reroll_button: PhantomVar::default(),
+            bake_button: PhantomVar::default(),
+            bake_path: GString::from("res://wave_forge_bake.tscn"),
             rules_files: VarDictionary::new(),
             noises: VarDictionary::new(),
             target_radii: VarDictionary::new(),
@@ -4019,6 +4037,49 @@ impl WaveForgeStages {
             |chunk| grounds.get(&chunk).map(|(mesh, _, _)| mesh),
             |chunk| worker.field(&stage, chunk),
         );
+    }
+
+    /// The inspector's "Start or regenerate".
+    fn regenerate(&mut self) {
+        self.start();
+    }
+
+    /// The inspector's "Reroll seed".
+    fn reroll_seed(&mut self) {
+        self.seed = i64::from(godot::global::randi() as u32);
+        if self.worker.is_some() {
+            self.start();
+        }
+    }
+
+    /// The inspector's "Bake the view": the chunks within `view_radius` of the followed one, saved
+    /// at `bake_path`, with an error if there is nothing followed or the bake fails.
+    fn bake_view(&mut self) {
+        let Some(followed) = self.followed else {
+            godot_error!("wave forge: nothing is followed yet, so there is no view to bake");
+            return;
+        };
+        let radius = self.view_radius.max(0);
+        let from = Vector3i::new(followed.x - radius, followed.y - radius, 0);
+        let to = Vector3i::new(followed.x + radius, followed.y + radius, 0);
+        let Some(scene) = self.bake(from, to) else {
+            return;
+        };
+        let saved = ResourceSaver::singleton()
+            .save_ex(&scene)
+            .path(&self.bake_path)
+            .done();
+        if saved == godot::global::Error::OK {
+            godot_print!(
+                "wave forge: baked chunks {from} to {to} into {}",
+                self.bake_path
+            );
+        } else {
+            godot_error!(
+                "wave forge: the bake could not be saved at {}: {saved:?}",
+                self.bake_path
+            );
+        }
     }
 
     /// What is wrong with the node's stage settings for `pack`, each a sentence: a target or a
