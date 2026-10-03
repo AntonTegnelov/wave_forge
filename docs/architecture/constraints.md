@@ -35,8 +35,9 @@ A kit of meshes can propose its own connectors, as marian42's editor tool does:
 `wfc_rules::import::propose` outlines each face from the mesh's vertices that lie on it and gives
 matching outlines one connector. A side's outline is seen from outside, so it fits its mirror image,
 and a top's is taken up to quarter turns. The result is a module set file for an artist to confirm,
-rename and mark walkable, since geometry says nothing about walking
-([#48](https://github.com/AntonTegnelov/wave_forge/issues/48), N6). The city's own voxel stand-ins,
+rename and mark walkable, since geometry says nothing about walking: `wfc_rules::import::connectors`
+lists the connectors found, and `propose_named` writes the set under the artist's names, refusing a
+naming that would lose or merge connectors (N6). The city's own voxel stand-ins,
 imported this way, generate a city (`wfc-devtools/tests/import.rs`).
 
 Two further tools sit next to the rules:
