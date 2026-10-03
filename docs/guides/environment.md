@@ -228,6 +228,7 @@ a docs-only pull request gets no checks.
 |---|---|
 | Library | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`, GPU tests included, on lavapipe; each crate on its own feature set ([testing.md](testing.md)) |
 | Godot extension | Clippy with `-D warnings` and the unit tests of `wave_forge_godot`; then `verify.sh release` in Godot 4.7.2, downloaded from the Godot release and checked against a pinned SHA-512 |
+| Godot extension on 4.8 (not gating) | the same in the newest Godot 4.8 pre-release (4.8 dev 7), from `godotengine/godot-builds`, until 4.8 is stable and becomes the gate ([#271](https://github.com/AntonTegnelov/wave_forge/issues/271)); a failure there does not block a merge |
 | Bevy plugin | the system libraries Bevy links against on Linux; Clippy with `-D warnings` and the tests of `wave_forge_bevy` that need no device |
 
 CI does not run the `#[ignore]`d suites (benchmarks, streaming, hole census, the game session, and
@@ -235,8 +236,9 @@ the two Bevy tests on a device) or `render_city.sh`. Run those by hand when a ch
 
 ## Godot
 
-The Godot checks need a Godot 4 binary; the one CI uses is 4.7.2 for Linux x86_64 from the Godot
-releases on GitHub. Unpack it outside the checkout. `~/.cache` is a named volume and survives a
+The Godot checks need a Godot 4 binary; the one CI gates on is 4.7.2 for Linux x86_64 from the
+Godot releases on GitHub. Pre-releases, 4.8 dev 7 now, come from `godotengine/godot-builds` instead,
+as `releases/download/4.8-dev7/Godot_v4.8-dev7_linux.x86_64.zip`. Unpack it outside the checkout. `~/.cache` is a named volume and survives a
 container recreate; `/tmp` does not.
 
 ```bash

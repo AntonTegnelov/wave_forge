@@ -25,9 +25,6 @@ env:
   CARGO_TERM_COLOR: always
   # The software device, by adapter name; WgpuBackend::from_env fails if it is not there.
   WGPU_ADAPTER_NAME: llvmpipe
-  GODOT_VERSION: 4.7.2
-  # From SHA512-SUMS.txt of the Godot 4.7.2 release, pinned so a changed download fails the job.
-  GODOT_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
 
 jobs:
   library:
@@ -61,8 +58,26 @@ jobs:
           cargo test -p wfc-rules --no-default-features
 
   godot:
-    name: Godot extension
+    # The gate is the stable Godot the extension supports; the next one, a pre-release, runs beside
+    # it without gating until it is stable (#271). Each SHA-512 is from its release's
+    # SHA512-SUMS.txt, pinned so a changed download fails the job.
+    name: Godot extension${{ matrix.suffix }}
     runs-on: ubuntu-24.04
+    continue-on-error: ${{ matrix.next }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suffix: ""
+            next: false
+            repository: godot
+            tag: 4.7.2-stable
+            sha512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
+          - suffix: " on 4.8 (not gating)"
+            next: true
+            repository: godot-builds
+            tag: 4.8-dev7
+            sha512: 6444078c4984699069e81f4c9fb83b88119a89d6f4dd39790acf9c2e2b1e4d0fb435a0c101aa48d24a81662d2ff50d648bd3475086d2d2ca37ce90374b97ef38
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain from rust-toolchain.toml
@@ -79,13 +94,14 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -qy mesa-vulkan-drivers
           dpkg-query -W mesa-vulkan-drivers
-      - name: Godot
+      # Stable releases are in godotengine/godot, pre-releases in godotengine/godot-builds.
+      - name: Godot ${{ matrix.tag }}
         run: |
-          zip="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
-          curl -sSfLO "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${zip}"
-          echo "${GODOT_SHA512}  ${zip}" | sha512sum --check
+          zip="Godot_v${{ matrix.tag }}_linux.x86_64.zip"
+          curl -sSfLO "https://github.com/godotengine/${{ matrix.repository }}/releases/download/${{ matrix.tag }}/${zip}"
+          echo "${{ matrix.sha512 }}  ${zip}" | sha512sum --check
           unzip -q "${zip}" -d "$RUNNER_TEMP/godot"
-          echo "GODOT=$RUNNER_TEMP/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" >> "$GITHUB_ENV"
+          echo "GODOT=$RUNNER_TEMP/godot/Godot_v${{ matrix.tag }}_linux.x86_64" >> "$GITHUB_ENV"
       - name: Clippy
         run: cargo clippy --manifest-path wave_forge_godot/Cargo.toml --all-targets -- -D warnings
       - name: Unit tests
