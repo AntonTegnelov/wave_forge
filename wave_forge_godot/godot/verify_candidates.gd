@@ -77,6 +77,11 @@ func _hovering(drawn: Array) -> String:
 			if buffer.is_empty():
 				buffer = set["transforms"]
 	var tree := Vector3(buffer[3], buffer[7], buffer[11])
+	# The dock asks along the ray under the mouse. This node has no ground_stage: the ray meets the
+	# ground the candidates stand on, the Scatter stage's height.
+	var looked: Dictionary = world.candidate_under(tree + Vector3(0.0, 40.0, 0.0), Vector3.DOWN)
+	if looked.get("verdict") != "kept":
+		return "looking down at the tree at %s: %s" % [tree, looked]
 	var under: Dictionary = world.candidate_near(tree, 0.01)
 	if under.get("verdict") != "kept" or under["conditions"].size() != 2:
 		return "under the tree at %s: %s" % [tree, under]

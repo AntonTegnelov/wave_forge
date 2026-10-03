@@ -81,6 +81,11 @@ pub struct Facts {
 }
 
 impl Facts {
+    /// A digest of every table's rows, so a world run can tell facts apart from others.
+    pub(crate) fn digest(&self) -> u64 {
+        super::pack::digest(&format!("{:?}", self.tables))
+    }
+
     /// The pack's tables for `seed`: the given ones empty, the generated ones computed.
     ///
     /// # Errors

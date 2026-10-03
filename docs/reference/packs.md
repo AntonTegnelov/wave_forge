@@ -220,8 +220,16 @@ is skipped, so a run stopped or cut short picks up where it left off, and the st
 the same bytes as a run that went at once (`tests/world_run.rs`). The run asks the store's `holds`
 first, which by default reads the chunk back with `fetch`, so a store that can tell without reading,
 as `DirectoryStore` does from the file's existence, should implement it; it reads a held chunk's
-entry once, for the names of the targets in it. A run with another target generates the chunks
-again whose entry lacks it, and keeps the targets they had that it does not name. `DirectoryStore` writes each
+entry once, for the names of the targets in it. Each entry also holds a digest of what decided
+its products: the pack, the seed, the chunks' columns, the facts, the edits, the parameters, the
+noises and the focused rows (not the towns' rule sets or region jobs a game gives in code). A chunk
+counts as held only by a run of the same digest, so a run with other edits, facts or parameters
+generates every chunk again, and an entry never mixes products of two. A run with another target
+generates the chunks again whose entry lacks it, and keeps the targets they had that it does not
+name, when they were kept by a run of the same digest. An entry holds its products in the order of
+their names, so the bytes do not depend on the order the targets are listed in. A store an older
+Wave Forge wrote a world run into, a file per target, is refused, by a run and by playback, rather
+than taken for an empty one. `DirectoryStore` writes each
 chunk beside its file and renames it over, so a process that ends mid-write leaves no chunk half
 written. A pack without a bound fails with
 `StageError::Unbounded`.

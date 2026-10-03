@@ -513,7 +513,15 @@ fn play(
         let mut entries: BTreeMap<ChunkCoord, Vec<(String, Vec<u8>)>> = BTreeMap::new();
         for (stage, chunk) in needed.difference(&held) {
             if !entries.contains_key(chunk) {
-                match super::world_run::kept(store.as_mut(), *chunk) {
+                let entry = super::world_run::kept(store.as_mut(), *chunk).and_then(|entry| {
+                    if entry.is_none() {
+                        let targets: Vec<&str> =
+                            targets.iter().map(|(target, _)| target.as_str()).collect();
+                        super::world_run::refuse_older_layout(store.as_mut(), &targets, *chunk)?;
+                    }
+                    Ok(entry.map_or_else(Vec::new, |entry| entry.products))
+                });
+                match entry {
                     Ok(entry) => entries.insert(*chunk, entry),
                     Err(error) => {
                         let _ = reports.send(Report::Failed(error.to_string()));

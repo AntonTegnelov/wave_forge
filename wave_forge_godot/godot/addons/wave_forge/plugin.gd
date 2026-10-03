@@ -73,9 +73,7 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 		return AFTER_GUI_INPUT_PASS
 	if not painting_toggle.button_pressed:
 		if event is InputEventMouseMotion and not String(stages.candidates_stage).is_empty():
-			var ground = _ground_under(camera, event.position)
-			# Within a cell of the mouse, along the ground.
-			candidate.show_candidate({} if ground == null else stages.candidate_near(ground, stages.cell_size.x))
+			candidate.show_candidate(stages.candidate_under(camera.project_ray_origin(event.position), camera.project_ray_normal(event.position)))
 		return AFTER_GUI_INPUT_PASS
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:

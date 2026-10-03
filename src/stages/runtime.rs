@@ -1940,6 +1940,24 @@ impl Runtime {
         Ok(generated)
     }
 
+    /// A digest of what decides the products this runtime generates: the pack, the seed, the
+    /// chunks' columns, the facts, the edits, the parameters, the noises and the focused rows. A
+    /// world run keeps it with each chunk and generates a chunk again whose digest differs. The
+    /// towns' rule sets and region jobs a game gives in code are not in it.
+    pub(crate) fn content_digest(&self) -> u64 {
+        super::pack::digest(&format!(
+            "{} {} {:?} {} {} {:?} {} {:?}",
+            self.pack.digest(),
+            self.seed,
+            self.size,
+            self.facts.as_ref().map_or(0, Facts::digest),
+            self.log.to_ron(),
+            self.params,
+            ron::to_string(&self.noises).expect("noises are plain data"),
+            self.focused,
+        ))
+    }
+
     /// Whether everything the request needs is generated.
     #[must_use]
     pub fn is_idle(&self) -> bool {
