@@ -27,8 +27,8 @@ use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
     ArrayMesh, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
     HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, NavigationMesh,
-    NavigationServer3D, Node, Node3D, PhysicsServer3D, RenderingServer, Shader, ShaderMaterial,
-    Shape3D, StandardMaterial3D, StaticBody3D,
+    NavigationServer3D, Node, Node3D, PhysicsServer3D, RenderingServer, ResourceSaver, Shader,
+    ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
 };
 use godot::global::Error;
 use godot::obj::EngineEnum;
@@ -100,6 +100,20 @@ pub struct WaveForgeStages {
     #[export(multiline)]
     #[var(get = edits_log, set = set_edits_text)]
     edits_text: PhantomVar<GString>,
+    /// Starts the node, or starts it again with its settings as they are now: in the editor, the
+    /// preview. The same as `start`.
+    #[export_tool_button(fn = Self::regenerate, name = "Start or regenerate", icon = "Reload")]
+    regenerate_button: PhantomVar<Callable>,
+    /// Takes a new `seed` at random, and starts again if the node is running.
+    #[export_tool_button(fn = Self::reroll_seed, name = "Reroll seed", icon = "RandomNumberGenerator")]
+    reroll_button: PhantomVar<Callable>,
+    /// Bakes the chunks within `view_radius` of the followed one, as `bake` does, into a scene saved
+    /// at `bake_path`.
+    #[export_tool_button(fn = Self::bake_view, name = "Bake the view", icon = "PackedScene")]
+    bake_button: PhantomVar<Callable>,
+    /// Where "Bake the view" saves the scene it bakes.
+    #[export(file = "*.tscn")]
+    bake_path: GString,
 
     /// Every choice in the world derives from this.
     #[export_group(name = "World")]
@@ -278,6 +292,8 @@ pub struct WaveForgeStages {
     builder: Option<Builder>,
     /// The world run under way, if one is.
     world_run: Option<WorldRunning>,
+    /// When the editor's configuration warnings were last looked at.
+    refresh: crate::warnings::Refresh,
     /// The candidates drawn, by chunk: the MultiMesh, its instance, and each verdict's count.
     candidates: HashMap<ChunkCoord, (Rid, Rid, BTreeMap<String, i64>)>,
     /// The box every candidate is drawn with, kept while any is drawn.
@@ -671,6 +687,10 @@ impl INode for WaveForgeStages {
         Self {
             base,
             pack_file: GString::new(),
+            regenerate_button: PhantomVar::default(),
+            reroll_button: PhantomVar::default(),
+            bake_button: PhantomVar::default(),
+            bake_path: GString::from("res://wave_forge_bake.tscn"),
             rules_files: VarDictionary::new(),
             noises: VarDictionary::new(),
             target_radii: VarDictionary::new(),
@@ -699,6 +719,7 @@ impl INode for WaveForgeStages {
             play_directory: GString::new(),
             builder: None,
             world_run: None,
+            refresh: crate::warnings::Refresh::default(),
             candidates_stage: GString::new(),
             candidates: HashMap::new(),
             candidate_box: None,
@@ -810,6 +831,10 @@ impl INode for WaveForgeStages {
         self.clear_ground_and_bodies();
     }
 
+    fn get_configuration_warnings(&self) -> PackedStringArray {
+        self.configuration_warnings()
+    }
+
     fn ready(&mut self) {
         let starts = if Engine::singleton().is_editor_hint() {
             self.preview_in_editor
@@ -823,6 +848,12 @@ impl INode for WaveForgeStages {
 
     /// Hands the frame whatever the stages' thread finished, as signals.
     fn process(&mut self, _delta: f64) {
+        if self.refresh.due() {
+            let warnings = self.warnings();
+            if self.refresh.changed(warnings) {
+                self.base_mut().update_configuration_warnings();
+            }
+        }
         self.update_world_run();
         let processing = std::time::Instant::now();
         let Some(worker) = &mut self.worker else {
@@ -1028,6 +1059,14 @@ impl INode for WaveForgeStages {
 
 #[godot_api]
 impl WaveForgeStages {
+    /// What the editor shows as the node's configuration warnings, each a sentence: settings that
+    /// would leave its world dark, without bodies, occluders or sound, or that name no fitting
+    /// stage (docs/reference/godot.md, "Editor"). Empty when there is nothing to warn of.
+    #[func]
+    fn configuration_warnings(&self) -> PackedStringArray {
+        self.warnings().iter().map(GString::from).collect()
+    }
+
     /// A stage's product for a chunk is ready to read. At most 256 of these and `stage_dropped`
     /// together are emitted per frame, in the order the products arrived, so after a wide request
     /// some come a few frames later; by then a product can have been dropped again, and its
@@ -1099,8 +1138,12 @@ impl WaveForgeStages {
                 }
             }
         }
+        if let Some(problem) = self.stage_setting_problems(&pack).first() {
+            godot_error!("wave forge: {problem}");
+            return false;
+        }
         if !self.ground_material_stage.is_empty() {
-            match self.materials_template(&pack) {
+            match self.materials_template() {
                 Ok(template) => self.palette = Some(template),
                 Err(error) => {
                     godot_error!("wave forge: {error}");
@@ -1110,36 +1153,10 @@ impl WaveForgeStages {
         } else {
             self.palette = None;
         }
-        if !self.far_ground_stage.is_empty()
-            && !matches!(
-                pack.kind(&self.far_ground_stage.to_string()),
-                Some(StageKind::Field(_))
-            )
-        {
-            godot_error!(
-                "wave forge: far_ground_stage {} is no field stage of the pack",
-                self.far_ground_stage
-            );
-            return false;
-        }
         self.rock = None;
         self.fluid = None;
         if !self.fluid_stage.is_empty() {
             let stage = self.fluid_stage.to_string();
-            if !matches!(
-                pack.kind(&stage),
-                Some(
-                    StageKind::Volume { .. } | StageKind::Carve { .. } | StageKind::Aquifer { .. }
-                )
-            ) || pack.scale(&stage) != Some(1)
-            {
-                godot_error!(
-                    "wave forge: fluid_stage {} is no Volume, Carve or Aquifer stage of the pack at \
-                     scale 1",
-                    self.fluid_stage
-                );
-                return false;
-            }
             self.fluid = Some(VolumeLayer::new(stage));
             if self.fluid_colours.is_none() {
                 let mut shader = Shader::new_gd();
@@ -1151,17 +1168,6 @@ impl WaveForgeStages {
         }
         if !self.volume_stage.is_empty() {
             let stage = self.volume_stage.to_string();
-            if !matches!(
-                pack.kind(&stage),
-                Some(StageKind::Volume { .. } | StageKind::Carve { .. })
-            ) || pack.scale(&stage) != Some(1)
-            {
-                godot_error!(
-                    "wave forge: volume_stage {} is no Volume or Carve stage of the pack at scale 1",
-                    self.volume_stage
-                );
-                return false;
-            }
             self.rock = Some(VolumeLayer::new(stage));
             if self.vertex_colours.is_none() {
                 let mut colours = StandardMaterial3D::new_gd();
@@ -4033,20 +4039,156 @@ impl WaveForgeStages {
         );
     }
 
-    /// The palette texture and the material each chunk's ground material is copied from.
-    fn materials_template(
-        &self,
-        pack: &Pack,
-    ) -> Result<(Gd<ImageTexture>, Gd<ShaderMaterial>), String> {
-        let stage = self.ground_material_stage.to_string();
-        match pack.kind(&stage) {
-            Some(StageKind::Rules { .. } | StageKind::Area { .. } | StageKind::Nearest { .. }) => {}
-            _ => {
-                return Err(format!(
-                    "ground_material_stage {stage:?} is no Rules, Area or Nearest stage of the pack"
+    /// The inspector's "Start or regenerate".
+    fn regenerate(&mut self) {
+        self.start();
+    }
+
+    /// The inspector's "Reroll seed".
+    fn reroll_seed(&mut self) {
+        self.seed = i64::from(godot::global::randi() as u32);
+        if self.worker.is_some() {
+            self.start();
+        }
+    }
+
+    /// The inspector's "Bake the view": the chunks within `view_radius` of the followed one, saved
+    /// at `bake_path`, with an error if there is nothing followed or the bake fails.
+    fn bake_view(&mut self) {
+        let Some(followed) = self.followed else {
+            godot_error!("wave forge: nothing is followed yet, so there is no view to bake");
+            return;
+        };
+        let radius = self.view_radius.max(0);
+        let from = Vector3i::new(followed.x - radius, followed.y - radius, 0);
+        let to = Vector3i::new(followed.x + radius, followed.y + radius, 0);
+        let Some(scene) = self.bake(from, to) else {
+            return;
+        };
+        let saved = ResourceSaver::singleton()
+            .save_ex(&scene)
+            .path(&self.bake_path)
+            .done();
+        if saved == godot::global::Error::OK {
+            godot_print!(
+                "wave forge: baked chunks {from} to {to} into {}",
+                self.bake_path
+            );
+        } else {
+            godot_error!(
+                "wave forge: the bake could not be saved at {}: {saved:?}",
+                self.bake_path
+            );
+        }
+    }
+
+    /// What is wrong with the node's stage settings for `pack`, each a sentence: a target or a
+    /// setting naming no stage of the pack, or a stage of the wrong kind for the setting. `start`
+    /// refuses to start with any, and the editor shows them as configuration warnings.
+    fn stage_setting_problems(&self, pack: &Pack) -> Vec<String> {
+        let mut problems = Vec::new();
+        for target in self.targets.as_slice() {
+            if pack.kind(&target.to_string()).is_none() {
+                problems.push(format!(
+                    "targets names {target}, which is no stage of the pack"
                 ));
             }
         }
+        let at_scale_one = |stage: &str| pack.scale(stage) == Some(1);
+        let settings: [(&str, &GString, &str, Fits<'_>); 7] = [
+            ("ground_stage", &self.ground_stage, "", &|_, _| true),
+            ("grass_stage", &self.grass_stage, "", &|_, _| true),
+            (
+                "candidates_stage",
+                &self.candidates_stage,
+                "Scatter ",
+                &|_, kind| matches!(kind, StageKind::Scatter { .. }),
+            ),
+            (
+                "ground_material_stage",
+                &self.ground_material_stage,
+                "Rules, Area or Nearest ",
+                &|_, kind| {
+                    matches!(
+                        kind,
+                        StageKind::Rules { .. }
+                            | StageKind::Area { .. }
+                            | StageKind::Nearest { .. }
+                    )
+                },
+            ),
+            (
+                "far_ground_stage",
+                &self.far_ground_stage,
+                "field ",
+                &|_, kind| matches!(kind, StageKind::Field(_)),
+            ),
+            (
+                "fluid_stage",
+                &self.fluid_stage,
+                "Volume, Carve or Aquifer ",
+                &|stage, kind| {
+                    at_scale_one(stage)
+                        && matches!(
+                            kind,
+                            StageKind::Volume { .. }
+                                | StageKind::Carve { .. }
+                                | StageKind::Aquifer { .. }
+                        )
+                },
+            ),
+            (
+                "volume_stage",
+                &self.volume_stage,
+                "Volume or Carve ",
+                &|stage, kind| {
+                    at_scale_one(stage)
+                        && matches!(kind, StageKind::Volume { .. } | StageKind::Carve { .. })
+                },
+            ),
+        ];
+        for (setting, value, kinds, fits) in settings {
+            if value.is_empty() {
+                continue;
+            }
+            let stage = value.to_string();
+            if !pack.kind(&stage).is_some_and(|kind| fits(&stage, kind)) {
+                let scale = if kinds.starts_with("Volume") {
+                    " at scale 1"
+                } else {
+                    ""
+                };
+                problems.push(format!(
+                    "{setting} {stage:?} is no {kinds}stage of the pack{scale}"
+                ));
+            }
+        }
+        problems
+    }
+
+    /// The node's configuration warnings: its settings for its pack, and the project's and the
+    /// scene's that would leave the world dark or without bodies ([`crate::warnings`]).
+    fn warnings(&self) -> Vec<String> {
+        let mut warnings = crate::warnings::lighting(&self.to_gd().upcast());
+        if self.pack_file.is_empty() {
+            warnings.push(
+                "No pack_file: set one (*.world.ron), or choose a preset in the Wave Forge dock."
+                    .to_owned(),
+            );
+        } else {
+            let text = FileAccess::get_file_as_string(&self.pack_file).to_string();
+            match Pack::parse(&text) {
+                Ok(pack) => warnings.extend(self.stage_setting_problems(&pack)),
+                Err(error) => warnings.push(format!("pack_file {}: {error}", self.pack_file)),
+            }
+        }
+        warnings.extend(crate::warnings::physics(self.collider_radius));
+        warnings.extend(crate::warnings::occlusion(self.occluder_radius));
+        warnings
+    }
+
+    /// The palette texture and the material each chunk's ground material is copied from.
+    fn materials_template(&self) -> Result<(Gd<ImageTexture>, Gd<ShaderMaterial>), String> {
         let template = match &self.ground_material {
             None => {
                 let mut shader = Shader::new_gd();
@@ -4350,6 +4492,9 @@ fn stage_costs<'a>(timings: impl IntoIterator<Item = &'a (String, StageTiming)>)
     }
     stages
 }
+
+/// Whether a stage, by name and kind, fits a setting ([`WaveForgeStages::stage_setting_problems`]).
+type Fits<'a> = &'a dyn Fn(&str, &StageKind) -> bool;
 
 /// A world run on a thread of its own ([`WaveForgeStages::run_world`]): what it reports, and the
 /// flag that stops it. The thread is joined before the process exits.

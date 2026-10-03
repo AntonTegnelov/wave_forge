@@ -49,7 +49,7 @@
 
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::{
-    FileAccess, INode, MeshLibrary, NavigationMesh, NavigationMeshSourceGeometryData3D,
+    Engine, FileAccess, INode, MeshLibrary, NavigationMesh, NavigationMeshSourceGeometryData3D,
     NavigationServer3D, Node, PhysicsServer3D, Shape3D,
 };
 use godot::prelude::*;
@@ -76,6 +76,7 @@ mod radius;
 mod stage_navigation;
 mod stages_node;
 mod timings;
+mod warnings;
 
 /// How many recent frames and navigation bakes `stats` summarises: a minute at 60 frames per
 /// second, and a few hundred chunks.
@@ -109,7 +110,7 @@ unsafe impl ExtensionLibrary for WaveForgeExtension {
 /// [`WaveForgeWorld::follow`] as the player moves and read the tiles of every chunk the
 /// `chunk_updated` signal names.
 #[derive(GodotClass)]
-#[class(base = Node)]
+#[class(tool, base = Node)]
 pub struct WaveForgeWorld {
     base: Base<Node>,
 
@@ -273,6 +274,8 @@ pub struct WaveForgeWorld {
     bake_start_ms: Timings,
     bake_source_ms: Timings,
     bake_finish_ms: Timings,
+    /// When the editor's configuration warnings were last looked at.
+    refresh: warnings::Refresh,
 }
 
 /// What one frame of `process` cost Godot's thread, and what it spent it on.
@@ -314,6 +317,7 @@ impl INode for WaveForgeWorld {
             base,
             rules_file: GString::new(),
             start_on_ready: false,
+            refresh: warnings::Refresh::default(),
             seed: 0,
             chunk_cells: Vector3i::new(8, 8, 8),
             cell_size: Vector3::ONE,
@@ -376,9 +380,14 @@ impl INode for WaveForgeWorld {
         self.proxies.clear();
     }
 
-    /// Starts generating from `rules_file` if the node is set to start on its own.
+    fn get_configuration_warnings(&self) -> PackedStringArray {
+        self.configuration_warnings()
+    }
+
+    /// Starts generating from `rules_file` if the node is set to start on its own, when the game
+    /// runs: in the editor it is a tool class only for its warnings.
     fn ready(&mut self) {
-        if !self.start_on_ready {
+        if !self.start_on_ready || Engine::singleton().is_editor_hint() {
             return;
         }
         if self.rules_file.is_empty() {
@@ -397,6 +406,12 @@ impl INode for WaveForgeWorld {
 
     /// Hands the frame whatever the generating thread finished, as signals.
     fn process(&mut self, _delta: f64) {
+        if self.refresh.due() {
+            let warnings = self.warnings();
+            if self.refresh.changed(warnings) {
+                self.base_mut().update_configuration_warnings();
+            }
+        }
         let processing = std::time::Instant::now();
         let (events, failure) = match &mut self.worker {
             Some(worker) => (worker.drain(), worker.failure().map(ToOwned::to_owned)),
@@ -449,8 +464,39 @@ impl INode for WaveForgeWorld {
     }
 }
 
+impl WaveForgeWorld {
+    /// The node's configuration warnings: a start with no rules, and the project's settings that
+    /// would leave its world without bodies, occluders or interior sound ([`warnings`]).
+    fn warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if self.start_on_ready && self.rules_file.is_empty() {
+            warnings.push(
+                "start_on_ready is set, but rules_file is empty: set it to a rule set (*.ron)."
+                    .to_owned(),
+            );
+        }
+        warnings.extend(warnings::physics(self.collider_radius));
+        warnings.extend(warnings::occlusion(self.occluder_radius));
+        if self.audio_radius >= 0 {
+            warnings.extend(warnings::buses(&[
+                ("interior_reverb_bus", &self.interior_reverb_bus),
+                ("interior_audio_bus", &self.interior_audio_bus),
+            ]));
+        }
+        warnings
+    }
+}
+
 #[godot_api]
 impl WaveForgeWorld {
+    /// What the editor shows as the node's configuration warnings, each a sentence: settings that
+    /// would leave its world dark, without bodies, occluders or sound, or that name no fitting
+    /// stage (docs/reference/godot.md, "Editor"). Empty when there is nothing to warn of.
+    #[func]
+    fn configuration_warnings(&self) -> PackedStringArray {
+        self.warnings().iter().map(GString::from).collect()
+    }
+
     /// A chunk's tiles are new or have changed, so anything built from them is stale. A repair
     /// reports every chunk it rewrote, not only the one it was repairing.
     #[signal]

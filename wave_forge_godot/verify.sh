@@ -19,7 +19,8 @@
 # paints strokes as the editor's brushes do, then `godot/verify_candidates.gd`, which draws a
 # Scatter stage's candidates by what became of each, then `godot/verify_world.gd`, which runs a
 # finite world whole, stopping and resuming, and plays it back, then `godot/verify_continent.gd`,
-# which follows the maximal preset's first settlement to its town, then the editor itself, headless,
+# which follows the maximal preset's first settlement to its town, then `godot/verify_inspector.gd`,
+# which checks the nodes' configuration warnings and inspector buttons, then the editor itself, headless,
 # which has to load the editor plugin (`godot/addons/wave_forge`) without a script error, then
 # `godot/verify_sound.gd`, which checks the city's region tags and sound, then
 # `godot/verify_names.gd`, which names a location through a translation, then
@@ -50,6 +51,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_candidates.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_world.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_continent.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_inspector.gd
 editor_log="$(mktemp)"
 "${GODOT:-godot}" --headless --editor --path "$here/godot" --quit-after 300 >"$editor_log" 2>&1
 if grep -E "SCRIPT ERROR|Failed to load script" "$editor_log"; then
