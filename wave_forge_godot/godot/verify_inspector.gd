@@ -2,8 +2,8 @@
 ## buttons of WaveForgeStages.
 ##
 ## Run by `../verify.sh` after `verify_continent.gd`. A WaveForgeStages node in a scene with no
-## light, no environment and no pack warns of all three, and of none once the scene has them and
-## the node a pack. A target or a stage setting naming the wrong stage warns, and `start` refuses
+## light, no environment, no camera to follow and no pack warns of all four, and of none once the
+## scene has them and the node a pack. A target or a stage setting naming the wrong stage warns, and `start` refuses
 ## it with the same words. Colliders without Jolt, occluders without occlusion culling, and a
 ## WaveForgeWorld that starts with no rules or names an interior bus the project lacks warn too.
 ## Then the buttons: "Start or regenerate" starts the node, "Reroll seed" takes another seed and
@@ -93,12 +93,13 @@ func _check() -> String:
 	scene.add_child(stages)
 
 	var warned := Array(stages.configuration_warnings())
-	for expected in ["no light", "no WorldEnvironment", "No pack_file"]:
+	for expected in ["no light", "no WorldEnvironment", "No pack_file", "no Camera3D"]:
 		if not _any(warned, expected):
 			return "a dark scene without a pack does not warn of %s: %s" % [expected, warned]
 
 	scene.add_child(DirectionalLight3D.new())
 	scene.add_child(WorldEnvironment.new())
+	scene.add_child(Camera3D.new())
 	stages.pack_file = "res://islands.world.ron"
 	stages.targets = PackedStringArray(["height", "trees"])
 	if not Array(stages.configuration_warnings()).is_empty():

@@ -45,6 +45,24 @@ pub(crate) fn lighting(node: &Gd<Node>) -> Vec<String> {
     warnings
 }
 
+/// That the node follows the camera while the scene has none, so nothing generates when the game
+/// runs until a script calls `follow`.
+pub(crate) fn camera(node: &Gd<Node>) -> Option<String> {
+    let scene = scene_of(node)?;
+    let has = scene.is_class("Camera3D")
+        || !scene
+            .find_children_ex("*")
+            .type_("Camera3D")
+            .owned(false)
+            .done()
+            .is_empty();
+    (!has).then(|| {
+        "follow_camera is on, but the scene has no Camera3D, so nothing generates when the game \
+         runs: add one, a player with a camera say, or call follow from a script."
+            .to_owned()
+    })
+}
+
 /// That colliders are asked for while the project's 3D physics is not Jolt, which the node's
 /// bodies and their measured costs assume.
 pub(crate) fn physics(collider_radius: i32) -> Option<String> {
