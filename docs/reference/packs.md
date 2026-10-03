@@ -108,7 +108,11 @@ The presets in `examples/presets`, each with three parameters:
   `roughness` runs from gentle to rugged, and whose `trees` run from bare to dense woods;
 - `hills.world.ron`: rolling hills of meadow under woods, rock on the highest crowns, whose `hills`
   run from gentle swells to steep hills, whose `forest` runs from open meadow to woods everywhere,
-  and whose `meadows` run from bare to thick grass (a `cover` field for an engine's grass).
+  and whose `meadows` run from bare to thick grass (a `cover` field for an engine's grass);
+- `canyon.world.ron`: mesas of banded red rock cut by winding canyons with sand on their floors and
+  cliffs where the ground falls steeply, whose `canyons` run from narrow slots to wide valleys,
+  whose `strata` run from smooth slopes to terraces of flat ledges and steep steps, and whose `cacti`
+  run from bare sand to cacti over much of it.
 
 ## Edits
 

@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/cactus.tres" id="1_m1dcm"]
+
+[node name="Cactus" type="MeshInstance3D" unique_id=1455053272]
+mesh = ExtResource("1_m1dcm")

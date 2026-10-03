@@ -1,0 +1,66 @@
+// The canyon desert preset (docs/product/user-stories.md, N2): mesas of banded red rock cut by
+// winding canyons with sand on their floors, cliffs where the ground falls steeply, and cacti on the
+// sand. Three parameters tune it: how wide the canyons cut, how stepped the rock stands, and how
+// many cacti grow. Every value in their ranges gives a sound world (tests/presets.rs sweeps them).
+(
+    version: 1,
+    params: {
+        // From narrow slot canyons at 0 to wide valleys between the mesas at 1.
+        "canyons": (default: 0.4, range: (0.0, 1.0)),
+        // From smooth slopes at 0 to terraces of flat ledges and steep steps at 1.
+        "strata": (default: 0.7, range: (0.0, 1.0)),
+        // From bare sand at 0 to cacti over much of it at 1.
+        "cacti": (default: 0.5, range: (0.0, 1.0)),
+    },
+    noises: {
+        // The canyons wind along where this noise crosses zero.
+        "canyons": (noise_type: SimplexSmooth, seed: 31, frequency: 0.01, fractal_octaves: 3),
+        "mesas": (noise_type: SimplexSmooth, seed: 32, frequency: 0.02, fractal_octaves: 2),
+        "detail": (noise_type: SimplexSmooth, seed: 33, frequency: 0.09, fractal_octaves: 2),
+        "patches": (noise_type: Perlin, seed: 34, frequency: 0.04, fractal_octaves: 2),
+    },
+    stages: [
+        // 0 on a canyon's floor and 1 on the mesas, rising over a wall as the canyon noise moves away
+        // from zero past the canyons amount.
+        (name: "plateau", kind: Field(Smoothstep(0.0, 0.25, Sub(
+            Abs(FastNoise("canyons")),
+            Add(Constant(0.03), Mul(Param("canyons"), Constant(0.27))),
+        )))),
+        // The rock before it is stepped: a canyon floor of low dunes 1 cell above the ground's zero,
+        // and mesas 6 to 14 cells above it.
+        (name: "rise", kind: Field(Add(
+            Add(Constant(1.0), Mul(Add(FastNoise("detail"), Constant(1.0)), Constant(0.25))),
+            Mul(Input("plateau"), Add(Constant(9.0), Mul(FastNoise("mesas"), Constant(4.0)))),
+        ))),
+        // The rise moved towards terraces 2.5 cells apart by the strata amount: flat over most of
+        // each step and climbing over its last quarter.
+        (name: "height", kind: Field(Add(Input("rise"), Mul(Param("strata"), Sub(
+            Mul(Add(
+                Floor(Mul(Input("rise"), Constant(0.4))),
+                Smoothstep(0.75, 1.0, Sub(
+                    Mul(Input("rise"), Constant(0.4)),
+                    Floor(Mul(Input("rise"), Constant(0.4))),
+                )),
+            ), Constant(2.5)),
+            Input("rise"),
+        ))))),
+        (name: "steep", kind: Delta(input: "height", radius: 1)),
+        (name: "surface", kind: Rules(rules: [
+            // Bands of paler rock a cell or so thick, as strata are, through the cliffs and the rock.
+            (category: "pale_cliff", when: [
+                Greater(Input("steep"), Constant(1.6)),
+                Greater(Sin(Mul(Input("height"), Constant(2.0))), Constant(0.35)),
+            ]),
+            (category: "cliff", when: [Greater(Input("steep"), Constant(1.6))]),
+            (category: "sand", when: [Less(Input("plateau"), Constant(0.1))]),
+            (category: "pale_rock", when: [Greater(Sin(Mul(Input("height"), Constant(2.0))), Constant(0.35))]),
+        ], otherwise: "red_rock")),
+        // Cacti on the canyons' floors, in patches as wide as the cacti amount.
+        (name: "cacti", kind: Scatter(kind: "cactus", height: "height", spacing: 4, apart: 3,
+            max_slope: Some(0.5), scale: (0.7, 1.3),
+            when: [
+                Greater(Is("surface", ["sand"]), Constant(0.5)),
+                Less(Clamp(Remap(FastNoise("patches"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("cacti")),
+            ])),
+    ],
+)
