@@ -316,7 +316,11 @@ world, without code.*
 walkable world with colliders and navigation on the first play; no error or warning in the output;
 the node's inspector shows three to six parameters. Needs a person: five people new to the plugin
 reach a walkable world in under five minutes, timed. **Needs.** Tier 0 presets, Emit, the defaults.
-**Status:** not started (2026-09-23).
+**Status:** in progress (2026-10-03). The node warns in the editor of a scene with no light or
+environment, which the owner chose over the node adding them itself (#48), and of settings that
+would leave the world without bodies or name no fitting stage (`verify_warnings.gd`,
+[#273](https://github.com/AntonTegnelov/wave_forge/issues/273)). The default preset, materials and
+tree, and following the camera with no code, are next.
 
 ### N2. Pick a preset and tweak it with a live preview
 

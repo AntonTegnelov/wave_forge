@@ -374,6 +374,22 @@ be placed again as `pooled_nodes` ([Scenes](#scenes)).
 
 ### Editor
 
+Both nodes are tool classes and show configuration warnings in the editor's scene tree, refreshed
+about twice a second, for settings that would leave the world dark, without bodies, occluders or
+sound, or that name no fitting stage; `configuration_warnings()` gives the same list to a script.
+`WaveForgeStages` warns when:
+- the scene has no light, or no `WorldEnvironment` and no default environment (the editor lights its
+  viewport with a preview sun and sky that a running game has not);
+- `pack_file` is empty or not a pack;
+- a target names no stage, or a stage setting (`ground_stage`, `grass_stage`, `candidates_stage`,
+  `ground_material_stage`, `far_ground_stage`, `fluid_stage`, `volume_stage`) names no stage of
+  the kind it needs, which `start` refuses with the same words.
+
+`WaveForgeWorld` warns when `start_on_ready` is set with no `rules_file`, or when an interior bus it
+names is not in the project's bus layout. Both warn when `collider_radius` builds bodies while the
+project's 3D physics is not Jolt, and when `occluder_radius` builds occluders while occlusion culling
+is off. `WaveForgeWorld` never starts in the editor.
+
 `WaveForgeStages` is a tool class, so it runs in the editor where `preview_in_editor` is on,
 generating around the editor's camera. The editor plugin (`addons/wave_forge`, enabled in the
 project's plugins) adds a Wave Forge dock:
