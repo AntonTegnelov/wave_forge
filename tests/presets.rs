@@ -1,6 +1,7 @@
 //! Presets and their parameters (docs/product/user-stories.md, N2): a pack's parameters change
 //! what reads them and nothing else, and every value in each preset's ranges gives a sound world,
-//! swept over a grid of values and seeds: islands, hills and forests, and the canyon desert.
+//! swept over a grid of values and seeds: islands, hills and forests, the canyon desert and the
+//! archipelago.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -403,4 +404,96 @@ fn wider_canyons_more_strata_and_more_cacti_each_make_more_of_theirs() {
         "{levels:?}"
     );
     assert!(cacti.windows(2).all(|pair| pair[0] < pair[1]), "{cacti:?}");
+}
+
+/// The archipelago's land share of the area, the share under a reef's shallow water, and how many
+/// palms stand in it, checking on the way that every height is finite and every palm stands on land
+/// above the waves.
+fn survey_archipelago(runtime: &Runtime) -> (f32, f32, usize) {
+    let (mut land, mut shallow, mut columns, mut palms) = (0, 0, 0, 0);
+    for chunk in area() {
+        let height = runtime.field("height", chunk).expect("generated");
+        for &value in &height.values {
+            assert!(
+                value.is_finite() && (-8.5..10.0).contains(&value),
+                "a height of {value}"
+            );
+            land += usize::from(value > 0.0);
+            shallow += usize::from((-1.0..0.0).contains(&value));
+            columns += 1;
+        }
+        for palm in runtime.points("palms", chunk).expect("generated") {
+            assert!(
+                palm.position[2] >= 0.3,
+                "a palm in the waves at {:?}",
+                palm.position
+            );
+            palms += 1;
+        }
+    }
+    let columns = columns as f32;
+    (land as f32 / columns, shallow as f32 / columns, palms)
+}
+
+#[test]
+fn every_value_in_the_archipelago_ranges_gives_a_sound_world() {
+    let pack = preset("archipelago");
+    let grid = [0.0, 0.5, 1.0];
+
+    for seed in [1, 2] {
+        for islands in grid {
+            for reefs in grid {
+                for palms in grid {
+                    let mut runtime = Runtime::new(Arc::clone(&pack), seed, SIZE);
+                    let values = params([("islands", islands), ("reefs", reefs), ("palms", palms)]);
+                    runtime.set_params(&values).expect("values in range");
+
+                    generate(&mut runtime, &["height", "surface", "cover", "palms"]);
+
+                    let (land, _, palm_count) = survey_archipelago(&runtime);
+                    let at =
+                        format!("seed {seed}, islands {islands}, reefs {reefs}, palms {palms}");
+                    assert!(
+                        (0.0..0.7).contains(&land) && land > 0.0,
+                        "{land} land at {at}"
+                    );
+                    if palms == 0.0 {
+                        assert_eq!(palm_count, 0, "palms at {at}");
+                    }
+                    if palms == 1.0 && islands >= 0.5 {
+                        assert!(palm_count > 15, "only {palm_count} palms at {at}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn larger_islands_wider_reefs_and_more_palms_each_make_more_of_theirs() {
+    let pack = preset("archipelago");
+    let survey_at = |islands: f32, reefs: f32, palms: f32| {
+        let mut runtime = Runtime::new(Arc::clone(&pack), 3, SIZE);
+        runtime
+            .set_params(&params([
+                ("islands", islands),
+                ("reefs", reefs),
+                ("palms", palms),
+            ]))
+            .expect("values in range");
+        generate(&mut runtime, &["height", "palms"]);
+        survey_archipelago(&runtime)
+    };
+    let amounts = [0.0, 0.5, 1.0];
+
+    let lands: Vec<f32> = amounts.iter().map(|&a| survey_at(a, 0.5, 0.6).0).collect();
+    let shallows: Vec<f32> = amounts.iter().map(|&a| survey_at(0.5, a, 0.6).1).collect();
+    let palms: Vec<usize> = amounts.iter().map(|&a| survey_at(0.5, 0.5, a).2).collect();
+
+    assert!(lands.windows(2).all(|pair| pair[0] < pair[1]), "{lands:?}");
+    assert!(
+        shallows.windows(2).all(|pair| pair[0] < pair[1]),
+        "{shallows:?}"
+    );
+    assert!(palms.windows(2).all(|pair| pair[0] < pair[1]), "{palms:?}");
 }
