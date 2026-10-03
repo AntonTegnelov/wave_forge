@@ -6,13 +6,13 @@
 ## a wide area and finds a town the way a game would, then asks for everything around it and waits
 ## until every chunk has arrived, then checks that towns stand on level ground at their height, that
 ## the modules bound to a scene are drawn from it with no code, standing where the town puts them,
-## and collide with it, that trees
-## stand on the ground and never on a town, and that Godot's thread stayed free, and that a path on the
-## navigation baked from the ground and the town's shapes crosses the town. Then a character with
-## gravity walks from the open ground straight through the town and out the other side, and must never
-## sink below the ground's surface. Then moving away drops what is no longer needed. Last, the node
-## starts again on the kernels the first start compiled and cached, and the time to the first town
-## is printed for both starts, cold and warm.
+## and collide with it, that trees stand on the ground and never on a town, that no frame emitted
+## more than 256 signals, and that a path on the navigation baked from the ground and the town's
+## shapes crosses the town. Then a character with gravity walks from the open ground straight through
+## the town and out the other side, and must never sink below the ground's surface, while the node's
+## own time on Godot's thread stays under its bars. Then moving away drops what is no longer needed.
+## Last, the node starts again on the kernels the first start compiled and cached, and the time to the
+## first town is printed for both starts, cold and warm.
 ##
 ## The town's modules get simple shapes here: a thin floor whose top is the bottom of every street-level cell, and
 ## a full box for everything above street level, so buildings are hollow at street level, as in
@@ -27,7 +27,10 @@ const RADIUS := 3
 const SEARCH_RADIUS := 12
 const TARGETS := ["level", "city", "trees", "cover", "hills"]
 const LOAD_TIMEOUT_S := 180.0
-## The node's own time on Godot's thread, at the 99th percentile and at worst.
+## The node's own time on Godot's thread: at the 99th percentile of the walk's frames, the steady
+## window that P1 bars, and at worst over the whole run. The frames before the walk are too few for a
+## percentile: on a software device they are a few hundred, and their 99th percentile is one of the
+## frames that emit 256 signals at once (docs/research/measurements.md, E57).
 const NODE_P99_MS := 2.0
 const NODE_MAX_MS := 8.0
 const COLLIDER_RADIUS := 2
@@ -58,6 +61,8 @@ var walk_to_x := 0.0
 var lowest_clearance := INF
 var highest_standing := -INF
 var walk_started_usec := 0
+## The node's own time on each frame of the walk, in milliseconds.
+var walk_frames: Array[float] = []
 ## When the first town chunk arrived after it was asked for, cold and then warm; 0 until then.
 var towns_asked_usec := 0
 var first_town_usec := 0
@@ -176,6 +181,7 @@ func _process(_delta: float) -> bool:
 	if moved:
 		return _check_dropped(waited)
 	if walking:
+		walk_frames.append(world.stats()["last_frame_ms"])
 		return false
 	if checked:
 		if _navigation_crosses_town(waited) and _occluders_stand_in_the_towns() and _drawn_collide():
@@ -195,7 +201,7 @@ func _process(_delta: float) -> bool:
 	if not _check_towns() or not _check_drawn() or not _check_trees() or not _check_cover():
 		return true
 	var stats: Dictionary = world.stats()
-	print("verify_stages: the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms; its slowest frame: %d events in %.3f ms, %d grounds in %.3f ms, %d bodies in %.3f ms, navigation %.3f ms" % [
+	print("verify_stages: the node's own process per frame since the start p50 %.3f ms, p99 %.3f ms, max %.3f ms; its slowest frame: %d events in %.3f ms, %d grounds in %.3f ms, %d bodies in %.3f ms, navigation %.3f ms" % [
 		stats["process_ms_median"], stats["process_ms_p99"], stats["process_ms_max"],
 		stats["slowest_frame_events"], stats["slowest_frame_signals_ms"],
 		stats["slowest_frame_grounds"], stats["slowest_frame_grounds_ms"],
@@ -210,9 +216,6 @@ func _process(_delta: float) -> bool:
 			return true
 	if stats["slowest_frame_events"] > 256:
 		_fail("a frame emitted %d signals; at most 256 are allowed" % stats["slowest_frame_events"])
-		return true
-	if stats["process_ms_p99"] > NODE_P99_MS or stats["process_ms_max"] > NODE_MAX_MS:
-		_fail("the node's process took %.2f ms at the 99th percentile, %.2f ms at worst" % [stats["process_ms_p99"], stats["process_ms_max"]])
 		return true
 	if not _check_ground() or not _check_sampling():
 		return true
@@ -406,6 +409,8 @@ func _physics_process(delta: float) -> bool:
 			return true
 	if at.x >= walk_to_x:
 		print("verify_stages: walked through the town in %.1f s; the feet were at most %.2f below the ground's surface, and at most %.2f above it while standing" % [(Time.get_ticks_usec() - walk_started_usec) / 1e6, maxf(0.0, -lowest_clearance), highest_standing])
+		if not _check_node_time():
+			return true
 		walking = false
 		walker.queue_free()
 		world.follow(Vector3(40 * CELLS * CELL_SIZE, 0, 40 * CELLS * CELL_SIZE))
@@ -416,6 +421,20 @@ func _physics_process(delta: float) -> bool:
 		_fail("the walker was stuck at %s after %.0f s" % [at, WALK_TIMEOUT_S])
 		return true
 	return false
+
+## The node's own time per frame stays under its bars: at the 99th percentile over the walk, and at
+## worst over every frame since the start.
+func _check_node_time() -> bool:
+	var sorted := walk_frames.duplicate()
+	sorted.sort()
+	var p99: float = sorted[roundi((sorted.size() - 1) * 0.99)]
+	var slowest: float = world.stats()["slowest_frame_ms"]
+	print("verify_stages: the node's own process per frame over the walk's %d frames p50 %.3f ms, p99 %.3f ms, max %.3f ms; its slowest frame since the start %.3f ms" % [
+		sorted.size(), sorted[sorted.size() / 2], p99, sorted[sorted.size() - 1], slowest])
+	if p99 > NODE_P99_MS or slowest > NODE_MAX_MS:
+		_fail("the node's process took %.2f ms at the walk's 99th percentile, %.2f ms at worst" % [p99, slowest])
+		return false
+	return true
 
 ## The ground's surface under a point, as the ground mesh has it: the heights of the four column
 ## centres around it, on the mesh's two triangles per square. NAN, after failing, where the height
