@@ -403,14 +403,26 @@ scripts:
   within 2 chunks (the ground's height map, a floor slab under every street-level town cell and a
   box for every town cell above), and walks a capsule (radius 0.4, height 1.5, gravity 20) at
   4 units/s from open ground straight through a town. Its bars: the node's own process under 2 ms
-  at the 99th percentile and 8 ms at worst; the walker's feet never more than 0.3 below the ground's
-  surface, nor above it while standing.
+  at the 99th percentile of the walk's frames and under 8 ms on its slowest frame since the start
+  ([#266], E55); the walker's feet never more than 0.3 below the ground's surface, nor above it
+  while standing.
 
 How frame time is read: Godot's `Performance.TIME_PROCESS` is the slowest frame of the last second,
 not the last frame's time (`main.cpp` keeps the maximum and publishes it once a second, 4.7.2). A
 percentile taken over it once per frame is the slowest frame repeated. Since `1ed29f8` ([#62]) the
 node times its own `process` every frame and `stats()` reports its median, 99th percentile and
 maximum; "Godot's slowest frame" is the maximum of `TIME_PROCESS`, which that reading leaves valid.
+
+A 99th percentile is read over a window of steady frames long enough for it to mean something: the
+city check's run of about 2 300 frames, the stages check's walk of about 2 050. Over a few hundred
+frames it is the second to fifth slowest one, a burst rather than the node's steady cost (E55).
+
+Both checks also run in CI, on GitHub's runners through lavapipe, whose threads share the runner's
+four logical CPUs with Godot's. Frame times there are slower and noisier than in the container, but
+over these windows they stay far under the bars (E55), so CI gates the bars as they are. Gating them
+on a reference machine instead and only reporting them in CI would need that machine, which does not
+exist yet ([#39]). If the slowest frame starts failing on the runners from contention alone, that
+is the change to make.
 
 ### Godot: the extension ([#27], [#37], [#51], [#58]; 2026-09-18 to 09-23)
 
@@ -500,6 +512,7 @@ default cell of 0.25, one region baked per chunk within 1 chunk of the player.
 | E52 | Far ground (`render_far.gd`): the far ground check's pack, a field at full detail (`height`, 25 chunks of near ground around the focus) and the same field at a scale of 8 (`far`, asked for 40 chunks out, 81 coarse chunks of far ground, each 8 by 8 chunks), drawn over magenta from above at an angle, across the near and far boundary from 25 units up, and from 250 units up; three runs | 0 magenta pixels in every view of every run (3 196, 1 637 and 3 580 primitives); before the walls reached below the near ground's skirt depth, 11, 10 and 1 gap pixels along the near ground's outer edges. Generation per second of each stage's own time: `height` 42 000 to 42 700 chunks (49 chunks in 1.1 to 1.2 ms), `far` 57 800 to 58 400 coarse chunks (121 in 2.1 ms), each covering 64 chunks of the lattice | `render_far.gd` under `xvfb-run`, Compatibility (OpenGL) over dozen on the RTX 3070, release, at [#183] |
 | E53 | A cave volume while a player walks through it (`measure_volume.gd`: `caves.world.ron`, chunks of 16 by 16 columns and 64 levels of one metre, a three-octave 3D SimplexSmooth noise under hills with three materials, 4 chunks seen around the player and colliders on the chunk around it), loaded and then walked for 20 s at 4.2 m/s; three runs | each chunk's volume 3.8 to 4.2 ms on the stages' thread (16 384 voxels, about 0.24 µs a voxel); each surface 1.68 to 1.70 ms on Godot's thread, drawing included, of which meshing 1.05 ms (4 061 triangles, the library's `volume_mesh` alone in release); a chunk's concave collider about 4.1 ms to build. With the first cut, 8 surfaces and 3 bodies a frame, the slowest frame took 15.8 to 17.2 ms (5 surfaces 7.7 to 8.3 ms, 3 bodies 8.1 to 8.9). With 2 ms budgets for each, at least one a frame, the slowest frame took 7.05 to 7.19 ms, and during the walk the node's own time per frame was 0.009 ms at the median, 1.88 to 2.25 ms at the 99th percentile and 3.9 to 4.1 ms at most, a single collider. So P1's 8 ms bar holds and its 2 ms p99 is borderline: meeting it needs meshing and colliders off Godot's thread ([#218]). Headless, so the dummy renderer: frame intervals (6.9 ms) are the headless loop's pacing, not drawing | `measure_volume.gd` in headless Godot 4.7.2, release, the dev container's CPU, at [#71] |
 | E54 | E53's walk with each surface meshed on a thread of its own (`SurfaceWorker`) and only drawn on Godot's, within the same 2 ms budget; three runs | each surface 0.26 to 0.30 ms on Godot's thread, against 1.7; during the walk the node's own time per frame 0.010 ms at the median, 0.069 to 0.074 ms at the 99th percentile and 4.1 to 4.2 ms at most, a single collider (4.0 to 4.3 ms); the slowest frame 5.6 to 5.7 ms. P1's bars hold in the container; a desktop's numbers are [#224] | `measure_volume.gd` in headless Godot 4.7.2, release, the dev container's CPU, at [#218] |
+| E55 | Where the stages check reads the node's 99th percentile | Read from `stats()` once the 49 chunks have arrived, as before [#266], the window holds every frame since the start, so its length is how long the town's kernels take to compile. On dozen they compile for about 10 s, the window holds about 1 800 frames, and its p99 was 0.50 to 0.59 ms in five runs. On lavapipe the chunks arrive in 0.4 to 4.3 s here (0.8 to 2.4 s in CI) and the window held 81 to 661 frames, of which several emit 256 signals at once, so the p99 is one of those. In 41 CI runs of 2026-09-29 and 30 it was 0.97 to 2.31 ms, two of them over the bar at 2.02 ms ([#259]) and 2.31 ms, both with the slowest frame emitting 256 signals; the slowest frame was 1.4 to 5.0 ms. Ten runs on lavapipe on four logical CPUs here: 1.81 to 3.42 ms, nine over the bar. Read over the walk through the town instead (about 2 050 frames, the node's `last_frame_ms` each frame): 0.31 to 0.37 ms on dozen (three runs) and 0.26 to 0.36 ms in the ten lavapipe runs. In two of those ten the slowest frame since the start went over 8 ms, at 10.4 and 15.9 ms, building 8 grounds in 9.5 and 11.5 ms against at most 3.7 ms in the others. Building grounds takes no lock (it reads the node's own copy of the products), so Godot's thread was descheduled on two cores shared with lavapipe's threads. The old reading would have failed those two runs as well; CI's slowest frames stayed under 5.0 ms | `verify_stages.gd` in headless Godot 4.7.2, release: dozen on the RTX 3070; lavapipe as Mesa 25.0.7 under `taskset -c 0-3` (two cores of the Ryzen 9 5900X and their SMT siblings), five runs with `LP_NUM_THREADS=4`; CI: the Godot extension job's logs, Mesa 25.2.8. At [#266] |
 
 ### Bevy ([#26], 2026-09-18)
 
@@ -597,3 +610,6 @@ Measurements the current code still waits for.
 [#48]: https://github.com/AntonTegnelov/wave_forge/issues/48
 [#247]: https://github.com/AntonTegnelov/wave_forge/issues/247
 [#263]: https://github.com/AntonTegnelov/wave_forge/pull/263
+[#39]: https://github.com/AntonTegnelov/wave_forge/issues/39
+[#259]: https://github.com/AntonTegnelov/wave_forge/pull/259
+[#266]: https://github.com/AntonTegnelov/wave_forge/pull/266

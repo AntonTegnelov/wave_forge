@@ -227,7 +227,7 @@ a docs-only pull request gets no checks.
 | Job | What it runs |
 |---|---|
 | Library | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`, GPU tests included, on lavapipe; each crate on its own feature set ([testing.md](testing.md)) |
-| Godot extension | Clippy with `-D warnings` and the unit tests of `wave_forge_godot`; then `verify.sh release` in Godot 4.7.2, downloaded from the Godot release and checked against a pinned SHA-512 |
+| Godot extension | Clippy with `-D warnings` and the unit tests of `wave_forge_godot`; then `verify.sh release` in Godot 4.7.2, downloaded from the Godot release and checked against a pinned SHA-512. Its frame-time bars gate CI too; why that holds on lavapipe is in [measurements.md](../research/measurements.md#the-engines) |
 | Bevy plugin | the system libraries Bevy links against on Linux; Clippy with `-D warnings` and the tests of `wave_forge_bevy` that need no device |
 
 CI does not run the `#[ignore]`d suites (benchmarks, streaming, hole census, the game session, and
