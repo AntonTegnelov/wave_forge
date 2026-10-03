@@ -21,6 +21,7 @@ var scene: Node3D
 var stages: Node
 var started_usec := 0
 var settled_frames := 0
+var camera: Camera3D
 
 func _initialize() -> void:
 	root.size = TILE
@@ -46,8 +47,14 @@ func _process(_delta: float) -> bool:
 		printerr("render_presets: tile %d did not settle" % tile)
 		quit(1)
 		return true
+	# Above the ground at the followed point, however high it stands.
+	var ground: float = stages.ground_height(AT)
+	if not is_nan(ground):
+		var reach: float = stages.view_radius * stages.chunk_cells.x * stages.cell_size.x
+		var at := AT + Vector3(0, ground, 0)
+		camera.look_at_from_position(at + Vector3(reach * 0.5, reach * 0.42, reach * 0.5), at)
 	var stats: Dictionary = stages.stats()
-	if stages.ground_chunks().is_empty() or stats["pending_grounds"] > 0 or stats["pending_placements"] > 0:
+	if is_nan(ground) or stages.ground_chunks().is_empty() or stats["pending_grounds"] > 0 or stats["pending_placements"] > 0:
 		settled_frames = 0
 		return false
 	settled_frames += 1
@@ -84,7 +91,7 @@ func _take(spec: Dictionary) -> void:
 	environment.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.environment.ambient_light_color = Color(0.55, 0.58, 0.62)
 	scene.add_child(environment)
-	var camera := Camera3D.new()
+	camera = Camera3D.new()
 	camera.far = 1000
 	scene.add_child(camera)
 	stages = ClassDB.instantiate("WaveForgeStages")
@@ -96,8 +103,6 @@ func _take(spec: Dictionary) -> void:
 	stages.navigation_radius = -1
 	scene.add_child(stages)
 	root.add_child(scene)
-	var reach: float = stages.view_radius * stages.chunk_cells.x * stages.cell_size.x
-	camera.look_at_from_position(AT + Vector3(reach * 0.5, reach * 0.42, reach * 0.5), AT)
 	stages.follow(AT)
 	started_usec = Time.get_ticks_usec()
 	settled_frames = 0
