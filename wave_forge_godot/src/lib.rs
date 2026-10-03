@@ -73,6 +73,7 @@ mod paths;
 mod placements;
 mod proxy;
 mod radius;
+mod sea;
 mod stage_navigation;
 mod stages_node;
 mod timings;

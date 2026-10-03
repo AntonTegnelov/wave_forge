@@ -122,6 +122,13 @@ is only ever set for a later primitive, never for a mesh of one (`modules/gltf/g
 4.7-stable). Meshes Wave Forge writes (`wfc-export-models`, and MeshProducts later) colour through a
 base colour texture and UVs, which every importer honours.
 
+**A MultiMesh with custom data carries a colour per instance too.** Godot 4.7.2's Compatibility
+renderer, given a MultiMesh with custom data and no colour format, reads the custom data where the
+instance colour belongs: trees coloured by their vertices, drawn with their sway as custom data,
+came out yellow, orange and lime green. The node's MultiMeshes carry a white colour per instance
+before the sway, which costs four floats an instance (`render_presets.sh` shows the trees before and
+after).
+
 **Engine assets never enter the product model.** Rules emit ids; each integration binds ids to its
 own assets (a `PackedScene`, a glTF scene, a material, a `FastNoiseLite`). That keeps one model for
 both engines.

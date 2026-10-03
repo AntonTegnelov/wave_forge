@@ -179,6 +179,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_material` | the material the ground is drawn with |
 | | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
+| | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view; empty, or a pack without water, draws none. Lakes above the sea level are not drawn |
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
 | Volume | `volume_stage` | a Volume or Carve stage at scale 1 whose surface is drawn and collided with, for overhangs and caves ([packs.md](packs.md#volume)); empty for none |
 | | `volume_material` | the material the volume's surface is drawn with; empty for Godot's default, or for a stage with materials one that takes its albedo from the vertices' colours |
@@ -398,8 +399,15 @@ is off. `WaveForgeWorld` never starts in the editor.
 `WaveForgeStages` is a tool class, so it runs in the editor where `preview_in_editor` is on,
 generating around the editor's camera. The editor plugin (`addons/wave_forge`, enabled in the
 project's plugins) adds a Wave Forge dock:
-- a Preset list of the packs shipped in `addons/wave_forge/presets`, which makes the chosen one
-  the selected node's pack as one undo action, its parameters then showing as sliders;
+- a Preset list of the presets shipped in `addons/wave_forge/presets`, each a scene of a
+  configured `WaveForgeStages` node beside its pack: choosing one copies its settings onto the
+  selected node as one undo action (its pack, targets, ground, palette, sea, bodies, navigation and
+  scenes, its parameters back to the pack's defaults, showing as sliders). A preset is copied, never
+  shared, so changing the node changes no other scene. A node added with nothing set (no pack, no
+  targets, no ground) takes the default preset, islands, when it is first selected. The copying is
+  `addons/wave_forge/presets.gd`. The presets bind `tree` to the plugin's built-in tree
+  (`addons/wave_forge/tree.tscn`, one vertex-coloured mesh written by `tools/make_tree.gd`) and draw
+  the sea with `addons/wave_forge/sea.tres`;
 - a Paint toggle;
 - a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
 - the stage it paints, or the point stages Remove takes from;

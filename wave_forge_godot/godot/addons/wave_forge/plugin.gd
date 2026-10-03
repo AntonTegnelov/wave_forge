@@ -13,6 +13,7 @@ extends EditorPlugin
 const WorldRunPanel := preload("res://addons/wave_forge/world_run_panel.gd")
 const CandidatePanel := preload("res://addons/wave_forge/candidate_panel.gd")
 const KitImportPanel := preload("res://addons/wave_forge/kit_import_panel.gd")
+const Presets := preload("res://addons/wave_forge/presets.gd")
 
 ## The brushes of the dock, as `paint` names them, with how each is shown.
 const BRUSHES := {
@@ -23,8 +24,6 @@ const BRUSHES := {
 	"Fill": "fill",
 	"Remove": "remove",
 }
-## Where the presets the dock lists lie: packs with a few parameters, shipped with the plugin.
-const PRESETS := "res://addons/wave_forge/presets"
 ## How far along a ray the plugin looks for the ground, in world units, and in what steps.
 const RAY_LENGTH := 2000.0
 const RAY_STEP := 0.5
@@ -60,6 +59,9 @@ func _handles(object: Object) -> bool:
 func _edit(object: Object) -> void:
 	stages = object
 	world_run.bind(object)
+	# A node just added, with nothing set, takes the default preset (N1).
+	if stages != null and Presets.is_fresh(stages) and FileAccess.file_exists(Presets.DEFAULT):
+		_apply_preset(Presets.DEFAULT, "Wave Forge: the default preset")
 
 func _process(_delta: float) -> void:
 	if stages == null or not is_instance_valid(stages) or not stages.preview_in_editor:
@@ -137,8 +139,8 @@ func _make_dock() -> VBoxContainer:
 	box.name = "Wave Forge"
 	preset_choice = OptionButton.new()
 	preset_choice.add_item("Choose a preset")
-	for preset in presets():
-		preset_choice.add_item(preset.get_file().trim_suffix(".world.ron"))
+	for preset in Presets.paths():
+		preset_choice.add_item(preset.get_file().trim_suffix(".tscn"))
 		preset_choice.set_item_metadata(preset_choice.item_count - 1, preset)
 	preset_choice.item_selected.connect(_choose_preset)
 	box.add_child(_labelled("Preset", preset_choice))
@@ -167,27 +169,23 @@ func _make_dock() -> VBoxContainer:
 	box.add_child(kit_import)
 	return box
 
-## The presets shipped with the plugin, by path.
-static func presets() -> PackedStringArray:
-	var paths := PackedStringArray()
-	for file in DirAccess.get_files_at(PRESETS):
-		if file.ends_with(".world.ron"):
-			paths.append(PRESETS.path_join(file))
-	return paths
-
-## Makes the chosen preset the selected node's pack, as one undo action; its parameters then show
-## in the inspector as sliders.
 func _choose_preset(index: int) -> void:
 	if index == 0 or stages == null or not is_instance_valid(stages):
 		return
+	_apply_preset(preset_choice.get_item_metadata(index), "Wave Forge: %s preset" % preset_choice.get_item_text(index))
+	preset_choice.select(0)
+
+## Copies the preset at `path` onto the selected node's settings, as one undo action.
+func _apply_preset(path: String, action: String) -> void:
 	var undo := get_undo_redo()
-	undo.create_action("Wave Forge: %s preset" % preset_choice.get_item_text(index))
-	undo.add_do_property(stages, "pack_file", preset_choice.get_item_metadata(index))
-	undo.add_undo_property(stages, "pack_file", stages.pack_file)
+	undo.create_action(action)
+	var settings := Presets.settings(path)
+	for property: String in settings:
+		undo.add_do_property(stages, property, settings[property])
+		undo.add_undo_property(stages, property, stages.get(property))
 	undo.add_do_method(stages, "notify_property_list_changed")
 	undo.add_undo_method(stages, "notify_property_list_changed")
 	undo.commit_action()
-	preset_choice.select(0)
 
 func _labelled(text: String, control: Control) -> HBoxContainer:
 	var row := HBoxContainer.new()

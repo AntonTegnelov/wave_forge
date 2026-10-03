@@ -156,6 +156,10 @@ pub struct WaveForgeStages {
     /// colours of their own from their index.
     #[export]
     ground_palette: PackedColorArray,
+    /// The material the pack's sea is drawn with: a plane at its water level under the followed
+    /// chunk, as wide as the view. Empty, or a pack without water, draws no sea.
+    #[export]
+    sea_material: Option<Gd<Material>>,
     /// A coarse field stage the far ground is drawn from beyond the near ground, a height in cells
     /// per column like `ground_stage`'s; empty for none. Give it a radius of its own in
     /// `target_radii`, as far as the ground should reach; a coarse chunk's far ground needs the
@@ -312,6 +316,8 @@ pub struct WaveForgeStages {
     rules: BTreeMap<String, RuleFile>,
     worker: Option<crate::ending::Ending<StageWorker>>,
     followed: Option<ChunkCoord>,
+    /// The sea's plane, once there is a followed chunk to draw it under.
+    sea: Option<crate::sea::Sea>,
     process_ms: Timings,
     /// Each town module's collision shape, by module name, for every Solve stage.
     collision_shapes: HashMap<String, Gd<Shape3D>>,
@@ -711,6 +717,8 @@ impl INode for WaveForgeStages {
             rules: BTreeMap::new(),
             worker: None,
             followed: None,
+            sea: None,
+            sea_material: None,
             process_ms: Timings::new(RECENT_FRAMES),
             ground_stage: GString::new(),
             far_ground_stage: GString::new(),
@@ -1385,6 +1393,7 @@ impl WaveForgeStages {
             &[FocusPoint::new(chunk, self.view_radius.max(0) as u32)],
             &targets,
         );
+        self.place_sea(chunk, size);
     }
 
     /// A field stage's values for a chunk, column by column with the lattice's x fastest; empty if
@@ -2672,10 +2681,12 @@ impl WaveForgeStages {
     /// each stage has cost on the stages' thread, by name, as `products`, `ms` in all and
     /// `slowest_ms` for one product. And `pending_signals`, `pending_grounds` and
     /// `pending_colliders`: the signals, grounds and bodies waiting for a later frame. And
-    /// `navigation_baked`, how many navigation bakes have gone into their regions.
+    /// `navigation_baked`, how many navigation bakes have gone into their regions. And
+    /// `sea_drawn`, whether the sea's plane is drawn.
     #[func]
     fn stats(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
+        out.set(&"sea_drawn".to_variant(), &self.sea.is_some().to_variant());
         let stages = stage_costs(self.worker.iter().flat_map(|worker| worker.timings()));
         out.set(&"stages".to_variant(), &stages.to_variant());
         out.set(
@@ -4082,6 +4093,43 @@ impl WaveForgeStages {
         }
     }
 
+    /// Draws the sea under `chunk`, of `size` along Godot's x and z, making it the first time
+    /// there is a material, a pack with water and a world to draw in.
+    fn place_sea(&mut self, chunk: ChunkCoord, size: [f32; 2]) {
+        if self.sea.is_none() {
+            let level = self
+                .pack
+                .as_ref()
+                .and_then(|pack| pack.water())
+                .map(|water| water.level);
+            let scenario = self
+                .base()
+                .get_viewport()
+                .and_then(|viewport| viewport.find_world_3d())
+                .map(|world| world.get_scenario());
+            let (Some(material), Some(level), Some(scenario)) =
+                (&self.sea_material, level, scenario)
+            else {
+                return;
+            };
+            // As wide as the view, and a chunk more on each side so its edge is never in it.
+            let side = (2 * self.view_radius.max(0) + 3) as f32 * size[0].max(size[1]);
+            self.sea = Some(crate::sea::Sea::new(
+                material,
+                side,
+                level * self.cell_size.y,
+                scenario,
+            ));
+        }
+        if let Some(sea) = &self.sea {
+            sea.place(Vector3::new(
+                (chunk.x as f32 + 0.5) * size[0],
+                0.0,
+                (chunk.y as f32 + 0.5) * size[1],
+            ));
+        }
+    }
+
     /// What is wrong with the node's stage settings for `pack`, each a sentence: a target or a
     /// setting naming no stage of the pack, or a stage of the wrong kind for the setting. `start`
     /// refuses to start with any, and the editor shows them as configuration warnings.
@@ -4222,6 +4270,7 @@ impl WaveForgeStages {
     }
 
     fn clear_ground_and_bodies(&mut self) {
+        self.sea = None;
         if let Some(grass) = &mut self.grass {
             grass.clear();
         }

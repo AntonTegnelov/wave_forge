@@ -320,8 +320,11 @@ reach a walkable world in under five minutes, timed. **Needs.** Tier 0 presets, 
 environment, which the owner chose over the node adding them itself (#48), and of settings that
 would leave the world without bodies or name no fitting stage, and has inspector buttons to start or
 regenerate, reroll the seed and bake the view (`verify_inspector.gd`,
-[#273](https://github.com/AntonTegnelov/wave_forge/issues/273)). The default preset, materials and
-tree, and following the camera with no code, are next.
+[#273](https://github.com/AntonTegnelov/wave_forge/issues/273)). A node added with nothing set
+takes the default preset, islands: its ground with sand, grass and rock, its sea, trees bound to the
+plugin's built-in tree, bodies and navigation; given to a fresh node in a lit scene, it starts on its
+own, stands that world and prints no error or warning (`verify_presets.gd`). Following the camera
+with no code, and a player to walk with, are next.
 
 ### N2. Pick a preset and tweak it with a live preview
 
@@ -338,8 +341,10 @@ rises and more trees as `trees` does, and a changed parameter regenerates only w
 (`tests/presets.rs`, `verify_params.gd`). The inspector shows each parameter as a slider over its
 range that changes the running stages as it moves, reads its default until set and reverts to it
 (`verify_params.gd`), and Godot's inspector makes each change undoable. The editor plugin's dock
-lists the shipped presets and makes the chosen one the node's pack; the node previews in the
-editor. Picking a preset and moving sliders with the mouse is not automated, and the preview's
+lists the shipped presets, each a scene of a configured node, and copies the chosen one's settings
+onto the node as one undo action; the node previews in the editor (`verify_presets.gd` takes each
+preset as a fresh node and checks it stands a lit world). `render_presets.sh` renders a contact
+sheet of each preset, every parameter at its minimum, default and maximum, for judging its look. Picking a preset and moving sliders with the mouse is not automated, and the preview's
 speed on a reference desktop is P6's
 ([#224](https://github.com/AntonTegnelov/wave_forge/issues/224)).
 
