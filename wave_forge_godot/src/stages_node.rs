@@ -2348,6 +2348,44 @@ impl WaveForgeStages {
         out
     }
 
+    /// The drawn candidate of `candidates_stage` under a ray from `from` along `along`, both in
+    /// Godot's world space, as [`WaveForgeStages::candidate_near`] gives it within a cell of where
+    /// the ray first meets the ground the candidates stand on, the field the Scatter stage reads
+    /// as its height: what the editor dock shows under the mouse. Empty when the ray meets that
+    /// ground nowhere generated within 2 000 units, or no candidate lies near where it does.
+    #[func]
+    fn candidate_under(&self, from: Vector3, along: Vector3) -> VarDictionary {
+        let (Some(worker), Some(pack)) = (&self.worker, &self.pack) else {
+            return VarDictionary::new();
+        };
+        let Some(StageKind::Scatter { height, .. }) = pack.kind(&self.candidates_stage.to_string())
+        else {
+            return VarDictionary::new();
+        };
+        let columns = [
+            self.chunk_cells.x.max(1) as u32,
+            self.chunk_cells.y.max(1) as u32,
+        ];
+        let cell = self.cell_size;
+        let along = along.normalized();
+        let step = 0.5 * cell.x.min(cell.z);
+        let mut travelled = 0.0;
+        while travelled < 2000.0 {
+            let at = from + along * travelled;
+            let ground = ground_height(
+                [at.x, at.z],
+                columns,
+                |chunk| worker.field(height, chunk),
+                cell.to_array(),
+            );
+            if ground.is_some_and(|ground| at.y <= ground) {
+                return self.candidate_near(at, cell.x);
+            }
+            travelled += step;
+        }
+        VarDictionary::new()
+    }
+
     /// Generates the whole world of the pack's bound ahead of time, on a thread of its own: the
     /// node's `targets` over every chunk, each chunk's products kept under `directory` the moment
     /// it is done, which `play_directory` then plays ([packs.md](packs.md#a-whole-world-ahead-of-time)).

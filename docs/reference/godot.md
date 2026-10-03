@@ -322,7 +322,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   its `verdict` and `colour`, its `position`, and what the stage's modifiers read there, `height`,
   `slope` and `water_depth` when the stage has those modifiers, and `conditions`, each with the
   `value` it tests and whether it `holds` ([packs.md](packs.md#scatter)); empty when none lies that
-  near.
+  near. `candidate_under(from, along)` gives the same for the candidate under a ray, within a cell
+  of where the ray first meets the ground the candidates stand on, the Scatter stage's height
+  field, whatever `ground_stage` is.
 - `run_world(directory)` generates the pack's whole finite world ahead of time on a thread of its
   own, the node's `targets` over every chunk of the bound, keeping each chunk's products under
   `directory` as it is done; `world_run_progress(done, total, stages)` reports each chunk, and
@@ -381,8 +383,8 @@ project's plugins) adds a Wave Forge dock:
 - the stage it paints, or the point stages Remove takes from;
 - a radius in cells, and a strength;
 - with Paint off, the candidate of the node's `candidates_stage` under the mouse, what became of it
-  and what its stage's modifiers read there, as `candidate_near` gives it within a cell of the
-  ground under the mouse; the panel is `addons/wave_forge/candidate_panel.gd`, which only renders
+  and what its stage's modifiers read there, as `candidate_under` gives it for the ray under the
+  mouse; the panel is `addons/wave_forge/candidate_panel.gd`, which only renders
   that Dictionary;
 - a Kit import: a `MeshLibrary` path, or a folder of scenes, and a cell size, which list the connectors the library's meshes
   propose, each with a field for a new name and, for a side, a walkable tick, and a path the named
