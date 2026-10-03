@@ -1,0 +1,43 @@
+// The hills and forests preset (docs/product/user-stories.md, N2): rolling hills of meadow under
+// woods, rock on the highest crowns, grass over the meadows and trees through the woods. Three
+// parameters tune it: how tall the hills rise, how much of the land the woods cover, and how thick
+// the meadows' grass grows. Every value in their ranges gives a sound world (tests/presets.rs
+// sweeps them).
+(
+    version: 1,
+    params: {
+        // From gentle swells at 0 to steep hills at 1.
+        "hills": (default: 0.5, range: (0.0, 1.0)),
+        // From open meadow at 0 to woods everywhere at 1.
+        "forest": (default: 0.45, range: (0.0, 1.0)),
+        // From bare meadows at 0 to thick grass at 1.
+        "meadows": (default: 0.6, range: (0.0, 1.0)),
+    },
+    noises: {
+        "hills": (noise_type: SimplexSmooth, seed: 21, frequency: 0.012, fractal_octaves: 4),
+        "detail": (noise_type: SimplexSmooth, seed: 22, frequency: 0.07, fractal_octaves: 2),
+        "woods": (noise_type: Perlin, seed: 23, frequency: 0.035, fractal_octaves: 2),
+    },
+    stages: [
+        // The hills rise from 2 cells above the ground's zero to as much as 22, by the hills amount.
+        (name: "height", kind: Field(Add(
+            Constant(2.0),
+            Mul(
+                Add(Add(FastNoise("hills"), Constant(1.0)), Mul(FastNoise("detail"), Constant(0.15))),
+                Add(Constant(3.0), Mul(Param("hills"), Constant(7.0))),
+            ),
+        ))),
+        // 0 to 1: where the woods lie under the forest amount.
+        (name: "woods", kind: Field(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0))),
+        (name: "surface", kind: Rules(rules: [
+            // The crowns of the tallest hills, a share of the way up whatever their height.
+            (category: "rock", when: [Greater(Input("height"), Add(Constant(6.8), Mul(Param("hills"), Constant(11.2))))]),
+            (category: "forest_floor", when: [Less(Input("woods"), Param("forest"))]),
+        ], otherwise: "meadow")),
+        // Grass over the meadows, as thick as the meadows amount.
+        (name: "cover", kind: Field(Mul(Is("surface", ["meadow"]), Param("meadows")))),
+        // Trees through the woods.
+        (name: "trees", kind: Scatter(kind: "tree", height: "height", spacing: 2, apart: 2,
+            when: [Greater(Is("surface", ["forest_floor"]), Constant(0.5))])),
+    ],
+)

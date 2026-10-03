@@ -103,9 +103,12 @@ and drops every product that read one whose value changed, with what was generat
 `request` does; `Runtime::params()` gives the values now. A name the pack does not declare, or a
 value outside its range, fails with `StageError::Param` and changes nothing.
 
-`examples/presets/islands.world.ron` is the first preset: islands whose `land` runs from a sea of
-islets to land with a few lakes, whose `roughness` runs from gentle to rugged, and whose `trees` run
-from bare to dense woods.
+The presets in `examples/presets`, each with three parameters:
+- `islands.world.ron`: islands whose `land` runs from a sea of islets to land with a few lakes, whose
+  `roughness` runs from gentle to rugged, and whose `trees` run from bare to dense woods;
+- `hills.world.ron`: rolling hills of meadow under woods, rock on the highest crowns, whose `hills`
+  run from gentle swells to steep hills, whose `forest` runs from open meadow to woods everywhere,
+  and whose `meadows` run from bare to thick grass (a `cover` field for an engine's grass).
 
 ## Edits
 

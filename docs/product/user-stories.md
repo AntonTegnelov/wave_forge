@@ -336,10 +336,11 @@ density) while the editor preview updates.*
 **Acceptance criteria.** Each preset's exposed parameters have ranges that never produce a broken
 world (swept by a seed and parameter contact sheet); the preview updates within the P6 target;
 undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Status:** in progress
-(2026-09-29): packs declare parameters with ranges that stages read, and the islands preset
-(`examples/presets/islands.world.ron`) tunes its land amount, roughness and tree density; a sweep
-of every range over a grid of values and seeds finds a sound world at each, more land as `land`
-rises and more trees as `trees` does, and a changed parameter regenerates only what reads it
+(2026-10-04): packs declare parameters with ranges that stages read, and the presets in
+`examples/presets` tune three each: islands its land amount, roughness and tree density, and hills
+and forests its relief, woods and meadow grass. A sweep of every range over a grid of values and
+seeds finds a sound world at each, more land as `land` rises, more trees as `trees` or `forest`
+does and more relief as `hills` does, and a changed parameter regenerates only what reads it
 (`tests/presets.rs`, `verify_params.gd`). The inspector shows each parameter as a slider over its
 range that changes the running stages as it moves, reads its default until set and reverts to it
 (`verify_params.gd`), and Godot's inspector makes each change undoable. The editor plugin's dock
