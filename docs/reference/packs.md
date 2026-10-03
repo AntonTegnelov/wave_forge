@@ -187,7 +187,9 @@ save holds them all, so freezing suits stages with few products, like locations.
 and comes back from it, unchanged, when a request needs it again, so a walk across an infinite world
 holds a bounded number of them (`tests/frozen_store.rs`). A store is anything that implements
 `FrozenStore`, which keeps bytes by stage name and chunk; `DirectoryStore::new(path)` keeps a file
-per chunk under a directory. A save then holds only the frozen chunks in memory, and the game keeps
+per chunk under a directory. A product goes into a store exactly as it was generated, in a binary
+form compressed with deflate, a volume's values laid out byte by byte so they compress well; the
+first byte names the form, and a store written in another is refused rather than misread. A save then holds only the frozen chunks in memory, and the game keeps
 the store with its saves; a runtime of a changed pack given the same store reads a stored chunk as
 it was first generated.
 

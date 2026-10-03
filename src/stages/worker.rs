@@ -511,9 +511,9 @@ fn play(
         let mut arrived = Vec::new();
         for (stage, chunk) in needed.difference(&held) {
             let product = match store.fetch(stage, *chunk) {
-                Ok(Some(bytes)) => std::str::from_utf8(&bytes)
-                    .map_err(|error| error.to_string())
-                    .and_then(|text| ron::from_str::<Product>(text).map_err(|e| e.to_string())),
+                Ok(Some(bytes)) => super::codec::decode(&bytes).map_err(|error| {
+                    format!("the store's chunk {chunk:?} of stage {stage:?}: {error}")
+                }),
                 Ok(None) => Err(format!(
                     "the store holds no chunk {chunk:?} of stage {stage:?}; run the world with it \
                      as a target"

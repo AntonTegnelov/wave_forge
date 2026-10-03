@@ -42,7 +42,7 @@ impl Runtime {
     /// Generates `targets` over every chunk of the pack's bound ([`Runtime::bound_chunks`]), a
     /// block at a time: square blocks as wide as the pack's largest regions and aligned with them,
     /// row by row, each asked for whole, so a region's inputs are generated once. It keeps each
-    /// chunk's product of each target in `store`, as the product's RON text under the stage's
+    /// chunk's product of each target in `store`, as a frozen chunk is kept, under the stage's
     /// name, as soon as its block is done. A chunk whose every target the store already holds is
     /// skipped. After each chunk, and every second while a block generates, `progress` is told
     /// how far the run has got, and the run stops if it breaks: a block of a large world takes
@@ -109,8 +109,7 @@ impl Runtime {
                         let product = self
                             .product(target, chunk)
                             .expect("a target is generated over the chunk it was asked for");
-                        let text = ron::to_string(product).expect("a product is plain data");
-                        store.keep(target, chunk, text.into_bytes())?;
+                        store.keep(target, chunk, super::codec::encode(product))?;
                     }
                 } else {
                     state.skipped += 1;
