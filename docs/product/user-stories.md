@@ -323,8 +323,10 @@ regenerate, reroll the seed and bake the view (`verify_inspector.gd`,
 [#273](https://github.com/AntonTegnelov/wave_forge/issues/273)). A node added with nothing set
 takes the default preset, islands: its ground with sand, grass and rock, its sea, trees bound to the
 plugin's built-in tree, bodies and navigation; given to a fresh node in a lit scene, it starts on its
-own, stands that world and prints no error or warning (`verify_presets.gd`). Following the camera
-with no code, and a player to walk with, are next.
+own, stands that world and prints no error or warning (`verify_presets.gd`). The node follows the camera
+with no code, and the plugin's walker walks the default preset, standing on its ground, with nothing
+printed (`verify_walk.gd`). Left: the timed walkthrough with five newcomers, near the release
+([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 
 ### N2. Pick a preset and tweak it with a live preview
 

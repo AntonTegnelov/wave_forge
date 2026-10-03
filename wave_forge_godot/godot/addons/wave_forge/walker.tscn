@@ -1,0 +1,18 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://addons/wave_forge/walker.gd" id="1_walker"]
+
+[sub_resource type="CapsuleShape3D" id="1_body"]
+radius = 0.35
+height = 1.8
+
+[node name="Walker" type="CharacterBody3D"]
+script = ExtResource("1_walker")
+
+[node name="Body" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("1_body")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+current = true
