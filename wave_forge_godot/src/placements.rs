@@ -459,6 +459,7 @@ fn multimesh(
             items.len() as i32,
             MultimeshTransformFormat::TRANSFORM_3D,
         )
+        .color_format(true)
         .custom_data_format(true)
         .done();
     rendering.multimesh_set_buffer(multimesh, &buffer(items, offset));
@@ -477,8 +478,8 @@ fn buffer(items: &[&Item], offset: Transform3D) -> PackedFloat32Array {
             let [a, b, c] = basis.rows;
             let [phase, stiffness] = item.sway;
             [
-                a.x, a.y, a.z, origin.x, b.x, b.y, b.z, origin.y, c.x, c.y, c.z, origin.z, phase,
-                stiffness, 0.0, 0.0,
+                a.x, a.y, a.z, origin.x, b.x, b.y, b.z, origin.y, c.x, c.y, c.z, origin.z, 1.0,
+                1.0, 1.0, 1.0, phase, stiffness, 0.0, 0.0,
             ]
         })
         .collect()
