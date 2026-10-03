@@ -390,12 +390,15 @@ hand.*
 **Acceptance criteria.** A guided import reads a `MeshLibrary` or a folder of scenes, proposes
 connectors from matching face shapes, lets the artist confirm or rename them, and writes a module
 set that generates a city with no unplaced chunk in the test world. **Needs.** Import, module-set
-authoring tools, Solve. **Status:** in progress (2026-09-29): `wfc_rules::import::propose` proposes
-connectors from matching face shapes and writes the module set, and the set proposed from the
-city's own voxel models generates a city with no unplaced chunk (`wfc-devtools/tests/import.rs`);
-`WaveForgeWorld.propose_module_set` proposes one from a `MeshLibrary` (`verify_import.gd`). The
-artist's confirming and renaming wait for the editor
-([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
+authoring tools, Solve. **Status:** verified by automated checks (2026-10-03), in the library's and
+the Godot extension's CI jobs. `wfc_rules::import::propose` proposes connectors from matching face
+shapes and writes the module set, and the set proposed from the city's own voxel models generates a
+city with no unplaced chunk (`wfc-devtools/tests/import.rs`); `connectors` lists what it finds and
+`propose_named` writes it under the artist's names with walkable sides, refusing a naming that
+would lose or merge connectors (`wfc-rules/src/import.rs`). In Godot the dock's kit import reads a
+`MeshLibrary` or a folder of scenes (`mesh_library_from_scenes`), lists the proposed connectors with
+a field to rename each and a walkable tick for a side, and saves the named set as a rule file that
+loads (`verify_import.gd`).
 
 ### N7. Use my own noise
 

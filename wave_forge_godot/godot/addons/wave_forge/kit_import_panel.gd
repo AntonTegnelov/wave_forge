@@ -1,7 +1,7 @@
 @tool
 extends VBoxContainer
 ## The dock's kit import (docs/reference/godot.md, "Editor"; N6): proposes a module set from a
-## MeshLibrary's meshes, lists the connectors the proposal finds for the artist to rename and mark
+## MeshLibrary's meshes or a folder of scenes, lists the connectors the proposal finds for the artist to rename and mark
 ## walkable, and saves the named set as a rule file. WaveForgeWorld does the work
 ## (`kit_connectors`, `name_module_set`); the panel only gathers the artist's names.
 
@@ -23,9 +23,9 @@ var rows := {}
 func _init() -> void:
 	name = "Kit import"
 	library_edit = LineEdit.new()
-	library_edit.placeholder_text = "res://kit.meshlib"
+	library_edit.placeholder_text = "res://kit.meshlib, or a folder of scenes"
 	library_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	add_child(_row("MeshLibrary", library_edit))
+	add_child(_row("Kit", library_edit))
 	var cell_row := HBoxContainer.new()
 	for axis in ["x", "y", "z"]:
 		var spin := SpinBox.new()
@@ -110,12 +110,21 @@ func save_to(path: String) -> bool:
 	status.text = "Saved the module set to %s" % path
 	return true
 
-func _on_propose() -> void:
-	var kit := load(library_edit.text) as MeshLibrary
+## Proposes from the kit at `path`, a MeshLibrary or a folder of scenes (`mesh_library_from_scenes`),
+## in cells of `cell_size`; returns how many connectors it lists, or -1 if nothing is there.
+func propose_path(path: String, cell_size: Vector3) -> int:
+	var kit: MeshLibrary
+	if DirAccess.dir_exists_absolute(path):
+		kit = ClassDB.class_call_static("WaveForgeWorld", "mesh_library_from_scenes", path)
+	else:
+		kit = load(path) as MeshLibrary
 	if kit == null:
-		status.text = "No MeshLibrary at %s" % library_edit.text
-		return
-	propose(kit, Vector3(cell_spins[0].value, cell_spins[1].value, cell_spins[2].value))
+		status.text = "No MeshLibrary or folder of scenes at %s" % path
+		return -1
+	return propose(kit, cell_size)
+
+func _on_propose() -> void:
+	propose_path(library_edit.text, Vector3(cell_spins[0].value, cell_spins[1].value, cell_spins[2].value))
 
 func _row(text: String, control: Control) -> HBoxContainer:
 	var row := HBoxContainer.new()

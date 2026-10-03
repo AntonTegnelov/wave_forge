@@ -49,8 +49,11 @@ extension needs none of godot-rust's thread-safety features.
   (`"side n"` or `"top n"`), whether it joins tops (`top`) and the `modules` that have it, and
   `name_module_set(library, cell_size, names, walkable)` writes the set with the connectors `names`
   maps under their new names and walkable sides on the connectors `walkable` lists; a naming that
-  would lose or merge connectors is refused with an error and an empty result. The dock's kit
-  import does both ([Editor](#editor)).
+  would lose or merge connectors is refused with an error and an empty result.
+  `mesh_library_from_scenes(directory)` makes a `MeshLibrary` of a kit that comes as a folder of
+  scenes: an item per `.tscn`, `.scn`, `.glb` or `.gltf` file, named as the file, whose mesh is
+  every `MeshInstance3D` of the scene merged where the scene places them. The dock's kit import does
+  all three ([Editor](#editor)).
 - **The prior:** `set_layer_tiles(layers)`, `ban_tiles_on_face(axis, tiles)`.
 - **Streaming:** `follow(position)` asks for the chunks around a position in Godot's world space;
   `generated_chunks()`.
@@ -381,10 +384,11 @@ project's plugins) adds a Wave Forge dock:
   and what its stage's modifiers read there, as `candidate_near` gives it within a cell of the
   ground under the mouse; the panel is `addons/wave_forge/candidate_panel.gd`, which only renders
   that Dictionary;
-- a Kit import: a `MeshLibrary` path and a cell size, which list the connectors the library's meshes
+- a Kit import: a `MeshLibrary` path, or a folder of scenes, and a cell size, which list the connectors the library's meshes
   propose, each with a field for a new name and, for a side, a walkable tick, and a path the named
   set is saved to as a rule file (`res://kit.ron` unless changed); the panel is
-  `addons/wave_forge/kit_import_panel.gd`, which calls `kit_connectors` and `name_module_set`;
+  `addons/wave_forge/kit_import_panel.gd`, which calls `mesh_library_from_scenes`,
+  `kit_connectors` and `name_module_set`;
 - a World run: a directory (`res://wave_forge_world` unless changed, so the result ships with the
   game), Run world and Cancel buttons, a progress bar of chunks, and what each stage has generated
   so far or how the run ended. Run world is the node's `run_world`, so the node has to have started,

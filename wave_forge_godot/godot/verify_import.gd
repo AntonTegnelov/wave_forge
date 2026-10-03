@@ -8,7 +8,8 @@
 ## set. The dock's kit import (N6) lists the four connectors, with the modules that have them;
 ## named by the artist, with the block's side walkable, it saves a module set under those names
 ## that loads as a rule set, refuses one name for two connectors, and offers no walkable tick for
-## a top.
+## a top. The same kit as a folder of scenes, the wall placed under a parent node, proposes the
+## same modules and the panel lists the same four connectors from the folder.
 extends SceneTree
 
 const CELL := Vector3(2, 1, 2)
@@ -52,7 +53,51 @@ func _initialize() -> void:
 		_fail(problem)
 		return
 	print("verify_import: the kit import lists the four connectors, saves the artist's names and walkable side as a rule set that loads, and refuses a name for two connectors")
+	problem = _from_scenes()
+	if not problem.is_empty():
+		_fail(problem)
+		return
+	print("verify_import: the same kit as a folder of scenes proposes the same modules, and the panel lists its four connectors")
 	quit(0)
+
+## What is wrong with proposing from the kit as a folder of scenes, or nothing.
+func _from_scenes() -> String:
+	var folder := "user://kit_scenes"
+	DirAccess.make_dir_recursive_absolute(folder)
+	var block := MeshInstance3D.new()
+	var block_mesh := BoxMesh.new()
+	block_mesh.size = CELL
+	block.mesh = block_mesh
+	var wall := Node3D.new()
+	var wall_mesh := MeshInstance3D.new()
+	var thin := BoxMesh.new()
+	thin.size = Vector3(CELL.x, CELL.y, CELL.z / 4.0)
+	wall_mesh.mesh = thin
+	wall_mesh.position = Vector3(0, 0, -CELL.z * 3.0 / 8.0)
+	wall.add_child(wall_mesh)
+	wall_mesh.owner = wall
+	for scene in [["air", Node3D.new()], ["block", block], ["wall", wall]]:
+		var packed := PackedScene.new()
+		packed.pack(scene[1])
+		ResourceSaver.save(packed, "%s/%s.tscn" % [folder, scene[0]])
+		scene[1].free()
+	var library: MeshLibrary = ClassDB.class_call_static("WaveForgeWorld", "mesh_library_from_scenes", folder)
+	if library == null:
+		return "no MeshLibrary from the folder"
+	var proposed: String = ClassDB.class_call_static("WaveForgeWorld", "propose_module_set", library, CELL)
+	for line in [
+		'(name: "air", sides: ["empty side", "empty side", "empty side", "empty side"], up: "empty top", down: "empty top")',
+		'(name: "block", sides: ["side 0", "side 0", "side 0", "side 0"], up: "top 0", down: "top 0")',
+		'(name: "wall", sides: ["side 1 plain", "side 1 flipped", "empty side", "side 0"]',
+	]:
+		if not proposed.contains(line):
+			return "the folder's proposal has no %s:\n%s" % [line, proposed]
+	var panel: VBoxContainer = (load("res://addons/wave_forge/kit_import_panel.gd") as GDScript).new()
+	var listed: int = panel.propose_path(folder, CELL)
+	panel.free()
+	if listed != 4:
+		return "the panel listed %d connectors from the folder" % listed
+	return ""
 
 ## What is wrong with naming the proposal through the dock's kit import, or nothing.
 func _named(library: MeshLibrary) -> String:
