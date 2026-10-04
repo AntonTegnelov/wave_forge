@@ -166,6 +166,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Group | Property | Meaning |
 |---|---|---|
 | Pack | `pack_file` | the pack, a `*.world.ron` file |
+| | `stack` | the pack as a stack of stages the inspector edits, a `WaveForgeStack` ([Stacks](#stacks)), generated instead of `pack_file` when set |
 | | `rules_files` | the rule sets Solve stages name, as name to rule file path |
 | | `targets` | the stages to generate; what they read comes with them |
 | | `params/<name>` | a slider per parameter of the pack over its range, listed from `pack_file`, which the scene saves, `start` gives the stages and moving it changes them while they run; reverting gives the pack's default ([packs.md](packs.md#parameters)). From code, `params` is the same values as name to number |
@@ -410,7 +411,8 @@ under the key `wave_forge`, on the right by default:
   scenes, its parameters back to the pack's defaults, showing as sliders). A preset is copied, never
   shared, so changing the node changes no other scene. A node added with nothing set (no pack, no
   targets, no ground) takes the default preset, islands, when it is first selected. The copying is
-  `addons/wave_forge/presets.gd`. The presets bind `tree`, `cactus` and `palm` to the plugin's
+  `addons/wave_forge/presets.gd`. Below it, Edit as a stack turns the node's `pack_file` into a
+  stack the scene holds ([Stacks](#stacks)). The presets bind `tree`, `cactus` and `palm` to the plugin's
   built-in props (`addons/wave_forge/tree.tscn`, `cactus.tscn` and `palm.tscn`, each one
   vertex-coloured mesh written by `tools/make_props.gd`) and draw the sea with
   `addons/wave_forge/sea.tres`, or the archipelago's clearer `lagoon.tres`. The small city binds
@@ -480,6 +482,20 @@ loading does. On data no pack holds, which they name by its place (`pack.stages[
 a pack the library refuses, they report the reason as an error and give an empty result. A stack of
 stages edited in the editor saves itself this way, so it holds nothing the library could not read
 (`src/pack_data.rs`).
+
+### Stacks
+
+A `WaveForgeStack` (`addons/wave_forge/stack.gd`, a GDScript resource) is a pack as a stack of
+stages the inspector edits: `stages`, an Array of `WaveForgeStackStage`s top to bottom, which the
+inspector reorders by dragging, and `rest`, the pack's other fields as plain data. A stage
+(`stack_stage.gd`) has its `name`, its `kind` as a pack names it, its `settings` (the kind's fields
+as plain data, [Packs as data](#packs-as-data)), its `scale` and its `persist`. `read_pack_text`
+makes a stack of a pack's text and `to_pack_text` saves the pack it holds. A node given one in
+`stack` generates that pack instead of `pack_file`, reading it again on every `start`, so a stack
+edited in place and started again generates the edited pack; it warns when both are set. The
+dock's Edit as a stack turns the selected node's `pack_file` into a stack the scene holds, as one
+undo action. A script that runs before the editor has listed the project's classes, a headless
+check say, preloads `stack.gd` and `stack_stage.gd` rather than naming their classes.
 
 ### Scenes
 

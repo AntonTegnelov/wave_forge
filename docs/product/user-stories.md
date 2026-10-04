@@ -366,9 +366,11 @@ grass, never floating, never overlapping.*
 Auto mode picks MultiMesh for a plain mesh scene and nodes for a scene with scripts or bodies; no
 two trees are closer than the spacing, across chunk seams too (checked); every tree stands on its
 anchor's surface (checked). **Needs.** Scatter, Emit, the Godot rule resources. **Status:** in
-progress (2026-09-24): the stages node binds a kind to a `PackedScene`, drawing a plain mesh scene
-as MultiMeshes and any other as nodes at each point (`verify_scenes.gd`); dropping a scene onto a
-rule needs the rule resources ([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
+progress (2026-10-04): the stages node binds a kind to a `PackedScene`, drawing a plain mesh scene
+as MultiMeshes and any other as nodes at each point (`verify_scenes.gd`). The rule resources
+exist: a node generates a stack of stages the inspector edits, as `WaveForgeStack` resources
+(`verify_stack.gd`); dropping a scene onto a rule of one is next
+([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
 
 ### N4. Paint where the town goes
 

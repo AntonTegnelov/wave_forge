@@ -69,6 +69,10 @@ pub struct WaveForgeStages {
     #[export_group(name = "Pack")]
     #[export(file = "*.ron")]
     pack_file: GString,
+    /// The pack as a stack of stages the inspector edits, a `WaveForgeStack` of the plugin, which
+    /// the node generates instead of `pack_file` when set.
+    #[export]
+    stack: Option<Gd<Resource>>,
     /// The rule sets Solve stages name, as name to rule file path.
     #[export]
     rules_files: VarDictionary,
@@ -701,6 +705,7 @@ impl INode for WaveForgeStages {
         Self {
             base,
             pack_file: GString::new(),
+            stack: None,
             regenerate_button: PhantomVar::default(),
             reroll_button: PhantomVar::default(),
             bake_button: PhantomVar::default(),
@@ -1137,20 +1142,23 @@ impl WaveForgeStages {
     #[signal]
     fn navigation_ready(chunk: Vector3i);
 
-    /// Loads `pack_file` and the rule sets its Solve stages name, and starts the stages' thread.
-    /// Returns whether it could start; why not is reported as an error. A town solver builds its
-    /// device on the stages' thread, so a failure there arrives as `generation_failed`.
+    /// Loads the pack, `stack`'s or `pack_file`'s, and the rule sets its Solve stages name, and
+    /// starts the stages' thread. Returns whether it could start; why not is reported as an
+    /// error. A town solver builds its device on the stages' thread, so a failure there arrives as
+    /// `generation_failed`.
     #[func]
     fn start(&mut self) -> bool {
-        let text = FileAccess::get_file_as_string(&self.pack_file).to_string();
-        if text.is_empty() {
-            godot_error!("wave forge: pack_file {} could not be read", self.pack_file);
-            return false;
-        }
+        let text = match self.pack_source() {
+            Ok(text) => text,
+            Err(error) => {
+                godot_error!("wave forge: {error}");
+                return false;
+            }
+        };
         let pack = match Pack::parse(&text) {
             Ok(pack) => Arc::new(pack),
             Err(error) => {
-                godot_error!("wave forge: {}: {error}", self.pack_file);
+                godot_error!("wave forge: {}: {error}", self.pack_name());
                 return false;
             }
         };
@@ -1273,7 +1281,7 @@ impl WaveForgeStages {
         let facts = match Facts::new(Arc::clone(&pack), seed) {
             Ok(facts) => facts,
             Err(error) => {
-                godot_error!("wave forge: {}: {error}", self.pack_file);
+                godot_error!("wave forge: {}: {error}", self.pack_name());
                 return false;
             }
         };
@@ -1281,7 +1289,7 @@ impl WaveForgeStages {
             match with_noises.clone()(Runtime::new(Arc::clone(&pack), seed, [shape.x, shape.y])) {
                 Ok(sampler) => sampler,
                 Err(error) => {
-                    godot_error!("wave forge: {}: {error}", self.pack_file);
+                    godot_error!("wave forge: {}: {error}", self.pack_name());
                     return false;
                 }
             };
@@ -1829,17 +1837,25 @@ impl WaveForgeStages {
         true
     }
 
-    /// The pack's parameters as `pack_file` declares them, read again when the file changes; none
-    /// if it names no pack that loads.
+    /// The pack's parameters as `stack` or `pack_file` declares them, read again when the stack's
+    /// pack or the file named changes; none if they hold no pack that loads.
     fn pack_param_defs(&mut self) -> BTreeMap<String, ParamDef> {
-        let path = self.pack_file.clone();
-        let fresh = !matches!(&self.listed_params, Some((listed, _)) if *listed == path);
+        // A file is read again when another is named, and a stack's text each time, since the
+        // inspector edits it in place.
+        let (source, text) = match &self.stack {
+            Some(_) => {
+                let text = self.pack_source().unwrap_or_default();
+                (GString::from(text.as_str()), Some(text))
+            }
+            None => (self.pack_file.clone(), None),
+        };
+        let fresh = !matches!(&self.listed_params, Some((listed, _)) if *listed == source);
         if fresh {
-            let text = FileAccess::get_file_as_string(&path).to_string();
+            let text = text.unwrap_or_else(|| FileAccess::get_file_as_string(&source).to_string());
             let defs = Pack::parse(&text)
                 .map(|pack| pack.params().clone())
                 .unwrap_or_default();
-            self.listed_params = Some((path, defs));
+            self.listed_params = Some((source, defs));
         }
         self.listed_params
             .as_ref()
@@ -4337,20 +4353,65 @@ impl WaveForgeStages {
         problems
     }
 
+    /// The text of the pack the node generates: its `stack`'s, written as a pack file is, when it
+    /// has one, otherwise `pack_file`'s.
+    ///
+    /// # Errors
+    /// Why there is none: a stack that holds no valid pack, or a pack file that could not be read.
+    fn pack_source(&self) -> Result<String, String> {
+        match &self.stack {
+            Some(stack) => {
+                let text = stack
+                    .clone()
+                    .call("to_pack_text", &[])
+                    .try_to::<GString>()
+                    .map_err(|_| "the stack is no WaveForgeStack".to_owned())?
+                    .to_string();
+                if text.is_empty() {
+                    return Err("the stack holds no valid pack".to_owned());
+                }
+                Ok(text)
+            }
+            None => {
+                let text = FileAccess::get_file_as_string(&self.pack_file).to_string();
+                if text.is_empty() {
+                    return Err(format!("pack_file {} could not be read", self.pack_file));
+                }
+                Ok(text)
+            }
+        }
+    }
+
+    /// What the node's pack is called in a message: the stack, or `pack_file`'s path.
+    fn pack_name(&self) -> String {
+        match &self.stack {
+            Some(_) => "the stack".to_owned(),
+            None => self.pack_file.to_string(),
+        }
+    }
+
     /// The node's configuration warnings: its settings for its pack, and the project's and the
     /// scene's that would leave the world dark or without bodies ([`crate::warnings`]).
     fn warnings(&self) -> Vec<String> {
         let mut warnings = crate::warnings::lighting(&self.to_gd().upcast());
-        if self.pack_file.is_empty() {
+        if self.pack_file.is_empty() && self.stack.is_none() {
             warnings.push(
                 "No pack_file: set one (*.world.ron), or choose a preset in the Wave Forge dock."
                     .to_owned(),
             );
         } else {
-            let text = FileAccess::get_file_as_string(&self.pack_file).to_string();
-            match Pack::parse(&text) {
-                Ok(pack) => warnings.extend(self.stage_setting_problems(&pack)),
-                Err(error) => warnings.push(format!("pack_file {}: {error}", self.pack_file)),
+            if self.stack.is_some() && !self.pack_file.is_empty() {
+                warnings.push(format!(
+                    "Both a stack and pack_file {} are set: the stack is generated.",
+                    self.pack_file
+                ));
+            }
+            match self.pack_source() {
+                Ok(text) => match Pack::parse(&text) {
+                    Ok(pack) => warnings.extend(self.stage_setting_problems(&pack)),
+                    Err(error) => warnings.push(format!("{}: {error}", self.pack_name())),
+                },
+                Err(error) => warnings.push(error),
             }
         }
         warnings.extend(crate::warnings::physics(self.collider_radius));
