@@ -49,8 +49,8 @@
 
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::{
-    Engine, FileAccess, INode, MeshLibrary, NavigationMesh, NavigationMeshSourceGeometryData3D,
-    NavigationServer3D, Node, PhysicsServer3D, Shape3D,
+    AudioStream, Engine, FileAccess, INode, MeshLibrary, NavigationMesh,
+    NavigationMeshSourceGeometryData3D, NavigationServer3D, Node, PhysicsServer3D, Shape3D,
 };
 use godot::prelude::*;
 use radius::chunk_distance;
@@ -177,7 +177,7 @@ pub struct WaveForgeWorld {
     audio_radius: i32,
     /// The stream each sound key plays, as key to `AudioStream`.
     #[export]
-    sounds: VarDictionary,
+    sounds: Dictionary<StringName, Option<Gd<AudioStream>>>,
     /// The audio bus whose effects interiors give the sounds inside them as reverb; empty for
     /// none.
     #[export]
@@ -203,7 +203,7 @@ pub struct WaveForgeWorld {
     /// Each module's colour seen from afar, as module name to `Color`; a module without one is
     /// left out of the proxies.
     #[export]
-    proxy_colours: VarDictionary,
+    proxy_colours: Dictionary<StringName, Color>,
 
     /// Cells solved around a chunk and thrown away, so its borders can be completed. Changing it
     /// compiles other kernels.
@@ -340,7 +340,7 @@ impl INode for WaveForgeWorld {
             bodies_due: std::collections::BTreeSet::new(),
             bodies_pending: 0,
             audio_radius: -1,
-            sounds: VarDictionary::new(),
+            sounds: Dictionary::new(),
             interior_reverb_bus: StringName::default(),
             interior_audio_bus: StringName::default(),
             audio: audio::RegionAudio::default(),
@@ -349,7 +349,7 @@ impl INode for WaveForgeWorld {
             occluders: occlusion::Occluders::default(),
             occluders_due: std::collections::BTreeSet::new(),
             proxy_distance: -1.0,
-            proxy_colours: VarDictionary::new(),
+            proxy_colours: Dictionary::new(),
             proxies: proxy::Proxies::default(),
             proxies_due: std::collections::BTreeSet::new(),
             proxies_begin: -1.0,
@@ -1272,8 +1272,7 @@ impl WaveForgeWorld {
         let colours = &self.proxy_colours;
         let colour = |module: &str| {
             colours
-                .get(module)
-                .and_then(|colour| colour.try_to::<Color>().ok())
+                .get(&StringName::from(module))
                 .map(|colour| [colour.r, colour.g, colour.b, colour.a])
         };
         let meshes: Vec<wave_forge::ProxyMesh> = plan

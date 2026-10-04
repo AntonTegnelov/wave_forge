@@ -53,7 +53,8 @@ func _initialize() -> void:
 	fountain.data = silence
 	fountain.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	fountain.loop_end = 44100
-	world.sounds = {"fountain": fountain}
+	var sounds: Dictionary[StringName, AudioStream] = {&"fountain": fountain}
+	world.sounds = sounds
 	world.interior_reverb_bus = BUS
 	world.interior_audio_bus = INDOORS
 	if not world.load_rules(FileAccess.get_file_as_string("res://city.ron")):

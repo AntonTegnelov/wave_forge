@@ -52,7 +52,7 @@ impl RegionAudio {
         &mut self,
         owner: &mut Gd<Node>,
         tags: &RegionTags,
-        sounds: &VarDictionary,
+        sounds: &Dictionary<StringName, Option<Gd<AudioStream>>>,
         buses: &InteriorBuses,
     ) {
         self.drop_chunk(tags.chunk);
@@ -87,8 +87,8 @@ impl RegionAudio {
         let mut players = Vec::new();
         for emitter in &tags.emitters {
             let Some(stream) = sounds
-                .get(emitter.key.as_str())
-                .and_then(|stream| stream.try_to::<Gd<AudioStream>>().ok())
+                .get(&StringName::from(emitter.key.as_str()))
+                .flatten()
             else {
                 if self.unmapped.insert(emitter.key.clone()) {
                     godot_warn!(

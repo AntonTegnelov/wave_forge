@@ -32,7 +32,8 @@ func _initialize() -> void:
 	noise.domain_warp_fractal_type = FastNoiseLite.DOMAIN_WARP_FRACTAL_INDEPENDENT
 	world = ClassDB.instantiate("WaveForgeStages")
 	world.pack_file = "res://noise.world.ron"
-	world.noises = {"hills": noise}
+	var noises: Dictionary[StringName, FastNoiseLite] = {&"hills": noise}
+	world.noises = noises
 	world.targets = PackedStringArray(["height"])
 	world.seed = 99
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)

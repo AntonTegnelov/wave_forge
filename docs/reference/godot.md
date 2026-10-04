@@ -28,12 +28,12 @@ extension needs none of godot-rust's thread-safety features.
 | Navigation | `navigation_radius` | chunks around the player that get navigation meshes |
 | | `navigation_template` | the `NavigationMesh` settings chunks are baked with |
 | Audio | `audio_radius` | chunks around the player that sound ([Sound and surfaces](#sound-and-surfaces)); below zero, none |
-| | `sounds` | the stream each sound key plays, as key to `AudioStream` |
+| | `sounds` | the stream each sound key plays, a `Dictionary[StringName, AudioStream]` ([Typed maps](#typed-maps)) |
 | | `interior_reverb_bus` | the audio bus interiors reverb the sounds inside them on; empty for none |
 | | `interior_audio_bus` | the audio bus sounds inside interiors play on instead of their own; empty for none, and with both empty, no interiors |
 | Occlusion | `occluder_radius` | chunks around the player that get occluders of their solid cells ([Occlusion](#occlusion)); below zero, none |
 | Far | `proxy_distance` | from this distance on, each generated chunk is drawn as its far proxy ([Far proxies](#far-proxies)); below zero, never |
-| | `proxy_colours` | each module's colour seen from afar, as module name to `Color`; a module without one is left out |
+| | `proxy_colours` | each module's colour seen from afar, a `Dictionary[StringName, Color]` of module names ([Typed maps](#typed-maps)); a module without one is left out |
 | Advanced | `halo` | the first parity's halo, in cells |
 | | `warm_kernels` | compile the kernels a run needs when generation starts |
 | | `frozen_directory` | freezes the world: where the chunks it evicts are kept as they are, a file each, and come back from rather than being generated, even after the rule set changes ([world.md](../architecture/world.md#regenerating-exactly)); `user://` paths are resolved, and the game keeps the directory with its saves. Empty generates an evicted chunk again, tile for tile |
@@ -210,7 +210,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 
 ### Functions
 
-- `noises`: a Dictionary of a pack's noise names to `FastNoiseLite` resources; each replaces the
+- `noises`: a `Dictionary[StringName, FastNoiseLite]` of a pack's noise names to resources ([Typed maps](#typed-maps)); each replaces the
   pack's noise of that name, so a Field reading `FastNoise(name)` holds exactly what the
   resource's `get_noise_2d` gives at each column's centre in cells.
 - `update_params(values)` sets the pack's parameters named in a Dictionary of names to numbers
@@ -228,7 +228,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   which arrives as the `saved` signal's text a game writes to disk; `load_save(text)` brings a world
   back from it. A text that is not a save, or holds an edit the pack refuses, is reported as an
   error, returns false and changes nothing.
-- `target_radii`: a Dictionary of target stage names to a radius in chunks of their own; the
+- `target_radii`: a `Dictionary[StringName, int]` of target stage names to a radius in chunks of their own; the
   other targets keep `view_radius`.
 - `start()` loads the pack and the rule sets and starts the stages' thread, where a town solver
   builds its device.
@@ -470,6 +470,16 @@ needs `ground_stage`. What a stroke does is the node's own `paint(brush, path)`:
 
 It adds the edits `stages::brushes::stroke` gives ([packs.md](packs.md#edits)), so a game's own
 tools paint the same way.
+
+### Typed maps
+
+`WaveForgeStages`' `target_radii` and `noises`, and `WaveForgeWorld`'s `sounds` and
+`proxy_colours`, are typed Dictionaries, so the inspector edits their keys and values as what they
+are. A scene saved while they were untyped Dictionaries loads into them. A script gives them a
+typed Dictionary: a typed variable or constant, `var radii: Dictionary[StringName, int] = {"far":
+6}`, which takes plain String keys, or an assignment to a node whose class the script names. An
+untyped Dictionary given through an untyped variable, `ClassDB.instantiate`'s say, is refused with
+an error. `rules_files` and `scenes` stay untyped, since `scenes` takes a path or a `PackedScene`.
 
 ### Packs as data
 

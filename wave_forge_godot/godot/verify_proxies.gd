@@ -26,7 +26,8 @@ func _initialize() -> void:
 	world.evict_margin = 1
 	world.collider_radius = -1
 	world.proxy_distance = 60.0
-	world.proxy_colours = {"building_base": Color(0.8, 0.7, 0.6), "building_floor": Color(0.8, 0.7, 0.6), "grass": Color(0.3, 0.6, 0.3)}
+	var colours: Dictionary[StringName, Color] = {&"building_base": Color(0.8, 0.7, 0.6), &"building_floor": Color(0.8, 0.7, 0.6), &"grass": Color(0.3, 0.6, 0.3)}
+	world.proxy_colours = colours
 	if not world.load_rules(FileAccess.get_file_as_string("res://city.ron")):
 		_fail("res://city.ron could not be loaded")
 		return
