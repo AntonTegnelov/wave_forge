@@ -365,12 +365,15 @@ grass, never floating, never overlapping.*
 **Acceptance criteria.** Dropping a `PackedScene` onto a rule creates a Scatter stage bound to it;
 Auto mode picks MultiMesh for a plain mesh scene and nodes for a scene with scripts or bodies; no
 two trees are closer than the spacing, across chunk seams too (checked); every tree stands on its
-anchor's surface (checked). **Needs.** Scatter, Emit, the Godot rule resources. **Status:** in
-progress (2026-10-04): the stages node binds a kind to a `PackedScene`, drawing a plain mesh scene
-as MultiMeshes and any other as nodes at each point (`verify_scenes.gd`). The rule resources
-exist: a node generates a stack of stages the inspector edits, as `WaveForgeStack` resources
-(`verify_stack.gd`); dropping a scene onto a rule of one is next
-([#48](https://github.com/AntonTegnelov/wave_forge/issues/48)).
+anchor's surface (checked). **Needs.** Scatter, Emit, the Godot rule resources. **Status:**
+verified by automated checks (2026-10-04), in the Godot CI job. The dock lists the categories of the
+pack's Rules stages, and a scene dragged from the FileSystem dock onto one adds a Scatter stage to
+the node's stack placing it there, standing on the node's ground, bound to the scene and generated,
+as one undo action. The check makes the same stage on the islands' grass: every point stands on a
+grass column on the ground there, and each is drawn from the bound scene (`verify_stack.gd`).
+Auto mode draws a plain mesh scene as MultiMeshes and any other as nodes (`verify_scenes.gd`), and
+no two points are closer than `apart` across chunk seams (`tests/scatter.rs`). The drag itself, with
+the mouse in the editor, is not automated.
 
 ### N4. Paint where the town goes
 
