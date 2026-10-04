@@ -75,6 +75,7 @@ mod placements;
 mod proxy;
 mod radius;
 mod sea;
+mod shaders;
 mod stage_navigation;
 mod stages_node;
 mod timings;

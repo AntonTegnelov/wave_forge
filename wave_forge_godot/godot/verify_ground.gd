@@ -79,8 +79,9 @@ func _check() -> bool:
 		if material == null:
 			_fail("the ground of %s has no material of its own" % chunk)
 			return true
-		if material.shader.code != world.ground_shader_code():
-			_fail("the ground of %s is not drawn with the reference shader" % chunk)
+		# The addon's shader file, which an export's shader baker finds.
+		if material.shader.code != world.ground_shader_code() or material.shader.resource_path != "res://addons/wave_forge/shaders/ground.gdshader":
+			_fail("the ground of %s is not drawn with the reference shader's file, but %s" % [chunk, material.shader.resource_path])
 			return true
 		if material.get_shader_parameter("wave_forge_cell") != Vector2(CELL.x, CELL.z):
 			_fail("the ground of %s has cells of %s" % [chunk, material.get_shader_parameter("wave_forge_cell")])
@@ -132,8 +133,8 @@ func _check_grass() -> bool:
 			_fail("grass on %s, beyond its radius" % chunk)
 			return true
 		var material: ShaderMaterial = world.grass_material_of(chunk)
-		if material.shader.code != world.grass_shader_code():
-			_fail("the grass of %s is not drawn with the reference shader" % chunk)
+		if material.shader.code != world.grass_shader_code() or material.shader.resource_path != "res://addons/wave_forge/shaders/grass.gdshader":
+			_fail("the grass of %s is not drawn with the reference shader's file, but %s" % [chunk, material.shader.resource_path])
 			return true
 		var cover: PackedByteArray = material.get_shader_parameter("wave_forge_cover").get_image().get_data()
 		var field: PackedFloat32Array = world.field_values("cover", chunk)
