@@ -34,7 +34,10 @@ built from the city module set, and trees on the ground between them.
 
 ## Loading
 
-`Pack::parse(text)` reads a pack, and `Pack::from_file(PackFile)` checks one built in code. Loading
+`Pack::parse(text)` reads a pack, and `Pack::from_file(PackFile)` checks one built in code;
+`PackFile::read(text)` reads a pack file as written without checking it, and `PackFile::to_text()`
+writes one back as the text of a pack file, pretty RON that reads back as the same pack, which is
+how a stack an engine edits as data saves itself ([godot.md](godot.md#packs-as-data)). Loading
 refuses, each time with a `PackError` that names the stage:
 
 | Error | When |
