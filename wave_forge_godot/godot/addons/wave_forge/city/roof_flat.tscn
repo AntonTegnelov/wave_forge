@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/city/roof_flat.tres" id="1_s5fca"]
+
+[node name="roof_flat" type="MeshInstance3D" unique_id=1436401192]
+mesh = ExtResource("1_s5fca")

@@ -1,0 +1,37 @@
+[gd_resource type="ArrayMesh" format=4]
+
+[sub_resource type="Image" id="Image_4qgdb"]
+data = {
+"data": PackedByteArray("sLCw"),
+"format": "RGB8",
+"height": 1,
+"mipmaps": false,
+"width": 1
+}
+
+[sub_resource type="ImageTexture" id="ImageTexture_5gejw"]
+resource_name = "0"
+image = SubResource("Image_4qgdb")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g5cd8"]
+resource_name = "voxel"
+albedo_texture = SubResource("ImageTexture_5gejw")
+texture_filter = 0
+metadata/_gltf_primary_texture_coord = 0
+
+[resource]
+resource_name = "stair_wall_stair_wall"
+_surfaces = [{
+"aabb": AABB(-0.5, -0.5, -0.25, 1, 1, 0.5),
+"attribute_data": PackedByteArray("/3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//fw=="),
+"format": 34896613399,
+"index_count": 312,
+"index_data": PackedByteArray("AAACAAEAAAADAAIABAAGAAUABAAHAAYACAAJAAoACAAKAAsADAAOAA0ADAAPAA4AEAASABEAEAATABIAFAAWABUAFAAXABYAGAAaABkAGAAbABoAHAAeAB0AHAAfAB4AIAAhACIAIAAiACMAJAAmACUAJAAnACYAKAAqACkAKAArACoALAAuAC0ALAAvAC4AMAAxADIAMAAyADMANAA1ADYANAA2ADcAOAA6ADkAOAA7ADoAPAA9AD4APAA+AD8AQABCAEEAQABDAEIARABFAEYARABGAEcASABKAEkASABLAEoATABNAE4ATABOAE8AUABRAFIAUABSAFMAVABWAFUAVABXAFYAWABaAFkAWABbAFoAXABeAF0AXABfAF4AYABhAGIAYABiAGMAZABmAGUAZABnAGYAaABpAGoAaABqAGsAbABuAG0AbABvAG4AcAByAHEAcABzAHIAdAB1AHYAdAB2AHcAeAB5AHoAeAB6AHsAfAB9AH4AfAB+AH8AgACBAIIAgACCAIMAhACFAIYAhACGAIcAiACKAIkAiACLAIoAjACOAI0AjACPAI4AkACRAJIAkACSAJMAlACVAJYAlACWAJcAmACaAJkAmACbAJoAnACeAJ0AnACfAJ4AoAChAKIAoACiAKMApAClAKYApACmAKcAqACpAKoAqACqAKsArACtAK4ArACuAK8AsACxALIAsACyALMAtAC2ALUAtAC3ALYAuAC6ALkAuAC7ALoAvAC9AL4AvAC+AL8AwADBAMIAwADCAMMAxADGAMUAxADHAMYAyADJAMoAyADKAMsAzADNAM4AzADOAM8A"),
+"material": SubResource("StandardMaterial3D_g5cd8"),
+"name": "voxel",
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 208,
+"vertex_data": PackedByteArray("AAAAAAAA/78AAAAA/3//vwAA/z//f/+/AAD/PwAA/78AAAAAAAD//wAA/z8AAP///z//PwAA////PwAAAAD//wAA/z8AAP///z//PwAA////P/8//3///wAA/z//f///AAAAAAAA////PwAAAAD///8/AAD/f///AAAAAP9/////PwAAAAD///8//z8AAP///3//PwAA////fwAAAAD///8/AAAAAP///38AAAAA////fwAA/3////8/AAD/f////38AAAAA////f/8/AAD///+//z8AAP///78AAAAA////fwAAAAD///+/AAAAAP///78AAP9/////fwAA/3//////AAAAAP////8AAP9///////8//3///////z8AAP///78AAAAA////v/8/AAD//////z8AAP////8AAAAA////vwAAAAD/////AAAAAP////8AAP9/////vwAA/3///wAAAAD/f/+/AAAAAP///78AAP8/////vwAA/z//f/+/AAAAAP///78AAP8/////v/8//z////+//z8AAP///78AAP8//3////8//z//f////z//P/////8AAP8//////wAAAAD/f////z8AAP9/////PwAA/////wAAAAD//////z8AAP///7//P/8/////v/9//z////+//38AAP///7//PwAA/3////9/AAD/f////38AAP//////PwAA//////9/AAD///+//3//P////7//v/8/////v/+/AAD///+//38AAP9/////vwAA/3////+/AAD//////38AAP///////wAA/3//////AAD/////////P/////////8//3////+/AAD///+//7//P////7////8/////v///AAD///+//78AAP9//////wAA/3//////AAD//////78AAP//////P/8/AAD/v/8//z//f/+//z//f/9//7//P/9/AAD/v/8//z8AAP///z//fwAA////f/9/AAD///9//z8AAP///z//fwAA////f/9/AAD///9//3//f////z//f/9/////f/8/AAD///9//38AAP///7//fwAA////v/8/AAD//////z8AAP//////P/9///////9//3///////38AAP///7//PwAA////v/9/AAD//////38AAP//////PwAA////P/8//3//v/8//z////+//z//f////7//P/9//3//v/8//z////+//z//f////7//f/9/////v/9//z////+//z//f/9/////f/9//3////9//3///////z//f///////f/8/////v/9//3////+//7//f////7//v/8/////v////z//f///////P/////////9//////////3//f////7//P////7//v/9/////v////3////+/////P////7//f/9/AAD/v/9//3//f/+//3//v/9//7//f/+/AAD/v/9//38AAP///3//vwAA////v/+/AAD///+//38AAP///3//vwAA////v/+/AAD///+//7//f////3//v/9///////9/AAD//////3//f///////v/9///////+/AAD///+//38AAP///7//vwAA//////+/AAD//////38AAP///3//f/9//7//f/9/////v/9//7////+//3//v/9//7//f/9/////v/9//7////+//7//v////7//v/9/////v/9//7//f////7//v/9/////v/+///////9//7//////////f/9///////9//////////7//////////v/9/////v/9/////v/+//7////+/////v////7////9/////v////78AAP//////v/9//////////3////////8AAP///7//vwAA/7//v/+//3//v/+/////f/+//7///wAA/7//v/+/AAD///+///8AAP///////wAA//////+/AAD///+///8AAP///////wAA/////////3////+/////f///////v/9///////+///////////////////////9/////v/+//3//v/+//7////+//7///////7//v////3//v/+//7////+//7///////7//////////v////7////+//7////9//////////3///////////////7//////////f////3////9/////f////z//v/8//7//P/+//z//v/9//7//f/+//3//v/9//7//f/8//3//P/9//z//f/8//z//v/8//7//P/+//z//v/9//z//f/8//3//P/9//z//P/+//z//v/8//7//P/+//3//P/9//z//f/8//3//P/+//3//v/9//7//f/+//3//P/+//z//v/8//7//P/+//3//P/9//z//f/8//3//P/9/////f////3////9/////f/9//3//f/9//3//f/9//3//v/9//7//f/+//3//v/9//z//f/8//3//P/9//z//f/9//3//f/9//3//f/9//3//P/9//z//f/8//3//P/9//3//f/9//3//f/9//3//f/8//3//P/9//z//f/8//7//f/+//3//v/9//7//f/9//3//f/9//3//f/9//3//f/8//3//P/9//z//f/8//3////9/////f////3////8//7//P/+//z//v/8//7//f/+//3//v/9//7//f/+//z//v/8//7//P/+//z//v/+//3//v/9//7//f/+//3//P/+//z//v/8//7//P/+//3////9/////f////3////9//3//f/9//3//f/9//3//f/+//3//v/9//7//f/+//3//f/9//3//f/9//3//f/+//3//v/9//7//f/+//3//f/9//3//f/9//3//f/9//3////9/////f////3////8//7//P/+//z//v/8//7//f/+//3//v/9//7//f/+//7//f/+//3//v/9//7//f/8//7//P/+//z//v/8//7//f////3////9/////f////3//f/9//3//f/9//3//f/9//7//f/+//3//v/9//7//v/9//7//f/+//3//v/9//3//f/9//3//f/9//3//f/+//3//v/9//7//f/+//3//f////3////9/////f////z//v/8//7//P/+//z//v/9//7//f/+//3//v/9//7//v/9//7//f/+//3//v/9//3////9/////f////3////9//3//f/9//3//f/9//3//f/+//3//v/9//7//f/+/")
+}]
+blend_shape_mode = 0

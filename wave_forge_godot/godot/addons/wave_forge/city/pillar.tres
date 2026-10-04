@@ -1,0 +1,37 @@
+[gd_resource type="ArrayMesh" format=4]
+
+[sub_resource type="Image" id="Image_w3b52"]
+data = {
+"data": PackedByteArray("xL6w"),
+"format": "RGB8",
+"height": 1,
+"mipmaps": false,
+"width": 1
+}
+
+[sub_resource type="ImageTexture" id="ImageTexture_t4042"]
+resource_name = "0"
+image = SubResource("Image_w3b52")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_b1dsa"]
+resource_name = "voxel"
+albedo_texture = SubResource("ImageTexture_t4042")
+texture_filter = 0
+metadata/_gltf_primary_texture_coord = 0
+
+[resource]
+resource_name = "pillar_pillar"
+_surfaces = [{
+"aabb": AABB(-0.25, -0.5, -0.25, 0.5, 1, 0.5),
+"attribute_data": PackedByteArray("/3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//f/9//3//fw=="),
+"format": 34896613399,
+"index_count": 240,
+"index_data": PackedByteArray("AAACAAEAAAADAAIABAAGAAUABAAHAAYACAAKAAkACAALAAoADAANAA4ADAAOAA8AEAASABEAEAATABIAFAAWABUAFAAXABYAGAAaABkAGAAbABoAHAAdAB4AHAAeAB8AIAAiACEAIAAjACIAJAAlACYAJAAmACcAKAApACoAKAAqACsALAAuAC0ALAAvAC4AMAAyADEAMAAzADIANAA2ADUANAA3ADYAOAA5ADoAOAA6ADsAPAA+AD0APAA/AD4AQABCAEEAQABDAEIARABFAEYARABGAEcASABJAEoASABKAEsATABNAE4ATABOAE8AUABSAFEAUABTAFIAVABWAFUAVABXAFYAWABZAFoAWABaAFsAXABeAF0AXABfAF4AYABiAGEAYABjAGIAZABlAGYAZABmAGcAaABpAGoAaABqAGsAbABtAG4AbABuAG8AcAByAHEAcABzAHIAdAB2AHUAdAB3AHYAeAB5AHoAeAB6AHsAfAB9AH4AfAB+AH8AgACCAIEAgACDAIIAhACFAIYAhACGAIcAiACKAIkAiACLAIoAjACNAI4AjACOAI8AkACRAJIAkACSAJMAlACVAJYAlACWAJcAmACZAJoAmACaAJsAnACdAJ4AnACeAJ8A"),
+"material": SubResource("StandardMaterial3D_b1dsa"),
+"name": "voxel",
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 160,
+"vertex_data": PackedByteArray("AAAAAAAA/78AAAAA/3//vwAA/z//f/+/AAD/PwAA/78AAAAAAAD//wAA/z8AAP///3//PwAA////fwAAAAD//wAAAAAAAP///38AAAAA////fwAA/3///wAAAAD/f/////8AAAAA/////wAA/3///////z//f///////PwAA////fwAAAAD///9//z8AAP//////PwAA/////wAAAAD///9/AAAAAP////8AAAAA/////wAA/3////9/AAD/f///AAAAAP9//78AAAAA////vwAA/z////+/AAD/P/9//78AAAAA////vwAA/z////+//3//P////7//fwAA////vwAAAAD/f////38AAP9/////fwAA/////wAAAAD///////8AAP9//////wAA/////////z//////////P/9/////fwAA////v/9//z////+/////P////7///wAA////v/9/AAD/f/////8AAP9//////wAA//////9/AAD/////AAD/PwAA/78AAP8//3//vwAA/3//f/+/AAD/fwAA/78AAP8/AAD//wAA/38AAP///3//fwAA////f/8/AAD//////z8AAP//////P/9///////9//3///////38AAP///3//PwAA////f/9/AAD//////38AAP//////PwAA//8AAP8//3//vwAA/z////+/AAD/f////78AAP9//3//vwAA/z////+/AAD/f////7//f/9/////v/9//z////+/////P/9///////8//////////3//////////f/9/////f/8/////v/9//3////+/////f////7////8/////vwAA/38AAP+/AAD/f/9//78AAP+//3//vwAA/78AAP+/AAD/fwAA//8AAP+/AAD///9//78AAP///3//fwAA//////9/AAD//////3//f///////v/9///////+/AAD///9//38AAP///3//vwAA//////+/AAD//////38AAP//AAD/f/9//78AAP9/////vwAA/7////+/AAD/v/9//78AAP9/////vwAA/7////+//3//v////7//f/9/////v////3//f///////f/////////+//////////7//f////3//f////7//f/+/////v////7////+/////f////78AAP+/AAD/vwAA/7//f/+/AAD///9//78AAP//AAD/vwAA/78AAP//AAD//wAA////f///AAD///9//78AAP//AAD//wAA////f///AAD///9/////f///AAD///9///////+/AAD//////7//f/////////9/////////AAD///9//78AAP///3///wAA////////AAD//////78AAP///3///wAA////////AAD/////////f////3////9///8AAP+//3//vwAA/7////+/AAD//////78AAP///3//vwAA/7////+/AAD//////7//f///////v/9//7////+/AAD///9/////f////3////9/////////AAD///////////+//3///////7///////////////////////3////9//7////+//3///////7//////////v////7////+//3////9//////////3///////////////3//////////f////3////9/////f////z//v/8//7//P/+//z//v/9//z//f/8//3//P/9//z//v/9//7//f/+//3//v/9//z//v/8//7//P/+//z//v/9//z//f/8//3//P/9//z//f////3////9/////f////3//f/9//3//f/9//3//f/9//z//f/8//3//P/9//z//v/9//7//f/+//3//v/9//3//f/9//3//f/9//3//f/9//z//f/8//3//P/9//z//f////3////9/////f////z//v/8//7//P/+//z//v/+//3//v/9//7//f/+//3//P/+//z//v/8//7//P/+//3////9/////f////3////9//3//f/9//3//f/9//3//v/9//7//f/+//3//v/9//3//f/9//3//f/9//3//f/9/////f////3////9/////P/+//z//v/8//7//P/+//7//f/+//3//v/9//7//f/8//7//P/+//z//v/8//7//f////3////9/////f////3//f/9//3//f/9//3//f/+//3//v/9//7//f/+//3//f/9//3//f/9//3//f/9//3////9/////f////3////8//7//P/+//z//v/8//7//f/+//3//v/9//7//f/+//7//f/+//3//v/9//7//f/8//7//P/+//z//v/8//7//f/+//3//v/9//7//f/+//3////9/////f////3////9//3//f/9//3//f/9//3//f/+//3//v/9//7//f/+//7//f/+//3//v/9//7//f/9//3//f/9//3//f/9//3//f/+//3//v/9//7//f/+/")
+}]
+blend_shape_mode = 0

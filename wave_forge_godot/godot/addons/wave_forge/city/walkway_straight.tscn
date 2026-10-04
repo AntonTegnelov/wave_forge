@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/city/walkway_straight.tres" id="1_m82fn"]
+
+[node name="walkway_straight" type="MeshInstance3D" unique_id=2016365838]
+mesh = ExtResource("1_m82fn")

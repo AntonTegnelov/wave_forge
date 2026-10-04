@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/city/walkway_on_pillar.tres" id="1_a5rx5"]
+
+[node name="walkway_on_pillar" type="MeshInstance3D" unique_id=89366608]
+mesh = ExtResource("1_a5rx5")

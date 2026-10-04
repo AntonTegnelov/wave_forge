@@ -29,6 +29,8 @@ cp "$here/../examples/continent/cultures/"*.ron "$here/godot/continent/cultures/
 mkdir -p "$here/godot/addons/wave_forge/presets"
 cp "$here/../examples/presets/"*.world.ron "$here/godot/addons/wave_forge/presets/"
 cp "$here/presets/"*.tscn "$here/godot/addons/wave_forge/presets/"
+# The module set of the city kit the small city preset draws, shipped with it.
+cp "$here/../examples/city.ron" "$here/godot/addons/wave_forge/city/city.ron"
 cargo run --quiet --manifest-path "$here/../Cargo.toml" -p wfc-devtools --bin wfc-export-models -- \
 	--out "$here/godot/models"
 

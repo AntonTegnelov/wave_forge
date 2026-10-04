@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/city/road_cross.tres" id="1_475d0"]
+
+[node name="road_cross" type="MeshInstance3D" unique_id=1485614888]
+mesh = ExtResource("1_475d0")
