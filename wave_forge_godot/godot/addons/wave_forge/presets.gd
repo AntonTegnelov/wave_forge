@@ -31,4 +31,4 @@ static func settings(path: String) -> Dictionary:
 
 ## Whether `node` has nothing of its own set yet: no pack, no targets and no ground.
 static func is_fresh(node: Node) -> bool:
-	return String(node.pack_file).is_empty() and node.targets.is_empty() and String(node.ground_stage).is_empty()
+	return String(node.pack_file).is_empty() and node.stack == null and node.targets.is_empty() and String(node.ground_stage).is_empty()

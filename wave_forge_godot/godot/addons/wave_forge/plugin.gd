@@ -10,12 +10,14 @@ extends EditorPlugin
 ## (`world_run_panel.gd`), and the kit import of N6: a MeshLibrary's connectors proposed, named
 ## by the artist and saved as a module set (`kit_import_panel.gd`). The dock is an `EditorDock`;
 ## Paint and each brush have a shortcut under `wave_forge/` that a user rebinds in the editor
-## settings, taken while the 3D viewport has focus and a node is selected.
+## settings, taken while the 3D viewport has focus and a node is selected. Edit as a stack turns
+## the node's pack_file into a `WaveForgeStack` the scene holds (`stack.gd`).
 
 const WorldRunPanel := preload("res://addons/wave_forge/world_run_panel.gd")
 const CandidatePanel := preload("res://addons/wave_forge/candidate_panel.gd")
 const KitImportPanel := preload("res://addons/wave_forge/kit_import_panel.gd")
 const Presets := preload("res://addons/wave_forge/presets.gd")
+const Stack := preload("res://addons/wave_forge/stack.gd")
 
 ## The brushes of the dock, as `paint` names them, with how each is shown.
 const BRUSHES := {
@@ -185,6 +187,11 @@ func _make_dock() -> VBoxContainer:
 		preset_choice.set_item_metadata(preset_choice.item_count - 1, preset)
 	preset_choice.item_selected.connect(_choose_preset)
 	box.add_child(_labelled("Preset", preset_choice))
+	var as_stack := Button.new()
+	as_stack.text = "Edit as a stack"
+	as_stack.tooltip_text = "Turns the node's pack_file into a stack of stages the scene holds and the inspector edits."
+	as_stack.pressed.connect(_make_stack)
+	box.add_child(as_stack)
 	painting_toggle = CheckButton.new()
 	painting_toggle.text = "Paint"
 	box.add_child(painting_toggle)
@@ -226,6 +233,21 @@ func _apply_preset(path: String, action: String) -> void:
 		undo.add_undo_property(stages, property, stages.get(property))
 	undo.add_do_method(stages, "notify_property_list_changed")
 	undo.add_undo_method(stages, "notify_property_list_changed")
+	undo.commit_action()
+
+## Gives the selected node a stack of its pack_file's pack in place of the file, as one undo action.
+func _make_stack() -> void:
+	if stages == null or not is_instance_valid(stages) or String(stages.pack_file).is_empty():
+		return
+	var stack := Stack.new()
+	if not stack.read_pack_text(FileAccess.get_file_as_string(stages.pack_file)):
+		return
+	var undo := get_undo_redo()
+	undo.create_action("Wave Forge: edit as a stack")
+	undo.add_do_property(stages, "stack", stack)
+	undo.add_do_property(stages, "pack_file", "")
+	undo.add_undo_property(stages, "stack", stages.stack)
+	undo.add_undo_property(stages, "pack_file", stages.pack_file)
 	undo.commit_action()
 
 func _labelled(text: String, control: Control) -> HBoxContainer:

@@ -16,7 +16,8 @@
 # `godot/verify_bake.gd`, which bakes an area into a scene of plain nodes, then
 # `godot/verify_import.gd`, which proposes a module set from a MeshLibrary, then
 # `godot/verify_params.gd`, which tunes a preset's parameters, then `godot/verify_pack_data.gd`,
-# which edits packs as plain data and saves them, then `godot/verify_paint.gd`, which
+# which edits packs as plain data and saves them, then `godot/verify_stack.gd`, which generates a
+# pack from a stack of stages edited in place, then `godot/verify_paint.gd`, which
 # paints strokes as the editor's brushes do, then `godot/verify_candidates.gd`, which draws a
 # Scatter stage's candidates by what became of each, then `godot/verify_world.gd`, which runs a
 # finite world whole, stopping and resuming, and plays it back, then `godot/verify_continent.gd`,
@@ -53,6 +54,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_import.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_params.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_pack_data.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_stack.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_paint.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_candidates.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_world.gd
