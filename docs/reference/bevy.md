@@ -107,7 +107,10 @@ itself, and holds no shapes for a town's modules: a game adds its towns' collide
   of that scale ([packs.md](packs.md#far-ground)), one per coarse chunk, again whenever ground comes
   or goes on or beside it: `WaveForgeStages::far_ground(chunk)` returns it, `far_ground_mesh` makes
   it a Bevy mesh to spawn at `far_ground_corner(chunk)`, and `FarGroundReady` and
-  `FarGroundDropped` announce it. Give the stage a radius of its own with `.with_radius`.
+  `FarGroundDropped` announce it. Give the stage a radius of its own with `.with_radius`. To
+  colour it as the Godot node does, generate a Rules stage at the same scale with the same radius
+  and give `wave_forge::far_ground_categories` the far ground and that stage's
+  `categories(stage, chunk)`: the category each vertex stands on, for the mesh's colours.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
   have arrived ([packs.md](packs.md#ground)): `WaveForgeStages::ground(chunk)` returns the
   `GroundMesh`, relative to `chunk_corner(chunk)`, `GroundReady(chunk)` and `GroundDropped(chunk)`

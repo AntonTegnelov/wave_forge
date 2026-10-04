@@ -190,6 +190,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
 | | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view; empty, or a pack without water, draws none. Lakes above the sea level are not drawn |
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
+| | `far_ground_material_stage` | a Rules stage at `far_ground_stage`'s scale whose categories colour the far ground, each vertex by the coarse column under it: in the colour `ground_palette` gives the category of `ground_material_stage` of the same name, or in a colour of its own for a category that stage does not name. Give it the far ground's radius in `target_radii`. Empty to draw the far ground with `ground_material` alone |
 | Volume | `volume_stage` | a Volume or Carve stage at scale 1 whose surface is drawn and collided with, for overhangs and caves ([packs.md](packs.md#volume)); empty for none |
 | | `volume_material` | the material the volume's surface is drawn with; empty for Godot's default, or for a stage with materials one that takes its albedo from the vertices' colours |
 | | `volume_budget_ms` | how long a frame may spend drawing volume surfaces, which are meshed on a thread of their own; one is drawn a frame whatever it costs (default 2 ms) |
@@ -300,7 +301,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   generated again, after a raise say, every ground that reads it is built again, its grass and
   body too.
 - `ground_chunks()` and `collider_chunks()` list the chunks with ground and with a body,
-  `far_ground_chunks()` the chunks of `far_ground_stage` whose far ground is drawn, and
+  `far_ground_chunks()` the chunks of `far_ground_stage` whose far ground is drawn, with
+  `far_ground_surface(chunk)` one's vertex `positions` and their `colours`, and
   `volume_chunks()` the chunks of `volume_stage` whose surface is built. `volume_surface(chunk)`
   gives one: its `positions`, `normals`, `indices` in Godot's winding and each vertex's material in
   `materials`, relative to the chunk's corner; `volume_mesh_of(chunk)` is the `RenderingServer` mesh
@@ -399,8 +401,8 @@ sound, or that name no fitting stage; `configuration_warnings()` gives the same 
   viewport with a preview sun and sky that a running game has not);
 - `pack_file` is empty or not a pack;
 - a target names no stage, or a stage setting (`ground_stage`, `grass_stage`, `candidates_stage`,
-  `ground_material_stage`, `far_ground_stage`, `fluid_stage`, `volume_stage`) names no stage of
-  the kind it needs, which `start` refuses with the same words.
+  `ground_material_stage`, `far_ground_stage`, `far_ground_material_stage`, `fluid_stage`,
+  `volume_stage`) names no stage of the kind it needs, which `start` refuses with the same words.
 
 `WaveForgeStages`' inspector has three buttons: Start or regenerate, the same as `start`; Reroll
 seed, which takes a new `seed` at random and starts again if the node is running; and Bake the view,

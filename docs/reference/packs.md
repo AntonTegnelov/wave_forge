@@ -1167,6 +1167,8 @@ two share their vertices and no crack opens. Positions are relative to the corne
 lattice chunk the coarse chunk covers, with heights absolute; the walls face both ways. It returns
 `None` until the coarse fields of the chunk and the eight around it have arrived, so the far ground
 reaches one coarse chunk less than its field.
+`wave_forge::far_ground_categories(far, categories, scale, cell_size)` gives the category each
+vertex stands on, from a Rules stage at the far ground's scale, for an engine to colour it by.
 
 ## In the engines
 

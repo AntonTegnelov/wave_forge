@@ -1,11 +1,14 @@
 //! Far ground from a coarse height field: its heights are what a fine stage reading the coarse field
 //! gets, neighbouring coarse chunks meet exactly, it covers every point of the ground plane that no
-//! near ground covers and none that one does, and a wall joins it to every near ground it meets.
+//! near ground covers and none that one does, a wall joins it to every near ground it meets, and
+//! each vertex stands on the category of the coarse column under it.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::{Pack, Runtime};
-use wave_forge::{ChunkCoord, FarGround, FocusPoint, GroundMesh, far_ground, ground};
+use wave_forge::{
+    ChunkCoord, FarGround, FocusPoint, GroundMesh, far_ground, far_ground_categories, ground,
+};
 
 const PACK: &str = r#"(
     version: 1,
@@ -13,6 +16,10 @@ const PACK: &str = r#"(
         (name: "far", scale: 8, kind: Field(Mul(Noise(frequency: 0.004, octaves: 3), Constant(40.0)))),
         (name: "near", kind: Field(Mul(Noise(frequency: 0.004, octaves: 3), Constant(40.0)))),
         (name: "read", kind: Field(Input("far"))),
+        (name: "far_kind", scale: 8, kind: Rules(rules: [
+            (category: "west", when: [Less(X, Constant(87.0))]),
+            (category: "south", when: [Less(Y, Constant(39.0))]),
+        ], otherwise: "east")),
     ],
 )"#;
 
@@ -29,7 +36,12 @@ fn runtime() -> Runtime {
     runtime
         .request_each(
             &[FocusPoint::new(ChunkCoord::new(4, 4, 0), 3)],
-            &[("far", Some(24)), ("near", None), ("read", Some(5))],
+            &[
+                ("far", Some(24)),
+                ("near", None),
+                ("read", Some(5)),
+                ("far_kind", Some(24)),
+            ],
         )
         .expect("stages");
     runtime.run_until_idle().expect("the stages run");
@@ -271,4 +283,35 @@ fn a_wall_joins_every_near_edge_the_far_ground_meets_from_above_it_to_below_its_
     let beside = 12 * (8 + 3);
     let plain = 2 * (SCALE * SCALE - 9 - 12) as usize;
     assert_eq!(far.indices.len(), 3 * (walls + beside + plain));
+}
+
+#[test]
+fn each_far_vertex_stands_on_the_category_of_the_coarse_column_under_it() {
+    let runtime = runtime();
+    let chunk = ChunkCoord::new(1, 0, 0);
+    let far = far(&runtime, chunk, &BTreeMap::new());
+    let categories = runtime.categories("far_kind", chunk).expect("generated");
+
+    let under = far_ground_categories(&far, categories, SCALE, CELL);
+
+    assert_eq!(under.len(), far.positions.len());
+    let side = (COLUMNS * SCALE as i32) as f32;
+    let origin = [chunk.x as f32 * side, chunk.y as f32 * side];
+    let mut seen = std::collections::BTreeSet::new();
+    for (vertex, &category) in far.positions.iter().zip(&under) {
+        // Within the chunk, a vertex on its far edges in the edge column.
+        let at = [
+            origin[0] + (vertex[0] / CELL[0]).clamp(0.0, side - 0.5),
+            origin[1] + (vertex[2] / CELL[2]).clamp(0.0, side - 0.5),
+        ];
+        let sampled = runtime
+            .sample("far_kind", at)
+            .expect("a Rules stage samples");
+        assert_eq!(f32::from(category), sampled, "the vertex at {vertex:?}");
+        seen.insert(category);
+    }
+    assert!(
+        seen.len() > 1,
+        "only the categories {seen:?} under the chunk"
+    );
 }

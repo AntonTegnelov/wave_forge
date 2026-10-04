@@ -1,9 +1,17 @@
 // The pack of the far ground checks (render_far.gd, verify_far.gd): the same rolling ground at
-// full detail near the focus and at a coarse scale far from it.
+// full detail near the focus and at a coarse scale far from it, each with its surface: high or low
+// ground, and far off a peak too, which the near ground has no category for.
 (
     version: 1,
     stages: [
         (name: "height", kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
         (name: "far", scale: 8, kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
+        (name: "surface", kind: Rules(rules: [
+            (category: "high", when: [Greater(Input("height"), Constant(5.0))]),
+        ], otherwise: "low")),
+        (name: "far_surface", scale: 8, kind: Rules(rules: [
+            (category: "peak", when: [Greater(Input("far"), Constant(6.5))]),
+            (category: "high", when: [Greater(Input("far"), Constant(5.0))]),
+        ], otherwise: "low")),
     ],
 )

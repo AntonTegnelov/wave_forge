@@ -15,7 +15,7 @@
 //! grounds meet without a seam.
 
 use crate::ground::GroundMesh;
-use crate::stages::Field;
+use crate::stages::{Categories, Field};
 use wfc_core::ChunkCoord;
 
 /// One coarse chunk's far ground, in a Y-up engine's axes as [`crate::YUpSpace`] maps them.
@@ -252,4 +252,34 @@ fn wall(
 fn unit(v: [f32; 3]) -> [f32; 3] {
     let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     v.map(|axis| axis / length)
+}
+
+/// The category each vertex of `far` stands on: that of the column under it of `categories`, the
+/// chunk of a Rules stage at the far ground's `scale`, with cells `cell_size` along the engine's x,
+/// y and z. A vertex on the chunk's far edges, which it shares with the next chunk, takes the edge
+/// column's; so does a wall's, from where it stands. An engine colours the far ground by these, as
+/// it colours the near ground by a Rules stage's categories.
+///
+/// # Panics
+/// If `categories` has no columns, or `scale` is zero.
+#[must_use]
+pub fn far_ground_categories(
+    far: &FarGround,
+    categories: &Categories,
+    scale: u32,
+    cell_size: [f32; 3],
+) -> Vec<u8> {
+    let [columns_x, columns_y] = categories.size;
+    let column = |at: f32, cell: f32, columns: u32| {
+        ((at / (cell * scale as f32)).floor().max(0.0) as u32).min(columns - 1)
+    };
+    far.positions
+        .iter()
+        .map(|&[x, _, z]| {
+            categories.get(
+                column(x, cell_size[0], columns_x),
+                column(z, cell_size[2], columns_y),
+            )
+        })
+        .collect()
 }

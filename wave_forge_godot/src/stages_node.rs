@@ -52,7 +52,8 @@ use wave_forge::stages::{
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, SurfaceWorker, VolumeMesh,
-    YUpSpace, far_ground, ground, ground_height, ground_materials, ground_readers, volume_height,
+    YUpSpace, far_ground, far_ground_categories, ground, ground_height, ground_materials,
+    ground_readers, volume_height,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -172,9 +173,17 @@ pub struct WaveForgeStages {
     /// A coarse field stage the far ground is drawn from beyond the near ground, a height in cells
     /// per column like `ground_stage`'s; empty for none. Give it a radius of its own in
     /// `target_radii`, as far as the ground should reach; a coarse chunk's far ground needs the
-    /// fields around it, so it reaches one coarse chunk less. It is drawn with `ground_material`.
+    /// fields around it, so it reaches one coarse chunk less. It is drawn with `ground_material`,
+    /// or with `far_ground_material_stage`'s colours.
     #[export]
     far_ground_stage: GString,
+    /// A Rules stage at `far_ground_stage`'s scale whose categories colour the far ground: each
+    /// vertex in the colour `ground_palette` gives the category of `ground_material_stage` of the
+    /// same name, or in a colour of its own for a category that stage does not name; empty to draw
+    /// the far ground with `ground_material` alone. Give it the far ground's radius in
+    /// `target_radii`.
+    #[export]
+    far_ground_material_stage: GString,
 
     /// A Volume or Carve stage at scale 1 whose surface is drawn and, within `collider_radius`,
     /// collided with, for overhangs and caves; empty for none. It has to be generated, as a target or as
@@ -346,9 +355,10 @@ pub struct WaveForgeStages {
     /// Chunks of `far_ground_stage` whose far ground may have to be built again: a field around
     /// them arrived, or near ground came or went on or beside them.
     far_due: std::collections::BTreeSet<ChunkCoord>,
-    /// The chunks of `far_ground_stage` whose far ground is drawn: its `RenderingServer` mesh and
-    /// instance.
-    far_grounds: HashMap<ChunkCoord, (Rid, Rid)>,
+    /// The colour of each category of `far_ground_material_stage`, by index, from `ground_palette`.
+    far_colours: Vec<Color>,
+    /// The chunks of `far_ground_stage` whose far ground is drawn.
+    far_grounds: HashMap<ChunkCoord, FarDrawn>,
     /// The surfaces of `volume_stage`, while there is one.
     rock: Option<VolumeLayer>,
     /// The surfaces of `fluid_stage`, while there is one.
@@ -741,6 +751,7 @@ impl INode for WaveForgeStages {
             process_ms: Timings::new(RECENT_FRAMES),
             ground_stage: GString::new(),
             far_ground_stage: GString::new(),
+            far_ground_material_stage: GString::new(),
             kernel_cache: GString::from("user://wave_forge/kernels"),
             frozen_directory: GString::new(),
             play_directory: GString::new(),
@@ -768,6 +779,7 @@ impl INode for WaveForgeStages {
             ground_builds: 0,
             far_due: std::collections::BTreeSet::new(),
             far_grounds: HashMap::new(),
+            far_colours: Vec::new(),
             volume_stage: GString::new(),
             volume_material: None,
             volume_palette: PackedColorArray::new(),
@@ -998,10 +1010,14 @@ impl INode for WaveForgeStages {
             }
         }
         let far_stage = self.far_ground_stage.to_string();
+        let far_material = self.far_ground_material_stage.to_string();
         let (mut far_arrived, mut far_gone) = (Vec::new(), Vec::new());
         for event in &events {
             match event {
-                StageEvent::Generated { stage, chunk } if *stage == far_stage => {
+                StageEvent::Generated { stage, chunk }
+                    if *stage == far_stage
+                        || (!far_material.is_empty() && *stage == far_material) =>
+                {
                     far_arrived.push(*chunk);
                 }
                 StageEvent::Dropped { stage, chunk } if *stage == far_stage => {
@@ -1195,6 +1211,10 @@ impl WaveForgeStages {
         } else {
             self.palette = None;
         }
+        self.far_colours = self.far_category_colours(&pack);
+        if !self.far_colours.is_empty() {
+            self.ensure_vertex_colours();
+        }
         self.rock = None;
         self.fluid = None;
         if !self.fluid_stage.is_empty() {
@@ -1212,13 +1232,7 @@ impl WaveForgeStages {
         if !self.volume_stage.is_empty() {
             let stage = self.volume_stage.to_string();
             self.rock = Some(VolumeLayer::new(stage));
-            if self.vertex_colours.is_none() {
-                let mut colours = StandardMaterial3D::new_gd();
-                colours.set_flag(Flags::ALBEDO_FROM_VERTEX_COLOR, true);
-                // `volume_palette` holds colours as the inspector picks them, in sRGB.
-                colours.set_flag(Flags::SRGB_VERTEX_COLOR, true);
-                self.vertex_colours = Some(colours);
-            }
+            self.ensure_vertex_colours();
         }
         if self.grass_stage.is_empty() {
             self.grass = None;
@@ -2215,6 +2229,25 @@ impl WaveForgeStages {
             .keys()
             .map(|&chunk| to_vector(chunk))
             .collect()
+    }
+
+    /// A coarse chunk's far ground: `positions` (PackedVector3Array) relative to the corner of the
+    /// first chunk of the WFC lattice it covers, and `colours` (PackedColorArray), each vertex's
+    /// colour from `far_ground_material_stage`, empty without one. Empty if it is not drawn.
+    #[func]
+    fn far_ground_surface(&self, chunk: Vector3i) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        if let Some(drawn) = self.far_grounds.get(&from_vector(chunk)) {
+            let positions: PackedVector3Array = drawn
+                .positions
+                .iter()
+                .map(|&[x, y, z]| Vector3::new(x, y, z))
+                .collect();
+            let colours: PackedColorArray = drawn.colours.iter().copied().collect();
+            out.set(&"positions".to_variant(), &positions.to_variant());
+            out.set(&"colours".to_variant(), &colours.to_variant());
+        }
+        out
     }
 
     /// The chunks of `volume_stage` whose surface is built, those without triangles included.
@@ -3557,6 +3590,7 @@ impl WaveForgeStages {
         near_changed: &[ChunkCoord],
     ) {
         let stage = self.far_ground_stage.to_string();
+        let material = self.far_ground_material_stage.to_string();
         let (Some(worker), Some(pack)) = (&self.worker, &self.pack) else {
             return;
         };
@@ -3567,9 +3601,9 @@ impl WaveForgeStages {
         let mut rendering = RenderingServer::singleton();
         for chunk in gone {
             self.far_due.remove(chunk);
-            if let Some((mesh, instance)) = self.far_grounds.remove(chunk) {
-                rendering.free_rid(instance);
-                rendering.free_rid(mesh);
+            if let Some(drawn) = self.far_grounds.remove(chunk) {
+                rendering.free_rid(drawn.instance);
+                rendering.free_rid(drawn.mesh);
             }
         }
         for chunk in arrived {
@@ -3620,16 +3654,30 @@ impl WaveForgeStages {
                 cell,
                 |fine| self.grounds.get(&fine).map(|(mesh, _, _)| mesh),
             );
-            if let Some(far) = far {
-                built.push(far);
-            }
+            let Some(far) = far else {
+                continue;
+            };
+            // Coloured by the far material stage once its chunk is there too, whose arrival makes
+            // the chunk due again.
+            let colours = if material.is_empty() {
+                Vec::new()
+            } else {
+                let Some(categories) = worker.categories(&material, chunk) else {
+                    continue;
+                };
+                far_ground_categories(&far, categories, scale as u32, cell)
+                    .into_iter()
+                    .map(|category| self.far_colours[usize::from(category)])
+                    .collect()
+            };
+            built.push((far, colours));
         }
-        for far in built {
+        for (far, colours) in built {
             // The near ground covers the whole coarse chunk: there is nothing of it to draw.
             if far.indices.is_empty() {
-                if let Some((mesh, instance)) = self.far_grounds.remove(&far.chunk) {
-                    rendering.free_rid(instance);
-                    rendering.free_rid(mesh);
+                if let Some(drawn) = self.far_grounds.remove(&far.chunk) {
+                    rendering.free_rid(drawn.instance);
+                    rendering.free_rid(drawn.mesh);
                 }
                 continue;
             }
@@ -3648,9 +3696,21 @@ impl WaveForgeStages {
                 .collect();
             arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
             arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+            if !colours.is_empty() {
+                let packed: PackedColorArray = colours.iter().copied().collect();
+                arrays.set(ArrayType::COLOR.ord() as usize, &packed.to_variant());
+            }
             add_levelled_surface(rid, &mut arrays, &far.indices, &[]);
-            if let Some(material) = &self.ground_material {
-                rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+            let material = match (&self.ground_material, colours.is_empty()) {
+                (Some(material), _) => Some(material.get_rid()),
+                (None, false) => self
+                    .vertex_colours
+                    .as_ref()
+                    .map(|colours| colours.get_rid()),
+                (None, true) => None,
+            };
+            if let Some(material) = material {
+                rendering.mesh_surface_set_material(rid, 0, material);
             }
             let instance = rendering.instance_create2(rid, scenario);
             let first = ChunkCoord::new(far.chunk.x * scale, far.chunk.y * scale, 0);
@@ -3659,9 +3719,15 @@ impl WaveForgeStages {
                 Transform3D::new(Basis::IDENTITY, self.chunk_corner(first)),
             );
             Gi::Static.apply(instance);
-            if let Some((mesh, old)) = self.far_grounds.insert(far.chunk, (rid, instance)) {
-                rendering.free_rid(old);
-                rendering.free_rid(mesh);
+            let drawn = FarDrawn {
+                mesh: rid,
+                instance,
+                positions: far.positions,
+                colours,
+            };
+            if let Some(old) = self.far_grounds.insert(far.chunk, drawn) {
+                rendering.free_rid(old.instance);
+                rendering.free_rid(old.mesh);
             }
         }
     }
@@ -4329,7 +4395,8 @@ impl WaveForgeStages {
             }
         }
         let at_scale_one = |stage: &str| pack.scale(stage) == Some(1);
-        let settings: [(&str, &GString, &str, Fits<'_>); 7] = [
+        let far_scale = pack.scale(&self.far_ground_stage.to_string());
+        let settings: [(&str, &GString, &str, Fits<'_>); 8] = [
             ("ground_stage", &self.ground_stage, "", &|_, _| true),
             ("grass_stage", &self.grass_stage, "", &|_, _| true),
             (
@@ -4356,6 +4423,16 @@ impl WaveForgeStages {
                 &self.far_ground_stage,
                 "field ",
                 &|_, kind| matches!(kind, StageKind::Field(_)),
+            ),
+            (
+                "far_ground_material_stage",
+                &self.far_ground_material_stage,
+                "Rules ",
+                &|stage, kind| {
+                    far_scale.is_some()
+                        && pack.scale(stage) == far_scale
+                        && matches!(kind, StageKind::Rules { .. })
+                },
             ),
             (
                 "fluid_stage",
@@ -4389,6 +4466,8 @@ impl WaveForgeStages {
             if !pack.kind(&stage).is_some_and(|kind| fits(&stage, kind)) {
                 let scale = if kinds.starts_with("Volume") {
                     " at scale 1"
+                } else if setting == "far_ground_material_stage" {
+                    " at far_ground_stage's scale"
                 } else {
                     ""
                 };
@@ -4469,6 +4548,40 @@ impl WaveForgeStages {
         warnings
     }
 
+    /// Makes the material that draws a surface in its vertices' colours, once.
+    fn ensure_vertex_colours(&mut self) {
+        if self.vertex_colours.is_none() {
+            let mut colours = StandardMaterial3D::new_gd();
+            colours.set_flag(Flags::ALBEDO_FROM_VERTEX_COLOR, true);
+            // Palettes hold colours as the inspector picks them, in sRGB.
+            colours.set_flag(Flags::SRGB_VERTEX_COLOR, true);
+            self.vertex_colours = Some(colours);
+        }
+    }
+
+    /// The colour of each category of `far_ground_material_stage`, by index: the colour
+    /// `ground_palette` gives the category of `ground_material_stage` of the same name, or a colour
+    /// of its own. Empty without a far ground material stage.
+    fn far_category_colours(&self, pack: &Pack) -> Vec<Color> {
+        let Some(far) = pack.kind(&self.far_ground_material_stage.to_string()) else {
+            return Vec::new();
+        };
+        let near: Vec<&str> = pack
+            .kind(&self.ground_material_stage.to_string())
+            .map(StageKind::categories)
+            .unwrap_or_default();
+        far.categories()
+            .iter()
+            .enumerate()
+            .map(
+                |(index, name)| match near.iter().position(|near| near == name) {
+                    Some(near) => palette_colour(&self.ground_palette, near),
+                    None => palette_colour(&PackedColorArray::new(), index),
+                },
+            )
+            .collect()
+    }
+
     /// The palette texture and the material each chunk's ground material is copied from.
     fn materials_template(&self) -> Result<(Gd<ImageTexture>, Gd<ShaderMaterial>), String> {
         let template = match &self.ground_material {
@@ -4515,7 +4628,7 @@ impl WaveForgeStages {
             rendering.free_rid(multimesh);
         }
         self.far_due.clear();
-        for (_, (mesh, instance)) in self.far_grounds.drain() {
+        for (_, FarDrawn { mesh, instance, .. }) in self.far_grounds.drain() {
             rendering.free_rid(instance);
             rendering.free_rid(mesh);
         }
@@ -4990,6 +5103,14 @@ fn placement_items(placing: &Placing, stage: &str, chunk: ChunkCoord) -> Option<
         _ => return None,
     };
     Some(items)
+}
+/// A coarse chunk's far ground as it is drawn: its `RenderingServer` mesh and instance, and its
+/// vertices and their colours for `far_ground_surface`.
+struct FarDrawn {
+    mesh: Rid,
+    instance: Rid,
+    positions: Vec<[f32; 3]>,
+    colours: Vec<Color>,
 }
 
 /// The colour of category `index` from `palette`, the categories past its end taking colours of
