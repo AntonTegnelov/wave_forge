@@ -1,0 +1,10 @@
+config_version=5
+
+[application]
+config/name="Wave Forge: a new world"
+config/features=PackedStringArray("4.7")
+run/main_scene="res://main.tscn"
+
+[physics]
+
+3d/physics_engine="Jolt Physics"

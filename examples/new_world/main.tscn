@@ -1,0 +1,72 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://main.gd" id="1_main"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+
+[sub_resource type="Sky" id="Sky_sky"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_world"]
+background_mode = 2
+sky = SubResource("Sky_sky")
+ambient_light_source = 3
+ambient_light_energy = 0.35
+tonemap_mode = 2
+
+[node name="NewWorld" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 50, 0)
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_world")
+
+[node name="Screen" type="CanvasLayer" parent="."]
+
+[node name="Panel" type="PanelContainer" parent="Screen"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -260.0
+offset_top = -140.0
+offset_right = 260.0
+offset_bottom = 140.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Margin" type="MarginContainer" parent="Screen/Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="Box" type="VBoxContainer" parent="Screen/Panel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="Screen/Panel/Margin/Box"]
+layout_mode = 2
+text = "A new world"
+horizontal_alignment = 1
+
+[node name="Status" type="Label" parent="Screen/Panel/Margin/Box"]
+layout_mode = 2
+text = "Simulating its history"
+autowrap_mode = 3
+
+[node name="Progress" type="ProgressBar" parent="Screen/Panel/Margin/Box"]
+custom_minimum_size = Vector2(0, 24)
+layout_mode = 2
+
+[node name="Costs" type="Label" parent="Screen/Panel/Margin/Box"]
+layout_mode = 2
+
+[node name="Button" type="Button" parent="Screen/Panel/Margin/Box"]
+layout_mode = 2
+text = "Stop"
