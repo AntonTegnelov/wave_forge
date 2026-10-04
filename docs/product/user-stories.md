@@ -475,9 +475,15 @@ with grass and wind, lighting that changes over a day, a generated town, and nav
 walking its streets, at the P1 frame rate on a reference desktop. Needs a person: the trailer
 checklist in the example's README is followed from a clean checkout within an hour. **Needs.** Grass
 and wind ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), navigation, presets.
-**Status:** not started (2026-09-24). Grass and trees that sway in a global wind are drawn in
-Godot (`verify_ground.gd`, `render_ground.sh`) and in Bevy (`grass_render.rs`,
-`vegetation_render.rs`).
+**Status:** in progress (2026-10-04). The example is `examples/sample_world`, on the small city
+preset: the city in grass and trees that sway in the extension's global wind, a sun and a moon
+turned through a day by `day_night.gd`, and townsfolk with navigation agents walking between random
+points of the city's streets. Its `check.gd`, run by `verify.sh`, finds the city in grass with its
+modules and trees placed, the day going on, and every one of the townsfolk walking along the
+navigation map inside the city. Grass and swaying trees are drawn in Bevy too (`grass_render.rs`,
+`vegetation_render.rs`). Left: the frame rate on a reference desktop, and a person following the
+README's trailer checklist from a clean checkout within an hour, near the release
+([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)).
 
 ### N11. Put my own history into the world
 

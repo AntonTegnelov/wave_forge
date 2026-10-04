@@ -1,0 +1,4 @@
+# Built and copied in by prepare.sh, and Godot's own caches.
+bin/
+addons/
+.godot/

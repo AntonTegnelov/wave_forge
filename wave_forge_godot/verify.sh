@@ -33,8 +33,8 @@
 # `godot/verify_sound.gd`, which checks the city's region tags and sound, then
 # `godot/verify_names.gd`, which names a location through a translation, then
 # `godot/verify_occlusion.gd`, which checks the city's occluders, then `godot/verify_proxies.gd`,
-# which checks its far proxies, and last the history example's own check
-# (examples/history/check.gd).
+# which checks its far proxies, then the history example's own check
+# (examples/history/check.gd), and last the sample world's (examples/sample_world/check.gd).
 # Build in release: its frame-time bars describe the extension a game would ship.
 set -euo pipefail
 
@@ -90,4 +90,6 @@ echo "verify: the editor loads the plugin without a script error, its dock an Ed
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_occlusion.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_proxies.gd
 "$here/../examples/history/prepare.sh" "${1:-debug}"
-exec "${GODOT:-godot}" --headless --path "$here/../examples/history" --script check.gd
+"${GODOT:-godot}" --headless --path "$here/../examples/history" --script check.gd
+"$here/../examples/sample_world/prepare.sh" "${1:-debug}"
+exec "${GODOT:-godot}" --headless --path "$here/../examples/sample_world" --script check.gd

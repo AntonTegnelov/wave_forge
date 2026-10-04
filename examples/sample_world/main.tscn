@@ -1,0 +1,48 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="PackedScene" path="res://addons/wave_forge/presets/city.tscn" id="1_city"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/walker.tscn" id="2_walker"]
+[ext_resource type="Script" path="res://day_night.gd" id="3_day_night"]
+[ext_resource type="Script" path="res://townsfolk.gd" id="4_townsfolk"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+
+[sub_resource type="Sky" id="Sky_sky"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_world"]
+background_mode = 2
+sky = SubResource("Sky_sky")
+ambient_light_source = 3
+tonemap_mode = 2
+
+[node name="SampleWorld" type="Node3D"]
+
+[node name="City" parent="." instance=ExtResource("1_city")]
+view_radius = 6
+navigation_radius = 4
+
+[node name="Walker" parent="." instance=ExtResource("2_walker")]
+transform = Transform3D(0.707107, 0, 0.707107, 0, 1, 0, -0.707107, 0, 0.707107, 0, 0, 0)
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, 0, -0.5, 0, 1, 0, 0.5, 0, 0.866025, 0, 50, 0)
+shadow_enabled = true
+
+[node name="Moon" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, 0, -0.5, 0, 1, 0, 0.5, 0, 0.866025, 0, 50, 0)
+light_color = Color(0.6, 0.7, 1, 1)
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_world")
+
+[node name="DayNight" type="Node" parent="." node_paths=PackedStringArray("sun", "moon", "environment")]
+script = ExtResource("3_day_night")
+sun = NodePath("../Sun")
+moon = NodePath("../Moon")
+environment = NodePath("../WorldEnvironment")
+
+[node name="Townsfolk" type="Node3D" parent="." node_paths=PackedStringArray("stages")]
+script = ExtResource("4_townsfolk")
+stages = NodePath("../City")

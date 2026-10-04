@@ -28,7 +28,9 @@ A pack of stages runs the same way through `wave_forge::stages::Runtime`; the fo
 
 `examples/history` is a Godot project that puts a history into a world with GDScript alone: a toy
 history of a continent's rivers, villages and roads, given to the stages as tables of facts, and a
-scene to walk through the result.
+scene to walk through the result. `examples/sample_world` is a sample world for a trailer on the
+small city preset: grass and trees in the wind, a day and a night, and townsfolk walking the city's
+streets.
 
 To look at a rule set by hand, the developer CLI generates one chunk and writes each cell's tile index to `output.txt`:
 
