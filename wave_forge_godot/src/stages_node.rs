@@ -924,6 +924,7 @@ impl INode for WaveForgeStages {
                             | StageKind::Spawn { .. }
                             | StageKind::Assemble { .. }
                             | StageKind::Cave { .. }
+                            | StageKind::Solve { .. }
                     )
                 )
             };
@@ -2850,17 +2851,15 @@ impl WaveForgeStages {
         chunk: ChunkCoord,
         wanted: impl Fn(&str) -> bool,
     ) -> Option<(Vec<InstanceSet>, f32)> {
-        let town = self.worker.as_ref()?.tiles(stage, chunk)?;
-        // The rule set the town was solved with, which its row may have chosen over the stage's.
-        let file = self.rules.get(town.rules.as_ref())?;
-        let space = YUpSpace::new(self.chunk_shape(), self.cell_size.to_array());
-        let tiles = Chunk {
-            coord: chunk,
-            tiles: town.tiles.to_vec().into_boxed_slice(),
-            version: 1,
-        };
-        let sets = wave_forge::instance_sets(&tiles, file, &space, wanted);
-        Some((sets, town.height * self.cell_size.y))
+        town_sets(
+            self.worker.as_ref()?,
+            &self.rules,
+            self.chunk_shape(),
+            self.cell_size,
+            stage,
+            chunk,
+            wanted,
+        )
     }
 
     /// A position in Godot's world space in cells, along the lattice's x and y and up.
@@ -3030,6 +3029,14 @@ impl WaveForgeStages {
             body
         };
         let bound = self.placements.kinds();
+        let placing = Placing {
+            worker,
+            pack,
+            rules: &self.rules,
+            shape: self.chunk_shape(),
+            cell: self.cell_size,
+            bound: &bound,
+        };
         for y in from.y..=to.y {
             for x in from.x..=to.x {
                 let chunk = ChunkCoord::new(x, y, 0);
@@ -3096,9 +3103,7 @@ impl WaveForgeStages {
                 let mut listed = VarArray::new();
                 if !bound.is_empty() {
                     for stage in pack.stage_names() {
-                        let Some(items) =
-                            placement_items(worker, pack, self.cell_size, &bound, stage, chunk)
-                        else {
+                        let Some(items) = placement_items(&placing, stage, chunk) else {
                             continue;
                         };
                         let points = worker.points(stage, chunk).unwrap_or_default();
@@ -4008,11 +4013,16 @@ impl WaveForgeStages {
         else {
             return 0;
         };
-        let cell = self.cell_size;
         let bound: Vec<String> = self.placements.kinds();
-        let items = |stage: &str, chunk: ChunkCoord| {
-            placement_items(worker, pack, cell, &bound, stage, chunk)
+        let placing = Placing {
+            worker,
+            pack,
+            rules: &self.rules,
+            shape: self.chunk_shape(),
+            cell: self.cell_size,
+            bound: &bound,
         };
+        let items = |stage: &str, chunk: ChunkCoord| placement_items(&placing, stage, chunk);
         let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
         let budget = self.placement_budget_ms;
         let radius = self.promotion_radius;
@@ -4655,16 +4665,54 @@ fn surface_faces(mesh: &VolumeMesh) -> PackedVector3Array {
         .collect()
 }
 
-/// What `stage` placed in `chunk` of the kinds in `bound`, where each stands in Godot's world with
-/// cells of `cell`; none for a stage that places nothing or a chunk not generated.
-fn placement_items(
+/// A town chunk's module instances of the modules `wanted` keeps, in chunks of `shape` with cells
+/// of `cell`, from the rule set in `rules` it was solved with, and how far its site lifts them in
+/// Godot's units; none outside every town or before the chunk arrives.
+fn town_sets(
     worker: &StageWorker,
-    pack: &Pack,
+    rules: &BTreeMap<String, RuleFile>,
+    shape: ChunkShape,
     cell: Vector3,
-    bound: &[String],
     stage: &str,
     chunk: ChunkCoord,
-) -> Option<Vec<Item>> {
+    wanted: impl Fn(&str) -> bool,
+) -> Option<(Vec<InstanceSet>, f32)> {
+    let town = worker.tiles(stage, chunk)?;
+    // The rule set the town was solved with, which its row may have chosen over the stage's.
+    let file = rules.get(town.rules.as_ref())?;
+    let space = YUpSpace::new(shape, cell.to_array());
+    let tiles = Chunk {
+        coord: chunk,
+        tiles: town.tiles.to_vec().into_boxed_slice(),
+        version: 1,
+    };
+    let sets = wave_forge::instance_sets(&tiles, file, &space, wanted);
+    Some((sets, town.height * cell.y))
+}
+
+/// What placements read a stage's chunk from: the stages and their pack, the rule sets towns are
+/// solved with, the chunks' shape and cells, and the kinds bound to a scene.
+struct Placing<'a> {
+    worker: &'a StageWorker,
+    pack: &'a Pack,
+    rules: &'a BTreeMap<String, RuleFile>,
+    shape: ChunkShape,
+    cell: Vector3,
+    bound: &'a [String],
+}
+
+/// What `stage` placed in `chunk` of the kinds `placing` binds, where each stands in Godot's
+/// world: a point's kind, a piece's name, or a town's module, from the rule set its town was
+/// solved with. None for a stage that places nothing or a chunk not generated.
+fn placement_items(placing: &Placing, stage: &str, chunk: ChunkCoord) -> Option<Vec<Item>> {
+    let &Placing {
+        worker,
+        pack,
+        rules,
+        shape,
+        cell,
+        bound,
+    } = placing;
     let binds = |kind: &str| bound.iter().any(|known| known == kind);
     let place = |rows: [[f32; 3]; 3], [x, y, height]: [f32; 3]| {
         Transform3D::new(
@@ -4708,6 +4756,32 @@ fn placement_items(
                 gi: Gi::Static,
             })
             .collect(),
+        StageKind::Solve { .. } => {
+            let (sets, lift) = town_sets(worker, rules, shape, cell, stage, chunk, binds)?;
+            sets.iter()
+                .flat_map(|set| {
+                    let transforms = set.transforms(cell.to_array());
+                    let rows: Vec<[f32; 12]> = transforms
+                        .chunks(12)
+                        .map(|row| row.try_into().expect("twelve floats per instance"))
+                        .collect();
+                    rows.into_iter().zip(&set.ids).map(move |(row, id)| Item {
+                        kind: set.name.clone(),
+                        transform: Transform3D::new(
+                            Basis::from_rows(
+                                Vector3::new(row[0], row[1], row[2]),
+                                Vector3::new(row[4], row[5], row[6]),
+                                Vector3::new(row[8], row[9], row[10]),
+                            ),
+                            Vector3::new(row[3], row[7] + lift, row[11]),
+                        ),
+                        id: local_id(id.local),
+                        sway: [0.0, 1.0],
+                        gi: Gi::Static,
+                    })
+                })
+                .collect()
+        }
         _ => return None,
     };
     Some(items)

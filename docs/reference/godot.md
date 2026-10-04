@@ -199,7 +199,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Navigation | `navigation_radius` | chunks around the followed position that get a navigation region ([Navigation](#navigation)); below zero, none (the default) |
 | | `navigation_template` | the `NavigationMesh` settings chunks are baked with |
 | Occlusion | `occluder_radius` | chunks around the followed position whose towns get occluders of their solid cells, for Godot's occlusion culling; below zero, none (the default) |
-| Scenes | `scenes` | a kind (a Scatter, Embed, Deposit or Spawn point's kind, or an Assemble piece's or Cave room's name) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
+| Scenes | `scenes` | a kind (a Scatter, Embed, Deposit or Spawn point's kind, an Assemble piece's or Cave room's name, or a Solve stage's module) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
@@ -458,8 +458,11 @@ tools paint the same way.
 
 ### Scenes
 
-`scenes` binds a kind to a scene: a Scatter, Embed, Deposit or Spawn point's kind, or an Assemble
-piece's or Cave room's name, so a dungeon's rooms bind the same way as trees. A value is a
+`scenes` binds a kind to a scene: a Scatter, Embed, Deposit or Spawn point's kind, an Assemble
+piece's or Cave room's name, or a module of a Solve stage's rule set, so a dungeon's rooms and a
+town's buildings bind the same way as trees. A module's scene is drawn in every cell of a town that
+holds it, turned by the tile's rotation, a unit model scaled to the cell as `town_instance_sets`
+gives it, so a town is drawn with no code. A value is a
 `PackedScene`, or a path the node loads on
 Godot's loader threads when it starts; placing waits until every scene has loaded. A scene holding
 another extension's Rust resource has to be given as a `PackedScene`, since such a resource aborts
@@ -470,7 +473,7 @@ Each scene is drawn one of two ways, chosen when it is bound:
 
 - **A lone mesh:** a scene whose root is a `MeshInstance3D` without children or a script is drawn as
   one `RenderingServer` MultiMesh per chunk and kind, never as nodes. A point's MultiMesh takes no
-  global illumination, as a prop's; an Assemble piece's or Cave room's is static, as a building's, so
+  global illumination, as a prop's; an Assemble piece's, Cave room's or town module's is static, as a building's, so
   SDFGI and baked lighting take it in ([Global illumination](#global-illumination)).
 - **Nodes:** any other scene is instantiated as nodes under the `WaveForgeStages` node, at the
   point's or piece's transform, and `instance_spawned(node, chunk, id)` names each, with the id

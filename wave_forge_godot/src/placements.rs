@@ -1,6 +1,6 @@
-//! Scenes bound to what Scatter and Assemble stages place (docs/reference/godot.md).
+//! Scenes bound to what Scatter, Assemble and Solve stages place (docs/reference/godot.md).
 //!
-//! A kind (a point's kind, or a piece's or cave room's name) is bound to a scene. A scene whose
+//! A kind (a point's kind, a piece's or cave room's name, or a town's module) is bound to a scene. A scene whose
 //! root is a lone `MeshInstance3D` without a script is drawn as one `RenderingServer` MultiMesh per
 //! chunk and kind, never as nodes; any other scene is instantiated as nodes, off the tree, and
 //! attached under a per-frame time budget nearest the followed position first. With promotion, a
