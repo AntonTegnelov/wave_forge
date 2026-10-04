@@ -344,7 +344,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   `directory` as it is done; `world_run_progress(done, total, stages)` reports each chunk, and
   every second while a block generates, with what each stage has generated so far in the form of
   `stats()["stages"]`, `world_run_finished(done, total)` the end, and `cancel_world_run()` stops
-  it within about a second, which running again resumes. The process waits for a run under way,
+  it within about a second, which running again resumes. A run that fails, its thread's panic
+  included, logs why and finishes with `world_run_finished(0, 0)`. The process waits for a run under way,
   and for the node's generating thread, before it exits. It runs as the node generates, with the tables given, the edits made and the parameters set since it started, so the node has to have started; in the editor,
   with `preview_in_editor`, it is the bake of M1. A node whose `play_directory` is that directory
   then plays the world with nothing generated.
