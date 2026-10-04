@@ -1,0 +1,81 @@
+// The cave level preset (docs/product/user-stories.md, N2): grassy hills over rock riddled with
+// caves, which break through the ground as sinkholes and cave mouths, with veins of crystal in the
+// stone and trees on the hills. A cavern near the world's centre opens wide, so a player who starts
+// there sees a way in. A Volume stage, so the caves have ceilings a height field could not
+// hold. Three parameters tune it: how much of the rock the caves hollow out, how often they open to
+// the sky, and how much crystal veins the stone. Every value in their ranges gives a sound world
+// (tests/presets.rs sweeps them).
+(
+    version: 1,
+    params: {
+        // From a few narrow passages at 0 to great caverns at 1.
+        "caves": (default: 0.5, range: (0.0, 1.0)),
+        // From caves sealed under a crust of rock at 0 to caves open to the sky wherever they reach
+        // the ground at 1.
+        "openings": (default: 0.6, range: (0.0, 1.0)),
+        // From plain stone at 0 to thick veins of crystal at 1.
+        "crystals": (default: 0.5, range: (0.0, 1.0)),
+    },
+    noises: {
+        "hills": (noise_type: SimplexSmooth, seed: 51, frequency: 0.02, fractal_octaves: 3),
+        "caves": (noise_type: SimplexSmooth, seed: 52, frequency: 0.035, fractal_octaves: 2),
+        "veins": (noise_type: SimplexSmooth, seed: 53, frequency: 0.12, fractal_octaves: 1),
+        "woods": (noise_type: Perlin, seed: 54, frequency: 0.05, fractal_octaves: 2),
+        "mouths": (noise_type: SimplexSmooth, seed: 55, frequency: 0.03, fractal_octaves: 2),
+    },
+    stages: [
+        // The hills' surface, 6 to 18 cells above the ground's zero.
+        (name: "height", kind: Field(Add(Constant(12.0), Mul(FastNoise("hills"), Constant(9.0))))),
+        // How far each column lies from the entrance cavern's middle.
+        (name: "entrance", kind: Field(Distance((-6.0, -6.0)))),
+        // How deep a crust of rock seals the caves: at least 1.5 cells where the mouths noise lies
+        // above the openings amount, and none where it lies well below it, nor over the entrance
+        // cavern, as wide as the openings amount lets it open.
+        (name: "crust", kind: Field(Min(
+            Add(Mul(Sub(
+                Clamp(Remap(FastNoise("mouths"), (-0.5, 0.5), (0.0, 1.0)), 0.0, 1.0),
+                Param("openings"),
+            ), Constant(8.0)), Constant(1.5)),
+            Sub(Add(Mul(Input("entrance"), Constant(0.5)), Constant(1.5)), Mul(Param("openings"), Constant(8.0))),
+        ))),
+        // Solid below the hills except in the caves, where the cave noise rises above a threshold
+        // the caves amount lowers, and in the entrance cavern. The crust keeps them under the
+        // ground, and the lowest levels are solid so the surface is closed.
+        (name: "rock", kind: Volume(
+            density: Max(
+                Min(
+                    Sub(Input("height"), Z),
+                    Max(
+                        Min(
+                            Mul(Sub(Sub(Constant(0.4), Mul(Param("caves"), Constant(0.25))), FastNoise("caves")), Constant(12.0)),
+                            // The entrance cavern, some 23 cells across and 17 high around 4 cells
+                            // under the hills' surface, so its mouth opens however high they stand.
+                            Add(
+                                Sub(Mul(Input("entrance"), Constant(0.6)), Constant(7.0)),
+                                Mul(Abs(Sub(Sub(Input("height"), Z), Constant(4.0))), Constant(0.8)),
+                            ),
+                        ),
+                        Sub(Input("crust"), Sub(Input("height"), Z)),
+                    ),
+                ),
+                Sub(Constant(-12.0), Z),
+            ),
+            bottom: -16,
+            top: 28,
+            materials: Some((rules: [
+                (category: "grass", when: [Greater(Z, Sub(Input("height"), Constant(1.0)))]),
+                (category: "dirt", when: [Greater(Z, Sub(Input("height"), Constant(4.0)))]),
+                (category: "crystal", when: [Greater(FastNoise("veins"), Sub(Constant(0.75), Mul(Param("crystals"), Constant(0.3))))]),
+            ], otherwise: "stone")),
+        )),
+        // What stands on the rock in each column: the hills' surface, or a sinkhole's floor.
+        (name: "top", kind: Top(volume: "rock")),
+        // Trees on the hills, never down a sinkhole.
+        (name: "trees", kind: Scatter(kind: "tree", height: "top", spacing: 3, apart: 2,
+            max_slope: Some(0.8),
+            when: [
+                Less(Abs(Sub(Input("top"), Input("height"))), Constant(0.5)),
+                Less(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Constant(0.3)),
+            ])),
+    ],
+)

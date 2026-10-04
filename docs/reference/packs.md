@@ -116,7 +116,12 @@ The presets in `examples/presets`, each with three parameters:
 - `archipelago.world.ron`: small islands of beach, grassy jungle and rock in a warm sea, each ringed
   by a reef of sand just under the water, whose `islands` run from a few islets to large islands,
   whose `reefs` run from shores that fall straight into deep water to wide reefs, and whose `palms`
-  run from bare islands to palm groves over all of them.
+  run from bare islands to palm groves over all of them;
+- `cave.world.ron`: a Volume stage of grassy hills over rock riddled with caves, with veins of
+  crystal in the stone, trees on the hills and an entrance cavern near the world's centre, whose
+  `caves` run from a few narrow passages to great caverns, whose `openings` run from caves sealed
+  under a crust of rock to caves open to the sky wherever they reach the ground, and whose
+  `crystals` run from plain stone to thick veins.
 
 ## Edits
 
