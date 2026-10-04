@@ -3,13 +3,17 @@
 ##
 ## Run with a display and the renderer to measure, never headless:
 ##     godot --path . --rendering-driver vulkan --script measure_city.gd -- --speed 4.2 --seconds 20 --out results.txt
-## Each chunk is drawn as one RenderingServer MultiMesh per module, from `instance_sets`, and freed
-## when the chunk is dropped; a camera follows the walker and a sun casts shadows; vsync is off.
+## Each chunk is drawn one of two ways, named by `--draw`, and freed when the chunk is dropped:
+## - `multimesh` (the default): one RenderingServer MultiMesh per module, from `instance_sets`;
+## - `merged`: one mesh per chunk, a surface per module holding every instance's copy of the
+##   module's model where `instance_sets` puts it, built with SurfaceTool, under one instance.
+## A camera follows the walker and a sun casts shadows; vsync is off.
 ## Once the first view is drawn it measures two phases of `--seconds` each: `idle`, standing still
 ## with nothing to generate, which is the cost of drawing alone, and `streaming`, walking along +x at
 ## `--speed` units a second. Each prints one line of `key=value` fields (frames, median, 99th
-## percentile and slowest frame in milliseconds, chunks drawn, and the node's own process time at the
-## 99th percentile), appended to `--out` as well when it is given.
+## percentile and slowest frame in milliseconds, chunks drawn, the node's own process time at the
+## 99th percentile, and how long drawing a chunk took Godot's thread, at the median and at worst),
+## appended to `--out` as well when it is given. The two ways of drawing are #203's choice.
 extends SceneTree
 
 const CELLS := 8
@@ -22,6 +26,8 @@ var camera: Camera3D
 var models := {}
 var drawn_names := PackedStringArray()
 var server_rids := {}
+## Each merged chunk's mesh, by its instance's RID, so the mesh lives as long as its instance.
+var merged_meshes := {}
 var speed := 4.2
 var seconds := 20.0
 var out := ""
@@ -31,6 +37,10 @@ var phase_started_usec := 0
 var last_usec := 0
 var frames := PackedFloat64Array()
 var drawn := 0
+## How this run draws a chunk: "multimesh" or "merged".
+var draw := "multimesh"
+## Milliseconds of Godot's thread each chunk took to draw in the phase.
+var draw_ms := PackedFloat64Array()
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -45,10 +55,14 @@ func _initialize() -> void:
 			"--speed": speed = value.to_float()
 			"--seconds": seconds = value.to_float()
 			"--out": out = value
+			"--draw": draw = value
 			_:
 				_fail("unknown option %s" % name)
 				return
 		i += 2
+	if draw != "multimesh" and draw != "merged":
+		_fail("--draw multimesh or merged, not %s" % draw)
+		return
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
 	world = ClassDB.instantiate("WaveForgeWorld")
@@ -124,10 +138,18 @@ func _draw(chunk: Vector3i) -> void:
 		if drawn_names.is_empty():
 			_fail("no module has a model; run prepare first")
 			return
+	var started := Time.get_ticks_usec()
 	_forget(chunk)
-	var rids := []
 	var scenario := root.get_world_3d().scenario
-	for set: Dictionary in world.instance_sets(chunk, drawn_names):
+	var sets: Array = world.instance_sets(chunk, drawn_names)
+	server_rids[chunk] = _multimeshes(sets, scenario) if draw == "multimesh" else _merged(sets, scenario)
+	draw_ms.append((Time.get_ticks_usec() - started) / 1000.0)
+	drawn += 1
+
+## A chunk's instance sets as a RenderingServer MultiMesh per module: the RIDs to free.
+func _multimeshes(sets: Array, scenario: RID) -> Array:
+	var rids := []
+	for set: Dictionary in sets:
 		var multimesh := RenderingServer.multimesh_create()
 		var transforms: PackedFloat32Array = set["transforms"]
 		RenderingServer.multimesh_set_mesh(multimesh, _model(set["name"]).get_rid())
@@ -135,12 +157,36 @@ func _draw(chunk: Vector3i) -> void:
 		RenderingServer.multimesh_set_buffer(multimesh, transforms)
 		rids.append(RenderingServer.instance_create2(multimesh, scenario))
 		rids.append(multimesh)
-	server_rids[chunk] = rids
-	drawn += 1
+	return rids
+
+## A chunk's instance sets as one mesh, a surface per module holding a copy of the module's model
+## at each of its instances, under one RenderingServer instance: the RIDs to free. The mesh is kept
+## alive by the RIDs' owner, the ArrayMesh in `merged_meshes`.
+func _merged(sets: Array, scenario: RID) -> Array:
+	var mesh := ArrayMesh.new()
+	for set: Dictionary in sets:
+		var model := _model(set["name"])
+		var transforms: PackedFloat32Array = set["transforms"]
+		var tool := SurfaceTool.new()
+		tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for i in range(0, transforms.size(), 12):
+			var at := Transform3D(
+				Vector3(transforms[i], transforms[i + 4], transforms[i + 8]),
+				Vector3(transforms[i + 1], transforms[i + 5], transforms[i + 9]),
+				Vector3(transforms[i + 2], transforms[i + 6], transforms[i + 10]),
+				Vector3(transforms[i + 3], transforms[i + 7], transforms[i + 11]))
+			for surface in model.get_surface_count():
+				tool.append_from(model, surface, at)
+		tool.set_material(model.surface_get_material(0))
+		tool.commit(mesh)
+	var instance := RenderingServer.instance_create2(mesh.get_rid(), scenario)
+	merged_meshes[instance] = mesh
+	return [instance]
 
 func _forget(chunk: Vector3i) -> void:
 	for rid: RID in server_rids.get(chunk, []):
 		RenderingServer.free_rid(rid)
+		merged_meshes.erase(rid)
 	server_rids.erase(chunk)
 
 ## Whether every chunk within the radius of the walker's chunk is drawn.
@@ -186,6 +232,7 @@ func _start(next: String) -> void:
 	phase = next
 	frames = PackedFloat64Array()
 	drawn = 0
+	draw_ms = PackedFloat64Array()
 	phase_started_usec = Time.get_ticks_usec()
 
 func _report(name: String) -> void:
@@ -193,10 +240,14 @@ func _report(name: String) -> void:
 	sorted.sort()
 	var at := func(fraction: float) -> float: return sorted[roundi((sorted.size() - 1) * fraction)]
 	var stats: Dictionary = world.stats()
-	var line := "measure_city adapter=\"%s\" driver=%s method=%s speed=%s phase=%s frames=%d p50_ms=%.2f p99_ms=%.2f max_ms=%.2f chunks=%d node_p99_ms=%.2f" % [
+	var drawing := draw_ms.duplicate()
+	drawing.sort()
+	var draw_p50 := drawing[drawing.size() / 2] if not drawing.is_empty() else 0.0
+	var draw_max := drawing[drawing.size() - 1] if not drawing.is_empty() else 0.0
+	var line := "measure_city adapter=\"%s\" driver=%s method=%s draw=%s speed=%s phase=%s frames=%d p50_ms=%.2f p99_ms=%.2f max_ms=%.2f chunks=%d node_p99_ms=%.2f draw_p50_ms=%.3f draw_max_ms=%.3f" % [
 		RenderingServer.get_video_adapter_name(), RenderingServer.get_current_rendering_driver_name(),
-		RenderingServer.get_current_rendering_method(), speed, name, sorted.size(), at.call(0.5), at.call(0.99),
-		sorted[sorted.size() - 1], drawn, stats.get("process_ms_p99", -1.0)]
+		RenderingServer.get_current_rendering_method(), draw, speed, name, sorted.size(), at.call(0.5), at.call(0.99),
+		sorted[sorted.size() - 1], drawn, stats.get("process_ms_p99", -1.0), draw_p50, draw_max]
 	print(line)
 	if out != "":
 		var file := FileAccess.open(out, FileAccess.READ_WRITE) if FileAccess.file_exists(out) else FileAccess.open(out, FileAccess.WRITE)
