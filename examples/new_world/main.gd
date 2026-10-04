@@ -55,6 +55,9 @@ func _generate() -> void:
 	history = _load_history()
 	if history.is_empty():
 		history = HISTORY.new().run(stages, stages.seed)
+		if history.is_empty():
+			_fail("the history founded no settlement, so there is no world to play")
+			return
 		FileAccess.open(_path("history.json"), FileAccess.WRITE).store_string(JSON.stringify(history))
 	if not stages.give_table("settlements", history):
 		_fail("the continent did not take the history")
@@ -64,7 +67,9 @@ func _generate() -> void:
 func _load_history() -> Array:
 	if not FileAccess.file_exists(_path("history.json")):
 		return []
-	return JSON.parse_string(FileAccess.get_file_as_string(_path("history.json")))
+	# The file is the game's own, but a crash part way through writing it leaves something else.
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(_path("history.json")))
+	return parsed if parsed is Array else []
 
 func _run() -> void:
 	if not stages.run_world(_path("world")):
@@ -110,10 +115,15 @@ func _play() -> void:
 	phase = "playing"
 	$Screen.hide()
 	history = _load_history()
+	if history.is_empty():
+		_fail("the folder holds a world but no history; delete it for a new world")
+		return
 	var scene: Node = CONTINENT.instantiate()
 	stages = scene.get_node("Continent")
 	stages.play_directory = _path("world")
 	add_child(scene)
+	# A world the folder no longer holds whole fails as it plays: the screen says so.
+	stages.generation_failed.connect(func(reason: String) -> void: _fail("the world could not be played: " + reason))
 	if not stages.start():
 		_fail("the world did not start")
 		return
@@ -124,6 +134,7 @@ func _play() -> void:
 
 func _fail(message: String) -> void:
 	phase = "failed"
+	$Screen.show()
 	status.text = message[0].to_upper() + message.substr(1)
 	button.hide()
 	push_error("new_world: " + message)
