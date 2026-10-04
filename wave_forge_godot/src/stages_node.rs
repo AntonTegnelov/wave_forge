@@ -1137,8 +1137,8 @@ impl WaveForgeStages {
     #[signal]
     fn world_run_finished(done: i64, total: i64);
 
-    /// A chunk's navigation mesh is baked and in the navigation map; agents can path across it and
-    /// into its neighbours that have theirs.
+    /// A chunk's navigation mesh is baked and the navigation map has taken it in, so a path asked
+    /// for now finds it; agents can path across it and into its neighbours that have theirs.
     #[signal]
     fn navigation_ready(chunk: Vector3i);
 
@@ -3855,7 +3855,7 @@ impl WaveForgeStages {
                 (-radius..=radius).map(move |dx| ChunkCoord::new(focus.x + dx, focus.y + dy, 0))
             })
             .collect();
-        let ready = self.navigation.settle(&wanted);
+        let ready = self.navigation.settle(&wanted, map);
         if !may_start {
             return ready;
         }

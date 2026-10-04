@@ -36,7 +36,7 @@ func _process(_delta: float) -> bool:
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
 		return _fail("%s: not settled after %.0f s: %s" % [paths[index], TIMEOUT_S, stages.stats()])
 	var stats: Dictionary = stages.stats()
-	if not _generated(stats) or _drawn().is_empty() or stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_colliders"] > 0 or stats["pending_placements"] > 0 or stats["navigation_baked"] == 0:
+	if not _generated(stats) or _drawn().is_empty() or stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_colliders"] > 0 or stats["pending_placements"] > 0 or stages.navigation_chunks().is_empty():
 		return false
 	var problem = _settled(paths[index], stats)
 	if problem != "ok":

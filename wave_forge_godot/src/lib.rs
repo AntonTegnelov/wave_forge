@@ -308,6 +308,8 @@ struct NavigationChunk {
     mesh: Gd<NavigationMesh>,
     /// When the running bake was asked for, if one is running.
     baking_since: Option<std::time::Instant>,
+    /// The newest mesh on its way into the map, once it is set on the region.
+    arriving: Option<crate::stage_navigation::Arrival>,
     /// Whether the chunk or a neighbour changed while it was baking, so it bakes again.
     stale: bool,
 }
@@ -508,8 +510,8 @@ impl WaveForgeWorld {
     #[signal]
     fn chunk_evicted(chunk: Vector3i);
 
-    /// A chunk's navigation mesh is baked and in the navigation map; agents can path across it and
-    /// into the neighbours that are ready too.
+    /// A chunk's navigation mesh is baked and the navigation map has taken it in, so a path asked
+    /// for now finds it; agents can path across it and into the neighbours that are ready too.
     #[signal]
     fn navigation_ready(chunk: Vector3i);
 
@@ -850,7 +852,7 @@ impl WaveForgeWorld {
     fn navigation_chunks(&self) -> Array<Vector3i> {
         self.navigation
             .iter()
-            .filter(|(_, chunk)| chunk.baking_since.is_none())
+            .filter(|(_, chunk)| chunk.baking_since.is_none() && chunk.arriving.is_none())
             .map(|(&coord, _)| to_vector(coord))
             .collect()
     }
@@ -1383,23 +1385,27 @@ impl WaveForgeWorld {
             return;
         };
         let cell_size = server.map_get_cell_size(map);
-        // Finished bakes go into the map.
+        // Finished bakes go into their regions, and are ready once the map has taken them in.
         let mut ready = Vec::new();
         for (&coord, chunk) in &mut self.navigation {
-            let Some(since) = chunk.baking_since else {
-                continue;
-            };
-            if server.is_baking_navigation_mesh(&chunk.mesh) {
-                continue;
+            if let Some(since) = chunk.baking_since
+                && !server.is_baking_navigation_mesh(&chunk.mesh)
+            {
+                let finishing = std::time::Instant::now();
+                server.region_set_navigation_mesh(chunk.region, &chunk.mesh);
+                chunk.arriving = Some(crate::stage_navigation::Arrival::of(&chunk.mesh));
+                chunk.baking_since = None;
+                self.bake_finish_ms
+                    .push(finishing.elapsed().as_secs_f64() * 1000.0);
+                self.bake_ms.push(since.elapsed().as_secs_f64() * 1000.0);
+                self.baked += 1;
             }
-            let finishing = std::time::Instant::now();
-            server.region_set_navigation_mesh(chunk.region, &chunk.mesh);
-            chunk.baking_since = None;
-            self.bake_finish_ms
-                .push(finishing.elapsed().as_secs_f64() * 1000.0);
-            self.bake_ms.push(since.elapsed().as_secs_f64() * 1000.0);
-            self.baked += 1;
-            ready.push(coord);
+            if let Some(arrival) = chunk.arriving
+                && arrival.arrived(&server, map, chunk.region)
+            {
+                chunk.arriving = None;
+                ready.push(coord);
+            }
         }
         for coord in &ready {
             self.signals().navigation_ready().emit(to_vector(*coord));
@@ -1544,6 +1550,7 @@ impl WaveForgeWorld {
                     region,
                     mesh,
                     baking_since: Some(std::time::Instant::now()),
+                    arriving: None,
                     stale: false,
                 },
             );

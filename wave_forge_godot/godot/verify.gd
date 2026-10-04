@@ -69,6 +69,9 @@ var done := false
 ## last bakes began.
 var navigable := {}
 var navigation_wait_usec := -1
+## How many chunks a path crossed on their navigation_ready, and the chunks one did not.
+var pathed_on_signal := 0
+var missed_on_signal: Array[Vector3i] = []
 ## A node set to start on its own from a rule file, checked on the first frame.
 var starting_on_ready: Node = null
 
@@ -103,7 +106,7 @@ func _initialize() -> void:
 	agent.agent_max_climb = 0.25
 	world.navigation_template = agent
 	world.navigation_radius = COLLIDER_RADIUS
-	world.navigation_ready.connect(func(chunk: Vector3i) -> void: navigable[chunk] = true)
+	world.navigation_ready.connect(_on_navigation_ready)
 	for axis in 4:
 		world.ban_tiles_on_face(axis, PackedInt32Array([FOREST]))
 	world.chunk_updated.connect(_on_chunk_updated)
@@ -339,8 +342,22 @@ func _on_chunk_evicted(chunk: Vector3i) -> void:
 func _on_generation_failed(reason: String) -> void:
 	_fail("generation failed: " + reason)
 
+## A path across the chunk `navigation_ready` names, asked for on the signal itself with no wait,
+## since the signal comes once the map has taken the chunk's mesh in.
+func _on_navigation_ready(chunk: Vector3i) -> void:
+	navigable[chunk] = true
+	var row := (7 * CELLS + 4) * CELLS
+	var from: Vector3 = world.cell_position(chunk, row + 1) + Vector3.UP * (CELL_SIZE / 2.0)
+	var to: Vector3 = world.cell_position(chunk, row + CELLS - 2) + Vector3.UP * (CELL_SIZE / 2.0)
+	var path := NavigationServer3D.map_get_path(root.get_world_3d().navigation_map, from, to, true)
+	if path.is_empty() or path[path.size() - 1].distance_to(to) > 0.5:
+		missed_on_signal.append(chunk)
+	else:
+		pathed_on_signal += 1
+
 ## Once the chunks near the focus have their navigation meshes, a path runs from one side of them to
-## the other across two seams, as straight as the flat ground allows.
+## the other across two seams, as straight as the flat ground allows, with no wait after the
+## signals; and every chunk was crossed by a path on its signal.
 func _await_navigation() -> bool:
 	var focus := Vector3i(WALK_FROM, 1, 0)
 	var waited := (Time.get_ticks_usec() - navigation_wait_usec) / 1e6
@@ -354,9 +371,9 @@ func _await_navigation() -> bool:
 		if waited > 60.0:
 			_fail("%d of 9 chunks near the focus have navigation after %.0f s" % [baked, waited])
 		return waited > 60.0
-	# The map takes the new regions in on its next synchronisation.
-	if waited < 0.5:
-		return false
+	if not missed_on_signal.is_empty():
+		_fail("no path across %s on their navigation_ready, of %d chunks" % [missed_on_signal, missed_on_signal.size() + pathed_on_signal])
+		return true
 	var top := func(chunk: Vector3i) -> Vector3:
 		var cell := (7 * CELLS + 4) * CELLS + 4
 		return world.cell_position(chunk, cell) + Vector3.UP * (CELL_SIZE / 2.0)
@@ -381,8 +398,8 @@ func _await_navigation() -> bool:
 		_fail("the path across flat ground is %.1f long for %.1f straight" % [length, from.distance_to(to)])
 		return true
 	var stats: Dictionary = world.stats()
-	print("verify: navigation on the 9 chunks near the focus, a path of %.1f across two seams for %.1f straight; %d bakes, median %.0f ms, max %.0f ms, %d polygons" % [
-		length, from.distance_to(to), stats["navigation_baked"], stats["navigation_bake_ms_median"], stats["navigation_bake_ms_max"], stats["navigation_polygons"]])
+	print("verify: navigation on the 9 chunks near the focus, a path of %.1f across two seams for %.1f straight; %d bakes, median %.0f ms, max %.0f ms, %d polygons; a path across each of %d chunks on its navigation_ready" % [
+		length, from.distance_to(to), stats["navigation_baked"], stats["navigation_bake_ms_median"], stats["navigation_bake_ms_max"], stats["navigation_polygons"], pathed_on_signal])
 	quit(0)
 	return true
 
