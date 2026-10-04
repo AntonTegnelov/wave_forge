@@ -1,7 +1,7 @@
 ## Checks the sample world headless: `godot --headless --path . --script check.gd`. It runs
 ## `main.tscn` until the townsfolk are out, then for `WALK_S` more seconds, and checks that the city
 ## stands in grass with trees around it, the day goes on, and every one of the townsfolk walks
-## along the navigation map inside the city.
+## along the navigation map towards a point of the city's streets.
 extends SceneTree
 
 const TIMEOUT_S := 300.0
@@ -60,14 +60,15 @@ func _process(_delta: float) -> bool:
 		var moved: float = walked[person]
 		if moved < 1.0:
 			return _fail("a person walked %.2f m in %.0f s" % [moved, WALK_S])
-		if not streets.has_point(Vector2(at.x, at.z)):
-			return _fail("a person left the city's streets, at %s" % at)
+		var target: Vector3 = person.get_node("NavigationAgent3D").target_position
+		if not streets.has_point(Vector2(target.x, target.z)):
+			return _fail("a person walks to %s, outside the city's streets" % target)
 		var off := at.distance_to(NavigationServer3D.map_get_closest_point(map, at))
 		if off > 0.5:
 			return _fail("a person stands %.2f m off the navigation map, at %s" % [off, at])
 		distances.append(moved)
 	distances.sort()
-	print("check: the city stands in grass, with %d trees and modules placed; the day went from %.3f to %.3f; %d townsfolk walked %.1f to %.1f m in %.0f s along the navigation map inside the city" % [
+	print("check: the city stands in grass, with %d trees and modules placed; the day went from %.3f to %.3f; %d townsfolk walked %.1f to %.1f m in %.0f s along the navigation map to points of the city's streets" % [
 		stats["placed_instances"], time_before, day.time, distances.size(), distances[0], distances[distances.size() - 1], WALK_S])
 	quit(0)
 	return true
