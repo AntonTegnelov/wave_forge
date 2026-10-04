@@ -3,9 +3,10 @@
 ## Run by `../verify.sh` after `verify_inspector.gd`, which also fails if this prints an error or
 ## a warning. For each preset: a fresh WaveForgeStages node is given the preset's settings and
 ## added to a scene with a sun and an environment, and it starts on its own, as on a first play.
-## Once nothing is pending around the followed point it warns of nothing, stands ground there,
-## has bodies and navigation, draws its sea when it has one, draws its props (trees, cacti) as
-## MultiMesh instances, and has a palette colour per material of its ground.
+## Once nothing is pending around the followed point it warns of nothing, stands ground there (its
+## ground's, or the top of its volume for a preset drawn from a volume alone), has bodies and
+## navigation, draws its sea when it has one, draws its props (trees, cacti, palms) as MultiMesh
+## instances, and has a palette colour per material of its ground or volume.
 extends SceneTree
 
 const Presets := preload("res://addons/wave_forge/presets.gd")
@@ -35,12 +36,12 @@ func _process(_delta: float) -> bool:
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
 		return _fail("%s: not settled after %.0f s: %s" % [paths[index], TIMEOUT_S, stages.stats()])
 	var stats: Dictionary = stages.stats()
-	if stages.ground_chunks().is_empty() or stats["pending_grounds"] > 0 or stats["pending_colliders"] > 0 or stats["pending_placements"] > 0 or stats["navigation_baked"] == 0:
+	if not _generated(stats) or _drawn().is_empty() or stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_colliders"] > 0 or stats["pending_placements"] > 0 or stats["navigation_baked"] == 0:
 		return false
 	var problem = _settled(paths[index], stats)
 	if problem != "ok":
 		return _fail(problem)
-	print("verify_presets: %s: %d grounds, %d bodies, %d navigation regions, %d props" % [paths[index].get_file(), stages.ground_chunks().size(), stages.collider_chunks().size(), stages.navigation_chunks().size(), stats["placed_instances"]])
+	print("verify_presets: %s: %d grounds, %d bodies, %d navigation regions, %d props" % [paths[index].get_file(), _drawn().size(), stages.collider_chunks().size(), stages.navigation_chunks().size(), stats["placed_instances"]])
 	scene.queue_free()
 	stages = null
 	return false
@@ -73,10 +74,26 @@ func _settled(path: String, stats: Dictionary) -> String:
 		return "%s has a sea and water but draws no sea" % path
 	if stats["placed_instances"] == 0:
 		return "%s draws no props as MultiMesh instances: %s" % [path, stats]
-	var materials: PackedStringArray = stages.category_names(stages.ground_material_stage)
-	if materials.size() != stages.ground_palette.size():
-		return "%s has %d palette colours for the materials %s" % [path, stages.ground_palette.size(), materials]
+	var volume: bool = stages.ground_stage.is_empty()
+	var materials: PackedStringArray = stages.category_names(stages.volume_stage if volume else stages.ground_material_stage)
+	var palette: PackedColorArray = stages.volume_palette if volume else stages.ground_palette
+	if materials.size() != palette.size():
+		return "%s has %d palette colours for the materials %s" % [path, palette.size(), materials]
 	return "ok"
+
+## Whether every target stage has generated something, since a stage that reads a slow one, trees
+## on a volume's top say, arrives after the ground is drawn.
+func _generated(stats: Dictionary) -> bool:
+	for target: String in stages.targets:
+		# A stage that has not run yet has no entry.
+		if not stats["stages"].has(target) or stats["stages"][target]["products"] == 0:
+			return false
+	return true
+
+## The chunks the preset draws its ground in: its ground's, or its volume's surface's for a preset
+## drawn from a volume alone.
+func _drawn() -> Array:
+	return stages.volume_chunks() if stages.ground_stage.is_empty() else stages.ground_chunks()
 
 func _fail(message: String) -> bool:
 	printerr("verify_presets: " + message)
