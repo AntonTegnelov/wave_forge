@@ -34,7 +34,8 @@ func _initialize() -> void:
 	world = ClassDB.instantiate("WaveForgeStages")
 	world.pack_file = "res://far.world.ron"
 	world.targets = PackedStringArray(["height", "far"])
-	world.target_radii = {"far": FAR_RADIUS}
+	var radii: Dictionary[StringName, int] = {&"far": FAR_RADIUS}
+	world.target_radii = radii
 	world.seed = 3
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	world.cell_size = CELL

@@ -83,7 +83,7 @@ pub struct WaveForgeStages {
     /// stage reading `FastNoise(name)` then gives exactly what the resource's `get_noise_2d` gives
     /// at each column's centre in cells.
     #[export]
-    noises: VarDictionary,
+    noises: Dictionary<StringName, Option<Gd<FastNoiseLite>>>,
     /// Values of the pack's parameters, as name to number, which `start` gives the stages; a
     /// parameter left out keeps its default ([packs.md](packs.md#parameters)). The inspector shows
     /// each as a slider over its range, `params/<name>`, which the scene saves and which changes
@@ -143,7 +143,7 @@ pub struct WaveForgeStages {
     /// A radius of its own for some targets, as stage name to chunks, the others keeping
     /// `view_radius`: ground far out, locations nearer and clutter nearest, say.
     #[export]
-    target_radii: VarDictionary,
+    target_radii: Dictionary<StringName, i32>,
 
     /// The field stage the ground is built from, a height in cells per column; empty for no
     /// ground. It has to be generated, as a target or as what a target reads. A chunk's ground
@@ -711,8 +711,8 @@ impl INode for WaveForgeStages {
             bake_button: PhantomVar::default(),
             bake_path: GString::from("res://wave_forge_bake.tscn"),
             rules_files: VarDictionary::new(),
-            noises: VarDictionary::new(),
-            target_radii: VarDictionary::new(),
+            noises: Dictionary::new(),
+            target_radii: Dictionary::new(),
             targets: PackedStringArray::new(),
             params: VarDictionary::new(),
             listed_params: None,
@@ -1257,9 +1257,9 @@ impl WaveForgeStages {
         });
         let mut noises = Vec::new();
         for (name, noise) in self.noises.iter_shared() {
-            let name = name.to::<GString>().to_string();
-            let Ok(noise) = noise.try_to::<Gd<FastNoiseLite>>() else {
-                godot_error!("wave forge: noise {name:?} is not a FastNoiseLite");
+            let name = name.to_string();
+            let Some(noise) = noise else {
+                godot_error!("wave forge: noise {name:?} has no FastNoiseLite");
                 return false;
             };
             match noise_config(&noise) {
@@ -1422,8 +1422,7 @@ impl WaveForgeStages {
             .map(|target| {
                 let radius = self
                     .target_radii
-                    .get(&target.to_variant())
-                    .and_then(|radius| radius.try_to::<i64>().ok())
+                    .get(&StringName::from(target))
                     .map(|radius| radius.max(0) as u32);
                 (target.to_string(), radius)
             })

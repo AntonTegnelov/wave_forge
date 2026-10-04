@@ -12,7 +12,7 @@ const CELL_SIZE := 2.0
 const RADIUS := 2
 const DISTANCE := 150.0
 const TIMEOUT_S := 120.0
-const COLOURS := {
+const COLOURS: Dictionary[StringName, Color] = {
 	"building_base": Color(0.76, 0.68, 0.58), "building_door": Color(0.76, 0.68, 0.58),
 	"building_floor": Color(0.72, 0.64, 0.56), "building_balcony": Color(0.72, 0.64, 0.56),
 	"building_passage": Color(0.72, 0.64, 0.56), "building_arcade": Color(0.72, 0.64, 0.56),

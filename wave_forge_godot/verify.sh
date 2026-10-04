@@ -23,6 +23,7 @@
 # finite world whole, stopping and resuming, and plays it back, then `godot/verify_continent.gd`,
 # which follows the maximal preset's first settlement to its town, then `godot/verify_inspector.gd`,
 # which checks the nodes' configuration warnings and inspector buttons, then
+# `godot/verify_typed_maps.gd`, which loads a scene saved with untyped maps into the typed ones, then
 # `godot/verify_presets.gd`, which takes every preset the plugin ships as a new node and checks it
 # stands a lit, walkable world with nothing printed, then `godot/verify_walk.gd`, which walks
 # the default preset with the plugin's walker and no code, then the editor itself, headless,
@@ -60,6 +61,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_world.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_continent.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_inspector.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_typed_maps.gd
 # N1: a preset's first play, and walking it, print no error and no warning; the device's own
 # notices aside.
 for script in verify_presets.gd verify_walk.gd; do
