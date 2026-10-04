@@ -24,7 +24,8 @@
 # `godot/verify_presets.gd`, which takes every preset the plugin ships as a new node and checks it
 # stands a lit, walkable world with nothing printed, then `godot/verify_walk.gd`, which walks
 # the default preset with the plugin's walker and no code, then the editor itself, headless,
-# which has to load the editor plugin (`godot/addons/wave_forge`) without a script error, then
+# which has to load the editor plugin (`godot/addons/wave_forge`) without a script error, its dock
+# an `EditorDock` and its shortcuts in the editor settings (`godot/verify_plugin.gd`), then
 # `godot/verify_sound.gd`, which checks the city's region tags and sound, then
 # `godot/verify_names.gd`, which names a location through a translation, then
 # `godot/verify_occlusion.gd`, which checks the city's occluders, then `godot/verify_proxies.gd`,
@@ -67,11 +68,15 @@ for script in verify_presets.gd verify_walk.gd; do
 done
 editor_log="$(mktemp)"
 "${GODOT:-godot}" --headless --editor --path "$here/godot" --quit-after 300 >"$editor_log" 2>&1
-if grep -E "SCRIPT ERROR|Failed to load script" "$editor_log"; then
-	echo "verify: the editor plugin does not load" >&2
+if grep -E "SCRIPT ERROR|Failed to load script|verify_plugin" "$editor_log" | grep -v "^verify_plugin: the dock"; then
+	echo "verify: the editor plugin does not load, or its dock or shortcuts are wrong" >&2
 	exit 1
 fi
-echo "verify: the editor loads the plugin without a script error"
+if ! grep -q "^verify_plugin: the dock" "$editor_log"; then
+	echo "verify: the editor never checked the plugin's dock and shortcuts" >&2
+	exit 1
+fi
+echo "verify: the editor loads the plugin without a script error, its dock an EditorDock with shortcuts"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_sound.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_names.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_occlusion.gd

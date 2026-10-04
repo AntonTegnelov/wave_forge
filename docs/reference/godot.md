@@ -402,7 +402,8 @@ is off. `WaveForgeWorld` never starts in the editor.
 
 `WaveForgeStages` is a tool class, so it runs in the editor where `preview_in_editor` is on,
 generating around the editor's camera. The editor plugin (`addons/wave_forge`, enabled in the
-project's plugins) adds a Wave Forge dock:
+project's plugins) adds a Wave Forge dock, an `EditorDock` the editor lays out, floats and saves
+under the key `wave_forge`, on the right by default:
 - a Preset list of the presets shipped in `addons/wave_forge/presets`, each a scene of a
   configured `WaveForgeStages` node beside its pack: choosing one copies its settings onto the
   selected node as one undo action (its pack, targets, ground, palette, sea, bodies, navigation and
@@ -448,6 +449,10 @@ holds the continent's pack, its eight cultures as `rules_files` and the 81 targe
 the scene's script (`continent.gd`) gives the node the history a game would simulate,
 `continent/history.json`, as its `settlements` table whenever it has started without one.
 `prepare.sh` copies the pack, the cultures and the history into `continent/`.
+
+Paint and each brush have a shortcut under `wave_forge/` in the editor settings, which a user
+rebinds there: P toggles Paint, and 1 to 6 pick Raise, Lower, Smooth, Dig, Fill and Remove, while
+the 3D viewport has focus and a `WaveForgeStages` node is selected.
 
 With Paint on and the node selected, a drag in the 3D viewport paints a stroke along the ground,
 as one undo action that restores `edits_text`. The ground comes from `ground_height`, so painting
