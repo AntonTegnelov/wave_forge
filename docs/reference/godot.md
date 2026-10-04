@@ -464,6 +464,23 @@ needs `ground_stage`. What a stroke does is the node's own `paint(brush, path)`:
 It adds the edits `stages::brushes::stroke` gives ([packs.md](packs.md#edits)), so a game's own
 tools paint the same way.
 
+### Packs as data
+
+`WaveForgeStages.pack_dictionary(text)` gives a pack as the plain data GDScript edits:
+- a Dictionary of the pack file's fields (`version`, `stages`, `params`, `noises`, `water` and
+  the rest);
+- each stage a Dictionary of its `name`, `scale`, `persist` and `kind`;
+- a kind a Dictionary of one key, the kind's name, holding its fields as a pack file writes them,
+  so a Field is `{"Field": {"Add": [{"FastNoise": "hills"}, {"Constant": 1}]}}`;
+- `None` a null, a tuple an Array, and a whole number an int.
+
+`WaveForgeStages.pack_text(data)` writes such data back as the text of a pack file, which the node
+loads as any other; a whole number may be an int or a float. Both are static and check the pack as
+loading does. On data no pack holds, which they name by its place (`pack.stages[0].kind.Field`), or
+a pack the library refuses, they report the reason as an error and give an empty result. A stack of
+stages edited in the editor saves itself this way, so it holds nothing the library could not read
+(`src/pack_data.rs`).
+
 ### Scenes
 
 `scenes` binds a kind to a scene: a Scatter, Embed, Deposit or Spawn point's kind, an Assemble

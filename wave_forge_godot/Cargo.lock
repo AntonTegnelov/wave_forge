@@ -1146,6 +1146,7 @@ name = "wave_forge_godot"
 version = "0.1.0"
 dependencies = [
  "godot",
+ "serde_json",
  "wave_forge",
 ]
 

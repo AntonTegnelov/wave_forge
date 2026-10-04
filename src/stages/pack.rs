@@ -42,6 +42,27 @@ pub struct PackFile {
     pub params: BTreeMap<String, ParamDef>,
 }
 
+impl PackFile {
+    /// The pack file `text` holds, as written, before [`Pack::from_file`] checks it.
+    ///
+    /// # Errors
+    /// [`PackError::Syntax`] if `text` is not a pack file's RON.
+    pub fn read(text: &str) -> Result<Self, PackError> {
+        ron::from_str(text).map_err(|error| PackError::Syntax(error.to_string()))
+    }
+
+    /// The pack as the text of a pack file: pretty RON, which [`Pack::parse`] reads back as this
+    /// pack. A stack an engine edits as data saves itself through it.
+    ///
+    /// # Panics
+    /// Never for a pack file: every field serializes to RON.
+    #[must_use]
+    pub fn to_text(&self) -> String {
+        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
+            .expect("every field of a pack file serializes to RON")
+    }
+}
+
 /// A number a pack exposes for tuning ([`PackFile::params`]): its value when none is given, and
 /// the range a value has to lie in, which is the range the pack promises gives a sound world.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
@@ -1799,9 +1820,7 @@ impl Pack {
     /// # Errors
     /// [`PackError`] naming what is wrong and in which stage.
     pub fn parse(text: &str) -> Result<Self, PackError> {
-        let file: PackFile =
-            ron::from_str(text).map_err(|error| PackError::Syntax(error.to_string()))?;
-        Self::from_file(file)
+        Self::from_file(PackFile::read(text)?)
     }
 
     /// Checks and links a pack built in code.

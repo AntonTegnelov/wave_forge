@@ -21,3 +21,6 @@ crate-type = ["cdylib"]
 # Godot may still change between versions.
 godot = { version = "0.5.5", features = ["register-docs", "experimental-godot-api"] }
 wave_forge = { path = ".." }
+# A pack as plain data for GDScript goes through serde_json's values between Godot's Variants and
+# the library's serde types; the version the library already tests with.
+serde_json = "1.0.151"

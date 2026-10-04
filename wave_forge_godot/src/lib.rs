@@ -69,6 +69,7 @@ mod grass;
 mod kit;
 mod lods;
 mod occlusion;
+mod pack_data;
 mod paths;
 mod placements;
 mod proxy;
