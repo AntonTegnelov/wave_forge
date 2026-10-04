@@ -10,7 +10,9 @@ const WALK_S := 5.0
 var main: Node
 var started_usec := 0
 var walking_usec := 0
-var starts := {}
+## Where each of the townsfolk was last frame, and how far each has walked since the walk began.
+var last := {}
+var walked := {}
 var time_before := 0.0
 
 func _initialize() -> void:
@@ -26,10 +28,14 @@ func _process(_delta: float) -> bool:
 		if townsfolk.get_child_count() < townsfolk.count:
 			return false
 		for person: Node3D in townsfolk.get_children():
-			starts[person] = person.global_position
+			last[person] = person.global_position
+			walked[person] = 0.0
 		time_before = main.get_node("DayNight").time
 		walking_usec = Time.get_ticks_usec()
 		return false
+	for person: Node3D in townsfolk.get_children():
+		walked[person] += person.global_position.distance_to(last[person])
+		last[person] = person.global_position
 	if (Time.get_ticks_usec() - walking_usec) / 1e6 < WALK_S:
 		return false
 	var city: Node = main.get_node("City")
@@ -48,10 +54,10 @@ func _process(_delta: float) -> bool:
 		return _fail("the time of day stayed at %.4f" % day.time)
 	var map: RID = main.get_world_3d().navigation_map
 	var streets: Rect2 = townsfolk.streets.grow(1.0)
-	var walked := PackedFloat64Array()
+	var distances := PackedFloat64Array()
 	for person: Node3D in townsfolk.get_children():
 		var at := person.global_position
-		var moved := at.distance_to(starts[person])
+		var moved: float = walked[person]
 		if moved < 1.0:
 			return _fail("a person walked %.2f m in %.0f s" % [moved, WALK_S])
 		if not streets.has_point(Vector2(at.x, at.z)):
@@ -59,10 +65,10 @@ func _process(_delta: float) -> bool:
 		var off := at.distance_to(NavigationServer3D.map_get_closest_point(map, at))
 		if off > 0.5:
 			return _fail("a person stands %.2f m off the navigation map, at %s" % [off, at])
-		walked.append(moved)
-	walked.sort()
+		distances.append(moved)
+	distances.sort()
 	print("check: the city stands in grass, with %d trees and modules placed; the day went from %.3f to %.3f; %d townsfolk walked %.1f to %.1f m in %.0f s along the navigation map inside the city" % [
-		stats["placed_instances"], time_before, day.time, walked.size(), walked[0], walked[walked.size() - 1], WALK_S])
+		stats["placed_instances"], time_before, day.time, distances.size(), distances[0], distances[distances.size() - 1], WALK_S])
 	quit(0)
 	return true
 
