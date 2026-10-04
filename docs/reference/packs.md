@@ -121,7 +121,11 @@ The presets in `examples/presets`, each with three parameters:
   crystal in the stone, trees on the hills and an entrance cavern near the world's centre, whose
   `caves` run from a few narrow passages to great caverns, whose `openings` run from caves sealed
   under a crust of rock to caves open to the sky wherever they reach the ground, and whose
-  `crystals` run from plain stone to thick veins.
+  `crystals` run from plain stone to thick veins;
+- `city.world.ron`: a city of the city module set (`examples/city.ron`) solved on a levelled site
+  beside the world's centre, the same place whatever the seed, in rolling countryside with woods,
+  whose `density` runs from parks with no building to every block built, whose `hills` run from
+  gentle swells to steep hills, and whose `trees` run from open country to thick woods.
 
 ## Edits
 

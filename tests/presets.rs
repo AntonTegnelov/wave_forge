@@ -1,12 +1,15 @@
 //! Presets and their parameters (docs/product/user-stories.md, N2): a pack's parameters change
 //! what reads them and nothing else, and every value in each preset's ranges gives a sound world,
 //! swept over a grid of values and seeds: islands, hills and forests, the canyon desert, the
-//! archipelago and the cave level.
+//! archipelago, the cave level and the small city, whose city the reference solver solves.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use wave_forge::stages::{Pack, PackError, Runtime, StageError};
-use wave_forge::{ChunkCoord, FocusPoint};
+use wave_forge::loader::{RuleFile, parse_rule_file};
+use wave_forge::stages::{Pack, PackError, Runtime, Site, StageError};
+use wave_forge::towns::WfcTowns;
+use wave_forge::{ChunkCoord, ChunkShape, FocusPoint};
+use wfc_core::reference::ReferenceSolver;
 
 const SIZE: [u32; 2] = [8, 8];
 
@@ -620,4 +623,146 @@ fn more_caves_more_openings_and_more_crystals_each_make_more_of_theirs() {
         crystals.windows(2).all(|pair| pair[0] < pair[1]),
         "{crystals:?}"
     );
+}
+
+/// The city module set the small city preset solves its city with.
+fn city_rules() -> RuleFile {
+    let text = std::fs::read_to_string(format!("{}/examples/city.ron", env!("CARGO_MANIFEST_DIR")))
+        .expect("the city module set");
+    parse_rule_file(&text).expect("a module set")
+}
+
+/// A runtime of the small city preset whose city is solved on the CPU by the reference solver, in
+/// chunks of 8 by 8 by 8 cells as the preset's scene has them.
+fn city_runtime(seed: u64) -> Runtime {
+    let shape = ChunkShape { x: 8, y: 8, z: 8 };
+    let towns = WfcTowns::new(shape)
+        .with_rules("city", city_rules(), |ruleset| {
+            Ok(ReferenceSolver::new(ruleset))
+        })
+        .expect("the rules compile");
+    Runtime::new(preset("city"), seed, SIZE)
+        .with_towns(Box::new(towns))
+        .expect("matching chunks")
+}
+
+/// The small city's one site, how many of its cells hold a building, how many trees stand around
+/// it, and the countryside's relief, checking on the way that every height is finite and no tree
+/// stands in the city.
+fn survey_city(runtime: &Runtime) -> (Site, usize, usize, f32) {
+    let rules = city_rules();
+    let building: Vec<usize> = rules.tiles_tagged("building");
+    let mut sites: Vec<Site> = Vec::new();
+    let (mut buildings, mut trees) = (0, 0);
+    for chunk in area() {
+        for site in runtime.sites("places", chunk).expect("generated") {
+            if !sites.iter().any(|known| known.id == site.id) {
+                sites.push(site.clone());
+            }
+        }
+        for &value in &runtime.field("level", chunk).expect("generated").values {
+            assert!(value.is_finite(), "a height of {value}");
+        }
+        if let Some(town) = runtime.tiles("city", chunk) {
+            buildings += town
+                .tiles
+                .iter()
+                .filter(|&&tile| building.contains(&usize::from(tile)))
+                .count();
+        }
+        trees += runtime.points("trees", chunk).expect("generated").len();
+    }
+    assert_eq!(sites.len(), 1, "{sites:?}");
+    let city = sites.remove(0);
+    for chunk in area() {
+        let inside = (city.min.0..city.max.0).contains(&chunk.x)
+            && (city.min.1..city.max.1).contains(&chunk.y);
+        if inside {
+            assert!(
+                runtime
+                    .points("trees", chunk)
+                    .expect("generated")
+                    .is_empty(),
+                "a tree in the city's chunk {chunk:?}"
+            );
+        }
+    }
+    let (mut low, mut high) = (f32::MAX, f32::MIN);
+    for chunk in area() {
+        let inside = (city.min.0..city.max.0).contains(&chunk.x)
+            && (city.min.1..city.max.1).contains(&chunk.y);
+        if !inside {
+            for &value in &runtime.field("level", chunk).expect("generated").values {
+                low = low.min(value);
+                high = high.max(value);
+            }
+        }
+    }
+    (city, buildings, trees, high - low)
+}
+
+#[test]
+fn every_value_in_the_city_ranges_gives_a_sound_world() {
+    let grid = [0.0, 0.5, 1.0];
+
+    for density in grid {
+        for hills in grid {
+            for trees in grid {
+                let mut runtime = city_runtime(1);
+                let values = params([("density", density), ("hills", hills), ("trees", trees)]);
+                runtime.set_params(&values).expect("values in range");
+
+                generate(&mut runtime, &["level", "surface", "city", "trees"]);
+
+                let (city, buildings, tree_count, relief) = survey_city(&runtime);
+                let at = format!("density {density}, hills {hills}, trees {trees}");
+                // A city of 3 by 3 chunks beside the world's centre.
+                assert_eq!((city.min, city.max), ((-4, -4), (-1, -1)), "{at}");
+                assert!(relief > 1.0, "a flat country of relief {relief} at {at}");
+                if density == 0.0 {
+                    assert_eq!(buildings, 0, "buildings at {at}");
+                }
+                if density == 1.0 {
+                    assert!(buildings > 200, "only {buildings} buildings at {at}");
+                }
+                if trees == 0.0 {
+                    assert_eq!(tree_count, 0, "trees at {at}");
+                }
+                if trees == 1.0 {
+                    assert!(tree_count > 100, "only {tree_count} trees at {at}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn more_density_more_hills_and_more_trees_each_make_more_of_theirs() {
+    let survey_at = |density: f32, hills: f32, trees: f32| {
+        let mut runtime = city_runtime(3);
+        runtime
+            .set_params(&params([
+                ("density", density),
+                ("hills", hills),
+                ("trees", trees),
+            ]))
+            .expect("values in range");
+        generate(&mut runtime, &["level", "city", "trees"]);
+        survey_city(&runtime)
+    };
+    let amounts = [0.0, 0.5, 1.0];
+
+    let buildings: Vec<usize> = amounts.iter().map(|&a| survey_at(a, 0.4, 0.5).1).collect();
+    let reliefs: Vec<f32> = amounts.iter().map(|&a| survey_at(0.7, a, 0.5).3).collect();
+    let trees: Vec<usize> = amounts.iter().map(|&a| survey_at(0.7, 0.4, a).2).collect();
+
+    assert!(
+        buildings.windows(2).all(|pair| pair[0] < pair[1]),
+        "{buildings:?}"
+    );
+    assert!(
+        reliefs.windows(2).all(|pair| pair[0] < pair[1]),
+        "{reliefs:?}"
+    );
+    assert!(trees.windows(2).all(|pair| pair[0] < pair[1]), "{trees:?}");
 }

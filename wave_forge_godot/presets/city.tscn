@@ -1,0 +1,84 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://addons/wave_forge/tree.tscn" id="1_tree"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/building_arcade.tscn" id="2_building_arcade"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/building_balcony.tscn" id="3_building_balcony"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/building_base.tscn" id="4_building_base"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/building_door.tscn" id="5_building_door"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/building_floor.tscn" id="6_building_floor"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/building_passage.tscn" id="7_building_passage"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/grass.tscn" id="8_grass"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/pillar.tscn" id="9_pillar"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/pillar_base.tscn" id="10_pillar_base"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/plaza.tscn" id="11_plaza"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/plaza_fountain.tscn" id="12_plaza_fountain"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/plaza_lamp.tscn" id="13_plaza_lamp"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/road_corner.tscn" id="14_road_corner"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/road_cross.tscn" id="15_road_cross"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/road_end.tscn" id="16_road_end"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/road_straight.tscn" id="17_road_straight"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/road_t.tscn" id="18_road_t"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/roof_flat.tscn" id="19_roof_flat"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/roof_flat_corner.tscn" id="20_roof_flat_corner"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/roof_flat_edge.tscn" id="21_roof_flat_edge"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/roof_flat_end.tscn" id="22_roof_flat_end"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/roof_flat_strip.tscn" id="23_roof_flat_strip"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/roof_pyramid.tscn" id="24_roof_pyramid"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/roof_tower.tscn" id="25_roof_tower"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/stair.tscn" id="26_stair"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/stair_roof.tscn" id="27_stair_roof"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/stair_wall.tscn" id="28_stair_wall"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/stair_wall_street.tscn" id="29_stair_wall_street"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/walkway_corner.tscn" id="30_walkway_corner"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/walkway_on_pillar.tscn" id="31_walkway_on_pillar"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/city/walkway_straight.tscn" id="32_walkway_straight"]
+
+[node name="City" type="WaveForgeStages"]
+pack_file = "res://addons/wave_forge/presets/city.world.ron"
+rules_files = {
+"city": "res://addons/wave_forge/city/city.ron"
+}
+targets = PackedStringArray("level", "surface", "city", "trees")
+start_on_ready = true
+preview_in_editor = true
+cell_size = Vector3(2, 2, 2)
+view_radius = 4
+ground_stage = "level"
+ground_material_stage = "surface"
+ground_palette = PackedColorArray(0.5, 0.48, 0.45, 1, 0.38, 0.6, 0.27, 1)
+collider_radius = 1
+navigation_radius = 1
+scenes = {
+"tree": ExtResource("1_tree"),
+"building_arcade": ExtResource("2_building_arcade"),
+"building_balcony": ExtResource("3_building_balcony"),
+"building_base": ExtResource("4_building_base"),
+"building_door": ExtResource("5_building_door"),
+"building_floor": ExtResource("6_building_floor"),
+"building_passage": ExtResource("7_building_passage"),
+"grass": ExtResource("8_grass"),
+"pillar": ExtResource("9_pillar"),
+"pillar_base": ExtResource("10_pillar_base"),
+"plaza": ExtResource("11_plaza"),
+"plaza_fountain": ExtResource("12_plaza_fountain"),
+"plaza_lamp": ExtResource("13_plaza_lamp"),
+"road_corner": ExtResource("14_road_corner"),
+"road_cross": ExtResource("15_road_cross"),
+"road_end": ExtResource("16_road_end"),
+"road_straight": ExtResource("17_road_straight"),
+"road_t": ExtResource("18_road_t"),
+"roof_flat": ExtResource("19_roof_flat"),
+"roof_flat_corner": ExtResource("20_roof_flat_corner"),
+"roof_flat_edge": ExtResource("21_roof_flat_edge"),
+"roof_flat_end": ExtResource("22_roof_flat_end"),
+"roof_flat_strip": ExtResource("23_roof_flat_strip"),
+"roof_pyramid": ExtResource("24_roof_pyramid"),
+"roof_tower": ExtResource("25_roof_tower"),
+"stair": ExtResource("26_stair"),
+"stair_roof": ExtResource("27_stair_roof"),
+"stair_wall": ExtResource("28_stair_wall"),
+"stair_wall_street": ExtResource("29_stair_wall_street"),
+"walkway_corner": ExtResource("30_walkway_corner"),
+"walkway_on_pillar": ExtResource("31_walkway_on_pillar"),
+"walkway_straight": ExtResource("32_walkway_straight")
+}
