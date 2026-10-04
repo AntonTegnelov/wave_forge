@@ -2,11 +2,13 @@
 ##
 ## Run by `../verify.sh` after `verify_ground.gd`. The pack's volume is ground solid below 6.3 cells
 ## with a cave under all of it from 1.8 to 4.2 cells up. Every chunk around the player gets its
-## surface, a ray down from the sky lands on the ground's top, and from inside the cave a ray up
-## meets its ceiling and a ray down its floor, each facing into the cave. The ground's top is grass
+## surface, a ray down from the sky lands on the ground's top, where `ground_height` stands with no
+## ground stage, and from inside the cave a ray up meets its ceiling and a ray down its floor, each
+## facing into the cave. The ground's top is grass
 ## and the cave rock, and the drawn surface carries each vertex's colour from `volume_palette`. A
 ## ball dug where four chunks meet opens the cave to the sky: a ray from above then falls through
-## the hole to the cave's floor, which every chunk around it has built again. Ore embedded in the
+## the hole to the cave's floor, which every chunk around it has built again, and `ground_height`
+## stands there too. Ore embedded in the
 ## rock and bound to a scene is placed as nodes, each inside the rock, none in the cave. Pools of an
 ## Aquifer stage drawn as `fluid_stage` fill the cave's floor up to their levels, water and lava in
 ## `fluid_palette`'s see-through colours, lava glowing as `fluid_glow` says, and the ray to the cave's floor passes through them, since
@@ -110,6 +112,10 @@ func _check() -> bool:
 		if hit["normal"].dot(Vector3.UP * -ray[2]) < 0.99:
 			_fail("%s faces %s, not back along the ray" % [ray[0], hit["normal"]])
 			return true
+	var height: float = world.ground_height(Vector3(x, 0, z))
+	if is_nan(height) or absf(height - 6.3 * CELL.y) > 0.001:
+		_fail("the ground's height over the cave is %.4f, not its top at %.4f" % [height, 6.3 * CELL.y])
+		return true
 	if not _check_materials() or not _check_ores() or not _check_fluid() or not _check_navigation(x, z):
 		return true
 	print("verify_volume: %d chunks have their surface; rays meet the ground's top and the cave's ceiling and floor" % world.volume_chunks().size())
@@ -178,12 +184,13 @@ func _check_hole() -> bool:
 	var hit := root.get_world_3d().direct_space_state.intersect_ray(query)
 	var fluid_after: RID = world.fluid_mesh_of(Vector3i(1, 1, 0))
 	var baked_again := navigable.has(Vector3i.ZERO)
-	if not hit.is_empty() and absf(hit["position"].y - 1.8 * CELL.y) < 0.001 and fluid_after.is_valid() and fluid_after != fluid_before and baked_again:
+	var height: float = world.ground_height(hole)
+	if not hit.is_empty() and absf(hit["position"].y - 1.8 * CELL.y) < 0.001 and absf(height - 1.8 * CELL.y) < 0.001 and fluid_after.is_valid() and fluid_after != fluid_before and baked_again:
 		print("verify_volume: a ball dug where four chunks meet opens the cave to the sky and builds the fluid and the navigation beside it again, %.1f s after the dig" % ((Time.get_ticks_usec() - started_usec) / 1e6))
 		quit(0)
 		return true
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
-		_fail("a ray into the hole still lands at %s, the fluid beside it is %s, was %s, and its navigation baked again: %s" % [hit["position"] if not hit.is_empty() else "nothing", fluid_after, fluid_before, baked_again])
+		_fail("a ray into the hole still lands at %s, the ground's height there is %.4f, the fluid beside it is %s, was %s, and its navigation baked again: %s" % [hit["position"] if not hit.is_empty() else "nothing", height, fluid_after, fluid_before, baked_again])
 		return true
 	return false
 

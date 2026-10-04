@@ -265,7 +265,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   modules of a rule set that carry a tag, to assign shapes by tag.
 - `ground_height(position)`: the height of the ground's surface at full detail above a position,
   from `ground_stage`'s fields ([packs.md](packs.md#ground)), what a game stands a player or an
-  object on; NaN until the fields around it have arrived.
+  object on; NaN until the fields around it have arrived. Without a `ground_stage` it is the
+  highest point of `volume_stage`'s surface there (`volume_height`, [packs.md](packs.md#volume)),
+  the top of the ground over a cave, NaN until the surfaces within a cell of it are built.
 - `sample(stage, position)` and `atlas(stage, min, size)`: a stage's value at a position on the
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
   Field, Rules, Nearest, Blur, Delta and Area stages. An error, and NaN or an empty array, for another

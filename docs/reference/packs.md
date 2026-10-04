@@ -486,6 +486,14 @@ engine's thread only draws them. Godot draws it and collides with it through
 `volume_stage` ([godot.md](godot.md#waveforgestages)), and Bevy builds it with `.with_volume`
 ([bevy.md](bevy.md#packs-of-stages)).
 
+`wave_forge::volume_height(at, columns, surface, cell_size)` gives the height of a volume's built
+surfaces above a point of the ground plane: their highest point there, where a ray from the sky
+first meets them, so the top of the ground over a cave and never the cave's ceiling or floor. It is
+what `ground_height` is for a height field, and both engines' `ground_height` give it for a world
+drawn from a volume alone. It is `None` until the surfaces of every chunk within a cell of the
+point are built, since a chunk's triangles reach up to a cell past its sides, and where no surface
+stands above the point.
+
 ### Carve
 
 `Carve(volume: "rock", tunnels: Some((curves: "tunnels", height: Some("ground"), depth: 6.0, max_radius: 3)), rooms: Some("dungeon"))`:

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::{Pack, Runtime};
-use wave_forge::{ChunkCoord, FocusPoint, VolumeMesh, volume_mesh};
+use wave_forge::{ChunkCoord, FocusPoint, VolumeMesh, volume_height, volume_mesh};
 
 const CELL: [f32; 3] = [2.0, 1.5, 2.0];
 
@@ -29,6 +29,12 @@ const PACK: &str = r#"(
             bottom: -4,
             top: 6,
             materials: Some((rules: [(category: "banded", when: [Less(Sin(Mul(Add(X, Z), Constant(0.7))), Constant(0.0))])], otherwise: "plain")),
+        )),
+        // Ground solid below 4.7 cells, with a cave from 1.4 to 3.2 cells under all of it.
+        (name: "roofed", kind: Volume(
+            density: Min(Sub(Constant(4.7), Z), Max(Sub(Z, Constant(3.2)), Sub(Constant(1.4), Z))),
+            bottom: -2,
+            top: 10,
         )),
         (name: "hills", kind: Volume(
             density: Max(Min(FastNoise("hills"), Sub(Constant(5.0), Z)), Sub(Constant(-3.0), Z)),
@@ -186,4 +192,51 @@ fn a_chunk_has_no_surface_until_its_neighbours_volumes_have_arrived() {
 
     assert!(runtime.volume("caves", chunk).is_some());
     assert!(mesh.is_none());
+}
+
+/// The surfaces of `stage` over the chunks from -1 to 1 on each side, in chunks 8 columns wide.
+fn surfaces(stage: &str) -> BTreeMap<ChunkCoord, VolumeMesh> {
+    let runtime = runtime(8, stage, &square(-2, 2));
+    square(-1, 1)
+        .into_iter()
+        .map(|chunk| (chunk, mesh(&runtime, stage, chunk)))
+        .collect()
+}
+
+#[test]
+fn a_volume_stands_its_height_at_its_top_above_a_cave_and_across_chunk_seams() {
+    let surfaces = surfaces("roofed");
+    // Points over the middle chunk and over its seams, never within a cell of the outer chunks'
+    // far sides.
+    let points = (0..=36).flat_map(|i| (0..=36).map(move |j| [i as f32, j as f32]));
+
+    for [i, j] in points {
+        let at = [-2.0 + i * 0.555, -2.0 + j * 0.555];
+        let height = volume_height(at, [8, 8], |chunk| surfaces.get(&chunk), CELL);
+
+        assert!(
+            height.is_some_and(|height| (height - 4.7 * CELL[1]).abs() < 1e-3),
+            "a height of {height:?} at {at:?}"
+        );
+    }
+}
+
+#[test]
+fn a_volume_has_no_height_until_the_surfaces_within_a_cell_are_built() {
+    let all = surfaces("flat");
+    let only_middle: BTreeMap<ChunkCoord, VolumeMesh> = all
+        .iter()
+        .filter(|(chunk, _)| **chunk == ChunkCoord::new(0, 0, 0))
+        .map(|(chunk, mesh)| (*chunk, mesh.clone()))
+        .collect();
+    let height = |at: [f32; 2]| volume_height(at, [8, 8], |chunk| only_middle.get(&chunk), CELL);
+
+    let middle = height([8.0, 8.0]);
+    let near_seam = height([0.5 * CELL[0], 8.0]);
+
+    assert!(
+        middle.is_some_and(|middle| (middle - 4.3 * CELL[1]).abs() < 1e-3),
+        "{middle:?}"
+    );
+    assert_eq!(near_seam, None);
 }
