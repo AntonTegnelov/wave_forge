@@ -7,7 +7,8 @@
 ## origin whole, which gets no far ground, and part of the ring around it, which does. The far
 ## ground's surface (`far_surface`) colours each vertex with the palette's colour of the near
 ## surface's category of the same name, a far category without one a colour of its own. A far
-## ground material stage at another scale than the far ground's is warned of and refused.
+## ground material stage at another scale than the far ground's, or one generated nearer than the
+## far ground, is warned of and refused.
 extends SceneTree
 
 const CELLS := 8
@@ -34,6 +35,17 @@ func _initialize() -> void:
 		return
 	if wrong.start():
 		_fail("the node started with a far ground material stage at scale 1")
+		return
+	wrong.far_ground_material_stage = "far_surface"
+	wrong.targets = PackedStringArray(["height", "far", "far_surface"])
+	var nearer: Dictionary[StringName, int] = {&"far": FAR_RADIUS}
+	wrong.target_radii = nearer
+	warned = " ".join(wrong.configuration_warnings())
+	if not warned.contains("far_ground_material_stage \"far_surface\" needs far_ground_stage's radius in target_radii"):
+		_fail("a far ground material stage nearer than the far ground does not warn: %s" % warned)
+		return
+	if wrong.start():
+		_fail("the node started with a far ground material stage nearer than the far ground")
 		return
 	wrong.free()
 	world = ClassDB.instantiate("WaveForgeStages")
