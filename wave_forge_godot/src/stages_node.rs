@@ -2590,7 +2590,7 @@ impl WaveForgeStages {
         let Some(run) = &self.world_run else {
             return;
         };
-        let events: Vec<RunEvent> = run.progress.try_iter().collect();
+        let events = received(&run.progress);
         for event in events {
             match event {
                 RunEvent::Progress(state) => {
@@ -4784,6 +4784,26 @@ impl Drop for WorldRunning {
     }
 }
 
+/// What a world run's thread has reported since the last look. A thread that stopped without
+/// reporting its end, as a panic stops it, ends the run as failed, so the node does not wait on it.
+fn received(progress: &std::sync::mpsc::Receiver<RunEvent>) -> Vec<RunEvent> {
+    let mut events = Vec::new();
+    loop {
+        match progress.try_recv() {
+            Ok(event) => events.push(event),
+            Err(std::sync::mpsc::TryRecvError::Empty) => return events,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                if !matches!(events.last(), Some(RunEvent::Ended(_))) {
+                    events.push(RunEvent::Ended(Err(
+                        "its thread stopped without finishing; the panic above says why".to_owned(),
+                    )));
+                }
+                return events;
+            }
+        }
+    }
+}
+
 /// What a world run's thread reports.
 enum RunEvent {
     /// One more chunk done.
@@ -5000,4 +5020,49 @@ fn chunk_material(
         &Vector2::new(cell[0], cell[2]).to_variant(),
     );
     material
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RunEvent, received};
+    use wave_forge::stages::RunProgress;
+
+    fn progress(done: usize) -> RunProgress {
+        RunProgress {
+            done,
+            total: 4,
+            skipped: 0,
+            held: 0,
+            stages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_world_run_whose_thread_stops_without_an_end_ends_failed() {
+        let (sent, progress_events) = std::sync::mpsc::channel();
+        sent.send(RunEvent::Progress(progress(1)))
+            .expect("the receiver is alive");
+
+        drop(sent);
+        let events = received(&progress_events);
+
+        assert!(matches!(events.first(), Some(RunEvent::Progress(_))));
+        assert!(
+            matches!(events.last(), Some(RunEvent::Ended(Err(_)))),
+            "the run did not end"
+        );
+    }
+
+    #[test]
+    fn a_world_run_that_ended_ends_once() {
+        let (sent, progress_events) = std::sync::mpsc::channel();
+        sent.send(RunEvent::Ended(Ok(progress(4))))
+            .expect("the receiver is alive");
+
+        drop(sent);
+        let events = received(&progress_events);
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], RunEvent::Ended(Ok(_))));
+    }
 }
