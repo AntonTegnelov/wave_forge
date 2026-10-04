@@ -69,9 +69,10 @@ extension needs none of godot-rust's thread-safety features.
 - **Colliders:** `set_collision_shape(module, shape)` gives every cell of a module a collider, in
   the chunks within `collider_radius`, at most three chunks' bodies per frame, nearest first; `collider_chunks()`; `collider_instance(rid, shape)` maps a
   ray or shape query's hit back to `{chunk, id}`.
-- **Navigation:** `navigation_chunks()` lists the chunks whose mesh is in the map. The node bakes
-  one region per chunk from the collider shapes and the library's navigation source, off Godot's
-  thread.
+- **Navigation:** `navigation_chunks()` lists the chunks whose mesh is in the map, and
+  `navigation_ready(chunk)` names each once the map has taken it in, so a path asked for on the
+  signal finds it ([Navigation](#navigation)). The node bakes one region per chunk from the
+  collider shapes and the library's navigation source, off Godot's thread.
 - **Sound and surfaces:** `surface_at(position)`, `region_tags(chunk)`
   ([Sound and surfaces](#sound-and-surfaces)).
 - **Occlusion:** `occluders(chunk)` ([Occlusion](#occlusion)).
@@ -607,7 +608,10 @@ any of them changes, keeping its last mesh until the new one is in. One bake is 
 nearest first, and only on a frame that has spent under 2 ms of Godot's thread so far, since
 starting one costs up to a millisecond. `navigation_template` gives the agent's size, climb and
 slope; its cell size and height are replaced by the map's. `navigation_chunks()` lists the chunks
-whose mesh is in the map, and `navigation_ready(chunk)` names each as it goes in. A played world
+whose mesh is in the map, and `navigation_ready(chunk)` names each as it goes in. Since Godot 4.4 a
+map takes a region's new mesh in some frames after it is set, so both are reported only once the
+map owns a point of the new mesh, and a path asked for on the signal itself finds it; a chunk baked
+again keeps its old mesh, listed, until then. A played world
 (`play_directory`) gets the same navigation as a generated one. The regions take no asynchronous
 iterations: a region given new meshes while one was under way stopped the map synchronising in
 Godot 4.7.2.

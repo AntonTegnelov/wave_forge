@@ -36,6 +36,10 @@ var fluid_before := RID()
 var hole := Vector3(CELLS * CELL.x, 6.3 * CELL.y, CELLS * CELL.z)
 ## The chunks whose navigation went into the map, since the start or the dig.
 var navigable := {}
+## How many chunks a path crossed on the ground's top on their navigation_ready, and the chunks one
+## did not.
+var pathed_on_signal := 0
+var missed_on_signal: Array[Vector3i] = []
 
 func _initialize() -> void:
 	var wrong := _world("height")
@@ -68,7 +72,7 @@ func _world(volume_stage: String) -> Node:
 	node.scenes = {"ore": _ore_scene()}
 	root.add_child(node)
 	node.instance_spawned.connect(func(ore: Node3D, chunk: Vector3i, id: int) -> void: ores[[chunk, id]] = ore)
-	node.navigation_ready.connect(func(chunk: Vector3i) -> void: navigable[chunk] = true)
+	node.navigation_ready.connect(_on_navigation_ready.bind(node))
 	return node
 
 func _process(_delta: float) -> bool:
@@ -134,6 +138,21 @@ func _check() -> bool:
 	started_usec = Time.get_ticks_usec()
 	return false
 
+## A path along the ground's top across the chunk `navigation_ready` names, asked for on the signal
+## itself with no wait, since the signal comes once the map has taken the chunk's mesh in.
+func _on_navigation_ready(chunk: Vector3i, node: Node) -> void:
+	if node != world:
+		return
+	navigable[chunk] = true
+	var corner := Vector3(chunk.x * CELLS * CELL.x, 6.3 * CELL.y, chunk.y * CELLS * CELL.z)
+	var from := corner + Vector3(CELL.x, 0, CELLS * CELL.z / 2.0)
+	var to := corner + Vector3((CELLS - 1) * CELL.x, 0, CELLS * CELL.z / 2.0)
+	var path := NavigationServer3D.map_get_path(root.get_world_3d().navigation_map, from, to, true)
+	if path.is_empty() or path[path.size() - 1].distance_to(to) > 0.5:
+		missed_on_signal.append(chunk)
+	else:
+		pathed_on_signal += 1
+
 ## The navigation map holds walkable ground on the ground's top and on the cave's floor at (x, z).
 func _check_navigation(x: float, z: float) -> bool:
 	var map := root.get_world_3d().navigation_map
@@ -144,7 +163,10 @@ func _check_navigation(x: float, z: float) -> bool:
 		if nearest.distance_to(on) > NavigationMesh.new().detail_sample_max_error:
 			_fail("the navigation nearest %s is at %s" % [level[0], nearest])
 			return false
-	print("verify_volume: the navigation walks on the ground's top and on the cave's floor")
+	if not missed_on_signal.is_empty() or pathed_on_signal == 0:
+		_fail("no path across %s on their navigation_ready, of %d chunks" % [missed_on_signal, missed_on_signal.size() + pathed_on_signal])
+		return false
+	print("verify_volume: the navigation walks on the ground's top and on the cave's floor, and a path crossed each of %d chunks on its navigation_ready" % pathed_on_signal)
 	return true
 
 ## A Node3D with a mesh child, packed, so each ore is placed as a node.
@@ -186,7 +208,10 @@ func _check_hole() -> bool:
 	var baked_again := navigable.has(Vector3i.ZERO)
 	var height: float = world.ground_height(hole)
 	if not hit.is_empty() and absf(hit["position"].y - 1.8 * CELL.y) < 0.001 and absf(height - 1.8 * CELL.y) < 0.001 and fluid_after.is_valid() and fluid_after != fluid_before and baked_again:
-		print("verify_volume: a ball dug where four chunks meet opens the cave to the sky and builds the fluid and the navigation beside it again, %.1f s after the dig" % ((Time.get_ticks_usec() - started_usec) / 1e6))
+		if not missed_on_signal.is_empty():
+			_fail("no path across %s on their navigation_ready, of %d chunks" % [missed_on_signal, missed_on_signal.size() + pathed_on_signal])
+			return true
+		print("verify_volume: a ball dug where four chunks meet opens the cave to the sky and builds the fluid and the navigation beside it again, %.1f s after the dig; a path crossed each of %d chunks on its navigation_ready" % [(Time.get_ticks_usec() - started_usec) / 1e6, pathed_on_signal])
 		quit(0)
 		return true
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:

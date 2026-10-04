@@ -8,6 +8,47 @@ use godot::prelude::*;
 use std::collections::HashMap;
 use wave_forge::{ChunkCoord, NavSource, NavSourceError};
 
+/// A region's newest mesh on its way into the navigation map. Since Godot 4.4 a region makes its
+/// polygons of a new mesh on a later sync, and the map takes them in on a later iteration of its
+/// own, built on a thread of its own, so a path asked for as soon as the mesh is set, on
+/// `navigation_ready` say, misses it: in `verify.gd` no chunk had a path then, nor after six forced
+/// updates of the map in the same frame, nor once the region's iteration had moved on. So the map is
+/// asked directly: the mesh is in once the map says the region owns the centre of one of the mesh's
+/// polygons. A mesh without polygons has nothing to wait for. A chunk baked again keeps its old
+/// mesh, of the same region, until the new one is in; a path over it is found either way.
+#[derive(Clone, Copy)]
+pub(crate) struct Arrival {
+    /// The centre of the mesh's first polygon, if it has one.
+    probe: Option<Vector3>,
+}
+
+impl Arrival {
+    /// The arrival of `mesh`, just set on its region.
+    pub(crate) fn of(mesh: &Gd<NavigationMesh>) -> Self {
+        let vertices = mesh.get_vertices();
+        let probe = (mesh.get_polygon_count() > 0).then(|| {
+            let corners = mesh.get_polygon(0);
+            let sum = corners
+                .as_slice()
+                .iter()
+                .fold(Vector3::ZERO, |sum, &corner| {
+                    sum + vertices[corner as usize]
+                });
+            sum / corners.len() as f32
+        });
+        Self { probe }
+    }
+
+    /// Whether the mesh is in `map` now, a path over it found from now on. A map not yet
+    /// synchronised once holds nothing, and asking it would be reported as an error.
+    pub(crate) fn arrived(self, server: &Gd<NavigationServer3D>, map: Rid, region: Rid) -> bool {
+        self.probe.is_none_or(|probe| {
+            server.map_get_iteration_id(map) > 0
+                && server.map_get_closest_point_owner(map, probe) == region
+        })
+    }
+}
+
 /// Each chunk's navigation region and the bake that fills it.
 pub(crate) struct StageNavigation<S> {
     chunks: HashMap<ChunkCoord, Region<S>>,
@@ -20,8 +61,10 @@ struct Region<S> {
     region: Rid,
     mesh: Gd<NavigationMesh>,
     baking: bool,
-    /// Whether a mesh baked for the chunk is in the region, this one or an earlier one.
+    /// Whether a mesh baked for the chunk is in the map, this one or an earlier one.
     in_map: bool,
+    /// The newest mesh on its way into the map, once it is set on the region.
+    arriving: Option<Arrival>,
     from: S,
 }
 
@@ -52,8 +95,9 @@ impl<S: PartialEq> StageNavigation<S> {
 
     /// Frees the regions of chunks no longer `wanted`, and puts every finished bake in its region.
     ///
-    /// Returns the chunks whose mesh went into the map.
-    pub(crate) fn settle(&mut self, wanted: &[ChunkCoord]) -> Vec<ChunkCoord> {
+    /// Returns the chunks whose newest mesh `map` has taken in since the last call ([`Arrival`]), a
+    /// path over them found from now on.
+    pub(crate) fn settle(&mut self, wanted: &[ChunkCoord], map: Rid) -> Vec<ChunkCoord> {
         let mut server = NavigationServer3D::singleton();
         let gone: Vec<ChunkCoord> = self
             .chunks
@@ -70,9 +114,15 @@ impl<S: PartialEq> StageNavigation<S> {
         for (&coord, chunk) in &mut self.chunks {
             if chunk.baking && !server.is_baking_navigation_mesh(&chunk.mesh) {
                 server.region_set_navigation_mesh(chunk.region, &chunk.mesh);
+                chunk.arriving = Some(Arrival::of(&chunk.mesh));
                 chunk.baking = false;
-                chunk.in_map = true;
                 self.baked += 1;
+            }
+            if let Some(arrival) = chunk.arriving
+                && arrival.arrived(&server, map, chunk.region)
+            {
+                chunk.arriving = None;
+                chunk.in_map = true;
                 ready.push(coord);
             }
         }
@@ -154,6 +204,7 @@ impl<S: PartialEq> StageNavigation<S> {
                     mesh,
                     baking: true,
                     in_map,
+                    arriving: None,
                     from: built_from,
                 },
             );
