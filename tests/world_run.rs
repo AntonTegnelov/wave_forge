@@ -439,3 +439,57 @@ fn a_run_generates_a_regions_inputs_about_once() {
         heights(&at_once)
     );
 }
+
+/// A coarse height at scale 2 beside the cells' height, in a world whose bound starts inside the
+/// first chunk of each lattice, so a coarse chunk's first fine chunk lies outside it.
+const COARSE: &str = r#"(
+    version: 1,
+    bound: Some(Rect(min: (12.0, 0.0), max: (47.0, 39.0))),
+    stages: [
+        (name: "height", kind: Field(Mul(Noise(frequency: 0.05, octaves: 3), Constant(12.0)))),
+        (name: "far", scale: 2, kind: Field(Mul(Noise(frequency: 0.02, octaves: 2), Constant(40.0)))),
+    ],
+)"#;
+
+#[test]
+fn a_run_writes_a_coarser_target_and_a_played_world_serves_it_as_a_runtime_generates_it() {
+    let targets = ["height", "far"];
+    let mut store = Memory::default();
+    let end = runtime(COARSE)
+        .run_world(&targets, &mut store, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+    let pack = Arc::new(Pack::parse(COARSE).expect("a valid pack"));
+    let mut worker = StageWorker::play(Arc::clone(&pack), SIZE, Box::new(store));
+    // Fine chunks 1 to 5 by 0 to 4; coarse chunks 0 to 2 by 0 to 2.
+    let coarse: Vec<ChunkCoord> = (0..=2)
+        .flat_map(|y| (0..=2).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+
+    worker.request(
+        &[wave_forge::FocusPoint::new(ChunkCoord::new(3, 2, 0), 3)],
+        &targets,
+    );
+    drain_until(&mut worker, |worker| {
+        coarse
+            .iter()
+            .all(|&chunk| worker.shared("far", chunk).is_some())
+    });
+
+    assert_eq!((end.done, end.total), (25, 25));
+    assert!(worker.failure().is_none(), "{:?}", worker.failure());
+    let mut direct = runtime(COARSE);
+    direct
+        .request(
+            &[wave_forge::FocusPoint::new(ChunkCoord::new(3, 2, 0), 3)],
+            &targets,
+        )
+        .expect("the stages");
+    direct.run_until_idle().expect("the stages run");
+    for &chunk in &coarse {
+        assert_eq!(
+            worker.shared("far", chunk).as_deref(),
+            direct.product("far", chunk),
+            "far at {chunk:?}"
+        );
+    }
+}

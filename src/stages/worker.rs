@@ -17,6 +17,7 @@ use super::save::Save;
 use crate::ChunkCoord;
 use crate::frozen::FrozenStore;
 use crate::scheduler::FocusPoint;
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
@@ -512,24 +513,29 @@ fn play(
         // A run kept each chunk's targets together: read each chunk's entry once.
         let mut entries: BTreeMap<ChunkCoord, Vec<(String, Vec<u8>)>> = BTreeMap::new();
         for (stage, chunk) in needed.difference(&held) {
-            if !entries.contains_key(chunk) {
-                let entry = super::world_run::kept(store.as_mut(), *chunk).and_then(|entry| {
-                    if entry.is_none() {
-                        let targets: Vec<&str> =
-                            targets.iter().map(|(target, _)| target.as_str()).collect();
-                        super::world_run::refuse_older_layout(store.as_mut(), &targets, *chunk)?;
+            let scale = pack.scale(stage).expect("a stage the pack names");
+            let at = super::world_run::entry_of(pack, scale, *chunk, size);
+            let products = match entries.entry(at) {
+                Entry::Occupied(kept) => kept.into_mut(),
+                Entry::Vacant(vacant) => {
+                    let entry = super::world_run::kept(store.as_mut(), at).and_then(|entry| {
+                        if entry.is_none() {
+                            let targets: Vec<&str> =
+                                targets.iter().map(|(target, _)| target.as_str()).collect();
+                            super::world_run::refuse_older_layout(store.as_mut(), &targets, at)?;
+                        }
+                        Ok(entry.map_or_else(Vec::new, |entry| entry.products))
+                    });
+                    match entry {
+                        Ok(entry) => vacant.insert(entry),
+                        Err(error) => {
+                            let _ = reports.send(Report::Failed(error.to_string()));
+                            return;
+                        }
                     }
-                    Ok(entry.map_or_else(Vec::new, |entry| entry.products))
-                });
-                match entry {
-                    Ok(entry) => entries.insert(*chunk, entry),
-                    Err(error) => {
-                        let _ = reports.send(Report::Failed(error.to_string()));
-                        return;
-                    }
-                };
-            }
-            let product = entries[chunk]
+                }
+            };
+            let product = products
                 .iter()
                 .find(|(name, _)| name == stage)
                 .ok_or_else(|| {
