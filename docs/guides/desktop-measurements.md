@@ -16,8 +16,12 @@ On Vulkan and on Direct3D 12:
 | A city streamed around a moving focus in Bevy and drawn at 1080p: on Bevy's device and on one of the solver's own, at 4.2 m/s and 30 m/s, and at 30 m/s with batches of at most 16 and 4 regions. An idle phase first, the cost of drawing alone | `wave_forge_bevy/examples/frame_times.rs` | where the solver runs in both engines, and whether a smaller batch buys smoother frames ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
 | The city walked in Godot with its module models drawn, on Forward+, at 4.2 m/s and 30 m/s, with the node's own time, each chunk drawn as a MultiMesh per module and as one merged mesh, and what drawing a chunk costs Godot's thread | `wave_forge_godot/godot/measure_city.gd` | the solver on a device of its own in a desktop Godot ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), P1's frame rate, and how a chunk is drawn ([#203](https://github.com/AntonTegnelov/wave_forge/issues/203)) |
 | Grass on 25 chunks with and without it, the ground's levels of detail, and the far ground beyond the near ground, each with a check for gaps, on Forward+ | `render_ground.gd`, `render_lods.gd`, `render_far.gd` | E45, E47 and E52 on a desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166), P2) |
+| The maximal preset's continent played from the directory its world run baked, in a window of 1920 by 1080 on Forward+, its far ground out to 2 km: walking at 4.2 m/s, then flying at 30 m/s, with the most memory the process held and a check that no stage ran | `wave_forge_godot/godot/measure_playback.gd` | M1's frame rate and bounded memory ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197), [#247](https://github.com/AntonTegnelov/wave_forge/issues/247)) |
 
-Once, headless: the history example's first towns, on the first run after building and on a second
+Once, headless, before the runs above: the whole continent baked from `continent.tscn` through the
+node's world run, as the editor dock's World run bakes it, from an empty directory, with the time it
+took and the most memory it held (`measure_world_run.gd`), for M1's ten minutes; the playback above
+plays what it wrote. Then, also once and headless: the history example's first towns, on the first run after building and on a second
 one, for P3's time into a new world; `tests/golden_stages.rs`, which checks that the stages come
 out on Windows bit for bit as recorded on Linux ([engine-integration.md](../architecture/engine-integration.md#noise-that-means-the-same-in-both-engines));
 `tests/interactive_edit.rs`, how long a changed parameter takes to regenerate a 3×3-chunk preview,
@@ -27,7 +31,7 @@ through it at 4.2 m/s, for P1 ([#71](https://github.com/AntonTegnelov/wave_forge
 [measurements.md](../research/measurements.md) E53).
 
 Each measured phase lasts 20 seconds and prints the median, 99th percentile and slowest frame. The
-whole run takes about 50 minutes, most of it the first build.
+whole run takes about 65 minutes, most of it the first build and the continent's bake.
 
 It does not measure a second GPU vendor, which #39 also asks for.
 
@@ -40,7 +44,7 @@ On the Windows desktop, once:
    ("Desktop development with C++") if they are missing; install them. Open a new terminal
    afterwards so `cargo` is on the path. The repository's `rust-toolchain.toml` picks the version.
 3. **The latest driver** for the GPU, from its vendor.
-4. About **15 GB free** on the drive that holds `%LOCALAPPDATA%`, where the builds go, or pass
+4. About **16 GB free** on the drive that holds `%LOCALAPPDATA%`, where the builds go, or pass
    `-BuildDir` to use another drive.
 
 The script downloads Godot 4.7.2 itself.
@@ -85,7 +89,7 @@ a non-zero code; the others still ran.
 | Option | Default | Use |
 |---|---|---|
 | `-Apis vulkan` or `-Apis d3d12` | both | measure on one graphics API only |
-| `-Only bevy,godot,ground,history,stages,volume` | all | run only some parts, for example again after a failure |
+| `-Only bevy,godot,ground,history,m1,stages,volume` | all | run only some parts, for example again after a failure |
 | `-Seconds 20` | 20 | how long each measured phase lasts |
 | `-SkipBuild` | | use what the last run built |
 | `-BuildDir D:\wave_forge-build` | `%LOCALAPPDATA%\wave_forge` | where Cargo builds and Godot is downloaded to |

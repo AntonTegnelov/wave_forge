@@ -16,6 +16,8 @@ And once, P3: the history example's first towns, on a first run and a second one
 stages test, which checks the stages come out on Windows bit for bit as recorded on Linux; and
 (#71, P1) what a cave volume costs a chunk, three times, while a player walks through it
 (measure_volume.gd, headless).
+And M1: the maximal preset's continent baked once ahead of time, headless (measure_world_run.gd), then
+played from what it baked on each graphics API, walking and flying, on Forward+ (measure_playback.gd).
 
 Everything goes into measurements/<date-time>/ in the repository, and a zip of it next to that
 folder. A run that fails is recorded and the others go on; the script ends with a non-zero exit code
@@ -39,7 +41,7 @@ The graphics APIs to measure on: vulkan, d3d12 or both (the default on Windows).
 How long each measured phase lasts. Default 20.
 
 .PARAMETER Only
-Run only some parts: bevy, godot, ground, history, stages, volume. Default all.
+Run only some parts: bevy, godot, ground, history, m1, stages, volume. Default all.
 
 .PARAMETER SkipBuild
 Use what an earlier run built.
@@ -53,7 +55,7 @@ param(
     [string]$BuildDir = "",
     [string[]]$Apis = @(),
     [int]$Seconds = 20,
-    [string[]]$Only = @("bevy", "godot", "ground", "history", "stages", "volume"),
+    [string[]]$Only = @("bevy", "godot", "ground", "history", "m1", "stages", "volume"),
     [switch]$SkipBuild
 )
 
@@ -70,8 +72,8 @@ if ($BuildDir -eq "") {
 $Apis = @($Apis | ForEach-Object { $_ -split "," } | Where-Object { $_ -ne "" })
 $Only = @($Only | ForEach-Object { $_ -split "," } | Where-Object { $_ -ne "" })
 foreach ($part in $Only) {
-    if (@("bevy", "godot", "ground", "history", "stages", "volume") -notcontains $part) {
-        throw "-Only takes bevy, godot, ground, history, stages and volume, not $part"
+    if (@("bevy", "godot", "ground", "history", "m1", "stages", "volume") -notcontains $part) {
+        throw "-Only takes bevy, godot, ground, history, m1, stages and volume, not $part"
     }
 }
 if ($Apis.Count -eq 0) {
@@ -168,7 +170,8 @@ if ($OnWindows) {
 }
 
 # Puts what a Godot project in this repository loads next to it: the extension, the city rule set,
-# the city's module models, and the extension list the editor would write.
+# the city's module models, and the extension list the editor would write; for the repository's own
+# project also the valley pack and the continent's pack, cultures and history.
 function Initialize-GodotProject([string]$Project, [bool]$Valley) {
     $bin = Join-Path $Project "bin"
     New-Item -ItemType Directory -Force -Path $bin | Out-Null
@@ -176,6 +179,12 @@ function Initialize-GodotProject([string]$Project, [bool]$Valley) {
     Copy-Item (Join-Path $Repo "examples/city.ron") (Join-Path $Project "city.ron") -Force
     if ($Valley) {
         Copy-Item (Join-Path $Repo "examples/valley.world.ron") (Join-Path $Project "valley.world.ron") -Force
+        $continent = Join-Path $Project "continent"
+        New-Item -ItemType Directory -Force -Path (Join-Path $continent "cultures") | Out-Null
+        foreach ($file in @("continent.world.ron", "history.json")) {
+            Copy-Item (Join-Path $Repo "examples/continent/$file") (Join-Path $continent $file) -Force
+        }
+        Copy-Item (Join-Path $Repo "examples/continent/cultures/*.ron") (Join-Path $continent "cultures") -Force
     }
     $env:CARGO_TARGET_DIR = $Targets.root
     Invoke-Checked "export-models-$(Split-Path $Project -Leaf)" "cargo" @(
@@ -203,6 +212,14 @@ Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
 # --- Measure -----------------------------------------------------------------------------------
 
 $seconds = "$Seconds"
+$ContinentWorld = Join-Path $BuildDir "continent_world"
+$Baked = $false
+if ($Only -contains "m1") {
+    # A bake from nothing each time: one resumed from an earlier run's directory would time less.
+    if (Test-Path $ContinentWorld) { Remove-Item -Recurse -Force $ContinentWorld }
+    $Baked = (Invoke-Logged "m1-world-run" $Godot @("--headless", "--path", $GodotProject, "--script", "measure_world_run.gd",
+        "--", "--directory", $ContinentWorld, "--out", (Join-Path $Results "m1.txt"))) -eq 0
+}
 foreach ($api in $Apis) {
     if ($Only -contains "bevy") {
         # wgpu names Direct3D 12 dx12.
@@ -234,6 +251,11 @@ foreach ($api in $Apis) {
                     "--out", (Join-Path $Results "godot_city.txt"))))
             }
         }
+    }
+    if ($Baked) {
+        [void](Invoke-Logged "m1-playback-$api" $Godot (@("--path", $GodotProject) + $renderer + @(
+            "--script", "measure_playback.gd", "--", "--directory", $ContinentWorld, "--seconds", $seconds,
+            "--out", (Join-Path $Results "m1.txt"))))
     }
     if ($Only -contains "ground") {
         foreach ($script in @("render_ground", "render_lods", "render_far")) {
@@ -276,7 +298,7 @@ if ($Only -contains "stages") {
 
 $summary = New-Object System.Collections.Generic.List[string]
 $summary.AddRange([string[]](Get-Content (Join-Path $Results "system.txt")))
-foreach ($file in @("bevy.txt", "godot_city.txt")) {
+foreach ($file in @("bevy.txt", "godot_city.txt", "m1.txt")) {
     $path = Join-Path $Results $file
     if (Test-Path $path) { $summary.Add(""); $summary.AddRange([string[]](Get-Content $path)) }
 }

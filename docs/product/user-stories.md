@@ -647,8 +647,11 @@ run, `continent.tscn`, whose script gives the node the history; the first settle
 of its culture's module set in 25 to 31 s (`verify_continent.gd`, L44). Baked from that scene
 through the node's world run, the whole continent takes 579 s in the dev container, holds at most
 1.86 GB, and fills 65 536 files of 729 MB on disk; a bake stopped and resumed gives the same bytes
-as one made at once, and it quits cleanly part way or after (L45, L47). The desktop numbers are the
-owner's run of `tools/measure_desktop.ps1`.
+as one made at once, and it quits cleanly part way or after (L45, L47). With its far ground the
+bake takes 628 s and holds at most 1.87 GB, and the baked world plays walking and flying at 1080p
+with no stage run (`measure_world_run.gd`, `measure_playback.gd`, L48). The desktop numbers, the
+bake's time and the playback's frame times and memory against the bars above, are the owner's run
+of `tools/measure_desktop.ps1`.
 
 ### M2. Generate a maximal world once before play
 
