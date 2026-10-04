@@ -412,7 +412,12 @@ under the key `wave_forge`, on the right by default:
   shared, so changing the node changes no other scene. A node added with nothing set (no pack, no
   targets, no ground) takes the default preset, islands, when it is first selected. The copying is
   `addons/wave_forge/presets.gd`. Below it, Edit as a stack turns the node's `pack_file` into a
-  stack the scene holds ([Stacks](#stacks)). The presets bind `tree`, `cactus` and `palm` to the plugin's
+  stack the scene holds ([Stacks](#stacks)), and the Rules panel lists the categories of the
+  pack's Rules stages: a scene dragged from the FileSystem dock onto one adds a Scatter stage
+  placing it on that category, standing on `ground_stage`, at least 2 cells apart and off steep
+  ground, named after the scene (a number added if taken), bound to the scene in `scenes` and
+  added to `targets`, as one undo action that makes the node's pack a stack if it was a file and
+  starts a preview again (`rule_drop.gd`, N3). The presets bind `tree`, `cactus` and `palm` to the plugin's
   built-in props (`addons/wave_forge/tree.tscn`, `cactus.tscn` and `palm.tscn`, each one
   vertex-coloured mesh written by `tools/make_props.gd`) and draw the sea with
   `addons/wave_forge/sea.tres`, or the archipelago's clearer `lagoon.tres`. The small city binds
@@ -490,7 +495,9 @@ stages the inspector edits: `stages`, an Array of `WaveForgeStackStage`s top to 
 inspector reorders by dragging, and `rest`, the pack's other fields as plain data. A stage
 (`stack_stage.gd`) has its `name`, its `kind` as a pack names it, its `settings` (the kind's fields
 as plain data, [Packs as data](#packs-as-data)), its `scale` and its `persist`. `read_pack_text`
-makes a stack of a pack's text and `to_pack_text` saves the pack it holds. A node given one in
+makes a stack of a pack's text and `to_pack_text` saves the pack it holds; `rule_categories` lists
+its Rules stages' categories and `add_scatter_on` adds the Scatter stage a scene dropped onto one
+makes. A node given one in
 `stack` generates that pack instead of `pack_file`, reading it again on every `start`, so a stack
 edited in place and started again generates the edited pack; it warns when both are set. The
 dock's Edit as a stack turns the selected node's `pack_file` into a stack the scene holds, as one

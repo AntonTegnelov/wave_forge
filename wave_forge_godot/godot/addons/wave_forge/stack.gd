@@ -31,6 +31,48 @@ func read_pack_text(text: String) -> bool:
 	rest = data
 	return true
 
+## Every category of the stack's Rules stages, by stage name in stack order, as a pack file
+## orders them: each rule's category where it first appears, then the one otherwise takes.
+func rule_categories() -> Dictionary:
+	var categories := {}
+	for stage: StackStage in stages:
+		if stage.kind != "Rules":
+			continue
+		var names := PackedStringArray()
+		for rule: Dictionary in stage.settings["rules"]:
+			if not names.has(rule["category"]):
+				names.append(rule["category"])
+		if not names.has(stage.settings["otherwise"]):
+			names.append(stage.settings["otherwise"])
+		categories[stage.name] = names
+	return categories
+
+## Adds, at the bottom, a Scatter stage placing points of `kind` on the columns of `category` of
+## the Rules stage `rules`, standing on the field stage `height`: what dropping a scene onto a rule
+## makes (N3). Its points lie at least 2 cells apart, one candidate per 3 cells square, off ground
+## steeper than 1 cell of height per cell. It is named after `kind`, with a number added if a stage
+## has the name already, and its points' kind is its name, so a scene bound to it binds it alone.
+## Returns the stage.
+func add_scatter_on(rules: String, category: String, kind: String, height: String) -> StackStage:
+	var taken := stages.map(func(stage: StackStage) -> String: return stage.name)
+	var stage := StackStage.new()
+	stage.name = kind
+	var number := 2
+	while taken.has(stage.name):
+		stage.name = "%s_%d" % [kind, number]
+		number += 1
+	stage.kind = "Scatter"
+	stage.settings = {
+		"kind": stage.name,
+		"height": height,
+		"spacing": 3,
+		"apart": 2,
+		"max_slope": 1.0,
+		"when": [{"Greater": [{"Is": [rules, [category]]}, {"Constant": 0.5}]}],
+	}
+	stages.append(stage)
+	return stage
+
 ## The pack as plain data, in the shape `WaveForgeStages.pack_text` takes.
 func to_pack_data() -> Dictionary:
 	var data := rest.duplicate(true)

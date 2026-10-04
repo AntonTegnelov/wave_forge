@@ -11,13 +11,16 @@ extends EditorPlugin
 ## by the artist and saved as a module set (`kit_import_panel.gd`). The dock is an `EditorDock`;
 ## Paint and each brush have a shortcut under `wave_forge/` that a user rebinds in the editor
 ## settings, taken while the 3D viewport has focus and a node is selected. Edit as a stack turns
-## the node's pack_file into a `WaveForgeStack` the scene holds (`stack.gd`).
+## the node's pack_file into a `WaveForgeStack` the scene holds (`stack.gd`). Below it, the Rules
+## panel lists the categories of the pack's Rules stages; a scene dragged from the FileSystem dock
+## onto one adds a Scatter stage placing it there, bound and generated (N3, `rule_drop.gd`).
 
 const WorldRunPanel := preload("res://addons/wave_forge/world_run_panel.gd")
 const CandidatePanel := preload("res://addons/wave_forge/candidate_panel.gd")
 const KitImportPanel := preload("res://addons/wave_forge/kit_import_panel.gd")
 const Presets := preload("res://addons/wave_forge/presets.gd")
 const Stack := preload("res://addons/wave_forge/stack.gd")
+const RuleDrop := preload("res://addons/wave_forge/rule_drop.gd")
 
 ## The brushes of the dock, as `paint` names them, with how each is shown.
 const BRUSHES := {
@@ -53,6 +56,7 @@ var strength_spin: SpinBox
 var world_run: VBoxContainer
 var candidate: VBoxContainer
 var kit_import: VBoxContainer
+var rules_box: VBoxContainer
 ## The node being edited, while one is selected.
 var stages: Node
 ## The stroke under way: its path along the ground, and the edits before it, for undo.
@@ -90,6 +94,7 @@ func _edit(object: Object) -> void:
 	# A node just added, with nothing set, takes the default preset (N1).
 	if stages != null and Presets.is_fresh(stages) and FileAccess.file_exists(Presets.DEFAULT):
 		_apply_preset(Presets.DEFAULT, "Wave Forge: the default preset")
+	_refresh_rules()
 
 func _process(_delta: float) -> void:
 	if stages == null or not is_instance_valid(stages) or not stages.preview_in_editor:
@@ -192,6 +197,8 @@ func _make_dock() -> VBoxContainer:
 	as_stack.tooltip_text = "Turns the node's pack_file into a stack of stages the scene holds and the inspector edits."
 	as_stack.pressed.connect(_make_stack)
 	box.add_child(as_stack)
+	rules_box = VBoxContainer.new()
+	box.add_child(rules_box)
 	painting_toggle = CheckButton.new()
 	painting_toggle.text = "Paint"
 	box.add_child(painting_toggle)
@@ -248,7 +255,76 @@ func _make_stack() -> void:
 	undo.add_do_property(stages, "pack_file", "")
 	undo.add_undo_property(stages, "stack", stages.stack)
 	undo.add_undo_property(stages, "pack_file", stages.pack_file)
+	undo.add_do_method(self, "_refresh_rules")
+	undo.add_undo_method(self, "_refresh_rules")
 	undo.commit_action()
+
+## The selected node's pack as a stack: a copy of its own stack, or one of its pack_file; null if
+## it has neither.
+func _stack_of_node() -> Stack:
+	if stages == null or not is_instance_valid(stages):
+		return null
+	if stages.stack != null:
+		return stages.stack.duplicate(true)
+	var stack := Stack.new()
+	if String(stages.pack_file).is_empty() or not stack.read_pack_text(FileAccess.get_file_as_string(stages.pack_file)):
+		return null
+	return stack
+
+## Lists the categories of the selected node's Rules stages, each a place to drop a scene onto.
+func _refresh_rules() -> void:
+	for child in rules_box.get_children():
+		child.queue_free()
+	var stack := _stack_of_node()
+	if stack == null:
+		return
+	var categories := stack.rule_categories()
+	if categories.is_empty():
+		return
+	var header := Label.new()
+	header.text = "Drop a scene onto a rule" if not String(stages.ground_stage).is_empty() else "Set ground_stage to drop scenes onto rules"
+	rules_box.add_child(header)
+	if String(stages.ground_stage).is_empty():
+		return
+	for rules: String in categories:
+		for category: String in categories[rules]:
+			var drop := RuleDrop.new()
+			drop.stage = rules
+			drop.category = category
+			drop.text = "  %s: %s" % [rules, category]
+			drop.dropped.connect(_drop_scene)
+			rules_box.add_child(drop)
+
+## Adds a Scatter stage placing the scene at `path` on `category` of the Rules stage `rules`,
+## standing on the node's ground, bound to the scene and generated, as one undo action (N3). The
+## node's pack becomes a stack if it was a pack_file.
+func _drop_scene(rules: String, category: String, path: String) -> void:
+	var stack := _stack_of_node()
+	var scene := load(path) as PackedScene
+	if stack == null or scene == null:
+		return
+	var stage := stack.add_scatter_on(rules, category, path.get_file().get_basename(), stages.ground_stage)
+	var scenes: Dictionary = stages.scenes.duplicate()
+	scenes[stage.name] = scene
+	var targets := PackedStringArray(stages.targets)
+	targets.append(stage.name)
+	var undo := get_undo_redo()
+	undo.create_action("Wave Forge: place %s on %s" % [path.get_file(), category])
+	for property: String in ["stack", "pack_file", "scenes", "targets"]:
+		undo.add_undo_property(stages, property, stages.get(property))
+	undo.add_do_property(stages, "stack", stack)
+	undo.add_do_property(stages, "pack_file", "")
+	undo.add_do_property(stages, "scenes", scenes)
+	undo.add_do_property(stages, "targets", targets)
+	for method in ["_refresh_rules", "_restart_preview"]:
+		undo.add_do_method(self, method)
+		undo.add_undo_method(self, method)
+	undo.commit_action()
+
+## Starts the selected node again if it previews in the editor, so it shows its pack as changed.
+func _restart_preview() -> void:
+	if stages != null and is_instance_valid(stages) and stages.preview_in_editor:
+		stages.start()
 
 func _labelled(text: String, control: Control) -> HBoxContainer:
 	var row := HBoxContainer.new()
