@@ -645,8 +645,8 @@ regions baked apart meet on the same vertices, and starts on a whole number of t
 height for the same reason. A chunk is baked once it and every neighbour inside the world have
 their ground and surface, so navigation reaches a chunk less far than the ground, and again when
 any of them changes, keeping its last mesh until the new one is in. One bake is started a frame,
-nearest first, and only on a frame that has spent under 2 ms of Godot's thread so far, since
-starting one costs up to a millisecond. `navigation_template` gives the agent's size, climb and
+nearest first, and only on a frame that has spent under 1 ms of Godot's thread so far, since
+starting one costs up to a millisecond and P1 bounds the node's own time at 2 ms a frame. `navigation_template` gives the agent's size, climb and
 slope; its cell size and height are replaced by the map's. `navigation_chunks()` lists the chunks
 whose mesh is in the map, and `navigation_ready(chunk)` names each as it goes in. Since Godot 4.4 a
 map takes a region's new mesh in some frames after it is set, so both are reported only once the
