@@ -649,8 +649,8 @@ history of settlements of eight cultures that a game gives as a table of facts, 
 the ground with a town of its culture, each culture a WFC module set of 61 modules
 (`examples/continent/cultures`), 209 Assemble pieces in eleven stages of dungeons and buildings
 grown on the larger places, 59 stages of vegetation and clutter by rule chains, and a coarse height
-an engine draws its far ground from, out to 2 km in `continent.tscn`, 104 stages in all, in chunks
-of 8 by 8 columns
+and coarse biomes an engine draws and colours its far ground from, out to 2 km in `continent.tscn`,
+106 stages in all, in chunks of 8 by 8 columns
 (`wfc-devtools/tests/continent.rs` and `cultures.rs`, [measurements.md](../research/measurements.md)
 L34 to L41). The whole continent runs ahead of time in 526 s in the dev container, into 0.61 GB
 kept as compressed binary, an entry per chunk (L47). In Godot the preset is a scene set up for the dock's World

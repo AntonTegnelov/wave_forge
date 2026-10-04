@@ -72,6 +72,38 @@ fn the_continent_chooses_among_forty_biomes_by_rules_and_forty_appear() {
 }
 
 #[test]
+fn the_far_ground_s_biomes_are_the_near_ground_s_in_name_and_mostly_in_place() {
+    let pack = pack();
+    let runtime = Runtime::new(Arc::clone(&pack), SEED, SIZE);
+    let near = pack.kind("biome").expect("a biome stage").categories();
+    let far = pack
+        .kind("far_biome")
+        .expect("a far_biome stage")
+        .categories();
+
+    let points: Vec<[f32; 2]> = grid(96).collect();
+    let agree = points
+        .iter()
+        .filter(|&&at| {
+            runtime.sample("biome", at).expect("a sampled biome")
+                == runtime
+                    .sample("far_biome", at)
+                    .expect("a sampled far biome")
+        })
+        .count();
+
+    // The same categories in the same order, so the far ground takes the near ground's palette.
+    assert_eq!(far, near);
+    // Over the coarse height and temperature, the biome differs only near the bands' edges: 89.5
+    // per cent of the points agree.
+    let share = agree as f32 / points.len() as f32;
+    assert!(
+        share > 0.85,
+        "the far ground's biomes agree with the near ground's at {share:.3} of the points"
+    );
+}
+
+#[test]
 fn the_coast_falls_into_the_ocean_before_the_bound_and_about_half_is_land() {
     let ring = (0..360).map(|degree| {
         let angle = (degree as f32).to_radians();
