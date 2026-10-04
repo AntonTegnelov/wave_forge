@@ -8,7 +8,9 @@ extends EditorPlugin
 ## under the mouse, and what its stage's modifiers read there (`candidate_panel.gd`, N5). Below
 ## them, the world run of M1: the node's whole finite world run ahead of time into a directory
 ## (`world_run_panel.gd`), and the kit import of N6: a MeshLibrary's connectors proposed, named
-## by the artist and saved as a module set (`kit_import_panel.gd`).
+## by the artist and saved as a module set (`kit_import_panel.gd`). The dock is an `EditorDock`;
+## Paint and each brush have a shortcut under `wave_forge/` that a user rebinds in the editor
+## settings, taken while the 3D viewport has focus and a node is selected.
 
 const WorldRunPanel := preload("res://addons/wave_forge/world_run_panel.gd")
 const CandidatePanel := preload("res://addons/wave_forge/candidate_panel.gd")
@@ -24,11 +26,22 @@ const BRUSHES := {
 	"Fill": "fill",
 	"Remove": "remove",
 }
+## Each shortcut's path in the editor settings, what it is called there, and its default key: Paint
+## toggles painting, and each brush's picks it.
+const SHORTCUTS := {
+	"wave_forge/paint": ["Toggle painting", KEY_P],
+	"wave_forge/brush_raise": ["Raise brush", KEY_1],
+	"wave_forge/brush_lower": ["Lower brush", KEY_2],
+	"wave_forge/brush_smooth": ["Smooth brush", KEY_3],
+	"wave_forge/brush_dig": ["Dig brush", KEY_4],
+	"wave_forge/brush_fill": ["Fill brush", KEY_5],
+	"wave_forge/brush_remove": ["Remove brush", KEY_6],
+}
 ## How far along a ray the plugin looks for the ground, in world units, and in what steps.
 const RAY_LENGTH := 2000.0
 const RAY_STEP := 0.5
 
-var dock: VBoxContainer
+var dock: EditorDock
 var preset_choice: OptionButton
 var painting_toggle: CheckButton
 var brush_choice: OptionButton
@@ -46,11 +59,24 @@ var path := PackedVector3Array()
 var before := ""
 
 func _enter_tree() -> void:
-	dock = _make_dock()
-	add_control_to_dock(DOCK_SLOT_RIGHT_UL, dock)
+	var settings := EditorInterface.get_editor_settings()
+	for path: String in SHORTCUTS:
+		if not settings.has_shortcut(path):
+			var key := InputEventKey.new()
+			key.keycode = SHORTCUTS[path][1]
+			var shortcut := Shortcut.new()
+			shortcut.resource_name = SHORTCUTS[path][0]
+			shortcut.events = [key]
+			settings.add_shortcut(path, shortcut)
+	dock = EditorDock.new()
+	dock.title = "Wave Forge"
+	dock.layout_key = "wave_forge"
+	dock.default_slot = EditorDock.DOCK_SLOT_RIGHT_UL
+	dock.add_child(_make_dock())
+	add_dock(dock)
 
 func _exit_tree() -> void:
-	remove_control_from_docks(dock)
+	remove_dock(dock)
 	dock.queue_free()
 
 func _handles(object: Object) -> bool:
@@ -71,6 +97,8 @@ func _process(_delta: float) -> void:
 		stages.follow(camera.global_position)
 
 func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
+	if event is InputEventKey and event.pressed and not event.echo and _take_shortcut(event):
+		return AFTER_GUI_INPUT_STOP
 	if stages == null or not is_instance_valid(stages):
 		return AFTER_GUI_INPUT_PASS
 	if not painting_toggle.button_pressed:
@@ -119,6 +147,19 @@ func _finish_stroke() -> void:
 	undo.add_do_property(stages, "edits_text", stages.edits_log())
 	undo.add_undo_property(stages, "edits_text", before)
 	undo.commit_action(false)
+
+## Toggles painting or picks a brush if `event` is one of their shortcuts; whether it was.
+func _take_shortcut(event: InputEvent) -> bool:
+	var settings := EditorInterface.get_editor_settings()
+	if settings.is_shortcut("wave_forge/paint", event):
+		painting_toggle.button_pressed = not painting_toggle.button_pressed
+		return true
+	for index in brush_choice.item_count:
+		var shown := brush_choice.get_item_text(index)
+		if settings.is_shortcut("wave_forge/brush_" + shown.to_lower(), event):
+			brush_choice.select(index)
+			return true
+	return false
 
 ## The brush the dock describes, as `paint` takes it.
 func _brush() -> Dictionary:
