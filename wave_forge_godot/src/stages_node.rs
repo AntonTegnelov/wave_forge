@@ -1936,6 +1936,34 @@ impl WaveForgeStages {
             .collect()
     }
 
+    /// The pack `text` holds as plain data, the shape GDScript edits it in: a Dictionary of its
+    /// `version`, `stages`, `params`, `noises` and the rest, each stage a Dictionary of its `name`,
+    /// `scale`, `persist` and `kind`, and a kind a Dictionary of one key, the kind's name, holding
+    /// its fields as a pack file writes them. Whole numbers are ints. Empty, with the library's
+    /// reason as an error, if `text` is no valid pack.
+    #[func]
+    fn pack_dictionary(text: GString) -> VarDictionary {
+        crate::pack_data::pack_data(&text.to_string()).unwrap_or_else(|error| {
+            godot_error!("wave forge: not a pack: {error}");
+            VarDictionary::new()
+        })
+    }
+
+    /// The text of the pack `data` holds, in the shape `pack_dictionary` gives, written as a pack
+    /// file is: what a stack of stages edited in the editor saves. A whole number may be an int or
+    /// a float. Empty, with the reason as an error, where `data` holds something no pack holds,
+    /// or is no valid pack.
+    #[func]
+    fn pack_text(data: VarDictionary) -> GString {
+        crate::pack_data::pack_text(&data).map_or_else(
+            |error| {
+                godot_error!("wave forge: not a pack: {error}");
+                GString::new()
+            },
+            |text| GString::from(text.as_str()),
+        )
+    }
+
     /// The categories a Rules stage names, in the order of their indices; empty for another stage.
     #[func]
     fn category_names(&self, stage: GString) -> PackedStringArray {
