@@ -682,8 +682,9 @@ fn elapsed_ms(since: std::time::Instant) -> f64 {
 }
 
 /// How long a frame may already have spent on Godot's thread, in milliseconds, for a navigation
-/// bake to be started in it.
-const NAVIGATION_START_MS: f64 = 2.0;
+/// bake to be started in it: starting one costs up to a millisecond, and P1 bounds the node's own
+/// time at 2 ms a frame.
+const NAVIGATION_START_MS: f64 = 1.0;
 
 /// The names of the pack's Solve stages, in the pack's order.
 fn solve_stages(pack: &Pack) -> Vec<String> {
