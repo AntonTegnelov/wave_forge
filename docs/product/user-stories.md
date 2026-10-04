@@ -422,7 +422,8 @@ city with no unplaced chunk (`wfc-devtools/tests/import.rs`); `connectors` lists
 would lose or merge connectors (`wfc-rules/src/import.rs`). In Godot the dock's kit import reads a
 `MeshLibrary` or a folder of scenes (`mesh_library_from_scenes`), lists the proposed connectors with
 a field to rename each and a walkable tick for a side, and saves the named set as a rule file that
-loads (`verify_import.gd`).
+loads; the kit's static bodies come with it, and a world of the module set with them as colliders
+(`set_collision_shapes`) has a body under every walkable cell (`verify_import.gd`).
 
 ### N7. Use my own noise
 

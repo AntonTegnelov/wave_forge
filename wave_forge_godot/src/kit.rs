@@ -2,7 +2,10 @@
 //! a `MeshLibrary`'s items, and a `MeshLibrary` made from a folder of scenes.
 
 use godot::classes::mesh::{ArrayType as MeshArray, PrimitiveType};
-use godot::classes::{DirAccess, Mesh, MeshLibrary, PackedScene, SurfaceTool};
+use godot::classes::{
+    CollisionShape3D, ConcavePolygonShape3D, DirAccess, Mesh, MeshLibrary, Node, Node3D,
+    PackedScene, Shape3D, StaticBody3D, SurfaceTool,
+};
 use godot::prelude::*;
 
 /// Two points of a kit's face count as one within this fraction of a cell.
@@ -44,6 +47,71 @@ pub(crate) fn items(library: &Gd<MeshLibrary>, cell_size: Vector3) -> Vec<(Strin
         .collect()
 }
 
+/// The collision shapes of `library`'s items, by item name, each as one shape centred on the cell as
+/// a `GridMap` places its item, which a node's `set_collision_shape` takes: an item's only shape if
+/// it has one at no offset, so a box stays a box, or else the faces of all of them where they stand,
+/// as one concave shape. An item without shapes is left out.
+pub(crate) fn item_shapes(library: &Gd<MeshLibrary>) -> Vec<(String, Gd<Shape3D>)> {
+    let mut found = Vec::new();
+    for &item in library.get_item_list().as_slice() {
+        // Godot gives an item's shapes as a flat list: a shape, then its transform, for each.
+        let listed: Vec<Variant> = library.get_item_shapes(item).iter_shared().collect();
+        let shapes: Vec<(Gd<Shape3D>, Transform3D)> = listed
+            .chunks(2)
+            .filter_map(|pair| {
+                Some((
+                    pair[0].try_to::<Gd<Shape3D>>().ok()?,
+                    pair.get(1)?.try_to::<Transform3D>().ok()?,
+                ))
+            })
+            .collect();
+        let name = library.get_item_name(item).to_string();
+        match shapes.as_slice() {
+            [] => {}
+            [(shape, at)] if *at == Transform3D::IDENTITY => found.push((name, shape.clone())),
+            _ => {
+                let faces: PackedVector3Array = shapes
+                    .iter()
+                    .filter_map(|(shape, at)| Some((shape.get_debug_mesh()?, *at)))
+                    .flat_map(|(mesh, at)| {
+                        mesh.get_faces()
+                            .as_slice()
+                            .iter()
+                            .map(|&corner| at * corner)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                let mut merged = ConcavePolygonShape3D::new_gd();
+                merged.set_faces(&faces);
+                found.push((name, merged.upcast()));
+            }
+        }
+    }
+    found
+}
+
+/// Every `CollisionShape3D` under a `StaticBody3D` in `node`, with where it stands relative to the
+/// scene's root, `at` being where `node` stands: the shapes a scene's item carries, as Godot 4.8's
+/// scene-to-MeshLibrary import takes them.
+fn body_shapes(node: &Gd<Node>, at: Transform3D, in_body: bool) -> Vec<(Gd<Shape3D>, Transform3D)> {
+    let mut found = Vec::new();
+    for child in node.get_children().iter_shared() {
+        let placed = child
+            .clone()
+            .try_cast::<Node3D>()
+            .map_or(at, |child| at * child.get_transform());
+        if in_body
+            && let Ok(collision) = child.clone().try_cast::<CollisionShape3D>()
+            && let Some(shape) = collision.get_shape()
+        {
+            found.push((shape, placed));
+        }
+        let body = in_body || child.clone().try_cast::<StaticBody3D>().is_ok();
+        found.extend(body_shapes(&child, placed, body));
+    }
+    found
+}
+
 /// `items` as the kit the import reads.
 pub(crate) fn modules(items: &[(String, Vec<[f32; 3]>)]) -> Vec<wave_forge::import::KitModule<'_>> {
     items
@@ -78,12 +146,19 @@ pub(crate) fn library_from_scenes(directory: &str) -> Result<Gd<MeshLibrary>, St
             .instantiate()
             .ok_or_else(|| format!("{path} does not instantiate"))?;
         let meshes = crate::placements::meshes(&root, Transform3D::IDENTITY);
+        let shapes = body_shapes(&root, Transform3D::IDENTITY, false);
         root.free();
         let name = file
             .rsplit_once('.')
             .map_or(file.as_str(), |(stem, _)| stem);
         library.create_item(id);
         library.set_item_name(id, name);
+        let mut listed = VarArray::new();
+        for (shape, at) in &shapes {
+            listed.push(&shape.to_variant());
+            listed.push(&at.to_variant());
+        }
+        library.set_item_shapes(id, &listed);
         if meshes.is_empty() {
             continue;
         }

@@ -596,8 +596,9 @@ impl WaveForgeWorld {
     /// A `MeshLibrary` of the scenes in `directory`, for proposing a module set from a kit that
     /// comes as a folder of scenes rather than a library: an item per `.tscn`, `.scn`, `.glb` or
     /// `.gltf` file, in the order of their names, named as the file without its extension, whose
-    /// mesh is every `MeshInstance3D` of the scene merged where the scene places them; a scene
-    /// without one is an item without a mesh. Null, with the reason as an error, if the directory
+    /// mesh is every `MeshInstance3D` of the scene merged where the scene places them, and whose
+    /// shapes are the `CollisionShape3D`s under its `StaticBody3D`s where it places them; a scene
+    /// without a mesh is an item without one. Null, with the reason as an error, if the directory
     /// or a scene cannot be read.
     #[func]
     fn mesh_library_from_scenes(directory: GString) -> Option<Gd<MeshLibrary>> {
@@ -821,6 +822,17 @@ impl WaveForgeWorld {
                 out
             })
             .collect()
+    }
+
+    /// Gives every module a collider of its item's shapes in `library`, the kit a module set was
+    /// imported from, as `set_collision_shape` gives one: an item's only shape if it has one at no
+    /// offset, or else all of them as one concave shape, where a `GridMap` would place them in the
+    /// item's cell. A module whose item has no shapes keeps what it has.
+    #[func]
+    fn set_collision_shapes(&mut self, library: Gd<MeshLibrary>) {
+        for (module, shape) in crate::kit::item_shapes(&library) {
+            self.set_collision_shape(GString::from(module.as_str()), Some(shape));
+        }
     }
 
     /// Gives every cell of `module` a collider of `shape`, turned by the tile's rotation and

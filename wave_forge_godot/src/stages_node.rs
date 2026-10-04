@@ -26,9 +26,9 @@ use godot::classes::rendering_server::ArrayType;
 use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::{
     ArrayMesh, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
-    HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, NavigationMesh,
-    NavigationServer3D, Node, Node3D, PhysicsServer3D, RenderingServer, ResourceSaver, Shader,
-    ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
+    HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, MeshLibrary,
+    NavigationMesh, NavigationServer3D, Node, Node3D, PhysicsServer3D, RenderingServer,
+    ResourceSaver, Shader, ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
 };
 use godot::global::Error;
 use godot::obj::EngineEnum;
@@ -2050,6 +2050,17 @@ impl WaveForgeStages {
                 out
             })
             .collect()
+    }
+
+    /// Gives every module a collider of its item's shapes in `library`, the kit a module set was
+    /// imported from, as `set_collision_shape` gives one: an item's only shape if it has one at no
+    /// offset, or else all of them as one concave shape, where a `GridMap` would place them in the
+    /// item's cell. A module whose item has no shapes keeps what it has.
+    #[func]
+    fn set_collision_shapes(&mut self, library: Gd<MeshLibrary>) {
+        for (module, shape) in crate::kit::item_shapes(&library) {
+            self.set_collision_shape(GString::from(module.as_str()), Some(shape));
+        }
     }
 
     /// Gives every cell of a town's `module` a collider of `shape` in the chunks within
