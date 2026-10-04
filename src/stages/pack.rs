@@ -227,6 +227,10 @@ pub enum StageKind {
         /// Sites whose ground is levelled in the volume before any tunnel or room is carved.
         #[serde(default)]
         level: Option<Level>,
+        /// An Aquifer stage with a `barrier`, whose barrier between pools of different levels is
+        /// filled with rock, after every tunnel and room is carved.
+        #[serde(default)]
+        barriers: Option<String>,
     },
     /// A field of the height, in cells, of the top of the Volume or Carve stage `volume` in each
     /// column: where its values cross zero going up from its highest solid voxel, or its bottom
@@ -240,13 +244,17 @@ pub enum StageKind {
     /// level. Open air under a pool's level fills too. With `materials`, each voxel takes one by
     /// rules read at its column with `Z` as its pool's level, so rules on `Z` alone give each pool
     /// one fluid, lava in the deepest say. Pools of two levels meet at a vertical face where their
-    /// cells meet; Minecraft walls that face off with stone, which an Aquifer stage does not.
+    /// cells meet. With `barrier`, the stage walls that face off as Minecraft does: it leaves dry
+    /// every voxel within `barrier` cells of the plane between two pools of different levels and
+    /// below the higher one's level, which a Carve stage naming it in `barriers` fills with rock.
     Aquifer {
         volume: String,
         cell: (u32, u32),
         level: (f32, f32),
         #[serde(default)]
         materials: Option<Materials>,
+        #[serde(default)]
+        barrier: Option<f32>,
     },
     /// Points of `kind` inside the solid voxels of the Volume or Carve stage `volume`, ore in rock
     /// say: `count` candidates per square block of `spacing` columns, each at a hashed place in the
@@ -1924,6 +1932,21 @@ impl Pack {
         }
         let outputs: Vec<Output> = file.stages.iter().map(|def| def.kind.output()).collect();
         let scales: Vec<u32> = file.stages.iter().map(|def| def.scale).collect();
+        // The Aquifer stages that wall off their pools, which a Carve stage's barriers may name.
+        let barriered: BTreeSet<String> = file
+            .stages
+            .iter()
+            .filter(|def| {
+                matches!(
+                    def.kind,
+                    StageKind::Aquifer {
+                        barrier: Some(_),
+                        ..
+                    }
+                )
+            })
+            .map(|def| def.name.clone())
+            .collect();
         let categories: Vec<Vec<String>> = file
             .stages
             .iter()
@@ -2418,9 +2441,15 @@ impl Pack {
                     cell,
                     level,
                     materials,
+                    barrier,
                 } => {
                     if cell.0 == 0 || cell.1 == 0 {
                         return Err(invalid(format!("cells of {cell:?}")));
+                    }
+                    if let Some(barrier) = barrier
+                        && !(barrier.is_finite() && *barrier > 0.0)
+                    {
+                        return Err(invalid(format!("a barrier {barrier} cells thick")));
                     }
                     if !(level.0.is_finite() && level.1.is_finite() && level.0 <= level.1) {
                         return Err(invalid(format!(
@@ -2472,6 +2501,7 @@ impl Pack {
                     tunnels,
                     rooms,
                     level,
+                    barriers,
                 } => {
                     if let Some(&index) = by_name.get(volume.as_str())
                         && scales[index] != 1
@@ -2481,6 +2511,15 @@ impl Pack {
                         )));
                     }
                     let mut reads = vec![(volume.as_str(), Reach::Cells(0), Output::Volume)];
+                    if let Some(barriers) = barriers {
+                        if !barriered.contains(barriers.as_str()) {
+                            return Err(invalid(format!(
+                                "its barriers name {barriers:?}, which is no Aquifer stage with \
+                                 a barrier"
+                            )));
+                        }
+                        reads.push((barriers.as_str(), Reach::Cells(0), Output::Volume));
+                    }
                     if let Some(tunnels) = tunnels {
                         if !tunnels.depth.is_finite() {
                             return Err(invalid(format!("tunnels {} deep", tunnels.depth)));
