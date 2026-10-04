@@ -11,7 +11,7 @@
 //! `PhysicsServer3D` with every shape added before the body joins the space.
 
 use crate::gi::Gi;
-use crate::grass::{GRASS_SHADER, Grass};
+use crate::grass::Grass;
 use crate::lods::{add_levelled_surface, levelled_mesh};
 use crate::occlusion::Occluders;
 use crate::placements::{Item, Placements};
@@ -28,7 +28,7 @@ use godot::classes::{
     ArrayMesh, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
     HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, MeshLibrary,
     NavigationMesh, NavigationServer3D, Node, Node3D, PhysicsServer3D, RenderingServer,
-    ResourceSaver, Shader, ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
+    ResourceSaver, ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
 };
 use godot::global::Error;
 use godot::obj::EngineEnum;
@@ -1196,10 +1196,11 @@ impl WaveForgeStages {
             let stage = self.fluid_stage.to_string();
             self.fluid = Some(VolumeLayer::new(stage));
             if self.fluid_colours.is_none() {
-                let mut shader = Shader::new_gd();
-                shader.set_code(FLUID_SHADER);
                 let mut material = ShaderMaterial::new_gd();
-                material.set_shader(&shader);
+                material.set_shader(&crate::shaders::reference(
+                    "fluid.gdshader",
+                    crate::shaders::FLUID,
+                ));
                 self.fluid_colours = Some(material);
             }
         }
@@ -2148,7 +2149,7 @@ impl WaveForgeStages {
     /// The reference ground shader's code, to copy into a shader of a game's own.
     #[func]
     fn ground_shader_code(&self) -> GString {
-        GString::from(GROUND_SHADER)
+        GString::from(crate::shaders::GROUND)
     }
 
     /// The chunks that have grass.
@@ -2173,19 +2174,19 @@ impl WaveForgeStages {
     /// carries per instance.
     #[func]
     fn vegetation_shader_code(&self) -> GString {
-        GString::from(VEGETATION_SHADER)
+        GString::from(crate::shaders::VEGETATION)
     }
 
     /// The reference fluid shader's code, to copy into a shader of a game's own.
     #[func]
     fn fluid_shader_code(&self) -> GString {
-        GString::from(FLUID_SHADER)
+        GString::from(crate::shaders::FLUID)
     }
 
     /// The reference grass shader's code, to copy into a shader of a game's own.
     #[func]
     fn grass_shader_code(&self) -> GString {
-        GString::from(GRASS_SHADER)
+        GString::from(crate::shaders::GRASS)
     }
 
     /// The chunks whose ground is built.
@@ -3136,7 +3137,7 @@ impl WaveForgeStages {
                         &mut ground_arrays(ground),
                         finest,
                         &coarser,
-                        material.as_ref(),
+                        material.map(crate::shaders::self_contained).as_ref(),
                     );
                     holder.add_child(&instance(mesh, "Ground", corner));
                     if let Some((width, depth, heights, at)) = self.ground_height_map(chunk) {
@@ -3162,7 +3163,9 @@ impl WaveForgeStages {
                         &mut self.surface_arrays(&surface.mesh, fluid),
                         &surface.mesh.indices,
                         &[],
-                        self.surface_material(&surface.mesh, fluid).as_ref(),
+                        self.surface_material(&surface.mesh, fluid)
+                            .map(crate::shaders::self_contained)
+                            .as_ref(),
                     );
                     let name = if fluid { "Fluid" } else { "Surface" };
                     holder.add_child(&instance(mesh, name, corner));
@@ -4459,10 +4462,11 @@ impl WaveForgeStages {
     fn materials_template(&self) -> Result<(Gd<ImageTexture>, Gd<ShaderMaterial>), String> {
         let template = match &self.ground_material {
             None => {
-                let mut shader = Shader::new_gd();
-                shader.set_code(GROUND_SHADER);
                 let mut material = ShaderMaterial::new_gd();
-                material.set_shader(&shader);
+                material.set_shader(&crate::shaders::reference(
+                    "ground.gdshader",
+                    crate::shaders::GROUND,
+                ));
                 material
             }
             Some(material) => material.clone().try_cast::<ShaderMaterial>().map_err(|_| {
@@ -4965,19 +4969,11 @@ fn palette_colour(palette: &PackedColorArray, index: usize) -> Color {
         .unwrap_or_else(|| Color::from_hsv(index as f64 * 0.618_034 % 1.0, 0.45, 0.6))
 }
 
-/// The reference vegetation shader: plants bending in the global wind.
-const VEGETATION_SHADER: &str = include_str!("shaders/vegetation.gdshader");
-
 /// A placement's phase in the wind as a fraction of a turn, from its id, so neighbours sway apart.
 fn phase(local: u64) -> f32 {
     let mixed = (local ^ (local >> 29)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     (mixed >> 40) as f32 / (1u64 << 24) as f32
 }
-
-/// The reference ground shader: a chunk's material ids per vertex, blended through a palette.
-const GROUND_SHADER: &str = include_str!("shaders/ground.gdshader");
-
-const FLUID_SHADER: &str = include_str!("shaders/fluid.gdshader");
 
 /// A chunk's copy of `template` holding the material `ids` of its ground's vertices, one texel each.
 fn chunk_material(

@@ -10,15 +10,12 @@ use godot::classes::image::Format as ImageFormat;
 use godot::classes::rendering_server::{
     ArrayType, MultimeshTransformFormat, PrimitiveType, ShadowCastingSetting,
 };
-use godot::classes::{Image, ImageTexture, Material, RenderingServer, Shader, ShaderMaterial};
+use godot::classes::{Image, ImageTexture, Material, RenderingServer, ShaderMaterial};
 use godot::obj::EngineEnum;
 use godot::prelude::*;
 use std::collections::HashMap;
 use wave_forge::stages::Field;
 use wave_forge::{ChunkCoord, GroundMesh};
-
-/// The reference grass shader.
-pub(crate) const GRASS_SHADER: &str = include_str!("shaders/grass.gdshader");
 
 /// The shared blades, the material each chunk's is copied from, and each chunk's instance.
 pub(crate) struct Grass {
@@ -42,10 +39,11 @@ impl Grass {
     ) -> Result<Self, String> {
         let template = match material {
             None => {
-                let mut shader = Shader::new_gd();
-                shader.set_code(GRASS_SHADER);
                 let mut material = ShaderMaterial::new_gd();
-                material.set_shader(&shader);
+                material.set_shader(&crate::shaders::reference(
+                    "grass.gdshader",
+                    crate::shaders::GRASS,
+                ));
                 material
             }
             Some(material) => material

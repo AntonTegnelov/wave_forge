@@ -320,7 +320,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
     any other as an instance of its scene, which the saved file refers to by path if the scene has
     one.
 
-  Grass and the far ground are left out. It returns null, with an error, while a chunk's ground or
+  A material drawn with one of the addon's reference shaders is baked as a copy holding its own
+  copy of the shader, so the scene opens in a project without the addon. Grass and the far ground
+  are left out. It returns null, with an error, while a chunk's ground or
   surfaces are not built, or while a scene is still loading. Its nodes carry metadata a linked
   bake reads, all plain Godot values:
   - a chunk's node has `wave_forge_chunk` and the list of its points in `wave_forge_points`;
@@ -487,6 +489,17 @@ gets every place a pack can name without reading it. A rule set shares the `.ron
 lists nothing. The parser is `addons/wave_forge/translation_parser.gd`; the entries it lists come
 from `translation_keys.gd`, which a game or a check can call outside the editor.
 
+### Reference shaders
+
+The shaders the nodes draw with when a game gives no material of its own, the ground's, the
+grass's, the fluid's and the plants' in the wind, ship as files in `addons/wave_forge/shaders/`,
+which the nodes load by path. Godot's shader baker (Godot 4.5) finds them there when a game is
+exported, so the export compiles them ahead of time on Forward+ and Mobile rather than on its first
+frames; the `*_shader_code()` functions give the same code. A project that has moved those files
+gets the same shaders built from the extension's own code, with a warning, which an export cannot
+bake. What the baker saves on the first frames of an export is to be measured on a desktop
+([#277](https://github.com/AntonTegnelov/wave_forge/issues/277)).
+
 ### Typed maps
 
 `WaveForgeStages`' `target_radii` and `noises`, and `WaveForgeWorld`'s `sounds` and
@@ -611,8 +624,8 @@ its material of its own. The copy takes three shader parameters: `wave_forge_mat
 of one texel per ground vertex holding its category in the red channel as id / 255;
 `wave_forge_cell`, the cell's width along x and z; and `wave_forge_palette`, a 256 by 1 texture of
 a colour per category from `ground_palette`, categories past its end taking colours of their own.
-With `ground_material` empty, the copy is of the reference ground shader, embedded in the extension,
-which blends the colours of the four vertices around every fragment, so materials meet in a smooth
+With `ground_material` empty, the copy is of the reference ground shader
+(`addons/wave_forge/shaders/ground.gdshader`, [Reference shaders](#reference-shaders)), which blends the colours of the four vertices around every fragment, so materials meet in a smooth
 band a cell wide on every renderer, Compatibility included. `ground_shader_code()` gives its code,
 to start a game's own shader from; a game's `ground_material` has to be a `ShaderMaterial` taking
 the same parameters. `ground_material_of(chunk)` gives a chunk's copy. Loading refuses a
@@ -649,8 +662,8 @@ chunks share one MultiMesh of `grass_per_cell` blades per column, each with the 
 so its buffer is uploaded once. Each chunk draws it as an instance of its own, with a copy of the
 grass material holding `wave_forge_cover` (the chunk's cover per column, one byte each),
 `wave_forge_heights` (the ground's height per vertex, one float each), `wave_forge_cell`,
-`wave_forge_per_column` and `wave_forge_chunk`. The reference grass shader, embedded in the
-extension (`grass_shader_code()` gives it), gives blade `INSTANCE_ID` its column, a hashed place in
+`wave_forge_per_column` and `wave_forge_chunk`. The reference grass shader
+(`addons/wave_forge/shaders/grass.gdshader`; `grass_shader_code()` gives its code) gives blade `INSTANCE_ID` its column, a hashed place in
 it, a hashed turn and height, and shows it only where a hash is below the column's cover; it stands
 on the ground's heights, blended between vertices, and sways in the global shader parameter
 `wave_forge_wind` (a direction along x and z, a strength at the tip, a speed), which the node
