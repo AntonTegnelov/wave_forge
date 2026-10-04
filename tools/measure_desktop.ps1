@@ -7,8 +7,9 @@ What it measures and why is in docs/guides/desktop-measurements.md, which is als
 guide. In short, on each graphics API in -Apis:
   - Bevy (#39): frame times while a city streams, on Bevy's device and on one of the solver's own,
     at a walk and in flight, and with smaller batches (wave_forge_bevy/examples/frame_times.rs).
-  - Godot (#39, P1): frame times while the city streams with its models drawn, on Forward+
-    (wave_forge_godot/godot/measure_city.gd).
+  - Godot (#39, P1, #203): frame times while the city streams with its models drawn, on Forward+,
+    each chunk drawn as a MultiMesh per module and as one merged mesh, with what drawing a chunk
+    costs Godot's thread (wave_forge_godot/godot/measure_city.gd).
   - Godot (#166, P2): grass, ground levels of detail and far ground on Forward+ (render_ground.gd,
     render_lods.gd, render_far.gd).
 And once, P3: the history example's first towns, on a first run and a second one; the golden
@@ -225,10 +226,13 @@ foreach ($api in $Apis) {
     }
     $renderer = @("--rendering-driver", $api, "--rendering-method", "forward_plus")
     if ($Only -contains "godot") {
-        foreach ($speed in @("4.2", "30")) {
-            [void](Invoke-Logged "godot-city-$api-$speed" $Godot (@("--path", $GodotProject) + $renderer + @(
-                "--script", "measure_city.gd", "--", "--speed", $speed, "--seconds", $seconds,
-                "--out", (Join-Path $Results "godot_city.txt"))))
+        # Each chunk drawn as a MultiMesh per module, and as one merged mesh (#203).
+        foreach ($draw in @("multimesh", "merged")) {
+            foreach ($speed in @("4.2", "30")) {
+                [void](Invoke-Logged "godot-city-$api-$draw-$speed" $Godot (@("--path", $GodotProject) + $renderer + @(
+                    "--script", "measure_city.gd", "--", "--draw", $draw, "--speed", $speed, "--seconds", $seconds,
+                    "--out", (Join-Path $Results "godot_city.txt"))))
+            }
         }
     }
     if ($Only -contains "ground") {

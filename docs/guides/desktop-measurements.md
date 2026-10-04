@@ -14,7 +14,7 @@ On Vulkan and on Direct3D 12:
 | Run | Tool | For |
 |---|---|---|
 | A city streamed around a moving focus in Bevy and drawn at 1080p: on Bevy's device and on one of the solver's own, at 4.2 m/s and 30 m/s, and at 30 m/s with batches of at most 16 and 4 regions. An idle phase first, the cost of drawing alone | `wave_forge_bevy/examples/frame_times.rs` | where the solver runs in both engines, and whether a smaller batch buys smoother frames ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
-| The city walked in Godot with its module models drawn, on Forward+, at 4.2 m/s and 30 m/s, with the node's own time | `wave_forge_godot/godot/measure_city.gd` | the solver on a device of its own in a desktop Godot ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), P1's frame rate |
+| The city walked in Godot with its module models drawn, on Forward+, at 4.2 m/s and 30 m/s, with the node's own time, each chunk drawn as a MultiMesh per module and as one merged mesh, and what drawing a chunk costs Godot's thread | `wave_forge_godot/godot/measure_city.gd` | the solver on a device of its own in a desktop Godot ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), P1's frame rate, and how a chunk is drawn ([#203](https://github.com/AntonTegnelov/wave_forge/issues/203)) |
 | Grass on 25 chunks with and without it, the ground's levels of detail, and the far ground beyond the near ground, each with a check for gaps, on Forward+ | `render_ground.gd`, `render_lods.gd`, `render_far.gd` | E45, E47 and E52 on a desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166), P2) |
 
 Once, headless: the history example's first towns, on the first run after building and on a second
@@ -27,11 +27,9 @@ through it at 4.2 m/s, for P1 ([#71](https://github.com/AntonTegnelov/wave_forge
 [measurements.md](../research/measurements.md) E53).
 
 Each measured phase lasts 20 seconds and prints the median, 99th percentile and slowest frame. The
-whole run takes about 45 minutes, most of it the first build.
+whole run takes about 50 minutes, most of it the first build.
 
-It does not measure a second GPU vendor, which #39 also asks for, nor merged chunk meshes against a
-MultiMesh per module ([#38](https://github.com/AntonTegnelov/wave_forge/issues/38)), which has no
-tool yet.
+It does not measure a second GPU vendor, which #39 also asks for.
 
 ## Before you start
 
