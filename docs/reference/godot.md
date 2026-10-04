@@ -407,9 +407,10 @@ project's plugins) adds a Wave Forge dock:
   scenes, its parameters back to the pack's defaults, showing as sliders). A preset is copied, never
   shared, so changing the node changes no other scene. A node added with nothing set (no pack, no
   targets, no ground) takes the default preset, islands, when it is first selected. The copying is
-  `addons/wave_forge/presets.gd`. The presets bind `tree` and `cactus` to the plugin's built-in
-  props (`addons/wave_forge/tree.tscn` and `cactus.tscn`, each one vertex-coloured mesh written by
-  `tools/make_props.gd`) and draw the sea with `addons/wave_forge/sea.tres`. To walk a world with
+  `addons/wave_forge/presets.gd`. The presets bind `tree`, `cactus` and `palm` to the plugin's
+  built-in props (`addons/wave_forge/tree.tscn`, `cactus.tscn` and `palm.tscn`, each one
+  vertex-coloured mesh written by `tools/make_props.gd`) and draw the sea with
+  `addons/wave_forge/sea.tres`, or the archipelago's clearer `lagoon.tres`. To walk a world with
   no code, drop the plugin's walker (`addons/wave_forge/walker.tscn`, a first-person
   `CharacterBody3D` with a camera) into the scene:
   the node follows its camera, and it holds still until the ground and its body are there under it,

@@ -112,7 +112,11 @@ The presets in `examples/presets`, each with three parameters:
 - `canyon.world.ron`: mesas of banded red rock cut by winding canyons with sand on their floors and
   cliffs where the ground falls steeply, whose `canyons` run from narrow slots to wide valleys,
   whose `strata` run from smooth slopes to terraces of flat ledges and steep steps, and whose `cacti`
-  run from bare sand to cacti over much of it.
+  run from bare sand to cacti over much of it;
+- `archipelago.world.ron`: small islands of beach, grassy jungle and rock in a warm sea, each ringed
+  by a reef of sand just under the water, whose `islands` run from a few islets to large islands,
+  whose `reefs` run from shores that fall straight into deep water to wide reefs, and whose `palms`
+  run from bare islands to palm groves over all of them.
 
 ## Edits
 

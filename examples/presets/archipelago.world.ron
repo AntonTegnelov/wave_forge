@@ -1,0 +1,62 @@
+// The archipelago preset (docs/product/user-stories.md, N2): a scatter of small islands in a warm
+// sea, each with a beach round a grassy jungle and rock on the tallest, ringed by a reef of sand
+// just under the water, with groves of palms over them. Three parameters tune it: how large the
+// islands grow, how wide their reefs reach, and how much of the land the palm groves cover. Every
+// value in their ranges gives a sound world (tests/presets.rs sweeps them).
+(
+    version: 1,
+    params: {
+        // From a few islets at 0 to large islands at 1.
+        "islands": (default: 0.5, range: (0.0, 1.0)),
+        // From shores that fall straight into deep water at 0 to wide reefs at 1.
+        "reefs": (default: 0.5, range: (0.0, 1.0)),
+        // From bare islands at 0 to palms over all of them at 1.
+        "palms": (default: 0.6, range: (0.0, 1.0)),
+    },
+    water: Some((level: 0.0)),
+    noises: {
+        // An island round each point of this noise, as large as the cell's own value lets it grow.
+        "isles": (noise_type: Cellular, seed: 41, frequency: 0.03),
+        "sizes": (noise_type: Cellular, seed: 41, frequency: 0.03, cellular_return_type: CellValue),
+        "detail": (noise_type: SimplexSmooth, seed: 42, frequency: 0.08, fractal_octaves: 2),
+        "groves": (noise_type: Perlin, seed: 43, frequency: 0.12, fractal_octaves: 2),
+    },
+    stages: [
+        // Below 0 on an island and above 0 off it, in spacings of the islands' noise: its distance
+        // to the island's point, roughened, less the island's size.
+        (name: "shore", kind: Field(Sub(
+            Add(Add(FastNoise("isles"), Constant(1.0)), Mul(FastNoise("detail"), Constant(0.06))),
+            Add(
+                Add(Constant(0.22), Mul(Param("islands"), Constant(0.25))),
+                Mul(FastNoise("sizes"), Constant(0.1)),
+            ),
+        ))),
+        // An island rises from its beach to as much as 7 cells; off it, a reef lies flat just under
+        // the water as far out as the reefs amount reaches, and past it the sea floor falls away.
+        (name: "height", kind: Field(Select(
+            when: Less(Input("shore"), Constant(0.0)),
+            then: Curve(Input("shore"), [(-0.3, 7.0), (-0.1, 3.0), (-0.025, 0.6), (0.0, -0.3)]),
+            otherwise: Max(
+                Sub(Constant(-0.3), Mul(Max(
+                    Sub(Input("shore"), Add(Constant(0.01), Mul(Param("reefs"), Constant(0.12)))),
+                    Constant(0.0),
+                ), Constant(60.0))),
+                Constant(-8.0),
+            ),
+        ))),
+        (name: "surface", kind: Rules(rules: [
+            (category: "deep", when: [Less(Input("height"), Constant(-1.0))]),
+            (category: "sand", when: [Less(Input("height"), Constant(1.0))]),
+            (category: "rock", when: [Greater(Input("height"), Constant(5.5))]),
+        ], otherwise: "jungle")),
+        // Grass through the jungle.
+        (name: "cover", kind: Field(Mul(Is("surface", ["jungle"]), Constant(0.7)))),
+        // Palms in groves over the land above the waves, as much of it as the palms amount, leaning a
+        // little.
+        (name: "palms", kind: Scatter(kind: "palm", height: "height", spacing: 3, apart: 2,
+            between: Some((0.3, 10.0)), max_slope: Some(0.8), tilt: (3.0, 12.0), scale: (0.8, 1.2),
+            when: [
+                Less(Clamp(Remap(FastNoise("groves"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("palms")),
+            ])),
+    ],
+)

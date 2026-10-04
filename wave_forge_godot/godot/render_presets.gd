@@ -47,11 +47,13 @@ func _process(_delta: float) -> bool:
 		printerr("render_presets: tile %d did not settle" % tile)
 		quit(1)
 		return true
-	# Above the ground at the followed point, however high it stands.
+	# Above the ground at the followed point, however high it stands, and above the water over it.
 	var ground: float = stages.ground_height(AT)
 	if not is_nan(ground):
 		var reach: float = stages.view_radius * stages.chunk_cells.x * stages.cell_size.x
-		var at := AT + Vector3(0, ground, 0)
+		var water: Dictionary = stages.water()
+		var surface := maxf(ground, water["level"] * stages.cell_size.y) if not water.is_empty() else ground
+		var at := AT + Vector3(0, surface, 0)
 		camera.look_at_from_position(at + Vector3(reach * 0.5, reach * 0.42, reach * 0.5), at)
 	var stats: Dictionary = stages.stats()
 	if is_nan(ground) or stages.ground_chunks().is_empty() or stats["pending_grounds"] > 0 or stats["pending_placements"] > 0:
