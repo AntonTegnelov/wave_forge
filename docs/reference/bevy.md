@@ -116,7 +116,8 @@ itself, and holds no shapes for a town's modules: a game adds its towns' collide
   or `ground_levels` into one per level of detail ([Ground levels of detail](#ground-levels-of-detail)),
   and its `heights` are the grid a physics crate's height-field collider takes (the plugin depends
   on no physics crate). `WaveForgeStages::ground_height(translation)` gives the height of the
-  ground's surface above a point, what a game stands a player or an object on.
+  ground's surface above a point, what a game stands a player or an object on; without a ground,
+  the highest point of the volume's surface there (`volume_height`, [packs.md](packs.md#volume)).
 - `.with_volume(stage)` builds each chunk's surface from a Volume or Carve stage at scale 1 once the volumes
   around it have arrived ([packs.md](packs.md#volume)): `WaveForgeStages::surface(chunk)` returns the
   `VolumeMesh`, relative to `chunk_corner(chunk)`, `VolumeReady(chunk)` and `VolumeDropped(chunk)`

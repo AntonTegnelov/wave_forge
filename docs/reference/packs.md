@@ -116,7 +116,12 @@ The presets in `examples/presets`, each with three parameters:
 - `archipelago.world.ron`: small islands of beach, grassy jungle and rock in a warm sea, each ringed
   by a reef of sand just under the water, whose `islands` run from a few islets to large islands,
   whose `reefs` run from shores that fall straight into deep water to wide reefs, and whose `palms`
-  run from bare islands to palm groves over all of them.
+  run from bare islands to palm groves over all of them;
+- `cave.world.ron`: a Volume stage of grassy hills over rock riddled with caves, with veins of
+  crystal in the stone, trees on the hills and an entrance cavern near the world's centre, whose
+  `caves` run from a few narrow passages to great caverns, whose `openings` run from caves sealed
+  under a crust of rock to caves open to the sky wherever they reach the ground, and whose
+  `crystals` run from plain stone to thick veins.
 
 ## Edits
 
@@ -485,6 +490,14 @@ chunk, shared rather than copied, and hands back only the answer to a chunk's ne
 engine's thread only draws them. Godot draws it and collides with it through
 `volume_stage` ([godot.md](godot.md#waveforgestages)), and Bevy builds it with `.with_volume`
 ([bevy.md](bevy.md#packs-of-stages)).
+
+`wave_forge::volume_height(at, columns, surface, cell_size)` gives the height of a volume's built
+surfaces above a point of the ground plane: their highest point there, where a ray from the sky
+first meets them, so the top of the ground over a cave and never the cave's ceiling or floor. It is
+what `ground_height` is for a height field, and both engines' `ground_height` give it for a world
+drawn from a volume alone. It is `None` until the surfaces of every chunk within a cell of the
+point are built, since a chunk's triangles reach up to a cell past its sides, and where no surface
+stands above the point.
 
 ### Carve
 

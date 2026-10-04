@@ -186,7 +186,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Volume | `volume_stage` | a Volume or Carve stage at scale 1 whose surface is drawn and collided with, for overhangs and caves ([packs.md](packs.md#volume)); empty for none |
 | | `volume_material` | the material the volume's surface is drawn with; empty for Godot's default, or for a stage with materials one that takes its albedo from the vertices' colours |
 | | `volume_budget_ms` | how long a frame may spend drawing volume surfaces, which are meshed on a thread of their own; one is drawn a frame whatever it costs (default 2 ms) |
-| | `volume_palette` | a colour per material of `volume_stage`, by index, which each vertex of the surface carries; materials past its end take colours of their own from their index |
+| | `volume_palette` | a colour per material of `volume_stage`, by index, which each vertex of the surface carries, drawn as the colour the inspector shows (sRGB, as `ground_palette`'s); materials past its end take colours of their own from their index |
 | | `fluid_stage` | a Volume, Carve or Aquifer stage at scale 1 whose surface is drawn as fluid and never collided with, the water and lava of an [Aquifer](packs.md#aquifer) stage say; meshed and drawn as the volume's, within the same `volume_budget_ms`; empty for none |
 | | `fluid_material` | the material the fluid's surface is drawn with; empty for one that takes its albedo and opacity from the vertices' colours, seen from both sides |
 | | `fluid_palette` | a colour per material of `fluid_stage`, by index, its alpha the fluid's opacity, as `volume_palette` is for the volume |
@@ -265,7 +265,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   modules of a rule set that carry a tag, to assign shapes by tag.
 - `ground_height(position)`: the height of the ground's surface at full detail above a position,
   from `ground_stage`'s fields ([packs.md](packs.md#ground)), what a game stands a player or an
-  object on; NaN until the fields around it have arrived.
+  object on; NaN until the fields around it have arrived. Without a `ground_stage` it is the
+  highest point of `volume_stage`'s surface there (`volume_height`, [packs.md](packs.md#volume)),
+  the top of the ground over a cave, NaN until the surfaces within a cell of it are built.
 - `sample(stage, position)` and `atlas(stage, min, size)`: a stage's value at a position on the
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
   Field, Rules, Nearest, Blur, Delta and Area stages. An error, and NaN or an empty array, for another

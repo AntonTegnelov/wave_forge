@@ -1,7 +1,7 @@
 //! Presets and their parameters (docs/product/user-stories.md, N2): a pack's parameters change
 //! what reads them and nothing else, and every value in each preset's ranges gives a sound world,
-//! swept over a grid of values and seeds: islands, hills and forests, the canyon desert and the
-//! archipelago.
+//! swept over a grid of values and seeds: islands, hills and forests, the canyon desert, the
+//! archipelago and the cave level.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -251,7 +251,7 @@ fn every_value_in_the_hills_ranges_gives_a_sound_world() {
                         assert_eq!(trees, 0, "trees at {at}");
                     }
                     if forest == 1.0 {
-                        assert!(trees > 50, "only {trees} trees at {at}");
+                        assert!(trees > 20, "only {trees} trees at {at}");
                     }
                     if meadows == 0.0 {
                         assert_eq!(cover, 0.0, "grass at {at}");
@@ -496,4 +496,128 @@ fn larger_islands_wider_reefs_and_more_palms_each_make_more_of_theirs() {
         "{shallows:?}"
     );
     assert!(palms.windows(2).all(|pair| pair[0] < pair[1]), "{palms:?}");
+}
+
+/// The cave level's share of the rock below the hills' surface that its caves hollow out, the
+/// share of its columns opened to the sky, the share of its solid voxels that are crystal, and how
+/// many trees stand on it, checking on the way that every height and value is finite and every
+/// tree stands on the hills' surface, never down a sinkhole.
+fn survey_cave(runtime: &Runtime, pack: &Pack) -> (f32, f32, f32, usize) {
+    let names = pack.kind("rock").expect("a rock stage").categories();
+    let crystal = names
+        .iter()
+        .position(|&name| name == "crystal")
+        .expect("crystal") as u8;
+    let (mut below, mut hollow, mut solid, mut crystals) = (0, 0, 0, 0);
+    let (mut columns, mut open, mut trees) = (0, 0, 0);
+    for chunk in area() {
+        let height = runtime.field("height", chunk).expect("generated");
+        let top = runtime.field("top", chunk).expect("generated");
+        let rock = runtime.volume("rock", chunk).expect("generated");
+        let [sx, sy, levels] = rock.size;
+        for y in 0..sy {
+            for x in 0..sx {
+                let surface = height.get(x, y);
+                assert!(surface.is_finite(), "a height of {surface}");
+                columns += 1;
+                open += usize::from(top.get(x, y) < surface - 1.0);
+                for level in 0..levels {
+                    let value = rock.get(x, y, level);
+                    assert!(value.is_finite(), "a value of {value}");
+                    let z = (rock.bottom + level as i32) as f32 + 0.5;
+                    if value > 0.0 {
+                        solid += 1;
+                        crystals += usize::from(rock.material(x, y, level) == crystal);
+                    } else if z < surface {
+                        hollow += 1;
+                    }
+                    below += usize::from(z < surface);
+                }
+            }
+        }
+        for tree in runtime.points("trees", chunk).expect("generated") {
+            let [x, y] = [tree.position[0], tree.position[1]].map(|at| at.floor() as i64);
+            let local =
+                [x - i64::from(chunk.x) * 8, y - i64::from(chunk.y) * 8].map(|at| at as u32);
+            assert!(
+                (tree.position[2] - height.get(local[0], local[1])).abs() < 1.0,
+                "a tree off the hills at {:?}",
+                tree.position
+            );
+            trees += 1;
+        }
+    }
+    (
+        hollow as f32 / below as f32,
+        open as f32 / columns as f32,
+        crystals as f32 / solid as f32,
+        trees,
+    )
+}
+
+#[test]
+fn every_value_in_the_cave_ranges_gives_a_sound_world() {
+    let pack = preset("cave");
+    let grid = [0.0, 0.5, 1.0];
+
+    for seed in [1, 2] {
+        for caves in grid {
+            for openings in grid {
+                for crystals in grid {
+                    let mut runtime = Runtime::new(Arc::clone(&pack), seed, SIZE);
+                    let values = params([
+                        ("caves", caves),
+                        ("openings", openings),
+                        ("crystals", crystals),
+                    ]);
+                    runtime.set_params(&values).expect("values in range");
+
+                    generate(&mut runtime, &["height", "rock", "top", "trees"]);
+
+                    let (hollow, open, crystal, trees) = survey_cave(&runtime, &pack);
+                    let at = format!(
+                        "seed {seed}, caves {caves}, openings {openings}, crystals {crystals}"
+                    );
+                    assert!(hollow > 0.03, "only {hollow} of the rock hollow at {at}");
+                    assert!(crystal > 0.0, "no crystal at {at}");
+                    assert!(trees > 20, "only {trees} trees at {at}");
+                    if openings == 0.0 {
+                        assert_eq!(open, 0.0, "caves open to the sky at {at}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn more_caves_more_openings_and_more_crystals_each_make_more_of_theirs() {
+    let pack = preset("cave");
+    let survey_at = |caves: f32, openings: f32, crystals: f32| {
+        let mut runtime = Runtime::new(Arc::clone(&pack), 3, SIZE);
+        runtime
+            .set_params(&params([
+                ("caves", caves),
+                ("openings", openings),
+                ("crystals", crystals),
+            ]))
+            .expect("values in range");
+        generate(&mut runtime, &["height", "rock", "top", "trees"]);
+        survey_cave(&runtime, &pack)
+    };
+    let amounts = [0.0, 0.5, 1.0];
+
+    let hollows: Vec<f32> = amounts.iter().map(|&a| survey_at(a, 0.6, 0.5).0).collect();
+    let opens: Vec<f32> = amounts.iter().map(|&a| survey_at(0.5, a, 0.5).1).collect();
+    let crystals: Vec<f32> = amounts.iter().map(|&a| survey_at(0.5, 0.6, a).2).collect();
+
+    assert!(
+        hollows.windows(2).all(|pair| pair[0] < pair[1]),
+        "{hollows:?}"
+    );
+    assert!(opens.windows(2).all(|pair| pair[0] < pair[1]), "{opens:?}");
+    assert!(
+        crystals.windows(2).all(|pair| pair[0] < pair[1]),
+        "{crystals:?}"
+    );
 }

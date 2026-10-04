@@ -147,8 +147,36 @@ func _check() -> bool:
 	if trees < 20 or ores < 5 or baked_trees != trees or baked_ores != ores:
 		_fail("%d of %d trees and %d of %d ores baked" % [baked_trees, trees, baked_ores, ores])
 		return true
+	if not _trees_stand_where_placed():
+		return true
 	print("verify_bake: 9 chunks baked into a scene naming no Wave Forge class, opened in a project without the extension, loaded back with their ground, bodies, cave, fluid, %d trees and %d ores" % [trees, ores])
 	return _edit_as_a_designer(ores)
+
+## Every baked tree stands where the stage placed it.
+func _trees_stand_where_placed() -> bool:
+	var placed := []
+	for chunk in _area():
+		for set: Dictionary in world.point_sets("trees", chunk):
+			var transforms: PackedFloat32Array = set["transforms"]
+			for i in range(0, transforms.size(), 12):
+				placed.append(Vector3(transforms[i + 3], transforms[i + 7], transforms[i + 11]))
+	var drawn := []
+	for node in baked.find_children("*", "MultiMeshInstance3D", true, false):
+		if node.name == "tree":
+			var at: Transform3D = node.get_parent().transform * node.transform
+			# Read from the buffer the scene saved: the headless renderer keeps no instance data.
+			var buffer: PackedFloat32Array = node.multimesh.buffer
+			var stride: int = buffer.size() / node.multimesh.instance_count
+			for i in node.multimesh.instance_count:
+				var o: int = i * stride
+				drawn.append(at * Vector3(buffer[o + 3], buffer[o + 7], buffer[o + 11]))
+	placed.sort()
+	drawn.sort()
+	for i in placed.size():
+		if not placed[i].is_equal_approx(drawn[i]):
+			_fail("a baked tree stands at %s, where the stage placed one at %s" % [drawn[i], placed[i]])
+			return false
+	return true
 
 ## Opens the saved bake in a project of its own, with no extension, in a second Godot process: the
 ## project has this one's name, so `user://` and the ore's scene there are the same.

@@ -325,11 +325,21 @@ impl WaveForgeStages {
 
     /// The height of the ground at a translation in Bevy's world, where its mesh at full detail
     /// stands above that point of the ground plane ([`wave_forge::ground_height`]): what a game
-    /// stands a player or an object on. `None` until the fields of the ground's stage around it
-    /// have arrived, or without a ground.
+    /// stands a player or an object on. Without a ground, the highest point of the volume's
+    /// surface there ([`wave_forge::volume_height`]), the top of the ground over a cave. `None`
+    /// until the fields of the ground's stage around it have arrived, or the surfaces within a cell
+    /// of it are built, and without a ground or a volume.
     #[must_use]
     pub fn ground_height(&self, translation: Vec3) -> Option<f32> {
-        let stage = self.ground_stage.as_ref()?;
+        let Some(stage) = self.ground_stage.as_ref() else {
+            self.volume_stage.as_ref()?;
+            return wave_forge::volume_height(
+                [translation.x, translation.z],
+                self.settings.chunk,
+                |at| self.surfaces.get(&at),
+                self.settings.cell_size.to_array(),
+            );
+        };
         wave_forge::ground_height(
             [translation.x, translation.z],
             self.settings.chunk,

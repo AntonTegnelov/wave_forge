@@ -59,6 +59,57 @@ impl VolumeMesh {
     }
 }
 
+/// The height of a volume's surface at a point `at` of the ground plane (the engine's x and z), in
+/// engine units: the highest point of the surfaces there, where a ray from the sky first meets
+/// them, from chunks of `columns` whose built surfaces `surface` looks up, with cells `cell_size`
+/// along the engine's x, y and z. What [`crate::ground_height`] is for a ground drawn from a height
+/// field, this is for a ground drawn from a volume: it stands on the top of the ground over a cave,
+/// never on the cave's ceiling or floor.
+///
+/// Returns `None` until the surfaces of every chunk within a cell of `at` are built, since a
+/// chunk's triangles reach up to a cell past its sides, and where no surface stands above `at`.
+#[must_use]
+pub fn volume_height<'a>(
+    at: [f32; 2],
+    columns: [u32; 2],
+    surface: impl Fn(ChunkCoord) -> Option<&'a VolumeMesh>,
+    cell_size: [f32; 3],
+) -> Option<f32> {
+    let size = [
+        columns[0] as f32 * cell_size[0],
+        columns[1] as f32 * cell_size[2],
+    ];
+    let chunk_of = |x: f32, z: f32| [(x / size[0]).floor() as i32, (z / size[1]).floor() as i32];
+    let [low_x, low_z] = chunk_of(at[0] - cell_size[0], at[1] - cell_size[2]);
+    let [high_x, high_z] = chunk_of(at[0] + cell_size[0], at[1] + cell_size[2]);
+    let mut highest: Option<f32> = None;
+    for cz in low_z..=high_z {
+        for cx in low_x..=high_x {
+            let mesh = surface(ChunkCoord::new(cx, cz, 0))?;
+            let (x, z) = (at[0] - cx as f32 * size[0], at[1] - cz as f32 * size[1]);
+            for triangle in mesh.indices.chunks(3) {
+                let [a, b, c] = [0, 1, 2].map(|i| mesh.positions[triangle[i] as usize]);
+                // The point's barycentric weights in the triangle seen from above; a triangle seen
+                // edge on holds no point.
+                let area = (b[0] - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (b[2] - a[2]);
+                if area.abs() < 1e-9 {
+                    continue;
+                }
+                let wb = ((x - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (z - a[2])) / area;
+                let wc = ((b[0] - a[0]) * (z - a[2]) - (x - a[0]) * (b[2] - a[2])) / area;
+                let wa = 1.0 - wb - wc;
+                const EDGE: f32 = -1e-5;
+                if wa < EDGE || wb < EDGE || wc < EDGE {
+                    continue;
+                }
+                let height = wa * a[1] + wb * b[1] + wc * c[1];
+                highest = Some(highest.map_or(height, |highest| highest.max(height)));
+            }
+        }
+    }
+    highest
+}
+
 /// The surface of `chunk` from a Volume stage whose chunks `volume` looks up, with voxels
 /// `voxel_size` along the engine's x, y and z: a cell's size times the stage's scale.
 ///

@@ -84,7 +84,7 @@ pub use region_tags::{Emitter, RegionTags, region_tags, surface_at};
 pub use scheduler::FocusPoint;
 pub use space::YUpSpace;
 pub use surface_worker::SurfaceWorker;
-pub use volume_mesh::{VolumeMesh, volume_mesh};
+pub use volume_mesh::{VolumeMesh, volume_height, volume_mesh};
 pub use worker::Worker;
 
 pub use wfc_core::{

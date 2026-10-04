@@ -19,7 +19,9 @@ use wave_forge::stages::{
     Edit, Edits, Facts, GivenRow, Pack, PointId, RowId, Runtime, Save, Stamp, Value,
 };
 use wave_forge::towns::{Town, TownError, TownRequest, TownSolver};
-use wave_forge::{ChunkCoord, ChunkShape, FocusPoint, ground, ground_materials, volume_mesh};
+use wave_forge::{
+    ChunkCoord, ChunkShape, FocusPoint, ground, ground_materials, volume_height, volume_mesh,
+};
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::materials::coloured_surface_mesh;
 use wave_forge_bevy::stages::{
@@ -1158,6 +1160,42 @@ fn each_chunks_fluid_surface_is_the_librarys_and_goes_with_its_fluid() {
         .map(|message| message.0)
         .collect();
     assert!(dropped.contains(&origin), "{dropped:?}");
+}
+
+#[test]
+fn without_a_ground_the_ground_height_is_the_librarys_top_of_the_volume() {
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["caves"], SETTINGS, || {
+            Ok(Runtime::new(
+                Arc::new(Pack::parse(VOLUME_PACK).expect("a valid pack")),
+                4,
+                SETTINGS.chunk,
+            ))
+        })
+        .with_volume("caves"),
+    );
+    let origin = ChunkCoord::new(0, 0, 0);
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .surface(origin)
+            .is_some()
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    // Points of the origin's chunk more than a cell from its sides, so its surface alone holds them.
+    for (x, z) in [(3.1, 4.7), (8.0, 8.0), (12.9, 5.5), (6.6, 13.3)] {
+        let got = stages.ground_height(Vec3::new(x, 100.0, z));
+
+        let expected = volume_height(
+            [x, z],
+            SETTINGS.chunk,
+            |at| stages.surface(at),
+            SETTINGS.cell_size.to_array(),
+        );
+        assert!(got.is_some(), "({x}, {z}) is on the volume");
+        assert_eq!(got, expected, "({x}, {z})");
+    }
 }
 
 #[test]

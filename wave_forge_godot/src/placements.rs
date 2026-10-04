@@ -295,6 +295,8 @@ impl Placements {
                 Binding::Mesh(mesh) => {
                     let mut multimesh = MultiMesh::new_gd();
                     multimesh.set_transform_format(TransformFormat::TRANSFORM_3D);
+                    // The layout `buffer` writes: a colour and custom data per instance.
+                    multimesh.set_use_colors(true);
                     multimesh.set_use_custom_data(true);
                     multimesh.set_mesh(mesh);
                     multimesh.set_instance_count(items.len() as i32);

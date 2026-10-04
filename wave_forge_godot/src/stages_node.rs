@@ -52,7 +52,7 @@ use wave_forge::stages::{
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, SurfaceWorker, VolumeMesh,
-    YUpSpace, far_ground, ground, ground_height, ground_materials, ground_readers,
+    YUpSpace, far_ground, ground, ground_height, ground_materials, ground_readers, volume_height,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -1195,6 +1195,8 @@ impl WaveForgeStages {
             if self.vertex_colours.is_none() {
                 let mut colours = StandardMaterial3D::new_gd();
                 colours.set_flag(Flags::ALBEDO_FROM_VERTEX_COLOR, true);
+                // `volume_palette` holds colours as the inspector picks them, in sRGB.
+                colours.set_flag(Flags::SRGB_VERTEX_COLOR, true);
                 self.vertex_colours = Some(colours);
             }
         }
@@ -1493,21 +1495,32 @@ impl WaveForgeStages {
 
     /// The height of the ground at a position in Godot's world space, where its mesh at full detail
     /// stands above that point of the ground plane ([`ground_height`]): what a game stands a
-    /// player or an object on. NaN until the fields of `ground_stage` around it have arrived, or
-    /// without a `ground_stage`.
+    /// player or an object on. Without a `ground_stage`, the highest point of `volume_stage`'s
+    /// surface there ([`volume_height`]), the top of the ground over a cave. NaN until the fields
+    /// of `ground_stage` around it have arrived, or the surfaces within a cell of it are built, and
+    /// without either stage.
     #[func]
     fn ground_height(&self, position: Vector3) -> f32 {
         let Some(worker) = &self.worker else {
             return f32::NAN;
         };
-        if self.ground_stage.is_empty() {
-            return f32::NAN;
-        }
-        let stage = self.ground_stage.to_string();
         let columns = [
             self.chunk_cells.x.max(1) as u32,
             self.chunk_cells.y.max(1) as u32,
         ];
+        if self.ground_stage.is_empty() {
+            let Some(rock) = &self.rock else {
+                return f32::NAN;
+            };
+            return volume_height(
+                [position.x, position.z],
+                columns,
+                |at| rock.built.get(&at).map(|built| &built.mesh),
+                self.cell_size.to_array(),
+            )
+            .unwrap_or(f32::NAN);
+        }
+        let stage = self.ground_stage.to_string();
         ground_height(
             [position.x, position.z],
             columns,
