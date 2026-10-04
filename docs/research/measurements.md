@@ -35,7 +35,7 @@ Each era starts with its standing protocol, and a row names only what differs fr
   void. They stay, with a pointer to what replaced them, because the change between two rows is
   evidence too.
 
-Rows carry an ID (P, K, L or E, by era) so that other rows and docs can point at them.
+Rows carry an ID (P, K, L, E or D, by era) so that other rows and docs can point at them.
 
 ## Eras
 
@@ -45,6 +45,7 @@ Rows carry an ID (P, K, L or E, by era) so that other rows and docs can point at
 | [The block kernel](#the-block-kernel) | 09-16 to 09-17 | One workgroup solving one chunk per dispatch, against the CPU reference; stitching chunks into a world | `wfc-gpu/tests/block_solver_bench.rs`, `wfc-devtools/tests/cpu_reference.rs` |
 | [The streaming library](#the-streaming-library) | 09-17 to 09-23 | Whole worlds through `wave_forge`: streaming, repairs, holes, order independence, determinism across devices | `wfc-devtools/tests/` |
 | [The engines](#the-engines) | 09-18 to 09-23 | Godot and Bevy: frame costs, multimesh, colliders, navigation, stages | `wave_forge_godot/`, `wave_forge_bevy/tests/` |
+| [The desktop](#the-desktop) | 10-03 on | The owner's runs of `tools/measure_desktop.ps1` on native drivers | `tools/measure_desktop.ps1` |
 
 Questions still open against the current code are [at the end](#open-questions).
 
@@ -516,16 +517,37 @@ dozen, `#[ignore]`d tests run with `-- --ignored`.
 | E22 | A headless app with the real `DefaultPlugins` | generates a 2×2-chunk city on the device Bevy created over 22 frames, nothing failing | `real_render_plugin.rs` |
 | E23 | A 4×4-chunk city through the plugin against the library on a device of its own | the same tiles, cell for cell: 16 chunks, 4 batches, 2 repairs, 0 rule violations | `shared_device.rs` |
 
+## The desktop
+
+The owner's runs of `tools/measure_desktop.ps1` ([desktop-measurements.md](../guides/desktop-measurements.md)),
+on native drivers rather than dozen. The standing protocol of the first run (2026-10-03, at
+`1d11045`, before the script's `m1`, `m2` and `n10` parts existed): Windows 11 Home 10.0.26200, the
+same AMD Ryzen 9 5900X and NVIDIA GeForce RTX 3070 as the dev container, 15.9 GB of memory, NVIDIA
+driver 32.0.15.9186, Godot 4.7.2 official, rustc 1.98.1, release builds, each measured phase 20 s.
+Every run passed. The results are in the owner's `measurements/20261003-230427/` folder.
+
+| ID | What | Result | Source |
+|---|---|---|---|
+| D1 | The city streamed in Bevy around a focus and drawn at 1080p, on Vulkan: Bevy's device against one of the solver's own, at 4.2 and 30 m/s, and at 30 m/s with batches of at most 16 and 4 regions, each after an idle phase | idle p50 2.25 to 2.66 ms, p99 3.82 to 7.38 ms. Streaming at 4.2 m/s, shared: p50 2.80, p99 4.74, slowest 7.81 ms; own: p50 3.13, p99 8.26, slowest 20.67 ms. At 30 m/s, shared: p50 3.50, p99 7.14, slowest 9.37 ms; own: p50 3.56, p99 6.92, slowest 14.10 ms. Shared with batches of 16: p50 3.56, p99 6.97, slowest 12.08 ms; of 4: p50 3.53, p99 6.85, slowest 11.46 ms. So on NVIDIA and Vulkan the shared device is no worse than an own one, and smaller batches change nothing | `wave_forge_bevy/examples/frame_times.rs`, `WGPU_BACKEND=vulkan` |
+| D2 | D1 on Direct3D 12 | idle, with nothing generating, p50 4.37 to 5.15 ms, p99 25.86 to 30.41 ms, slowest 98.3 to 143.1 ms; streaming p50 4.55 to 6.91 ms, p99 11.57 to 27.72 ms, slowest 111.5 to 353.4 ms, with either device. The idle phase is as slow as streaming, so the cost is the Direct3D 12 path's own frame pacing, not the solver ([#318]) | as D1, `WGPU_BACKEND=dx12` |
+| D3 | The city walked in Godot with its module models drawn as a MultiMesh per module, on Forward+ | Vulkan: idle p50 4.25 ms, p99 7.42 ms; at 4.2 m/s p50 3.59, p99 7.02, slowest 22.23 ms; at 30 m/s p50 2.99, p99 17.89, slowest 44.33 ms. Direct3D 12: idle p50 3.35, p99 5.66 ms; at 4.2 m/s p50 2.89, p99 5.43, slowest 22.88 ms; at 30 m/s p50 2.93, p99 17.87, slowest 46.80 ms. The node's p99 printed with them (0.04 to 2.02 ms) was its p99 since the start, loading included, which the script no longer reports | `wave_forge_godot/godot/measure_city.gd` as at `1d11045` |
+| D4 | E45 on Forward+: 25 chunks of grass at 8 blades a cell, a frame with and without grass | Direct3D 12: 0.59 ms with, 0.48 ms without; Vulkan: 0.69 ms either way; 12 800 blades drawn | `render_ground.gd` |
+| D5 | E47 on Forward+: the ground's levels of detail over 225 chunks by `mesh_lod_threshold` | 0 px 10 944 primitives, 1 px 8 472, 4 px 1 624, 16 px 570, on both APIs, no gap pixel: the counts the container found | `render_lods.gd` |
+| D6 | E52 on Forward+: the far ground beyond the near ground, three views | no gap pixel in any view, on both APIs; the coarse stage 48 000 to 55 000 chunks a second | `render_far.gd` |
+| D7 | E39's history example, first town on a first and a second run | 0.6 and 0.8 s to the standing and burned villages' towns on the first run, 0.6 and 0.7 s on the second | `examples/history/check.gd` |
+| D8 | E54's walk through the cave pack at 4.2 m/s, three runs, headless | a volume chunk 4.40 to 4.58 ms on the stages' thread, a surface 0.31 to 0.32 ms on Godot's; during the walk the node's own time per frame p50 0.016 to 0.017 ms, p99 0.110 to 0.140 ms, at most 3.88 to 4.00 ms; the slowest frame 5.52 to 5.97 ms, a body 4.0 to 4.2 ms. P1's bars hold ([#224]) | `measure_volume.gd` |
+| D9 | L33's islands preview, a parameter changed five times | first preview 2.56 ms; `trees` median 0.09 ms; `roughness` and `land` median 2.16 and 2.18 ms, two orders under P6's 200 ms | `tests/interactive_edit.rs` |
+| D10 | L47's whole continent run ahead of time, with L34's part of it | the whole run 676 s, 65 536 entries, 0.61 GB, against 526 s in the dev container: `rock` 178.6 s, `terrain` 137.1 s, `roughness` 27.6 s, `height` 23.5 s, `biome` 14.7 s. Over M1's 10 minutes ([#319]). The part: 64 chunks of ground in 57.1 s | `wfc-devtools/tests/continent.rs`, ignored tests, one thread |
+| D11 | The golden stages on Windows | bit for bit as recorded on Linux | `tests/golden_stages.rs` |
+
 ## Open questions
 
 Measurements the current code still waits for.
 
-- **What the numbers are on native Vulkan and a desktop.** Every GPU timing here goes through dozen,
-  which distorts dispatch and submission cost, and small dispatches are not even stable on it (K21).
-  The same measurement decides whether Godot should generate on its own `RenderingDevice` instead of
-  a device of its own, which cannot be measured here: dozen lacks `VK_KHR_swapchain`, and Godot
-  creates no `RenderingDevice` without it
-  ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
+- **What the numbers are on another vendor's GPU.** The first desktop run (D1 to D11) is NVIDIA
+  only. Whether Godot should generate on its own `RenderingDevice` instead of a device of its own
+  cannot be measured in the container either: dozen lacks `VK_KHR_swapchain`, and Godot creates no
+  `RenderingDevice` without it ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)).
 - **What a kernel step's floor consists of.** At one chunk, µs per step fits about 11 µs plus
   0.85 µs per cell an invocation owns (K10), and the slowest chunk's step cost stays flat from 1 to
   64 chunks (K11), which rules out barriers as the main cost. The 11 µs is a fit to five points on
@@ -604,3 +626,5 @@ Measurements the current code still waits for.
 [#263]: https://github.com/AntonTegnelov/wave_forge/pull/263
 [#265]: https://github.com/AntonTegnelov/wave_forge/issues/265
 [#307]: https://github.com/AntonTegnelov/wave_forge/issues/307
+[#318]: https://github.com/AntonTegnelov/wave_forge/issues/318
+[#319]: https://github.com/AntonTegnelov/wave_forge/issues/319

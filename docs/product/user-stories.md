@@ -531,7 +531,11 @@ per second, Godot's slowest frame under 8 ms, the node's own time under 2 ms at 
 and no frame with a chunk missing within the ready radius. **Status:** in progress (2026-09-23): the Godot check
 meets these for a streamed WFC world (a small band rule set) with colliders and navigation (slowest frame 3.4 ms, node p99 0.56 ms,
 [measurements.md](../research/measurements.md)), on the dev container's RTX 3070
-through dozen; not yet with Phase 2 stages or on a desktop. With the valley pack's stages, the stages node's own time stays at 0.23 to 0.28 ms at the 99th percentile and under 3 ms at worst over ten runs, now that it emits at most 256 signals per frame ([measurements.md](../research/measurements.md) E31); that check does not yet run at 4.2 m/s through a stages world. With collider bodies bounded per frame, twenty runs of the city check stayed under Godot's 8 ms bar, the slowest at 7.0 ms (E43), but a later run went over it at 11.8 ms, a host stall landing in the start of a navigation bake (E46, [#157](https://github.com/AntonTegnelov/wave_forge/issues/157)). Walking at 4.2 m/s through density volumes (a cave pack) with surfaces meshed on a thread of their own, the slowest frame is 5.6 ms and the node's own time 0.07 ms at the 99th percentile (E54); on a desktop that is [#224](https://github.com/AntonTegnelov/wave_forge/issues/224).
+through dozen. On the reference desktop, walking through a cave volume at 4.2 m/s holds the node's
+bar and Godot's (the node's p99 0.11 to 0.14 ms, the slowest frame 5.5 to 6.0 ms), and the city
+streamed in Godot runs at p99 5.4 to 7.0 ms with a slowest frame of 22 to 23 ms
+([measurements.md](../research/measurements.md) D3, D8); the stage worlds with drawn content are
+the desktop script's `n10` part, not yet run. With the valley pack's stages, the stages node's own time stays at 0.23 to 0.28 ms at the 99th percentile and under 3 ms at worst over ten runs, now that it emits at most 256 signals per frame ([measurements.md](../research/measurements.md) E31); that check does not yet run at 4.2 m/s through a stages world. With collider bodies bounded per frame, twenty runs of the city check stayed under Godot's 8 ms bar, the slowest at 7.0 ms (E43), but a later run went over it at 11.8 ms, a host stall landing in the start of a navigation bake (E46, [#157](https://github.com/AntonTegnelov/wave_forge/issues/157)). Walking at 4.2 m/s through density volumes (a cave pack) with surfaces meshed on a thread of their own, the slowest frame is 5.6 ms and the node's own time 0.07 ms at the 99th percentile (E54); on a desktop that is [#224](https://github.com/AntonTegnelov/wave_forge/issues/224).
 
 ### P2. Long view distance
 
@@ -660,9 +664,11 @@ through the node's world run, the whole continent takes 579 s in the dev contain
 1.86 GB, and fills 65 536 files of 729 MB on disk; a bake stopped and resumed gives the same bytes
 as one made at once, and it quits cleanly part way or after (L45, L47). With its far ground the
 bake takes 628 s and holds at most 1.87 GB, and the baked world plays walking and flying at 1080p
-with no stage run (`measure_world_run.gd`, `measure_playback.gd`, L48). The desktop numbers, the
-bake's time and the playback's frame times and memory against the bars above, are the owner's run
-of `tools/measure_desktop.ps1`.
+with no stage run (`measure_world_run.gd`, `measure_playback.gd`, L48). On the reference desktop
+the library's whole run took 676 s, over the 10 minutes
+([measurements.md](../research/measurements.md) D10,
+[#319](https://github.com/AntonTegnelov/wave_forge/issues/319)); the bake's time and the playback's
+frame times and memory there are the desktop script's `m1` part, not yet run.
 
 ### M2. Generate a maximal world once before play
 
