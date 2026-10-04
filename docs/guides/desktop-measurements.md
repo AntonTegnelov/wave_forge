@@ -22,7 +22,9 @@ On Vulkan and on Direct3D 12:
 Once, headless, before the runs above: the whole continent baked from `continent.tscn` through the
 node's world run, as the editor dock's World run bakes it, from an empty directory, with the time it
 took and the most memory it held (`measure_world_run.gd`), for M1's ten minutes; the playback above
-plays what it wrote. Then, also once and headless: the history example's first towns, on the first run after building and on a second
+plays what it wrote. Also once and headless, a new world made from nothing as a game makes one,
+the game's history and then the whole continent until it plays (`examples/new_world/measure.gd`),
+for M2's ten minutes. Then, also once and headless: the history example's first towns, on the first run after building and on a second
 one, for P3's time into a new world; `tests/golden_stages.rs`, which checks that the stages come
 out on Windows bit for bit as recorded on Linux ([engine-integration.md](../architecture/engine-integration.md#noise-that-means-the-same-in-both-engines));
 `tests/interactive_edit.rs`, how long a changed parameter takes to regenerate a 3×3-chunk preview,
@@ -32,7 +34,7 @@ through it at 4.2 m/s, for P1 ([#71](https://github.com/AntonTegnelov/wave_forge
 [measurements.md](../research/measurements.md) E53).
 
 Each measured phase lasts 20 seconds and prints the median, 99th percentile and slowest frame. The
-whole run takes about 65 minutes, most of it the first build and the continent's bake.
+whole run takes about 80 minutes, most of it the first build and the continent's two whole runs.
 
 It does not measure a second GPU vendor, which #39 also asks for.
 
@@ -45,7 +47,7 @@ On the Windows desktop, once:
    ("Desktop development with C++") if they are missing; install them. Open a new terminal
    afterwards so `cargo` is on the path. The repository's `rust-toolchain.toml` picks the version.
 3. **The latest driver** for the GPU, from its vendor.
-4. About **16 GB free** on the drive that holds `%LOCALAPPDATA%`, where the builds go, or pass
+4. About **17 GB free** on the drive that holds `%LOCALAPPDATA%`, where the builds go, or pass
    `-BuildDir` to use another drive.
 
 The script downloads Godot 4.7.2 itself.
@@ -90,7 +92,7 @@ a non-zero code; the others still ran.
 | Option | Default | Use |
 |---|---|---|
 | `-Apis vulkan` or `-Apis d3d12` | both | measure on one graphics API only |
-| `-Only bevy,godot,ground,history,m1,n10,stages,volume` | all | run only some parts, for example again after a failure |
+| `-Only bevy,godot,ground,history,m1,m2,n10,stages,volume` | all | run only some parts, for example again after a failure |
 | `-Seconds 20` | 20 | how long each measured phase lasts |
 | `-SkipBuild` | | use what the last run built |
 | `-BuildDir D:\wave_forge-build` | `%LOCALAPPDATA%\wave_forge` | where Cargo builds and Godot is downloaded to |

@@ -31,6 +31,8 @@ history of a continent's rivers, villages and roads, given to the stages as tabl
 scene to walk through the result. `examples/sample_world` is a sample world for a trailer on the
 small city preset: grass and trees in the wind, a day and a night, and townsfolk walking the city's
 streets.
+`examples/new_world` generates the maximal continent whole when a player starts a new game, with the
+game's history and a progress screen, and plays it from what it wrote.
 
 To look at a rule set by hand, the developer CLI generates one chunk and writes each cell's tile index to `output.txt`:
 

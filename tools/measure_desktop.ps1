@@ -19,7 +19,8 @@ stages test, which checks the stages come out on Windows bit for bit as recorded
 And M1: the maximal preset's continent baked once ahead of time, headless (measure_world_run.gd), then
 played from what it baked on each graphics API, walking and flying, on Forward+ (measure_playback.gd).
 And N10: the sample world walked into its city on each graphics API, on Forward+
-(examples/sample_world/measure.gd).
+(examples/sample_world/measure.gd). And M2, once, headless: a new world made from nothing, the
+game's history and then the whole continent (examples/new_world/measure.gd).
 
 Everything goes into measurements/<date-time>/ in the repository, and a zip of it next to that
 folder. A run that fails is recorded and the others go on; the script ends with a non-zero exit code
@@ -43,7 +44,7 @@ The graphics APIs to measure on: vulkan, d3d12 or both (the default on Windows).
 How long each measured phase lasts. Default 20.
 
 .PARAMETER Only
-Run only some parts: bevy, godot, ground, history, m1, n10, stages, volume. Default all.
+Run only some parts: bevy, godot, ground, history, m1, m2, n10, stages, volume. Default all.
 
 .PARAMETER SkipBuild
 Use what an earlier run built.
@@ -57,7 +58,7 @@ param(
     [string]$BuildDir = "",
     [string[]]$Apis = @(),
     [int]$Seconds = 20,
-    [string[]]$Only = @("bevy", "godot", "ground", "history", "m1", "n10", "stages", "volume"),
+    [string[]]$Only = @("bevy", "godot", "ground", "history", "m1", "m2", "n10", "stages", "volume"),
     [switch]$SkipBuild
 )
 
@@ -74,8 +75,8 @@ if ($BuildDir -eq "") {
 $Apis = @($Apis | ForEach-Object { $_ -split "," } | Where-Object { $_ -ne "" })
 $Only = @($Only | ForEach-Object { $_ -split "," } | Where-Object { $_ -ne "" })
 foreach ($part in $Only) {
-    if (@("bevy", "godot", "ground", "history", "m1", "n10", "stages", "volume") -notcontains $part) {
-        throw "-Only takes bevy, godot, ground, history, m1, n10, stages and volume, not $part"
+    if (@("bevy", "godot", "ground", "history", "m1", "m2", "n10", "stages", "volume") -notcontains $part) {
+        throw "-Only takes bevy, godot, ground, history, m1, m2, n10, stages and volume, not $part"
     }
 }
 if ($Apis.Count -eq 0) {
@@ -197,9 +198,9 @@ function Initialize-GodotProject([string]$Project, [bool]$Valley) {
     Set-Content -Path (Join-Path $dotGodot "extension_list.cfg") -Value "res://wave_forge.gdextension"
 }
 
-# Installs the extension and the Wave Forge addon, with its presets and city kit, in the sample
-# world, as its prepare.sh does.
-function Initialize-SampleWorld([string]$Project) {
+# Installs the extension and the Wave Forge addon, with its presets and city kit, in an example
+# project, as wave_forge_godot/install.sh does.
+function Initialize-Example([string]$Project) {
     $bin = Join-Path $Project "bin"
     New-Item -ItemType Directory -Force -Path $bin | Out-Null
     Copy-Item (Join-Path $Targets.godot "release/$Library") $bin -Force
@@ -221,12 +222,21 @@ function Initialize-SampleWorld([string]$Project) {
 $GodotProject = Join-Path $Repo "wave_forge_godot/godot"
 $HistoryProject = Join-Path $Repo "examples/history"
 $SampleWorld = Join-Path $Repo "examples/sample_world"
+$NewWorld = Join-Path $Repo "examples/new_world"
 if (-not $SkipBuild) {
     $env:CARGO_TARGET_DIR = $Targets.godot
     Invoke-Checked "build-godot" "cargo" @("build", "--release", "--manifest-path", (Join-Path $Repo "wave_forge_godot/Cargo.toml"))
     Initialize-GodotProject $GodotProject $true
     Initialize-GodotProject $HistoryProject $false
-    Initialize-SampleWorld $SampleWorld
+    Initialize-Example $SampleWorld
+    Initialize-Example $NewWorld
+    # The new world's continent and memory reading, as its prepare.sh copies them.
+    $continent = Join-Path $NewWorld "continent"
+    if (Test-Path $continent) { Remove-Item -Recurse -Force $continent }
+    Copy-Item -Recurse (Join-Path $GodotProject "continent") $continent
+    foreach ($file in @("continent.tscn", "continent.gd", "peak_memory.gd")) {
+        Copy-Item (Join-Path $GodotProject $file) (Join-Path $NewWorld $file) -Force
+    }
     if ($Only -contains "bevy") {
         $env:CARGO_TARGET_DIR = $Targets.bevy
         Invoke-Checked "build-bevy" "cargo" @("build", "--release", "--example", "frame_times", "--manifest-path", (Join-Path $Repo "wave_forge_bevy/Cargo.toml"))
@@ -244,6 +254,10 @@ if ($Only -contains "m1") {
     if (Test-Path $ContinentWorld) { Remove-Item -Recurse -Force $ContinentWorld }
     $Baked = (Invoke-Logged "m1-world-run" $Godot @("--headless", "--path", $GodotProject, "--script", "measure_world_run.gd",
         "--", "--directory", $ContinentWorld, "--out", (Join-Path $Results "m1.txt"))) -eq 0
+}
+if ($Only -contains "m2") {
+    [void](Invoke-Logged "m2-new-world" $Godot @("--headless", "--path", $NewWorld, "--script", "measure.gd",
+        "--", "--out", (Join-Path $Results "m2.txt")))
 }
 foreach ($api in $Apis) {
     if ($Only -contains "bevy") {
@@ -327,7 +341,7 @@ if ($Only -contains "stages") {
 
 $summary = New-Object System.Collections.Generic.List[string]
 $summary.AddRange([string[]](Get-Content (Join-Path $Results "system.txt")))
-foreach ($file in @("bevy.txt", "godot_city.txt", "m1.txt", "n10.txt")) {
+foreach ($file in @("bevy.txt", "godot_city.txt", "m1.txt", "m2.txt", "n10.txt")) {
     $path = Join-Path $Results $file
     if (Test-Path $path) { $summary.Add(""); $summary.AddRange([string[]](Get-Content $path)) }
 }

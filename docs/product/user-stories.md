@@ -685,5 +685,14 @@ between terrain and realisation, and the world is generated at full detail rathe
 - It then plays as M1's baked world does, at the same bars.
 
 **Needs.** What M1 needs, less the editor, plus per-stage persistence (`Frozen`) through the game's
-store ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)). **Status:** not started
-(2026-09-25).
+store ([#142](https://github.com/AntonTegnelov/wave_forge/issues/142)). **Status:** in progress
+(2026-10-04): `examples/new_world` is a game that does this with M1's continent. It simulates its
+history over the map in GDScript with `sample` before anything is generated, gives it to the
+stages as the `settlements` table and saves it, and runs the whole world into its folder with a
+progress screen by stage and a button that stops it. Stopped or closed part way, it resumes with
+the saved history from what it wrote; with every chunk there it plays the world from the folder,
+generating nothing. Its `check.gd` checks the history repeats for its seed, the progress, stopping
+and resuming. Made from nothing in the dev container, the history takes 0.5 s and the whole
+world 664 s, holding at most 1.87 GB, and the world then plays with no stage run
+([measurements.md](../research/measurements.md) L49). Left: the time and the playback on a
+reference desktop (the desktop script's `m2` and `m1` parts).

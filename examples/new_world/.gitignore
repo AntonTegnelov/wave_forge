@@ -1,0 +1,10 @@
+# Built and copied in by prepare.sh, and Godot's own caches.
+bin/
+addons/
+continent/
+continent.tscn
+continent.gd
+peak_memory.gd
+.godot/
+continent.gd.uid
+peak_memory.gd.uid
