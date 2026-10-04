@@ -3160,6 +3160,8 @@ impl WaveForgeStages {
             body.add_child(&collision);
             body
         };
+        // The reference shaders the bake's materials carry, one copy of each for the whole bake.
+        let mut shaders = HashMap::new();
         let bound = self.placements.kinds();
         let placing = Placing {
             worker,
@@ -3191,7 +3193,9 @@ impl WaveForgeStages {
                         &mut ground_arrays(ground),
                         finest,
                         &coarser,
-                        material.map(crate::shaders::self_contained).as_ref(),
+                        material
+                            .map(|material| crate::shaders::self_contained(material, &mut shaders))
+                            .as_ref(),
                     );
                     holder.add_child(&instance(mesh, "Ground", corner));
                     if let Some((width, depth, heights, at)) = self.ground_height_map(chunk) {
@@ -3218,7 +3222,7 @@ impl WaveForgeStages {
                         &surface.mesh.indices,
                         &[],
                         self.surface_material(&surface.mesh, fluid)
-                            .map(crate::shaders::self_contained)
+                            .map(|material| crate::shaders::self_contained(material, &mut shaders))
                             .as_ref(),
                     );
                     let name = if fluid { "Fluid" } else { "Surface" };
