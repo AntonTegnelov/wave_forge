@@ -1,5 +1,5 @@
-// The pack of the far ground check (render_far.gd): the same rolling ground at full detail near the
-// focus and at a coarse scale far from it.
+// The pack of the far ground checks (render_far.gd, verify_far.gd): the same rolling ground at
+// full detail near the focus and at a coarse scale far from it.
 (
     version: 1,
     stages: [

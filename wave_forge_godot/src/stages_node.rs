@@ -3611,6 +3611,14 @@ impl WaveForgeStages {
             }
         }
         for far in built {
+            // The near ground covers the whole coarse chunk: there is nothing of it to draw.
+            if far.indices.is_empty() {
+                if let Some((mesh, instance)) = self.far_grounds.remove(&far.chunk) {
+                    rendering.free_rid(instance);
+                    rendering.free_rid(mesh);
+                }
+                continue;
+            }
             let rid = rendering.mesh_create();
             let mut arrays = VarArray::new();
             arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
