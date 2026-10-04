@@ -481,8 +481,13 @@ turned through a day by `day_night.gd`, and townsfolk with navigation agents wal
 points of the city's streets. Its `check.gd`, run by `verify.sh`, finds the city in grass with its
 modules and trees placed, the day going on, and every one of the townsfolk walking along the
 navigation map inside the city. Grass and swaying trees are drawn in Bevy too (`grass_render.rs`,
-`vegetation_render.rs`). Left: the frame rate on a reference desktop, and a person following the
-README's trailer checklist from a clean checkout within an hour, near the release
+`vegetation_render.rs`). Its `measure.gd` walks into the city at 4.2 m/s for the
+desktop script's `n10` part; in the dev container the node's own time over the walk is 0.22 ms
+at the median and 10 ms at the 99th percentile, in the frames that build 8 grounds at once, over
+P1's 2 ms ([measurements.md](../research/measurements.md) E55). Left: that cost brought under P1's bars
+([#307](https://github.com/AntonTegnelov/wave_forge/issues/307)), the
+frame rate on a reference desktop, and a person following the README's trailer checklist from a
+clean checkout within an hour, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)).
 
 ### N11. Put my own history into the world
