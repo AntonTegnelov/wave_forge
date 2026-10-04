@@ -341,8 +341,8 @@ undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Sta
 forests its relief, woods and meadow grass; canyon desert its canyons' width, its terraces and its
 cacti; the archipelago its islands' size, its reefs and its palms; the cave level, a volume, its
 caves, how often they open to the sky and its crystal; and the small city, solved by WFC from the
-city module set beside the world's centre and drawn from the plugin's city kit with no code, how
-much of it is built, its hills and its woods. A sweep of every range over a grid of values and
+city module set beside the world's centre and drawn from the plugin's city kit with no code, in
+grass that stops at its edge, how much of it is built, its hills and its woods. A sweep of every range over a grid of values and
 seeds finds a sound world at each, more land as `land` or `islands` rises, more trees as `trees` or
 `forest` does, more relief as `hills` does, more sand as `canyons` does, more level ground as
 `strata` does, more shallow water as `reefs` does, more hollow rock, openings and crystal as
@@ -475,9 +475,15 @@ with grass and wind, lighting that changes over a day, a generated town, and nav
 walking its streets, at the P1 frame rate on a reference desktop. Needs a person: the trailer
 checklist in the example's README is followed from a clean checkout within an hour. **Needs.** Grass
 and wind ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), navigation, presets.
-**Status:** not started (2026-09-24). Grass and trees that sway in a global wind are drawn in
-Godot (`verify_ground.gd`, `render_ground.sh`) and in Bevy (`grass_render.rs`,
-`vegetation_render.rs`).
+**Status:** in progress (2026-10-04). The example is `examples/sample_world`, on the small city
+preset: the city in grass and trees that sway in the extension's global wind, a sun and a moon
+turned through a day by `day_night.gd`, and townsfolk with navigation agents walking between random
+points of the city's streets. Its `check.gd`, run by `verify.sh`, finds the city in grass with its
+modules and trees placed, the day going on, and every one of the townsfolk walking along the
+navigation map inside the city. Grass and swaying trees are drawn in Bevy too (`grass_render.rs`,
+`vegetation_render.rs`). Left: the frame rate on a reference desktop, and a person following the
+README's trailer checklist from a clean checkout within an hour, near the release
+([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)).
 
 ### N11. Put my own history into the world
 
