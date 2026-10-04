@@ -81,12 +81,14 @@ func _settled(path: String, stats: Dictionary) -> String:
 		return "%s has %d palette colours for the materials %s" % [path, palette.size(), materials]
 	return "ok"
 
-## Whether every target stage has generated something, since a stage that reads a slow one, trees
-## on a volume's top say, arrives after the ground is drawn.
+## Whether every target stage has generated every chunk within its radius, since a stage that
+## reads a slow one, trees on a volume's top say, or a town still being solved, arrives after the
+## ground is drawn. A target without a radius of its own has the view's.
 func _generated(stats: Dictionary) -> bool:
 	for target: String in stages.targets:
+		var radius: int = stages.target_radii.get(target, stages.view_radius)
 		# A stage that has not run yet has no entry.
-		if not stats["stages"].has(target) or stats["stages"][target]["products"] == 0:
+		if not stats["stages"].has(target) or stats["stages"][target]["products"] < (2 * radius + 1) * (2 * radius + 1):
 			return false
 	return true
 

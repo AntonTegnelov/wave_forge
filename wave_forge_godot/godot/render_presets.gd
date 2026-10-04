@@ -57,12 +57,14 @@ func _process(_delta: float) -> bool:
 		camera.look_at_from_position(at + Vector3(reach * 0.5, reach * 0.42, reach * 0.5), at)
 	var stats: Dictionary = stages.stats()
 	var drawn: Array = stages.volume_chunks() if stages.ground_stage.is_empty() else stages.ground_chunks()
-	# Every target stage has generated something: a stage that reads a slow one, trees on a
-	# volume's top say, arrives after the ground is drawn.
+	# Every target stage has generated every chunk within its radius: a stage that reads a slow one,
+	# trees on a volume's top say, or a town still being solved, arrives after the ground is drawn.
+	# A target without a radius of its own has the view's.
 	var generated := true
 	for target: String in stages.targets:
+		var radius: int = stages.target_radii.get(target, stages.view_radius)
 		# A stage that has not run yet has no entry.
-		generated = generated and stats["stages"].has(target) and stats["stages"][target]["products"] > 0
+		generated = generated and stats["stages"].has(target) and stats["stages"][target]["products"] >= (2 * radius + 1) * (2 * radius + 1)
 	if not generated or is_nan(ground) or drawn.is_empty() or stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_placements"] > 0:
 		settled_frames = 0
 		return false
