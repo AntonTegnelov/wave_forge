@@ -5,7 +5,8 @@
 ## between them. The node runs the stages on its own thread. This first asks for the sites alone over
 ## a wide area and finds a town the way a game would, then asks for everything around it and waits
 ## until every chunk has arrived, then checks that towns stand on level ground at their height, that
-## the modules bound to a scene are drawn from it with no code, standing where the town puts them, that trees
+## the modules bound to a scene are drawn from it with no code, standing where the town puts them,
+## and collide with it, that trees
 ## stand on the ground and never on a town, and that Godot's thread stayed free, and that a path on the
 ## navigation baked from the ground and the town's shapes crosses the town. Then a character with
 ## gravity walks from the open ground straight through the town and out the other side, and must never
@@ -15,7 +16,8 @@
 ##
 ## The town's modules get simple shapes here: a thin floor whose top is the bottom of every street-level cell, and
 ## a full box for everything above street level, so buildings are hollow at street level, as in
-## marian42's city, and the walk can cross a town in a straight line.
+## marian42's city, and the walk can cross a town in a straight line. The two modules drawn from a
+## box take that box as their shape instead, with no shape given.
 extends SceneTree
 
 const CELLS := 8
@@ -38,8 +40,9 @@ const WALK_SPEED := 4.0
 const WALK_TIMEOUT_S := 60.0
 const SINK_TOLERANCE := 0.3
 const GRAVITY := 20.0
-## The modules bound to a scene, so the node draws them with no code.
-const DRAWN := ["building_base", "building_floor"]
+## The modules bound to a box's scene, so the node draws them with no code, and given no shape
+## here, so they collide with their box.
+const DRAWN := ["building_floor", "building_balcony"]
 
 var world: Node
 ## The chunk the checks look around: a town's, once one is found.
@@ -105,7 +108,8 @@ func _give_town_shapes() -> void:
 	box.size = Vector3.ONE * CELL_SIZE
 	for tag in ["building", "roof", "walkway", "pillar", "stair"]:
 		for module in world.modules_tagged("city", tag):
-			world.set_collision_shape(module, box)
+			if not DRAWN.has(module):
+				world.set_collision_shape(module, box)
 	var slab := ConvexPolygonShape3D.new()
 	var points := PackedVector3Array()
 	for y in [-half - 0.2, -half]:
@@ -117,7 +121,8 @@ func _give_town_shapes() -> void:
 	if street.is_empty():
 		_fail("the city has no street-level modules")
 	for module in street:
-		world.set_collision_shape(module, slab)
+		if not DRAWN.has(module):
+			world.set_collision_shape(module, slab)
 
 func _on_stage_ready(stage: String, chunk: Vector3i) -> void:
 	ready[[stage, chunk]] = true
@@ -173,7 +178,7 @@ func _process(_delta: float) -> bool:
 	if walking:
 		return false
 	if checked:
-		if _navigation_crosses_town(waited) and _occluders_stand_in_the_towns():
+		if _navigation_crosses_town(waited) and _occluders_stand_in_the_towns() and _drawn_collide():
 			_start_walk()
 		return false
 	for chunk in _view():
@@ -515,6 +520,28 @@ func _check_drawn() -> bool:
 			_fail("a baked module stands at %s, where the town puts one at %s" % [drawn[i], expected[i]])
 			return false
 	print("verify_stages: %d town modules drawn from their scenes with no code, those of %s baked where the town puts them" % [placed, town_chunk])
+	return true
+
+## A ray dropped onto the top of each drawn module within the colliders' reach meets it there:
+## the module collides with the box it is drawn from, no shape given.
+func _drawn_collide() -> bool:
+	var space := root.get_world_3d().direct_space_state
+	var met := 0
+	for chunk: Vector3i in world.collider_chunks():
+		for set: Dictionary in world.town_instance_sets("city", chunk, PackedStringArray(DRAWN)):
+			var transforms: PackedFloat32Array = set["transforms"]
+			for i in range(0, transforms.size(), 12):
+				var top := Vector3(transforms[i + 3], transforms[i + 7] + CELL_SIZE / 2.0, transforms[i + 11])
+				var query := PhysicsRayQueryParameters3D.create(top + Vector3.UP * 0.05, top + Vector3.DOWN * 0.05)
+				var hit := space.intersect_ray(query)
+				if hit.is_empty() or absf(hit["position"].y - top.y) > 0.001:
+					_fail("a ray onto the top of %s at %s met %s" % [set["name"], top, hit.get("position", "nothing")])
+					return false
+				met += 1
+	if met == 0:
+		_fail("no drawn module within the colliders' reach")
+		return false
+	print("verify_stages: rays meet the tops of %d drawn modules, which collide with the box they are drawn from" % met)
 	return true
 
 ## Every tree stands on the ground of its column, and none stands in a town's chunk.

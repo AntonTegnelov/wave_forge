@@ -128,6 +128,19 @@ impl Placements {
         !self.bindings.is_empty()
     }
 
+    /// Each kind drawn as a lone mesh with its mesh, once no scene is still loading; none before.
+    pub(crate) fn lone_meshes(&self) -> Option<Vec<(String, Gd<Mesh>)>> {
+        let mut meshes = Vec::new();
+        for (kind, binding) in &self.bindings {
+            match binding {
+                Binding::Loading(_) => return None,
+                Binding::Mesh(mesh) => meshes.push((kind.clone(), mesh.clone())),
+                Binding::Nodes { .. } => {}
+            }
+        }
+        Some(meshes)
+    }
+
     /// The kinds bound to a scene.
     pub(crate) fn kinds(&self) -> Vec<String> {
         self.bindings.keys().cloned().collect()

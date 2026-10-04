@@ -462,7 +462,9 @@ tools paint the same way.
 piece's or Cave room's name, or a module of a Solve stage's rule set, so a dungeon's rooms and a
 town's buildings bind the same way as trees. A module's scene is drawn in every cell of a town that
 holds it, turned by the tile's rotation, a unit model scaled to the cell as `town_instance_sets`
-gives it, so a town is drawn with no code. A value is a
+gives it, so a town is drawn with no code. A module drawn from a lone mesh collides with that mesh
+too, its triangles scaled to the cell as a concave shape, unless `set_collision_shape` gives it a
+shape of its own, so a town drawn with no code is walked on and into as it is drawn. A value is a
 `PackedScene`, or a path the node loads on
 Godot's loader threads when it starts; placing waits until every scene has loaded. A scene holding
 another extension's Rust resource has to be given as a `PackedScene`, since such a resource aborts

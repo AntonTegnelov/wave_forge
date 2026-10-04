@@ -34,7 +34,7 @@ use godot::global::Error;
 use godot::obj::EngineEnum;
 use godot::prelude::*;
 use godot::register::info::{PropertyHint, PropertyHintInfo, PropertyInfo};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use wave_forge::DirectoryStore;
 use wave_forge::loader::{RuleFile, parse_rule_file};
@@ -326,6 +326,9 @@ pub struct WaveForgeStages {
     process_ms: Timings,
     /// Each town module's collision shape, by module name, for every Solve stage.
     collision_shapes: HashMap<String, Gd<Shape3D>>,
+    /// The modules whose shape in `collision_shapes` is their bound mesh's, not one a script set;
+    /// none until the bound scenes have loaded and the shapes are made.
+    mesh_shapes: Option<BTreeSet<String>>,
     /// Chunks whose ground may be buildable: a field around them arrived since they were last
     /// looked at.
     ground_due: std::collections::BTreeSet<ChunkCoord>,
@@ -749,6 +752,7 @@ impl INode for WaveForgeStages {
             palette: None,
             collider_radius: 1,
             collision_shapes: HashMap::new(),
+            mesh_shapes: None,
             grounds: HashMap::new(),
             ground_revisions: HashMap::new(),
             ground_builds: 0,
@@ -1070,6 +1074,7 @@ impl INode for WaveForgeStages {
         self.update_occluders(&towns);
         self.update_grass();
         let placing = std::time::Instant::now();
+        self.give_mesh_shapes();
         frame.placed = self.update_placements();
         frame.placements_ms = elapsed_ms(placing);
         frame.ms = elapsed_ms(processing);
@@ -1317,6 +1322,9 @@ impl WaveForgeStages {
                 return false;
             }
         };
+        for module in self.mesh_shapes.take().into_iter().flatten() {
+            self.collision_shapes.remove(&module);
+        }
         // The towns' device is built on the stages' thread, which is where it is used.
         // The runtime the stages' thread generates with, and a world run too.
         let build: Builder = Arc::new(move || {
@@ -3997,6 +4005,46 @@ impl WaveForgeStages {
             physics.free_rid(body);
             shape.into_iter().for_each(|shape| physics.free_rid(shape));
         }
+    }
+
+    /// Once the bound scenes have loaded, gives every town module drawn from a lone mesh and given
+    /// no shape by `set_collision_shape` its mesh as its collision shape, scaled to the cell, so a
+    /// town drawn with no code is walked on and into as it is drawn.
+    fn give_mesh_shapes(&mut self) {
+        if self.mesh_shapes.is_some() {
+            return;
+        }
+        let Some(meshes) = self.placements.lone_meshes() else {
+            return;
+        };
+        let module = |name: &str| {
+            self.rules
+                .values()
+                .any(|file| (0..file.num_tiles()).any(|tile| file.name(tile) == name))
+        };
+        let cell = self.cell_size;
+        let mut given = BTreeSet::new();
+        for (name, mesh) in meshes {
+            if !module(&name) || self.collision_shapes.contains_key(&name) {
+                continue;
+            }
+            let faces: PackedVector3Array = mesh
+                .get_faces()
+                .as_slice()
+                .iter()
+                .map(|&corner| corner * cell)
+                .collect();
+            let mut shape = ConcavePolygonShape3D::new_gd();
+            shape.set_faces(&faces);
+            self.collision_shapes.insert(name.clone(), shape.upcast());
+            given.insert(name);
+        }
+        if !given.is_empty() {
+            self.free_bodies();
+            self.shape_faces.clear();
+            self.navigation.clear();
+        }
+        self.mesh_shapes = Some(given);
     }
 
     /// Places the chunks of bound scenes that are due, within the frame's budget, and signals
