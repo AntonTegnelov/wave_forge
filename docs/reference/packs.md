@@ -533,6 +533,14 @@ of either box keeping the higher of its value and how far inside the slab it is,
 its value and how far outside the air it is. So a building stands on flat ground under open sky
 however the volume's terrain runs, and a tunnel or room still cuts through the slab.
 
+`barriers: Some("water")` fills with rock, after every tunnel and room is carved, the barrier of
+the Aquifer stage `water` between its pools of different levels ([Aquifer](#aquifer)): each voxel
+keeps the higher of its value and how deep inside the barrier it lies. The Aquifer stage reads the
+volume before the barrier and leaves the barrier dry, so `rock`, a Carve of it with tunnels,
+`water` over that, and a Carve of the tunnels with `barriers` naming `water` is the order, and an
+engine draws the last as the rock. Loading refuses barriers that name no Aquifer stage with a
+`barrier`, and a barrier that is not a positive number of cells.
+
 ### Top
 
 `Top(volume: "caves")`: a field of the height, in cells, of the top of a Volume or Carve stage of the
@@ -558,8 +566,15 @@ fluid: `(rules: [(category: "lava", when: [Less(Z, Constant(-30.0))])], otherwis
 the deepest pools lava. The product has its volume's size and bottom; it works at the WFC lattice's
 scale on a volume of that scale.
 
-Pools of two levels meet at a vertical face where their cells meet, which Minecraft walls off with
-stone and an Aquifer stage does not ([#236](https://github.com/AntonTegnelov/wave_forge/issues/236)).
+Pools of two levels meet at a vertical face where their cells meet: water stands up to its level
+on one side and the open cave is dry, or a lower pool, on the other. `barrier: Some(1.5)` walls it
+off as Minecraft does. Every voxel within that many cells of the plane halfway between its two
+nearest pool centres, where their levels differ, and below the higher level, is a barrier: the
+Aquifer stage leaves it dry, and a [Carve](#carve) stage whose `barriers` name the Aquifer stage
+fills it with rock, so the pools sit in sealed basins whose rims are the higher pool's surface.
+The barrier changes the rock near every pool border, between stacked pools too, and with small
+cells there are many of them; a dig through a barrier leaves the gap dry, since fluid does not
+flow, so the pools stay as they were.
 Godot draws it beside the rock as `fluid_stage`, see-through
 and glowing by material, and Bevy builds its surface with `.with_fluid`
 ([godot.md](godot.md#waveforgestages), [bevy.md](bevy.md#packs-of-stages)); neither collides with

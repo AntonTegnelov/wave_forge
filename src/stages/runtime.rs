@@ -3817,6 +3817,7 @@ impl Runtime {
             cell,
             level,
             materials: kinds,
+            barrier,
         } = &stage.kind
         {
             let rock_index = self.pack.index(volume).expect("linked when loaded");
@@ -3838,8 +3839,13 @@ impl Runtime {
                             i64::from(chunk.x) * i64::from(sx) + i64::from(x),
                             i64::from(chunk.y) * i64::from(sy) + i64::from(y),
                         ];
-                        let pool = pool_level(world ^ stage.salt, *cell, *level, column, z);
-                        values.push((pool - z).min(-rock.get(x, y, step)));
+                        let pools = pools(world ^ stage.salt, *cell, *level, column, z);
+                        let pool = pools[0].level;
+                        let mut value = (pool - z).min(-rock.get(x, y, step));
+                        if let Some(half) = barrier {
+                            value = value.min(-barrier_value(&pools, *half, z));
+                        }
+                        values.push(value);
                         if let Some(kinds) = kinds {
                             let place = ColumnPlace {
                                 height: Some(pool),
@@ -3973,6 +3979,7 @@ impl Runtime {
             tunnels,
             rooms,
             level,
+            barriers,
         } = &stage.kind
         else {
             unreachable!("called for Carve stages")
@@ -4107,6 +4114,22 @@ impl Runtime {
                 ));
             }
         }
+        // The pools whose barriers are filled: the Aquifer stage's hash stream, cells, levels and
+        // barrier.
+        let walls = barriers.as_ref().map(|name| {
+            let aquifer = &self.pack.stages[self.pack.index(name).expect("linked when loaded")];
+            let StageKind::Aquifer {
+                cell,
+                level,
+                barrier: Some(half),
+                ..
+            } = &aquifer.kind
+            else {
+                unreachable!("checked when the pack loads")
+            };
+            let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+            (world ^ aquifer.salt, *cell, *level, *half)
+        });
         let [sx, sy, levels] = carved.size;
         for level in 0..levels {
             let z = (carved.bottom + level as i32) as f32 + 0.5;
@@ -4151,6 +4174,10 @@ impl Runtime {
                     }
                     if outside < CARVE_MARGIN {
                         *value = value.min(outside);
+                    }
+                    if let Some((stream, cell, levels, half)) = walls {
+                        let pools = pools(stream, cell, levels, column, z);
+                        *value = value.max(barrier_value(&pools, half, z));
                     }
                 }
             }
@@ -5000,14 +5027,20 @@ fn value_at(volume: &Volume, x: u32, y: u32, z: f32) -> f32 {
     low + (high - low) * t
 }
 
-/// The fluid level, in cells, of the pool that the voxel at `column` and height `z` belongs to.
-///
-/// Space is cut into cells `cell.0` columns wide and `cell.1` cells tall. Each cell has a centre at
-/// a hashed place inside it and a level hashed from `level.0` up to `level.1`, both from `stream`
-/// and the cell alone, and a voxel belongs to the pool of the nearest centre among its own cell and
-/// the 26 around it, as Minecraft's aquifers look no further. A centre two cells away is rarely the
-/// nearest and never decides; the level depends on the voxel's place alone either way.
-fn pool_level(stream: u32, cell: (u32, u32), level: (f32, f32), column: [i64; 2], z: f32) -> f32 {
+/// One of an Aquifer stage's pools near a voxel: its centre, the squared distance to it, and its
+/// level.
+#[derive(Clone, Copy)]
+struct Pool {
+    centre: [f32; 3],
+    distance: f32,
+    level: f32,
+}
+
+/// The two pools nearest the voxel at height `z` in `column`, the nearest first, of an Aquifer
+/// stage whose cells are `cell.0` columns wide and `cell.1` cells tall with levels in `level`:
+/// each cell's centre at a hashed place in it and its level hashed from `level.0` up to `level.1`
+/// on `stream`, the nearest among the voxel's own cell and the 26 around it.
+fn pools(stream: u32, cell: (u32, u32), level: (f32, f32), column: [i64; 2], z: f32) -> [Pool; 2] {
     let (wide, tall) = (i64::from(cell.0), i64::from(cell.1));
     let at = [column[0] as f32 + 0.5, column[1] as f32 + 0.5, z];
     let home = [
@@ -5015,7 +5048,12 @@ fn pool_level(stream: u32, cell: (u32, u32), level: (f32, f32), column: [i64; 2]
         column[1].div_euclid(wide),
         (z.floor() as i64).div_euclid(tall),
     ];
-    let mut nearest = (f32::INFINITY, 0.0);
+    let far = Pool {
+        centre: at,
+        distance: f32::INFINITY,
+        level: 0.0,
+    };
+    let mut nearest = [far, far];
     for dz in -1..=1 {
         for dy in -1..=1 {
             for dx in -1..=1 {
@@ -5031,14 +5069,42 @@ fn pool_level(stream: u32, cell: (u32, u32), level: (f32, f32), column: [i64; 2]
                     (cz * tall) as f32 + unit(c) * tall as f32,
                 ];
                 let distance: f32 = (0..3).map(|i| (centre[i] - at[i]).powi(2)).sum();
-                if distance < nearest.0 {
+                if distance < nearest[1].distance {
                     let [height, ..] = pcg3d([a, b, c]);
-                    nearest = (distance, level.0 + (level.1 - level.0) * unit(height));
+                    let pool = Pool {
+                        centre,
+                        distance,
+                        level: level.0 + (level.1 - level.0) * unit(height),
+                    };
+                    if distance < nearest[0].distance {
+                        nearest = [pool, nearest[0]];
+                    } else {
+                        nearest[1] = pool;
+                    }
                 }
             }
         }
     }
-    nearest.1
+    nearest
+}
+
+/// How deep the voxel at height `z` lies inside the barrier between its two nearest pools, in
+/// cells, below zero outside it: a barrier stands within `half` cells of the plane halfway between
+/// two pools of different levels, below the higher level, so it walls off the face where they
+/// would meet and its top is the higher pool's surface.
+fn barrier_value(pools: &[Pool; 2], half: f32, z: f32) -> f32 {
+    let [near, next] = pools;
+    if near.level == next.level {
+        return -half;
+    }
+    let apart = (0..3)
+        .map(|i| (next.centre[i] - near.centre[i]).powi(2))
+        .sum::<f32>()
+        .sqrt();
+    // The squared distances to the two centres differ by twice their separation times the
+    // voxel's distance from the plane halfway between them.
+    let from_plane = (next.distance - near.distance) / (2.0 * apart);
+    (half - from_plane).min(near.level.max(next.level) - z)
 }
 
 /// How far outside a tunnel or room, in cells, a Carve stage still lowers a voxel.

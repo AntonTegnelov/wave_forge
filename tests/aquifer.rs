@@ -161,3 +161,137 @@ fn cells_of_nothing_levels_the_wrong_way_or_a_coarse_volume_are_refused() {
         );
     }
 }
+
+/// The test pack's pools walled off: the same rock and pools with a barrier 1.5 cells either side
+/// of the plane between two pools of different levels, and a Carve stage filling it with rock.
+fn sealed_runtime(chunks: &[ChunkCoord]) -> Runtime {
+    let pack = PACK
+        .replace(
+            r#"level: (-24.0, 4.0),"#,
+            r#"level: (-24.0, 4.0), barrier: Some(1.5),"#,
+        )
+        .replace(
+            "    ],\n)",
+            "        (name: \"sealed\", kind: Carve(volume: \"rock\", barriers: Some(\"fluid\"))),\n    ],\n)",
+        );
+    let mut runtime = Runtime::new(
+        Arc::new(Pack::parse(&pack).expect("a valid pack")),
+        6,
+        [8, 8],
+    );
+    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime
+        .request(&focus, &["fluid", "sealed"])
+        .expect("a stage");
+    runtime.run_until_idle().expect("the stages run");
+    runtime
+}
+
+/// How many fluid voxels of the area's inner chunks have a neighbour along x or y, at their own
+/// height, that is neither fluid nor solid in `walls`: a face where fluid stands against dry open
+/// space.
+fn faces(runtime: &Runtime, walls: &str) -> usize {
+    let inner: Vec<ChunkCoord> = (-1..1)
+        .flat_map(|y| (-1..1).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let at = |stage: &str, column: [i32; 2], level: u32| -> f32 {
+        let chunk = ChunkCoord::new(column[0].div_euclid(8), column[1].div_euclid(8), 0);
+        runtime.volume(stage, chunk).expect("generated").get(
+            column[0].rem_euclid(8) as u32,
+            column[1].rem_euclid(8) as u32,
+            level,
+        )
+    };
+    let mut faces = 0;
+    for chunk in inner {
+        let fluid = runtime.volume("fluid", chunk).expect("generated");
+        for (x, y, level, _) in voxels(fluid) {
+            if fluid.get(x, y, level) <= 0.0 {
+                continue;
+            }
+            let column = [chunk.x * 8 + x as i32, chunk.y * 8 + y as i32];
+            for step in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
+                let next = [column[0] + step[0], column[1] + step[1]];
+                if at("fluid", next, level) <= 0.0 && at(walls, next, level) <= 0.0 {
+                    faces += 1;
+                }
+            }
+        }
+    }
+    faces
+}
+
+#[test]
+fn without_a_barrier_pools_of_different_levels_meet_at_faces() {
+    let runtime = runtime(&area());
+
+    let faces = faces(&runtime, "rock");
+
+    assert!(faces > 20, "only {faces} faces");
+}
+
+#[test]
+fn a_barrier_walls_off_every_face_between_pools() {
+    let runtime = sealed_runtime(&area());
+
+    let faces = faces(&runtime, "sealed");
+
+    assert_eq!(faces, 0);
+}
+
+#[test]
+fn a_barrier_only_fills_rock_and_leaves_its_voxels_dry() {
+    let chunks = area();
+    let runtime = sealed_runtime(&chunks);
+
+    let (mut filled, mut open) = (0, 0);
+    for &chunk in &chunks {
+        let rock = runtime.volume("rock", chunk).expect("an input");
+        let sealed = runtime.volume("sealed", chunk).expect("generated");
+        let fluid = runtime.volume("fluid", chunk).expect("generated");
+        for (x, y, level, z) in voxels(sealed) {
+            let (before, after) = (rock.get(x, y, level), sealed.get(x, y, level));
+            assert!(after >= before, "the barrier emptied a voxel at {z}");
+            if after > 0.0 {
+                assert!(fluid.get(x, y, level) <= 0.0, "fluid in a barrier at {z}");
+            }
+            if before <= 0.0 {
+                open += 1;
+                filled += usize::from(after > 0.0);
+            }
+        }
+    }
+    assert!(
+        // The test pack's cells are small, 8 columns by 6 cells, so its barriers are many.
+        filled > 0 && filled * 3 < open,
+        "{filled} of {open} open voxels filled"
+    );
+}
+
+#[test]
+fn a_barrier_of_no_thickness_or_one_naming_no_walled_aquifer_is_refused() {
+    let parse = |aquifer: &str, carve: &str| {
+        Pack::parse(&format!(
+            r#"(version: 1, stages: [
+                (name: "rock", kind: Volume(density: Z, bottom: 0, top: 4)),
+                (name: "fluid", kind: Aquifer(volume: "rock", cell: (4, 4), level: (0.0, 1.0){aquifer})),
+                (name: "sealed", kind: Carve(volume: "rock"{carve})),
+            ])"#
+        ))
+    };
+
+    let thin = parse(", barrier: Some(0.0)", "");
+    let unwalled = parse("", r#", barriers: Some("fluid")"#);
+    let rock = parse(", barrier: Some(1.0)", r#", barriers: Some("rock")"#);
+
+    assert!(
+        matches!(&thin, Err(PackError::Invalid { stage, .. }) if stage == "fluid"),
+        "{thin:?}"
+    );
+    for result in [unwalled, rock] {
+        assert!(
+            matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "sealed"),
+            "{result:?}"
+        );
+    }
+}
