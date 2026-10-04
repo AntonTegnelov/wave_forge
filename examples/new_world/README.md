@@ -2,7 +2,7 @@
 
 An example of generating a maximal world once, when a player starts a new game, and playing it
 without further waits ([story M2](../../docs/product/user-stories.md)). The world is the maximal
-preset's continent, 4 by 4 km of 104 stages with towns of eight cultures. Its history is the
+preset's continent, 4 by 4 km of over a hundred stages with towns of eight cultures. Its history is the
 game's, simulated over the continent's map in GDScript before anything is generated. The whole
 world is then generated into the game's folder, with a progress screen and a button to stop, and
 played from what was written.
