@@ -242,7 +242,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   Locations stage), footprint `min` and `max` in chunks, and levelled `height`. A location's name
   is its `name_key` with its `name_args` ([packs.md](packs.md#locations)), which a game turns into
   words with `tr(site.name_key, "wave_forge").format(site.name_args)` and a translation of that key
-  in the `wave_forge` context.
+  in the `wave_forge` context. `pack_name_keys(text)`, static, lists every key a pack's sites can
+  be named by ([Place names in translation templates](#place-names-in-translation-templates)).
 - `water()`: the pack's water ([packs.md](packs.md#water)), its `level` in cells of height, or an
   empty dictionary if the pack declares none.
 - `occluder_chunks()` and `town_occluders(chunk)`: the chunks within `occluder_radius` that have
@@ -470,6 +471,15 @@ needs `ground_stage`. What a stroke does is the node's own `paint(brush, path)`:
 
 It adds the edits `stages::brushes::stroke` gives ([packs.md](packs.md#edits)), so a game's own
 tools paint the same way.
+
+### Place names in translation templates
+
+The editor plugin lists the place names of pack files when Godot generates a translation template
+(Project Settings, Localization, Template Generation, with the pack files added there): every key
+`pack_name_keys` gives for a `*.world.ron` file, each in the `wave_forge` context, so a translator
+gets every place a pack can name without reading it. A rule set shares the `.ron` extension and
+lists nothing. The parser is `addons/wave_forge/translation_parser.gd`; the entries it lists come
+from `translation_keys.gd`, which a game or a check can call outside the editor.
 
 ### Typed maps
 

@@ -3,23 +3,38 @@
 ## Run by `../verify.sh` after `verify_sound.gd`. A site of kind `stone_circle` is named by the key
 ## `wf-place-stone-circle` with its `region_x`, `region_y` and `index`, never a finished string; a
 ## translation the game registers for the `wave_forge` context turns it into words with
-## `tr(name_key, "wave_forge").format(name_args)`.
+## `tr(name_key, "wave_forge").format(name_args)`. The translation is built from the entries the
+## plugin lists in the editor's translation templates (`translation_keys.gd`), as a translator
+## would fill a template in: every key the pack can give, in its context.
 extends SceneTree
 
 const CELLS := 8
 const TIMEOUT_S := 30.0
+const PACK := "res://names.world.ron"
+const TranslationKeys := preload("res://addons/wave_forge/translation_keys.gd")
+## What a translator writes for each key of the template.
+const ENGLISH := {"wf-place-stone-circle": "Stone Circle {index} of {region_x}, {region_y}"}
 
 var world: Node
 var started_usec := 0
 
 func _initialize() -> void:
+	var entries := TranslationKeys.entries(PACK)
+	if entries != [PackedStringArray(["wf-place-stone-circle", "wave_forge"])]:
+		_fail("the template lists %s for the pack" % [entries])
+		return
+	if not TranslationKeys.entries("res://city.ron").is_empty():
+		_fail("the template lists a rule set's strings")
+		return
 	var english := Translation.new()
 	english.locale = "en"
-	english.add_message("wf-place-stone-circle", "Stone Circle {index} of {region_x}, {region_y}", "wave_forge")
+	for entry in entries:
+		english.add_message(entry[0], ENGLISH[entry[0]], entry[1])
 	TranslationServer.add_translation(english)
+	print("verify_names: the translation template lists the pack's one place name, wf-place-stone-circle, in the wave_forge context, and no rule set's strings")
 	TranslationServer.set_locale("en")
 	world = ClassDB.instantiate("WaveForgeStages")
-	world.pack_file = "res://names.world.ron"
+	world.pack_file = PACK
 	world.targets = PackedStringArray(["places"])
 	world.seed = 5
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
@@ -58,7 +73,7 @@ func _process(_delta: float) -> bool:
 		if words != expected:
 			_fail("a stone circle is called %s, expected %s" % [words, expected])
 			return true
-	print("verify_names: %d sites named by wf-place-stone-circle, called \"%s\" through a translation" % [sites.size(), tr(sites[0]["name_key"], "wave_forge").format(sites[0]["name_args"])])
+	print("verify_names: %d sites named by wf-place-stone-circle, called \"%s\" through the translation built from the template" % [sites.size(), tr(sites[0]["name_key"], "wave_forge").format(sites[0]["name_args"])])
 	quit(0)
 	return true
 

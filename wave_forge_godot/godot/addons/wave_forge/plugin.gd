@@ -13,13 +13,16 @@ extends EditorPlugin
 ## settings, taken while the 3D viewport has focus and a node is selected. Edit as a stack turns
 ## the node's pack_file into a `WaveForgeStack` the scene holds (`stack.gd`). Below it, the Rules
 ## panel lists the categories of the pack's Rules stages; a scene dragged from the FileSystem dock
-## onto one adds a Scatter stage placing it there, bound and generated (N3, `rule_drop.gd`).
+## onto one adds a Scatter stage placing it there, bound and generated (N3, `rule_drop.gd`). The
+## plugin also lists the place names of pack files in the editor's translation template generation
+## (`translation_parser.gd`).
 
 const WorldRunPanel := preload("res://addons/wave_forge/world_run_panel.gd")
 const CandidatePanel := preload("res://addons/wave_forge/candidate_panel.gd")
 const KitImportPanel := preload("res://addons/wave_forge/kit_import_panel.gd")
 const Presets := preload("res://addons/wave_forge/presets.gd")
 const Stack := preload("res://addons/wave_forge/stack.gd")
+const TranslationParser := preload("res://addons/wave_forge/translation_parser.gd")
 const RuleDrop := preload("res://addons/wave_forge/rule_drop.gd")
 
 ## The brushes of the dock, as `paint` names them, with how each is shown.
@@ -57,6 +60,7 @@ var world_run: VBoxContainer
 var candidate: VBoxContainer
 var kit_import: VBoxContainer
 var rules_box: VBoxContainer
+var translation_parser: EditorTranslationParserPlugin
 ## The node being edited, while one is selected.
 var stages: Node
 ## The stroke under way: its path along the ground, and the edits before it, for undo.
@@ -74,6 +78,8 @@ func _enter_tree() -> void:
 			shortcut.resource_name = SHORTCUTS[path][0]
 			shortcut.events = [key]
 			settings.add_shortcut(path, shortcut)
+	translation_parser = TranslationParser.new()
+	add_translation_parser_plugin(translation_parser)
 	dock = EditorDock.new()
 	dock.title = "Wave Forge"
 	dock.layout_key = "wave_forge"
@@ -82,6 +88,7 @@ func _enter_tree() -> void:
 	add_dock(dock)
 
 func _exit_tree() -> void:
+	remove_translation_parser_plugin(translation_parser)
 	remove_dock(dock)
 	dock.queue_free()
 

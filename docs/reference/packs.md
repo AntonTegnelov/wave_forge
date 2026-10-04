@@ -677,7 +677,9 @@ A site of a location table has a name for a game to show, `Site::name()`: never 
 but the translation key `wf-place-<kind>`, the kind's name with its underscores as hyphens (a
 `stone_circle` is `wf-place-stone-circle`), and the arguments `region_x`, `region_y` and `index` a
 translation may use to tell sites of a kind apart. A Sites or TableSites stage's site has no name;
-a row's name is the game's.
+a row's name is the game's. `Pack::name_keys()` lists every key a pack's sites can be named by, one
+per kind of its location tables, sorted, so a translator can be given them all
+([godot.md](godot.md#place-names-in-translation-templates)).
 
 `Runtime::location_log(stage, chunk)` gives a line per kind for the region the chunk lies in, such
 as `altar: placed 2 of 3; refused 5 crowded, 1 near its kind, 12 failing its conditions`. A quota is
