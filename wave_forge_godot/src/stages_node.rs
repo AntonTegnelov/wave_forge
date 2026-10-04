@@ -461,6 +461,10 @@ const SIGNALS_PER_FRAME: usize = 256;
 /// building each takes tenths of a millisecond on Godot's thread, so the rest wait for the next
 /// frames, nearest the followed position first.
 const GROUNDS_PER_FRAME: usize = 8;
+/// How long one frame may spend giving chunks ground, in milliseconds, after its first. Uploading
+/// a ground's surface and its material costs a millisecond and more on some drivers
+/// (measurements.md E55).
+const GROUNDS_BUDGET_MS: f64 = 2.0;
 /// How long one frame may spend building bodies, in milliseconds, after its first.
 const BODIES_BUDGET_MS: f64 = 2.0;
 
@@ -2960,8 +2964,8 @@ impl WaveForgeStages {
     }
 
     /// Builds the ground of up to [`GROUNDS_PER_FRAME`] chunks a newly arrived field may have
-    /// completed, nearest the followed position first, and frees the ground of chunks whose own
-    /// field was dropped.
+    /// completed, within [`GROUNDS_BUDGET_MS`] after the first, nearest the followed position
+    /// first, and frees the ground of chunks whose own field was dropped.
     ///
     /// Returns how many chunks got ground.
     fn update_ground(&mut self, arrived: &[ChunkCoord], gone: &[ChunkCoord]) -> usize {
@@ -3007,6 +3011,7 @@ impl WaveForgeStages {
                 *chunk,
             )
         });
+        let building = std::time::Instant::now();
         let mut built = Vec::new();
         for chunk in due {
             if built.len() == GROUNDS_PER_FRAME {
@@ -3030,8 +3035,13 @@ impl WaveForgeStages {
                 built.push((chunk, mesh, Some(ids)));
             }
         }
-        let count = built.len();
+        let mut count = 0;
         for (chunk, mesh, ids) in built {
+            if count > 0 && elapsed_ms(building) >= GROUNDS_BUDGET_MS {
+                self.ground_due.insert(chunk);
+                continue;
+            }
+            count += 1;
             let rid = rendering.mesh_create();
             let mut arrays = ground_arrays(&mesh);
             let (finest, coarser) = ground_levels(&mesh);
