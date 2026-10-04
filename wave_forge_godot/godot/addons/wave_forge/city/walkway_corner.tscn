@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/city/walkway_corner.tres" id="1_jshsr"]
+
+[node name="walkway_corner" type="MeshInstance3D" unique_id=1656045202]
+mesh = ExtResource("1_jshsr")

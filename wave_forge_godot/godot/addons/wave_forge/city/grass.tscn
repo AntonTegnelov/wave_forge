@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/city/grass.tres" id="1_g8rtq"]
+
+[node name="grass" type="MeshInstance3D" unique_id=1144116899]
+mesh = ExtResource("1_g8rtq")

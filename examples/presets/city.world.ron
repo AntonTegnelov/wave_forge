@@ -1,0 +1,55 @@
+// The small city preset (docs/product/user-stories.md, N2): a city of the city module set
+// (examples/city.ron), solved by WFC on a levelled site beside the world's centre, where a player
+// who starts there stands at its edge, in rolling countryside of grass and rock with woods around
+// it. Three parameters tune it: how much of the city is built rather than left as parks, how high
+// the hills around it rise, and how thick the woods grow. Every value in their ranges gives a sound
+// world (tests/presets.rs sweeps them).
+(
+    version: 1,
+    params: {
+        // From parks with no building at 0 to every block built at 1.
+        "density": (default: 0.7, range: (0.0, 1.0)),
+        // From gentle swells at 0 to steep hills at 1.
+        "hills": (default: 0.4, range: (0.0, 1.0)),
+        // From open country at 0 to thick woods at 1.
+        "trees": (default: 0.5, range: (0.0, 1.0)),
+    },
+    noises: {
+        "hills": (noise_type: SimplexSmooth, seed: 61, frequency: 0.01, fractal_octaves: 3),
+        "blocks": (noise_type: SimplexSmooth, seed: 62, frequency: 0.09, fractal_octaves: 1),
+        "woods": (noise_type: Perlin, seed: 63, frequency: 0.05, fractal_octaves: 2),
+    },
+    stages: [
+        // The countryside, 4 cells above the ground's zero and up to 4 to 14 more.
+        (name: "hills", kind: Field(Add(
+            Constant(4.0),
+            Mul(Add(FastNoise("hills"), Constant(1.0)), Add(Constant(2.0), Mul(Param("hills"), Constant(5.0)))),
+        ))),
+        // One city of 3 by 3 chunks beside the world's centre, whatever the seed: a footprint of 3
+        // chunks kept one chunk inside a region of 5 has one place in it, chunks -4 to -2 in the
+        // region beside the centre, and only that place's centre is near (-20, -20).
+        (name: "places", kind: Locations(height: "hills", region: 5, kinds: [
+            (name: "city", quota: 1, size: 3, tries: 1, when: [Less(Distance((-20.0, -20.0)), Constant(4.0))]),
+        ])),
+        (name: "level", kind: Flatten(height: "hills", sites: "places", blend: 8)),
+        // Above 0.5 where the city builds: blocks of the blocks noise, more of them as the density
+        // amount rises.
+        (name: "built", kind: Field(Add(
+            Clamp(Remap(FastNoise("blocks"), (-0.5, 0.5), (0.0, 1.0)), 0.0, 1.0),
+            Sub(Param("density"), Constant(0.5)),
+        ))),
+        (name: "city", kind: Solve(sites: "places", rules: "city",
+            bottom: Some(Tagged("street_level")), top: Some(Named("air")),
+            mask: Some((field: "built", above: 0.5, outside: Named("air"), ground: Some(Named("grass")))))),
+        (name: "steep", kind: Delta(input: "level", radius: 1)),
+        (name: "surface", kind: Rules(rules: [
+            (category: "rock", when: [Greater(Input("steep"), Constant(1.5))]),
+        ], otherwise: "grass")),
+        // Trees in woods as thick as the trees amount, clear of the city.
+        (name: "trees", kind: Scatter(kind: "tree", height: "level", spacing: 3, apart: 2,
+            max_slope: Some(1.0), avoid: Some(("places", 2)),
+            when: [
+                Less(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("trees")),
+            ])),
+    ],
+)

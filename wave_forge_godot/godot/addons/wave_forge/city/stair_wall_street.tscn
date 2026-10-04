@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/city/stair_wall_street.tres" id="1_iawrq"]
+
+[node name="stair_wall_street" type="MeshInstance3D" unique_id=63045970]
+mesh = ExtResource("1_iawrq")

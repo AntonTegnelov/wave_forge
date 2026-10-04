@@ -339,14 +339,15 @@ undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Sta
 (2026-10-04): packs declare parameters with ranges that stages read, and the presets in
 `examples/presets` tune three each: islands its land amount, roughness and tree density; hills and
 forests its relief, woods and meadow grass; canyon desert its canyons' width, its terraces and its
-cacti; the archipelago its islands' size, its reefs and its palms; and the cave level, a volume,
-its caves, how often they open to the sky and its crystal. A sweep of every range over a grid of
-values and seeds finds a sound world at each, more land as `land` or `islands` rises, more trees as
-`trees` or `forest` does, more relief as `hills` does, more sand as `canyons` does, more level
-ground as `strata` does, more shallow water as `reefs` does and more hollow rock, openings and
-crystal as `caves`, `openings` and `crystals` do, and a changed parameter regenerates only what
-reads it
-(`tests/presets.rs`, `verify_params.gd`). The inspector shows each parameter as a slider over its
+cacti; the archipelago its islands' size, its reefs and its palms; the cave level, a volume, its
+caves, how often they open to the sky and its crystal; and the small city, solved by WFC from the
+city module set beside the world's centre and drawn from the plugin's city kit with no code, how
+much of it is built, its hills and its woods. A sweep of every range over a grid of values and
+seeds finds a sound world at each, more land as `land` or `islands` rises, more trees as `trees` or
+`forest` does, more relief as `hills` does, more sand as `canyons` does, more level ground as
+`strata` does, more shallow water as `reefs` does, more hollow rock, openings and crystal as
+`caves`, `openings` and `crystals` do and more buildings as `density` does, and a changed parameter
+regenerates only what reads it (`tests/presets.rs`, `verify_params.gd`). The inspector shows each parameter as a slider over its
 range that changes the running stages as it moves, reads its default until set and reverts to it
 (`verify_params.gd`), and Godot's inspector makes each change undoable. The editor plugin's dock
 lists the shipped presets, each a scene of a configured node, and copies the chosen one's settings

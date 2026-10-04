@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/city/building_arcade.tres" id="1_rswbl"]
+
+[node name="building_arcade" type="MeshInstance3D" unique_id=401155906]
+mesh = ExtResource("1_rswbl")

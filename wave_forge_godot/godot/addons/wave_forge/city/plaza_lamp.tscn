@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/city/plaza_lamp.tres" id="1_n4i2n"]
+
+[node name="plaza_lamp" type="MeshInstance3D" unique_id=1275666699]
+mesh = ExtResource("1_n4i2n")
