@@ -647,9 +647,9 @@ fn city_runtime(seed: u64) -> Runtime {
 }
 
 /// The small city's one site, how many of its cells hold a building, how many trees stand around
-/// it, and the countryside's relief, checking on the way that every height is finite and no tree
-/// stands in the city.
-fn survey_city(runtime: &Runtime) -> (Site, usize, usize, f32) {
+/// it, the countryside's relief, and the largest grass cover, checking on the way that every
+/// height is finite, every cover is between 0 and 1, and no tree or grass stands in the city.
+fn survey_city(runtime: &Runtime) -> (Site, usize, usize, f32, f32) {
     let rules = city_rules();
     let building: Vec<usize> = rules.tiles_tagged("building");
     let mut sites: Vec<Site> = Vec::new();
@@ -687,10 +687,18 @@ fn survey_city(runtime: &Runtime) -> (Site, usize, usize, f32) {
             );
         }
     }
-    let (mut low, mut high) = (f32::MAX, f32::MIN);
+    let (mut low, mut high, mut cover) = (f32::MAX, f32::MIN, 0.0_f32);
     for chunk in area() {
         let inside = (city.min.0..city.max.0).contains(&chunk.x)
             && (city.min.1..city.max.1).contains(&chunk.y);
+        for &value in &runtime.field("cover", chunk).expect("generated").values {
+            assert!((0.0..=1.0).contains(&value), "a cover of {value}");
+            assert!(
+                !inside || value == 0.0,
+                "grass of {value} in the city's chunk {chunk:?}"
+            );
+            cover = cover.max(value);
+        }
         if !inside {
             for &value in &runtime.field("level", chunk).expect("generated").values {
                 low = low.min(value);
@@ -698,7 +706,7 @@ fn survey_city(runtime: &Runtime) -> (Site, usize, usize, f32) {
             }
         }
     }
-    (city, buildings, trees, high - low)
+    (city, buildings, trees, high - low, cover)
 }
 
 #[test]
@@ -712,13 +720,17 @@ fn every_value_in_the_city_ranges_gives_a_sound_world() {
                 let values = params([("density", density), ("hills", hills), ("trees", trees)]);
                 runtime.set_params(&values).expect("values in range");
 
-                generate(&mut runtime, &["level", "surface", "city", "trees"]);
+                generate(
+                    &mut runtime,
+                    &["level", "surface", "cover", "city", "trees"],
+                );
 
-                let (city, buildings, tree_count, relief) = survey_city(&runtime);
+                let (city, buildings, tree_count, relief, cover) = survey_city(&runtime);
                 let at = format!("density {density}, hills {hills}, trees {trees}");
                 // A city of 3 by 3 chunks beside the world's centre.
                 assert_eq!((city.min, city.max), ((-4, -4), (-1, -1)), "{at}");
                 assert!(relief > 1.0, "a flat country of relief {relief} at {at}");
+                assert!(cover > 0.5, "no grass around the city at {at}");
                 if density == 0.0 {
                     assert_eq!(buildings, 0, "buildings at {at}");
                 }
@@ -747,7 +759,7 @@ fn more_density_more_hills_and_more_trees_each_make_more_of_theirs() {
                 ("trees", trees),
             ]))
             .expect("values in range");
-        generate(&mut runtime, &["level", "city", "trees"]);
+        generate(&mut runtime, &["level", "cover", "city", "trees"]);
         survey_city(&runtime)
     };
     let amounts = [0.0, 0.5, 1.0];

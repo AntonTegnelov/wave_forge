@@ -341,8 +341,8 @@ undo works for every change. **Needs.** Tier 0, preview in the editor, P6. **Sta
 forests its relief, woods and meadow grass; canyon desert its canyons' width, its terraces and its
 cacti; the archipelago its islands' size, its reefs and its palms; the cave level, a volume, its
 caves, how often they open to the sky and its crystal; and the small city, solved by WFC from the
-city module set beside the world's centre and drawn from the plugin's city kit with no code, how
-much of it is built, its hills and its woods. A sweep of every range over a grid of values and
+city module set beside the world's centre and drawn from the plugin's city kit with no code, in
+grass that stops at its edge, how much of it is built, its hills and its woods. A sweep of every range over a grid of values and
 seeds finds a sound world at each, more land as `land` or `islands` rises, more trees as `trees` or
 `forest` does, more relief as `hills` does, more sand as `canyons` does, more level ground as
 `strata` does, more shallow water as `reefs` does, more hollow rock, openings and crystal as

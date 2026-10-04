@@ -45,6 +45,13 @@
         (name: "surface", kind: Rules(rules: [
             (category: "rock", when: [Greater(Input("steep"), Constant(1.5))]),
         ], otherwise: "grass")),
+        // Grass on the grass of the countryside, thinning out over the last 3 cells before the city:
+        // the city's place is chunks -4 to -2 either way whatever the seed (places, above), 12
+        // cells around (-20, -20), so its streets and parks have none.
+        (name: "cover", kind: Field(Mul(
+            Is("surface", ["grass"]),
+            Smoothstep(12.0, 15.0, Max(Abs(Add(X, Constant(20.0))), Abs(Add(Y, Constant(20.0))))),
+        ))),
         // Trees in woods as thick as the trees amount, clear of the city.
         (name: "trees", kind: Scatter(kind: "tree", height: "level", spacing: 3, apart: 2,
             max_slope: Some(1.0), avoid: Some(("places", 2)),
