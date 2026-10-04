@@ -1,6 +1,6 @@
-//! Scenes bound to what Scatter and Assemble stages place (docs/reference/godot.md).
+//! Scenes bound to what Scatter, Assemble and Solve stages place (docs/reference/godot.md).
 //!
-//! A kind (a point's kind, or a piece's or cave room's name) is bound to a scene. A scene whose
+//! A kind (a point's kind, a piece's or cave room's name, or a town's module) is bound to a scene. A scene whose
 //! root is a lone `MeshInstance3D` without a script is drawn as one `RenderingServer` MultiMesh per
 //! chunk and kind, never as nodes; any other scene is instantiated as nodes, off the tree, and
 //! attached under a per-frame time budget nearest the followed position first. With promotion, a
@@ -126,6 +126,19 @@ impl Placements {
     /// Whether any kind is bound, so the node looks for things to place at all.
     pub(crate) fn any(&self) -> bool {
         !self.bindings.is_empty()
+    }
+
+    /// Each kind drawn as a lone mesh with its mesh, once no scene is still loading; none before.
+    pub(crate) fn lone_meshes(&self) -> Option<Vec<(String, Gd<Mesh>)>> {
+        let mut meshes = Vec::new();
+        for (kind, binding) in &self.bindings {
+            match binding {
+                Binding::Loading(_) => return None,
+                Binding::Mesh(mesh) => meshes.push((kind.clone(), mesh.clone())),
+                Binding::Nodes { .. } => {}
+            }
+        }
+        Some(meshes)
     }
 
     /// The kinds bound to a scene.

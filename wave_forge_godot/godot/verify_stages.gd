@@ -4,7 +4,9 @@
 ## the first slice: rolling ground, towns on levelled sites built by the city module set, and trees
 ## between them. The node runs the stages on its own thread. This first asks for the sites alone over
 ## a wide area and finds a town the way a game would, then asks for everything around it and waits
-## until every chunk has arrived, then checks that towns stand on level ground at their height, that trees
+## until every chunk has arrived, then checks that towns stand on level ground at their height, that
+## the modules bound to a scene are drawn from it with no code, standing where the town puts them,
+## and collide with it, that trees
 ## stand on the ground and never on a town, and that Godot's thread stayed free, and that a path on the
 ## navigation baked from the ground and the town's shapes crosses the town. Then a character with
 ## gravity walks from the open ground straight through the town and out the other side, and must never
@@ -14,7 +16,8 @@
 ##
 ## The town's modules get simple shapes here: a thin floor whose top is the bottom of every street-level cell, and
 ## a full box for everything above street level, so buildings are hollow at street level, as in
-## marian42's city, and the walk can cross a town in a straight line.
+## marian42's city, and the walk can cross a town in a straight line. The two modules drawn from a
+## box take that box as their shape instead, with no shape given.
 extends SceneTree
 
 const CELLS := 8
@@ -37,6 +40,9 @@ const WALK_SPEED := 4.0
 const WALK_TIMEOUT_S := 60.0
 const SINK_TOLERANCE := 0.3
 const GRAVITY := 20.0
+## The modules bound to a box's scene, so the node draws them with no code, and given no shape
+## here, so they collide with their box.
+const DRAWN := ["building_floor", "building_balcony"]
 
 var world: Node
 ## The chunk the checks look around: a town's, once one is found.
@@ -78,6 +84,12 @@ func _initialize() -> void:
 	world.collider_radius = COLLIDER_RADIUS
 	world.navigation_radius = COLLIDER_RADIUS
 	world.occluder_radius = COLLIDER_RADIUS
+	var box := MeshInstance3D.new()
+	box.mesh = BoxMesh.new()
+	var scene := PackedScene.new()
+	scene.pack(box)
+	box.free()
+	world.scenes = {DRAWN[0]: scene, DRAWN[1]: scene}
 	root.add_child(world)
 	world.stage_ready.connect(_on_stage_ready)
 	world.stage_dropped.connect(func(stage: String, chunk: Vector3i) -> void: dropped[[stage, chunk]] = true)
@@ -96,7 +108,8 @@ func _give_town_shapes() -> void:
 	box.size = Vector3.ONE * CELL_SIZE
 	for tag in ["building", "roof", "walkway", "pillar", "stair"]:
 		for module in world.modules_tagged("city", tag):
-			world.set_collision_shape(module, box)
+			if not DRAWN.has(module):
+				world.set_collision_shape(module, box)
 	var slab := ConvexPolygonShape3D.new()
 	var points := PackedVector3Array()
 	for y in [-half - 0.2, -half]:
@@ -108,7 +121,8 @@ func _give_town_shapes() -> void:
 	if street.is_empty():
 		_fail("the city has no street-level modules")
 	for module in street:
-		world.set_collision_shape(module, slab)
+		if not DRAWN.has(module):
+			world.set_collision_shape(module, slab)
 
 func _on_stage_ready(stage: String, chunk: Vector3i) -> void:
 	ready[[stage, chunk]] = true
@@ -164,7 +178,7 @@ func _process(_delta: float) -> bool:
 	if walking:
 		return false
 	if checked:
-		if _navigation_crosses_town(waited) and _occluders_stand_in_the_towns():
+		if _navigation_crosses_town(waited) and _occluders_stand_in_the_towns() and _drawn_collide():
 			_start_walk()
 		return false
 	for chunk in _view():
@@ -175,10 +189,10 @@ func _process(_delta: float) -> bool:
 					return true
 				return false
 	var queued: Dictionary = world.stats()
-	if queued["pending_signals"] > 0 or queued["pending_grounds"] > 0 or queued["pending_colliders"] > 0:
+	if queued["pending_signals"] > 0 or queued["pending_grounds"] > 0 or queued["pending_colliders"] > 0 or queued["pending_placements"] > 0:
 		return false
 	print("verify_stages: %d chunks of %s arrived in %.1f s" % [_view().size(), TARGETS, waited])
-	if not _check_towns() or not _check_trees() or not _check_cover():
+	if not _check_towns() or not _check_drawn() or not _check_trees() or not _check_cover():
 		return true
 	var stats: Dictionary = world.stats()
 	print("verify_stages: the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms; its slowest frame: %d events in %.3f ms, %d grounds in %.3f ms, %d bodies in %.3f ms, navigation %.3f ms" % [
@@ -463,6 +477,71 @@ func _check_towns() -> bool:
 		_fail("no town in the %d chunks around the focus" % _view().size())
 		return false
 	print("verify_stages: %d town chunks, each on level ground at its site's height" % towns)
+	return true
+
+## The town's modules bound to a scene are drawn with no code: as many instances as its chunks
+## hold, and a baked town chunk has each where `town_instance_sets` puts it.
+func _check_drawn() -> bool:
+	var instances := 0
+	var town_chunk := Vector3i.MAX
+	for key: Array in ready:
+		if key[0] != "city":
+			continue
+		for set: Dictionary in world.town_instance_sets("city", key[1], PackedStringArray(DRAWN)):
+			instances += set["ids"].size()
+			town_chunk = key[1]
+	var placed: int = world.stats()["placed_instances"]
+	if instances == 0 or placed != instances:
+		_fail("%d instances of %s drawn, the towns hold %d" % [placed, DRAWN, instances])
+		return false
+	var expected := []
+	for set: Dictionary in world.town_instance_sets("city", town_chunk, PackedStringArray(DRAWN)):
+		var transforms: PackedFloat32Array = set["transforms"]
+		for i in range(0, transforms.size(), 12):
+			expected.append(Vector3(transforms[i + 3], transforms[i + 7], transforms[i + 11]))
+	var baked: Node = world.bake(town_chunk, town_chunk).instantiate()
+	var drawn := []
+	for node in baked.find_children("*", "MultiMeshInstance3D", true, false):
+		var at: Transform3D = node.get_parent().transform * node.transform
+		# The buffer the bake wrote: the headless renderer keeps no instance data.
+		var buffer: PackedFloat32Array = node.multimesh.buffer
+		var stride: int = buffer.size() / node.multimesh.instance_count
+		for i in node.multimesh.instance_count:
+			var o: int = i * stride
+			drawn.append(at * Vector3(buffer[o + 3], buffer[o + 7], buffer[o + 11]))
+	baked.free()
+	expected.sort()
+	drawn.sort()
+	if drawn.size() != expected.size():
+		_fail("%d of %s baked in %s, the town holds %d" % [drawn.size(), DRAWN, town_chunk, expected.size()])
+		return false
+	for i in expected.size():
+		if not expected[i].is_equal_approx(drawn[i]):
+			_fail("a baked module stands at %s, where the town puts one at %s" % [drawn[i], expected[i]])
+			return false
+	print("verify_stages: %d town modules drawn from their scenes with no code, those of %s baked where the town puts them" % [placed, town_chunk])
+	return true
+
+## A ray dropped onto the top of each drawn module within the colliders' reach meets it there:
+## the module collides with the box it is drawn from, no shape given.
+func _drawn_collide() -> bool:
+	var space := root.get_world_3d().direct_space_state
+	var met := 0
+	for chunk: Vector3i in world.collider_chunks():
+		for set: Dictionary in world.town_instance_sets("city", chunk, PackedStringArray(DRAWN)):
+			var transforms: PackedFloat32Array = set["transforms"]
+			for i in range(0, transforms.size(), 12):
+				var top := Vector3(transforms[i + 3], transforms[i + 7] + CELL_SIZE / 2.0, transforms[i + 11])
+				var query := PhysicsRayQueryParameters3D.create(top + Vector3.UP * 0.05, top + Vector3.DOWN * 0.05)
+				var hit := space.intersect_ray(query)
+				if hit.is_empty() or absf(hit["position"].y - top.y) > 0.001:
+					_fail("a ray onto the top of %s at %s met %s" % [set["name"], top, hit.get("position", "nothing")])
+					return false
+				met += 1
+	if met == 0:
+		_fail("no drawn module within the colliders' reach")
+		return false
+	print("verify_stages: rays meet the tops of %d drawn modules, which collide with the box they are drawn from" % met)
 	return true
 
 ## Every tree stands on the ground of its column, and none stands in a town's chunk.
