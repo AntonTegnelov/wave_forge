@@ -1195,6 +1195,8 @@ impl WaveForgeStages {
             if self.vertex_colours.is_none() {
                 let mut colours = StandardMaterial3D::new_gd();
                 colours.set_flag(Flags::ALBEDO_FROM_VERTEX_COLOR, true);
+                // `volume_palette` holds colours as the inspector picks them, in sRGB.
+                colours.set_flag(Flags::SRGB_VERTEX_COLOR, true);
                 self.vertex_colours = Some(colours);
             }
         }
