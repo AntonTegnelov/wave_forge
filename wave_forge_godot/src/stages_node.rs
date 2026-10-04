@@ -1553,9 +1553,9 @@ impl WaveForgeStages {
     }
 
     /// A stage's value at a position in Godot's world space, on the ground plane, computed on the
-    /// spot without generating chunks: a field's value, or a category's index. Only field, rules
-    /// and blur stages that read no others can be sampled; another stage is reported as an error
-    /// and gives NaN.
+    /// spot without generating chunks: a field's value, or a category's index. Field, Rules,
+    /// Nearest, Blur, Delta and Area stages can be sampled, with whatever they read; another stage
+    /// is reported as an error and gives NaN.
     #[func]
     fn sample(&self, stage: GString, position: Vector3) -> f32 {
         let Some(sampler) = &self.sampler else {
