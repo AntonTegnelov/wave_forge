@@ -1011,14 +1011,17 @@ impl INode for WaveForgeStages {
         }
         let far_stage = self.far_ground_stage.to_string();
         let far_material = self.far_ground_material_stage.to_string();
-        let (mut far_arrived, mut far_gone) = (Vec::new(), Vec::new());
+        let (mut far_arrived, mut far_gone, mut far_coloured) =
+            (Vec::new(), Vec::new(), Vec::new());
         for event in &events {
             match event {
-                StageEvent::Generated { stage, chunk }
-                    if *stage == far_stage
-                        || (!far_material.is_empty() && *stage == far_material) =>
-                {
+                StageEvent::Generated { stage, chunk } if *stage == far_stage => {
                     far_arrived.push(*chunk);
+                }
+                StageEvent::Generated { stage, chunk }
+                    if !far_material.is_empty() && *stage == far_material =>
+                {
+                    far_coloured.push(*chunk);
                 }
                 StageEvent::Dropped { stage, chunk } if *stage == far_stage => {
                     far_gone.push(*chunk);
@@ -1079,7 +1082,7 @@ impl INode for WaveForgeStages {
                     .filter(|chunk| !self.grounds.contains_key(chunk)),
             )
             .collect();
-        self.update_far_ground(&far_arrived, &far_gone, &near_changed);
+        self.update_far_ground(&far_arrived, &far_coloured, &far_gone, &near_changed);
         let drawing = std::time::Instant::now();
         frame.grounds +=
             self.update_layer(false, &layers[0].0, &layers[0].1, self.volume_budget_ms);
@@ -2825,6 +2828,13 @@ impl WaveForgeStages {
         out
     }
 
+    /// The milliseconds of Godot's thread the node's last frame took, cheap enough for a script to
+    /// read every frame, which building all of `stats()` is not.
+    #[func]
+    fn last_frame_ms(&self) -> f64 {
+        self.last_frame_ms
+    }
+
     /// What the node has cost Godot's thread: `process_ms_median`, `_p99` and `_max` over recent
     /// frames, once there are some; and what its slowest frame since the start spent the time on:
     /// `slowest_frame_ms` in all, `slowest_frame_events` signals emitted in
@@ -3150,6 +3160,8 @@ impl WaveForgeStages {
             body.add_child(&collision);
             body
         };
+        // The reference shaders the bake's materials carry, one copy of each for the whole bake.
+        let mut shaders = HashMap::new();
         let bound = self.placements.kinds();
         let placing = Placing {
             worker,
@@ -3181,7 +3193,9 @@ impl WaveForgeStages {
                         &mut ground_arrays(ground),
                         finest,
                         &coarser,
-                        material.map(crate::shaders::self_contained).as_ref(),
+                        material
+                            .map(|material| crate::shaders::self_contained(material, &mut shaders))
+                            .as_ref(),
                     );
                     holder.add_child(&instance(mesh, "Ground", corner));
                     if let Some((width, depth, heights, at)) = self.ground_height_map(chunk) {
@@ -3208,7 +3222,7 @@ impl WaveForgeStages {
                         &surface.mesh.indices,
                         &[],
                         self.surface_material(&surface.mesh, fluid)
-                            .map(crate::shaders::self_contained)
+                            .map(|material| crate::shaders::self_contained(material, &mut shaders))
                             .as_ref(),
                     );
                     let name = if fluid { "Fluid" } else { "Surface" };
@@ -3581,11 +3595,13 @@ impl WaveForgeStages {
     /// Draws the far ground of the coarse chunks that are due, nearest the followed position first
     /// and at most [`FAR_GROUNDS_PER_FRAME`] a frame: one mesh each, leaving out the chunks whose
     /// near ground is drawn and walled off where it meets them ([`far_ground`]). A coarse chunk is
-    /// due when a field around it arrives, and when near ground comes or goes on or beside a
-    /// lattice chunk it covers; one whose field is dropped is freed.
+    /// due when a field around it arrives, when its own chunk of `far_ground_material_stage`
+    /// arrives, and when near ground comes or goes on or beside a lattice chunk it covers; one
+    /// whose field is dropped is freed.
     fn update_far_ground(
         &mut self,
         arrived: &[ChunkCoord],
+        coloured: &[ChunkCoord],
         gone: &[ChunkCoord],
         near_changed: &[ChunkCoord],
     ) {
@@ -3612,6 +3628,8 @@ impl WaveForgeStages {
                     .insert(ChunkCoord::new(chunk.x + dx, chunk.y + dy, 0));
             }
         }
+        // A chunk's colours read its own categories alone.
+        self.far_due.extend(coloured.iter().copied());
         for fine in near_changed {
             for (dx, dy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
                 self.far_due.insert(ChunkCoord::new(
@@ -4473,6 +4491,25 @@ impl WaveForgeStages {
                 };
                 problems.push(format!(
                     "{setting} {stage:?} is no {kinds}stage of the pack{scale}"
+                ));
+            }
+        }
+        // A far chunk is drawn only once its colours have arrived, so the colouring stage has to
+        // reach as far as the far ground.
+        if !self.far_ground_material_stage.is_empty() {
+            let material = self.far_ground_material_stage.to_string();
+            let radius = |stage: &GString| self.target_radii.get(&StringName::from(stage));
+            if !self
+                .targets
+                .as_slice()
+                .contains(&self.far_ground_material_stage)
+            {
+                problems.push(format!(
+                    "far_ground_material_stage {material:?} is no target, so the far ground is never coloured"
+                ));
+            } else if radius(&self.far_ground_material_stage) != radius(&self.far_ground_stage) {
+                problems.push(format!(
+                    "far_ground_material_stage {material:?} needs far_ground_stage's radius in target_radii, or the far ground ends where its colours do"
                 ));
             }
         }

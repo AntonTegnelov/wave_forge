@@ -6,6 +6,7 @@
 
 use godot::classes::{Material, Shader, ShaderMaterial};
 use godot::prelude::*;
+use std::collections::HashMap;
 
 /// The reference ground shader.
 pub(crate) const GROUND: &str = include_str!("../godot/addons/wave_forge/shaders/ground.gdshader");
@@ -32,24 +33,28 @@ pub(crate) fn reference(file: &str, code: &str) -> Gd<Shader> {
 
 /// `material` as a baked scene holds it: a copy holding a copy of its shader if its shader is one
 /// of the addon's reference shaders, which the scene then carries itself, so it opens in a project
-/// without the extension; any other material as it is.
-pub(crate) fn self_contained(material: Gd<Material>) -> Gd<Material> {
+/// without the extension; any other material as it is. `copies` holds the shaders a bake has
+/// copied so far, by path, so every material of a bake shares one copy of each.
+pub(crate) fn self_contained(
+    material: Gd<Material>,
+    copies: &mut HashMap<String, Gd<Shader>>,
+) -> Gd<Material> {
     let Ok(shading) = material.clone().try_cast::<ShaderMaterial>() else {
         return material;
     };
     let Some(shader) = shading.get_shader() else {
         return material;
     };
-    if !shader
-        .get_path()
-        .to_string()
-        .starts_with("res://addons/wave_forge/shaders/")
-    {
+    let path = shader.get_path().to_string();
+    if !path.starts_with("res://addons/wave_forge/shaders/") {
         return material;
     }
+    let own = copies.entry(path).or_insert_with(|| {
+        let mut own = Shader::new_gd();
+        own.set_code(&shader.get_code());
+        own
+    });
     let mut copy = shading.duplicate_resource();
-    let mut own = Shader::new_gd();
-    own.set_code(&shader.get_code());
-    copy.set_shader(&own);
+    copy.set_shader(&*own);
     copy.upcast()
 }

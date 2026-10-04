@@ -64,7 +64,7 @@ func _process(_delta: float) -> bool:
 		return false
 	frames.append((now - last_usec) / 1000.0)
 	last_usec = now
-	node_frames.append(main.get_node("City").stats()["last_frame_ms"])
+	node_frames.append(main.get_node("City").last_frame_ms())
 	var step := heading * SPEED * frames[frames.size() - 1] / 1000.0
 	var at := walker.global_position + step
 	var ground: float = main.get_node("City").ground_height(at)

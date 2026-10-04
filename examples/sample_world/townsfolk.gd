@@ -2,9 +2,9 @@ extends Node3D
 ## The townsfolk of the small city. Once the city's site is generated and every chunk of it has
 ## navigation, `count` people (`person.tscn`) stand at random points of its streets, and each walks
 ## to another whenever it arrives. The streets are the navigation map's points nearest the city's
-## level ground that a path from its middle reaches, so the townsfolk keep to street level, the
-## stairs and walkways between, and the one connected piece of the map the middle stands on: a roof
-## or a closed court the streets do not reach would hold a person who could never leave it.
+## level ground that a path from a point of its main streets reaches, so the townsfolk keep to
+## street level, the stairs and walkways between, and the largest connected piece of the map: a
+## roof or a closed court the streets do not reach would hold a person who could never leave it.
 
 const PERSON := preload("res://person.tscn")
 
@@ -18,14 +18,14 @@ const PERSON := preload("res://person.tscn")
 ## The city's footprint on the ground plane, in metres, and the height of its level ground.
 var streets := Rect2()
 var street_height := 0.0
-## The point of the navigation map at the city's middle, which every street point is reached from.
+## A point of the city's main streets, which every street point is reached from.
 var middle := Vector3.ZERO
 var _random := RandomNumberGenerator.new()
 
 func _process(_delta: float) -> void:
 	if not _city_navigable():
 		return
-	middle = _nearest_street(Vector3(streets.get_center().x, street_height, streets.get_center().y))
+	middle = _main_street()
 	for i in count:
 		var person: Node3D = PERSON.instantiate()
 		add_child(person)
@@ -65,10 +65,29 @@ func _take_site(site: Dictionary) -> void:
 ## the middle itself if a few tries find none.
 func street_point() -> Vector3:
 	for attempt in 8:
-		var at := _nearest_street(Vector3(_random.randf_range(streets.position.x, streets.end.x), street_height, _random.randf_range(streets.position.y, streets.end.y)))
+		var at := _random_street()
 		if reaches(middle, at):
 			return at
 	return middle
+
+## Of a dozen random street points, the one the most of the others are reachable from: a point of
+## the largest connected piece of the streets, wherever the city's middle happens to stand.
+func _main_street() -> Vector3:
+	var candidates: Array[Vector3] = []
+	for i in 12:
+		candidates.append(_random_street())
+	var best := candidates[0]
+	var most := -1
+	for from in candidates:
+		var reached := candidates.filter(func(to: Vector3) -> bool: return reaches(from, to)).size()
+		if reached > most:
+			most = reached
+			best = from
+	return best
+
+## The navigation map's point nearest a random point of the city's footprint at street height.
+func _random_street() -> Vector3:
+	return _nearest_street(Vector3(_random.randf_range(streets.position.x, streets.end.x), street_height, _random.randf_range(streets.position.y, streets.end.y)))
 
 ## Whether a path along the navigation map from `from` ends at `to`.
 func reaches(from: Vector3, to: Vector3) -> bool:

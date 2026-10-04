@@ -108,7 +108,9 @@ extension needs none of godot-rust's thread-safety features.
   source triangles, the rest being their handover to Godot).
 
 The node times itself because Godot's `Performance.TIME_PROCESS` is the slowest frame of the last
-second, published once a second, not the last frame's time.
+second, published once a second, not the last frame's time. `last_frame_ms()`, on this node and on
+`WaveForgeStages`, gives the node's own time in its last frame alone, cheap enough for a script that
+measures to read every frame, which building all of `stats()` is not.
 
 ### Sound and surfaces
 
@@ -190,7 +192,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
 | | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view; empty, or a pack without water, draws none. Lakes above the sea level are not drawn |
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
-| | `far_ground_material_stage` | a Rules stage at `far_ground_stage`'s scale whose categories colour the far ground, each vertex by the coarse column under it: in the colour `ground_palette` gives the category of `ground_material_stage` of the same name, or in a colour of its own for a category that stage does not name. Give it the far ground's radius in `target_radii`. Empty to draw the far ground with `ground_material` alone |
+| | `far_ground_material_stage` | a Rules stage at `far_ground_stage`'s scale whose categories colour the far ground, each vertex by the coarse column under it: in the colour `ground_palette` gives the category of `ground_material_stage` of the same name, or in a colour of its own for a category that stage does not name. It has to be a target with the far ground's radius in `target_radii`, which `start` checks, since a far chunk is drawn only once its colours are there. Empty to draw the far ground with `ground_material` alone |
 | Volume | `volume_stage` | a Volume or Carve stage at scale 1 whose surface is drawn and collided with, for overhangs and caves ([packs.md](packs.md#volume)); empty for none |
 | | `volume_material` | the material the volume's surface is drawn with; empty for Godot's default, or for a stage with materials one that takes its albedo from the vertices' colours |
 | | `volume_budget_ms` | how long a frame may spend drawing volume surfaces, which are meshed on a thread of their own; one is drawn a frame whatever it costs (default 2 ms) |
@@ -368,7 +370,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   navigation regions), `navigation_baked`, the navigation bakes gone into their regions, and
   `stages`, each stage's cost on
   the stages' thread by name (`products`, `ms`, `slowest_ms`); `last_frame_ms`, the node's own time
-  in its last frame; and `volume_surfaces` and `volume_surfaces_ms`, the surfaces drawn so far and
+  in its last frame, which `last_frame_ms()` gives alone; and `volume_surfaces` and `volume_surfaces_ms`, the surfaces drawn so far and
   the milliseconds drawing them took on Godot's thread, fluid included; `pending_volumes` counts
   those due, those being meshed and those meshed and waiting to be drawn.
 
@@ -402,7 +404,8 @@ sound, or that name no fitting stage; `configuration_warnings()` gives the same 
 - `pack_file` is empty or not a pack;
 - a target names no stage, or a stage setting (`ground_stage`, `grass_stage`, `candidates_stage`,
   `ground_material_stage`, `far_ground_stage`, `far_ground_material_stage`, `fluid_stage`,
-  `volume_stage`) names no stage of the kind it needs, which `start` refuses with the same words.
+  `volume_stage`) names no stage of the kind it needs, or `far_ground_material_stage` is no target
+  with the far ground's radius, which `start` refuses with the same words.
 
 `WaveForgeStages`' inspector has three buttons: Start or regenerate, the same as `start`; Reroll
 seed, which takes a new `seed` at random and starts again if the node is running; and Bake the view,

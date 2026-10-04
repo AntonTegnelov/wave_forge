@@ -20,6 +20,9 @@ func _initialize() -> void:
 	scene = (load("res://continent.tscn") as PackedScene).instantiate()
 	stages = scene.get_node("Continent")
 	stages.targets = PackedStringArray(["towns"])
+	# Towns alone: no far ground, so no stage to colour it either.
+	stages.far_ground_stage = ""
+	stages.far_ground_material_stage = ""
 	stages.view_radius = 0
 	stages.collider_radius = -1
 	root.add_child(scene)
