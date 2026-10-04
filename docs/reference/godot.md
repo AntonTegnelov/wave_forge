@@ -53,8 +53,13 @@ extension needs none of godot-rust's thread-safety features.
   would lose or merge connectors is refused with an error and an empty result.
   `mesh_library_from_scenes(directory)` makes a `MeshLibrary` of a kit that comes as a folder of
   scenes: an item per `.tscn`, `.scn`, `.glb` or `.gltf` file, named as the file, whose mesh is
-  every `MeshInstance3D` of the scene merged where the scene places them. The dock's kit import does
-  all three ([Editor](#editor)).
+  every `MeshInstance3D` of the scene merged where the scene places them, and whose shapes are the
+  `CollisionShape3D`s under its `StaticBody3D`s, where it places them, as Godot 4.8's
+  scene-to-MeshLibrary import takes them. The dock's kit import does all three ([Editor](#editor)).
+  `set_collision_shapes(library)`, on both nodes, gives every module the collider of its item's
+  shapes in the kit's library: an item's only shape if it has one at no offset, or else all of them
+  as one concave shape, where a `GridMap` would place them in the cell; a module whose item has no
+  shapes keeps what it has.
 - **The prior:** `set_layer_tiles(layers)`, `ban_tiles_on_face(axis, tiles)`.
 - **Streaming:** `follow(position)` asks for the chunks around a position in Godot's world space;
   `generated_chunks()`.
