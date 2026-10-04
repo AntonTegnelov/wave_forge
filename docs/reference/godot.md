@@ -108,7 +108,9 @@ extension needs none of godot-rust's thread-safety features.
   source triangles, the rest being their handover to Godot).
 
 The node times itself because Godot's `Performance.TIME_PROCESS` is the slowest frame of the last
-second, published once a second, not the last frame's time.
+second, published once a second, not the last frame's time. `last_frame_ms()`, on this node and on
+`WaveForgeStages`, gives the node's own time in its last frame alone, cheap enough for a script that
+measures to read every frame, which building all of `stats()` is not.
 
 ### Sound and surfaces
 
@@ -368,7 +370,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   navigation regions), `navigation_baked`, the navigation bakes gone into their regions, and
   `stages`, each stage's cost on
   the stages' thread by name (`products`, `ms`, `slowest_ms`); `last_frame_ms`, the node's own time
-  in its last frame; and `volume_surfaces` and `volume_surfaces_ms`, the surfaces drawn so far and
+  in its last frame, which `last_frame_ms()` gives alone; and `volume_surfaces` and `volume_surfaces_ms`, the surfaces drawn so far and
   the milliseconds drawing them took on Godot's thread, fluid included; `pending_volumes` counts
   those due, those being meshed and those meshed and waiting to be drawn.
 

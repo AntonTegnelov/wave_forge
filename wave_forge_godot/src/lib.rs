@@ -268,6 +268,8 @@ pub struct WaveForgeWorld {
     /// Milliseconds of Godot's thread that `process` took on each recent frame, and what the
     /// slowest frame since the start spent its time on.
     process_ms: Timings,
+    /// Milliseconds of Godot's thread that the last frame's `process` took.
+    last_frame_ms: f64,
     slowest_frame: FrameCost,
     /// How many navigation bakes have finished, the milliseconds from asking for each recent one to
     /// its mesh being in place, and the milliseconds of Godot's thread each took to prepare and
@@ -361,6 +363,7 @@ impl INode for WaveForgeWorld {
             navigation: HashMap::new(),
             shape_faces: HashMap::new(),
             process_ms: Timings::new(RECENT_FRAMES),
+            last_frame_ms: 0.0,
             slowest_frame: FrameCost::default(),
             baked: 0,
             bake_ms: Timings::new(RECENT_BAKES),
@@ -463,6 +466,7 @@ impl INode for WaveForgeWorld {
         self.update_proxies(&updated);
         frame.ms = elapsed_ms(processing);
         self.process_ms.push(frame.ms);
+        self.last_frame_ms = frame.ms;
         if frame.ms > self.slowest_frame.ms {
             self.slowest_frame = frame;
         }
@@ -1052,6 +1056,13 @@ impl WaveForgeWorld {
                 .collect(),
             None => Array::new(),
         }
+    }
+
+    /// The milliseconds of Godot's thread the node's last frame took, cheap enough for a script to
+    /// read every frame, which building all of `stats()` is not.
+    #[func]
+    fn last_frame_ms(&self) -> f64 {
+        self.last_frame_ms
     }
 
     /// What generation has cost so far: `batches`, `solved`, `repaired`, `rewritten_by_repair`,

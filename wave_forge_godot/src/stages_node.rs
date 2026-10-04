@@ -2825,6 +2825,13 @@ impl WaveForgeStages {
         out
     }
 
+    /// The milliseconds of Godot's thread the node's last frame took, cheap enough for a script to
+    /// read every frame, which building all of `stats()` is not.
+    #[func]
+    fn last_frame_ms(&self) -> f64 {
+        self.last_frame_ms
+    }
+
     /// What the node has cost Godot's thread: `process_ms_median`, `_p99` and `_max` over recent
     /// frames, once there are some; and what its slowest frame since the start spent the time on:
     /// `slowest_frame_ms` in all, `slowest_frame_events` signals emitted in

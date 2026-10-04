@@ -60,9 +60,9 @@ func _initialize() -> void:
 
 func _process(delta: float) -> bool:
 	var now := Time.get_ticks_usec()
-	var stats: Dictionary = world.stats()
 	match phase:
 		"load":
+			var stats: Dictionary = world.stats()
 			if (now - started_usec) / 1e6 > LOAD_TIMEOUT_S:
 				_fail("the view was not built in %d s" % LOAD_TIMEOUT_S)
 				return true
@@ -74,12 +74,12 @@ func _process(delta: float) -> bool:
 				last_usec = now
 		"walk":
 			frames.append((now - last_usec) / 1000.0)
-			node_frames.append(stats["last_frame_ms"])
+			node_frames.append(world.last_frame_ms())
 			last_usec = now
 			walker.x += speed * delta
 			world.follow(walker)
 			if (now - started_usec) / 1e6 >= seconds:
-				_report(stats)
+				_report(world.stats())
 				quit(0)
 				return true
 	return false

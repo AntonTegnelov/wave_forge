@@ -5,15 +5,16 @@
 ##     godot --path . --rendering-driver vulkan --script measure_city.gd -- --speed 4.2 --seconds 20 --out results.txt
 ## Each chunk is drawn one of two ways, named by `--draw`, and freed when the chunk is dropped:
 ## - `multimesh` (the default): one RenderingServer MultiMesh per module, from `instance_sets`;
-## - `merged`: one mesh per chunk, a surface per module holding every instance's copy of the
-##   module's model where `instance_sets` puts it, built with SurfaceTool, under one instance.
+## - `merged`: one mesh per chunk, a surface per module and surface of its model holding every
+##   instance's copy of it where `instance_sets` puts it, in that surface's material, built with
+##   SurfaceTool, under one instance.
 ## A camera follows the walker and a sun casts shadows; vsync is off.
 ## Once the first view is drawn it measures two phases of `--seconds` each: `idle`, standing still
 ## with nothing to generate, which is the cost of drawing alone, and `streaming`, walking along +x at
 ## `--speed` units a second. Each prints one line of `key=value` fields (frames, median, 99th
-## percentile and slowest frame in milliseconds, chunks drawn, the node's own process time at the
-## 99th percentile, and how long drawing a chunk took Godot's thread, at the median and at worst),
-## appended to `--out` as well when it is given. The two ways of drawing are #203's choice.
+## percentile and slowest frame in milliseconds, chunks drawn, the node's own time per frame of the
+## phase at the median, the 99th percentile and its slowest, and how long drawing a chunk took
+## Godot's thread, at the median and at worst), appended to `--out` as well when it is given.
 extends SceneTree
 
 const CELLS := 8
@@ -36,6 +37,8 @@ var walker := Vector3.ZERO
 var phase_started_usec := 0
 var last_usec := 0
 var frames := PackedFloat64Array()
+## The node's own milliseconds on Godot's thread in each frame of the phase.
+var node_frames := PackedFloat64Array()
 var drawn := 0
 ## How this run draws a chunk: "multimesh" or "merged".
 var draw := "multimesh"
@@ -159,26 +162,27 @@ func _multimeshes(sets: Array, scenario: RID) -> Array:
 		rids.append(multimesh)
 	return rids
 
-## A chunk's instance sets as one mesh, a surface per module holding a copy of the module's model
-## at each of its instances, under one RenderingServer instance: the RIDs to free. The mesh is kept
-## alive by the RIDs' owner, the ArrayMesh in `merged_meshes`.
+## A chunk's instance sets as one mesh, a surface per module and surface of its model holding a
+## copy of that surface at each of its instances, in the surface's material, under one
+## RenderingServer instance: the RIDs to free. The mesh is kept alive by the RIDs' owner, the
+## ArrayMesh in `merged_meshes`.
 func _merged(sets: Array, scenario: RID) -> Array:
 	var mesh := ArrayMesh.new()
 	for set: Dictionary in sets:
 		var model := _model(set["name"])
 		var transforms: PackedFloat32Array = set["transforms"]
-		var tool := SurfaceTool.new()
-		tool.begin(Mesh.PRIMITIVE_TRIANGLES)
-		for i in range(0, transforms.size(), 12):
-			var at := Transform3D(
-				Vector3(transforms[i], transforms[i + 4], transforms[i + 8]),
-				Vector3(transforms[i + 1], transforms[i + 5], transforms[i + 9]),
-				Vector3(transforms[i + 2], transforms[i + 6], transforms[i + 10]),
-				Vector3(transforms[i + 3], transforms[i + 7], transforms[i + 11]))
-			for surface in model.get_surface_count():
+		for surface in model.get_surface_count():
+			var tool := SurfaceTool.new()
+			tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+			for i in range(0, transforms.size(), 12):
+				var at := Transform3D(
+					Vector3(transforms[i], transforms[i + 4], transforms[i + 8]),
+					Vector3(transforms[i + 1], transforms[i + 5], transforms[i + 9]),
+					Vector3(transforms[i + 2], transforms[i + 6], transforms[i + 10]),
+					Vector3(transforms[i + 3], transforms[i + 7], transforms[i + 11]))
 				tool.append_from(model, surface, at)
-		tool.set_material(model.surface_get_material(0))
-		tool.commit(mesh)
+			tool.set_material(model.surface_get_material(surface))
+			tool.commit(mesh)
 	var instance := RenderingServer.instance_create2(mesh.get_rid(), scenario)
 	merged_meshes[instance] = mesh
 	return [instance]
@@ -212,11 +216,13 @@ func _process(_delta: float) -> bool:
 				_start("idle")
 		"idle":
 			frames.append(frame_ms)
+			node_frames.append(world.last_frame_ms())
 			if elapsed >= seconds:
 				_report("idle")
 				_start("streaming")
 		"streaming":
 			frames.append(frame_ms)
+			node_frames.append(world.last_frame_ms())
 			walker.x += speed * frame_ms / 1000.0
 			world.follow(walker)
 			_follow_camera()
@@ -231,6 +237,7 @@ func _process(_delta: float) -> bool:
 func _start(next: String) -> void:
 	phase = next
 	frames = PackedFloat64Array()
+	node_frames = PackedFloat64Array()
 	drawn = 0
 	draw_ms = PackedFloat64Array()
 	phase_started_usec = Time.get_ticks_usec()
@@ -239,15 +246,17 @@ func _report(name: String) -> void:
 	var sorted := frames.duplicate()
 	sorted.sort()
 	var at := func(fraction: float) -> float: return sorted[roundi((sorted.size() - 1) * fraction)]
-	var stats: Dictionary = world.stats()
+	var node := node_frames.duplicate()
+	node.sort()
+	var node_at := func(fraction: float) -> float: return node[roundi((node.size() - 1) * fraction)]
 	var drawing := draw_ms.duplicate()
 	drawing.sort()
 	var draw_p50 := drawing[drawing.size() / 2] if not drawing.is_empty() else 0.0
 	var draw_max := drawing[drawing.size() - 1] if not drawing.is_empty() else 0.0
-	var line := "measure_city adapter=\"%s\" driver=%s method=%s draw=%s speed=%s phase=%s frames=%d p50_ms=%.2f p99_ms=%.2f max_ms=%.2f chunks=%d node_p99_ms=%.2f draw_p50_ms=%.3f draw_max_ms=%.3f" % [
+	var line := "measure_city adapter=\"%s\" driver=%s method=%s draw=%s speed=%s phase=%s frames=%d p50_ms=%.2f p99_ms=%.2f max_ms=%.2f chunks=%d node_p50_ms=%.3f node_p99_ms=%.2f node_max_ms=%.2f draw_p50_ms=%.3f draw_max_ms=%.3f" % [
 		RenderingServer.get_video_adapter_name(), RenderingServer.get_current_rendering_driver_name(),
 		RenderingServer.get_current_rendering_method(), draw, speed, name, sorted.size(), at.call(0.5), at.call(0.99),
-		sorted[sorted.size() - 1], drawn, stats.get("process_ms_p99", -1.0), draw_p50, draw_max]
+		sorted[sorted.size() - 1], drawn, node_at.call(0.5), node_at.call(0.99), node_at.call(1.0), draw_p50, draw_max]
 	print(line)
 	if out != "":
 		var file := FileAccess.open(out, FileAccess.READ_WRITE) if FileAccess.file_exists(out) else FileAccess.open(out, FileAccess.WRITE)

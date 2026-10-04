@@ -282,7 +282,7 @@ foreach ($api in $Apis) {
     }
     $renderer = @("--rendering-driver", $api, "--rendering-method", "forward_plus")
     if ($Only -contains "godot") {
-        # Each chunk drawn as a MultiMesh per module, and as one merged mesh (#203).
+        # Each chunk drawn as a MultiMesh per module, and as one merged mesh.
         foreach ($draw in @("multimesh", "merged")) {
             foreach ($speed in @("4.2", "30")) {
                 [void](Invoke-Logged "godot-city-$api-$draw-$speed" $Godot (@("--path", $GodotProject) + $renderer + @(
