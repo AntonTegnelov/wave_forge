@@ -134,6 +134,11 @@ pub struct PlaceName {
     pub args: Vec<(&'static str, i64)>,
 }
 
+/// The translation key of a place of `kind`, as [`PlaceName::key`] gives it.
+pub(crate) fn place_key(kind: &str) -> String {
+    format!("wf-place-{}", kind.replace('_', "-"))
+}
+
 impl Site {
     /// The site's name, for a site a location table placed; a Sites or TableSites stage's site
     /// has none, and a row's name is the game's.
@@ -144,7 +149,7 @@ impl Site {
         };
         let kind = self.kind.as_deref()?;
         Some(PlaceName {
-            key: format!("wf-place-{}", kind.replace('_', "-")),
+            key: place_key(kind),
             args: vec![
                 ("region_x", i64::from(region.0)),
                 ("region_y", i64::from(region.1)),

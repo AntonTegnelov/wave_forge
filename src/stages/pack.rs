@@ -3146,6 +3146,24 @@ impl Pack {
         self.water.as_ref()
     }
 
+    /// Every translation key a site of the pack can be named by ([`crate::stages::PlaceName`]), one
+    /// per kind of its location tables, sorted: what a translator needs to name every place the pack
+    /// makes. A kind two tables share gives one key.
+    #[must_use]
+    pub fn name_keys(&self) -> Vec<String> {
+        let keys: BTreeSet<String> = self
+            .stages
+            .iter()
+            .filter_map(|stage| match &stage.kind {
+                StageKind::Locations { kinds, .. } => Some(kinds),
+                _ => None,
+            })
+            .flatten()
+            .map(|kind| crate::stages::runtime::place_key(&kind.name))
+            .collect();
+        keys.into_iter().collect()
+    }
+
     /// The scale `stage` works at, in WFC cells per column.
     #[must_use]
     pub fn scale(&self, stage: &str) -> Option<u32> {

@@ -1964,6 +1964,21 @@ impl WaveForgeStages {
         })
     }
 
+    /// Every translation key a site of the pack `text` can be named by, sorted: `wf-place-<kind>`
+    /// for each kind of its location tables, which a game translates in the `wave_forge` context
+    /// (docs/reference/godot.md, "Place names in translation templates"). Empty, with the library's
+    /// reason as an error, if `text` is no valid pack.
+    #[func]
+    fn pack_name_keys(text: GString) -> PackedStringArray {
+        match Pack::parse(&text.to_string()) {
+            Ok(pack) => pack.name_keys().iter().map(GString::from).collect(),
+            Err(error) => {
+                godot_error!("wave forge: not a pack: {error}");
+                PackedStringArray::new()
+            }
+        }
+    }
+
     /// The text of the pack `data` holds, in the shape `pack_dictionary` gives, written as a pack
     /// file is: what a stack of stages edited in the editor saves. A whole number may be an int or
     /// a float. Empty, with the reason as an error, where `data` holds something no pack holds,

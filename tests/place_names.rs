@@ -79,3 +79,59 @@ fn a_kind_whose_name_cannot_be_a_key_is_refused() {
         );
     }
 }
+
+#[test]
+fn a_pack_lists_every_name_key_its_sites_can_be_given() {
+    let pack = Pack::parse(
+        r#"(
+        version: 1,
+        stages: [
+            (name: "ground", kind: Field(Constant(4.0))),
+            (name: "places", kind: Locations(height: "ground", region: 4, kinds: [
+                (name: "stone_circle", quota: 2, tries: 20),
+                (name: "old-well", quota: 1, tries: 20),
+            ])),
+            (name: "shrines", kind: Locations(height: "ground", region: 6, kinds: [
+                (name: "stone_circle", quota: 1, tries: 20),
+                (name: "altar", quota: 1, tries: 20),
+            ])),
+            (name: "towns", kind: Sites(height: "ground", region: 4, size: (1, 1), chance: 1.0)),
+        ],
+    )"#,
+    )
+    .expect("a valid pack");
+    let mut runtime = Runtime::new(Arc::new(pack.clone()), 5, [8, 8]);
+    let area: Vec<ChunkCoord> = (0..8)
+        .flat_map(|y| (0..8).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<FocusPoint> = area
+        .iter()
+        .map(|&chunk| FocusPoint::new(chunk, 0))
+        .collect();
+    runtime
+        .request(&focus, &["places", "shrines"])
+        .expect("stages");
+    runtime.run_until_idle().expect("the stages run");
+
+    let keys = pack.name_keys();
+
+    assert_eq!(
+        keys,
+        [
+            "wf-place-altar",
+            "wf-place-old-well",
+            "wf-place-stone-circle"
+        ]
+    );
+    let mut named = 0;
+    for stage in ["places", "shrines"] {
+        for &chunk in &area {
+            for site in runtime.sites(stage, chunk).expect("generated") {
+                let name = site.name().expect("a location has a name");
+                assert!(keys.contains(&name.key), "{} is not listed", name.key);
+                named += 1;
+            }
+        }
+    }
+    assert!(named > 4, "only {named} sites named");
+}
