@@ -17,12 +17,16 @@ rules_files = {
 "jungle_folk": "res://continent/cultures/jungle_folk.ron",
 "frostfolk": "res://continent/cultures/frostfolk.ron"
 }
-targets = PackedStringArray("ground", "biome", "rock", "lakes", "towns", "places", "settlements", "boulders", "stone_piles", "tide_rocks", "ice_blocks", "oaks", "beeches", "birch_groves", "pines", "spruces", "firs", "larches", "willows", "cypresses", "mangrove_trees", "palms", "date_palms", "acacias", "baobabs", "jungle_giants", "cloud_trees", "tree_ferns", "bamboo_stands", "bottle_trees", "hazels", "brambles", "junipers", "heather_bushes", "sagebrush", "creosote_bushes", "fern_clumps", "bog_myrtles", "dwarf_willows", "thornbushes", "berry_bushes", "saltbushes", "agaves", "cacti", "grass_tufts", "tall_grass", "wildflowers", "poppies", "lupines", "cotton_grass", "moss_patches", "lichen_patches", "mushrooms", "dune_grass", "fallen_logs", "stumps", "driftwood", "shells", "bones", "termite_mounds", "snow_drifts", "reeds", "cattails", "lily_pads", "kelp", "coral", "crypt_dungeon", "mine_tunnels", "castle_grounds", "monastery_cloister", "market_quarter", "harbour_front", "frost_hold", "ziggurat_halls", "ruined_courts", "drowned_halls", "cliff_rooms", "coal", "iron", "copper", "gold")
+targets = PackedStringArray("ground", "biome", "rock", "lakes", "towns", "places", "settlements", "boulders", "stone_piles", "tide_rocks", "ice_blocks", "oaks", "beeches", "birch_groves", "pines", "spruces", "firs", "larches", "willows", "cypresses", "mangrove_trees", "palms", "date_palms", "acacias", "baobabs", "jungle_giants", "cloud_trees", "tree_ferns", "bamboo_stands", "bottle_trees", "hazels", "brambles", "junipers", "heather_bushes", "sagebrush", "creosote_bushes", "fern_clumps", "bog_myrtles", "dwarf_willows", "thornbushes", "berry_bushes", "saltbushes", "agaves", "cacti", "grass_tufts", "tall_grass", "wildflowers", "poppies", "lupines", "cotton_grass", "moss_patches", "lichen_patches", "mushrooms", "dune_grass", "fallen_logs", "stumps", "driftwood", "shells", "bones", "termite_mounds", "snow_drifts", "reeds", "cattails", "lily_pads", "kelp", "coral", "crypt_dungeon", "mine_tunnels", "castle_grounds", "monastery_cloister", "market_quarter", "harbour_front", "frost_hold", "ziggurat_halls", "ruined_courts", "drowned_halls", "cliff_rooms", "coal", "iron", "copper", "gold", "far_height")
 seed = 11
 chunk_cells = Vector3i(8, 8, 6)
 cell_size = Vector3(2, 2, 2)
 view_radius = 4
+target_radii = Dictionary[StringName, int]({
+&"far_height": 32
+})
 ground_stage = "ground"
+far_ground_stage = "far_height"
 ground_material_stage = "biome"
 volume_stage = "rock"
 collider_radius = 1

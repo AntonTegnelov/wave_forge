@@ -10,6 +10,7 @@
 //! bytes whether the run went at once or in pieces.
 
 use super::codec;
+use super::pack::Pack;
 use super::runtime::{Runtime, StageError, StageTiming};
 use crate::FocusPoint;
 use crate::frozen::{FrozenStore, StoreError};
@@ -48,7 +49,8 @@ impl Runtime {
     /// block at a time: square blocks as wide as the pack's largest regions and aligned with them,
     /// row by row, each asked for whole, so a region's inputs are generated once. It keeps each
     /// chunk's product of each target in `store`, as a frozen chunk is kept, under the stage's
-    /// name, as soon as its block is done. A chunk whose every target the store already holds is
+    /// name, as soon as its block is done; for a coarser target, the product of its chunk that
+    /// covers the chunk. A chunk whose every target the store already holds is
     /// skipped. After each chunk, and every second while a block generates, `progress` is told
     /// how far the run has got, and the run stops if it breaks: a block of a large world takes
     /// minutes.
@@ -124,7 +126,7 @@ impl Runtime {
                     let mut products = others.remove(&chunk).unwrap_or_default();
                     for &target in targets {
                         let product = self
-                            .product(target, chunk)
+                            .product(target, covering(self.pack(), target, chunk))
                             .expect("a target is generated over the chunk it was asked for");
                         products.push((target.to_owned(), codec::encode(product)));
                     }
@@ -145,6 +147,30 @@ impl Runtime {
         }
         Ok(state)
     }
+}
+
+/// The chunk of `target` that covers `chunk` of the WFC lattice: the same chunk at scale 1, the
+/// coarser chunk it lies in at a coarser scale.
+fn covering(pack: &Pack, target: &str, chunk: ChunkCoord) -> ChunkCoord {
+    let scale = pack.scale(target).expect("a target the pack names") as i32;
+    ChunkCoord::new(chunk.x.div_euclid(scale), chunk.y.div_euclid(scale), 0)
+}
+
+/// The chunk of the WFC lattice whose entry a world run kept `chunk` of a stage of `scale` in: the
+/// same chunk at scale 1; at a coarser scale the first chunk it covers, row by row, that lies in
+/// the world's bound, since every chunk it covers holds it ([`Runtime::run_world`]).
+pub(crate) fn entry_of(pack: &Pack, scale: u32, chunk: ChunkCoord, size: [u32; 2]) -> ChunkCoord {
+    let scale = scale as i32;
+    let [sx, sy] = size.map(|side| side as f32);
+    (0..scale)
+        .flat_map(|y| (0..scale).map(move |x| (x, y)))
+        .map(|(x, y)| ChunkCoord::new(chunk.x * scale + x, chunk.y * scale + y, 0))
+        .find(|fine| {
+            let min = [fine.x as f32 * sx, fine.y as f32 * sy];
+            pack.bound()
+                .is_none_or(|bound| bound.meets(min, [min[0] + sx, min[1] + sy]))
+        })
+        .expect("a chunk in the bound covers chunks in it")
 }
 
 /// What a store holds of a world run's targets at one chunk ([`held`]).

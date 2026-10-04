@@ -637,8 +637,9 @@ table of 33 kinds with quotas and spacing whose footprints are levelled and join
 history of settlements of eight cultures that a game gives as a table of facts, each levelled into
 the ground with a town of its culture, each culture a WFC module set of 61 modules
 (`examples/continent/cultures`), 209 Assemble pieces in eleven stages of dungeons and buildings
-grown on the larger places, and 59 stages of vegetation and clutter by rule chains, 102 stages in
-all, in chunks of 8 by 8 columns
+grown on the larger places, 59 stages of vegetation and clutter by rule chains, and a coarse height
+an engine draws its far ground from, out to 2 km in `continent.tscn`, 104 stages in all, in chunks
+of 8 by 8 columns
 (`wfc-devtools/tests/continent.rs` and `cultures.rs`, [measurements.md](../research/measurements.md)
 L34 to L41). The whole continent runs ahead of time in 526 s in the dev container, into 0.61 GB
 kept as compressed binary, an entry per chunk (L47). In Godot the preset is a scene set up for the dock's World
@@ -646,8 +647,11 @@ run, `continent.tscn`, whose script gives the node the history; the first settle
 of its culture's module set in 25 to 31 s (`verify_continent.gd`, L44). Baked from that scene
 through the node's world run, the whole continent takes 579 s in the dev container, holds at most
 1.86 GB, and fills 65 536 files of 729 MB on disk; a bake stopped and resumed gives the same bytes
-as one made at once, and it quits cleanly part way or after (L45, L47). The desktop numbers are the
-owner's run of `tools/measure_desktop.ps1`.
+as one made at once, and it quits cleanly part way or after (L45, L47). With its far ground the
+bake takes 628 s and holds at most 1.87 GB, and the baked world plays walking and flying at 1080p
+with no stage run (`measure_world_run.gd`, `measure_playback.gd`, L48). The desktop numbers, the
+bake's time and the playback's frame times and memory against the bars above, are the owner's run
+of `tools/measure_desktop.ps1`.
 
 ### M2. Generate a maximal world once before play
 

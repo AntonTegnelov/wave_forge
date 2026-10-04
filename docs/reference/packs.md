@@ -224,7 +224,10 @@ chunk of the pack's bound (`Runtime::bound_chunks`), a block at a time: square b
 pack's largest regions and aligned with them, each asked for whole, so a region's inputs are
 generated once, not once for each row of chunks that crosses it. It keeps each chunk's products of
 its targets in the store the moment its block is done, together in one entry under the layer
-`world run`, each product as a frozen chunk is kept. A world is then a file per chunk in a
+`world run`, each product as a frozen chunk is kept. A target of a coarser scale, such as the height
+a far ground is drawn from, has its chunk that covers the chunk kept in that entry, so each of its
+chunks is in the entry of every chunk it covers, and playback reads it from the first of those in
+the bound. A world is then a file per chunk in a
 `DirectoryStore`, not one per chunk and target, since every file rounds up to a filesystem block
 ([measurements.md](../research/measurements.md) L47). No stage may be named `world run`
 (`PackError::Invalid`). So the runtime
