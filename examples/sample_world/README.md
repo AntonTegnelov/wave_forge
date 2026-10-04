@@ -35,6 +35,8 @@ user folder.
   trees read ([godot.md](../../docs/reference/godot.md#wind)); set it from a script with
   `RenderingServer.global_shader_parameter_set`.
 - `check.gd` checks all of this headless: `godot --headless --path . --script check.gd`.
+- `measure.gd` walks into the city at 4.2 m/s and prints the frame times, for the desktop
+  measurements ([desktop-measurements.md](../../docs/guides/desktop-measurements.md)).
 
 ## Making a trailer in an hour
 
