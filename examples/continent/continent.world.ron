@@ -57,6 +57,21 @@
                 ),
             ),
         ))),
+        // The height a view of the continent out to 2 km stands on beyond the near ground, which an
+        // engine draws its far ground from (docs/reference/packs.md, "Far ground"): the height's
+        // coarse terms, the ridges at their mean and the hills left out, and above 70 cells the peaks
+        // raised as their biomes raise them.
+        (name: "coarse_height", scale: 4, kind: Field(Add(
+            Mul(Input("base"), Constant(40.0)),
+            Mul(
+                Clamp(Mul(Input("base"), Constant(8.0)), 0.0, 1.0),
+                Add(Mul(Input("ranges"), Constant(47.5)), Input("plateaus")),
+            ),
+        ))),
+        (name: "far_height", scale: 4, kind: Field(Max(
+            Input("coarse_height"),
+            Add(Constant(70.0), Mul(Sub(Input("coarse_height"), Constant(70.0)), Constant(1.7))),
+        ))),
         // Temperature: warm in the south, cold in the north, with a noise of a fifth either way,
         // and colder higher up.
         (name: "temperature", kind: Field(Sub(
