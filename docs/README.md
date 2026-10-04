@@ -84,6 +84,7 @@ Each topic has one home; other documents link to it rather than repeating it.
 | [measurements.md](research/measurements.md) | every measurement with its protocol, by era |
 | [literature.md](research/literature.md) | the solver and WFC literature we rely on or tested |
 | [worldgen-survey.md](research/worldgen-survey.md) | how engines, libraries and eight games structure generation |
+| [terrain-look.md](research/terrain-look.md) | the terrain's look against modern generators, and the order of work to close the gap |
 | [per-collapse-solver.md](research/per-collapse-solver.md) | the solver that was replaced: what it measured, what was refuted, what carried over |
 
 The dev container's setup and operations are in [.devcontainer/README.md](../.devcontainer/README.md).
