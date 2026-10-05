@@ -66,6 +66,12 @@ The Bevy plugin and Godot GDExtension wrap the library. Both exist; what is left
 ## Non-goals
 
 - **No CPU fallback.** A GPU (Vulkan, Metal or DirectX 12) is a hard requirement. The games this is built for always have one, and maintaining a second, CPU-only solver would double the work while hiding GPU performance problems behind a slower path that still "works". CPU threads and SIMD remain *performance tiers* for work that is faster on the CPU, not substitutes for a missing GPU. The stage runtime runs its fields and scatter on the CPU today for exactly that reason: it is where they are fast enough so far, while WFC, the part that needs it, runs on the GPU.
+- **Nothing beyond terrain generation.** Wave Forge generates terrain and what the generator
+  places on it, and hands it to the engines drawable, collidable and navigable. Everything else a
+  game shows or plays is the game's: atmosphere (sky, lighting, fog, a day and night), sound,
+  player controllers, characters and their behaviour, game interfaces and localisation. The three
+  showcase games built on Wave Forge do those and provide its marketing material (the owner's
+  direction, 2026-10-05).
 - **Not a game engine or renderer.** Wave Forge never draws anything or owns an engine object. The library produces render-, physics-, navigation- and gameplay-ready data (instance sets, meshes with levels of detail, colliders, navigation source geometry, spawn points); the integrations map that data onto each engine's own systems and ship reference materials and shaders ([engine-integration.md](../architecture/engine-integration.md)). Any rendering in this repository itself (PNG exports, orthographic views) is **developer tooling** to inspect results.
 - **Not a standalone editor.** Authoring tools (preview, brushes, baking a region as a starting point for handcrafted work) live inside the engines' own editors, and their logic lives in the library. The product is still the runtime generator.
 - **No web target.** Web exports have no GPU compute path (Godot's is WebGL 2 only), and there is no CPU fallback.

@@ -1,8 +1,9 @@
 # The terrain's look against modern generators
 
 How Wave Forge's generated terrain compares with three references the owner named on 2026-10-04,
-what it lacks, and the order of work to close the gap. The work is issues #321 to #329; this page
-is why they are what they are.
+what it lacks, and the order of work to close the gap. The work is issues #322 to #329; this page
+is why they are what they are. Only the terrain is compared: a scene's atmosphere, its lighting and
+fog, is the games' ([vision.md](../product/vision.md#non-goals)).
 
 ## The references
 
@@ -74,8 +75,6 @@ erosion suits finite maps generated once.
   vertex, blended bilinearly, with constant roughness and per-vertex normals: no textures, no detail
   normal, no slope logic in the fragment, no height blending, no macro variation. Material borders
   follow the 2 m grid as blurred staircases. The far ground is coloured by coarse biomes (#314).
-- **Atmosphere.** The examples have a procedural sky, filmic tonemapping and a shadowed sun; no fog
-  anywhere, so every contact sheet ends at a hard horizon.
 - **Water surfaces.** The sea only; lakes and rivers are not drawn.
 - **Vegetation.** Scatter as MultiMeshes in a global wind, grass from a cover field within one
   chunk by default.
@@ -87,21 +86,18 @@ erosion suits finite maps generated once.
    (rock by the fragment's slope, transitions broken by noise and height, macro variation, a detail
    normal, strata) needs no assets; an optional textured path after it needs a decision on assets.
    Both shaders, Godot's and Bevy's, have to keep in step, and on Compatibility too.
-2. **Atmosphere** (#321). Fog is the cheapest depth cue and hides the near-to-far step and the hard
-   horizon. It ships as a reference environment the presets and examples use, since the node adds
-   nothing to a scene by itself.
-3. **Shape primitives** (#324). Warped, ridged gradient noise instead of axis-aligned value noise
+2. **Shape primitives** (#324). Warped, ridged gradient noise instead of axis-aligned value noise
    folded once. The noises exist already; the packs do not use them.
-4. **Local erosion** (#325). Branching gullies are what make the references read as terrain. A
+3. **Local erosion** (#325). Branching gullies are what make the references read as terrain. A
    filter that evaluates each point from the input's smoothed gradient is deterministic and seamless
    in chunks with a bounded reach, which a simulation is not. It is the largest shape change that
    still fits infinite worlds. It does not give true drainage.
-5. **Shading channels** (#326). Cavity, curvature and wetness from field stages, passed to the
+4. **Shading channels** (#326). Cavity, curvature and wetness from field stages, passed to the
    shader beside the material ids.
-6. **Far ground fidelity** (#327). Ridges in the coarse height, finer far normals, and a grass
+5. **Far ground fidelity** (#327). Ridges in the coarse height, finer far normals, and a grass
    hand-off, for P2's 2 km view.
-7. **Water surfaces** (#328). Lakes and rivers drawn, so carved channels stop reading as dry pits.
-8. **Erosion for finite worlds** (#329). A region job of droplets, then transport, for real
+6. **Water surfaces** (#328). Lakes and rivers drawn, so carved channels stop reading as dry pits.
+7. **Erosion for finite worlds** (#329). A region job of droplets, then transport, for real
    drainage on worlds run ahead of time. The largest item, and the one that pays off only on finite
    worlds; its time competes with M1's 10 minutes, already exceeded on the desktop (#319).
 
