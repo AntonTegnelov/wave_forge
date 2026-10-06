@@ -307,15 +307,17 @@ crystal and enemies (`verify_cave_scenes.gd`, `wave_forge_bevy/tests/stages.rs`)
 These stories are about staying intuitive: defaults that look good, few words to learn, and a tool
 that explains itself. Where a story says "without code", adding code must not be the fix.
 
-### N1. Press play and walk a world
+### N1. Press play and see a world
 
-*Someone new to Godot drags the Wave Forge node into a scene, presses play and walks a good-looking
-world, without code.*
+*Someone new to Godot drags the Wave Forge node into a scene with a camera, presses play and sees a
+good-looking world come in around the camera, without code, ready for a player of their own.*
 
-**Acceptance criteria.** A new project with the node and its default preset shows a lit, textured,
-walkable world with colliders and navigation on the first play; no error or warning in the output;
-the node's inspector shows three to six parameters. Needs a person: five people new to the plugin
-reach a walkable world in under five minutes, timed. **Needs.** Tier 0 presets, Emit, the defaults.
+**Acceptance criteria.** A new project with the node, its default preset and a camera shows a
+textured world around the camera on the first play, with colliders and navigation a game's player
+can use; no error or warning in the output; the node's inspector shows three to six parameters.
+Needs a person: five people new to the plugin reach a generated world in under five minutes, timed.
+The player itself, and the scene's light, are the game's
+([vision.md](vision.md#non-goals)). **Needs.** Tier 0 presets, Emit, the defaults.
 **Status:** in progress (2026-10-03). The node warns in the editor of a scene with no light or
 environment, which the owner chose over the node adding them itself (#48), and of settings that
 would leave the world without bodies or name no fitting stage, and has inspector buttons to start or
@@ -324,8 +326,9 @@ regenerate, reroll the seed and bake the view (`verify_inspector.gd`,
 takes the default preset, islands: its ground with sand, grass and rock, its sea, trees bound to the
 plugin's built-in tree, bodies and navigation; given to a fresh node in a lit scene, it starts on its
 own, stands that world and prints no error or warning (`verify_presets.gd`). The node follows the camera
-with no code, and the plugin's walker walks the default preset, standing on its ground, with nothing
-printed (`verify_walk.gd`). Left: the timed walkthrough with five newcomers, near the release
+with no code, and a walker standing in for a game's player (the checks' own, `walker.tscn` in the
+verification project) walks the default preset, standing on its ground, with nothing printed
+(`verify_walk.gd`). Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 
 ### N2. Pick a preset and tweak it with a live preview

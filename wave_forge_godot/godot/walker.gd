@@ -1,7 +1,7 @@
 extends CharacterBody3D
-## A first-person walker to stand in a generated world and walk it with no code (N1): drop
-## `walker.tscn` into a scene with a WaveForgeStages node, whose `follow_camera` then follows its
-## camera. It holds still until the ground and its body are there under it, so it never falls
+## A first-person walker for the checks and examples to stand in a generated world (developer
+## tooling, not part of the addon: a game brings its own player): drop `walker.tscn` into a scene
+## with a WaveForgeStages node, whose `follow_camera` then follows its camera. It holds still until the ground and its body are there under it, so it never falls
 ## through a world still generating, and then stands on the ground. WASD or the arrow keys walk,
 ## Space jumps, a click captures the mouse to look around and Escape releases it.
 

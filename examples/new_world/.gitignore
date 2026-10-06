@@ -5,6 +5,9 @@ continent/
 continent.tscn
 continent.gd
 peak_memory.gd
+walker.tscn
+walker.gd
 .godot/
 continent.gd.uid
 peak_memory.gd.uid
+walker.gd.uid

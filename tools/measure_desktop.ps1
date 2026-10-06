@@ -230,11 +230,11 @@ if (-not $SkipBuild) {
     Initialize-GodotProject $HistoryProject $false
     Initialize-Example $SampleWorld
     Initialize-Example $NewWorld
-    # The new world's continent and memory reading, as its prepare.sh copies them.
+    # The new world's continent, memory reading and walker, as its prepare.sh copies them.
     $continent = Join-Path $NewWorld "continent"
     if (Test-Path $continent) { Remove-Item -Recurse -Force $continent }
     Copy-Item -Recurse (Join-Path $GodotProject "continent") $continent
-    foreach ($file in @("continent.tscn", "continent.gd", "peak_memory.gd")) {
+    foreach ($file in @("continent.tscn", "continent.gd", "peak_memory.gd", "walker.tscn", "walker.gd")) {
         Copy-Item (Join-Path $GodotProject $file) (Join-Path $NewWorld $file) -Force
     }
     if ($Only -contains "bevy") {

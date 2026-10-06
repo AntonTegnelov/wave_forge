@@ -1,9 +1,9 @@
-## N1: a scene of the default preset and the plugin's walker, with no code, is walked.
+## N1: a scene of the default preset, with no code, stands a world a player can walk.
 ##
 ## Run by `../verify.sh` after `verify_presets.gd`, which also fails if this prints an error or a
 ## warning. The scene holds a sun, an environment, a WaveForgeStages node given the default preset
-## and the plugin's walker standing over land; nothing calls `follow`, so the node follows the
-## walker's camera. The node warns of nothing; the walker stands on the ground once its body is
+## and the checks' own walker (`walker.tscn`, a stand-in for a game's player) over land; nothing
+## calls `follow`, so the node follows the walker's camera. The node warns of nothing; the walker stands on the ground once its body is
 ## there, then walks forward for three seconds, travelling at least half its speed's distance and
 ## never falling below the ground.
 extends SceneTree
@@ -28,7 +28,7 @@ func _initialize() -> void:
 	for property: String in settings:
 		stages.set(property, settings[property])
 	scene.add_child(stages)
-	walker = (load("res://addons/wave_forge/walker.tscn") as PackedScene).instantiate()
+	walker = (load("res://walker.tscn") as PackedScene).instantiate()
 	scene.add_child(walker)
 	root.add_child(scene)
 	started_usec = Time.get_ticks_usec()

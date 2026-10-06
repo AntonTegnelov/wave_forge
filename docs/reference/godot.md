@@ -439,13 +439,10 @@ under the key `wave_forge`, on the right by default:
   `addons/wave_forge/sea.tres`, or the archipelago's clearer `lagoon.tres`. The small city binds
   the city module set's modules to the plugin's city kit (`addons/wave_forge/city/`, the module set
   and a lone-mesh scene per module, written from its models by `tools/make_city_kit.gd`), so its
-  city is drawn and collided with no code ([Scenes](#scenes)). To walk a world with
-  no code, drop the plugin's walker (`addons/wave_forge/walker.tscn`, a first-person
-  `CharacterBody3D` with a camera) into the scene:
-  the node follows its camera, and it holds still until the ground and its body are there under it,
-  then stands on the ground. WASD or the arrow keys walk, Space jumps, a click captures the mouse
-  to look and Escape releases it; it adds those actions to the input map unless the project has
-  its own;
+  city is drawn and collided with no code ([Scenes](#scenes)). The node follows the current camera,
+  so a game's own player, or any camera, sees the world come in around it; a player is the game's
+  (the checks and examples use a walker of their own, `wave_forge_godot/godot/walker.tscn`, which
+  waits until the ground and its body are under it before it stands, as a game's player has to);
 - a Paint toggle;
 - a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
 - the stage it paints, or the point stages Remove takes from;
