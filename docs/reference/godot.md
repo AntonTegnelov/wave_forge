@@ -569,9 +569,11 @@ Each scene is drawn one of two ways, chosen when it is bound:
   global illumination, as a prop's; an Assemble piece's, Cave room's or town module's is static, as a building's, so
   SDFGI and baked lighting take it in ([Global illumination](#global-illumination)).
 - **Nodes:** any other scene is instantiated as nodes under the `WaveForgeStages` node, at the
-  point's or piece's transform, and `instance_spawned(node, chunk, id)` names each, with the id
-  `point_sets` and `stamps` give it. A piece overlapping several chunks is placed once, by the chunk
-  holding its footprint's centre.
+  point's, piece's or town module's transform, and `instance_spawned(node, chunk, id)` names each,
+  with the id `point_sets`, `stamps` or `town_instance_sets` gives it. A piece overlapping several chunks
+  is placed once, by the chunk holding its footprint's centre. This is how a game hangs its own
+  behaviour on generated content: a house module bound to a scene of the house's mesh and the
+  game's own `Area3D` plays the game's sound when a player walks in, with no code in Wave Forge.
 
 With `promotion_radius` at zero or more, a scene placed as nodes is so only in chunks within that
 many chunks of the followed position. Farther out it is drawn as a MultiMesh of its first mesh,
