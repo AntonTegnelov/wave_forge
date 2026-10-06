@@ -17,7 +17,7 @@ On Vulkan and on Direct3D 12:
 | The city walked in Godot with its module models drawn, on Forward+, at 4.2 m/s and 30 m/s, with the node's own time, each chunk drawn as a MultiMesh per module and as one merged mesh, and what drawing a chunk costs Godot's thread | `wave_forge_godot/godot/measure_city.gd` | the solver on a device of its own in a desktop Godot ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), P1's frame rate, and how a chunk is drawn ([#203](https://github.com/AntonTegnelov/wave_forge/issues/203)) |
 | Grass on 25 chunks with and without it, the ground's levels of detail, and the far ground beyond the near ground, each with a check for gaps, on Forward+ | `render_ground.gd`, `render_lods.gd`, `render_far.gd` | E45, E47 and E52 on a desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166), P2) |
 | The maximal preset's continent played from the directory its world run baked, in a window of 1920 by 1080 on Forward+, its far ground out to 2 km: walking at 4.2 m/s, then flying at 30 m/s, with the most memory the process held and a check that no stage ran | `wave_forge_godot/godot/measure_playback.gd` | M1's frame rate and bounded memory ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197), [#247](https://github.com/AntonTegnelov/wave_forge/issues/247)) |
-| The sample world walked at 4.2 m/s from its start into the city, in a window of 1920 by 1080 on Forward+, with the node's own time | `examples/sample_world/measure.gd` | N10's frame rate against P1's bars |
+| The small city preset walked by a camera at 4.2 m/s from the world's origin into the city, its town, grass, bodies and navigation built around it, in a window of 1920 by 1080 on Forward+, with the node's own time | `wave_forge_godot/godot/measure_city_preset.gd` | P1's bars on a stage world with a town drawn ([#307](https://github.com/AntonTegnelov/wave_forge/issues/307)) |
 
 Once, headless, before the runs above: the whole continent baked from `continent.tscn` through the
 node's world run, as the editor dock's World run bakes it, from an empty directory, with the time it
@@ -92,7 +92,7 @@ a non-zero code; the others still ran.
 | Option | Default | Use |
 |---|---|---|
 | `-Apis vulkan` or `-Apis d3d12` | both | measure on one graphics API only |
-| `-Only bevy,godot,ground,history,m1,m2,n10,stages,volume` | all | run only some parts, for example again after a failure |
+| `-Only bevy,godot,ground,history,m1,m2,preset,stages,volume` | all | run only some parts, for example again after a failure |
 | `-Seconds 20` | 20 | how long each measured phase lasts |
 | `-SkipBuild` | | use what the last run built |
 | `-BuildDir D:\wave_forge-build` | `%LOCALAPPDATA%\wave_forge` | where Cargo builds and Godot is downloaded to |

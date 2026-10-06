@@ -468,31 +468,6 @@ identical on NVIDIA through dozen and on Mesa's lavapipe, and a city is the same
 chunks are generated in, repairs included ([testing.md](../guides/testing.md)), for tiles only; chunk hashes
 do not exist yet.
 
-### N10. Something impressive in an hour
-
-*A developer preparing a trailer wants a sample world with wind in the grass, a day and night cycle,
-buildings and agents walking between them, running in under an hour.*
-
-**Acceptance criteria.** An example project in this repository, built on a preset, opens and runs
-with grass and wind, lighting that changes over a day, a generated town, and navigation agents
-walking its streets, at the P1 frame rate on a reference desktop. Needs a person: the trailer
-checklist in the example's README is followed from a clean checkout within an hour. **Needs.** Grass
-and wind ([#46](https://github.com/AntonTegnelov/wave_forge/issues/46)), navigation, presets.
-**Status:** in progress (2026-10-04). The example is `examples/sample_world`, on the small city
-preset: the city in grass and trees that sway in the extension's global wind, a sun and a moon
-turned through a day by `day_night.gd`, and townsfolk with navigation agents walking between random
-points of the city's streets. Its `check.gd`, run by `verify.sh`, finds the city in grass with its
-modules and trees placed, the day going on, and every one of the townsfolk walking along the
-navigation map inside the city. Grass and swaying trees are drawn in Bevy too (`grass_render.rs`,
-`vegetation_render.rs`). Its `measure.gd` walks into the city at 4.2 m/s for the
-desktop script's `n10` part; in the dev container the node's own time over the walk is 0.22 ms
-at the median and 10 ms at the 99th percentile, in the frames that build 8 grounds at once, over
-P1's 2 ms ([measurements.md](../research/measurements.md) E55). Left: that cost brought under P1's bars
-([#307](https://github.com/AntonTegnelov/wave_forge/issues/307)), the
-frame rate on a reference desktop, and a person following the README's trailer checklist from a
-clean checkout within an hour, near the release
-([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)).
-
 ### N11. Put my own history into the world
 
 *A developer making a colony or strategy game wants the villages, roads and ruins of a history their
@@ -538,7 +513,12 @@ through dozen. On the reference desktop, walking through a cave volume at 4.2 m/
 bar and Godot's (the node's p99 0.11 to 0.14 ms, the slowest frame 5.5 to 6.0 ms), and the city
 streamed in Godot runs at p99 5.4 to 7.0 ms with a slowest frame of 22 to 23 ms
 ([measurements.md](../research/measurements.md) D3, D8); the stage worlds with drawn content are
-the desktop script's `n10` part, not yet run. With the valley pack's stages, the stages node's own time stays at 0.23 to 0.28 ms at the 99th percentile and under 3 ms at worst over ten runs, now that it emits at most 256 signals per frame ([measurements.md](../research/measurements.md) E31); that check does not yet run at 4.2 m/s through a stages world. With collider bodies bounded per frame, twenty runs of the city check stayed under Godot's 8 ms bar, the slowest at 7.0 ms (E43), but a later run went over it at 11.8 ms, a host stall landing in the start of a navigation bake (E46, [#157](https://github.com/AntonTegnelov/wave_forge/issues/157)). Walking at 4.2 m/s through density volumes (a cave pack) with surfaces meshed on a thread of their own, the slowest frame is 5.6 ms and the node's own time 0.07 ms at the 99th percentile (E54); on a desktop that is [#224](https://github.com/AntonTegnelov/wave_forge/issues/224).
+the desktop script's `preset` part, not yet run: `measure_city_preset.gd` walks a camera into the
+small city preset at 4.2 m/s, its town, grass, bodies and navigation built around it. In the dev
+container the node's own time over that walk was 10 ms at the 99th percentile in frames that built 8
+grounds at once, 8 ms once ground was given 2 ms a frame
+([measurements.md](../research/measurements.md) E55, E56,
+[#307](https://github.com/AntonTegnelov/wave_forge/issues/307)). With the valley pack's stages, the stages node's own time stays at 0.23 to 0.28 ms at the 99th percentile and under 3 ms at worst over ten runs, now that it emits at most 256 signals per frame ([measurements.md](../research/measurements.md) E31); that check does not yet run at 4.2 m/s through a stages world. With collider bodies bounded per frame, twenty runs of the city check stayed under Godot's 8 ms bar, the slowest at 7.0 ms (E43), but a later run went over it at 11.8 ms, a host stall landing in the start of a navigation bake (E46, [#157](https://github.com/AntonTegnelov/wave_forge/issues/157)). Walking at 4.2 m/s through density volumes (a cave pack) with surfaces meshed on a thread of their own, the slowest frame is 5.6 ms and the node's own time 0.07 ms at the 99th percentile (E54); on a desktop that is [#224](https://github.com/AntonTegnelov/wave_forge/issues/224).
 
 ### P2. Long view distance
 
