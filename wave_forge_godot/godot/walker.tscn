@@ -1,6 +1,6 @@
 [gd_scene format=3]
 
-[ext_resource type="Script" path="res://addons/wave_forge/walker.gd" id="1_walker"]
+[ext_resource type="Script" path="res://walker.gd" id="1_walker"]
 
 [sub_resource type="CapsuleShape3D" id="1_body"]
 radius = 0.35

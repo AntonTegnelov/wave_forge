@@ -57,13 +57,12 @@ the towns, which a walker crosses without falling through. Both are checked in h
 and its ground as meshes and height grids.
 Headless apps with the real `DefaultPlugins` test both ([reference/bevy.md](../reference/bevy.md)).
 
-**Examples.** Three Godot projects in `examples/` run on the extension and its addon as a game
+**Examples.** Two Godot projects in `examples/` run on the extension and its addon as a game
 installs them, each with a check `verify.sh` runs: `history` puts a GDScript history into a
-continent as tables of facts (N11); `sample_world` is the small city preset with grass and trees in
-the wind, a day and a night and townsfolk walking its streets (N10); and `new_world` generates the
-maximal continent whole when a player starts a new world, with the game's history, a progress
-screen, stopping and resuming, and then plays it from its folder (M2). The maximal continent itself
-is `examples/continent` (M1). What M1, M2 and N10 still need is their numbers on a desktop
+continent as tables of facts (N11), and `new_world` generates the maximal continent whole when a
+player starts a new world, with the game's history, a progress screen, stopping and resuming, and
+then plays it from its folder (M2). The maximal continent itself is `examples/continent` (M1). What
+M1 and M2 still need is their numbers on a desktop
 ([desktop-measurements.md](../guides/desktop-measurements.md)).
 
 **Tooling.** The `wave-forge` CLI, PNG and isometric renderers, glTF model export for the city's

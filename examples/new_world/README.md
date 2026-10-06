@@ -36,7 +36,8 @@ new world.
   and runs the whole world with `run_world` into `new_world/world/`. `world_run_progress` drives
   the progress screen, `cancel_world_run` the Stop button, and `world_run_finished` either the
   Resume button or, with every chunk done, a mark in `new_world/done` and play: a second node with
-  `play_directory` set to the folder, and the addon's walker at the first settlement.
+  `play_directory` set to the folder, and a walker at the first settlement (the checks' own,
+  copied in by `prepare.sh`, standing in for a game's player).
 - A resumed run gives the stages the saved history rather than a new one, since a chunk written
   from another history would not belong to the same world; the run skips every chunk the folder
   holds already.

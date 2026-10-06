@@ -120,7 +120,7 @@ manual experiments in Godot and Bevy, and two kinds of packs:
 |---|---|---|
 | **Game packs** | each game's repository | the game's world, tuned for play; smoke tests for Wave Forge |
 | **Test packs** | here | edge cases, stress tests, and one pack per user story exercising its techniques; the evidence for the [verification gate](../product/user-stories.md#the-verification-gate) |
-| **Presets** | here | the product's out-of-the-box worlds (N1, N2, N10) |
+| **Presets** | here | the product's out-of-the-box worlds (N1, N2) |
 
 **Smoke tests run downstream.** Each game's CI builds it against Wave Forge's latest `develop` every
 night and on every change of its pin, and runs its packs, so nothing here needs access to a private

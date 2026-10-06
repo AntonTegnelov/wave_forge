@@ -9,7 +9,7 @@ extends Node3D
 
 const CONTINENT := preload("res://continent.tscn")
 const HISTORY := preload("res://history.gd")
-const WALKER := preload("res://addons/wave_forge/walker.tscn")
+const WALKER := preload("res://walker.tscn")
 
 ## Where the game keeps the world: its history, its chunks, and a mark once they are all there.
 @export var folder := "user://new_world"

@@ -439,13 +439,10 @@ under the key `wave_forge`, on the right by default:
   `addons/wave_forge/sea.tres`, or the archipelago's clearer `lagoon.tres`. The small city binds
   the city module set's modules to the plugin's city kit (`addons/wave_forge/city/`, the module set
   and a lone-mesh scene per module, written from its models by `tools/make_city_kit.gd`), so its
-  city is drawn and collided with no code ([Scenes](#scenes)). To walk a world with
-  no code, drop the plugin's walker (`addons/wave_forge/walker.tscn`, a first-person
-  `CharacterBody3D` with a camera) into the scene:
-  the node follows its camera, and it holds still until the ground and its body are there under it,
-  then stands on the ground. WASD or the arrow keys walk, Space jumps, a click captures the mouse
-  to look and Escape releases it; it adds those actions to the input map unless the project has
-  its own;
+  city is drawn and collided with no code ([Scenes](#scenes)). The node follows the current camera,
+  so a game's own player, or any camera, sees the world come in around it; a player is the game's
+  (the checks and examples use a walker of their own, `wave_forge_godot/godot/walker.tscn`, which
+  waits until the ground and its body are under it before it stands, as a game's player has to);
 - a Paint toggle;
 - a brush (Raise, Lower, Smooth, Dig, Fill or Remove);
 - the stage it paints, or the point stages Remove takes from;
@@ -572,9 +569,11 @@ Each scene is drawn one of two ways, chosen when it is bound:
   global illumination, as a prop's; an Assemble piece's, Cave room's or town module's is static, as a building's, so
   SDFGI and baked lighting take it in ([Global illumination](#global-illumination)).
 - **Nodes:** any other scene is instantiated as nodes under the `WaveForgeStages` node, at the
-  point's or piece's transform, and `instance_spawned(node, chunk, id)` names each, with the id
-  `point_sets` and `stamps` give it. A piece overlapping several chunks is placed once, by the chunk
-  holding its footprint's centre.
+  point's, piece's or town module's transform, and `instance_spawned(node, chunk, id)` names each,
+  with the id `point_sets`, `stamps` or `town_instance_sets` gives it. A piece overlapping several chunks
+  is placed once, by the chunk holding its footprint's centre. This is how a game hangs its own
+  behaviour on generated content: a house module bound to a scene of the house's mesh and the
+  game's own `Area3D` plays the game's sound when a player walks in, with no code in Wave Forge.
 
 With `promotion_radius` at zero or more, a scene placed as nodes is so only in chunks within that
 many chunks of the followed position. Farther out it is drawn as a MultiMesh of its first mesh,

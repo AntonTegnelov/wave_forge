@@ -212,7 +212,7 @@ Minecraft's datapacks use. It is validated at load and runs the same in Godot an
 between pack versions are **not built yet**; a pack of another version is refused.
 
 - **Tier 0, presets.** A pack with three to six parameters exposed in the inspector. Brushes and
-  splines write Edits. (N1, N2, N10.)
+  splines write Edits. (N1, N2.)
 - **Tier 1, stack.** An ordered list of stages. Each row shows its kind, cell size, reach and inputs,
   "the row above" by default; rows hold inline modifier chains, mask stacks and rule lists, which is
   where MapMagic's layered nodes and ProtonScatter's modifier stack succeed. The stack is a view of
