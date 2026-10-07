@@ -17,7 +17,8 @@
         "crystals": (default: 0.5, range: (0.0, 1.0)),
     },
     noises: {
-        "hills": (noise_type: SimplexSmooth, seed: 51, frequency: 0.02, fractal_octaves: 3),
+        "hills": (noise_type: SimplexSmooth, seed: 51, frequency: 0.02, fractal_octaves: 3,
+            domain_warp_enabled: true, domain_warp_amplitude: 20.0, domain_warp_frequency: 0.012, domain_warp_fractal_octaves: 2),
         "caves": (noise_type: SimplexSmooth, seed: 52, frequency: 0.035, fractal_octaves: 2),
         "veins": (noise_type: SimplexSmooth, seed: 53, frequency: 0.12, fractal_octaves: 1),
         "woods": (noise_type: Perlin, seed: 54, frequency: 0.05, fractal_octaves: 2),
