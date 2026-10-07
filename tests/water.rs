@@ -153,3 +153,49 @@ fn neighbouring_chunks_water_meets_exactly() {
         assert_eq!(on_a[0] - 8.0 * CELL[0], on_b[0], "row {j}");
     }
 }
+
+#[test]
+fn the_rivers_water_runs_down_under_the_sea_where_it_meets_it() {
+    // The same valley with its sea at -1, which floods its low end along x.
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/water.world.ron",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("the water pack")
+    .replace("level: -100.0", "level: -1.0");
+    let pack = Arc::new(Pack::parse(&text).expect("a valid pack"));
+    let mut facts = Facts::new(Arc::clone(&pack), 9).expect("facts");
+    let river = GivenRow {
+        id: 1,
+        values: BTreeMap::from([
+            ("x0".to_owned(), Value::Number(2.0)),
+            ("y0".to_owned(), Value::Number(32.0)),
+            ("x1".to_owned(), Value::Number(62.0)),
+            ("y1".to_owned(), Value::Number(32.0)),
+            ("width".to_owned(), Value::Number(1.5)),
+        ]),
+    };
+    facts.give("rivers", vec![river]).expect("the river");
+    let mut runtime = Runtime::new(pack, 9, SIZE);
+    runtime.set_facts(facts).expect("facts");
+    let focus: Vec<FocusPoint> = (0..8)
+        .flat_map(|y| (0..8).map(move |x| FocusPoint::new(ChunkCoord::new(x, y, 0), 0)))
+        .collect();
+    runtime
+        .request(&focus, &["water", "terrain"])
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+
+    let levels: Vec<f32> = (4..60).map(|x| value(&runtime, "water", x, 32)).collect();
+    let above = levels.iter().filter(|&&level| level > -1.0).count();
+    let first_under = levels.iter().position(|&level| level <= -1.0);
+
+    // Upstream the river shows above the sea; from where it reaches the sea's level on, it stays
+    // under it, so the sea covers it and no step of river water stands over the sea.
+    assert!(above > 5, "the river never rises above the sea: {levels:?}");
+    let first_under = first_under.expect("the river reaches the sea");
+    assert!(
+        levels[first_under..].iter().all(|&level| level <= -1.0),
+        "river water above the sea downstream of where it met it: {levels:?}"
+    );
+}
