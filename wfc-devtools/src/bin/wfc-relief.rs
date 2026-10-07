@@ -111,7 +111,7 @@ fn main() -> Result<()> {
     for &chunk in &chunks {
         let field = runtime
             .field(&args.stage, chunk)
-            .ok_or_else(|| anyhow!("{} is not a Field stage", args.stage))?;
+            .ok_or_else(|| anyhow!("{} is not a Field stage of scale 1", args.stage))?;
         ensure!(
             field.size == [args.chunk_size; 2],
             "{} is at another scale than the chunk",
@@ -150,8 +150,9 @@ fn main() -> Result<()> {
         .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), &h| {
             (low.min(h), high.max(h))
         });
+    let mean = heights.iter().sum::<f32>() / heights.len() as f32;
     println!(
-        "wrote {}, {side} by {side} columns, heights {low:.1} to {high:.1}",
+        "wrote {}, {side} by {side} columns, heights {low:.1} to {high:.1}, {mean:.3} on average",
         args.out.display()
     );
     Ok(())
