@@ -1202,6 +1202,33 @@ reaches one coarse chunk less than its field.
 `wave_forge::far_ground_categories(far, categories, scale, cell_size)` gives the category each
 vertex stands on, from a Rules stage at the far ground's scale, for an engine to colour it by.
 
+### Water surfaces
+
+`wave_forge::water_surface(chunk, water, ground, cell_size)` builds a chunk's lakes and rivers as a
+`WaterMesh`, from a field of the water's level and the field of the ground the engine draws, both at
+the ground's scale ([#328](https://github.com/AntonTegnelov/wave_forge/issues/328)). It stands on
+the ground's grid, the +x and +y edges from the chunks beyond, so neighbouring chunks' water meets
+exactly. A vertex is wet where the water's level stands more than `water::WET` (0.05 cells) above
+the ground, and takes that level; a dry one sits just under the ground. Every square with a wet
+corner is drawn, so the water runs out to where it dips under the bank and the ground hides its
+edge, whatever the bank's slope. A chunk without water has no triangles. It returns `None` until
+both fields of the chunk and of the chunks beyond its far edges have arrived.
+
+A pack makes the water's field from what it has: a Lakes stage's level where it stands above the
+ground, and its rivers as an Apply stage that carves less deep than the bed, so the river's water
+lies between the bed and the banks, with the bed's blend, so it meets the banks:
+
+```ron
+(name: "ground", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2, profile: Carve(0.8))),
+(name: "river_water", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2, profile: Carve(0.3))),
+(name: "water", kind: Field(Max(
+    Select(when: Greater(Input("lakes"), Add(Input("terrain"), Constant(0.05))), then: Input("lakes"), otherwise: Constant(-1000.0)),
+    Input("river_water"),
+))),
+```
+
+Where a river reaches the sea its water lies at the sea's level, under the engine's sea plane.
+
 ## In the engines
 
 - Godot: the `WaveForgeStages` node ([godot.md](godot.md#waveforgestages)).
