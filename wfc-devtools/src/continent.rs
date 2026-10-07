@@ -92,11 +92,14 @@ const fn hash(a: u64, b: u64, c: u64) -> u64 {
     x ^ (x >> 29)
 }
 
-/// The continent's history as a game might simulate it over the map before play: a settlement
-/// tried in every square of 64 cells, kept where its biome has a culture and the ground is dry,
-/// gentle and below the peaks, at least 128 cells from every settlement kept before it; its
-/// population, founding year and fate drawn from a hash, the oldest the likeliest to have fallen,
-/// and its size, two to six chunks a side, from its population.
+/// The continent's history as a game might simulate it over the map before play: in every square
+/// of 64 cells, up to three places tried, and the first that suits each culture kept, where its
+/// biome is the culture's and the ground is dry, gentle and below the peaks. Each culture founds
+/// its first settlement before any other is chosen, so one whose land is scarce, a beach or a
+/// highland, still has one; then the rest in the order of their hashes, each at least 128 cells
+/// from every settlement kept before it. A settlement's population, founding year and fate are
+/// drawn from a hash, the oldest the likeliest to have fallen, and its size, two to six chunks a
+/// side, from its population.
 ///
 /// # Panics
 /// If the pack cannot sample its biome, terrain and roughness, which its checks rule out.
@@ -107,26 +110,37 @@ pub fn history(pack: &Arc<Pack>) -> Vec<GivenRow> {
     let mut tried: Vec<(u64, [f32; 2], &str)> = Vec::new();
     for gy in 0..32u64 {
         for gx in 0..32u64 {
-            let h = hash(gx, gy, 1);
-            let at = [
-                gx as f32 * 64.0 + 8.0 + (h % 48) as f32,
-                gy as f32 * 64.0 + 8.0 + ((h >> 8) % 48) as f32,
-            ];
-            let biome = names[runtime.sample("biome", at).expect("a biome") as usize];
-            let Some((culture, _)) = CULTURES.iter().find(|(_, biomes)| biomes.contains(&biome))
-            else {
-                continue;
-            };
-            let height = runtime.sample("terrain", at).expect("a height");
-            let rough = runtime.sample("roughness", at).expect("a roughness");
-            if (0.5..45.0).contains(&height) && rough < 3.0 {
-                tried.push((h, at, culture));
+            let mut suited: Vec<&str> = Vec::new();
+            for attempt in 0..3 {
+                let h = hash(gx, gy, 1 + attempt);
+                let at = [
+                    gx as f32 * 64.0 + 8.0 + (h % 48) as f32,
+                    gy as f32 * 64.0 + 8.0 + ((h >> 8) % 48) as f32,
+                ];
+                let biome = names[runtime.sample("biome", at).expect("a biome") as usize];
+                let Some((culture, _)) =
+                    CULTURES.iter().find(|(_, biomes)| biomes.contains(&biome))
+                else {
+                    continue;
+                };
+                if suited.contains(culture) {
+                    continue;
+                }
+                let height = runtime.sample("terrain", at).expect("a height");
+                let rough = runtime.sample("roughness", at).expect("a roughness");
+                if (0.5..45.0).contains(&height) && rough < 3.0 {
+                    suited.push(culture);
+                    tried.push((h, at, culture));
+                }
             }
         }
     }
     tried.sort_by_key(|&(h, ..)| h);
+    let firsts = CULTURES
+        .iter()
+        .filter_map(|(culture, _)| tried.iter().find(|(.., c)| c == culture));
     let mut kept: Vec<([f32; 2], &str, u64)> = Vec::new();
-    for (h, at, culture) in tried {
+    for &(h, at, culture) in firsts.chain(&tried) {
         let apart = |other: &[f32; 2]| (other[0] - at[0]).hypot(other[1] - at[1]) >= 128.0;
         if kept.iter().all(|(other, ..)| apart(other)) {
             kept.push((at, culture, h));
