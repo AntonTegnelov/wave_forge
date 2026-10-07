@@ -493,3 +493,40 @@ fn a_run_writes_a_coarser_target_and_a_played_world_serves_it_as_a_runtime_gener
         );
     }
 }
+
+/// A height worn by droplets, in regions of four chunks over a world of twelve chunks a side.
+const DROPLETS: &str = r#"(
+    version: 1,
+    bound: Some(Rect(min: (0.0, 0.0), max: (95.0, 95.0))),
+    stages: [
+        (name: "height", kind: Field(Mul(Noise(frequency: 0.04, octaves: 3), Constant(20.0)))),
+        (name: "worn", kind: Droplets(height: "height", region: 4)),
+    ],
+)"#;
+
+#[test]
+fn a_run_of_worn_ground_stopped_and_resumed_writes_the_same_bytes_as_one_at_once() {
+    let mut at_once = Memory::default();
+    runtime(DROPLETS)
+        .run_world(&["worn"], &mut at_once, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+
+    let mut pieces = Memory::default();
+    let stopped = runtime(DROPLETS)
+        .run_world(&["worn"], &mut pieces, |progress| {
+            if progress.done == 40 {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .expect("a bounded pack");
+    // A fresh runtime, as after a crash, drains the regions again and picks up from the store.
+    let resumed = runtime(DROPLETS)
+        .run_world(&["worn"], &mut pieces, |_| ControlFlow::Continue(()))
+        .expect("a bounded pack");
+
+    assert_eq!((stopped.done, stopped.total), (40, 144));
+    assert_eq!((resumed.done, resumed.skipped), (144, 40));
+    assert_eq!(pieces.0, at_once.0);
+}

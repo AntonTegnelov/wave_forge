@@ -6,6 +6,7 @@ mod assemble;
 pub mod brushes;
 mod caves;
 mod codec;
+mod droplets;
 pub mod edits;
 mod erode;
 mod evaluate;

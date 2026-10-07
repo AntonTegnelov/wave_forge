@@ -9,6 +9,7 @@
 
 use super::assemble::Growth;
 use super::caves::{self, CavePlan, CaveRules};
+use super::droplets::{Droplets, drain, droplet_start};
 use super::edits::{Edit, Edits};
 use super::erode::{Erosion, erode, fitted_slope};
 use super::evaluate::{Leaves, evaluate, holds};
@@ -621,9 +622,10 @@ pub struct Runtime {
     /// Location tables placed, by Locations stage and region, kept while a chunk of their region
     /// is needed.
     placed: BTreeMap<RegionKey, Arc<Placed>>,
-    /// Lakes filled, by Lakes stage and region: the water's surface over the region's columns, row
-    /// by row, kept while a chunk of their region is needed.
-    lakes: BTreeMap<RegionKey, Arc<[f32]>>,
+    /// The fields of the stages computed a region at a time (a Lakes stage's water, a Droplets
+    /// stage's worn ground), by stage and region: the region's columns row by row, kept while a
+    /// chunk of their region is needed.
+    region_fields: BTreeMap<RegionKey, Arc<[f32]>>,
     /// Cave levels planned, by Cave stage and region, kept while a chunk of their region is needed.
     caves: BTreeMap<RegionKey, Arc<CavePlan>>,
     /// Tunnels found, by Tunnels stage and its cave's region, kept as the cave's plan is.
@@ -752,7 +754,7 @@ impl Runtime {
             region_jobs: BTreeMap::new(),
             regions: BTreeMap::new(),
             placed: BTreeMap::new(),
-            lakes: BTreeMap::new(),
+            region_fields: BTreeMap::new(),
             caves: BTreeMap::new(),
             tunnels: BTreeMap::new(),
             budgeted: BTreeMap::new(),
@@ -1272,10 +1274,11 @@ impl Runtime {
                 }
             }
         });
-        self.lakes.retain(|&(stage, region), _| {
-            let StageKind::Lakes { region: size, .. } = pack.stages[stage].kind else {
-                unreachable!("only Lakes stages fill lakes")
-            };
+        self.region_fields.retain(|&(stage, region), _| {
+            let size = pack.stages[stage]
+                .kind
+                .field_region()
+                .expect("only region field stages fill region fields");
             match stale.get(&stage) {
                 None => true,
                 Some(Stale::All) => false,
@@ -1853,10 +1856,11 @@ impl Runtime {
                     chunks.iter().any(|&chunk| region_of(chunk, size) == region)
                 })
         });
-        self.lakes.retain(|&(stage, region), _| {
-            let StageKind::Lakes { region: size, .. } = pack.stages[stage].kind else {
-                unreachable!("only Lakes stages fill lakes")
-            };
+        self.region_fields.retain(|&(stage, region), _| {
+            let size = pack.stages[stage]
+                .kind
+                .field_region()
+                .expect("only region field stages fill region fields");
             finite
                 || needed.get(&stage).is_some_and(|chunks| {
                     chunks.iter().any(|&chunk| region_of(chunk, size) == region)
@@ -2030,7 +2034,7 @@ impl Runtime {
                         self.assemble_of(index, chunk)?;
                         self.run_region_of(index, chunk)?;
                         self.place_locations_of(index, chunk)?;
-                        self.fill_lakes_of(index, chunk)?;
+                        self.fill_region_field_of(index, chunk)?;
                         self.plan_cave_of(index, chunk)?;
                         let product = self.generate(index, chunk)?;
                         if self.pack.stages[index].persist == Persist::Frozen {
@@ -2334,7 +2338,10 @@ impl Runtime {
             | StageKind::Region { .. }
             | StageKind::Rivers { .. }
             | StageKind::Network { .. }
-            | StageKind::Lakes { .. } => return Err(StageError::NotSampled(stage.name.clone())),
+            | StageKind::Lakes { .. }
+            | StageKind::Droplets { .. } => {
+                return Err(StageError::NotSampled(stage.name.clone()));
+            }
         };
         // A sample is what the chunk holds, raises included.
         let value = value
@@ -2600,26 +2607,22 @@ impl Runtime {
         })
     }
 
-    /// Places the location table of Locations stage `index` in the region `chunk` lies in, if it
-    /// is not placed yet: the kinds in order of priority, each trying its footprints in turn.
-    /// Fills the lakes of the region of Lakes stage `index` that `chunk` lies in, if it has not
-    /// been filled yet.
-    fn fill_lakes_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
+    /// Computes the field of the region `chunk` lies in for a stage computed a region at a time,
+    /// stage `index`, if it is not computed yet: a Lakes stage's water, or a Droplets stage's worn
+    /// ground.
+    fn fill_region_field_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let stage = &self.pack.stages[index];
-        let StageKind::Lakes {
-            height,
-            region: size,
-            min_columns,
-        } = &stage.kind
+        let (Some(size), StageKind::Lakes { height, .. } | StageKind::Droplets { height, .. }) =
+            (stage.kind.field_region(), &stage.kind)
         else {
             return Ok(());
         };
-        let region = region_of(chunk, *size);
-        if self.lakes.contains_key(&(index, region)) {
+        let region = region_of(chunk, size);
+        if self.region_fields.contains_key(&(index, region)) {
             return Ok(());
         }
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
-        let side = i64::from(*size);
+        let side = i64::from(size);
         let min = [
             i64::from(region.0) * side * sx,
             i64::from(region.1) * side * sy,
@@ -2638,18 +2641,47 @@ impl Runtime {
                 heights.push(view.get(min[0] + x, min[1] + y)?);
             }
         }
-        let sea = self
-            .pack
-            .water()
-            .expect("a pack with lakes declares water")
-            .level;
-        let surface = lake_surface(
-            &heights,
-            [width as usize, depth as usize],
-            sea,
-            *min_columns,
-        );
-        self.lakes.insert((index, region), Arc::from(surface));
+        let columns = [width as usize, depth as usize];
+        let field = match stage.kind {
+            StageKind::Lakes { min_columns, .. } => {
+                let sea = self
+                    .pack
+                    .water()
+                    .expect("a pack with lakes declares water")
+                    .level;
+                lake_surface(&heights, columns, sea, min_columns)
+            }
+            StageKind::Droplets {
+                droplets,
+                lifetime,
+                radius,
+                capacity,
+                erosion,
+                deposition,
+                fade,
+                ..
+            } => {
+                let settings = Droplets {
+                    per_column: droplets,
+                    lifetime,
+                    radius,
+                    capacity,
+                    erosion,
+                    deposition,
+                    fade,
+                };
+                let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
+                drain(
+                    &heights,
+                    columns,
+                    stage.scale as f32,
+                    &settings,
+                    |droplet| droplet_start(world, stage.salt, region, droplet),
+                )
+            }
+            _ => unreachable!("only Lakes and Droplets stages compute a region's field"),
+        };
+        self.region_fields.insert((index, region), Arc::from(field));
         Ok(())
     }
 
@@ -2987,6 +3019,8 @@ impl Runtime {
         points
     }
 
+    /// Places the location table of Locations stage `index` in the region `chunk` lies in, if it
+    /// is not placed yet: the kinds in order of priority, each trying its footprints in turn.
     fn place_locations_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let stage = &self.pack.stages[index];
         let StageKind::Locations {
@@ -3394,7 +3428,9 @@ impl Runtime {
     fn region_held(&self, index: usize, chunk: ChunkCoord) -> bool {
         let key = |size: u32| (index, region_of(chunk, size));
         match &self.pack.stages[index].kind {
-            StageKind::Lakes { region, .. } => self.lakes.contains_key(&key(*region)),
+            StageKind::Lakes { region, .. } | StageKind::Droplets { region, .. } => {
+                self.region_fields.contains_key(&key(*region))
+            }
             StageKind::Locations { region, .. } => self.placed.contains_key(&key(*region)),
             StageKind::Region { region, .. }
             | StageKind::Rivers { region, .. }
@@ -3570,15 +3606,15 @@ impl Runtime {
                     .unwrap_or_default(),
             ));
         }
-        if let StageKind::Lakes { region: size, .. } = &stage.kind {
-            let region = region_of(chunk, *size);
-            let surface = &self.lakes[&(index, region)];
+        if let Some(size) = stage.kind.field_region() {
+            let region = region_of(chunk, size);
+            let surface = &self.region_fields[&(index, region)];
             let [sx, sy] = self.size;
             let side = (size * sx) as usize;
             // The chunk's columns in the region's rows.
             let (ox, oy) = (
-                ((chunk.x - region.0 * *size as i32) as u32 * sx) as usize,
-                ((chunk.y - region.1 * *size as i32) as u32 * sy) as usize,
+                ((chunk.x - region.0 * size as i32) as u32 * sx) as usize,
+                ((chunk.y - region.1 * size as i32) as u32 * sy) as usize,
             );
             let values = (0..sy as usize)
                 .flat_map(|y| (0..sx as usize).map(move |x| (x, y)))
@@ -3984,7 +4020,8 @@ impl Runtime {
                     | StageKind::Region { .. }
                     | StageKind::Rivers { .. }
                     | StageKind::Network { .. }
-                    | StageKind::Lakes { .. } => {
+                    | StageKind::Lakes { .. }
+                    | StageKind::Droplets { .. } => {
                         unreachable!("handled above")
                     }
                 };

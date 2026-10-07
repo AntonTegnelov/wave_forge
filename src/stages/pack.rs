@@ -439,6 +439,32 @@ pub enum StageKind {
         #[serde(default = "four_columns")]
         min_columns: u32,
     },
+    /// The `height` field worn by droplets of water (docs/reference/packs.md, "Droplets"): in every
+    /// square region of `region` chunks, `droplets` droplets a column run one after another from
+    /// hashed starts, each for at most `lifetime` steps of a column, wearing the ground within
+    /// `radius` columns where it speeds down with room to carry `capacity` cells of sediment on a
+    /// slope of one, picking up `erosion` of that room a step and dropping `deposition` of what it
+    /// carries beyond it. A droplet that leaves the region stops, and the change fades in over
+    /// `fade` columns from the region's edges, so regions never read each other. The product is
+    /// the worn field.
+    Droplets {
+        height: String,
+        region: u32,
+        #[serde(default = "one_droplet")]
+        droplets: f32,
+        #[serde(default = "forty_steps")]
+        lifetime: u32,
+        #[serde(default = "three_columns")]
+        radius: u32,
+        #[serde(default = "four_cells")]
+        capacity: f32,
+        #[serde(default = "a_third")]
+        erosion: f32,
+        #[serde(default = "a_third")]
+        deposition: f32,
+        #[serde(default = "sixteen_columns")]
+        fade: u32,
+    },
     /// A location table: sites of several kinds, placed once per square region of `region` chunks,
     /// the kinds in order of their `priority`, highest first. Each kind tries `tries` hashed
     /// footprints of `size` chunks a side in the region, one chunk in from its edge, and keeps one
@@ -892,6 +918,30 @@ const fn four_columns() -> u32 {
     4
 }
 
+const fn one_droplet() -> f32 {
+    1.0
+}
+
+const fn forty_steps() -> u32 {
+    40
+}
+
+const fn three_columns() -> u32 {
+    3
+}
+
+const fn four_cells() -> f32 {
+    4.0
+}
+
+const fn a_third() -> f32 {
+    0.3
+}
+
+const fn sixteen_columns() -> u32 {
+    16
+}
+
 const fn one_each() -> (u32, u32) {
     (1, 1)
 }
@@ -1043,6 +1093,15 @@ impl StageKind {
         }
     }
 
+    /// How many chunks a side of the regions a stage computes a field over at once, for the stages
+    /// whose every chunk is cut from its region's field.
+    pub(crate) const fn field_region(&self) -> Option<u32> {
+        match self {
+            Self::Lakes { region, .. } | Self::Droplets { region, .. } => Some(*region),
+            _ => None,
+        }
+    }
+
     pub(crate) const fn output(&self) -> Output {
         match self {
             Self::Field(_)
@@ -1051,7 +1110,8 @@ impl StageKind {
             | Self::Erode { .. }
             | Self::Flatten { .. }
             | Self::Apply { .. }
-            | Self::Lakes { .. } => Output::Field,
+            | Self::Lakes { .. }
+            | Self::Droplets { .. } => Output::Field,
             Self::Volume { .. } | Self::Carve { .. } | Self::Aquifer { .. } => Output::Volume,
             Self::Top { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } | Self::Nearest { .. } => Output::Categories,
@@ -2375,6 +2435,39 @@ impl Pack {
                     // The lakes fill the whole region, from its heights alone.
                     vec![(height.as_str(), Reach::region(*region), Output::Field)]
                 }
+                StageKind::Droplets {
+                    height,
+                    region,
+                    droplets,
+                    lifetime,
+                    radius,
+                    capacity,
+                    erosion,
+                    deposition,
+                    fade: _,
+                } => {
+                    let shares = [("erosion", *erosion), ("deposition", *deposition)];
+                    if let Some((name, share)) = shares
+                        .iter()
+                        .find(|(_, share)| !(0.0..=1.0).contains(share))
+                    {
+                        return Err(invalid(format!("an {name} of {share}, beyond 0 to 1")));
+                    }
+                    if *region == 0
+                        || *lifetime == 0
+                        || *radius == 0
+                        || !(*droplets > 0.0 && droplets.is_finite())
+                        || !(*capacity > 0.0 && capacity.is_finite())
+                    {
+                        return Err(invalid(format!(
+                            "a region of {region} chunks, {droplets} droplets a column living \
+                             {lifetime} steps, wearing {radius} columns around with a capacity \
+                             of {capacity}"
+                        )));
+                    }
+                    // The droplets run over the whole region, from its heights alone.
+                    vec![(height.as_str(), Reach::region(*region), Output::Field)]
+                }
                 StageKind::Locations {
                     height,
                     region,
@@ -3162,6 +3255,7 @@ impl Pack {
                 | StageKind::Rivers { .. }
                 | StageKind::Network { .. }
                 | StageKind::Lakes { .. }
+                | StageKind::Droplets { .. }
                 | StageKind::Carve { .. }
                 | StageKind::Top { .. }
                 | StageKind::Aquifer { .. }
@@ -3351,6 +3445,7 @@ impl Pack {
             .filter_map(|stage| match &stage.kind {
                 StageKind::Sites { region, .. }
                 | StageKind::Lakes { region, .. }
+                | StageKind::Droplets { region, .. }
                 | StageKind::Locations { region, .. }
                 | StageKind::Region { region, .. }
                 | StageKind::Rivers { region, .. }
