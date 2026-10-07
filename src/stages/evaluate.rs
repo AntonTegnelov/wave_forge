@@ -26,6 +26,10 @@ pub(crate) fn evaluate(expr: &Expr, leaves: &impl Leaves) -> Result<f32, StageEr
         Expr::Min(a, b) => value(a)?.min(value(b)?),
         Expr::Max(a, b) => value(a)?.max(value(b)?),
         Expr::Abs(a) => value(a)?.abs(),
+        Expr::Pow(a, exponent) => {
+            let a = value(a)?;
+            a.signum() * libm::powf(a.abs(), *exponent)
+        }
         Expr::Floor(a) => value(a)?.floor(),
         Expr::Sin(a) => libm::sinf(value(a)?),
         Expr::Clamp(a, low, high) => value(a)?.clamp(*low, *high),

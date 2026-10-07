@@ -4902,6 +4902,7 @@ impl Leaves for ColumnPlace<'_, '_> {
             | Expr::Min(..)
             | Expr::Max(..)
             | Expr::Abs(_)
+            | Expr::Pow(..)
             | Expr::Floor(_)
             | Expr::Sin(_)
             | Expr::Clamp(..)

@@ -1051,6 +1051,10 @@ pub enum Expr {
     Min(Box<Expr>, Box<Expr>),
     Max(Box<Expr>, Box<Expr>),
     Abs(Box<Expr>),
+    /// The value raised to a power above zero, keeping its sign: `sign(a) * |a|^exponent`, so
+    /// noise around zero keeps its symmetry. An exponent above 1 flattens values near zero and
+    /// sharpens the extremes; one below 1 does the reverse.
+    Pow(Box<Expr>, f32),
     Floor(Box<Expr>),
     /// The sine of an angle in radians.
     Sin(Box<Expr>),
@@ -1210,6 +1214,7 @@ impl Expr {
                 b.inputs(into);
             }
             Self::Abs(a)
+            | Self::Pow(a, _)
             | Self::Floor(a)
             | Self::Sin(a)
             | Self::Clamp(a, ..)
@@ -1258,6 +1263,7 @@ impl Expr {
                 b.visit(f);
             }
             Self::Abs(a)
+            | Self::Pow(a, _)
             | Self::Floor(a)
             | Self::Sin(a)
             | Self::Clamp(a, ..)
@@ -1325,6 +1331,7 @@ impl Expr {
                 b.categories(into);
             }
             Self::Abs(a)
+            | Self::Pow(a, _)
             | Self::Floor(a)
             | Self::Sin(a)
             | Self::Clamp(a, ..)
@@ -1394,6 +1401,13 @@ impl Expr {
             | Self::Min(a, b)
             | Self::Max(a, b) => a.check().and_then(|()| b.check()),
             Self::Abs(a) | Self::Floor(a) | Self::Sin(a) => a.check(),
+            Self::Pow(a, exponent) => {
+                finite(&[*exponent])?;
+                if *exponent <= 0.0 {
+                    return Err(format!("a power of {exponent}, not above zero"));
+                }
+                a.check()
+            }
             Self::Clamp(a, low, high) => {
                 finite(&[*low, *high])?;
                 if low > high {
@@ -1552,6 +1566,7 @@ fn leaf_allowed(
         | Expr::Min(..)
         | Expr::Max(..)
         | Expr::Abs(_)
+        | Expr::Pow(..)
         | Expr::Floor(_)
         | Expr::Sin(_)
         | Expr::Clamp(..)

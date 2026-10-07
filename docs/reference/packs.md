@@ -402,6 +402,7 @@ in cells, measured from the world's origin to the column's centre, along the lat
 | `Angle((x, y))` | the direction from a point to the column's centre, as a fraction of a turn from +x towards +y, in 0..1 |
 | `Add(a, b)`, `Sub(a, b)`, `Mul(a, b)`, `Min(a, b)`, `Max(a, b)` | the arithmetic |
 | `Abs(a)`, `Floor(a)`, `Sin(a)` | the absolute value, the largest whole number not above it, the sine of an angle in radians |
+| `Pow(a, 1.5)` | `a` raised to a power above zero, keeping its sign (`sign(a) * \|a\|^1.5`), so noise around zero stays symmetric: above 1 flattens the lows and sharpens the peaks, below 1 the reverse |
 | `Is("stage", ["name", ...])` | 1 where a Rules stage's category is one of the names, 0 elsewhere |
 | `Match(input: "stage", cases: [("name", expr), ...], otherwise: expr, blend: b)` | one expression per category of a Rules stage, blended where categories meet (below) |
 | `Clamp(a, low, high)` | `a` held between the bounds |
