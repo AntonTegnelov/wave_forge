@@ -408,6 +408,7 @@ impl Leaves for RowPlace<'_> {
             | Expr::Min(..)
             | Expr::Max(..)
             | Expr::Abs(_)
+            | Expr::Pow(..)
             | Expr::Floor(_)
             | Expr::Sin(_)
             | Expr::Clamp(..)

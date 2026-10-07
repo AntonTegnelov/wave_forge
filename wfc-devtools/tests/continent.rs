@@ -207,7 +207,7 @@ fn a_part_of_the_continent_generates_with_rivers_and_lakes() {
 fn the_rock_under_cliffs_holds_caves_overhangs_and_ore() {
     let mut runtime = runtime();
     // Chunks on a plateau's rim, cliffs 15 to 50 cells up by sampling.
-    let centre = ChunkCoord::new(95, 111, 0);
+    let centre = ChunkCoord::new(148, 86, 0);
     let ores = ["coal", "iron", "copper", "gold"];
     let mut targets = vec!["ground", "rock"];
     targets.extend(ores);

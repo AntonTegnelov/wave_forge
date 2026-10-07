@@ -16,8 +16,11 @@
     water: Some((level: 0.0)),
     noises: {
         // An island round each point of this noise, as large as the cell's own value lets it grow.
-        "isles": (noise_type: Cellular, seed: 41, frequency: 0.03),
-        "sizes": (noise_type: Cellular, seed: 41, frequency: 0.03, cellular_return_type: CellValue),
+        // Both are warped alike, so the islands take irregular shapes and each keeps its own size.
+        "isles": (noise_type: Cellular, seed: 41, frequency: 0.03,
+            domain_warp_enabled: true, domain_warp_amplitude: 10.0, domain_warp_frequency: 0.03, domain_warp_fractal_octaves: 2),
+        "sizes": (noise_type: Cellular, seed: 41, frequency: 0.03, cellular_return_type: CellValue,
+            domain_warp_enabled: true, domain_warp_amplitude: 10.0, domain_warp_frequency: 0.03, domain_warp_fractal_octaves: 2),
         "detail": (noise_type: SimplexSmooth, seed: 42, frequency: 0.08, fractal_octaves: 2),
         "groves": (noise_type: Perlin, seed: 43, frequency: 0.12, fractal_octaves: 2),
     },

@@ -28,23 +28,39 @@
     noises: {
         "caves": (noise_type: SimplexSmooth, seed: 31, frequency: 0.035, fractal_octaves: 2),
         "overhangs": (noise_type: SimplexSmooth, seed: 32, frequency: 0.06, fractal_octaves: 2),
+        // The ridges of the mountain ranges: ridged where each octave crosses zero, and warped so
+        // they branch and wind rather than line up with the lattice.
+        "ridges": (noise_type: SimplexSmooth, seed: 33, frequency: 0.006, fractal_type: Ridged, fractal_octaves: 5,
+            domain_warp_enabled: true, domain_warp_amplitude: 60.0, domain_warp_frequency: 0.003, domain_warp_fractal_octaves: 2),
+        // How far the coast lies from the falloff's circle.
+        "coast": (noise_type: SimplexSmooth, seed: 34, frequency: 0.0025, fractal_octaves: 4,
+            domain_warp_enabled: true, domain_warp_amplitude: 80.0, domain_warp_frequency: 0.002, domain_warp_fractal_octaves: 2),
+        // Where the mountain ranges run: along the ridges of a broad ridged noise, warped into
+        // long arcs.
+        "ranges": (noise_type: SimplexSmooth, seed: 35, frequency: 0.0009, fractal_type: Ridged, fractal_octaves: 2,
+            domain_warp_enabled: true, domain_warp_amplitude: 150.0, domain_warp_frequency: 0.0008, domain_warp_fractal_octaves: 2),
+        // The highlands' plateaus, warped so their rims wind.
+        "plateaus": (noise_type: SimplexSmooth, seed: 37, frequency: 0.0018, fractal_octaves: 3,
+            domain_warp_enabled: true, domain_warp_amplitude: 60.0, domain_warp_frequency: 0.002, domain_warp_fractal_octaves: 2),
+        "hills": (noise_type: SimplexSmooth, seed: 36, frequency: 0.02, fractal_octaves: 3,
+            domain_warp_enabled: true, domain_warp_amplitude: 15.0, domain_warp_frequency: 0.01, domain_warp_fractal_octaves: 2),
     },
     stages: [
-        // The continent's broad shape: low-frequency noise, pulled under the sea from 780 cells
-        // out from the centre to 990, so the coast never reaches the bound.
+        // The continent's broad shape: low-frequency noise, pulled under the sea from 660 cells
+        // out from the centre to 860, that distance moved by up to 150 cells either way by the
+        // coast noise, so the coast winds and never reaches the bound.
         (name: "landmass", scale: 4, kind: Field(Noise(frequency: 0.0016, octaves: 5, name: Some("landmass")))),
-        (name: "falloff", scale: 4, kind: Field(Smoothstep(780.0, 990.0, Distance((1024.0, 1024.0))))),
+        (name: "falloff", scale: 4, kind: Field(Smoothstep(660.0, 860.0, Add(Distance((1024.0, 1024.0)), Mul(FastNoise("coast"), Constant(150.0)))))),
         (name: "base", scale: 4, kind: Field(Sub(
             Mul(Input("landmass"), Constant(1.6)),
             Add(Constant(0.5), Mul(Input("falloff"), Constant(1.2))),
         ))),
-        // Where mountain ranges run, and their ridges: one minus the fold of a noise, sharp on top.
-        (name: "ranges", scale: 4, kind: Field(Smoothstep(0.6, 0.75, Noise(frequency: 0.0011, octaves: 2, name: Some("ranges"))))),
-        (name: "ridges", kind: Field(Sub(Constant(1.0),
-            Abs(Sub(Mul(Noise(frequency: 0.006, octaves: 4, name: Some("ridges")), Constant(2.0)), Constant(1.0)))))),
-        (name: "hills", kind: Field(Noise(frequency: 0.02, octaves: 3, name: Some("hills")))),
+        // Where mountain ranges run, and their ridges, sharpened by a power.
+        (name: "ranges", scale: 4, kind: Field(Smoothstep(0.55, 0.8, FastNoise("ranges")))),
+        (name: "ridges", kind: Field(Pow(Remap(FastNoise("ridges"), (-1.0, 1.0), (0.0, 1.0)), 1.5))),
+        (name: "hills", kind: Field(Remap(FastNoise("hills"), (-1.0, 1.0), (0.0, 1.0)))),
         // Plateaus lifted a score of cells, with steep rims, which give the highlands off the ranges.
-        (name: "plateaus", scale: 4, kind: Field(Mul(Smoothstep(0.56, 0.64, Noise(frequency: 0.0018, octaves: 3, name: Some("plateaus"))), Constant(22.0)))),
+        (name: "plateaus", scale: 4, kind: Field(Mul(Smoothstep(0.3, 0.42, FastNoise("plateaus")), Constant(22.0)))),
         // The height before biomes: the landmass scaled to cells, and on land the ranges' ridges,
         // the plateaus and hills.
         (name: "height", kind: Field(Add(
@@ -65,7 +81,7 @@
             Mul(Input("base"), Constant(40.0)),
             Mul(
                 Clamp(Mul(Input("base"), Constant(8.0)), 0.0, 1.0),
-                Add(Mul(Input("ranges"), Constant(47.5)), Input("plateaus")),
+                Add(Mul(Input("ranges"), Constant(51.0)), Input("plateaus")),
             ),
         ))),
         (name: "far_height", scale: 4, kind: Field(Max(
@@ -76,7 +92,7 @@
         // and colder higher up.
         (name: "temperature", kind: Field(Sub(
             Add(
-                Remap(Y, (250.0, 1800.0), (1.05, 0.0)),
+                Remap(Y, (400.0, 1720.0), (1.05, 0.0)),
                 Mul(Sub(Noise(frequency: 0.002, octaves: 3, name: Some("heat")), Constant(0.5)), Constant(0.4)),
             ),
             Mul(Max(Input("height"), Constant(0.0)), Constant(0.003)),
@@ -146,7 +162,7 @@
         // for (tests/continent.rs checks the two name the same categories in the same order).
         (name: "far_temperature", scale: 4, kind: Field(Sub(
             Add(
-                Remap(Y, (250.0, 1800.0), (1.05, 0.0)),
+                Remap(Y, (400.0, 1720.0), (1.05, 0.0)),
                 Mul(Sub(Noise(frequency: 0.002, octaves: 3, name: Some("heat")), Constant(0.5)), Constant(0.4)),
             ),
             Mul(Max(Input("coarse_height"), Constant(0.0)), Constant(0.003)),

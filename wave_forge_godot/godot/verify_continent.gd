@@ -2,13 +2,13 @@
 ##
 ## Run by `../verify.sh` after `verify_world.gd`. `continent.tscn` is instanced and its node started
 ## asking for towns alone; the scene's script gives it the history (`continent/history.json`),
-## all its settlements. The first settlement is of the marsh folk, not the Solve stage's default
-## culture: following it, its town arrives on its site, solved with the marsh folk's module set,
-## and every module its placements name is one of that set's.
+## all its settlements. The first settlement is of the steppe riders, not the Solve stage's
+## default culture: following it, its town arrives on its site, solved with the steppe riders'
+## module set, and every module its placements name is one of that set's.
 extends SceneTree
 
 const TIMEOUT_S := 300.0
-const CULTURE := "marsh_folk"
+const CULTURE := "steppe_riders"
 
 var scene: Node
 var stages: Node

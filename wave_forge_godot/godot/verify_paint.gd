@@ -1,6 +1,7 @@
 ## Paints strokes on a stages node's world, as the editor plugin's brushes do.
 ##
-## Run by `../verify.sh` after `verify_params.gd`. On the islands preset, all land: a remove stroke
+## Run by `../verify.sh` after `verify_params.gd`. On the islands preset, all land and with no
+## roughness, so its rock spines stay low and trees grow along the stroke: a remove stroke
 ## takes every tree near its path once the chunks come back, a raise stroke then lifts the ground
 ## on its path by its strength at once, and `edits_text` holds both; a second node given that text
 ## before it starts has the raised ground from its start. A brush that names no brush is refused.
@@ -38,7 +39,7 @@ func _world() -> Node:
 	node.cell_size = CELL
 	node.view_radius = 1
 	node.collider_radius = -1
-	node.params = {"land": 1.0, "trees": 1.0}
+	node.params = {"land": 1.0, "trees": 1.0, "roughness": 0.0}
 	root.add_child(node)
 	node.generation_failed.connect(func(reason: String) -> void: _fail(reason))
 	return node
