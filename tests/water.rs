@@ -12,37 +12,18 @@ use wave_forge::{ChunkCoord, FocusPoint, WaterMesh, water_surface};
 const SIZE: [u32; 2] = [8, 8];
 const CELL: [f32; 3] = [2.0, 1.0, 2.0];
 
-/// A valley falling along +x with a hollow in it, a river down its floor, and the water: the lakes
-/// where they stand above the ground, and the river's water.
-const PACK: &str = r#"(
-    version: 1,
-    // A sea far below the valley, so its lakes stand above it.
-    water: Some((level: -100.0, lakes: Some("lakes"))),
-    tables: [(name: "rivers", kind: Given(columns: [
-        ("x0", Number), ("y0", Number), ("x1", Number), ("y1", Number), ("width", Number),
-    ]))],
-    stages: [
-        (name: "terrain", kind: Field(Add(
-            Add(Mul(X, Constant(-0.05)), Mul(Abs(Sub(Y, Constant(32.0))), Constant(0.3))),
-            Mul(Smoothstep(10.0, 4.0, Distance((40.0, 20.0))), Constant(-3.0)),
-        ))),
-        (name: "lakes", kind: Lakes(height: "terrain", region: 8, min_columns: 4)),
-        (name: "rivers", kind: TableCurves(table: "rivers", from: ("x0", "y0"), to: ("x1", "y1"), radius: "width")),
-        (name: "ground", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2, profile: Carve(0.8))),
-        (name: "river_water", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2, profile: Carve(0.3))),
-        (name: "water", kind: Field(Max(
-            Select(
-                when: Greater(Input("lakes"), Add(Input("terrain"), Constant(0.05))),
-                then: Input("lakes"),
-                otherwise: Constant(-1000.0),
-            ),
-            Input("river_water"),
-        ))),
-    ],
-)"#;
+/// The water checks' pack: a valley with a hollow and a river from a table, and its water.
+fn pack() -> Arc<Pack> {
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/water.world.ron",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("the water pack");
+    Arc::new(Pack::parse(&text).expect("a valid pack"))
+}
 
 fn runtime() -> Runtime {
-    let pack = Arc::new(Pack::parse(PACK).expect("a valid pack"));
+    let pack = pack();
     let mut facts = Facts::new(Arc::clone(&pack), 9).expect("facts");
     let river = GivenRow {
         id: 1,

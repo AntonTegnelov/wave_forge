@@ -21,6 +21,8 @@ cp "$target/$profile/libwave_forge_godot.so" "$here/godot/bin/"
 cp "$here/../examples/city.ron" "$here/godot/city.ron"
 cp "$here/../examples/valley.world.ron" "$here/godot/valley.world.ron"
 cp "$here/../examples/presets/islands.world.ron" "$here/godot/islands.world.ron"
+# The water checks' valley, which the library's and the Bevy plugin's tests read too.
+cp "$here/../tests/fixtures/water.world.ron" "$here/godot/water.world.ron"
 # The maximal preset's continent, its eight cultures and the history a game gives it.
 mkdir -p "$here/godot/continent/cultures"
 cp "$here/../examples/continent/continent.world.ron" "$here/../examples/continent/history.json" "$here/godot/continent/"

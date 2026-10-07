@@ -1,7 +1,8 @@
-// The pack of the water check (verify_water.gd): a valley falling along +x with a hollow in it, a
-// river from the `rivers` table down its floor, its bed carved 0.8 cells deep and its water 0.3
+// The pack of the water checks (tests/water.rs, wave_forge_bevy's tests/stages.rs and Godot's
+// verify_water.gd, which prepare.sh copies it for): a valley falling along +x with a hollow in it,
+// a river from the `rivers` table down its floor, its bed carved 0.8 cells deep and its water 0.3
 // cells below the banks, and the water's level: the lakes where they stand above the ground, and
-// the river's water. tests/water.rs checks the same pack in the library.
+// the river's water.
 (
     version: 1,
     // A sea far below the valley, so its lakes stand above it.
