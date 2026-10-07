@@ -12,7 +12,7 @@
 
 use crate::gi::Gi;
 use crate::grass::Grass;
-use crate::lods::{add_levelled_surface, levelled_mesh};
+use crate::lods::{add_levelled_surface, godot_triangles, levelled_mesh};
 use crate::occlusion::Occluders;
 use crate::placements::{Item, Placements};
 use crate::stage_navigation::StageNavigation;
@@ -3206,8 +3206,10 @@ impl WaveForgeStages {
             if let Some(water) = water.filter(|water| !water.indices.is_empty()) {
                 let rid = rendering.mesh_create();
                 let mut arrays = water_arrays(&water);
-                let indices: PackedInt32Array = water.indices.iter().map(|&i| i as i32).collect();
-                arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
+                arrays.set(
+                    ArrayType::INDEX.ord() as usize,
+                    &godot_triangles(&water.indices).to_variant(),
+                );
                 rendering.mesh_add_surface_from_arrays(rid, PrimitiveType::TRIANGLES, &arrays);
                 if let Some(material) = self.water_material.as_ref().or(self.sea_material.as_ref())
                 {
@@ -4559,12 +4561,9 @@ impl WaveForgeStages {
                 "field ",
                 &|stage, _| pack.is_field(stage),
             ),
-            (
-                "water_stage",
-                &self.water_stage,
-                "field ",
-                &|stage, _| pack.is_field(stage),
-            ),
+            ("water_stage", &self.water_stage, "field ", &|stage, _| {
+                pack.is_field(stage)
+            }),
             (
                 "far_ground_stage",
                 &self.far_ground_stage,

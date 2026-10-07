@@ -61,7 +61,7 @@ fn levels(arrays: &mut VarArray, finest: &[u32], coarser: &[(&[u32], f32)]) -> V
 
 /// Triangles for Godot: the library's are counter-clockwise seen from their front, Godot's
 /// clockwise.
-fn godot_triangles(indices: &[u32]) -> PackedInt32Array {
+pub(crate) fn godot_triangles(indices: &[u32]) -> PackedInt32Array {
     indices
         .chunks(3)
         .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]])
