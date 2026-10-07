@@ -5,7 +5,9 @@
 ## (`height`) and at a coarse scale of 8 (`far`), asked for 40 chunks out. Each view is filled with
 ## ground over a magenta background, so a magenta pixel is a gap: from above at an angle, across
 ## the boundary between near and far ground from low down, and from high above. It prints what
-## each view drew and how many chunks each level generated per second of its stage's time.
+## each view drew and how many chunks each level generated per second of its stage's time. Given
+## `-- far4` after the script, it draws the far ground of `far4`, the same ground at a scale of 4,
+## two coarse columns to a lattice chunk.
 extends SceneTree
 
 const CELLS := 8
@@ -29,12 +31,17 @@ var arrived := false
 var view_at := 0
 var lines := PackedStringArray()
 var gaps := 0
+## The coarse stage drawn: `far`, or the one named after `--` on the command line.
+var far_stage := "far"
 
 func _initialize() -> void:
+	var user_args := OS.get_cmdline_user_args()
+	if not user_args.is_empty():
+		far_stage = user_args[0]
 	world = ClassDB.instantiate("WaveForgeStages")
 	world.pack_file = "res://far.world.ron"
-	world.targets = PackedStringArray(["height", "far"])
-	var radii: Dictionary[StringName, int] = {&"far": FAR_RADIUS}
+	world.targets = PackedStringArray(["height", far_stage])
+	var radii: Dictionary[StringName, int] = {StringName(far_stage): FAR_RADIUS}
 	world.target_radii = radii
 	world.seed = 3
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
@@ -42,7 +49,7 @@ func _initialize() -> void:
 	world.view_radius = RADIUS
 	world.collider_radius = -1
 	world.ground_stage = "height"
-	world.far_ground_stage = "far"
+	world.far_ground_stage = far_stage
 	root.add_child(world)
 	camera = Camera3D.new()
 	camera.far = 2000
@@ -90,13 +97,13 @@ func _process(_delta: float) -> bool:
 	var count := _gaps(image)
 	gaps += count
 	lines.append("view %d: %d primitives, %d gap pixels" % [view_at, RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME), count])
-	image.save_png("user://far_%d.png" % view_at)
+	image.save_png("user://%s_%d.png" % [far_stage, view_at])
 	view_at += 1
 	if view_at < VIEWS.size():
 		_look(view_at)
 		return false
 	var stages: Dictionary = world.stats()["stages"]
-	for stage in ["height", "far"]:
+	for stage in ["height", far_stage]:
 		var cost: Dictionary = stages[stage]
 		lines.append("%s: %d chunks in %.1f ms, %.0f a second" % [stage, cost["products"], cost["ms"], cost["products"] / max(cost["ms"], 0.001) * 1000.0])
 	print("render_far: %d near grounds, %d far grounds; %s; pictures in %s" % [world.ground_chunks().size(), world.far_ground_chunks().size(), "; ".join(lines), ProjectSettings.globalize_path("user://")])
