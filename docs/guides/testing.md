@@ -322,6 +322,14 @@ cargo run -p wfc-devtools --bin wfc-render -- grid.txt --out grid.png --empty-ti
 cargo run -p wfc-devtools --bin wfc-render -- grid.txt --view layer --z 0 --out layer0.png
 ```
 
+`wfc-relief` draws a pack's height field from straight above as shaded relief, a pixel per column,
+for judging a landform's shape: water blue below zero, land from green through brown to white at
+`--top`, lit from the north-west. It takes the pack's parameters as `--param name=value`:
+
+```bash
+cargo run -p wfc-devtools --release --bin wfc-relief -- examples/presets/hills.world.ron --chunks 48 --corner -24 -24 --top 24 --out hills.png
+```
+
 The four-view sheet (`--view four-view`, the default) shows the whole grid with `+z` up:
 
 | | |
