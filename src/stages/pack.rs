@@ -3244,6 +3244,15 @@ impl Pack {
         Some(self.stages[*self.by_name.get(stage)?].scale)
     }
 
+    /// Whether `stage` is a stage of the pack that produces a field, a value per column, which
+    /// [`crate::stages::Runtime::field`] gives.
+    #[must_use]
+    pub fn is_field(&self, stage: &str) -> bool {
+        self.by_name
+            .get(stage)
+            .is_some_and(|&index| self.stages[index].kind.output() == Output::Field)
+    }
+
     pub(crate) fn index(&self, name: &str) -> Option<usize> {
         self.by_name.get(name).copied()
     }
@@ -3569,6 +3578,24 @@ mod tests {
             matches!(&result, Err(PackError::Invalid { stage, .. }) if stage == "world run"),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn a_field_stage_is_told_from_the_others() {
+        let pack = Pack::parse(
+            r#"(
+                version: 1,
+                stages: [
+                    (name: "height", kind: Field(Constant(1.0))),
+                    (name: "smooth", kind: Blur(input: "height", radius: 1)),
+                    (name: "ground", kind: Rules(rules: [], otherwise: "grass")),
+                ],
+            )"#,
+        )
+        .expect("a valid pack");
+
+        assert!(pack.is_field("height") && pack.is_field("smooth"));
+        assert!(!pack.is_field("ground") && !pack.is_field("nowhere"));
     }
 
     #[test]
