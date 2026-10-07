@@ -65,7 +65,7 @@ erosion suits finite maps generated once.
   (`src/far_ground.rs`).
 - **Shape.** Field expressions over the built-in `Noise` (fractal value noise, no rotation between
   octaves) and `FastNoise` (Godot's FastNoiseLite exactly, with ridged fractals and domain warp);
-  neighbourhood stages Blur, Delta and Area; per-biome formulas through Match
+  neighbourhood stages Blur, Delta, Erode and Area; per-biome formulas through Match
   ([packs.md](../reference/packs.md)). The continent's ranges, ridges, hills, plateaus and coast and
   the presets' landforms are warped `FastNoise`, ridged where they form crests, shaped with `Pow`
   (#324); the continent's far height leaves the ridges and hills out. `wfc-relief` draws a pack's
