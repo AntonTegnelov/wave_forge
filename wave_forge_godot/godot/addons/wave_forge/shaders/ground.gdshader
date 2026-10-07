@@ -3,8 +3,9 @@
 // the materials of the four vertices around it. Where they differ, each is weighted by how near
 // its vertices are plus a noise of its own, and the highest wins with a short blend, so materials
 // meet along a broken line rather than the grid's. Steep ground turns to rock by its own slope,
-// its colour muted and banded in strata; a broad noise varies the colour across the land, and a fine one and a detail normal give
-// the ground grain near the camera. Asset free; works on every renderer, Compatibility included.
+// its colour muted and banded in strata; a broad noise varies the colour across the land, and a
+// fine one bumps the ground and grains its colour near the camera. Asset free; works on every
+// renderer, Compatibility included.
 // `wave_forge_bevy/src/shaders/ground.wesl` is the same shader for Bevy.
 shader_type spatial;
 
@@ -40,8 +41,11 @@ void vertex() {
 	world_normal = (MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz;
 }
 
+// A hash without trigonometry, cheaper than sin and the same on every GPU.
 float hash(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
 }
 
 // Value noise in 0..1 with a smooth step between the lattice's points.
@@ -96,47 +100,56 @@ void fragment() {
 	for (int k = 0; k < 4; k++) {
 		ids[k] = id_at(corners[k]);
 	}
-	float heights[4];
-	float shares[4];
-	float highest = -2.0;
-	for (int k = 0; k < 4; k++) {
-		float weight = 0.0;
-		float same = 0.0;
-		for (int j = 0; j < 4; j++) {
-			if (ids[j] == ids[k]) {
-				weight += near_weights[j];
-				same += 1.0;
+	vec3 albedo = colour_of(ids[0]);
+	// Most fragments have one material on all four corners and need no border.
+	if (ids[1] != ids[0] || ids[2] != ids[0] || ids[3] != ids[0]) {
+		float heights[4];
+		float shares[4];
+		float highest = -2.0;
+		for (int k = 0; k < 4; k++) {
+			float weight = 0.0;
+			float same = 0.0;
+			for (int j = 0; j < 4; j++) {
+				if (ids[j] == ids[k]) {
+					weight += near_weights[j];
+					same += 1.0;
+				}
 			}
+			heights[k] = weight + border_noise * (fbm(ground / 2.0 + float(ids[k]) * 17.31) - 0.5) * 2.0;
+			shares[k] = 1.0 / same;
+			highest = max(highest, heights[k]);
 		}
-		heights[k] = weight + border_noise * (fbm(ground / 2.0 + float(ids[k]) * 17.31) - 0.5) * 2.0;
-		shares[k] = 1.0 / same;
-		highest = max(highest, heights[k]);
+		albedo = vec3(0.0);
+		float total = 0.0;
+		for (int k = 0; k < 4; k++) {
+			float weight = max(heights[k] - highest + border_width, 0.0) * shares[k];
+			albedo += colour_of(ids[k]) * weight;
+			total += weight;
+		}
+		albedo /= total;
 	}
-	vec3 albedo = vec3(0.0);
-	float total = 0.0;
-	for (int k = 0; k < 4; k++) {
-		float weight = max(heights[k] - highest + border_width, 0.0) * shares[k];
-		albedo += colour_of(ids[k]) * weight;
-		total += weight;
-	}
-	albedo /= total;
 
 	float near = 1.0 - smoothstep(30.0, 120.0, length(world - CAMERA_POSITION_WORLD));
-	vec3 normal = surface;
-	// The detail normal: the slope of a fine noise, fading with distance.
-	if (detail > 0.0) {
-		float step_m = 0.15;
-		float here = fbm(ground * 1.7);
-		vec2 slope = vec2(fbm((ground + vec2(step_m, 0.0)) * 1.7) - here, fbm((ground + vec2(0.0, step_m)) * 1.7) - here) / step_m;
-		normal = normalize(normal + vec3(-slope.x, 0.0, -slope.y) * 0.25 * detail * near);
-	}
+	float grain = detail * near;
+	// The fine noise bumps the surface by its slope on screen (Mikkelsen's surface gradient), fading
+	// with distance. Screen derivatives need every fragment of a quad, so this runs unbranched.
+	float fine = fbm(ground * 1.7);
+	vec3 dpdx = dFdx(world);
+	vec3 dpdy = dFdy(world);
+	vec3 r1 = cross(dpdy, surface);
+	vec3 r2 = cross(surface, dpdx);
+	float det = dot(dpdx, r1);
+	vec3 bump = (dFdx(fine) * r1 + dFdy(fine) * r2) * 0.25 * grain;
+	vec3 normal = normalize(abs(det) * surface - sign(det) * bump);
 	// The rock is the ground's colour muted, banded in warped strata.
-	float band = 0.5 + 0.5 * sin(world.y * 1.8 + fbm(ground / 12.0) * 2.0);
-	vec3 muted = mix(albedo, vec3(dot(albedo, vec3(0.299, 0.587, 0.114))), 0.3) * 0.8;
-	vec3 rock_base = mix(muted, rock_colour.rgb, rock_colour.a);
-	albedo = mix(albedo, rock_base * mix(1.0, 0.8 + 0.4 * band, strata), rock);
+	if (rock > 0.0) {
+		float band = 0.5 + 0.5 * sin(world.y * 1.8 + fbm(ground / 12.0) * 2.0);
+		vec3 muted = mix(albedo, vec3(dot(albedo, vec3(0.299, 0.587, 0.114))), 0.3) * 0.8;
+		vec3 rock_base = mix(muted, rock_colour.rgb, rock_colour.a);
+		albedo = mix(albedo, rock_base * mix(1.0, 0.8 + 0.4 * band, strata), rock);
+	}
 	albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), macro_variation);
-	albedo *= mix(1.0, 0.86 + 0.28 * fbm(ground * 1.3), detail * near);
+	albedo *= mix(1.0, 0.86 + 0.28 * fine, grain);
 
 	ALBEDO = albedo;
 	ROUGHNESS = roughness;
