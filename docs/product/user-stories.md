@@ -359,7 +359,9 @@ range that changes the running stages as it moves, reads its default until set a
 lists the shipped presets, each a scene of a configured node, and copies the chosen one's settings
 onto the node as one undo action; the node previews in the editor (`verify_presets.gd` takes each
 preset as a fresh node and checks it stands a lit world). `render_presets.sh` renders a contact
-sheet of each preset, every parameter at its minimum, default and maximum, for judging its look. Picking a preset and moving sliders with the mouse is not automated, and the preview's
+sheet of each preset, every parameter at its minimum, default and maximum, for judging its look,
+and `wfc-relief` draws a preset's height from above for judging its landforms, which are warped
+and, on hills and islands, ridged noise ([#324](https://github.com/AntonTegnelov/wave_forge/issues/324)). Picking a preset and moving sliders with the mouse is not automated, and the preview's
 speed on a reference desktop is P6's
 ([#224](https://github.com/AntonTegnelov/wave_forge/issues/224)).
 

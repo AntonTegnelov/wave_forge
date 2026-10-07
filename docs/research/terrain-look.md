@@ -66,8 +66,10 @@ erosion suits finite maps generated once.
 - **Shape.** Field expressions over the built-in `Noise` (fractal value noise, no rotation between
   octaves) and `FastNoise` (Godot's FastNoiseLite exactly, with ridged fractals and domain warp);
   neighbourhood stages Blur, Delta and Area; per-biome formulas through Match
-  ([packs.md](../reference/packs.md)). The continent uses only the built-in noise; its ridges are
-  one fold of the summed noise, and its far height leaves the ridges and hills out.
+  ([packs.md](../reference/packs.md)). The continent's ranges, ridges, hills, plateaus and coast and
+  the presets' landforms are warped `FastNoise`, ridged where they form crests, shaped with `Pow`
+  (#324); the continent's far height leaves the ridges and hills out. `wfc-relief` draws a pack's
+  height from above for judging a shape ([testing.md](../guides/testing.md#rendering-tools)).
 - **Water and drainage.** Lakes by priority flood and rivers down steepest descent, both region
   jobs, carved by Apply. No erosion of any kind; [stages.md](../architecture/stages.md) records
   that no stage kind is global.
@@ -87,7 +89,7 @@ erosion suits finite maps generated once.
    path after it (#323) needs a decision on assets. Both shaders, Godot's and Bevy's, have to keep
    in step, and on Compatibility too.
 2. **Shape primitives** (#324). Warped, ridged gradient noise instead of axis-aligned value noise
-   folded once. The noises exist already; the packs do not use them.
+   folded once, now in the continent and the presets.
 3. **Local erosion** (#325). Branching gullies are what make the references read as terrain. A
    filter that evaluates each point from the input's smoothed gradient is deterministic and seamless
    in chunks with a bounded reach, which a simulation is not. It is the largest shape change that
