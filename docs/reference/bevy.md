@@ -217,6 +217,15 @@ and `GroundLook::flat()` the palette's colours alone, blended between the vertic
 chunks beyond its far edges, so the material stage has to be generated one chunk beyond the ground,
 with `.with_radius` say.
 
+`WaveForgeStagesPlugin::with_ground_cavity(stage)` and `with_ground_wetness(stage)` give the ground
+channels from field stages, as Godot's `ground_cavity_stage` and `ground_wetness_stage` do
+([godot.md](godot.md#ground-and-colliders)): a chunk's ground waits for them too, generated one
+chunk beyond it as the materials are, and `WaveForgeStages::ground_channels(chunk)` gives them per
+vertex, cavity then wetness. `ground_material` puts them in `GroundMaterials::channels`, a two-float
+texture `ground_channels_image(size, channels)` makes, and a ground built some other way sets that
+field itself; without channels it is a single texel of zeros. `GroundLook`'s `cavity_darkening`,
+`wet_darkening` and `wet_roughness` say how far they darken and smooth the ground.
+
 ## Grass
 
 `GrassMaterial` is an `ExtendedMaterial` over `StandardMaterial` with a vertex shader of its own.
