@@ -14,19 +14,34 @@
     },
     water: Some((level: 0.0)),
     noises: {
-        "islands": (noise_type: SimplexSmooth, seed: 11, frequency: 0.015, fractal_octaves: 3),
+        // Warped, so the coasts wind and the islands take irregular shapes.
+        "islands": (noise_type: SimplexSmooth, seed: 11, frequency: 0.015, fractal_octaves: 3,
+            domain_warp_enabled: true, domain_warp_amplitude: 30.0, domain_warp_frequency: 0.01),
+        // Ridged and warped: the spines of rock that run along the islands' interiors.
+        "spines": (noise_type: SimplexSmooth, seed: 14, frequency: 0.02, fractal_type: Ridged, fractal_octaves: 3,
+            domain_warp_enabled: true, domain_warp_amplitude: 20.0, domain_warp_frequency: 0.015),
         "detail": (noise_type: SimplexSmooth, seed: 12, frequency: 0.08, fractal_octaves: 3),
         "woods": (noise_type: Perlin, seed: 13, frequency: 0.05, fractal_octaves: 2),
     },
     stages: [
         // The coast lies where the island noise crosses the land amount; the land rises from it and
-        // roughness adds detail, the sea floor falling away below it.
-        (name: "height", kind: Field(Mul(
-            Add(
-                Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))),
-                Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))),
+        // roughness adds detail, the sea floor falling away below it. Inland, away from the coast,
+        // ridges raise spines as tall as the roughness lets them.
+        (name: "height", kind: Field(Add(
+            Mul(
+                Add(
+                    Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))),
+                    Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))),
+                ),
+                Constant(14.0),
             ),
-            Constant(14.0),
+            Mul(
+                Mul(
+                    Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0),
+                    Clamp(Mul(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(3.0)), 0.0, 1.0),
+                ),
+                Add(Constant(2.0), Mul(Param("roughness"), Constant(6.0))),
+            ),
         ))),
         (name: "surface", kind: Rules(rules: [
             (category: "sand", when: [Less(Input("height"), Constant(1.2))]),
