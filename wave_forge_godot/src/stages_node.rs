@@ -12,7 +12,7 @@
 
 use crate::gi::Gi;
 use crate::grass::Grass;
-use crate::lods::{add_levelled_surface, levelled_mesh};
+use crate::lods::{add_levelled_surface, godot_triangles, levelled_mesh};
 use crate::occlusion::Occluders;
 use crate::placements::{Item, Placements};
 use crate::stage_navigation::StageNavigation;
@@ -24,6 +24,7 @@ use godot::classes::image::Format as ImageFormat;
 use godot::classes::physics_server_3d::BodyMode;
 use godot::classes::rendering_server::ArrayType;
 use godot::classes::rendering_server::MultimeshTransformFormat;
+use godot::classes::rendering_server::PrimitiveType;
 use godot::classes::{
     ArrayMesh, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
     HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, MeshLibrary,
@@ -52,8 +53,8 @@ use wave_forge::stages::{
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, SurfaceWorker, VolumeMesh,
-    YUpSpace, far_ground, far_ground_categories, ground, ground_channels, ground_height,
-    ground_materials, ground_readers, ground_values, volume_height,
+    WaterMesh, YUpSpace, far_ground, far_ground_categories, ground, ground_channels, ground_height,
+    ground_materials, ground_readers, ground_values, volume_height, water_surface,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -179,6 +180,15 @@ pub struct WaveForgeStages {
     /// chunk, as wide as the view. Empty, or a pack without water, draws no sea.
     #[export]
     sea_material: Option<Gd<Material>>,
+    /// A field stage at the ground's scale holding the level of the lakes' and rivers' water, in
+    /// cells like `ground_stage`'s: each chunk whose ground is drawn also gets its water, where the
+    /// level stands above the ground (`wave_forge::water_surface`). Empty for none.
+    #[export]
+    water_stage: GString,
+    /// The material the lakes and rivers are drawn with; empty draws them with `sea_material`, and
+    /// with neither, as with the sea, they are not drawn.
+    #[export]
+    water_material: Option<Gd<Material>>,
     /// A coarse field stage the far ground is drawn from beyond the near ground, a height in cells
     /// per column like `ground_stage`'s; empty for none. Give it a radius of its own in
     /// `target_radii`, as far as the ground should reach; a coarse chunk's far ground needs the
@@ -356,6 +366,8 @@ pub struct WaveForgeStages {
     ground_due: std::collections::BTreeSet<ChunkCoord>,
     /// The chunks whose ground is built: its mesh, and its `RenderingServer` mesh and instance.
     grounds: HashMap<ChunkCoord, (GroundMesh, Rid, Rid)>,
+    /// Each drawn ground's water, with water in it, and its mesh and instance.
+    waters: HashMap<ChunkCoord, (WaterMesh, Rid, Rid)>,
     /// The revision each built ground was built as, so a chunk's body tells a ground built again
     /// from the one it holds.
     ground_revisions: HashMap<ChunkCoord, u64>,
@@ -757,6 +769,8 @@ impl INode for WaveForgeStages {
             followed: None,
             sea: None,
             sea_material: None,
+            water_stage: GString::new(),
+            water_material: None,
             process_ms: Timings::new(RECENT_FRAMES),
             ground_stage: GString::new(),
             far_ground_stage: GString::new(),
@@ -786,6 +800,7 @@ impl INode for WaveForgeStages {
             collision_shapes: HashMap::new(),
             mesh_shapes: None,
             grounds: HashMap::new(),
+            waters: HashMap::new(),
             ground_revisions: HashMap::new(),
             ground_builds: 0,
             far_due: std::collections::BTreeSet::new(),
@@ -985,6 +1000,7 @@ impl INode for WaveForgeStages {
             self.ground_material_stage.to_string(),
             self.ground_cavity_stage.to_string(),
             self.ground_wetness_stage.to_string(),
+            self.water_stage.to_string(),
         ];
         for event in &events {
             match event {
@@ -2266,6 +2282,34 @@ impl WaveForgeStages {
         out
     }
 
+    /// The chunks whose lakes and rivers are drawn: those with water in them.
+    #[func]
+    fn water_chunks(&self) -> Array<Vector3i> {
+        self.waters.keys().map(|&chunk| to_vector(chunk)).collect()
+    }
+
+    /// A chunk's water, relative to the chunk's corner on the ground plane: `positions`
+    /// (PackedVector3Array) on the ground's grid and `indices` (PackedInt32Array, three per
+    /// triangle, clockwise seen from above as Godot's front faces are, as drawn). Empty if the
+    /// chunk has no water drawn.
+    #[func]
+    fn water_surface_of(&self, chunk: Vector3i) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        if let Some((water, _, _)) = self.waters.get(&from_vector(chunk)) {
+            let positions: PackedVector3Array = water
+                .positions
+                .iter()
+                .map(|&[x, y, z]| Vector3::new(x, y, z))
+                .collect();
+            out.set(&"positions".to_variant(), &positions.to_variant());
+            out.set(
+                &"indices".to_variant(),
+                &godot_triangles(&water.indices).to_variant(),
+            );
+        }
+        out
+    }
+
     /// The chunks of `volume_stage` whose surface is built, those without triangles included.
     #[func]
     fn volume_chunks(&self) -> Array<Vector3i> {
@@ -3034,6 +3078,10 @@ impl WaveForgeStages {
                 rendering.free_rid(instance);
                 rendering.free_rid(mesh);
             }
+            if let Some((_, mesh, instance)) = self.waters.remove(&reader) {
+                rendering.free_rid(instance);
+                rendering.free_rid(mesh);
+            }
             self.ground_revisions.remove(&reader);
             self.chunk_materials.remove(&reader);
             if let Some(grass) = &mut self.grass {
@@ -3055,6 +3103,7 @@ impl WaveForgeStages {
         let material_stage = self.ground_material_stage.to_string();
         let cavity_stage = self.ground_cavity_stage.to_string();
         let wetness_stage = self.ground_wetness_stage.to_string();
+        let water_stage = self.water_stage.to_string();
         let cell = self.cell_size.to_array();
         // Drops first: a raise drops a chunk and generates it again in one frame, and it is due.
         for chunk in gone {
@@ -3085,8 +3134,23 @@ impl WaveForgeStages {
             let Some(mesh) = ground(chunk, |at| worker.field(&stage, at), cell) else {
                 continue;
             };
+            // The chunk's lakes and rivers, or wait for the water's field.
+            let water = if water_stage.is_empty() {
+                None
+            } else {
+                let surface = water_surface(
+                    chunk,
+                    |at| worker.field(&water_stage, at),
+                    |at| worker.field(&stage, at),
+                    cell,
+                );
+                let Some(surface) = surface else {
+                    continue;
+                };
+                Some(surface)
+            };
             if self.palette.is_none() {
-                built.push((chunk, mesh, None));
+                built.push((chunk, mesh, None, water));
                 continue;
             }
             let Some(ids) = ground_materials(chunk, |at| worker.categories(&material_stage, at))
@@ -3105,10 +3169,15 @@ impl WaveForgeStages {
             else {
                 continue;
             };
-            built.push((chunk, mesh, Some((ids, ground_channels(cavity, wetness)))));
+            built.push((
+                chunk,
+                mesh,
+                Some((ids, ground_channels(cavity, wetness))),
+                water,
+            ));
         }
         let mut count = 0;
-        for (chunk, mesh, ids) in built {
+        for (chunk, mesh, ids, water) in built {
             if count > 0 && elapsed_ms(building) >= GROUNDS_BUDGET_MS {
                 self.ground_due.insert(chunk);
                 continue;
@@ -3138,6 +3207,25 @@ impl WaveForgeStages {
             );
             Gi::Static.apply(instance);
             self.grounds.insert(chunk, (mesh, rid, instance));
+            let material = self.water_material.as_ref().or(self.sea_material.as_ref());
+            if let (Some(water), Some(material)) =
+                (water.filter(|water| !water.indices.is_empty()), material)
+            {
+                let rid = rendering.mesh_create();
+                let mut arrays = water_arrays(&water);
+                arrays.set(
+                    ArrayType::INDEX.ord() as usize,
+                    &godot_triangles(&water.indices).to_variant(),
+                );
+                rendering.mesh_add_surface_from_arrays(rid, PrimitiveType::TRIANGLES, &arrays);
+                rendering.mesh_surface_set_material(rid, 0, material.get_rid());
+                let instance = rendering.instance_create2(rid, scenario);
+                rendering.instance_set_transform(
+                    instance,
+                    Transform3D::new(Basis::IDENTITY, self.chunk_corner(chunk)),
+                );
+                self.waters.insert(chunk, (water, rid, instance));
+            }
             self.ground_builds += 1;
             self.ground_revisions.insert(chunk, self.ground_builds);
         }
@@ -4443,7 +4531,7 @@ impl WaveForgeStages {
         }
         let at_scale_one = |stage: &str| pack.scale(stage) == Some(1);
         let far_scale = pack.scale(&self.far_ground_stage.to_string());
-        let settings: [(&str, &GString, &str, Fits<'_>); 10] = [
+        let settings: [(&str, &GString, &str, Fits<'_>); 11] = [
             ("ground_stage", &self.ground_stage, "", &|_, _| true),
             ("grass_stage", &self.grass_stage, "", &|_, _| true),
             (
@@ -4477,6 +4565,9 @@ impl WaveForgeStages {
                 "field ",
                 &|stage, _| pack.is_field(stage),
             ),
+            ("water_stage", &self.water_stage, "field ", &|stage, _| {
+                pack.is_field(stage)
+            }),
             (
                 "far_ground_stage",
                 &self.far_ground_stage,
@@ -4714,6 +4805,10 @@ impl WaveForgeStages {
             rendering.free_rid(instance);
             rendering.free_rid(mesh);
         }
+        for (_, (_, mesh, instance)) in self.waters.drain() {
+            rendering.free_rid(instance);
+            rendering.free_rid(mesh);
+        }
         self.ground_revisions.clear();
         for layer in [&mut self.rock, &mut self.fluid].into_iter().flatten() {
             layer.clear();
@@ -4782,6 +4877,25 @@ fn layer_mesh(layer: Option<&VolumeLayer>, chunk: Vector3i) -> Rid {
 }
 
 /// A chunk's ground as a surface's arrays without its triangles: its vertices and normals.
+/// A chunk's water's vertices and normals as a surface's arrays, its triangles to be added.
+fn water_arrays(water: &WaterMesh) -> VarArray {
+    let mut arrays = VarArray::new();
+    arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
+    let vertices: PackedVector3Array = water
+        .positions
+        .iter()
+        .map(|&[x, y, z]| Vector3::new(x, y, z))
+        .collect();
+    let normals: PackedVector3Array = water
+        .normals
+        .iter()
+        .map(|&[x, y, z]| Vector3::new(x, y, z))
+        .collect();
+    arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
+    arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+    arrays
+}
+
 fn ground_arrays(mesh: &GroundMesh) -> VarArray {
     let mut arrays = VarArray::new();
     arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());

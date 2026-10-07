@@ -272,6 +272,19 @@
         (name: "rivers", kind: Rivers(height: "terrain", region: 64, sources: 6, width: (0.8, 3.0), step: 2)),
         (name: "carved", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
             profile: Carve(0.8))),
+        // The lakes' and rivers' water an engine draws (docs/reference/packs.md, "Water surfaces"):
+        // the lakes where they stand above the terrain, and the rivers' water half a cell above
+        // their beds, carved with the beds' blend so it meets the banks.
+        (name: "river_water", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
+            profile: Carve(0.3))),
+        (name: "water", kind: Field(Max(
+            Select(
+                when: Greater(Input("lakes"), Add(Input("terrain"), Constant(0.05))),
+                then: Input("lakes"),
+                otherwise: Constant(-1000.0),
+            ),
+            Input("river_water"),
+        ))),
         // How uneven the ground is, and where each biome ends, for what is placed on it.
         (name: "roughness", kind: Delta(input: "terrain", radius: 2)),
         (name: "biome_area", kind: Area(input: "biome", distance: 4)),

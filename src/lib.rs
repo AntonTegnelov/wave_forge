@@ -65,6 +65,7 @@ pub mod stages;
 pub mod surface_worker;
 pub mod towns;
 pub mod volume_mesh;
+pub mod water;
 pub mod worker;
 
 pub use cell_boxes::CellBox;
@@ -86,6 +87,7 @@ pub use scheduler::FocusPoint;
 pub use space::YUpSpace;
 pub use surface_worker::SurfaceWorker;
 pub use volume_mesh::{VolumeMesh, volume_height, volume_mesh};
+pub use water::{WaterMesh, water_surface};
 pub use worker::Worker;
 
 pub use wfc_core::{

@@ -45,8 +45,8 @@ use wave_forge::stages::{
 };
 use wave_forge::{
     ChunkCoord, FarGround, FocusPoint, FrozenStore, GroundMesh, InstanceId, NavSource,
-    NavSourceError, VolumeMesh, far_ground, ground, ground_channels, ground_materials,
-    ground_readers, ground_values, surface_nav_source, volume_mesh,
+    NavSourceError, VolumeMesh, WaterMesh, far_ground, ground, ground_channels, ground_materials,
+    ground_readers, ground_values, surface_nav_source, volume_mesh, water_surface,
 };
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
@@ -180,6 +180,10 @@ pub struct WaveForgeStages {
     ground_channel_stages: [Option<String>; 2],
     /// Each built ground's channels, cavity then wetness per vertex, with a channel stage.
     ground_channels: HashMap<ChunkCoord, Vec<f32>>,
+    /// The field stage of the lakes' and rivers' level, if any.
+    water_stage: Option<String>,
+    /// Each built ground's water, with a water stage.
+    waters: HashMap<ChunkCoord, WaterMesh>,
     /// The coarse field stage the far ground is built from and its scale, if any.
     far_ground_stage: Option<(String, u32)>,
     far_grounds: HashMap<ChunkCoord, FarGround>,
@@ -281,6 +285,15 @@ impl WaveForgeStages {
     #[must_use]
     pub fn ground(&self, chunk: ChunkCoord) -> Option<&GroundMesh> {
         self.grounds.get(&chunk)
+    }
+
+    /// A chunk's lakes and rivers, built with its ground from the stage
+    /// [`WaveForgeStagesPlugin::with_water`] names ([`wave_forge::water_surface`]): a mesh in
+    /// Bevy's axes relative to [`WaveForgeStages::chunk_corner`], with no triangles where the chunk
+    /// has no water. `None` without a water stage or before the chunk's ground is built.
+    #[must_use]
+    pub fn water(&self, chunk: ChunkCoord) -> Option<&WaterMesh> {
+        self.waters.get(&chunk)
     }
 
     /// A Volume stage's values for a chunk, if they have arrived.
@@ -490,6 +503,19 @@ pub fn ground_mesh(ground: &GroundMesh) -> Mesh {
     .with_inserted_indices(Indices::U32(ground.levels[0].indices.clone()))
 }
 
+/// A chunk's lakes and rivers as a Bevy mesh, facing up, to spawn at
+/// [`WaveForgeStages::chunk_corner`].
+#[must_use]
+pub fn water_mesh(water: &WaterMesh) -> Mesh {
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water.positions.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water.normals.clone())
+    .with_inserted_indices(Indices::U32(water.indices.clone()))
+}
+
 /// A chunk's volume surface as a Bevy mesh, facing from solid to empty.
 #[must_use]
 pub fn surface_mesh(surface: &VolumeMesh) -> Mesh {
@@ -579,6 +605,7 @@ pub struct WaveForgeStagesPlugin {
     ground_stage: Option<String>,
     ground_material_stage: Option<String>,
     ground_channel_stages: [Option<String>; 2],
+    water_stage: Option<String>,
     far_ground_stage: Option<(String, u32)>,
     volume_stage: Option<String>,
     fluid_stage: Option<String>,
@@ -621,6 +648,7 @@ impl WaveForgeStagesPlugin {
             ground_stage: None,
             ground_material_stage: None,
             ground_channel_stages: [None, None],
+            water_stage: None,
             far_ground_stage: None,
             volume_stage: None,
             fluid_stage: None,
@@ -714,6 +742,16 @@ impl WaveForgeStagesPlugin {
         self.ground_channel_stages[1] = Some(stage.to_owned());
         self
     }
+
+    /// Gives the ground its lakes and rivers from the field stage `stage`, the water's level at the
+    /// ground's scale (docs/reference/packs.md, "Water surfaces"): a chunk's ground then also waits
+    /// for it, and [`WaveForgeStages::water`] gives the chunk's water, which [`water_mesh`] makes a
+    /// mesh of. Generated one chunk beyond the ground, as the materials are.
+    #[must_use]
+    pub fn with_water(mut self, stage: &str) -> Self {
+        self.water_stage = Some(stage.to_owned());
+        self
+    }
 }
 
 /// The stages' worker, whose thread is joined when it drops: a device still being torn down on it
@@ -769,6 +807,8 @@ impl Plugin for WaveForgeStagesPlugin {
             ground_ids: HashMap::new(),
             ground_channel_stages: self.ground_channel_stages.clone(),
             ground_channels: HashMap::new(),
+            water_stage: self.water_stage.clone(),
+            waters: HashMap::new(),
             far_ground_stage: self.far_ground_stage.clone(),
             far_grounds: HashMap::new(),
             far_due: BTreeSet::new(),
@@ -880,7 +920,8 @@ fn drain(
     let ground_stage = stages.ground_stage.clone();
     let material_stage = stages.ground_material_stage.clone();
     let channel_stages = stages.ground_channel_stages.clone();
-    // The stages a chunk's ground reads: its field, its materials and its channels.
+    let water_stage = stages.water_stage.clone();
+    // The stages a chunk's ground reads: its field, its materials, its channels and its water.
     let read = |stage: &String| {
         ground_stage.as_ref() == Some(stage)
             || material_stage.as_ref() == Some(stage)
@@ -888,6 +929,7 @@ fn drain(
                 .iter()
                 .flatten()
                 .any(|channel| channel == stage)
+            || water_stage.as_ref() == Some(stage)
     };
     let far_stage = stages.far_ground_stage.clone();
     let volume_stage = stages.volume_stage.clone();
@@ -929,6 +971,7 @@ fn drain(
                         if stages.grounds.remove(&reader).is_some() {
                             stages.ground_ids.remove(&reader);
                             stages.ground_channels.remove(&reader);
+                            stages.waters.remove(&reader);
                             near_changed.push(reader);
                             grounds.dropped.write(GroundDropped(reader));
                         }
@@ -995,8 +1038,26 @@ fn drain(
             else {
                 continue;
             };
+            // The chunk's lakes and rivers, or wait for the water's field.
+            let water = match &water_stage {
+                None => None,
+                Some(water) => {
+                    let Some(surface) = water_surface(
+                        chunk,
+                        |at| stages.worker.field(water, at),
+                        |at| stages.worker.field(stage, at),
+                        cell,
+                    ) else {
+                        continue;
+                    };
+                    Some(surface)
+                }
+            };
             if let Some(channels) = ground_channels(cavity, wetness) {
                 stages.ground_channels.insert(chunk, channels);
+            }
+            if let Some(water) = water {
+                stages.waters.insert(chunk, water);
             }
             stages.grounds.insert(chunk, mesh);
             near_changed.push(chunk);
