@@ -631,10 +631,21 @@ of one texel per ground vertex holding its category in the red channel as id / 2
 `wave_forge_cell`, the cell's width along x and z; and `wave_forge_palette`, a 256 by 1 texture of
 a colour per category from `ground_palette`, categories past its end taking colours of their own.
 With `ground_material` empty, the copy is of the reference ground shader
-(`addons/wave_forge/shaders/ground.gdshader`, [Reference shaders](#reference-shaders)), which blends the colours of the four vertices around every fragment, so materials meet in a smooth
-band a cell wide on every renderer, Compatibility included. `ground_shader_code()` gives its code,
-to start a game's own shader from; a game's `ground_material` has to be a `ShaderMaterial` taking
-the same parameters. `ground_material_of(chunk)` gives a chunk's copy. Loading refuses a
+(`addons/wave_forge/shaders/ground.gdshader`, [Reference shaders](#reference-shaders)), which draws
+the materials of the four vertices around every fragment, asset free and on every renderer,
+Compatibility included. Each material is weighted by how near its vertices are plus a noise of its
+own, so materials meet along a broken line rather than the grid's. Steep ground turns to rock by
+its slope: the ground's own colour muted and banded in strata, with a soft border on walls, where
+the per-column materials would otherwise streak down. A broad noise varies the colour across the
+land, and near the camera a fine one bumps the surface and grains its colour. Its parameters set
+the look: `rock_colour` (whose alpha, above zero, replaces the muted colour with its own),
+`rock_slope` (the slopes, one minus the normal's height, where rock starts and has taken over),
+`strata`, `edge_noise`, `macro_variation` and `detail`, all on by default; zero noise and
+`rock_slope` beyond 1 draw the palette's colours alone. A game sets them on a `ShaderMaterial` of
+the reference shader given as `ground_material`, whose parameters every chunk's copy keeps. What
+the shader costs is in [measurements.md](../research/measurements.md) (E58).
+`ground_shader_code()` gives its code, to start a game's own shader from; a game's
+`ground_material` has to be a `ShaderMaterial` taking the same parameters. `ground_material_of(chunk)` gives a chunk's copy. Loading refuses a
 `ground_material_stage` that is no Rules, Area or Nearest stage, and a `ground_material` that is no
 `ShaderMaterial` beside it.
 
@@ -711,7 +722,7 @@ through a town), `godot/verify_tables.gd` (tables of facts given from GDScript) 
 chunk) in a real headless Godot. `render_occlusion.sh` measures what occluders cull and cost from
 above the city and from a street, and `render_proxies.sh` checks that a chunk's modules draw near
 and its proxy far, never both. `render_ground.sh` renders the ground's materials and grass to pictures, to look at, times
-grass, and checks that trees drawn with the vegetation shader move in the wind and stand still
+grass and the ground shader, and checks that trees drawn with the vegetation shader move in the wind and stand still
 without it.
 How to run it in the dev container and in CI is in [environment.md](../guides/environment.md), and
 what the checks assert is in [testing.md](../guides/testing.md).

@@ -328,7 +328,10 @@ plugin's built-in tree, bodies and navigation; given to a fresh node in a lit sc
 own, stands that world and prints no error or warning (`verify_presets.gd`). The node follows the camera
 with no code, and a walker standing in for a game's player (the checks' own, `walker.tscn` in the
 verification project) walks the default preset, standing on its ground, with nothing printed
-(`verify_walk.gd`). Left: the timed walkthrough with five newcomers, near the release
+(`verify_walk.gd`). The ground is drawn asset free by the procedural reference shader, its
+materials meeting along broken lines and steep ground turning to rock, on every renderer
+(`render_presets.sh`'s contact sheets, [#322](https://github.com/AntonTegnelov/wave_forge/issues/322)).
+Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 
 ### N2. Pick a preset and tweak it with a live preview
