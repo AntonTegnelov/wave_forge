@@ -2289,7 +2289,8 @@ impl WaveForgeStages {
 
     /// A chunk's water, relative to the chunk's corner on the ground plane: `positions`
     /// (PackedVector3Array) on the ground's grid and `indices` (PackedInt32Array, three per
-    /// triangle). Empty if the chunk has no water drawn.
+    /// triangle, clockwise seen from above as Godot's front faces are, as drawn). Empty if the
+    /// chunk has no water drawn.
     #[func]
     fn water_surface_of(&self, chunk: Vector3i) -> VarDictionary {
         let mut out = VarDictionary::new();
@@ -2299,9 +2300,11 @@ impl WaveForgeStages {
                 .iter()
                 .map(|&[x, y, z]| Vector3::new(x, y, z))
                 .collect();
-            let indices: PackedInt32Array = water.indices.iter().map(|&i| i as i32).collect();
             out.set(&"positions".to_variant(), &positions.to_variant());
-            out.set(&"indices".to_variant(), &indices.to_variant());
+            out.set(
+                &"indices".to_variant(),
+                &godot_triangles(&water.indices).to_variant(),
+            );
         }
         out
     }

@@ -3,8 +3,8 @@
 ## Run by `../verify.sh` after `verify_ground.gd`. The water check's pack has a valley with a hollow
 ## in it and a river the script gives as a table row: each chunk of drawn ground along the river
 ## gets its water, every vertex where the water stands above the ground at the water's level and
-## every other one under the ground, so the water meets its banks with no gap; a chunk on the
-## valley's dry side gets none. A water stage that is no field is refused.
+## every other one under the ground, so the water meets its banks with no gap, and every triangle
+## facing up as Godot draws its front faces; a chunk on the valley's dry side gets none. A water stage that is no field is refused.
 extends SceneTree
 
 const CELLS := 8
@@ -69,6 +69,14 @@ func _process(_delta: float) -> bool:
 			_fail("no water drawn on %s, along the river" % chunk)
 			return true
 		var positions: PackedVector3Array = surface["positions"]
+		# Drawn as Godot's front faces, clockwise seen from above, so the water shows from above.
+		var indices: PackedInt32Array = surface["indices"]
+		for t in range(0, indices.size(), 3):
+			var a := positions[indices[t]]
+			var normal := (positions[indices[t + 1]] - a).cross(positions[indices[t + 2]] - a)
+			if normal.y >= 0.0:
+				_fail("a triangle of %s's water faces down from above: %s" % [chunk, normal])
+				return true
 		for j in CELLS + 1:
 			for i in CELLS + 1:
 				var column := Vector2i(chunk.x * CELLS + i, chunk.y * CELLS + j)
