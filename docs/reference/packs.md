@@ -1185,14 +1185,17 @@ edge, its +y edge and its +x+y corner have arrived.
 `wave_forge::far_ground(chunk, scale, field, cell_size, near)` builds the ground beyond the near
 ground from a coarse height field stage ([Levels](#levels)): one `FarGround` mesh per chunk of it,
 covering its `scale` by `scale` chunks of the WFC lattice. It has a vertex at every lattice chunk's
-corner, where a near ground's first vertex is, with the height a fine stage reading the coarse field
-there gets, so each lattice chunk is one square with exactly a near ground's outline, and two
-neighbouring coarse chunks meet exactly. `near` gives the near ground drawn on a lattice chunk, if
-any: its square is left out, so the two never overlap. Along every edge a far square shares with a
-near ground a wall stands, from the higher of the two edges to below the lower by as much as the
-near ground's skirt hangs, so no view sees between them at any level of detail the near ground is
-drawn at; a square beside a near ground fans out from its centre through the wall's feet, so the
-two share their vertices and no crack opens. Positions are relative to the corner of the first
+corner, where a near ground's first vertex is, and where a lattice chunk spans a whole number of
+coarse columns, one for each of them along its edges and inside (`far_steps(columns, scale)`: two at
+a scale of 4 with chunks of 8 columns, a vertex every 8 m at cells of 2 m), each with the height a
+fine stage reading the coarse field there gets. So each lattice chunk is a block of far squares with
+exactly a near ground's outline, and two neighbouring coarse chunks meet exactly. `near` gives the
+near ground drawn on a lattice chunk, if any: its block is left out, so the two never overlap. Along
+every edge a block shares with a near ground a wall stands, from the higher of the two edges to
+below the lower by as much as the near ground's skirt hangs, so no view sees between them at any
+level of detail the near ground is drawn at; a block beside a near ground fans out from its centre
+through the wall's feet and its other edges' vertices, so it shares its vertices with the walls and
+the far squares beside it and no crack opens. Positions are relative to the corner of the first
 lattice chunk the coarse chunk covers, with heights absolute; the walls face both ways. It returns
 `None` until the coarse fields of the chunk and the eight around it have arrived, so the far ground
 reaches one coarse chunk less than its field.
