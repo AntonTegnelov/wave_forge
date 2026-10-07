@@ -45,8 +45,8 @@ use wave_forge::stages::{
 };
 use wave_forge::{
     ChunkCoord, FarGround, FocusPoint, FrozenStore, GroundMesh, InstanceId, NavSource,
-    NavSourceError, VolumeMesh, far_ground, ground, ground_materials, ground_readers,
-    surface_nav_source, volume_mesh,
+    NavSourceError, VolumeMesh, far_ground, ground, ground_channels, ground_materials,
+    ground_readers, ground_values, surface_nav_source, volume_mesh,
 };
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
@@ -176,6 +176,10 @@ pub struct WaveForgeStages {
     ground_material_stage: Option<String>,
     /// Each built ground's category per vertex, with a material stage.
     ground_ids: HashMap<ChunkCoord, Vec<u8>>,
+    /// The field stages whose values are the ground's cavity and wetness, if any.
+    ground_channel_stages: [Option<String>; 2],
+    /// Each built ground's channels, cavity then wetness per vertex, with a channel stage.
+    ground_channels: HashMap<ChunkCoord, Vec<f32>>,
     /// The coarse field stage the far ground is built from and its scale, if any.
     far_ground_stage: Option<(String, u32)>,
     far_grounds: HashMap<ChunkCoord, FarGround>,
@@ -354,6 +358,15 @@ impl WaveForgeStages {
     #[must_use]
     pub fn ground_materials(&self, chunk: ChunkCoord) -> Option<&[u8]> {
         self.ground_ids.get(&chunk).map(Vec::as_slice)
+    }
+
+    /// The channels of every vertex of a chunk's ground, cavity then wetness, from the stages
+    /// [`WaveForgeStagesPlugin::with_ground_cavity`] and
+    /// [`WaveForgeStagesPlugin::with_ground_wetness`] name, as [`wave_forge::ground_channels`]
+    /// lays them out; `None` without either or before the chunk's ground is built.
+    #[must_use]
+    pub fn ground_channels(&self, chunk: ChunkCoord) -> Option<&[f32]> {
+        self.ground_channels.get(&chunk).map(Vec::as_slice)
     }
 
     /// How chunks and cells sit in Bevy's world, as the plugin was given it.
@@ -565,6 +578,7 @@ pub struct WaveForgeStagesPlugin {
     settings: StagesSettings,
     ground_stage: Option<String>,
     ground_material_stage: Option<String>,
+    ground_channel_stages: [Option<String>; 2],
     far_ground_stage: Option<(String, u32)>,
     volume_stage: Option<String>,
     fluid_stage: Option<String>,
@@ -606,6 +620,7 @@ impl WaveForgeStagesPlugin {
             settings,
             ground_stage: None,
             ground_material_stage: None,
+            ground_channel_stages: [None, None],
             far_ground_stage: None,
             volume_stage: None,
             fluid_stage: None,
@@ -680,6 +695,25 @@ impl WaveForgeStagesPlugin {
         self.ground_material_stage = Some(stage.to_owned());
         self
     }
+
+    /// Gives the ground the values of the field stage `stage`, 0 to 1, as its cavity, which
+    /// [`crate::materials::GroundMaterial`] darkens: a chunk's ground then also waits for them, and
+    /// [`WaveForgeStages::ground_channels`] gives them per vertex. Generated one chunk beyond the
+    /// ground, as the materials are.
+    #[must_use]
+    pub fn with_ground_cavity(mut self, stage: &str) -> Self {
+        self.ground_channel_stages[0] = Some(stage.to_owned());
+        self
+    }
+
+    /// Gives the ground the values of the field stage `stage`, 0 to 1, as its wetness, which
+    /// [`crate::materials::GroundMaterial`] darkens and smooths, as
+    /// [`WaveForgeStagesPlugin::with_ground_cavity`] gives its cavity.
+    #[must_use]
+    pub fn with_ground_wetness(mut self, stage: &str) -> Self {
+        self.ground_channel_stages[1] = Some(stage.to_owned());
+        self
+    }
 }
 
 /// The stages' worker, whose thread is joined when it drops: a device still being torn down on it
@@ -733,6 +767,8 @@ impl Plugin for WaveForgeStagesPlugin {
             grounds: HashMap::new(),
             ground_material_stage: self.ground_material_stage.clone(),
             ground_ids: HashMap::new(),
+            ground_channel_stages: self.ground_channel_stages.clone(),
+            ground_channels: HashMap::new(),
             far_ground_stage: self.far_ground_stage.clone(),
             far_grounds: HashMap::new(),
             far_due: BTreeSet::new(),
@@ -843,6 +879,16 @@ fn drain(
     let had_failed = stages.worker.failure().is_some();
     let ground_stage = stages.ground_stage.clone();
     let material_stage = stages.ground_material_stage.clone();
+    let channel_stages = stages.ground_channel_stages.clone();
+    // The stages a chunk's ground reads: its field, its materials and its channels.
+    let read = |stage: &String| {
+        ground_stage.as_ref() == Some(stage)
+            || material_stage.as_ref() == Some(stage)
+            || channel_stages
+                .iter()
+                .flatten()
+                .any(|channel| channel == stage)
+    };
     let far_stage = stages.far_ground_stage.clone();
     let volume_stage = stages.volume_stage.clone();
     let fluid_stage = stages.fluid_stage.clone();
@@ -861,10 +907,10 @@ fn drain(
                             .insert(ChunkCoord::new(chunk.x + dx, chunk.y + dy, 0));
                     }
                 }
-                // A chunk's ground reads the materials of itself and of the chunks beyond its far
-                // edges, which are among the chunks whose ground reads a field of this chunk.
-                if ground_stage.as_ref() == Some(&stage) || material_stage.as_ref() == Some(&stage)
-                {
+                // A chunk's ground reads the materials and channels of itself and of the chunks
+                // beyond its far edges, which are among the chunks whose ground reads a field of
+                // this chunk.
+                if read(&stage) {
                     arrived.push(chunk);
                 }
                 if volume_stage.as_ref() == Some(&stage) {
@@ -878,11 +924,11 @@ fn drain(
             StageEvent::Dropped { stage, chunk } => {
                 // A chunk's ground reads the fields and materials of the chunks around it, so it goes
                 // with any of them, and comes back when they have all arrived again.
-                if ground_stage.as_ref() == Some(&stage) || material_stage.as_ref() == Some(&stage)
-                {
+                if read(&stage) {
                     for reader in ground_readers(chunk) {
                         if stages.grounds.remove(&reader).is_some() {
                             stages.ground_ids.remove(&reader);
+                            stages.ground_channels.remove(&reader);
                             near_changed.push(reader);
                             grounds.dropped.write(GroundDropped(reader));
                         }
@@ -938,6 +984,19 @@ fn drain(
                     continue;
                 };
                 stages.ground_ids.insert(chunk, ids);
+            }
+            // A channel's values, none for a channel not set, or wait for its stage.
+            let channel = |stage: &Option<String>| match stage {
+                None => Some(None),
+                Some(stage) => ground_values(chunk, |at| stages.worker.field(stage, at)).map(Some),
+            };
+            let (Some(cavity), Some(wetness)) =
+                (channel(&channel_stages[0]), channel(&channel_stages[1]))
+            else {
+                continue;
+            };
+            if let Some(channels) = ground_channels(cavity, wetness) {
+                stages.ground_channels.insert(chunk, channels);
             }
             stages.grounds.insert(chunk, mesh);
             near_changed.push(chunk);

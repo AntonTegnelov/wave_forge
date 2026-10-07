@@ -4,8 +4,8 @@
 // by how near its vertices are plus a noise of its own, and the highest wins with a short blend, so
 // materials meet along a broken line rather than the grid's. Steep ground turns to rock by its own
 // slope, its colour muted and banded in strata; a broad noise varies the colour across the land,
-// and a fine one bumps the ground and grains its colour near the camera. Bevy's own lighting does
-// the rest. `wave_forge_godot/godot/addons/wave_forge/shaders/ground.gdshader` is the same
+// and a fine one bumps the ground and grains its colour near the camera. Channels the stages hand
+// in darken hollows and wet ground. Bevy's own lighting does the rest. `wave_forge_godot/godot/addons/wave_forge/shaders/ground.gdshader` is the same
 // shader for Godot.
 import bevy_pbr::render::{
     mesh_view_bindings::view,
@@ -23,6 +23,9 @@ struct GroundLook {
     edge_noise: f32,
     macro_variation: f32,
     detail: f32,
+    cavity_darkening: f32,
+    wet_darkening: f32,
+    wet_roughness: f32,
 }
 
 // The chunk's corner on the ground plane (x, z) and a cell's width along x and z.
@@ -32,6 +35,9 @@ struct GroundLook {
 // A colour per material id, in texel id of a 256 by 1 texture.
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var palette: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var<uniform> look: GroundLook;
+// Per ground vertex, 0 to 1: a cavity in red, which darkens the ground, and a wetness in green,
+// which darkens and smooths it. A single texel of zeros for a ground without channels.
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var channels: texture_2d<f32>;
 
 // A hash without trigonometry, cheaper than sin and the same on every GPU.
 fn hash(p: vec2<f32>) -> f32 {
@@ -167,6 +173,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         albedo = mix(albedo, rock_base * mix(1.0, 0.8 + 0.4 * band, look.strata), rock);
     }
     albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), look.macro_variation);
+    // The channels, blended between the vertices as the materials are.
+    let channel_size = vec2<i32>(textureDimensions(channels));
+    var wet_and_hollow = vec2<f32>(0.0);
+    for (var k = 0; k < 4; k++) {
+        wet_and_hollow += textureLoad(channels, min(corners[k], channel_size - 1), 0).rg * near_weights[k];
+    }
+    let cavity = clamp(wet_and_hollow.x, 0.0, 1.0);
+    let wet = clamp(wet_and_hollow.y, 0.0, 1.0);
+    albedo *= (1.0 - look.cavity_darkening * cavity) * (1.0 - look.wet_darkening * wet);
+    pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, look.wet_roughness, wet);
     albedo *= mix(1.0, 0.86 + 0.28 * fine.x, grain);
 
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);

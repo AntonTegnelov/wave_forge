@@ -47,6 +47,12 @@ pub struct GroundLook {
     pub macro_variation: f32,
     /// How much fine grain and detail normal the ground has near the camera, 0 to 1.
     pub detail: f32,
+    /// How far a full cavity in the ground's channels darkens the ground, 0 to 1.
+    pub cavity_darkening: f32,
+    /// How far full wetness in the ground's channels darkens the ground, 0 to 1.
+    pub wet_darkening: f32,
+    /// The perceptual roughness fully wet ground takes.
+    pub wet_roughness: f32,
 }
 
 impl Default for GroundLook {
@@ -62,6 +68,9 @@ impl Default for GroundLook {
             edge_noise: 0.5,
             macro_variation: 0.5,
             detail: 1.0,
+            cavity_darkening: 0.6,
+            wet_darkening: 0.45,
+            wet_roughness: 0.35,
         }
     }
 }
@@ -83,7 +92,7 @@ impl GroundLook {
 }
 
 /// What [`GroundMaterial`] adds to a `StandardMaterial`: the chunk's grid, its material id per
-/// ground vertex, the palette and the look.
+/// ground vertex, the palette, the look and the ground's channels.
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 pub struct GroundMaterials {
     /// The chunk's corner on the ground plane (x, z) and a cell's width along x and z.
@@ -98,6 +107,10 @@ pub struct GroundMaterials {
     /// How the ground is drawn beyond the palette's colours.
     #[uniform(103)]
     pub look: GroundLook,
+    /// Two floats per ground vertex, its cavity and wetness, 0 to 1 ([`ground_channels_image`]);
+    /// a single texel of zeros for a ground without channels.
+    #[texture(104, sample_type = "float", filterable = false)]
+    pub channels: Handle<Image>,
 }
 
 impl MaterialExtension for GroundMaterials {
@@ -493,7 +506,7 @@ pub fn ground_material(
 ) -> Option<GroundMaterial> {
     let (mesh, ids) = (stages.ground(chunk)?, stages.ground_materials(chunk)?);
     let settings = stages.settings();
-    Some(ground_material_of(
+    let mut material = ground_material_of(
         mesh,
         ids,
         stages.chunk_corner(chunk),
@@ -501,12 +514,46 @@ pub fn ground_material(
         base,
         palette,
         images,
-    ))
+    );
+    if let Some(channels) = stages.ground_channels(chunk) {
+        material.extension.channels = images.add(ground_channels_image(mesh.size, channels));
+    }
+    Some(material)
+}
+
+/// The image of a chunk's ground channels for [`GroundMaterials::channels`]: `channels` as
+/// [`wave_forge::ground_channels`] lays them out, two floats per vertex of a ground of `size`
+/// vertices.
+///
+/// # Panics
+/// If `channels` does not hold two values per vertex.
+#[must_use]
+pub fn ground_channels_image(size: [u32; 2], channels: &[f32]) -> Image {
+    assert_eq!(
+        channels.len(),
+        2 * (size[0] * size[1]) as usize,
+        "two channels per vertex"
+    );
+    Image::new(
+        Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        channels
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect(),
+        TextureFormat::Rg32Float,
+        RenderAssetUsages::RENDER_WORLD,
+    )
 }
 
 /// The ground material of a chunk's ground `mesh` whose vertices' material ids are `ids`
 /// ([`wave_forge::ground_materials`]), with its corner at `corner` and cells of `cell`: what
-/// [`ground_material`] makes from the plugin's resource, for a ground built some other way.
+/// [`ground_material`] makes from the plugin's resource, for a ground built some other way. It
+/// has no channels; [`ground_channels_image`] gives `extension.channels` a chunk's.
 #[must_use]
 pub fn ground_material_of(
     mesh: &GroundMesh,
@@ -535,6 +582,7 @@ pub fn ground_material_of(
             materials: images.add(materials),
             palette,
             look: GroundLook::default(),
+            channels: images.add(ground_channels_image([1, 1], &[0.0, 0.0])),
         },
     }
 }

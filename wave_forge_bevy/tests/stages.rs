@@ -20,7 +20,8 @@ use wave_forge::stages::{
 };
 use wave_forge::towns::{Town, TownError, TownRequest, TownSolver};
 use wave_forge::{
-    ChunkCoord, ChunkShape, FocusPoint, ground, ground_materials, volume_height, volume_mesh,
+    ChunkCoord, ChunkShape, FocusPoint, ground, ground_channels, ground_materials, ground_values,
+    volume_height, volume_mesh,
 };
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::materials::coloured_surface_mesh;
@@ -285,6 +286,55 @@ fn the_grounds_materials_are_the_librarys_categories_of_its_vertices() {
         let expected = ground_materials(chunk, |at| direct.categories("cover", at));
         assert_eq!(
             stages.ground_materials(chunk),
+            expected.as_deref(),
+            "chunk {chunk:?}"
+        );
+    }
+}
+
+#[test]
+fn the_grounds_channels_are_the_librarys_values_of_its_vertices() {
+    // The pack and a cavity of 0 to 1 that rises with the ground.
+    let pack = || {
+        let text = PACK.replace(
+            "    ],\n)",
+            "        (name: \"hollow\", kind: Field(Clamp(Mul(Input(\"height\"), Constant(0.05)), 0.0, 1.0))),\n    ],\n)",
+        );
+        Arc::new(Pack::parse(&text).expect("a valid pack"))
+    };
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["height", "cover", "hollow"], SETTINGS, move || {
+            Ok(Runtime::new(pack(), 4, SETTINGS.chunk))
+        })
+        .with_ground("height")
+        .with_ground_materials("cover")
+        .with_ground_cavity("hollow")
+        // The ground reads the materials and channels of the chunks beyond its far edges too.
+        .with_radius("cover", 2)
+        .with_radius("hollow", 2),
+    );
+    let mut direct = Runtime::new(pack(), 4, SETTINGS.chunk);
+    direct
+        .request(
+            &[FocusPoint::new(ChunkCoord::new(0, 0, 0), 2)],
+            &["height", "hollow"],
+        )
+        .expect("stages");
+    direct.run_until_idle().expect("the stages run");
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        around_origin()
+            .iter()
+            .all(|&c| stages.ground_channels(c).is_some())
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    for chunk in around_origin() {
+        let cavity = ground_values(chunk, |at| direct.field("hollow", at));
+        let expected = ground_channels(cavity, None);
+        assert_eq!(
+            stages.ground_channels(chunk),
             expected.as_deref(),
             "chunk {chunk:?}"
         );

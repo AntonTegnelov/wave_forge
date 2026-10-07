@@ -335,6 +335,26 @@ pub fn ground_values<'a>(
     per_vertex(chunk, field, |f| f.size, Field::get)
 }
 
+/// A chunk's ground channels for a ground shader, from [`ground_values`] of a cavity stage and of a
+/// wetness stage: two values a vertex, cavity then wetness, for a two-channel float texture, 0 for
+/// the channel not given. `None` when neither is.
+///
+/// # Panics
+/// If both are given and differ in length: both are one chunk's vertices.
+#[must_use]
+pub fn ground_channels(cavity: Option<Vec<f32>>, wetness: Option<Vec<f32>>) -> Option<Vec<f32>> {
+    let count = cavity.as_ref().or(wetness.as_ref())?.len();
+    if let (Some(c), Some(w)) = (&cavity, &wetness) {
+        assert_eq!(c.len(), w.len(), "both channels are one chunk's vertices");
+    }
+    let at = |channel: &Option<Vec<f32>>, i: usize| channel.as_ref().map_or(0.0, |v| v[i]);
+    Some(
+        (0..count)
+            .flat_map(|i| [at(&cavity, i), at(&wetness, i)])
+            .collect(),
+    )
+}
+
 /// A stage's value at every vertex of `chunk`'s ground, the +x and +y edges from the chunks
 /// beyond, read from the chunks `lookup` finds with `get`.
 fn per_vertex<'a, S: 'a, T>(
@@ -733,6 +753,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn channels_interleave_cavity_and_wetness_with_0_for_one_not_given() {
+        let both = ground_channels(Some(vec![0.1, 0.2]), Some(vec![0.7, 0.8]));
+        let cavity = ground_channels(Some(vec![0.1, 0.2]), None);
+        let wetness = ground_channels(None, Some(vec![0.7, 0.8]));
+
+        assert_eq!(both, Some(vec![0.1, 0.7, 0.2, 0.8]));
+        assert_eq!(cavity, Some(vec![0.1, 0.0, 0.2, 0.0]));
+        assert_eq!(wetness, Some(vec![0.0, 0.7, 0.0, 0.8]));
+        assert_eq!(ground_channels(None, None), None);
     }
 
     #[test]
