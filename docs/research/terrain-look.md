@@ -77,12 +77,13 @@ erosion suits finite maps generated once.
   vertex and draws it procedurally: borders broken by noise rather than following the 2 m grid,
   rock by the fragment's slope in muted strata, a broad colour variation, and a fine bump and grain
   near the camera ([godot.md](../reference/godot.md#ground-and-colliders)). Field stages can hand it
-  a cavity, which darkens hollows, and a wetness, which darkens and smooths the ground (#326). It
-  has no textures and no height blending. The far ground is coloured by coarse biomes (#314).
+  a cavity, which darkens hollows, and a wetness, which darkens and smooths the ground (#326), and
+  a cover, which tints the ground toward the grass where the grass fades out, so its edge leaves no
+  ring (#342). It has no textures and no height blending. The far ground is coloured by coarse biomes (#314).
 - **Water surfaces.** The sea, and since #328 lakes and rivers from a field of the water's level,
   drawn as a mesh per chunk that runs out under its banks ([packs.md](../reference/packs.md#water-surfaces)).
 - **Vegetation.** Scatter as MultiMeshes in a global wind, grass from a cover field within one
-  chunk by default.
+  chunk by default, its blades shrinking away over the radius's last chunk.
 
 ## The gaps, by look gained per work
 
