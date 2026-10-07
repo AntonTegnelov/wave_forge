@@ -13,8 +13,9 @@
         "cacti": (default: 0.5, range: (0.0, 1.0)),
     },
     noises: {
-        // The canyons wind along where this noise crosses zero.
-        "canyons": (noise_type: SimplexSmooth, seed: 31, frequency: 0.01, fractal_octaves: 3),
+        // The canyons wind along where this noise crosses zero, warped so they meander.
+        "canyons": (noise_type: SimplexSmooth, seed: 31, frequency: 0.01, fractal_octaves: 3,
+            domain_warp_enabled: true, domain_warp_amplitude: 35.0, domain_warp_frequency: 0.006, domain_warp_fractal_octaves: 1),
         "mesas": (noise_type: SimplexSmooth, seed: 32, frequency: 0.02, fractal_octaves: 2),
         "detail": (noise_type: SimplexSmooth, seed: 33, frequency: 0.09, fractal_octaves: 2),
         "patches": (noise_type: Perlin, seed: 34, frequency: 0.04, fractal_octaves: 2),
