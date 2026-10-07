@@ -1,6 +1,7 @@
 //! Renders a pack's height field seen from straight above as shaded relief (developer tool), for
 //! judging a landform's shape: water blue below zero, land from green through brown to white with
-//! height, lit from the north-west.
+//! height, lit from the north-west. A pixel is one of the stage's columns, so a coarse stage's
+//! picture covers its scale times as much ground, and `--chunks` and `--corner` count its chunks.
 //!
 //! ```text
 //! cargo run -p wfc-devtools --release --bin wfc-relief -- examples/presets/hills.world.ron \
@@ -86,6 +87,10 @@ fn main() -> Result<()> {
     let text = std::fs::read_to_string(&args.pack)
         .with_context(|| format!("reading {}", args.pack.display()))?;
     let pack = Pack::parse(&text).map_err(|error| anyhow!("{}: {error}", args.pack.display()))?;
+    // Slopes are shaded per cell, so a coarse stage lights as the same ground at full detail would.
+    let scale = pack
+        .scale(&args.stage)
+        .ok_or_else(|| anyhow!("{} is no stage of the pack", args.stage))? as f32;
     let mut runtime = Runtime::new(Arc::new(pack), args.seed, [args.chunk_size; 2]);
     let params: BTreeMap<String, f32> = args.params.iter().cloned().collect();
     runtime
@@ -95,9 +100,11 @@ fn main() -> Result<()> {
         .flat_map(|y| (0..args.chunks).map(move |x| (x, y)))
         .map(|(x, y)| ChunkCoord::new(args.corner[0] + x, args.corner[1] + y, 0))
         .collect();
+    // A focus is in the lattice's chunks; a coarse stage's chunk covers `scale` of them each way.
+    let step = scale as i32;
     let focus: Vec<FocusPoint> = chunks
         .iter()
-        .map(|&chunk| FocusPoint::new(chunk, 0))
+        .map(|chunk| FocusPoint::new(ChunkCoord::new(chunk.x * step, chunk.y * step, 0), 0))
         .collect();
     runtime
         .request(&focus, &[args.stage.as_str()])
@@ -111,12 +118,7 @@ fn main() -> Result<()> {
     for &chunk in &chunks {
         let field = runtime
             .field(&args.stage, chunk)
-            .ok_or_else(|| anyhow!("{} is not a Field stage of scale 1", args.stage))?;
-        ensure!(
-            field.size == [args.chunk_size; 2],
-            "{} is at another scale than the chunk",
-            args.stage
-        );
+            .ok_or_else(|| anyhow!("{} is not a Field stage", args.stage))?;
         let x0 = (chunk.x - args.corner[0]) as u32 * args.chunk_size;
         let y0 = (chunk.y - args.corner[1]) as u32 * args.chunk_size;
         for (i, &value) in field.values.iter().enumerate() {
@@ -133,8 +135,8 @@ fn main() -> Result<()> {
     let image = RgbImage::from_fn(side, side, |px, py| {
         let (x, y) = (px, side - 1 - py);
         let h = at(x, y);
-        let dx = (at(x + 1, y) - at(x.saturating_sub(1), y)) / 2.0;
-        let dy = (at(x, y + 1) - at(x, y.saturating_sub(1))) / 2.0;
+        let dx = (at(x + 1, y) - at(x.saturating_sub(1), y)) / (2.0 * scale);
+        let dy = (at(x, y + 1) - at(x, y.saturating_sub(1))) / (2.0 * scale);
         let normal = [-dx, -dy, 1.0];
         let length = (normal[0] * normal[0] + normal[1] * normal[1] + 1.0).sqrt();
         let lit = (normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2]) / length;
