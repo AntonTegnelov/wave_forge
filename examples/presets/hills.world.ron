@@ -14,16 +14,25 @@
         "meadows": (default: 0.6, range: (0.0, 1.0)),
     },
     noises: {
-        "hills": (noise_type: SimplexSmooth, seed: 21, frequency: 0.012, fractal_octaves: 4),
+        // Warped, so the hills wind rather than lining up.
+        "hills": (noise_type: SimplexSmooth, seed: 21, frequency: 0.012, fractal_octaves: 4,
+            domain_warp_enabled: true, domain_warp_amplitude: 40.0, domain_warp_frequency: 0.008),
+        // Ridged and warped: the crests that run along the hills.
+        "crests": (noise_type: SimplexSmooth, seed: 24, frequency: 0.006, fractal_type: Ridged, fractal_octaves: 4,
+            domain_warp_enabled: true, domain_warp_amplitude: 40.0, domain_warp_frequency: 0.004),
         "detail": (noise_type: SimplexSmooth, seed: 22, frequency: 0.07, fractal_octaves: 2),
         "woods": (noise_type: Perlin, seed: 23, frequency: 0.035, fractal_octaves: 2),
     },
     stages: [
-        // The hills rise from 2 cells above the ground's zero to as much as 22, by the hills amount.
+        // The hills rise from 2 cells above the ground's zero to as much as 22, by the hills amount,
+        // their crests sharpened where the ridged noise peaks.
         (name: "height", kind: Field(Add(
             Constant(2.0),
             Mul(
-                Add(Add(FastNoise("hills"), Constant(1.0)), Mul(FastNoise("detail"), Constant(0.15))),
+                Add(
+                    Add(Add(FastNoise("hills"), Constant(1.0)), Mul(FastNoise("detail"), Constant(0.15))),
+                    Mul(Pow(Remap(FastNoise("crests"), (-1.0, 1.0), (0.0, 1.0)), 2.5), Constant(1.0)),
+                ),
                 Add(Constant(3.0), Mul(Param("hills"), Constant(7.0))),
             ),
         ))),
