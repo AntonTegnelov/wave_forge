@@ -199,6 +199,15 @@ of the chunk's bounds so no point of the chunk is nearer, and a level's error co
 every finer level's. A level no distance would draw is left out. Bevy chooses no mesh's level on its
 own, so a game that wants the levels spawns these instead of `ground_mesh`.
 
+## Water
+
+`WaveForgeStagesPlugin::with_water(stage)` gives the ground its lakes and rivers from a field stage
+holding the water's level at the ground's scale ([packs.md](packs.md#water-surfaces)), as Godot's
+`water_stage` does: a chunk's ground also waits for it, generated one chunk beyond the ground with
+`.with_radius`, and `WaveForgeStages::water(chunk)` gives the chunk's `WaterMesh`, built with the
+ground and dropped with it, with no triangles where the chunk has no water. `water_mesh(water)` makes
+a Bevy mesh of it to spawn at `chunk_corner(chunk)` with a material of the game's own.
+
 ## Ground materials
 
 `WaveForgeMaterialsPlugin`, which a game that renders adds after Bevy's own plugins, registers the
