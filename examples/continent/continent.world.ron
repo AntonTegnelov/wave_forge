@@ -63,7 +63,7 @@
         (name: "plateaus", scale: 4, kind: Field(Mul(Smoothstep(0.3, 0.42, FastNoise("plateaus")), Constant(22.0)))),
         // The height before biomes: the landmass scaled to cells, and on land the ranges' ridges,
         // the plateaus and hills.
-        (name: "height", kind: Field(Add(
+        (name: "uplift", kind: Field(Add(
             Mul(Input("base"), Constant(40.0)),
             Mul(
                 Clamp(Mul(Input("base"), Constant(8.0)), 0.0, 1.0),
@@ -72,6 +72,14 @@
                     Mul(Sub(Input("hills"), Constant(0.5)), Constant(8.0)),
                 ),
             ),
+        ))),
+        // Gullies cut down the ranges' flanks, branching as they run; the lowlands' gentler slopes
+        // keep their shape. Shores and the sea floor are laid down, not cut, so the gullies blend
+        // in from the waterline to 5 cells up.
+        (name: "eroded", kind: Erode(input: "uplift", spacing: 40.0, octaves: 6, depth: 6.0, slope: 0.8, smooth: 4)),
+        (name: "height", kind: Field(Add(
+            Input("uplift"),
+            Mul(Sub(Input("eroded"), Input("uplift")), Clamp(Mul(Input("uplift"), Constant(0.2)), 0.0, 1.0)),
         ))),
         // The height a view of the continent out to 2 km stands on beyond the near ground, which an
         // engine draws its far ground from (docs/reference/packs.md, "Far ground"): the height's
