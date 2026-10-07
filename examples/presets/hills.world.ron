@@ -40,7 +40,7 @@
         (name: "woods", kind: Field(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0))),
         (name: "surface", kind: Rules(rules: [
             // The crowns of the tallest hills, a share of the way up whatever their height.
-            (category: "rock", when: [Greater(Input("height"), Add(Constant(6.8), Mul(Param("hills"), Constant(11.2))))]),
+            (category: "rock", when: [Greater(Input("height"), Add(Constant(8.3), Mul(Param("hills"), Constant(14.7))))]),
             (category: "forest_floor", when: [Less(Input("woods"), Param("forest"))]),
         ], otherwise: "meadow")),
         // Grass over the meadows, as thick as the meadows amount.
