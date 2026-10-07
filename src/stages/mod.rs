@@ -7,6 +7,7 @@ pub mod brushes;
 mod caves;
 mod codec;
 pub mod edits;
+mod erode;
 mod evaluate;
 pub mod facts;
 mod lakes;

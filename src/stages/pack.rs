@@ -217,6 +217,14 @@ const fn base_scale() -> u32 {
     1
 }
 
+const fn half() -> f32 {
+    0.5
+}
+
+const fn two() -> u32 {
+    2
+}
+
 /// What a stage does.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum StageKind {
@@ -310,6 +318,26 @@ pub enum StageKind {
     /// The highest value of another field less its lowest over the square of `radius` cells around
     /// each column: how uneven the ground is there, what Valheim calls terrain delta.
     Delta { input: String, radius: u32 },
+    /// Another field with gullies cut into it that run downhill and branch: `octaves` of them, the
+    /// first `spacing` cells apart and `depth` cells from floor to the ridge's middle, each next at
+    /// twice the frequency and `gain` times the depth. They are cut fully where the field slopes by
+    /// `slope` cells of height per cell, fading out toward flat ground, and the slope is the plane
+    /// fitted over the square of `smooth` columns around each column. With a `name`, the gullies'
+    /// lattice comes from a stream of that name, the same in every stage that names it, so a coarse
+    /// stage's first octaves follow a fine one's; without, from the stage's own.
+    Erode {
+        input: String,
+        spacing: f32,
+        octaves: u32,
+        depth: f32,
+        #[serde(default = "half")]
+        gain: f32,
+        slope: f32,
+        #[serde(default = "two")]
+        smooth: u32,
+        #[serde(default)]
+        name: Option<String>,
+    },
     /// Where each column lies in its category of a Rules stage: `edge` where any of the eight
     /// columns `distance` cells away, along the axes and the diagonals, has another category, and
     /// `median` elsewhere, as Valheim's biome area tells the two apart.
@@ -945,6 +973,7 @@ impl StageKind {
             Self::Field(_)
             | Self::Blur { .. }
             | Self::Delta { .. }
+            | Self::Erode { .. }
             | Self::Flatten { .. }
             | Self::Apply { .. }
             | Self::Lakes { .. } => Output::Field,
@@ -2187,6 +2216,35 @@ impl Pack {
                 StageKind::Blur { input, radius } | StageKind::Delta { input, radius } => {
                     vec![(input.as_str(), Reach::Cells(*radius), Output::Field)]
                 }
+                StageKind::Erode {
+                    input,
+                    spacing,
+                    octaves,
+                    depth,
+                    gain,
+                    slope,
+                    smooth,
+                    ..
+                } => {
+                    let positive = |value: f32| value.is_finite() && value > 0.0;
+                    if !positive(*spacing) || !positive(*slope) {
+                        return Err(invalid(format!(
+                            "gullies {spacing} cells apart, cut fully at a slope of {slope}: both have to be above zero"
+                        )));
+                    }
+                    if !(1..=8).contains(octaves) {
+                        return Err(invalid(format!("{octaves} octaves of gullies, not 1 to 8")));
+                    }
+                    if !(depth.is_finite() && *depth >= 0.0) || !(positive(*gain) && *gain <= 1.0) {
+                        return Err(invalid(format!(
+                            "gullies {depth} cells deep with a gain of {gain}: a depth of 0 or more and a gain above 0 and at most 1"
+                        )));
+                    }
+                    if *smooth == 0 {
+                        return Err(invalid("a slope fitted over 0 columns".to_owned()));
+                    }
+                    vec![(input.as_str(), Reach::Cells(*smooth), Output::Field)]
+                }
                 StageKind::Area { input, distance } => {
                     if *distance == 0 {
                         return Err(invalid("an area measured 0 cells out".to_owned()));
@@ -3014,6 +3072,7 @@ impl Pack {
                 }
                 StageKind::Blur { .. }
                 | StageKind::Delta { .. }
+                | StageKind::Erode { .. }
                 | StageKind::Area { .. }
                 | StageKind::Sites { .. }
                 | StageKind::Apply { .. }

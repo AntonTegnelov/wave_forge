@@ -361,6 +361,7 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Nearest` | Categories | what its climate reads, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
 | `Delta` | Field | one field, `radius` cells |
+| `Erode` | Field | one field, `smooth` cells |
 | `Area` | Categories | one Rules stage, `distance` cells |
 | `Sites` | Sites | a height field, over its region |
 | `TableSites` | Sites | a table's rows; a height field, `max_size` chunks |
@@ -621,6 +622,33 @@ column.
 `Delta(input: "field", radius: r)`: the highest value of the input less its lowest over the square
 of `r` cells around each column: how uneven the ground is there, what Valheim's location table calls
 terrain delta. A Rules condition or a Select over it keeps a location or a plant off steep ground.
+
+### Erode
+
+`Erode(input: "height", spacing: 40.0, octaves: 5, depth: 8.0, slope: 0.8)`: the input with gullies
+cut into it that run downhill and branch, from the input's slope around each column alone, so
+chunks generate in any order and meet without seams ([#325](https://github.com/AntonTegnelov/wave_forge/issues/325)).
+
+| Field | Meaning |
+|---|---|
+| `spacing` | cells between gullies in the first octave, above 0 |
+| `octaves` | 1 to 8, each at twice the frequency of the one before |
+| `depth` | cells of height from the first octave's gully floor to the middle of the ridge beside it, 0 or more |
+| `gain` | each octave's depth against the one before, above 0 and at most 1; 0.5 if left out |
+| `slope` | the input's slope, in cells of height per cell, at which gullies are cut fully; below half of it none are, so gentle ground keeps its shape |
+| `smooth` | the slope is the plane fitted over the square of this many columns around each column, which is the stage's reach; 2 if left out |
+| `name` | with a name, the gullies come from a stream of that name, the same in every stage that names it; without, from the stage's own |
+
+Each octave lays stripes across the slope through points jittered one to a lattice cell, weighted
+by how near each point is, so they run downhill; each runs along the slope the octaves before it
+left, so finer gullies turn off coarser ones. The ridges between the gullies rise as far as the
+gullies sink, so the ground keeps its mean. A far ground follows the near ground's erosion with an
+Erode stage at its own scale over its coarse height, given the same `name`, `spacing` and
+parameters, its first octaves only, and `smooth` as the near one's divided by the scale, so both fit
+the slope over the same cells (`tests/erode.rs`). They agree where the coarse field resolves the
+fine one's features, and least where the slope lies between half of `slope` and `slope`, where a
+small difference in the fit moves the fade. Its cost per chunk is in
+[measurements.md](../research/measurements.md) (E59).
 
 ### Area
 
@@ -1089,7 +1117,7 @@ let trees = runtime.points("trees", chunk);
   between; `is_idle` says whether anything is left.
 - `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
   its values over an area of its own columns, row by row with x fastest, without generating any
-  chunk: exactly what the chunks would hold. Field, Rules, Nearest, Blur, Delta and Area stages whose
+  chunk: exactly what the chunks would hold. Field, Rules, Nearest, Blur, Delta, Erode and Area stages whose
   inputs are too can be sampled; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
   takes `&self` and holds no products, so a game can build a runtime just to sample, on any thread:
   an atlas of 256 by 256 world tiles takes 50 ms in release on the dev container. This is how a

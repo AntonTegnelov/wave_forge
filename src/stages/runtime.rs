@@ -10,6 +10,7 @@
 use super::assemble::Growth;
 use super::caves::{self, CavePlan, CaveRules};
 use super::edits::{Edit, Edits};
+use super::erode::{Erosion, erode, fitted_slope};
 use super::evaluate::{Leaves, evaluate, holds};
 use super::facts::{Facts, Row, RowId, Table};
 use super::lakes::lake_surface;
@@ -447,7 +448,7 @@ pub enum StageError {
     #[error("stage {0:?} names a region job the runtime was not given")]
     NoRegionJob(String),
     /// Only stages computed column by column from what they read (Field, Rules, Nearest, Blur,
-    /// Delta and Area stages over such stages) can be sampled without chunks.
+    /// Delta, Erode and Area stages over such stages) can be sampled without chunks.
     #[error(
         "stage {0:?} cannot be sampled without chunks: it is not a field, rules, nearest, blur, delta \
          or area stage"
@@ -2154,7 +2155,7 @@ impl Runtime {
 
     /// A stage's value at a point in WFC cells without generating any chunk: a field's value, or a
     /// category's index, at the column of the stage the point lies in. It equals what the chunk
-    /// holding that column would hold. Only Field, Rules, Blur, Delta and Area stages whose inputs
+    /// holding that column would hold. Only Field, Rules, Blur, Delta, Erode and Area stages whose inputs
     /// are too can be sampled; the pack's other kinds need neighbouring chunks. A runtime made only to sample
     /// never holds a product, so a game can keep one on any thread.
     ///
@@ -2315,6 +2316,7 @@ impl Runtime {
             }
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
             StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
+            StageKind::Erode { input, .. } => eroded(self.seed, stage, input, column, &read)?,
             StageKind::Area { input, distance } => {
                 f32::from(area(input, *distance, column, &read)?)
             }
@@ -3918,6 +3920,9 @@ impl Runtime {
                     StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
                     StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
                     StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
+                    StageKind::Erode { input, .. } => {
+                        eroded(self.seed, stage, input, column, &read)?
+                    }
                     StageKind::Flatten { height, blend, .. } => {
                         let view = &views[&self.pack.index(height).expect("linked when loaded")];
                         let base = view.get(column[0], column[1])?;
@@ -5213,6 +5218,47 @@ fn blur(input: &str, radius: u32, column: [i64; 2], read: &Read<'_>) -> Result<f
     Ok(sum / ((2 * r + 1) * (2 * r + 1)) as f32)
 }
 
+/// `input` at `column` with the gullies of `stage`, an Erode stage, cut into it.
+fn eroded(
+    seed: u64,
+    stage: &Stage,
+    input: &str,
+    column: [i64; 2],
+    read: &Read<'_>,
+) -> Result<f32, StageError> {
+    let StageKind::Erode {
+        spacing,
+        octaves,
+        depth,
+        gain,
+        slope,
+        smooth,
+        ref name,
+        ..
+    } = stage.kind
+    else {
+        unreachable!("only an Erode stage erodes")
+    };
+    let erosion = Erosion {
+        spacing,
+        octaves,
+        depth,
+        gain,
+        slope,
+    };
+    let base = read(input, column[0], column[1])?;
+    let fitted = fitted_slope(column, smooth, |x, y| read(input, x, y))?;
+    // Columns of a coarser stage span `scale` cells: the slope and the position are in cells.
+    let scale = stage.scale as f32;
+    let at = [
+        (column[0] as f32 + 0.5) * scale,
+        (column[1] as f32 + 0.5) * scale,
+    ];
+    let slope = [fitted[0] / scale, fitted[1] / scale];
+    let stream = name.as_deref().map_or(stage.salt, noise_stream);
+    Ok(base + erode(seed, stream, &erosion, at, slope))
+}
+
 /// The highest value of `input` less its lowest over the square of `radius` columns around
 /// `column`.
 fn delta(input: &str, radius: u32, column: [i64; 2], read: &Read<'_>) -> Result<f32, StageError> {
@@ -5359,7 +5405,7 @@ pub(crate) fn unit(hash: u32) -> f32 {
 
 /// A random number in 0..1 for one lattice point of one octave, from the world seed and the
 /// stage's salt: a named stream, so no other stage or octave shares it.
-fn lattice(seed: u64, salt: u32, octave: u32, x: i64, y: i64) -> f32 {
+pub(crate) fn lattice(seed: u64, salt: u32, octave: u32, x: i64, y: i64) -> f32 {
     let world = (seed as u32) ^ ((seed >> 32) as u32);
     let [a, ..] = pcg3d([world ^ salt, x as u32, y as u32]);
     let [b, ..] = pcg3d([
