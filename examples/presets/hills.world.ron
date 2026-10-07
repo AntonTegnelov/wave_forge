@@ -26,7 +26,7 @@
     stages: [
         // The hills rise from 2 cells above the ground's zero to as much as 22, by the hills amount,
         // their crests sharpened where the ridged noise peaks.
-        (name: "height", kind: Field(Add(
+        (name: "shape", kind: Field(Add(
             Constant(2.0),
             Mul(
                 Add(
@@ -36,6 +36,9 @@
                 Add(Constant(3.0), Mul(Param("hills"), Constant(7.0))),
             ),
         ))),
+        // Gullies cut down the steeper slopes, so the tallest hills come out dissected and the
+        // gentle ones keep their shape.
+        (name: "height", kind: Erode(input: "shape", spacing: 20.0, octaves: 5, depth: 1.5, slope: 0.3, smooth: 3)),
         // 0 to 1: where the woods lie under the forest amount.
         (name: "woods", kind: Field(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0))),
         (name: "surface", kind: Rules(rules: [
