@@ -28,6 +28,9 @@ pub struct Emitter {
     pub at: [f32; 3],
     /// What plays: a name the game maps to a sound.
     pub key: String,
+    /// How loud, from 0 to 1, as a share of the sound's own volume: 1 for a module's sound, and
+    /// for the terrain's ambience as loud as what makes it ([`crate::ambience`]).
+    pub volume: f32,
 }
 
 /// The interiors and emitters of a solved `chunk` of a module set.
@@ -60,6 +63,7 @@ pub fn region_tags(chunk: &Chunk, rules: &RuleFile, space: &YUpSpace) -> RegionT
                     origin[1] + (z as f32 + az) * cell_up,
                     origin[2] + (y as f32 + ay) * cell_z,
                 ],
+                volume: 1.0,
                 key: sound.key,
             });
         }

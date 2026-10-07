@@ -40,6 +40,30 @@ pub struct PackFile {
     /// [`Expr::Param`]: a preset's land amount, roughness and tree density, say.
     #[serde(default)]
     pub params: BTreeMap<String, ParamDef>,
+    /// The sounds the terrain makes, each a key the game maps to a sound and where it plays:
+    /// running water along rivers and lapping at lake shores, say
+    /// ([`crate::stages::Runtime::ambience`]).
+    #[serde(default)]
+    pub ambience: Vec<AmbienceDef>,
+}
+
+/// A sound the terrain makes ([`PackFile::ambience`]): the key a game maps to a sound, and where
+/// it plays.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AmbienceDef {
+    pub key: String,
+    pub kind: AmbienceKind,
+}
+
+/// Where an ambient sound plays.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub enum AmbienceKind {
+    /// Along the curves of a Rivers, Region or TableCurves stage over the `height` field, spaced by
+    /// the curves' radius, louder where a river runs wider and falls faster.
+    River { curves: String, height: String },
+    /// At the shores of a Lakes stage's lakes over the `height` field.
+    Lake { lakes: String, height: String },
 }
 
 impl PackFile {
@@ -61,6 +85,57 @@ impl PackFile {
         ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .expect("every field of a pack file serializes to RON")
     }
+}
+
+/// Checks that every ambient sound has a key of its own and names stages of the kinds it plays over.
+fn check_ambience(file: &PackFile) -> Result<(), PackError> {
+    let kind_of = |name: &str| {
+        file.stages
+            .iter()
+            .find(|def| def.name == name)
+            .map(|def| &def.kind)
+    };
+    let mut keys = std::collections::BTreeSet::new();
+    for def in &file.ambience {
+        let refuse = |message: String| PackError::Ambience {
+            key: def.key.clone(),
+            message,
+        };
+        if def.key.is_empty() || !keys.insert(def.key.as_str()) {
+            return Err(refuse("a key that is empty or another sound's".to_owned()));
+        }
+        let (source, fits, height) = match &def.kind {
+            AmbienceKind::River { curves, height } => (
+                curves,
+                kind_of(curves).is_some_and(|kind| kind.output() == Output::Curves),
+                height,
+            ),
+            AmbienceKind::Lake { lakes, height } => (
+                lakes,
+                matches!(kind_of(lakes), Some(StageKind::Lakes { .. })),
+                height,
+            ),
+        };
+        if !fits {
+            return Err(refuse(format!(
+                "{source:?} is no stage of the kind it plays along"
+            )));
+        }
+        let at_scale_one = |name: &str| {
+            file.stages
+                .iter()
+                .any(|def| def.name == name && def.scale == 1)
+        };
+        if !kind_of(height).is_some_and(|kind| kind.output() == Output::Field) {
+            return Err(refuse(format!("{height:?} is no field stage")));
+        }
+        if !at_scale_one(height) || !at_scale_one(source) {
+            return Err(refuse(format!(
+                "{source:?} and {height:?} have to work at scale 1, as the ground does"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A number a pack exposes for tuning ([`PackFile::params`]): its value when none is given, and
@@ -1526,6 +1601,8 @@ pub enum PackError {
     Bound(String),
     #[error("the pack's water: {0}")]
     Water(String),
+    #[error("the pack's ambience {key:?}: {message}")]
+    Ambience { key: String, message: String },
     #[error("the pack's parameter {name:?}: {message}")]
     Param { name: String, message: String },
     #[error("two tables are named {0:?}")]
@@ -1854,6 +1931,7 @@ pub struct Pack {
     pub(crate) bound: Option<Bound>,
     pub(crate) water: Option<PackWater>,
     pub(crate) params: BTreeMap<String, ParamDef>,
+    pub(crate) ambience: Vec<AmbienceDef>,
     /// FNV-1a of the pack as RON, which a save records.
     pub(crate) digest: u64,
 }
@@ -1913,6 +1991,7 @@ impl Pack {
                 )));
             }
         }
+        check_ambience(&file)?;
         let lakes = file.water.as_ref().and_then(|water| water.lakes.as_deref());
         let (tables, table_by_name, table_order) = link_tables(file.tables)?;
         for def in &file.stages {
@@ -3140,8 +3219,15 @@ impl Pack {
             bound: file.bound,
             water: file.water,
             params: file.params,
+            ambience: file.ambience,
             digest,
         })
+    }
+
+    /// The sounds the terrain makes, as the pack declares them ([`PackFile::ambience`]).
+    #[must_use]
+    pub fn ambience(&self) -> &[AmbienceDef] {
+        &self.ambience
     }
 
     /// What the stage named `name` does, if there is one.
