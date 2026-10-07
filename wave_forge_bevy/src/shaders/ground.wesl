@@ -26,6 +26,9 @@ struct GroundLook {
     cavity_darkening: f32,
     wet_darkening: f32,
     wet_roughness: f32,
+    cover_tint: f32,
+    cover_colour: vec4<f32>,
+    cover_fade: vec2<f32>,
 }
 
 // The chunk's corner on the ground plane (x, z) and a cell's width along x and z.
@@ -35,8 +38,9 @@ struct GroundLook {
 // A colour per material id, in texel id of a 256 by 1 texture.
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var palette: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var<uniform> look: GroundLook;
-// Per ground vertex, 0 to 1: a cavity in red, which darkens the ground, and a wetness in green,
-// which darkens and smooths it. A single texel of zeros for a ground without channels.
+// Per ground vertex, 0 to 1: a cavity in red, which darkens the ground, a wetness in green, which
+// darkens and smooths it, and a cover in blue, which tints it toward the grass's colour. A single
+// texel of zeros for a ground without channels.
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var channels: texture_2d<f32>;
 
 // A hash without trigonometry, cheaper than sin and the same on every GPU.
@@ -175,12 +179,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), look.macro_variation);
     // The channels, blended between the vertices as the materials are.
     let channel_size = vec2<i32>(textureDimensions(channels));
-    var wet_and_hollow = vec2<f32>(0.0);
+    var near_channels = vec3<f32>(0.0);
     for (var k = 0; k < 4; k++) {
-        wet_and_hollow += textureLoad(channels, min(corners[k], channel_size - 1), 0).rg * near_weights[k];
+        near_channels += textureLoad(channels, min(corners[k], channel_size - 1), 0).rgb * near_weights[k];
     }
-    let cavity = clamp(wet_and_hollow.x, 0.0, 1.0);
-    let wet = clamp(wet_and_hollow.y, 0.0, 1.0);
+    let cavity = clamp(near_channels.x, 0.0, 1.0);
+    let wet = clamp(near_channels.y, 0.0, 1.0);
+    let cover = clamp(near_channels.z, 0.0, 1.0);
+    // Covered ground tints in as the grass's blades shrink away, so where they stand it is as it is.
+    let beyond_grass = smoothstep(look.cover_fade.x, look.cover_fade.y, length(world.xz - view.world_position.xz));
+    albedo = mix(albedo, look.cover_colour.rgb, cover * look.cover_tint * beyond_grass);
     albedo *= (1.0 - look.cavity_darkening * cavity) * (1.0 - look.wet_darkening * wet);
     pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, look.wet_roughness, wet);
     albedo *= mix(1.0, 0.86 + 0.28 * fine.x, grain);

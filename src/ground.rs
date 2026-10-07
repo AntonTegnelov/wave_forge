@@ -335,22 +335,32 @@ pub fn ground_values<'a>(
     per_vertex(chunk, field, |f| f.size, Field::get)
 }
 
-/// A chunk's ground channels for a ground shader, from [`ground_values`] of a cavity stage and of a
-/// wetness stage: two values a vertex, cavity then wetness, for a two-channel float texture, 0 for
-/// the channel not given. `None` when neither is.
+/// How many channels a ground shader reads per vertex: cavity, wetness and cover.
+pub const GROUND_CHANNELS: usize = 3;
+
+/// A chunk's ground channels for a ground shader, from [`ground_values`] of a cavity, a wetness and
+/// a cover stage, in that order: [`GROUND_CHANNELS`] values a vertex, for a float texture of as
+/// many channels, 0 for a channel not given. `None` when none is.
 ///
 /// # Panics
-/// If both are given and differ in length: both are one chunk's vertices.
+/// If two given channels differ in length: all are one chunk's vertices.
 #[must_use]
-pub fn ground_channels(cavity: Option<Vec<f32>>, wetness: Option<Vec<f32>>) -> Option<Vec<f32>> {
-    let count = cavity.as_ref().or(wetness.as_ref())?.len();
-    if let (Some(c), Some(w)) = (&cavity, &wetness) {
-        assert_eq!(c.len(), w.len(), "both channels are one chunk's vertices");
-    }
-    let at = |channel: &Option<Vec<f32>>, i: usize| channel.as_ref().map_or(0.0, |v| v[i]);
+pub fn ground_channels(channels: [Option<Vec<f32>>; GROUND_CHANNELS]) -> Option<Vec<f32>> {
+    let count = channels.iter().flatten().next()?.len();
+    assert!(
+        channels
+            .iter()
+            .flatten()
+            .all(|channel| channel.len() == count),
+        "all channels are one chunk's vertices"
+    );
     Some(
         (0..count)
-            .flat_map(|i| [at(&cavity, i), at(&wetness, i)])
+            .flat_map(|i| {
+                channels
+                    .iter()
+                    .map(move |channel| channel.as_ref().map_or(0.0, |values| values[i]))
+            })
             .collect(),
     )
 }
@@ -756,15 +766,19 @@ mod tests {
     }
 
     #[test]
-    fn channels_interleave_cavity_and_wetness_with_0_for_one_not_given() {
-        let both = ground_channels(Some(vec![0.1, 0.2]), Some(vec![0.7, 0.8]));
-        let cavity = ground_channels(Some(vec![0.1, 0.2]), None);
-        let wetness = ground_channels(None, Some(vec![0.7, 0.8]));
+    fn channels_interleave_cavity_wetness_and_cover_with_0_for_one_not_given() {
+        let all = ground_channels([
+            Some(vec![0.1, 0.2]),
+            Some(vec![0.7, 0.8]),
+            Some(vec![1.0, 0.5]),
+        ]);
+        let cavity = ground_channels([Some(vec![0.1, 0.2]), None, None]);
+        let cover = ground_channels([None, None, Some(vec![1.0, 0.5])]);
 
-        assert_eq!(both, Some(vec![0.1, 0.7, 0.2, 0.8]));
-        assert_eq!(cavity, Some(vec![0.1, 0.0, 0.2, 0.0]));
-        assert_eq!(wetness, Some(vec![0.0, 0.7, 0.0, 0.8]));
-        assert_eq!(ground_channels(None, None), None);
+        assert_eq!(all, Some(vec![0.1, 0.7, 1.0, 0.2, 0.8, 0.5]));
+        assert_eq!(cavity, Some(vec![0.1, 0.0, 0.0, 0.2, 0.0, 0.0]));
+        assert_eq!(cover, Some(vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.5]));
+        assert_eq!(ground_channels([None, None, None]), None);
     }
 
     #[test]

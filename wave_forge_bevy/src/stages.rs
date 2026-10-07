@@ -46,9 +46,10 @@ use wave_forge::stages::{
     StageTiming, StageWorker, Stamp, TownChunk, Volume,
 };
 use wave_forge::{
-    ChunkCoord, Emitter, FarGround, FocusPoint, FrozenStore, GroundMesh, InstanceId, NavSource,
-    NavSourceError, VolumeMesh, WaterMesh, far_ground, ground, ground_channels, ground_materials,
-    ground_readers, ground_values, surface_nav_source, volume_mesh, water_surface,
+    ChunkCoord, Emitter, FarGround, FocusPoint, FrozenStore, GROUND_CHANNELS, GroundMesh,
+    InstanceId, NavSource, NavSourceError, VolumeMesh, WaterMesh, far_ground, ground,
+    ground_channels, ground_materials, ground_readers, ground_values, surface_nav_source,
+    volume_mesh, water_surface,
 };
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
@@ -179,7 +180,7 @@ pub struct WaveForgeStages {
     /// Each built ground's category per vertex, with a material stage.
     ground_ids: HashMap<ChunkCoord, Vec<u8>>,
     /// The field stages whose values are the ground's cavity and wetness, if any.
-    ground_channel_stages: [Option<String>; 2],
+    ground_channel_stages: [Option<String>; GROUND_CHANNELS],
     /// Each built ground's channels, cavity then wetness per vertex, with a channel stage.
     ground_channels: HashMap<ChunkCoord, Vec<f32>>,
     /// The field stage of the lakes' and rivers' level, if any.
@@ -375,9 +376,9 @@ impl WaveForgeStages {
         self.ground_ids.get(&chunk).map(Vec::as_slice)
     }
 
-    /// The channels of every vertex of a chunk's ground, cavity then wetness, from the stages
-    /// [`WaveForgeStagesPlugin::with_ground_cavity`] and
-    /// [`WaveForgeStagesPlugin::with_ground_wetness`] name, as [`wave_forge::ground_channels`]
+    /// The channels of every vertex of a chunk's ground, cavity, wetness and cover, from the stages
+    /// [`WaveForgeStagesPlugin::with_ground_cavity`], [`WaveForgeStagesPlugin::with_ground_wetness`]
+    /// and [`WaveForgeStagesPlugin::with_ground_cover`] name, as [`wave_forge::ground_channels`]
     /// lays them out; `None` without either or before the chunk's ground is built.
     #[must_use]
     pub fn ground_channels(&self, chunk: ChunkCoord) -> Option<&[f32]> {
@@ -623,7 +624,7 @@ pub struct WaveForgeStagesPlugin {
     settings: StagesSettings,
     ground_stage: Option<String>,
     ground_material_stage: Option<String>,
-    ground_channel_stages: [Option<String>; 2],
+    ground_channel_stages: [Option<String>; GROUND_CHANNELS],
     water_stage: Option<String>,
     far_ground_stage: Option<(String, u32)>,
     volume_stage: Option<String>,
@@ -666,7 +667,7 @@ impl WaveForgeStagesPlugin {
             settings,
             ground_stage: None,
             ground_material_stage: None,
-            ground_channel_stages: [None, None],
+            ground_channel_stages: [None, None, None],
             water_stage: None,
             far_ground_stage: None,
             volume_stage: None,
@@ -759,6 +760,16 @@ impl WaveForgeStagesPlugin {
     #[must_use]
     pub fn with_ground_wetness(mut self, stage: &str) -> Self {
         self.ground_channel_stages[1] = Some(stage.to_owned());
+        self
+    }
+
+    /// Gives the ground the values of the field stage `stage`, 0 to 1, as its cover, which
+    /// [`crate::materials::GroundMaterial`] tints toward its grass's colour, so covered ground
+    /// beyond the grass reads as the same meadow; the grass's own cover field, say. As
+    /// [`WaveForgeStagesPlugin::with_ground_cavity`] gives the cavity.
+    #[must_use]
+    pub fn with_ground_cover(mut self, stage: &str) -> Self {
+        self.ground_channel_stages[2] = Some(stage.to_owned());
         self
     }
 
@@ -1052,9 +1063,11 @@ fn drain(
                 None => Some(None),
                 Some(stage) => ground_values(chunk, |at| stages.worker.field(stage, at)).map(Some),
             };
-            let (Some(cavity), Some(wetness)) =
-                (channel(&channel_stages[0]), channel(&channel_stages[1]))
-            else {
+            let (Some(cavity), Some(wetness), Some(cover)) = (
+                channel(&channel_stages[0]),
+                channel(&channel_stages[1]),
+                channel(&channel_stages[2]),
+            ) else {
                 continue;
             };
             // The chunk's lakes and rivers, or wait for the water's field.
@@ -1072,7 +1085,7 @@ fn drain(
                     Some(surface)
                 }
             };
-            if let Some(channels) = ground_channels(cavity, wetness) {
+            if let Some(channels) = ground_channels([cavity, wetness, cover]) {
                 stages.ground_channels.insert(chunk, channels);
             }
             if let Some(water) = water {

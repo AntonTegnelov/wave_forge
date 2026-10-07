@@ -1,8 +1,8 @@
 ## Renders a pack's ground with a material per category and saves the picture (developer tool).
 ##
 ## Run through `../render_ground.sh`. The ground check's pack draws sand, grass and rock through
-## the reference ground shader with a palette of those three colours, its hollows darkened and the
-## ground wet near the water, and grass through the reference grass shader, lit from above, seen from above at an angle; the picture shows whether
+## the reference ground shader with a palette of those three colours, its hollows darkened, the
+## ground wet near the water and tinted toward the grass where it grows, and grass through the reference grass shader, lit from above, seen from above at an angle; the picture shows whether
 ## materials blend smoothly across triangles and chunks and where grass grows. It lands in Godot's
 ## user directory, and the script prints where. Then, with vsync off, it times frames with the
 ## grass and without it, and prints both, with the viewport's GPU time for each: grass's cost on
@@ -41,6 +41,7 @@ func _initialize() -> void:
 	world.targets = PackedStringArray(["height", "surface", "cover", "hollow", "wet"])
 	world.ground_cavity_stage = "hollow"
 	world.ground_wetness_stage = "wet"
+	world.ground_cover_stage = "cover"
 	world.grass_stage = "cover"
 	world.grass_radius = RADIUS - 1
 	root.add_child(world)

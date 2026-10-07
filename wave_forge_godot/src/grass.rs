@@ -92,6 +92,11 @@ impl Grass {
         })
     }
 
+    /// The distances from the camera, in world units, over which blades shrink away.
+    pub(crate) fn fade(&self) -> Vector2 {
+        self.fade
+    }
+
     /// Frees the grass of chunks for which `keep` fails, then grows grass on at most `budget` of
     /// `candidates` that have none, in their order, when `ground` and `cover` give both. Returns
     /// how many chunks got grass.
