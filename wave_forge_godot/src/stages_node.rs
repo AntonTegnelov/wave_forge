@@ -52,8 +52,8 @@ use wave_forge::stages::{
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, SurfaceWorker, VolumeMesh,
-    YUpSpace, far_ground, far_ground_categories, ground, ground_height, ground_materials,
-    ground_readers, volume_height,
+    YUpSpace, far_ground, far_ground_categories, ground, ground_channels, ground_height,
+    ground_materials, ground_readers, ground_values, volume_height,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -166,6 +166,15 @@ pub struct WaveForgeStages {
     /// colours of their own from their index.
     #[export]
     ground_palette: PackedColorArray,
+    /// A field stage at the ground's scale whose values, 0 to 1, darken the ground's hollows: its
+    /// cavity, handed to the ground material with `ground_material_stage`'s categories, in the red
+    /// channel of `wave_forge_channels`. Empty for none.
+    #[export]
+    ground_cavity_stage: GString,
+    /// A field stage at the ground's scale whose values, 0 to 1, darken and smooth wet ground, in
+    /// the green channel of `wave_forge_channels`. Empty for none.
+    #[export]
+    ground_wetness_stage: GString,
     /// The material the pack's sea is drawn with: a plane at its water level under the followed
     /// chunk, as wide as the view. Empty, or a pack without water, draws no sea.
     #[export]
@@ -769,6 +778,8 @@ impl INode for WaveForgeStages {
             grass_material: None,
             grass: None,
             ground_palette: PackedColorArray::new(),
+            ground_cavity_stage: GString::new(),
+            ground_wetness_stage: GString::new(),
             chunk_materials: HashMap::new(),
             palette: None,
             collider_radius: 1,
@@ -969,19 +980,21 @@ impl INode for WaveForgeStages {
                 }
             }
         }
-        let material_stage = self.ground_material_stage.to_string();
+        let read = [
+            ground_stage.clone(),
+            self.ground_material_stage.to_string(),
+            self.ground_cavity_stage.to_string(),
+            self.ground_wetness_stage.to_string(),
+        ];
         for event in &events {
             match event {
-                // A chunk's ground reads the materials of itself and of the chunks beyond its
-                // far edges, which are among the chunks whose ground reads a field of this chunk.
-                StageEvent::Generated { stage, chunk }
-                    if *stage == ground_stage || *stage == material_stage =>
-                {
+                // A chunk's ground reads the materials and channels of itself and of the chunks
+                // beyond its far edges, which are among the chunks whose ground reads a field of
+                // this chunk.
+                StageEvent::Generated { stage, chunk } if read.contains(stage) => {
                     arrived.push(*chunk);
                 }
-                StageEvent::Dropped { stage, chunk }
-                    if *stage == ground_stage || *stage == material_stage =>
-                {
+                StageEvent::Dropped { stage, chunk } if read.contains(stage) => {
                     gone.push(*chunk);
                 }
                 StageEvent::Generated { .. }
@@ -3040,6 +3053,8 @@ impl WaveForgeStages {
         };
         let stage = self.ground_stage.to_string();
         let material_stage = self.ground_material_stage.to_string();
+        let cavity_stage = self.ground_cavity_stage.to_string();
+        let wetness_stage = self.ground_wetness_stage.to_string();
         let cell = self.cell_size.to_array();
         // Drops first: a raise drops a chunk and generates it again in one frame, and it is due.
         for chunk in gone {
@@ -3074,10 +3089,23 @@ impl WaveForgeStages {
                 built.push((chunk, mesh, None));
                 continue;
             }
-            if let Some(ids) = ground_materials(chunk, |at| worker.categories(&material_stage, at))
-            {
-                built.push((chunk, mesh, Some(ids)));
-            }
+            let Some(ids) = ground_materials(chunk, |at| worker.categories(&material_stage, at))
+            else {
+                continue;
+            };
+            // A channel's values, none for a channel not set, or wait for its stage.
+            let channel = |stage: &str| {
+                if stage.is_empty() {
+                    Some(None)
+                } else {
+                    ground_values(chunk, |at| worker.field(stage, at)).map(Some)
+                }
+            };
+            let (Some(cavity), Some(wetness)) = (channel(&cavity_stage), channel(&wetness_stage))
+            else {
+                continue;
+            };
+            built.push((chunk, mesh, Some((ids, ground_channels(cavity, wetness)))));
         }
         let mut count = 0;
         for (chunk, mesh, ids) in built {
@@ -3091,8 +3119,9 @@ impl WaveForgeStages {
             let (finest, coarser) = ground_levels(&mesh);
             add_levelled_surface(rid, &mut arrays, finest, &coarser);
             match (ids, &self.palette) {
-                (Some(ids), Some((palette, template))) => {
-                    let material = chunk_material(template, palette, &mesh, &ids, cell);
+                (Some((ids, channels)), Some((palette, template))) => {
+                    let material =
+                        chunk_material(template, palette, &mesh, &ids, channels.as_deref(), cell);
                     rendering.mesh_surface_set_material(rid, 0, material.get_rid());
                     self.chunk_materials.insert(chunk, material);
                 }
@@ -4414,7 +4443,7 @@ impl WaveForgeStages {
         }
         let at_scale_one = |stage: &str| pack.scale(stage) == Some(1);
         let far_scale = pack.scale(&self.far_ground_stage.to_string());
-        let settings: [(&str, &GString, &str, Fits<'_>); 8] = [
+        let settings: [(&str, &GString, &str, Fits<'_>); 10] = [
             ("ground_stage", &self.ground_stage, "", &|_, _| true),
             ("grass_stage", &self.grass_stage, "", &|_, _| true),
             (
@@ -4435,6 +4464,18 @@ impl WaveForgeStages {
                             | StageKind::Nearest { .. }
                     )
                 },
+            ),
+            (
+                "ground_cavity_stage",
+                &self.ground_cavity_stage,
+                "field ",
+                &|stage, _| pack.is_field(stage),
+            ),
+            (
+                "ground_wetness_stage",
+                &self.ground_wetness_stage,
+                "field ",
+                &|stage, _| pack.is_field(stage),
             ),
             (
                 "far_ground_stage",
@@ -5170,6 +5211,7 @@ fn chunk_material(
     palette: &Gd<ImageTexture>,
     mesh: &GroundMesh,
     ids: &[u8],
+    channels: Option<&[f32]>,
     cell: [f32; 3],
 ) -> Gd<ShaderMaterial> {
     let image = Image::create_from_data(
@@ -5188,6 +5230,22 @@ fn chunk_material(
         "wave_forge_cell",
         &Vector2::new(cell[0], cell[2]).to_variant(),
     );
+    if let Some(channels) = channels {
+        let bytes: Vec<u8> = channels
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        let image = Image::create_from_data(
+            mesh.size[0] as i32,
+            mesh.size[1] as i32,
+            false,
+            ImageFormat::RGF,
+            &PackedByteArray::from(bytes.as_slice()),
+        )
+        .expect("an image of two floats per vertex");
+        let texture = ImageTexture::create_from_image(&image).expect("a texture of the image");
+        material.set_shader_parameter("wave_forge_channels", &texture.to_variant());
+    }
     material
 }
 

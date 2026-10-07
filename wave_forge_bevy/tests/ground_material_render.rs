@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials};
 use wave_forge_bevy::materials::{
-    GroundLook, WaveForgeMaterialsPlugin, ground_material_of, palette_image,
+    GroundLook, WaveForgeMaterialsPlugin, ground_channels_image, ground_material_of, palette_image,
 };
 use wave_forge_bevy::stages::ground_mesh;
 
@@ -43,8 +43,9 @@ const EAST: [u8; 3] = [20, 60, 220];
 #[derive(Resource, Default)]
 struct Pixels(Option<Vec<u8>>);
 
-/// The chunk drawn with `look`, seen from straight above: `SIZE` by `SIZE` pixels, RGBA.
-fn render_halves(look: GroundLook) -> Vec<u8> {
+/// The chunk drawn with `look`, seen from straight above: `SIZE` by `SIZE` pixels, RGBA. With
+/// `channels`, the west half's vertices are fully hollow and the east half's fully wet.
+fn render_halves(look: GroundLook, channels: bool) -> Vec<u8> {
     let mut runtime = Runtime::new(
         Arc::new(Pack::parse(PACK).expect("a valid pack")),
         1,
@@ -108,6 +109,14 @@ fn render_halves(look: GroundLook) -> Vec<u8> {
         )
     };
     material.extension.look = look;
+    if channels {
+        let values: Vec<f32> = ids
+            .iter()
+            .flat_map(|&id| if id == 0 { [1.0, 0.0] } else { [0.0, 1.0] })
+            .collect();
+        let image = ground_channels_image(mesh.size, &values);
+        material.extension.channels = world.resource_mut::<Assets<Image>>().add(image);
+    }
     let material = world
         .resource_mut::<Assets<wave_forge_bevy::materials::GroundMaterial>>()
         .add(material);
@@ -157,7 +166,7 @@ fn pixel_of(pixels: &[u8], x: u32, y: u32) -> [u8; 3] {
 #[test]
 #[ignore = "needs a device; run with --ignored in release mode"]
 fn with_the_flat_look_a_chunks_materials_come_out_in_their_palette_colours() {
-    let pixels = render_halves(GroundLook::flat());
+    let pixels = render_halves(GroundLook::flat(), false);
 
     let pixel = |x: u32, y: u32| pixel_of(&pixels, x, y);
     let near = |a: [u8; 3], b: [u8; 3]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2);
@@ -190,7 +199,7 @@ fn with_the_flat_look_a_chunks_materials_come_out_in_their_palette_colours() {
 #[test]
 #[ignore = "needs a device; run with --ignored in release mode"]
 fn with_the_default_look_the_colours_vary_around_the_palettes() {
-    let pixels = render_halves(GroundLook::default());
+    let pixels = render_halves(GroundLook::default(), false);
 
     // The two quarters furthest from the border, which lies 3.5 cells into the 8 the camera sees.
     let (left, right): (Vec<[u8; 3]>, Vec<[u8; 3]>) = (0..SIZE)
@@ -222,4 +231,32 @@ fn with_the_default_look_the_colours_vary_around_the_palettes() {
             off * 100.0
         );
     }
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn a_hollow_darkens_the_ground_and_wetness_darkens_it_less() {
+    let look = GroundLook::flat();
+    let pixels = render_halves(look, true);
+
+    // The factors darken the linear colour, which the target stores as sRGB.
+    let darkened = |colour: [u8; 3], by: f32| {
+        let linear = Color::srgb_u8(colour[0], colour[1], colour[2]).to_linear();
+        let dark = LinearRgba::rgb(linear.red * by, linear.green * by, linear.blue * by);
+        let srgb = Srgba::from(dark).to_u8_array();
+        [srgb[0], srgb[1], srgb[2]]
+    };
+    let hollow = darkened(WEST, 1.0 - look.cavity_darkening);
+    let wet = darkened(EAST, 1.0 - look.wet_darkening);
+    let near = |a: [u8; 3], b: [u8; 3]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2);
+    let (left, right) = (
+        pixel_of(&pixels, 4, SIZE / 2),
+        pixel_of(&pixels, SIZE - 5, SIZE / 2),
+    );
+    println!("left {left:?}, right {right:?}; hollow {hollow:?}, wet {wet:?}");
+
+    assert!(
+        (near(left, hollow) && near(right, wet)) || (near(left, wet) && near(right, hollow)),
+        "left {left:?}, right {right:?}; hollow {hollow:?}, wet {wet:?}"
+    );
 }

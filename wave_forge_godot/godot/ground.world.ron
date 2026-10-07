@@ -1,5 +1,6 @@
 // The pack of the ground check (verify_ground.gd): rolling ground whose materials are its
-// categories, sand low, grass in between and rock high, with grass growing on the grass.
+// categories, sand low, grass in between and rock high, with grass growing on the grass, hollows
+// darkened by their depth under the ground around them and ground wet near the water.
 (
     version: 1,
     // The sea: the sand below it is under water.
@@ -12,5 +13,10 @@
         ], otherwise: "grass")),
         // Grass covers the grassland fully and nothing else.
         (name: "cover", kind: Field(Is("surface", ["grass"]))),
+        // How far each column lies below the ground around it, as a cavity of 0 to 1.
+        (name: "around", kind: Blur(input: "height", radius: 2)),
+        (name: "hollow", kind: Field(Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.5)), 0.0, 1.0))),
+        // Wet from 2 cells above the water down to it.
+        (name: "wet", kind: Field(Clamp(Remap(Input("height"), (5.0, 3.0), (0.0, 1.0)), 0.0, 1.0))),
     ],
 )

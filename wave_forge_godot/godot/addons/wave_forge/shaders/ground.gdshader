@@ -5,7 +5,7 @@
 // meet along a broken line rather than the grid's. Steep ground turns to rock by its own slope,
 // its colour muted and banded in strata; a broad noise varies the colour across the land, and a
 // fine one bumps the ground and grains its colour near the camera. Asset free; works on every
-// renderer, Compatibility included.
+// renderer, Compatibility included. Channels the node hands in darken hollows and wet ground.
 // `wave_forge_bevy/src/shaders/ground.wesl` is the same shader for Bevy.
 shader_type spatial;
 
@@ -16,7 +16,15 @@ uniform sampler2D wave_forge_materials : filter_nearest, repeat_disable;
 uniform vec2 wave_forge_cell = vec2(1.0);
 // A colour per material id, in texel id of a 256 by 1 texture.
 uniform sampler2D wave_forge_palette : filter_nearest, repeat_disable, source_color;
+// Per ground vertex, 0 to 1: a cavity in red, which darkens the ground, and a wetness in green,
+// which darkens and smooths it. Black, no effect, where the node hands in none.
+uniform sampler2D wave_forge_channels : filter_nearest, repeat_disable, hint_default_black;
 uniform float roughness = 0.9;
+// How far a full cavity darkens the ground.
+uniform float cavity_darkening : hint_range(0.0, 1.0) = 0.6;
+// How far full wetness darkens the ground, and the roughness it leaves.
+uniform float wet_darkening : hint_range(0.0, 1.0) = 0.45;
+uniform float wet_roughness : hint_range(0.0, 1.0) = 0.35;
 // Rock on steep ground is the ground's own colour muted and darkened, or with this colour's alpha
 // above zero, this colour instead, by that much; and the slopes (one minus the normal's height) at
 // which rock starts and has taken over.
@@ -170,9 +178,18 @@ void fragment() {
 		albedo = mix(albedo, rock_base * mix(1.0, 0.8 + 0.4 * band, strata), rock);
 	}
 	albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), macro_variation);
+	// The channels, blended between the vertices as the materials are.
+	ivec2 channel_size = textureSize(wave_forge_channels, 0);
+	vec2 channels = vec2(0.0);
+	for (int k = 0; k < 4; k++) {
+		channels += texelFetch(wave_forge_channels, min(corners[k], channel_size - 1), 0).rg * near_weights[k];
+	}
+	float cavity = clamp(channels.r, 0.0, 1.0);
+	float wet = clamp(channels.g, 0.0, 1.0);
+	albedo *= (1.0 - cavity_darkening * cavity) * (1.0 - wet_darkening * wet);
 	albedo *= mix(1.0, 0.86 + 0.28 * fine.x, grain);
 
 	ALBEDO = albedo;
-	ROUGHNESS = roughness;
+	ROUGHNESS = mix(roughness, wet_roughness, wet);
 	NORMAL = normalize((VIEW_MATRIX * vec4(normal, 0.0)).xyz);
 }

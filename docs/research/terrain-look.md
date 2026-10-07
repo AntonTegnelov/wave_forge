@@ -76,8 +76,9 @@ erosion suits finite maps generated once.
 - **Ground shading.** The reference ground shader (#322) takes a palette colour per category per
   vertex and draws it procedurally: borders broken by noise rather than following the 2 m grid,
   rock by the fragment's slope in muted strata, a broad colour variation, and a fine bump and grain
-  near the camera ([godot.md](../reference/godot.md#ground-and-colliders)). It has no textures, no
-  height blending and constant roughness. The far ground is coloured by coarse biomes (#314).
+  near the camera ([godot.md](../reference/godot.md#ground-and-colliders)). Field stages can hand it
+  a cavity, which darkens hollows, and a wetness, which darkens and smooths the ground (#326). It
+  has no textures and no height blending. The far ground is coloured by coarse biomes (#314).
 - **Water surfaces.** The sea only; lakes and rivers are not drawn.
 - **Vegetation.** Scatter as MultiMeshes in a global wind, grass from a cover field within one
   chunk by default.
