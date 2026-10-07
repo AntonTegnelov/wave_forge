@@ -79,7 +79,8 @@ erosion suits finite maps generated once.
   near the camera ([godot.md](../reference/godot.md#ground-and-colliders)). Field stages can hand it
   a cavity, which darkens hollows, and a wetness, which darkens and smooths the ground (#326). It
   has no textures and no height blending. The far ground is coloured by coarse biomes (#314).
-- **Water surfaces.** The sea only; lakes and rivers are not drawn.
+- **Water surfaces.** The sea, and since #328 lakes and rivers from a field of the water's level,
+  drawn as a mesh per chunk that runs out under its banks ([packs.md](../reference/packs.md#water-surfaces)).
 - **Vegetation.** Scatter as MultiMeshes in a global wind, grass from a cover field within one
   chunk by default.
 
@@ -99,7 +100,8 @@ erosion suits finite maps generated once.
    shader beside the material ids.
 5. **Far ground fidelity** (#327). Ridges in the coarse height, finer far normals, and a grass
    hand-off, for P2's 2 km view.
-6. **Water surfaces** (#328). Lakes and rivers drawn, so carved channels stop reading as dry pits.
+6. **Water surfaces** (#328). Lakes and rivers drawn, so carved channels stop reading as dry pits;
+   done in both engines.
 7. **Erosion for finite worlds** (#329). A region job of droplets, then transport, for real
    drainage on worlds run ahead of time. The largest item, and the one that pays off only on finite
    worlds; its time competes with M1's 10 minutes, already exceeded on the desktop (#319).
