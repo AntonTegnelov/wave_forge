@@ -46,6 +46,7 @@ func _world(water_stage: String) -> Node:
 	node.collider_radius = -1
 	node.ground_stage = "ground"
 	node.water_stage = water_stage
+	node.water_material = StandardMaterial3D.new()
 	root.add_child(node)
 	return node
 

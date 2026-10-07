@@ -185,7 +185,8 @@ pub struct WaveForgeStages {
     /// level stands above the ground (`wave_forge::water_surface`). Empty for none.
     #[export]
     water_stage: GString,
-    /// The material the lakes and rivers are drawn with; empty draws them with `sea_material`.
+    /// The material the lakes and rivers are drawn with; empty draws them with `sea_material`, and
+    /// with neither, as with the sea, they are not drawn.
     #[export]
     water_material: Option<Gd<Material>>,
     /// A coarse field stage the far ground is drawn from beyond the near ground, a height in cells
@@ -3206,7 +3207,10 @@ impl WaveForgeStages {
             );
             Gi::Static.apply(instance);
             self.grounds.insert(chunk, (mesh, rid, instance));
-            if let Some(water) = water.filter(|water| !water.indices.is_empty()) {
+            let material = self.water_material.as_ref().or(self.sea_material.as_ref());
+            if let (Some(water), Some(material)) =
+                (water.filter(|water| !water.indices.is_empty()), material)
+            {
                 let rid = rendering.mesh_create();
                 let mut arrays = water_arrays(&water);
                 arrays.set(
@@ -3214,10 +3218,7 @@ impl WaveForgeStages {
                     &godot_triangles(&water.indices).to_variant(),
                 );
                 rendering.mesh_add_surface_from_arrays(rid, PrimitiveType::TRIANGLES, &arrays);
-                if let Some(material) = self.water_material.as_ref().or(self.sea_material.as_ref())
-                {
-                    rendering.mesh_surface_set_material(rid, 0, material.get_rid());
-                }
+                rendering.mesh_surface_set_material(rid, 0, material.get_rid());
                 let instance = rendering.instance_create2(rid, scenario);
                 rendering.instance_set_transform(
                     instance,
