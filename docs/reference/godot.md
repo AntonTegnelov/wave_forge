@@ -211,6 +211,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Navigation | `navigation_radius` | chunks around the followed position that get a navigation region ([Navigation](#navigation)); below zero, none (the default) |
 | | `navigation_template` | the `NavigationMesh` settings chunks are baked with |
 | Occlusion | `occluder_radius` | chunks around the followed position whose towns get occluders of their solid cells, for Godot's occlusion culling; below zero, none (the default) |
+| Audio | `audio_radius` | chunks around the followed position that play the terrain's sounds, the pack's ambience ([packs.md](packs.md#ambience)): each chunk with ground gets an `AudioStreamPlayer3D` per emitter whose key `sounds` maps to a stream, at the emitter's position and volume, from a pool as the world node's are ([Sound and surfaces](#sound-and-surfaces)); below zero, none (the default). `ambience(chunk)` gives a chunk's emitters, a dictionary each with its `position`, `key` and `volume`, for a game that maps them itself |
+| | `sounds` | the stream each sound key plays: `water_river` and `water_lake` for the continent's rivers and lakes |
 | Scenes | `scenes` | a kind (a Scatter, Embed, Deposit or Spawn point's kind, an Assemble piece's or Cave room's name, or a Solve stage's module) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
