@@ -75,22 +75,30 @@
         ))),
         // Gullies cut down the ranges' flanks, branching as they run; the lowlands' gentler slopes
         // keep their shape. Shores and the sea floor are laid down, not cut, so the gullies blend
-        // in from the waterline to 5 cells up.
-        (name: "eroded", kind: Erode(input: "uplift", spacing: 40.0, octaves: 6, depth: 6.0, slope: 0.8, smooth: 4)),
+        // in from the waterline to 5 cells up. The lattice is named, so the far ground's coarse
+        // erosion follows the first octaves.
+        (name: "eroded", kind: Erode(input: "uplift", spacing: 40.0, octaves: 6, depth: 6.0, slope: 0.8, smooth: 4, name: Some("gullies"))),
         (name: "height", kind: Field(Add(
             Input("uplift"),
             Mul(Sub(Input("eroded"), Input("uplift")), Clamp(Mul(Input("uplift"), Constant(0.2)), 0.0, 1.0)),
         ))),
         // The height a view of the continent out to 2 km stands on beyond the near ground, which an
         // engine draws its far ground from (docs/reference/packs.md, "Far ground"): the height's
-        // coarse terms, the ridges at their mean and the hills left out, and above 70 cells the peaks
-        // raised as their biomes raise them.
-        (name: "coarse_height", scale: 4, kind: Field(Add(
+        // terms at the coarse columns, the ridges sampled there and the hills left out, eroded by
+        // the near ground's first two octaves of gullies from the same named lattice, and above 70
+        // cells the peaks raised as their biomes raise them.
+        (name: "coarse_ridges", scale: 4, kind: Field(Pow(Remap(FastNoise("ridges"), (-1.0, 1.0), (0.0, 1.0)), 1.5))),
+        (name: "coarse_uplift", scale: 4, kind: Field(Add(
             Mul(Input("base"), Constant(40.0)),
             Mul(
                 Clamp(Mul(Input("base"), Constant(8.0)), 0.0, 1.0),
-                Add(Mul(Input("ranges"), Constant(51.0)), Input("plateaus")),
+                Add(Mul(Mul(Input("ranges"), Input("coarse_ridges")), Constant(95.0)), Input("plateaus")),
             ),
+        ))),
+        (name: "coarse_eroded", scale: 4, kind: Erode(input: "coarse_uplift", spacing: 40.0, octaves: 2, depth: 6.0, slope: 0.8, smooth: 1, name: Some("gullies"))),
+        (name: "coarse_height", scale: 4, kind: Field(Add(
+            Input("coarse_uplift"),
+            Mul(Sub(Input("coarse_eroded"), Input("coarse_uplift")), Clamp(Mul(Input("coarse_uplift"), Constant(0.2)), 0.0, 1.0)),
         ))),
         (name: "far_height", scale: 4, kind: Field(Max(
             Input("coarse_height"),
