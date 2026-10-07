@@ -199,6 +199,10 @@ pub struct GrassSettings {
     pub base_colour: Vec4,
     /// A blade's colour at its tip, linear RGBA.
     pub tip_colour: Vec4,
+    /// The horizontal distances from the camera at which blades start to shrink and have gone, so
+    /// the grass ends without a visible edge: set it to end where the app stops giving chunks grass.
+    /// Farther than any view by default.
+    pub fade: Vec2,
 }
 
 /// What [`GrassMaterial`] adds to a `StandardMaterial`: the chunk's settings, the ground's height
@@ -404,6 +408,7 @@ pub fn grass_material_of(
                 chunk_and_count: IVec4::new(mesh.chunk.x, mesh.chunk.y, per_column as i32, 0),
                 base_colour: Vec4::new(0.03, 0.08, 0.01, 1.0),
                 tip_colour: Vec4::new(0.26, 0.5, 0.07, 1.0),
+                fade: Vec2::new(1e9, 2e9),
             },
             heights: images.add(heights),
             cover: images.add(covered),
@@ -603,6 +608,7 @@ mod tests {
                     chunk_and_count: IVec4::ZERO,
                     base_colour: Vec4::ONE,
                     tip_colour: Vec4::ONE,
+                    fade: Vec2::new(1e9, 2e9),
                 },
                 heights: Handle::default(),
                 cover: Handle::default(),

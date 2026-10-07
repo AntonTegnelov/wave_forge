@@ -1,5 +1,5 @@
-//! Grass drawn by Bevy's own renderer: blades grow only where the cover is, and sway while the wind
-//! blows and stand still once it drops.
+//! Grass drawn by Bevy's own renderer: blades grow only where the cover is, sway while the wind
+//! blows and stand still once it drops, and shrink away over the fade's distances from the camera.
 //!
 //! ```text
 //! cargo test -p wave_forge_bevy --release --test grass_render -- --ignored --nocapture
@@ -69,9 +69,10 @@ fn changed(a: &[u8], b: &[u8]) -> usize {
     a.chunks(4).zip(b.chunks(4)).filter(|(a, b)| a != b).count()
 }
 
-#[test]
-#[ignore = "needs a device; run with --ignored in release mode"]
-fn blades_grow_only_where_the_cover_is_and_sway_in_the_wind() {
+/// An app drawing a chunk of grass covered on its west half, seen from its south edge, a few cells
+/// up: the chunk's rows lie 5 to 13 cells from the camera along the ground. Returns the app and the
+/// grass's material.
+fn grass_app() -> (App, Handle<GrassMaterial>) {
     let mut runtime = Runtime::new(
         Arc::new(Pack::parse(PACK).expect("a valid pack")),
         1,
@@ -126,6 +127,7 @@ fn blades_grow_only_where_the_cover_is_and_sway_in_the_wind() {
         )
     };
     let material = world.resource_mut::<Assets<GrassMaterial>>().add(material);
+    let handle = material.clone();
     let blades = world
         .resource_mut::<Assets<Mesh>>()
         .add(grass_mesh([8, 8], 16));
@@ -149,9 +151,6 @@ fn blades_grow_only_where_the_cover_is_and_sway_in_the_wind() {
             pixels.0 = Some(readback.data.clone());
         },
     );
-    app.world_mut()
-        .insert_resource(Wind(Vec4::new(1.0, 0.0, 0.3, 3.0)));
-
     // Pipelines compile over the first seconds, drawing nothing until they are ready.
     let started = Instant::now();
     while lit(&run_for(&mut app, 0.1), 0, SIZE) == 0 {
@@ -160,6 +159,16 @@ fn blades_grow_only_where_the_cover_is_and_sway_in_the_wind() {
             "nothing was drawn"
         );
     }
+    (app, handle)
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn blades_grow_only_where_the_cover_is_and_sway_in_the_wind() {
+    let (mut app, _) = grass_app();
+    app.world_mut()
+        .insert_resource(Wind(Vec4::new(1.0, 0.0, 0.3, 3.0)));
+
     let first = run_for(&mut app, 0.1);
     let later = run_for(&mut app, 0.5);
     app.world_mut()
@@ -175,4 +184,30 @@ fn blades_grow_only_where_the_cover_is_and_sway_in_the_wind() {
     assert!(left.max(right) > 100 && left.min(right) == 0);
     assert!(swaying > 0);
     assert_eq!(standing, 0);
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn blades_shrink_away_over_the_fade_and_none_stand_beyond_it() {
+    let (mut app, material) = grass_app();
+    app.world_mut()
+        .insert_resource(Wind(Vec4::new(1.0, 0.0, 0.0, 3.0)));
+    let fade_to = |app: &mut App, fade: Vec2| {
+        app.world_mut()
+            .resource_mut::<Assets<GrassMaterial>>()
+            .get_mut(&material)
+            .expect("the grass material")
+            .extension
+            .settings
+            .fade = fade;
+        lit(&run_for(app, 0.3), 0, SIZE)
+    };
+
+    let whole = fade_to(&mut app, Vec2::new(1e9, 2e9));
+    let partly = fade_to(&mut app, Vec2::new(6.0, 10.0));
+    let gone = fade_to(&mut app, Vec2::new(0.5, 1.0));
+
+    println!("{whole} pixels lit unfaded, {partly} faded from 6 to 10 cells, {gone} faded by 1");
+    assert!(0 < partly && partly < whole, "{partly} of {whole}");
+    assert_eq!(gone, 0);
 }

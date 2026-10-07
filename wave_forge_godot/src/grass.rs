@@ -22,13 +22,16 @@ pub(crate) struct Grass {
     blade: Rid,
     multimesh: Rid,
     per_column: u32,
+    /// The distances from the camera, in world units, over which blades shrink away.
+    fade: Vector2,
     template: Gd<ShaderMaterial>,
     chunks: HashMap<ChunkCoord, (Rid, Gd<ShaderMaterial>)>,
 }
 
 impl Grass {
     /// Blades for chunks of `columns`, `per_column` to a column, drawn with `material`, or with
-    /// the reference grass shader when it is `None`.
+    /// the reference grass shader when it is `None`, shrinking away between the distances from
+    /// the camera `fade` gives in world units.
     ///
     /// # Errors
     /// If `material` is not a `ShaderMaterial`.
@@ -36,6 +39,7 @@ impl Grass {
         material: Option<&Gd<Material>>,
         per_column: u32,
         columns: [u32; 2],
+        fade: Vector2,
     ) -> Result<Self, String> {
         let template = match material {
             None => {
@@ -82,6 +86,7 @@ impl Grass {
             blade,
             multimesh,
             per_column,
+            fade,
             template,
             chunks: HashMap::new(),
         })
@@ -231,6 +236,7 @@ impl Grass {
                 "wave_forge_chunk",
                 Vector2i::new(chunk.x, chunk.y).to_variant(),
             ),
+            ("wave_forge_fade", self.fade.to_variant()),
         ] {
             material.set_shader_parameter(name, &value);
         }

@@ -1306,10 +1306,17 @@ impl WaveForgeStages {
                 self.chunk_cells.x.max(1) as u32,
                 self.chunk_cells.y.max(1) as u32,
             ];
+            // Blades shrink away over the last chunk before the grass's edge, which is at least
+            // `grass_radius` chunks from the camera whichever way it looks, so no edge shows.
+            let span =
+                (columns[0] as f32 * self.cell_size.x).min(columns[1] as f32 * self.cell_size.z);
+            let end = (self.grass_radius as f32).max(0.5) * span;
+            let fade = Vector2::new((end - span).max(0.0), end);
             match Grass::new(
                 self.grass_material.as_ref(),
                 self.grass_per_cell.max(1) as u32,
                 columns,
+                fade,
             ) {
                 Ok(grass) => self.grass = Some(grass),
                 Err(error) => {

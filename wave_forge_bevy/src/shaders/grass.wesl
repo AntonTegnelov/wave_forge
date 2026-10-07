@@ -5,7 +5,7 @@
 // heights and sways in the wind.
 import bevy_pbr::render::{
     mesh_functions,
-    mesh_view_bindings::globals,
+    mesh_view_bindings::{globals, view},
     forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
     view_transformations::position_world_to_clip,
     pbr_fragment::pbr_input_from_standard_material,
@@ -22,6 +22,8 @@ struct GrassSettings {
     chunk_and_count: vec4<i32>,
     base_colour: vec4<f32>,
     tip_colour: vec4<f32>,
+    // The horizontal distances from the camera at which blades start to shrink and have gone.
+    fade: vec2<f32>,
 };
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> grass: GrassSettings;
@@ -62,7 +64,12 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
         ^ (u32(grass.chunk_and_count.y) * 1181783497u);
     let place = vec2<f32>(at) + vec2<f32>(unit(seed), unit(seed ^ 0x9E3779B9u));
     let covered = textureLoad(cover, at, 0).r;
-    let shown = column < columns.x * columns.y && unit(seed ^ 0x85EBCA6Bu) < covered;
+    let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
+    let root = mesh_functions::mesh_position_local_to_world(
+        world_from_local,
+        vec4<f32>(place.x * grass.cell_and_blade.x, 0.0, place.y * grass.cell_and_blade.y, 1.0));
+    let faded = 1.0 - smoothstep(grass.fade.x, grass.fade.y, length(root.xz - view.world_position.xz));
+    let shown = column < columns.x * columns.y && unit(seed ^ 0x85EBCA6Bu) < covered && faded > 0.0;
     // The ground's vertices stand at the columns' centres.
     let last = vec2<i32>(textureDimensions(heights)) - 1;
     let grid = clamp(place - 0.5, vec2<f32>(0.0), vec2<f32>(last));
@@ -76,7 +83,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let angle = unit(seed ^ 0x27D4EB2Fu) * 6.2831853;
     let facing = vec2<f32>(cos(angle), sin(angle));
     let along = in.position.y;
-    let tall = grass.cell_and_blade.z * (0.7 + 0.6 * unit(seed ^ 0x165667B1u));
+    let tall = grass.cell_and_blade.z * (0.7 + 0.6 * unit(seed ^ 0x165667B1u)) * faded;
     let width = grass.cell_and_blade.w;
     var blade_offset = vec3<f32>(facing.x * in.position.x * width, along * tall, facing.y * in.position.x * width);
     let phase = unit(seed ^ 0xD3A2646Cu) * 6.2831853;
@@ -86,7 +93,6 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     if shown {
         local = vec3<f32>(place.x * grass.cell_and_blade.x, ground, place.y * grass.cell_and_blade.y) + blade_offset;
     }
-    let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(local, 1.0));
     out.position = position_world_to_clip(out.world_position.xyz);
     out.world_normal = vec3<f32>(0.0, 1.0, 0.0);
