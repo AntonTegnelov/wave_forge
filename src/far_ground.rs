@@ -2,10 +2,12 @@
 //! "Levels"): one mesh per chunk of the coarse stage, drawn where no near ground is.
 //!
 //! A coarse chunk covers `scale` by `scale` chunks of the WFC lattice. Its far ground has a vertex at
-//! the corner of every one of them: the centre of that chunk's first column, where a near ground's
-//! first vertex is ([`fn@crate::ground`]), with the height a fine stage reading the coarse field there
-//! would get, linearly between the four coarse columns around it. So each lattice chunk is one
-//! square of the far ground, and it has exactly a near ground's outline. The squares of the chunks
+//! the corner of every one of them, the centre of that chunk's first column, where a near ground's
+//! first vertex is ([`fn@crate::ground`]); and where a lattice chunk spans several coarse columns, a
+//! vertex for each of them along its edges and inside, so the far ground follows the coarse field at
+//! its own resolution. Every vertex has the height a fine stage reading the coarse field there would
+//! get, linearly between the four coarse columns around it. So each lattice chunk is a block of far
+//! squares with exactly a near ground's outline. The squares of the chunks
 //! whose near ground is drawn are left out, so the two never overlap; and along every edge a far
 //! square shares with a near ground, a wall joins the near ground's edge, at full detail, to the far
 //! square's, so no view sees between them. A near ground drawn at a coarser level of detail hangs
@@ -24,8 +26,8 @@ pub struct FarGround {
     /// The chunk of the coarse stage.
     pub chunk: ChunkCoord,
     /// Relative to the corner of the lattice chunk at the coarse chunk's lowest corner, on the
-    /// ground plane (the engine's x and z), with the height absolute: first the grid, `scale + 1`
-    /// vertices each way, row by row along z, x fastest; then the walls' vertices.
+    /// ground plane (the engine's x and z), with the height absolute: first the grid, `scale * n + 1`
+    /// vertices each way for `n` coarse columns to a lattice chunk ([`far_steps`]), row by row along z, x fastest; then the walls' vertices.
     pub positions: Vec<[f32; 3]>,
     /// Unit normals, one per vertex.
     pub normals: Vec<[f32; 3]>,
@@ -94,53 +96,100 @@ pub fn far_ground<'a>(
         bottom + (top - bottom) * t
     };
     let [cell_x, cell_up, cell_z] = cell_size;
-    // A lattice chunk has as many columns as a coarse one.
+    // A lattice chunk has as many columns as a coarse one, and `steps` far squares along each side.
+    let steps = far_steps(own.size[0], scale);
     let (span_x, span_z) = (columns_x as f32 * cell_x, columns_x as f32 * cell_z);
-    let side = scale + 1;
+    let (step_x, step_z) = (span_x / steps as f32, span_z / steps as f32);
+    let stride = columns_x / i64::from(steps);
+    let side = scale * steps + 1;
     let first = ChunkCoord::new(chunk.x * scale as i32, chunk.y * scale as i32, chunk.z);
     // The height of the far ground's vertex `i`, `j`, which may lie a step outside the chunk for
     // a normal at its edge: the coarse neighbours cover that.
-    let corner_height = |i: i64, j: i64| height(i * columns_x, j * columns_y) * cell_up;
+    let corner_height = |i: i64, j: i64| height(i * stride, j * stride) * cell_up;
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     for j in 0..i64::from(side) {
         for i in 0..i64::from(side) {
             positions.push([
-                i as f32 * span_x + 0.5 * cell_x,
+                i as f32 * step_x + 0.5 * cell_x,
                 corner_height(i, j),
-                j as f32 * span_z + 0.5 * cell_z,
+                j as f32 * step_z + 0.5 * cell_z,
             ]);
-            let slope_x = (corner_height(i + 1, j) - corner_height(i - 1, j)) / (2.0 * span_x);
-            let slope_z = (corner_height(i, j + 1) - corner_height(i, j - 1)) / (2.0 * span_z);
+            let slope_x = (corner_height(i + 1, j) - corner_height(i - 1, j)) / (2.0 * step_x);
+            let slope_z = (corner_height(i, j + 1) - corner_height(i, j - 1)) / (2.0 * step_z);
             let length = (slope_x * slope_x + 1.0 + slope_z * slope_z).sqrt();
             normals.push([-slope_x / length, 1.0 / length, -slope_z / length]);
         }
     }
     let lattice = |i: u32, j: u32| ChunkCoord::new(first.x + i as i32, first.y + j as i32, first.z);
+    let vertex = |i: u32, j: u32| j * side + i;
     let mut indices = Vec::new();
     for j in 0..scale {
         for i in 0..scale {
             if near(lattice(i, j)).is_some() {
                 continue;
             }
-            let corner = j * side + i;
-            let (right, below) = (corner + 1, corner + side);
-            // The square's corners in the order its surface winds, counter-clockwise seen from
-            // above, and each edge's neighbour across it.
+            let here = lattice(i, j);
+            let beside_near = [(-1, 0), (0, 1), (1, 0), (0, -1)].iter().any(|&(dx, dy)| {
+                near(ChunkCoord::new(here.x + dx, here.y + dy, first.z)).is_some()
+            });
+            let (gi, gj) = (i * steps, j * steps);
+            if !beside_near {
+                for b in 0..steps {
+                    for a in 0..steps {
+                        let corner = vertex(gi + a, gj + b);
+                        let (right, below) = (corner + 1, corner + side);
+                        indices.extend([corner, below, right, right, below, below + 1]);
+                    }
+                }
+                continue;
+            }
+            let corner = vertex(gi, gj);
+            let (right, below) = (vertex(gi + steps, gj), vertex(gi, gj + steps));
+            let far_corner = vertex(gi + steps, gj + steps);
+            // The block's edges in the order its surface winds, counter-clockwise seen from above:
+            // each edge's neighbour across it, its corners, and the far vertices along it from its
+            // first corner up to its last.
             let edges = [
-                ((-1_i32, 0_i32), corner, below),
-                ((0, 1), below, below + 1),
-                ((1, 0), below + 1, right),
-                ((0, -1), right, corner),
+                (
+                    (-1, 0),
+                    corner,
+                    below,
+                    (0..steps).map(|k| vertex(gi, gj + k)).collect::<Vec<u32>>(),
+                ),
+                (
+                    (0, 1),
+                    below,
+                    far_corner,
+                    (0..steps)
+                        .map(|k| vertex(gi + k, gj + steps))
+                        .collect::<Vec<u32>>(),
+                ),
+                (
+                    (1, 0),
+                    far_corner,
+                    right,
+                    (0..steps)
+                        .map(|k| vertex(gi + steps, gj + steps - k))
+                        .collect::<Vec<u32>>(),
+                ),
+                (
+                    (0, -1),
+                    right,
+                    corner,
+                    (0..steps)
+                        .map(|k| vertex(gi + steps - k, gj))
+                        .collect::<Vec<u32>>(),
+                ),
             ];
-            // The square's outline: along an edge shared with a near ground, the far foot of its
-            // wall, one vertex under or over each of the near edge's; along any other, its corner.
+            // The block's outline: along an edge shared with a near ground, the far foot of its
+            // wall, one vertex under or over each of the near edge's; along any other, its far
+            // vertices, which the far squares beside it share.
             let mut outline = Vec::new();
-            for ((dx, dy), from, to) in edges {
-                let here = lattice(i, j);
+            for ((dx, dy), from, to, along) in edges {
                 let across = ChunkCoord::new(here.x + dx, here.y + dy, first.z);
                 let Some(ground) = near(across) else {
-                    outline.push(from);
+                    outline.extend(along);
                     continue;
                 };
                 let feet = wall(
@@ -157,18 +206,14 @@ pub fn far_ground<'a>(
                 );
                 outline.extend(&feet[..feet.len() - 1]);
             }
-            if outline.len() == 4 {
-                indices.extend([corner, below, right, right, below, below + 1]);
-                continue;
-            }
-            // A fan from the square's centre through every vertex of its outline, so it shares its
-            // edges' vertices with the walls and no crack opens between them.
+            // A fan from the block's centre through every vertex of its outline, so it shares its
+            // edges' vertices with the walls and the far squares beside it, and no crack opens.
             let centre = positions.len() as u32;
-            let corners = [corner, right, below, below + 1].map(|v| positions[v as usize]);
+            let corners = [corner, right, below, far_corner].map(|v| positions[v as usize]);
             let average = |axis: usize| corners.iter().map(|p| p[axis]).sum::<f32>() / 4.0;
             positions.push([average(0), average(1), average(2)]);
             normals.push(unit(
-                [corner, right, below, below + 1]
+                [corner, right, below, far_corner]
                     .iter()
                     .map(|&v| normals[v as usize])
                     .fold([0.0; 3], |a, n| [a[0] + n[0], a[1] + n[1], a[2] + n[2]]),
@@ -184,6 +229,18 @@ pub fn far_ground<'a>(
         normals,
         indices,
     })
+}
+
+/// How many far squares a far ground of a coarse stage at `scale`, whose chunks have `columns`
+/// columns along each side, has along each side of a lattice chunk: one per coarse column the
+/// lattice chunk spans, or one where it spans less than one or not a whole number of them.
+#[must_use]
+pub fn far_steps(columns: u32, scale: u32) -> u32 {
+    if scale > 0 && columns >= scale && columns.is_multiple_of(scale) {
+        columns / scale
+    } else {
+        1
+    }
 }
 
 /// Hangs a wall between a near ground's edge facing across `(dx, dy)` and the far square's edge

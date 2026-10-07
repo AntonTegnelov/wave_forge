@@ -1,13 +1,16 @@
 //! Far ground from a coarse height field: its heights are what a fine stage reading the coarse field
 //! gets, neighbouring coarse chunks meet exactly, it covers every point of the ground plane that no
 //! near ground covers and none that one does, a wall joins it to every near ground it meets, and
-//! each vertex stands on the category of the coarse column under it.
+//! each vertex stands on the category of the coarse column under it. A coarse stage at a scale of 8
+//! spans one coarse column to a lattice chunk; one at a scale of 4 spans two, and its far ground
+//! has a vertex for each.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{
-    ChunkCoord, FarGround, FocusPoint, GroundMesh, far_ground, far_ground_categories, ground,
+    ChunkCoord, FarGround, FocusPoint, GroundMesh, far_ground, far_ground_categories, far_steps,
+    ground,
 };
 
 const PACK: &str = r#"(
@@ -16,6 +19,8 @@ const PACK: &str = r#"(
         (name: "far", scale: 8, kind: Field(Mul(Noise(frequency: 0.004, octaves: 3), Constant(40.0)))),
         (name: "near", kind: Field(Mul(Noise(frequency: 0.004, octaves: 3), Constant(40.0)))),
         (name: "read", kind: Field(Input("far"))),
+        (name: "far4", scale: 4, kind: Field(Mul(Noise(frequency: 0.004, octaves: 3), Constant(40.0)))),
+        (name: "read4", kind: Field(Input("far4"))),
         (name: "far_kind", scale: 8, kind: Rules(rules: [
             (category: "west", when: [Less(X, Constant(87.0))]),
             (category: "south", when: [Less(Y, Constant(39.0))]),
@@ -41,6 +46,7 @@ fn runtime() -> Runtime {
                 ("near", None),
                 ("read", Some(5)),
                 ("far_kind", Some(24)),
+                ("far4", Some(16)),
             ],
         )
         .expect("stages");
@@ -49,10 +55,21 @@ fn runtime() -> Runtime {
 }
 
 fn far(runtime: &Runtime, chunk: ChunkCoord, near: &BTreeMap<ChunkCoord, GroundMesh>) -> FarGround {
+    far_of(runtime, "far", SCALE, chunk, near)
+}
+
+/// The far ground of `chunk` of the coarse stage `stage` at `scale`.
+fn far_of(
+    runtime: &Runtime,
+    stage: &str,
+    scale: u32,
+    chunk: ChunkCoord,
+    near: &BTreeMap<ChunkCoord, GroundMesh>,
+) -> FarGround {
     far_ground(
         chunk,
-        SCALE,
-        |at| runtime.field("far", at),
+        scale,
+        |at| runtime.field(stage, at),
         CELL,
         |at| near.get(&at),
     )
@@ -61,11 +78,16 @@ fn far(runtime: &Runtime, chunk: ChunkCoord, near: &BTreeMap<ChunkCoord, GroundM
 
 /// Where a far ground's vertex is in the world's ground plane and height.
 fn world(far: &FarGround, vertex: usize) -> [f32; 3] {
+    world_of(far, SCALE, vertex)
+}
+
+/// Where the vertex of a far ground at `scale` is in the world's ground plane and height.
+fn world_of(far: &FarGround, scale: u32, vertex: usize) -> [f32; 3] {
     let [x, y, z] = far.positions[vertex];
     let span = COLUMNS as f32 * CELL[0];
     let corner = [
-        far.chunk.x as f32 * SCALE as f32 * span,
-        far.chunk.y as f32 * SCALE as f32 * span,
+        far.chunk.x as f32 * scale as f32 * span,
+        far.chunk.y as f32 * scale as f32 * span,
     ];
     [x + corner[0], y, z + corner[1]]
 }
@@ -188,14 +210,84 @@ fn far_and_near_ground_cover_every_point_once() {
     let runtime = runtime();
     let near = near_grounds(&runtime);
     let far = far(&runtime, ChunkCoord::new(0, 0, 0), &near);
+
+    assert_cover_once(&far, SCALE, &near);
+}
+
+#[test]
+fn a_finer_coarse_stage_gives_a_vertex_for_each_coarse_column_where_a_fine_stage_reads_it() {
+    let runtime = runtime();
+    let chunk = ChunkCoord::new(1, 0, 0);
+
+    let far = far_of(&runtime, "far4", 4, chunk, &BTreeMap::new());
+
+    let side = 4 * 2 + 1;
+    let first = [chunk.x * 4 * COLUMNS, chunk.y * 4 * COLUMNS];
+    for j in 0..side {
+        for i in 0..side {
+            // Every fourth fine column, two to a lattice chunk of eight.
+            let column = [first[0] + i * 4, first[1] + j * 4];
+            let at = [column[0] as f32 + 0.5, column[1] as f32 + 0.5];
+            let expected = runtime.sample("read4", at).expect("a sample") * CELL[1];
+            let got = far.positions[(j * side + i) as usize][1];
+            assert!(
+                (got - expected).abs() < 1e-4,
+                "vertex ({i}, {j}): {got} against {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn neighbouring_finer_far_grounds_meet_exactly() {
+    let runtime = runtime();
+    let (a, b) = (ChunkCoord::new(0, 0, 0), ChunkCoord::new(0, 1, 0));
+
+    let (a, b) = (
+        far_of(&runtime, "far4", 4, a, &BTreeMap::new()),
+        far_of(&runtime, "far4", 4, b, &BTreeMap::new()),
+    );
+
+    let side = 4 * 2 + 1;
+    for i in 0..side {
+        let on_a = world_of(&a, 4, ((side - 1) * side + i) as usize);
+        let on_b = world_of(&b, 4, i as usize);
+        assert!(
+            on_a.iter().zip(on_b).all(|(p, q)| (p - q).abs() < 1e-4),
+            "column {i}: {on_a:?} against {on_b:?}"
+        );
+    }
+}
+
+#[test]
+fn a_finer_far_ground_and_the_near_ground_cover_every_point_once() {
+    let runtime = runtime();
+    // Two lattice chunks inside the coarse chunk at the origin, which spans four each way.
+    let near: BTreeMap<ChunkCoord, GroundMesh> = [(2, 2), (3, 2)]
+        .into_iter()
+        .map(|(x, y)| {
+            let chunk = ChunkCoord::new(x, y, 0);
+            let mesh = ground(chunk, |at| runtime.field("near", at), CELL).expect("fields around");
+            (chunk, mesh)
+        })
+        .collect();
+
+    let far = far_of(&runtime, "far4", 4, ChunkCoord::new(0, 0, 0), &near);
+
+    assert_cover_once(&far, 4, &near);
+}
+
+/// Checks that `far`, of a coarse stage at `scale`, and the near grounds `near` hold every point of
+/// the coarse chunk's ground plane in exactly one triangle.
+fn assert_cover_once(far: &FarGround, scale: u32, near: &BTreeMap<ChunkCoord, GroundMesh>) {
     let span = COLUMNS as f32 * CELL[0];
     let flat = |p: [f32; 3]| [p[0], p[2]];
     let mut triangles: Vec<[[f32; 2]; 3]> = far
         .indices
         .chunks(3)
-        .map(|t| [0, 1, 2].map(|k| flat(world(&far, t[k] as usize))))
+        .map(|t| [0, 1, 2].map(|k| flat(world_of(far, scale, t[k] as usize))))
         .collect();
-    for (chunk, mesh) in &near {
+    for (chunk, mesh) in near {
         let corner = [chunk.x as f32 * span, chunk.y as f32 * span];
         let at = |vertex: u32| {
             let [x, _, z] = mesh.positions[vertex as usize];
@@ -214,11 +306,11 @@ fn far_and_near_ground_cover_every_point_once() {
     for j in 0..60 {
         for i in 0..60 {
             let p = [
-                0.5 * CELL[0] + (i as f32 + 0.37) * span * SCALE as f32 / 60.0,
-                0.5 * CELL[2] + (j as f32 + 0.41) * span * SCALE as f32 / 60.0,
+                0.5 * CELL[0] + (i as f32 + 0.37) * span * scale as f32 / 60.0,
+                0.5 * CELL[2] + (j as f32 + 0.41) * span * scale as f32 / 60.0,
             ];
-            if p[0] >= 0.5 * CELL[0] + span * SCALE as f32
-                || p[1] >= 0.5 * CELL[2] + span * SCALE as f32
+            if p[0] >= 0.5 * CELL[0] + span * scale as f32
+                || p[1] >= 0.5 * CELL[2] + span * scale as f32
             {
                 continue;
             }
@@ -314,4 +406,12 @@ fn each_far_vertex_stands_on_the_category_of_the_coarse_column_under_it() {
         seen.len() > 1,
         "only the categories {seen:?} under the chunk"
     );
+}
+
+#[test]
+fn a_far_square_is_a_coarse_column_where_a_lattice_chunk_spans_a_whole_number_of_them() {
+    let steps =
+        [(8, 4), (8, 2), (8, 8), (8, 16), (8, 3)].map(|(columns, scale)| far_steps(columns, scale));
+
+    assert_eq!(steps, [2, 4, 1, 1, 1]);
 }

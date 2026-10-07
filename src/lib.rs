@@ -68,7 +68,7 @@ pub mod volume_mesh;
 pub mod worker;
 
 pub use cell_boxes::CellBox;
-pub use far_ground::{FarGround, far_ground, far_ground_categories};
+pub use far_ground::{FarGround, far_ground, far_ground_categories, far_steps};
 pub use frozen::{DirectoryStore, FrozenStore, StoreError};
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
 pub use ground::{
