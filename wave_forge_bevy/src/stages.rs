@@ -37,14 +37,16 @@ use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
+use wave_forge::ambience::chunk_ambience;
 use wave_forge::noise::NoiseConfig;
+use wave_forge::stages::AmbienceDef;
 use wave_forge::stages::regions::Curve;
 use wave_forge::stages::{
     Categories, Edits, Facts, Field, Pack, Point, RowId, Runtime, Save, Site, StageEvent,
     StageTiming, StageWorker, Stamp, TownChunk, Volume,
 };
 use wave_forge::{
-    ChunkCoord, FarGround, FocusPoint, FrozenStore, GroundMesh, InstanceId, NavSource,
+    ChunkCoord, Emitter, FarGround, FocusPoint, FrozenStore, GroundMesh, InstanceId, NavSource,
     NavSourceError, VolumeMesh, WaterMesh, far_ground, ground, ground_channels, ground_materials,
     ground_readers, ground_values, surface_nav_source, volume_mesh, water_surface,
 };
@@ -380,6 +382,23 @@ impl WaveForgeStages {
     #[must_use]
     pub fn ground_channels(&self, chunk: ChunkCoord) -> Option<&[f32]> {
         self.ground_channels.get(&chunk).map(Vec::as_slice)
+    }
+
+    /// The sounds the terrain makes in a chunk, as `defs`, the pack's ambience
+    /// ([`wave_forge::stages::Pack::ambience`]), declares them: emitters along its rivers, as loud
+    /// as their flow, and at its lakes' shores ([`wave_forge::ambience::chunk_ambience`]), in
+    /// Bevy's world. `None` until the curves and fields they read have arrived, which the stages'
+    /// radii have to reach: one chunk beyond the chunk.
+    #[must_use]
+    pub fn ambience(&self, chunk: ChunkCoord, defs: &[AmbienceDef]) -> Option<Vec<Emitter>> {
+        chunk_ambience(
+            defs,
+            chunk,
+            self.settings.chunk,
+            |stage, at| self.worker.curves(stage, at),
+            |stage, at| self.worker.field(stage, at),
+            self.settings.cell_size.to_array(),
+        )
     }
 
     /// How chunks and cells sit in Bevy's world, as the plugin was given it.
