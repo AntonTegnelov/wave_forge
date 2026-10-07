@@ -15,7 +15,8 @@
 //! two levels.
 //!
 //! [`ground_materials`] gives the category of every vertex of the same grid from a Rules stage, so
-//! an engine can tell its ground shader which material each part of the ground is.
+//! an engine can tell its ground shader which material each part of the ground is, and
+//! [`ground_values`] a field stage's value there, which the shader takes as a channel.
 //!
 //! Everything is in a Y-up engine's axes, as [`crate::YUpSpace`] maps them: the lattice's x is the
 //! engine's x, its y the engine's z, and a field's height the engine's y.
@@ -313,29 +314,59 @@ pub fn ground_materials<'a>(
     chunk: ChunkCoord,
     categories: impl Fn(ChunkCoord) -> Option<&'a Categories>,
 ) -> Option<Vec<u8>> {
-    let own = categories(chunk)?;
-    let [sx, sy] = own.size;
+    per_vertex(chunk, categories, |c| c.size, Categories::get)
+}
+
+/// The value of every vertex of `chunk`'s ground from a field stage at the height field's scale
+/// whose chunks `field` looks up, laid out as [`ground_materials`] lays out the categories: an
+/// engine hands it to its ground shader as a channel beside the materials, a cavity or a wetness
+/// say. Neighbouring chunks' edge vertices take one column's value, so they meet exactly.
+///
+/// Returns `None` until the field of `chunk` and of the chunks beyond its +x edge, its +y edge and
+/// its +x+y corner have arrived.
+///
+/// # Panics
+/// If those chunks do not all have one size: a stage's chunks are one size.
+#[must_use]
+pub fn ground_values<'a>(
+    chunk: ChunkCoord,
+    field: impl Fn(ChunkCoord) -> Option<&'a Field>,
+) -> Option<Vec<f32>> {
+    per_vertex(chunk, field, |f| f.size, Field::get)
+}
+
+/// A stage's value at every vertex of `chunk`'s ground, the +x and +y edges from the chunks
+/// beyond, read from the chunks `lookup` finds with `get`.
+fn per_vertex<'a, S: 'a, T>(
+    chunk: ChunkCoord,
+    lookup: impl Fn(ChunkCoord) -> Option<&'a S>,
+    size: impl Fn(&S) -> [u32; 2],
+    get: impl Fn(&S, u32, u32) -> T,
+) -> Option<Vec<T>> {
+    let own = lookup(chunk)?;
+    let [sx, sy] = size(own);
     let mut beyond = [[None; 2]; 2];
     for (dy, row) in beyond.iter_mut().enumerate() {
         for (dx, slot) in row.iter_mut().enumerate() {
             let at = ChunkCoord::new(chunk.x + dx as i32, chunk.y + dy as i32, chunk.z);
-            let neighbour = categories(at)?;
+            let neighbour = lookup(at)?;
             assert_eq!(
-                neighbour.size, own.size,
-                "the categories of one stage share a size"
+                size(neighbour),
+                [sx, sy],
+                "the chunks of one stage share a size"
             );
             *slot = Some(neighbour);
         }
     }
-    let mut materials = Vec::with_capacity(((sx + 1) * (sy + 1)) as usize);
+    let mut values = Vec::with_capacity(((sx + 1) * (sy + 1)) as usize);
     for j in 0..=sy {
         for i in 0..=sx {
             let (dx, dy) = (usize::from(i == sx), usize::from(j == sy));
             let from = beyond[dy][dx].expect("every neighbour was looked up above");
-            materials.push(from.get(i % sx, j % sy));
+            values.push(get(from, i % sx, j % sy));
         }
     }
-    Some(materials)
+    Some(values)
 }
 
 /// The chunks whose ground reads the field of `chunk`: itself and the eight around it. When that
@@ -698,6 +729,54 @@ mod tests {
                 assert_eq!(
                     materials[(j * size[0] + i) as usize],
                     banded(column.0, column.1),
+                    "vertex ({i}, {j})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn neighbours_share_their_edge_values_exactly() {
+        let fields = fields(hilly);
+        let (left, right) = (ChunkCoord::new(-1, 0, 0), ChunkCoord::new(0, 0, 0));
+        let (below, above) = (ChunkCoord::new(0, -1, 0), ChunkCoord::new(0, 0, 0));
+        let values = |chunk| ground_values(chunk, |at| fields.get(&at)).expect("all arrived");
+        let [w, h] = [SIZE[0] + 1, SIZE[1] + 1];
+
+        let (left, right, below, above) =
+            (values(left), values(right), values(below), values(above));
+
+        for j in 0..h {
+            assert_eq!(
+                left[(j * w + w - 1) as usize],
+                right[(j * w) as usize],
+                "row {j}"
+            );
+        }
+        for i in 0..w {
+            assert_eq!(
+                below[((h - 1) * w + i) as usize],
+                above[i as usize],
+                "column {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_vertex_takes_the_value_of_the_column_it_stands_over() {
+        let fields = fields(hilly);
+        let chunk = ChunkCoord::new(1, -1, 0);
+
+        let values = ground_values(chunk, |at| fields.get(&at)).expect("all arrived");
+
+        let size = [SIZE[0] + 1, SIZE[1] + 1];
+        for j in 0..size[1] {
+            for i in 0..size[0] {
+                let x = i64::from(chunk.x) * i64::from(SIZE[0]) + i64::from(i);
+                let y = i64::from(chunk.y) * i64::from(SIZE[1]) + i64::from(j);
+                assert_eq!(
+                    values[(j * size[0] + i) as usize],
+                    hilly(x, y),
                     "vertex ({i}, {j})"
                 );
             }
