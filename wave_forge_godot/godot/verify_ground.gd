@@ -4,7 +4,9 @@
 ## every chunk's ground gets its own copy of the reference ground shader's material, whose id
 ## texture holds the category of every vertex of the ground, the chunks beyond the far edges
 ## included, and whose cell is the node's. A material stage that is no Rules or Area stage is
-## refused. Grass grows on every chunk of ground within its radius, each chunk's grass material
+## refused, as is a cavity stage that is no field. Each material's channels hold the cavity and
+## wetness stages' values at every vertex. Grass grows on every chunk of ground within its radius,
+## each chunk's grass material
 ## holding the chunk's cover per column and the ground's height per vertex. Last, raising the first
 ## column of the chunk beside the origin builds the origin's ground again, which reaches to it.
 extends SceneTree
@@ -28,6 +30,12 @@ func _initialize() -> void:
 		_fail("a material stage that is a field was taken")
 		return
 	wrong.queue_free()
+	var wrong_cavity := _world("surface")
+	wrong_cavity.ground_cavity_stage = "surface"
+	if wrong_cavity.start():
+		_fail("a cavity stage that is no field was taken")
+		return
+	wrong_cavity.queue_free()
 	world = _world("surface")
 	world.stage_ready.connect(func(stage: String, chunk: Vector3i) -> void: ready[[stage, chunk]] = true)
 	if not world.start():
@@ -42,7 +50,7 @@ func _initialize() -> void:
 func _world(material_stage: String) -> Node:
 	var node: Node = ClassDB.instantiate("WaveForgeStages")
 	node.pack_file = "res://ground.world.ron"
-	node.targets = PackedStringArray(["height", "surface", "cover"])
+	node.targets = PackedStringArray(["height", "surface", "cover", "hollow", "wet"])
 	node.seed = 3
 	node.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	node.cell_size = CELL
@@ -50,6 +58,8 @@ func _world(material_stage: String) -> Node:
 	node.collider_radius = -1
 	node.ground_stage = "height"
 	node.ground_material_stage = material_stage
+	node.ground_cavity_stage = "hollow"
+	node.ground_wetness_stage = "wet"
 	node.grass_stage = "cover"
 	node.grass_radius = 1
 	root.add_child(node)
@@ -98,6 +108,17 @@ func _check() -> bool:
 					_fail("vertex (%d, %d) of %s holds %d, not %d" % [i, j, chunk, data[j * (CELLS + 1) + i], expected])
 					return true
 				seen[expected] = true
+		var channels: Image = material.get_shader_parameter("wave_forge_channels").get_image()
+		if channels.get_format() != Image.FORMAT_RGF or channels.get_size() != Vector2i(CELLS + 1, CELLS + 1):
+			_fail("the channels of %s are %s texels of format %d" % [chunk, channels.get_size(), channels.get_format()])
+			return true
+		for j in CELLS + 1:
+			for i in CELLS + 1:
+				var column := Vector2i(chunk.x * CELLS + i, chunk.y * CELLS + j)
+				var texel := channels.get_pixel(i, j)
+				if texel.r != _value("hollow", column) or texel.g != _value("wet", column):
+					_fail("vertex (%d, %d) of %s holds channels %s, not %f and %f" % [i, j, chunk, texel, _value("hollow", column), _value("wet", column)])
+					return true
 	if seen.size() < 2:
 		_fail("only %d materials on the ground" % seen.size())
 		return true
@@ -117,8 +138,14 @@ func _check() -> bool:
 					_fail("the ground at %s is %f high, off its triangles' diagonal %f" % [middle, world.ground_height(middle), diagonal])
 					return true
 	print("verify_ground: the ground's height stands on its mesh at every column centre and on every square's diagonal")
-	print("verify_ground: %d chunks of ground, each with the categories of its %d vertices, %d materials in all" % [world.ground_chunks().size(), (CELLS + 1) * (CELLS + 1), seen.size()])
+	print("verify_ground: %d chunks of ground, each with the categories and channels of its %d vertices, %d materials in all" % [world.ground_chunks().size(), (CELLS + 1) * (CELLS + 1), seen.size()])
 	return false
+
+## The value of field stage `stage` at the world column `column`.
+func _value(stage: String, column: Vector2i) -> float:
+	var chunk := Vector3i(floori(float(column.x) / CELLS), floori(float(column.y) / CELLS), 0)
+	var values: PackedFloat32Array = world.field_values(stage, chunk)
+	return values[posmod(column.y, CELLS) * CELLS + posmod(column.x, CELLS)]
 
 ## The height field's value at the world column `column`, in world units.
 func _height(column: Vector2i) -> float:

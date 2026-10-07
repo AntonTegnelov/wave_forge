@@ -190,6 +190,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_material` | the material the ground is drawn with |
 | | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
+| | `ground_cavity_stage`, `ground_wetness_stage` | field stages whose values, 0 to 1, the reference ground shader takes as channels: a cavity that darkens hollows and a wetness that darkens and smooths the ground |
 | | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view; empty, or a pack without water, draws none. Lakes above the sea level are not drawn |
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
 | | `far_ground_material_stage` | a Rules stage at `far_ground_stage`'s scale whose categories colour the far ground, each vertex by the coarse column under it: in the colour `ground_palette` gives the category of `ground_material_stage` of the same name, or in a colour of its own for a category that stage does not name. It has to be a target with the far ground's radius in `target_radii`, which `start` checks, since a far chunk is drawn only once its colours are there. Empty to draw the far ground with `ground_material` alone |
@@ -644,6 +645,18 @@ the look: `rock_colour` (whose alpha, above zero, replaces the muted colour with
 `rock_slope` beyond 1 draw the palette's colours alone. A game sets them on a `ShaderMaterial` of
 the reference shader given as `ground_material`, whose parameters every chunk's copy keeps. What
 the shader costs is in [measurements.md](../research/measurements.md) (E58).
+
+With `ground_cavity_stage` or `ground_wetness_stage` set to field stages at the ground's scale, a
+chunk's ground also waits for their values at its vertices, those beyond its far edges included,
+and its copy takes them as `wave_forge_channels`: two floats a vertex, the cavity in red and the
+wetness in green, laid out as the material ids and shared exactly along chunk edges
+(`wave_forge::ground_values`, `ground_channels`). The reference shader blends them between the
+vertices as it blends the materials: a cavity darkens the ground by up to `cavity_darkening`, and
+wetness darkens it by up to `wet_darkening` and smooths it toward `wet_roughness`. Compatibility has
+no screen-space ambient occlusion, so a cavity stage is how its ground gets darker hollows; one is a
+field like `Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.5)), 0.0, 1.0)` over a Blur
+of the height named `around`. Without either, the texture is black and changes nothing. Loading
+refuses a channel stage that is no field.
 `ground_shader_code()` gives its code, to start a game's own shader from; a game's
 `ground_material` has to be a `ShaderMaterial` taking the same parameters. `ground_material_of(chunk)` gives a chunk's copy. Loading refuses a
 `ground_material_stage` that is no Rules, Area or Nearest stage, and a `ground_material` that is no
