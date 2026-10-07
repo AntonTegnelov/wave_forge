@@ -68,6 +68,33 @@ float fbm(vec2 p) {
 	return (value(p) * 4.0 + value(q) * 2.0 + value(turn * q)) / 7.0;
 }
 
+// Value noise and its slope, (value, d/dx, d/dy).
+vec3 value_with_slope(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = p - i;
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	vec2 du = 6.0 * f * (1.0 - f);
+	float a = hash(i);
+	float b = hash(i + vec2(1.0, 0.0));
+	float c = hash(i + vec2(0.0, 1.0));
+	float d = hash(i + vec2(1.0, 1.0));
+	float k = a - b - c + d;
+	return vec3(a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y, du * (vec2(b - a, c - a) + k * u.yx));
+}
+
+// `fbm` and its slope, (value, d/dx, d/dy): each turned octave's slope turned back.
+vec3 fbm_with_slope(vec2 p) {
+	mat2 turn = mat2(vec2(1.6, 1.2), vec2(-1.2, 1.6));
+	mat2 back = transpose(turn);
+	vec2 q = turn * p;
+	vec3 first = value_with_slope(p);
+	vec3 second = value_with_slope(q);
+	vec3 third = value_with_slope(turn * q);
+	float v = first.x * 4.0 + second.x * 2.0 + third.x;
+	vec2 slope = first.yz * 4.0 + back * (second.yz * 2.0 + back * third.yz);
+	return vec3(v, slope) / 7.0;
+}
+
 int id_at(ivec2 vertex) {
 	return int(texelFetch(wave_forge_materials, vertex, 0).r * 255.0 + 0.5);
 }
@@ -131,16 +158,10 @@ void fragment() {
 
 	float near = 1.0 - smoothstep(30.0, 120.0, length(world - CAMERA_POSITION_WORLD));
 	float grain = detail * near;
-	// The fine noise bumps the surface by its slope on screen (Mikkelsen's surface gradient), fading
-	// with distance. Screen derivatives need every fragment of a quad, so this runs unbranched.
-	float fine = fbm(ground * 1.7);
-	vec3 dpdx = dFdx(world);
-	vec3 dpdy = dFdy(world);
-	vec3 r1 = cross(dpdy, surface);
-	vec3 r2 = cross(surface, dpdx);
-	float det = dot(dpdx, r1);
-	vec3 bump = (dFdx(fine) * r1 + dFdy(fine) * r2) * 0.25 * grain;
-	vec3 normal = normalize(abs(det) * surface - sign(det) * bump);
+	// The fine noise bumps the surface by its slope, fading with distance.
+	vec3 fine = fbm_with_slope(ground * 1.7);
+	vec2 slope = fine.yz * 1.7;
+	vec3 normal = normalize(surface + vec3(-slope.x, 0.0, -slope.y) * 0.25 * grain);
 	// The rock is the ground's colour muted, banded in warped strata.
 	if (rock > 0.0) {
 		float band = 0.5 + 0.5 * sin(world.y * 1.8 + fbm(ground / 12.0) * 2.0);
@@ -149,7 +170,7 @@ void fragment() {
 		albedo = mix(albedo, rock_base * mix(1.0, 0.8 + 0.4 * band, strata), rock);
 	}
 	albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), macro_variation);
-	albedo *= mix(1.0, 0.86 + 0.28 * fine, grain);
+	albedo *= mix(1.0, 0.86 + 0.28 * fine.x, grain);
 
 	ALBEDO = albedo;
 	ROUGHNESS = roughness;

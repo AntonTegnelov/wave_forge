@@ -60,6 +60,33 @@ fn fbm(p: vec2<f32>) -> f32 {
     return (value(p) * 4.0 + value(q) * 2.0 + value(turn * q)) / 7.0;
 }
 
+// Value noise and its slope, (value, d/dx, d/dy).
+fn value_with_slope(p: vec2<f32>) -> vec3<f32> {
+    let i = floor(p);
+    let f = p - i;
+    let u = f * f * (3.0 - 2.0 * f);
+    let du = 6.0 * f * (1.0 - f);
+    let a = hash(i);
+    let b = hash(i + vec2<f32>(1.0, 0.0));
+    let c = hash(i + vec2<f32>(0.0, 1.0));
+    let d = hash(i + vec2<f32>(1.0, 1.0));
+    let k = a - b - c + d;
+    return vec3<f32>(a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y, du * (vec2<f32>(b - a, c - a) + k * u.yx));
+}
+
+// `fbm` and its slope, (value, d/dx, d/dy): each turned octave's slope turned back.
+fn fbm_with_slope(p: vec2<f32>) -> vec3<f32> {
+    let turn = mat2x2<f32>(vec2<f32>(1.6, 1.2), vec2<f32>(-1.2, 1.6));
+    let back = transpose(turn);
+    let q = turn * p;
+    let first = value_with_slope(p);
+    let second = value_with_slope(q);
+    let third = value_with_slope(turn * q);
+    let v = first.x * 4.0 + second.x * 2.0 + third.x;
+    let slope = first.yz * 4.0 + back * (second.yz * 2.0 + back * third.yz);
+    return vec3<f32>(v, slope) / 7.0;
+}
+
 fn id_at(vertex: vec2<i32>) -> i32 {
     return i32(textureLoad(materials, vertex, 0).r * 255.0 + 0.5);
 }
@@ -128,16 +155,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     let near = 1.0 - smoothstep(30.0, 120.0, length(world - view.world_position));
     let grain = look.detail * near;
-    // The fine noise bumps the surface by its slope on screen (Mikkelsen's surface gradient), fading
-    // with distance. Screen derivatives need every fragment of a quad, so this runs unbranched.
-    let fine = fbm(ground * 1.7);
-    let dpdx_world = dpdx(world);
-    let dpdy_world = dpdy(world);
-    let r1 = cross(dpdy_world, pbr_input.N);
-    let r2 = cross(pbr_input.N, dpdx_world);
-    let det = dot(dpdx_world, r1);
-    let bump = (dpdx(fine) * r1 + dpdy(fine) * r2) * 0.25 * grain;
-    pbr_input.N = normalize(abs(det) * pbr_input.N - sign(det) * bump);
+    // The fine noise bumps the surface by its slope, fading with distance.
+    let fine = fbm_with_slope(ground * 1.7);
+    let slope = fine.yz * 1.7;
+    pbr_input.N = normalize(pbr_input.N + vec3<f32>(-slope.x, 0.0, -slope.y) * 0.25 * grain);
     // The rock is the ground's colour muted, banded in warped strata.
     if rock > 0.0 {
         let band = 0.5 + 0.5 * sin(world.y * 1.8 + fbm(ground / 12.0) * 2.0);
@@ -146,7 +167,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         albedo = mix(albedo, rock_base * mix(1.0, 0.8 + 0.4 * band, look.strata), rock);
     }
     albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), look.macro_variation);
-    albedo *= mix(1.0, 0.86 + 0.28 * fine, grain);
+    albedo *= mix(1.0, 0.86 + 0.28 * fine.x, grain);
 
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
     var out: FragmentOutput;
