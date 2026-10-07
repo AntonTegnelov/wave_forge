@@ -208,6 +208,15 @@ holding the water's level at the ground's scale ([packs.md](packs.md#water-surfa
 ground and dropped with it, with no triangles where the chunk has no water. `water_mesh(water)` makes
 a Bevy mesh of it to spawn at `chunk_corner(chunk)` with a material of the game's own.
 
+## Ambience
+
+`WaveForgeStages::ambience(chunk, pack.ambience())` gives the sounds the terrain makes in a chunk,
+as the pack declares them ([packs.md](packs.md#ambience)): an `Emitter` each with its position in
+Bevy's world, its key and its volume from 0 to 1. The plugin does not keep the pack, so the game
+hands its ambience in; it is `None` until the curves and fields it reads have arrived, one chunk
+beyond the chunk. A game plays them as it plays a module set's emitters, mapping the keys to its
+sounds and the volume to the emitter's.
+
 ## Ground materials
 
 `WaveForgeMaterialsPlugin`, which a game that renders adds after Bevy's own plugins, registers the

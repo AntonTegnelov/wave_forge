@@ -48,6 +48,7 @@
 //!   corner chunks it does not wait for. A rule set is *streaming-clean* when no repair is ever
 //!   needed, which lifts that limit too.
 
+pub mod ambience;
 pub mod cell_boxes;
 pub mod far_ground;
 pub mod frozen;

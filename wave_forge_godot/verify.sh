@@ -13,6 +13,7 @@
 # `godot/verify_pooling.gd`, which reuses the nodes of scenes that reset themselves, then
 # `godot/verify_ground.gd`, which gives the ground a material per category, then
 # `godot/verify_water.gd`, which draws a valley's lakes and river as water, then
+# `godot/verify_ambience.gd`, which plays the terrain's sounds along a river and at a shore, then
 # `godot/verify_far.gd`, which draws the far ground where the near ground is missing, then
 # `godot/verify_volume.gd`, which draws a volume's surface and collides with its cave, then
 # `godot/verify_bake.gd`, which bakes an area into a scene of plain nodes, then
@@ -53,6 +54,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_pooling.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_ground.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_water.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_ambience.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_far.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_volume.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_bake.gd

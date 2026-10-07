@@ -10,11 +10,13 @@
 //! as a height map and the town's modules as the shapes the game assigned them, built through the
 //! `PhysicsServer3D` with every shape added before the body joins the space.
 
+use crate::audio::{InteriorBuses, RegionAudio};
 use crate::gi::Gi;
 use crate::grass::Grass;
 use crate::lods::{add_levelled_surface, godot_triangles, levelled_mesh};
 use crate::occlusion::Occluders;
 use crate::placements::{Item, Placements};
+use crate::radius;
 use crate::stage_navigation::StageNavigation;
 use crate::timings::Timings;
 use crate::{BODIES_PER_FRAME, RECENT_FRAMES, from_vector, local_id, to_vector};
@@ -26,18 +28,20 @@ use godot::classes::rendering_server::ArrayType;
 use godot::classes::rendering_server::MultimeshTransformFormat;
 use godot::classes::rendering_server::PrimitiveType;
 use godot::classes::{
-    ArrayMesh, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine, FastNoiseLite, FileAccess,
-    HeightMapShape3D, INode, Image, ImageTexture, Material, MeshInstance3D, MeshLibrary,
-    NavigationMesh, NavigationServer3D, Node, Node3D, PhysicsServer3D, RenderingServer,
-    ResourceSaver, ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
+    ArrayMesh, AudioStream, BoxMesh, CollisionShape3D, ConcavePolygonShape3D, Engine,
+    FastNoiseLite, FileAccess, HeightMapShape3D, INode, Image, ImageTexture, Material,
+    MeshInstance3D, MeshLibrary, NavigationMesh, NavigationServer3D, Node, Node3D, PhysicsServer3D,
+    RenderingServer, ResourceSaver, ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
 };
 use godot::global::Error;
 use godot::obj::EngineEnum;
 use godot::prelude::*;
 use godot::register::info::{PropertyHint, PropertyHintInfo, PropertyInfo};
+use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use wave_forge::DirectoryStore;
+use wave_forge::ambience::chunk_ambience;
 use wave_forge::loader::{RuleFile, parse_rule_file};
 use wave_forge::noise::{
     CellularDistanceFunction, CellularReturnType, DomainWarpFractalType, DomainWarpType,
@@ -52,9 +56,9 @@ use wave_forge::stages::{
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
-    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, SurfaceWorker, VolumeMesh,
-    WaterMesh, YUpSpace, far_ground, far_ground_categories, ground, ground_channels, ground_height,
-    ground_materials, ground_readers, ground_values, volume_height, water_surface,
+    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, RegionTags, SurfaceWorker,
+    VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories, ground, ground_channels,
+    ground_height, ground_materials, ground_readers, ground_values, volume_height, water_surface,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -283,6 +287,18 @@ pub struct WaveForgeStages {
     #[export]
     occluder_radius: i32,
 
+    /// How many chunks around the followed position play the terrain's sounds, the pack's
+    /// `ambience`: running water along its rivers and lapping at its lakes' shores, a player for
+    /// each emitter whose key `sounds` maps to a stream, as loud as the emitter says. Below zero,
+    /// none do.
+    #[export_group(name = "Audio")]
+    #[export]
+    audio_radius: i32,
+    /// The stream each sound key plays, as key to `AudioStream`: `water_river` and `water_lake`
+    /// for the presets' rivers and lakes.
+    #[export]
+    sounds: Dictionary<StringName, Option<Gd<AudioStream>>>,
+
     /// Scenes placed where Scatter and Assemble stages put things, as a kind (a point's kind or a
     /// piece's name) to a `PackedScene` or a path to one, loaded on Godot's loader threads; give a
     /// scene holding another extension's Rust resource as a `PackedScene`, since such a resource
@@ -424,6 +440,10 @@ pub struct WaveForgeStages {
     /// The occluders of the town chunks within `occluder_radius`, and the chunks whose towns
     /// arrived since they were built.
     occluders: Occluders,
+    /// The players of the chunks within `audio_radius`.
+    audio: RegionAudio,
+    /// Chunks within `audio_radius` whose sounds wait for what they read.
+    audio_due: std::collections::BTreeSet<ChunkCoord>,
     occluders_due: std::collections::BTreeSet<ChunkCoord>,
     /// The scenes bound to kinds, and what each stage's chunk placed.
     placements: Placements,
@@ -830,6 +850,10 @@ impl INode for WaveForgeStages {
             shape_faces: HashMap::new(),
             occluder_radius: -1,
             occluders: Occluders::default(),
+            audio_radius: -1,
+            sounds: Dictionary::new(),
+            audio: RegionAudio::default(),
+            audio_due: std::collections::BTreeSet::new(),
             occluders_due: std::collections::BTreeSet::new(),
             scenes: VarDictionary::new(),
             placement_budget_ms: 2.0,
@@ -895,6 +919,7 @@ impl INode for WaveForgeStages {
     /// servers rather than to the node.
     fn exit_tree(&mut self) {
         self.clear_ground_and_bodies();
+        self.audio.stop();
     }
 
     fn get_configuration_warnings(&self) -> PackedStringArray {
@@ -1131,6 +1156,7 @@ impl INode for WaveForgeStages {
         frame.navigation_ms = elapsed_ms(navigating);
         self.update_occluders(&towns);
         self.update_grass();
+        self.update_audio(&near_changed);
         let placing = std::time::Instant::now();
         self.give_mesh_shapes();
         frame.placed = self.update_placements();
@@ -2282,6 +2308,43 @@ impl WaveForgeStages {
         out
     }
 
+    /// The sounds the terrain makes in a chunk, as the pack's `ambience` declares them: a
+    /// dictionary per emitter with its `position` in Godot's world, its `key` and its `volume`,
+    /// from 0 to 1. Empty until what it reads has arrived. A game that maps the keys itself leaves
+    /// `audio_radius` below zero and reads these.
+    #[func]
+    fn ambience(&self, chunk: Vector3i) -> Array<VarDictionary> {
+        let (Some(worker), Some(pack)) = (&self.worker, &self.pack) else {
+            return Array::new();
+        };
+        let size = [
+            self.chunk_cells.x.max(1) as u32,
+            self.chunk_cells.y.max(1) as u32,
+        ];
+        let emitters = chunk_ambience(
+            pack.ambience(),
+            from_vector(chunk),
+            size,
+            |stage, at| worker.curves(stage, at),
+            |stage, at| worker.field(stage, at),
+            self.cell_size.to_array(),
+        );
+        emitters
+            .unwrap_or_default()
+            .iter()
+            .map(|emitter| {
+                let mut out = VarDictionary::new();
+                out.set(
+                    &"position".to_variant(),
+                    &Vector3::from_array(emitter.at).to_variant(),
+                );
+                out.set(&"key".to_variant(), &emitter.key.to_variant());
+                out.set(&"volume".to_variant(), &emitter.volume.to_variant());
+                out
+            })
+            .collect()
+    }
+
     /// The chunks whose lakes and rivers are drawn: those with water in them.
     #[func]
     fn water_chunks(&self) -> Array<Vector3i> {
@@ -3062,6 +3125,65 @@ impl WaveForgeStages {
             0.0,
             chunk.y as f32 * shape.y as f32 * self.cell_size.z,
         )
+    }
+
+    /// Keeps the terrain's sounds playing on every chunk with ground within `audio_radius` of the
+    /// followed chunk, a few a frame, nearest first, once what they read has arrived; drops them
+    /// from the chunks out of range or without ground.
+    fn update_audio(&mut self, changed: &[ChunkCoord]) {
+        let (Some(worker), Some(pack), Some(focus)) = (&self.worker, &self.pack, self.followed)
+        else {
+            return;
+        };
+        let grounded: HashSet<ChunkCoord> = self.grounds.keys().copied().collect();
+        let built: HashSet<ChunkCoord> = self.audio.chunks().collect();
+        let plan = radius::plan(
+            self.audio_radius,
+            focus,
+            &grounded,
+            &built,
+            &mut self.audio_due,
+            changed,
+            BODIES_PER_FRAME,
+        );
+        let size = [
+            self.chunk_cells.x.max(1) as u32,
+            self.chunk_cells.y.max(1) as u32,
+        ];
+        let cell = self.cell_size.to_array();
+        let mut ready = Vec::new();
+        for chunk in plan.build {
+            let emitters = chunk_ambience(
+                pack.ambience(),
+                chunk,
+                size,
+                |stage, at| worker.curves(stage, at),
+                |stage, at| worker.field(stage, at),
+                cell,
+            );
+            match emitters {
+                Some(emitters) => ready.push(RegionTags {
+                    chunk,
+                    interiors: Vec::new(),
+                    emitters,
+                }),
+                None => {
+                    self.audio_due.insert(chunk);
+                }
+            }
+        }
+        for chunk in plan.gone {
+            self.audio.drop_chunk(chunk);
+        }
+        let sounds = self.sounds.clone();
+        let buses = InteriorBuses {
+            reverb: StringName::default(),
+            audio: StringName::default(),
+        };
+        let mut owner = self.base().clone().upcast::<Node>();
+        for tags in ready {
+            self.audio.build(&mut owner, &tags, &sounds, &buses);
+        }
     }
 
     /// Builds the ground of up to [`GROUNDS_PER_FRAME`] chunks a newly arrived field may have

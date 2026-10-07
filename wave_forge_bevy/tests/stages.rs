@@ -413,6 +413,92 @@ fn a_chunks_water_is_the_librarys_of_its_level_and_ground() {
 }
 
 #[test]
+fn a_chunks_ambience_is_the_runtimes() {
+    // The water checks' valley with the default ambience, its river given as a row.
+    let text = std::fs::read_to_string(format!(
+        "{}/../tests/fixtures/water.world.ron",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("the water pack")
+    .replacen(
+        "stages: [",
+        r#"ambience: [
+            (key: "water_river", kind: River(curves: "rivers", height: "terrain")),
+            (key: "water_lake", kind: Lake(lakes: "lakes", height: "terrain")),
+        ],
+        stages: ["#,
+        1,
+    );
+    let pack = Arc::new(Pack::parse(&text).expect("a valid pack"));
+    let runtime = {
+        let pack = Arc::clone(&pack);
+        move || {
+            let mut facts = Facts::new(Arc::clone(&pack), 9).expect("facts");
+            let river = GivenRow {
+                id: 1,
+                values: BTreeMap::from([
+                    ("x0".to_owned(), Value::Number(2.0)),
+                    ("y0".to_owned(), Value::Number(32.0)),
+                    ("x1".to_owned(), Value::Number(62.0)),
+                    ("y1".to_owned(), Value::Number(32.0)),
+                    ("width".to_owned(), Value::Number(1.5)),
+                ]),
+            };
+            facts.give("rivers", vec![river]).expect("the river");
+            let mut runtime = Runtime::new(Arc::clone(&pack), 9, SETTINGS.chunk);
+            runtime.set_facts(facts).expect("facts");
+            runtime
+        }
+    };
+    let mut app = App::new();
+    let build = runtime.clone();
+    app.add_plugins(WaveForgeStagesPlugin::new(
+        &["rivers", "terrain", "lakes"],
+        SETTINGS,
+        move || Ok(build()),
+    ))
+    .add_systems(Startup, |mut commands: Commands| {
+        commands.spawn((
+            GlobalTransform::from_translation(Vec3::new(56.0, 0.0, 64.0)),
+            GenerationFocus::new(2),
+        ));
+    });
+    let chunks = [ChunkCoord::new(3, 4, 0), ChunkCoord::new(3, 3, 0)];
+    let mut direct = runtime();
+    direct
+        .request(
+            &[FocusPoint::new(ChunkCoord::new(3, 4, 0), 2)],
+            &["rivers", "terrain", "lakes"],
+        )
+        .expect("stages");
+    direct.run_until_idle().expect("the stages run");
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        chunks
+            .iter()
+            .all(|&c| stages.ambience(c, pack.ambience()).is_some())
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    for chunk in chunks {
+        let expected = direct.ambience(chunk, SETTINGS.cell_size.to_array());
+        assert_eq!(
+            stages.ambience(chunk, pack.ambience()),
+            expected,
+            "chunk {chunk:?}"
+        );
+    }
+    let along = stages
+        .ambience(chunks[0], pack.ambience())
+        .expect("arrived");
+    assert!(
+        along.iter().any(|emitter| emitter.key == "water_river"),
+        "no river sound"
+    );
+}
+
+#[test]
 fn a_ground_mesh_has_a_vertex_per_column_and_its_neighbours_edge() {
     let mut app = app_with(plugin().with_ground("height"));
     let origin = ChunkCoord::new(0, 0, 0);

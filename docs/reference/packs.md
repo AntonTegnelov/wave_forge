@@ -93,6 +93,36 @@ below the sea or a lake, whichever is higher, and rivers run down to the sea or 
 not a number, lakes that name no Lakes stage, and a Scatter stage's `water`, a Rivers stage or a
 Lakes stage in a pack that declares no water.
 
+## Ambience
+
+A pack may declare the sounds its terrain makes, each a key a game maps to a sound and where it
+plays ([#333](https://github.com/AntonTegnelov/wave_forge/issues/333)):
+
+```ron
+ambience: [
+    (key: "water_river", kind: River(curves: "rivers", height: "terrain")),
+    (key: "water_lake", kind: Lake(lakes: "lakes", height: "terrain")),
+],
+```
+
+- `River(curves, height)`: emitters along the curves of a Rivers, Region or TableCurves stage, six
+  cells apart for each cell of the river's radius there and at least four, at distances measured
+  from the curve's start, so every chunk a river crosses places the same ones and keeps those inside
+  it. Each plays as loud as the river's flow there, its width times the fall of `height` along it
+  per cell (measured two cells either way), against `ambience::FULL_FLOW` (0.5), and no quieter
+  than `ambience::QUIETEST` (0.1).
+- `Lake(lakes, height)`: an emitter at the shore column nearest each chunk's middle, a column where
+  the Lakes stage's surface stands above `height` with dry ground beside it, at the lake's level and
+  `ambience::SHORE_VOLUME` (0.5).
+
+`Runtime::ambience(chunk, cell_size)` gives a chunk's emitters in an engine's world space, and
+`ambience::chunk_ambience` the same from any lookups, which a worker uses; an `Emitter`'s `volume`
+is 1 for a module's sound. Both are `None` until the curves of the chunk and the fields of it and of
+the chunks around it have arrived. The continent binds `water_river` and `water_lake`. Loading
+refuses an ambient sound whose key is empty or another's, whose source is no stage of its kind, or
+whose height is no field, or either not at scale 1. Music, mixing and the sounds themselves are the
+game's.
+
 ## Parameters
 
 `params: {"land": (default: 0.45, range: (0.0, 1.0))}` declares numbers a user tunes without

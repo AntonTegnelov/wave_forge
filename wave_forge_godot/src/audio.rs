@@ -107,6 +107,8 @@ impl RegionAudio {
             // Since Godot 4.7 a player's default `area_mask` is empty, so no area reverbs it.
             player.set_area_mask(INTERIOR_LAYER);
             player.set_position(Vector3::from_array(emitter.at));
+            // A pooled player keeps the volume of its last sound, so every sound sets its own.
+            player.set_volume_db(20.0 * emitter.volume.max(1e-4).log10());
             player.play();
             players.push(player);
         }

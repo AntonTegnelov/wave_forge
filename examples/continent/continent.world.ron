@@ -24,6 +24,12 @@
             ("fate", Names(["thriving", "declining", "ruined", "abandoned"])),
         ])),
     ],
+    // The sounds the terrain makes: running water along the rivers, louder where they run wider
+    // and fall faster, and lapping at the lakes' shores, under the default keys a game maps.
+    ambience: [
+        (key: "water_river", kind: River(curves: "rivers", height: "terrain")),
+        (key: "water_lake", kind: Lake(lakes: "lakes", height: "terrain")),
+    ],
     // The 3D noises of the rock: cheese caves, and the blobs that overhang cliffs.
     noises: {
         "caves": (noise_type: SimplexSmooth, seed: 31, frequency: 0.035, fractal_octaves: 2),

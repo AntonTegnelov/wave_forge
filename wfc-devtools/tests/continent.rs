@@ -153,6 +153,79 @@ fn the_history_settles_every_culture_on_land_and_the_continent_takes_it() {
 
 #[test]
 #[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn the_continents_rivers_sound_along_their_courses_as_loud_as_they_flow() {
+    let mut runtime = runtime();
+    // Chunks several rivers cross, and one chunk around them, whose fields their falls read.
+    let window = |low: (i32, i32), high: (i32, i32)| {
+        (low.1..high.1)
+            .flat_map(move |y| (low.0..high.0).map(move |x| ChunkCoord::new(x, y, 0)))
+            .collect::<Vec<_>>()
+    };
+    let part = window((117, 113), (125, 121));
+    let focus: Vec<FocusPoint> = part.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime
+        .request(&focus, &["rivers", "terrain", "lakes"])
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+    let cell = [1.0, 1.0, 1.0];
+    let terrain = |x: f32, y: f32| {
+        let (x, y) = (x.floor() as i64, y.floor() as i64);
+        let chunk = ChunkCoord::new(x.div_euclid(8) as i32, y.div_euclid(8) as i32, 0);
+        runtime
+            .field("terrain", chunk)
+            .expect("generated")
+            .get(x.rem_euclid(8) as u32, y.rem_euclid(8) as u32)
+    };
+
+    // Each river emitter in the part's inner chunks, with the flow of the river under it: its
+    // width there times the fall of the terrain along it, measured two cells either way.
+    let mut sounds: Vec<(f32, f32)> = Vec::new();
+    for chunk in window((118, 114), (124, 120)) {
+        let emitters = runtime.ambience(chunk, cell).expect("arrived");
+        for emitter in emitters.iter().filter(|e| e.key == "water_river") {
+            let (x, y) = (emitter.at[0], emitter.at[2]);
+            let mut nearest = (f32::INFINITY, 0.0, [0.0_f32; 2]);
+            for curve in runtime.curves("rivers", chunk).expect("generated") {
+                for (k, pair) in curve.points.windows(2).enumerate() {
+                    let (a, b) = (pair[0], pair[1]);
+                    let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+                    let along = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+                    let t =
+                        (((x - a[0]) * along[0] + (y - a[1]) * along[1]) / length).clamp(0.0, 1.0);
+                    let (px, py) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+                    let off = (px - x).hypot(py - y);
+                    if off < nearest.0 {
+                        let radius = curve.values[k] + (curve.values[k + 1] - curve.values[k]) * t;
+                        nearest = (off, radius, along);
+                    }
+                }
+            }
+            let (off, radius, along) = nearest;
+            assert!(off < 1e-3, "an emitter {off} cells off its river");
+            let fall = (terrain(x - along[0] * 2.0, y - along[1] * 2.0)
+                - terrain(x + along[0] * 2.0, y + along[1] * 2.0))
+                / 4.0;
+            sounds.push((2.0 * radius * fall.max(0.0), emitter.volume));
+        }
+    }
+    eprintln!("continent: {} river emitters in 36 chunks", sounds.len());
+
+    assert!(sounds.len() >= 5, "only {} river emitters", sounds.len());
+    sounds.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for pair in sounds.windows(2) {
+        assert!(
+            pair[1].1 >= pair[0].1,
+            "flows {} and {} play at {} and {}",
+            pair[0].0,
+            pair[1].0,
+            pair[0].1,
+            pair[1].1
+        );
+    }
+}
+
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
 fn a_part_of_the_continent_generates_with_rivers_and_lakes() {
     let mut runtime = runtime();
     let part = square(120, 128);

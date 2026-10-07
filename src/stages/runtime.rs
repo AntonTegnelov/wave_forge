@@ -23,9 +23,11 @@ use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of}
 use super::rivers::DownhillRivers;
 use super::save::{FrozenChunk, Save};
 use super::town_thread::{Done, Job, Masked, Stopped, TownKey, TownThread};
+use crate::ambience::chunk_ambience;
 use crate::frozen::{FrozenStore, StoreError};
 use crate::noise::NoiseConfig;
 use crate::products::InstanceId;
+use crate::region_tags::Emitter;
 use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownSolver};
 use std::cell::RefCell;
@@ -2344,6 +2346,25 @@ impl Runtime {
                 .unwrap_or(0.0);
         memo.borrow_mut().insert((index, column), value);
         Ok(value)
+    }
+
+    /// The sounds the terrain makes in `chunk` ([`crate::stages::PackFile::ambience`]), in an
+    /// engine's world space with cells `cell_size`: emitters along the rivers, spaced by their
+    /// radius and as loud as their flow ([`crate::ambience::river_emitters`]), and at the lakes'
+    /// shores ([`crate::ambience::shore_emitters`]). Empty for a pack that declares none.
+    ///
+    /// Returns `None` until what they read has arrived: the curves of `chunk`, and the fields of
+    /// `chunk` and of the chunks around it.
+    #[must_use]
+    pub fn ambience(&self, chunk: ChunkCoord, cell_size: [f32; 3]) -> Option<Vec<Emitter>> {
+        chunk_ambience(
+            self.pack.ambience(),
+            chunk,
+            self.size,
+            |stage, at| self.curves(stage, at),
+            |stage, at| self.field(stage, at),
+            cell_size,
+        )
     }
 
     /// The curves `stage` holds for `chunk`: those of its region that pass through it, if it is a
