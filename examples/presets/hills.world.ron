@@ -16,10 +16,10 @@
     noises: {
         // Warped, so the hills wind rather than lining up.
         "hills": (noise_type: SimplexSmooth, seed: 21, frequency: 0.012, fractal_octaves: 4,
-            domain_warp_enabled: true, domain_warp_amplitude: 40.0, domain_warp_frequency: 0.008),
+            domain_warp_enabled: true, domain_warp_amplitude: 40.0, domain_warp_frequency: 0.008, domain_warp_fractal_octaves: 2),
         // Ridged and warped: the crests that run along the hills.
         "crests": (noise_type: SimplexSmooth, seed: 24, frequency: 0.006, fractal_type: Ridged, fractal_octaves: 4,
-            domain_warp_enabled: true, domain_warp_amplitude: 40.0, domain_warp_frequency: 0.004),
+            domain_warp_enabled: true, domain_warp_amplitude: 40.0, domain_warp_frequency: 0.004, domain_warp_fractal_octaves: 2),
         "detail": (noise_type: SimplexSmooth, seed: 22, frequency: 0.07, fractal_octaves: 2),
         "woods": (noise_type: Perlin, seed: 23, frequency: 0.035, fractal_octaves: 2),
     },

@@ -16,10 +16,10 @@
     noises: {
         // Warped, so the coasts wind and the islands take irregular shapes.
         "islands": (noise_type: SimplexSmooth, seed: 11, frequency: 0.015, fractal_octaves: 3,
-            domain_warp_enabled: true, domain_warp_amplitude: 30.0, domain_warp_frequency: 0.01),
+            domain_warp_enabled: true, domain_warp_amplitude: 30.0, domain_warp_frequency: 0.01, domain_warp_fractal_octaves: 2),
         // Ridged and warped: the spines of rock that run along the islands' interiors.
         "spines": (noise_type: SimplexSmooth, seed: 14, frequency: 0.02, fractal_type: Ridged, fractal_octaves: 3,
-            domain_warp_enabled: true, domain_warp_amplitude: 20.0, domain_warp_frequency: 0.015),
+            domain_warp_enabled: true, domain_warp_amplitude: 20.0, domain_warp_frequency: 0.015, domain_warp_fractal_octaves: 2),
         "detail": (noise_type: SimplexSmooth, seed: 12, frequency: 0.08, fractal_octaves: 3),
         "woods": (noise_type: Perlin, seed: 13, frequency: 0.05, fractal_octaves: 2),
     },
