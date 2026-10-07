@@ -2308,6 +2308,43 @@ impl WaveForgeStages {
         out
     }
 
+    /// The sounds the terrain makes in a chunk, as the pack's `ambience` declares them: a
+    /// dictionary per emitter with its `position` in Godot's world, its `key` and its `volume`,
+    /// from 0 to 1. Empty until what it reads has arrived. A game that maps the keys itself leaves
+    /// `audio_radius` below zero and reads these.
+    #[func]
+    fn ambience(&self, chunk: Vector3i) -> Array<VarDictionary> {
+        let (Some(worker), Some(pack)) = (&self.worker, &self.pack) else {
+            return Array::new();
+        };
+        let size = [
+            self.chunk_cells.x.max(1) as u32,
+            self.chunk_cells.y.max(1) as u32,
+        ];
+        let emitters = chunk_ambience(
+            pack.ambience(),
+            from_vector(chunk),
+            size,
+            |stage, at| worker.curves(stage, at),
+            |stage, at| worker.field(stage, at),
+            self.cell_size.to_array(),
+        );
+        emitters
+            .unwrap_or_default()
+            .iter()
+            .map(|emitter| {
+                let mut out = VarDictionary::new();
+                out.set(
+                    &"position".to_variant(),
+                    &Vector3::from_array(emitter.at).to_variant(),
+                );
+                out.set(&"key".to_variant(), &emitter.key.to_variant());
+                out.set(&"volume".to_variant(), &emitter.volume.to_variant());
+                out
+            })
+            .collect()
+    }
+
     /// The chunks whose lakes and rivers are drawn: those with water in them.
     #[func]
     fn water_chunks(&self) -> Array<Vector3i> {
