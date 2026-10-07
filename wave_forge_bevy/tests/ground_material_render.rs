@@ -1,5 +1,6 @@
 //! The ground material drawn by Bevy's own renderer: a chunk whose west half is one material and
-//! east half another comes out in their palette colours, blended only around the border.
+//! east half another. With the flat look it comes out in their palette colours, blended only around
+//! the border; with the default look the colours vary around the palette's.
 //!
 //! ```text
 //! cargo test -p wave_forge_bevy --release --test ground_material_render -- --ignored --nocapture
@@ -7,7 +8,7 @@
 //!
 //! `#[ignore]`d: it needs a device. The app is headless and renders into an image, which it reads
 //! back from the GPU; the material is unlit and the camera does no tonemapping, so what comes back
-//! is the palette's colours themselves.
+//! is the material's colours themselves.
 
 use bevy::app::PluginsState;
 use bevy::asset::RenderAssetUsages;
@@ -21,7 +22,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials};
-use wave_forge_bevy::materials::{WaveForgeMaterialsPlugin, ground_material_of, palette_image};
+use wave_forge_bevy::materials::{
+    GroundLook, WaveForgeMaterialsPlugin, ground_material_of, palette_image,
+};
 use wave_forge_bevy::stages::ground_mesh;
 
 const PACK: &str = r#"(
@@ -40,9 +43,8 @@ const EAST: [u8; 3] = [20, 60, 220];
 #[derive(Resource, Default)]
 struct Pixels(Option<Vec<u8>>);
 
-#[test]
-#[ignore = "needs a device; run with --ignored in release mode"]
-fn a_chunks_materials_come_out_in_their_palette_colours() {
+/// The chunk drawn with `look`, seen from straight above: `SIZE` by `SIZE` pixels, RGBA.
+fn render_halves(look: GroundLook) -> Vec<u8> {
     let mut runtime = Runtime::new(
         Arc::new(Pack::parse(PACK).expect("a valid pack")),
         1,
@@ -90,7 +92,7 @@ fn a_chunks_materials_come_out_in_their_palette_colours() {
         Color::srgb_u8(EAST[0], EAST[1], EAST[2]),
     ]);
     let palette = world.resource_mut::<Assets<Image>>().add(palette);
-    let material = {
+    let mut material = {
         let mut images = world.resource_mut::<Assets<Image>>();
         ground_material_of(
             &mesh,
@@ -105,6 +107,7 @@ fn a_chunks_materials_come_out_in_their_palette_colours() {
             &mut images,
         )
     };
+    material.extension.look = look;
     let material = world
         .resource_mut::<Assets<wave_forge_bevy::materials::GroundMaterial>>()
         .add(material);
@@ -139,17 +142,24 @@ fn a_chunks_materials_come_out_in_their_palette_colours() {
         frames += 1;
         assert!(started.elapsed() < Duration::from_secs(60), "no picture");
     }
-
-    let pixels = app
-        .world()
+    app.world()
         .resource::<Pixels>()
         .0
         .clone()
-        .expect("read back");
-    let pixel = |x: u32, y: u32| {
-        let at = ((y * SIZE + x) * 4) as usize;
-        [pixels[at], pixels[at + 1], pixels[at + 2]]
-    };
+        .expect("read back")
+}
+
+fn pixel_of(pixels: &[u8], x: u32, y: u32) -> [u8; 3] {
+    let at = ((y * SIZE + x) * 4) as usize;
+    [pixels[at], pixels[at + 1], pixels[at + 2]]
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn with_the_flat_look_a_chunks_materials_come_out_in_their_palette_colours() {
+    let pixels = render_halves(GroundLook::flat());
+
+    let pixel = |x: u32, y: u32| pixel_of(&pixels, x, y);
     let near = |a: [u8; 3], b: [u8; 3]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2);
     let (left, right) = (pixel(4, SIZE / 2), pixel(SIZE - 5, SIZE / 2));
     let (west, east) = if near(left, WEST) {
@@ -174,5 +184,42 @@ fn a_chunks_materials_come_out_in_their_palette_colours() {
                 assert!(near(colour, EAST), "({x}, {y}): {colour:?}");
             }
         }
+    }
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn with_the_default_look_the_colours_vary_around_the_palettes() {
+    let pixels = render_halves(GroundLook::default());
+
+    // The two quarters furthest from the border, which lies 3.5 cells into the 8 the camera sees.
+    let (left, right): (Vec<[u8; 3]>, Vec<[u8; 3]>) = (0..SIZE)
+        .flat_map(|y| (0..SIZE / 4).map(move |x| (x, y)))
+        .map(|(x, y)| (pixel_of(&pixels, x, y), pixel_of(&pixels, SIZE - 1 - x, y)))
+        .unzip();
+    for (side, colours) in [("left", left), ("right", right)] {
+        let mean = |channel: usize| {
+            colours.iter().map(|c| f32::from(c[channel])).sum::<f32>() / colours.len() as f32
+        };
+        let palette = if mean(0) > mean(2) { WEST } else { EAST };
+        let strongest = if palette == WEST { 0 } else { 2 };
+        let values: Vec<u8> = colours.iter().map(|c| c[strongest]).collect();
+        let spread = values.iter().max().expect("pixels") - values.iter().min().expect("pixels");
+        let off =
+            (mean(strongest) - f32::from(palette[strongest])).abs() / f32::from(palette[strongest]);
+        println!(
+            "{side}: spread {spread}, mean {:.1} against {}",
+            mean(strongest),
+            palette[strongest]
+        );
+        assert!(
+            spread >= 8,
+            "{side}: the colour does not vary, spread {spread}"
+        );
+        assert!(
+            off < 0.2,
+            "{side}: the mean is {:.0}% off the palette",
+            off * 100.0
+        );
     }
 }

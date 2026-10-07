@@ -16,7 +16,7 @@ use bevy_color::{Color, ColorToComponents, ColorToPacked};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::prelude::{MessageReader, Res, ResMut, Resource};
 use bevy_image::Image;
-use bevy_math::{IVec4, Vec3, Vec4};
+use bevy_math::{IVec4, Vec2, Vec3, Vec4};
 use bevy_mesh::{Mesh, PrimitiveTopology};
 use bevy_pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, StandardMaterial};
 use bevy_reflect::TypePath;
@@ -30,8 +30,60 @@ use wave_forge::{ChunkCoord, GroundMesh, VolumeMesh};
 /// How many colours a palette holds: one per category a Rules stage can have.
 const PALETTE: usize = 256;
 
+/// How [`GroundMaterial`] draws the ground beyond the palette's colours: the same settings, under
+/// the same names, as the Godot ground shader's uniforms.
+#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
+pub struct GroundLook {
+    /// Rock on steep ground is the ground's own colour muted and darkened; or, as far as alpha is
+    /// above zero, this colour (linear RGB) instead.
+    pub rock_colour: Vec4,
+    /// The slopes (one minus the normal's height) at which rock starts and has taken over.
+    pub rock_slope: Vec2,
+    /// How strongly the rock is banded in strata, 0 to 1.
+    pub strata: f32,
+    /// How far noise breaks the line where materials meet, 0 to 1.
+    pub edge_noise: f32,
+    /// How much a broad noise varies the colour across the land, 0 to 1.
+    pub macro_variation: f32,
+    /// How much fine grain and detail normal the ground has near the camera, 0 to 1.
+    pub detail: f32,
+}
+
+impl Default for GroundLook {
+    /// Rock from the ground's own colour, and every noise on: the Godot shader's defaults.
+    fn default() -> Self {
+        Self {
+            rock_colour: Color::srgb(0.42, 0.40, 0.38)
+                .to_linear()
+                .to_vec4()
+                .with_w(0.0),
+            rock_slope: Vec2::new(0.3, 0.5),
+            strata: 0.6,
+            edge_noise: 0.5,
+            macro_variation: 0.5,
+            detail: 1.0,
+        }
+    }
+}
+
+impl GroundLook {
+    /// The palette's colours alone, blended between the vertices: no rock, noise or grain.
+    #[must_use]
+    pub fn flat() -> Self {
+        Self {
+            // Steeper than any ground can be, so nothing turns to rock.
+            rock_slope: Vec2::new(2.0, 3.0),
+            strata: 0.0,
+            edge_noise: 0.0,
+            macro_variation: 0.0,
+            detail: 0.0,
+            ..Self::default()
+        }
+    }
+}
+
 /// What [`GroundMaterial`] adds to a `StandardMaterial`: the chunk's grid, its material id per
-/// ground vertex, and the palette.
+/// ground vertex, the palette and the look.
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 pub struct GroundMaterials {
     /// The chunk's corner on the ground plane (x, z) and a cell's width along x and z.
@@ -43,6 +95,9 @@ pub struct GroundMaterials {
     /// A colour per material id, 256 by 1.
     #[texture(102, sample_type = "float", filterable = false)]
     pub palette: Handle<Image>,
+    /// How the ground is drawn beyond the palette's colours.
+    #[uniform(103)]
+    pub look: GroundLook,
 }
 
 impl MaterialExtension for GroundMaterials {
@@ -479,6 +534,7 @@ pub fn ground_material_of(
             grid: Vec4::new(corner.x, corner.z, cell.x, cell.z),
             materials: images.add(materials),
             palette,
+            look: GroundLook::default(),
         },
     }
 }
