@@ -5,7 +5,8 @@
 ## reference grass shader, lit from above, seen from above at an angle; the picture shows whether
 ## materials blend smoothly across triangles and chunks and where grass grows. It lands in Godot's
 ## user directory, and the script prints where. Then, with vsync off, it times frames with the
-## grass and without it, and prints both: grass's cost on this renderer.
+## grass and without it, and prints both, with the viewport's GPU time for each: grass's cost on
+## this renderer, and without grass, what the ground shader costs.
 extends SceneTree
 
 const CELLS := 8
@@ -20,6 +21,8 @@ var waited_frames := 0
 var phase := "arrive"
 var frame_usec := 0
 var frames := 0
+var gpu_ms := 0.0
+var with_grass_gpu_ms := 0.0
 var timed_usec := 0
 var with_grass_ms := 0.0
 
@@ -88,6 +91,7 @@ func _process(_delta: float) -> bool:
 			print("render_ground: saved %s, grass close up" % ProjectSettings.globalize_path(close))
 			DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 			Engine.max_fps = 0
+			RenderingServer.viewport_set_measure_render_time(root.get_viewport().get_viewport_rid(), true)
 			phase = "with grass"
 			frames = -10
 		"with grass", "without grass":
@@ -108,16 +112,22 @@ func _time() -> bool:
 	frames += 1
 	if frames == 0:
 		timed_usec = Time.get_ticks_usec()
+		gpu_ms = 0.0
+	elif frames > 0:
+		gpu_ms += RenderingServer.viewport_get_measured_render_time_gpu(root.get_viewport().get_viewport_rid())
 	if frames < TIMED_FRAMES:
 		return false
 	var ms := (Time.get_ticks_usec() - timed_usec) / 1000.0 / TIMED_FRAMES
+	gpu_ms /= TIMED_FRAMES - 1
 	if phase == "with grass":
 		with_grass_ms = ms
+		with_grass_gpu_ms = gpu_ms
 		world.grass_radius = -1
 		phase = "without grass"
 		frames = -10
 		return false
 	var blades: int = CELLS * CELLS * world.grass_per_cell * 25
 	print("render_ground: %.2f ms a frame with grass (%d chunks, %d blades drawn, most collapsed where there is no cover), %.2f ms without, on %s" % [with_grass_ms, 25, blades, ms, RenderingServer.get_video_adapter_name()])
+	print("render_ground: the viewport's GPU time, %.3f ms a frame with grass, %.3f ms without" % [with_grass_gpu_ms, gpu_ms])
 	quit(0)
 	return true

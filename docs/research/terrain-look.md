@@ -71,10 +71,11 @@ erosion suits finite maps generated once.
 - **Water and drainage.** Lakes by priority flood and rivers down steepest descent, both region
   jobs, carved by Apply. No erosion of any kind; [stages.md](../architecture/stages.md) records
   that no stage kind is global.
-- **Ground shading.** The reference ground shader draws a flat palette colour per category per
-  vertex, blended bilinearly, with constant roughness and per-vertex normals: no textures, no detail
-  normal, no slope logic in the fragment, no height blending, no macro variation. Material borders
-  follow the 2 m grid as blurred staircases. The far ground is coloured by coarse biomes (#314).
+- **Ground shading.** The reference ground shader (#322) takes a palette colour per category per
+  vertex and draws it procedurally: borders broken by noise rather than following the 2 m grid,
+  rock by the fragment's slope in muted strata, a broad colour variation, and a fine bump and grain
+  near the camera ([godot.md](../reference/godot.md#ground-and-colliders)). It has no textures, no
+  height blending and constant roughness. The far ground is coloured by coarse biomes (#314).
 - **Water surfaces.** The sea only; lakes and rivers are not drawn.
 - **Vegetation.** Scatter as MultiMeshes in a global wind, grass from a cover field within one
   chunk by default.
@@ -82,10 +83,9 @@ erosion suits finite maps generated once.
 ## The gaps, by look gained per work
 
 1. **Ground shading** (#322, then #323). The references' look is mostly per-pixel colour and
-   normal detail; ours is one colour per category with staircase borders. A procedural shader
-   (rock by the fragment's slope, transitions broken by noise and height, macro variation, a detail
-   normal, strata) needs no assets; an optional textured path after it needs a decision on assets.
-   Both shaders, Godot's and Bevy's, have to keep in step, and on Compatibility too.
+   normal detail. The procedural shader (#322) gives what needs no assets; an optional textured
+   path after it (#323) needs a decision on assets. Both shaders, Godot's and Bevy's, have to keep
+   in step, and on Compatibility too.
 2. **Shape primitives** (#324). Warped, ridged gradient noise instead of axis-aligned value noise
    folded once. The noises exist already; the packs do not use them.
 3. **Local erosion** (#325). Branching gullies are what make the references read as terrain. A

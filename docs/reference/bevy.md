@@ -208,9 +208,12 @@ comes from the chunk's materials. `ground_material(stages, chunk, base, palette,
 chunk's, once its ground is built with materials, and `ground_material_of(mesh, ids, corner, cell,
 base, palette, images)` makes one for a ground built some other way. Its id image holds a texel per
 ground vertex, the category / 255 in red; `palette_image(colours)` makes the 256 by 1 palette,
-categories past the colours given taking colours of their own. The fragment shader blends the
-colours of the four vertices around each fragment, so materials meet in a band a cell wide, then
-applies Bevy's lighting, or none for an unlit base. A chunk's ground reads the materials of the
+categories past the colours given taking colours of their own. The fragment shader is the Godot
+reference ground shader's ([godot.md](godot.md#ground-and-colliders)): materials meeting along a
+noise-broken line, rock on steep ground, a broad colour variation and a fine bump and grain near
+the camera, then Bevy's lighting, or none for an unlit base. Its `look`, a `GroundLook`, holds the
+Godot shader's parameters under the same names; `GroundLook::default()` is what both makers give,
+and `GroundLook::flat()` the palette's colours alone, blended between the vertices. A chunk's ground reads the materials of the
 chunks beyond its far edges, so the material stage has to be generated one chunk beyond the ground,
 with `.with_radius` say.
 
