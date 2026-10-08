@@ -1056,24 +1056,33 @@ registers its own jobs in the runtime it builds; a Godot game, which cannot, use
 ### Rivers
 
 `Rivers(height: "terrain", region: 16, sources: 3, width: (0.6, 2.0), step: 2)`: rivers down a
-height field, a region job built into the library, so a pack names it without Rust. In every square
-region of `region` chunks, a priority flood (Barnes, Lehman and Mulla, 2014) from the region's edge
-columns and the columns at or below the pack's water ([Water](#water)) points every column at the
-one its water runs to next: down the slope, out of a hollow over the lowest point it spills over,
-and across a flat toward its way out, ties broken by a hash of the column so a river crosses a flat
-in a wandering line. Each of `sources` rivers (1 to `MAX_SOURCES`, 64) starts at the highest of a
-few hashed columns within the region's edge and follows those columns, with a point every `step`
-cells (default 1), until it reaches the sea, the region's edge, a river an earlier source traced
-(where it joins it), or a lake of the pack's water (a column where the lake's water stands above the
-ground its Lakes stage filled). With `through_lakes: true` it runs on through a lake to its outlet
-instead, so a world whose ground is full of small lakes still has rivers that reach the sea. A
-river may run down another field than the lakes' ground and still ends at their lakes. Its values,
-the radius an Apply stage carves by, grow from `width.0` at its source to `width.1` at its mouth
-(default 1 to 3). A river never leaves its region, so regions never read each other, and rivers
-are the same in any order; a river that reaches its region's edge stops there, so large regions
-suit an island whose rivers run to its coast. The ring world's rivers run from its high ground to
-the sea and are carved into its `ground`; the continent's run through its lakes, down the drained
-terrain, from its ranges to the sea or their region's edge.
+height field, a region job built into the library, so a pack names it without Rust. A region's
+water leaves it through the pack's sea ([Water](#water)) and through crossings: on each side of the
+region, the pair of columns facing each other across the border whose lower column is lowest, which
+the regions on both sides find alike from the border's heights alone. Water crosses from the higher
+column of the pair to the lower, so a crossing lets water out of one region and into the other. A
+priority flood (Barnes, Lehman and Mulla, 2014) from the sea and the crossings water leaves by
+points every column at the one its water runs to next: down the slope, out of a hollow over the
+lowest point it spills over, and across a flat toward its way out, ties broken by a hash of the
+column so a river crosses a flat in a wandering line. A region with no sea and no crossing water
+leaves by drains off its lowest edge column.
+
+A river runs up from every crossing water leaves by, along the columns that gather the most water,
+from where it gathers at least 64 columns' water; a river runs on from every crossing water comes in
+by; and `sources` more (1 to `MAX_SOURCES`, 64) start at the highest of a few hashed columns within
+the region's edge. Each follows the flood's columns, with a point every `step` cells (default 1),
+until it reaches the sea, a crossing, a river traced before it (where it joins it), or a lake of
+the pack's water (a column where the lake's water stands above the ground its Lakes stage filled);
+a river running up from a crossing starts where it leaves a lake. With `through_lakes: true` rivers
+run on through lakes to their outlets instead, so a world whose ground is full of small lakes still
+has rivers that reach the sea. A river may run down another field than the lakes' ground and still
+ends at their lakes. Its values, the radius an Apply stage carves by, grow from `width.0` at its
+source to `width.1` at its mouth (default 1 to 3); a river coming in across a crossing is as wide
+as a mouth from its first point. A river that leaves its region carries on in the next from the
+column across, so rivers run across regions without either reading the other's, and they are the
+same in any order. The ring world's rivers run from its high ground to the sea and are carved into
+its `ground`; the continent's run through its lakes, down the drained terrain, from its ranges to
+the sea.
 
 ### Lakes
 

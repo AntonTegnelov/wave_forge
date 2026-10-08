@@ -42,51 +42,54 @@ impl PartialOrd for Wet {
     }
 }
 
-/// What a priority flood over a region gives: the height water stands at over every column, and
-/// the column its water runs to next, toward the region's edge or the sea, `None` where it drains
-/// away there.
+/// What a priority flood over a region gives: the height water stands at over every column, the
+/// column its water runs to next, toward an outlet, `None` at an outlet, and the columns in the
+/// order the flood reached them, every column after the one its water runs to.
 pub(crate) struct Flood {
     pub(crate) filled: Vec<f32>,
     pub(crate) toward: Vec<Option<usize>>,
+    pub(crate) reached: Vec<usize>,
 }
 
 /// A priority flood over a region of `size` columns (x fastest) whose ground is `heights` and whose
-/// first column is `origin` in the world, from its edge columns and the columns at or below the sea
-/// at `sea`: every column filled to the lowest height its water could drain away over, and pointed
-/// at the column it was reached from, so water leaves a hollow over the lowest point it spills over
-/// and crosses a flat toward its way out.
+/// first column is `origin` in the world, from the columns `outlet` says water drains away at:
+/// every column filled to the lowest height its water could drain away over, and pointed at the
+/// column it was reached from, so water leaves a hollow over the lowest point it spills over and
+/// crosses a flat toward its way out.
 ///
 /// # Panics
-/// If `heights` does not hold `size[0] * size[1]` heights.
-pub(crate) fn flood(heights: &[f32], size: [usize; 2], origin: [i64; 2], sea: f32) -> Flood {
+/// If `heights` does not hold `size[0] * size[1]` heights, or no column is an outlet.
+pub(crate) fn flood(
+    heights: &[f32],
+    size: [usize; 2],
+    origin: [i64; 2],
+    outlet: impl Fn(usize) -> bool,
+) -> Flood {
     let [w, h] = size;
     assert_eq!(heights.len(), w * h, "a height per column");
     let mut filled = heights.to_vec();
     let mut toward = vec![None; heights.len()];
     let mut visited = vec![false; heights.len()];
+    let mut reached = Vec::with_capacity(heights.len());
     let mut queue = BinaryHeap::new();
     let mut order = 0;
     let tie = |at: usize| {
         let (x, y) = (origin[0] + (at % w) as i64, origin[1] + (at / w) as i64);
         pcg3d([x as u32, y as u32, 0x666C_6F77])[0]
     };
-    for y in 0..h {
-        for x in 0..w {
-            let at = y * w + x;
-            let edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
-            if edge || heights[at] <= sea {
-                visited[at] = true;
-                queue.push(Reverse(Wet {
-                    level: heights[at],
-                    tie: tie(at),
-                    order,
-                    at,
-                }));
-                order += 1;
-            }
-        }
+    for at in (0..heights.len()).filter(|&at| outlet(at)) {
+        visited[at] = true;
+        queue.push(Reverse(Wet {
+            level: heights[at],
+            tie: tie(at),
+            order,
+            at,
+        }));
+        order += 1;
     }
+    assert!(!queue.is_empty(), "a flood needs an outlet");
     while let Some(Reverse(Wet { level, at, .. })) = queue.pop() {
+        reached.push(at);
         let (x, y) = (at % w, at / w);
         for (dx, dy) in [(1_isize, 0_isize), (-1, 0), (0, 1), (0, -1)] {
             let (nx, ny) = (x as isize + dx, y as isize + dy);
@@ -109,7 +112,11 @@ pub(crate) fn flood(heights: &[f32], size: [usize; 2], origin: [i64; 2], sea: f3
             order += 1;
         }
     }
-    Flood { filled, toward }
+    Flood {
+        filled,
+        toward,
+        reached,
+    }
 }
 
 /// The water surface over a region of `size` columns (x fastest) whose ground is `heights`: a
@@ -125,8 +132,13 @@ pub(crate) fn lake_surface(
     min_columns: u32,
 ) -> Vec<f32> {
     let [w, h] = size;
+    // Water drains off the region's edge and into the sea.
+    let outlet = |at: usize| {
+        let (x, y) = (at % w, at / w);
+        x == 0 || y == 0 || x == w - 1 || y == h - 1 || heights[at] <= sea
+    };
     // The water's surface is the same however the flood breaks ties, so its place is no matter.
-    let filled = flood(heights, size, [0, 0], sea).filled;
+    let filled = flood(heights, size, [0, 0], outlet).filled;
 
     // Lakes: connected columns filled above their ground and above the sea.
     let wet = |at: usize| filled[at] > heights[at] && filled[at] > sea;
