@@ -33,7 +33,7 @@ use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownSolver};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use wfc_core::ChunkCoord;
 use wfc_core::hash::pcg3d;
@@ -626,6 +626,9 @@ pub struct Runtime {
     /// stage's worn ground), by stage and region: the region's columns row by row, kept while a
     /// chunk of their region is needed.
     region_fields: BTreeMap<RegionKey, Arc<[f32]>>,
+    /// The same fields computed for sampling, from samples of their inputs, when generation holds
+    /// none: kept behind a lock since sampling borrows the runtime shared.
+    sampled_fields: Mutex<BTreeMap<RegionKey, Arc<[f32]>>>,
     /// Cave levels planned, by Cave stage and region, kept while a chunk of their region is needed.
     caves: BTreeMap<RegionKey, Arc<CavePlan>>,
     /// Tunnels found, by Tunnels stage and its cave's region, kept as the cave's plan is.
@@ -755,6 +758,7 @@ impl Runtime {
             regions: BTreeMap::new(),
             placed: BTreeMap::new(),
             region_fields: BTreeMap::new(),
+            sampled_fields: Mutex::new(BTreeMap::new()),
             caves: BTreeMap::new(),
             tunnels: BTreeMap::new(),
             budgeted: BTreeMap::new(),
@@ -1172,6 +1176,11 @@ impl Runtime {
     /// its inputs, and a town or a region goes with any stale chunk it covers; what is still asked
     /// for is generated again.
     fn invalidate(&mut self, mut stale: BTreeMap<usize, Stale>) -> Vec<(String, ChunkCoord)> {
+        // Sampled region fields are few and cheap to compute again beside what generation holds.
+        self.sampled_fields
+            .get_mut()
+            .expect("no sample panics holding the lock")
+            .clear();
         // Inputs come first in `order`, so a stage's inputs are judged before it.
         for &index in &self.pack.order {
             if matches!(stale.get(&index), Some(Stale::All)) {
@@ -2161,8 +2170,10 @@ impl Runtime {
 
     /// A stage's value at a point in WFC cells without generating any chunk: a field's value, or a
     /// category's index, at the column of the stage the point lies in. It equals what the chunk
-    /// holding that column would hold. Only Field, Rules, Blur, Delta, Erode and Area stages whose inputs
-    /// are too can be sampled; the pack's other kinds need neighbouring chunks. A runtime made only to sample
+    /// holding that column would hold. Only Field, Rules, Blur, Delta, Erode and Area stages, and
+    /// Lakes and Droplets stages, whose inputs are too can be sampled; the pack's other kinds need
+    /// neighbouring chunks. A Lakes or Droplets stage is computed over the whole region a sample
+    /// lies in, once, from samples of its input. A runtime made only to sample
     /// never holds a product, so a game can keep one on any thread.
     ///
     /// # Errors
@@ -2337,10 +2348,20 @@ impl Runtime {
             | StageKind::Assemble { .. }
             | StageKind::Region { .. }
             | StageKind::Rivers { .. }
-            | StageKind::Network { .. }
-            | StageKind::Lakes { .. }
-            | StageKind::Droplets { .. } => {
+            | StageKind::Network { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
+            }
+            StageKind::Lakes { .. } | StageKind::Droplets { .. } => {
+                let size = stage.kind.field_region().expect("a region field stage");
+                let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+                let side = [i64::from(size) * sx, i64::from(size) * sy];
+                let region = (
+                    column[0].div_euclid(side[0]) as i32,
+                    column[1].div_euclid(side[1]) as i32,
+                );
+                let field = self.sampled_region_field(index, region, &read)?;
+                field[(column[1].rem_euclid(side[1]) * side[0] + column[0].rem_euclid(side[0]))
+                    as usize]
             }
         };
         // A sample is what the chunk holds, raises included.
@@ -2641,15 +2662,28 @@ impl Runtime {
                 heights.push(view.get(min[0] + x, min[1] + y)?);
             }
         }
-        let columns = [width as usize, depth as usize];
-        let field = match stage.kind {
+        let field = self.region_field(index, region, &heights);
+        self.region_fields.insert((index, region), Arc::from(field));
+        Ok(())
+    }
+
+    /// The field of stage `index`, computed a region at a time, over `region` from `heights`, its
+    /// input's values over the region's columns row by row.
+    fn region_field(&self, index: usize, region: (i32, i32), heights: &[f32]) -> Vec<f32> {
+        let stage = &self.pack.stages[index];
+        let size = stage.kind.field_region().expect("a region field stage");
+        let columns = [
+            (size * self.size[0]) as usize,
+            (size * self.size[1]) as usize,
+        ];
+        match stage.kind {
             StageKind::Lakes { min_columns, .. } => {
                 let sea = self
                     .pack
                     .water()
                     .expect("a pack with lakes declares water")
                     .level;
-                lake_surface(&heights, columns, sea, min_columns)
+                lake_surface(heights, columns, sea, min_columns)
             }
             StageKind::Droplets {
                 droplets,
@@ -2671,18 +2705,59 @@ impl Runtime {
                     fade,
                 };
                 let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
-                drain(
-                    &heights,
-                    columns,
-                    stage.scale as f32,
-                    &settings,
-                    |droplet| droplet_start(world, stage.salt, region, droplet),
-                )
+                drain(heights, columns, stage.scale as f32, &settings, |droplet| {
+                    droplet_start(world, stage.salt, region, droplet)
+                })
             }
             _ => unreachable!("only Lakes and Droplets stages compute a region's field"),
+        }
+    }
+
+    /// The field of stage `index`, computed a region at a time, over `region`, for sampling: the
+    /// one generation computed if it is held, or else one computed from samples of the stage's
+    /// input, which equal what its chunks hold, and kept for later samples.
+    fn sampled_region_field(
+        &self,
+        index: usize,
+        region: (i32, i32),
+        read: &Read<'_>,
+    ) -> Result<Arc<[f32]>, StageError> {
+        if let Some(field) = self.region_fields.get(&(index, region)) {
+            return Ok(Arc::clone(field));
+        }
+        let held = self
+            .sampled_fields
+            .lock()
+            .expect("no sample panics holding the lock")
+            .get(&(index, region))
+            .cloned();
+        if let Some(field) = held {
+            return Ok(field);
+        }
+        let stage = &self.pack.stages[index];
+        let (Some(size), StageKind::Lakes { height, .. } | StageKind::Droplets { height, .. }) =
+            (stage.kind.field_region(), &stage.kind)
+        else {
+            unreachable!("only region field stages are sampled a region at a time")
         };
-        self.region_fields.insert((index, region), Arc::from(field));
-        Ok(())
+        let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
+        let side = i64::from(size);
+        let min = [
+            i64::from(region.0) * side * sx,
+            i64::from(region.1) * side * sy,
+        ];
+        let mut heights = Vec::with_capacity((side * sx * side * sy) as usize);
+        for y in 0..side * sy {
+            for x in 0..side * sx {
+                heights.push(read(height, min[0] + x, min[1] + y)?);
+            }
+        }
+        let field: Arc<[f32]> = Arc::from(self.region_field(index, region, &heights));
+        self.sampled_fields
+            .lock()
+            .expect("no sample panics holding the lock")
+            .insert((index, region), Arc::clone(&field));
+        Ok(field)
     }
 
     /// Plans the cave level of Cave stage `index`, or of the Cave stage a Tunnels stage `index`

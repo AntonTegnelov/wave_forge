@@ -141,3 +141,17 @@ fn droplets_that_cannot_run_are_refused() {
         );
     }
 }
+
+#[test]
+fn a_sample_of_the_worn_ground_is_what_its_chunk_holds() {
+    let columns = columns_asked(&[area()]);
+    let sampler = Runtime::new(Arc::new(pack(PACK).expect("a valid pack")), 6, SIZE);
+
+    for (&(x, y), &(_, worn)) in &columns {
+        let sampled = sampler
+            .sample("worn", [x as f32 + 0.5, y as f32 + 0.5])
+            .expect("a sample");
+
+        assert_eq!(sampled.to_bits(), worn.to_bits(), "column ({x}, {y})");
+    }
+}

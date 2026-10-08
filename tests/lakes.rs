@@ -322,3 +322,17 @@ fn the_ring_world_has_lakes_in_its_hollows_and_rivers_that_reach_them() {
     assert!(lake_columns >= 20, "{lake_columns} columns under lakes");
     assert!(ends_in_lakes > 0, "no river reaches a lake");
 }
+
+#[test]
+fn a_sample_of_the_lakes_is_what_their_chunk_holds() {
+    let generated = columns(&run(&[area()], &["lakes", "ground"]));
+    let sampler = Runtime::new(pack(), 6, SIZE);
+
+    for (&(x, y), &(_, lakes)) in &generated {
+        let sampled = sampler
+            .sample("lakes", [x as f32 + 0.5, y as f32 + 0.5])
+            .expect("a sample");
+
+        assert_eq!(sampled.to_bits(), lakes.to_bits(), "column ({x}, {y})");
+    }
+}
