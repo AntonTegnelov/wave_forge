@@ -5,8 +5,11 @@
 //!
 //! ```text
 //! cargo run -p wfc-devtools --release --bin wfc-relief -- examples/presets/hills.world.ron \
-//!     --chunks 32 --out hills.png [--stage height] [--seed 1] [--param hills=0.8]
+//!     --chunks 32 --out hills.png [--stage height] [--seed 1] [--param hills=0.8] \
+//!     [--curves rivers]
 //! ```
+//!
+//! With `--curves`, the lines of that Curves stage, rivers say, are drawn over the relief in blue.
 
 use anyhow::{Context, Result, anyhow, ensure};
 use clap::Parser;
@@ -43,6 +46,9 @@ struct Args {
     /// The height that draws white; the land's colours run from 0 to it.
     #[arg(long, default_value_t = 30.0)]
     top: f32,
+    /// A Curves stage of the drawn stage's scale whose lines to draw over the relief.
+    #[arg(long)]
+    curves: Option<String>,
     /// A parameter of the pack, `name=value`. Repeatable.
     #[arg(long = "param", value_parser = parse_param)]
     params: Vec<(String, f32)>,
@@ -91,6 +97,12 @@ fn main() -> Result<()> {
     let scale = pack
         .scale(&args.stage)
         .ok_or_else(|| anyhow!("{} is no stage of the pack", args.stage))? as f32;
+    if let Some(curves) = &args.curves {
+        ensure!(
+            pack.scale(curves) == Some(scale as u32),
+            "{curves} is no stage of the drawn stage's scale"
+        );
+    }
     let mut runtime = Runtime::new(Arc::new(pack), args.seed, [args.chunk_size; 2]);
     let params: BTreeMap<String, f32> = args.params.iter().cloned().collect();
     runtime
@@ -106,8 +118,10 @@ fn main() -> Result<()> {
         .iter()
         .map(|chunk| FocusPoint::new(ChunkCoord::new(chunk.x * step, chunk.y * step, 0), 0))
         .collect();
+    let mut targets = vec![args.stage.as_str()];
+    targets.extend(args.curves.as_deref());
     runtime
-        .request(&focus, &[args.stage.as_str()])
+        .request(&focus, &targets)
         .map_err(|error| anyhow!("{error}"))?;
     runtime
         .run_until_idle()
@@ -132,7 +146,7 @@ fn main() -> Result<()> {
     let at = |x: u32, y: u32| heights[(y.min(side - 1) * side + x.min(side - 1)) as usize];
     let light = [-0.5f32, 0.5, std::f32::consts::FRAC_1_SQRT_2];
     // The image's rows run from the square's far side, +y, down to its near one.
-    let image = RgbImage::from_fn(side, side, |px, py| {
+    let mut image = RgbImage::from_fn(side, side, |px, py| {
         let (x, y) = (px, side - 1 - py);
         let h = at(x, y);
         let dx = (at(x + 1, y) - at(x.saturating_sub(1), y)) / (2.0 * scale);
@@ -144,6 +158,33 @@ fn main() -> Result<()> {
         let base = colour(h, args.top);
         Rgb(base.map(|c| (c * shade * 255.0).clamp(0.0, 255.0) as u8))
     });
+    if let Some(curves) = &args.curves {
+        // Curves are in cells; a pixel is a column of the drawn stage.
+        let origin = [
+            (args.corner[0] * args.chunk_size as i32) as f32,
+            (args.corner[1] * args.chunk_size as i32) as f32,
+        ];
+        let mut plot = |x: f32, y: f32| {
+            let (px, py) = (x / scale - origin[0], y / scale - origin[1]);
+            if px >= 0.0 && py >= 0.0 && px < side as f32 && py < side as f32 {
+                image.put_pixel(px as u32, side - 1 - py as u32, Rgb([40, 90, 230]));
+            }
+        };
+        for &chunk in &chunks {
+            for curve in runtime.curves(curves, chunk).unwrap_or(&[]) {
+                for pair in curve.points.windows(2) {
+                    let (a, b) = (pair[0], pair[1]);
+                    let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / scale * 4.0)
+                        .ceil()
+                        .max(1.0);
+                    for k in 0..=steps as u32 {
+                        let t = k as f32 / steps;
+                        plot(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+                    }
+                }
+            }
+        }
+    }
     image
         .save(&args.out)
         .with_context(|| format!("writing {}", args.out.display()))?;
