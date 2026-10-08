@@ -4,10 +4,11 @@
 ## every chunk's ground gets its own copy of the reference ground shader's material, whose id
 ## texture holds the category of every vertex of the ground, the chunks beyond the far edges
 ## included, and whose cell is the node's. A material stage that is no Rules or Area stage is
-## refused, as is a cavity stage that is no field. Each material's channels hold the cavity and
-## wetness stages' values at every vertex. Grass grows on every chunk of ground within its radius,
-## each chunk's grass material
-## holding the chunk's cover per column and the ground's height per vertex. Last, raising the first
+## refused, as is a cavity stage that is no field. Each material's channels hold the cavity,
+## wetness and cover stages' values at every vertex. Grass grows on every chunk of ground within its
+## radius, each chunk's grass material holding the chunk's cover per column and the ground's height
+## per vertex, and fading out over the last chunk of the radius, over which every chunk's ground
+## takes the cover's tint in. Last, raising the first
 ## column of the chunk beside the origin builds the origin's ground again, which reaches to it.
 extends SceneTree
 
@@ -60,6 +61,7 @@ func _world(material_stage: String) -> Node:
 	node.ground_material_stage = material_stage
 	node.ground_cavity_stage = "hollow"
 	node.ground_wetness_stage = "wet"
+	node.ground_cover_stage = "cover"
 	node.grass_stage = "cover"
 	node.grass_radius = 1
 	root.add_child(node)
@@ -109,15 +111,15 @@ func _check() -> bool:
 					return true
 				seen[expected] = true
 		var channels: Image = material.get_shader_parameter("wave_forge_channels").get_image()
-		if channels.get_format() != Image.FORMAT_RGF or channels.get_size() != Vector2i(CELLS + 1, CELLS + 1):
+		if channels.get_format() != Image.FORMAT_RGBF or channels.get_size() != Vector2i(CELLS + 1, CELLS + 1):
 			_fail("the channels of %s are %s texels of format %d" % [chunk, channels.get_size(), channels.get_format()])
 			return true
 		for j in CELLS + 1:
 			for i in CELLS + 1:
 				var column := Vector2i(chunk.x * CELLS + i, chunk.y * CELLS + j)
 				var texel := channels.get_pixel(i, j)
-				if texel.r != _value("hollow", column) or texel.g != _value("wet", column):
-					_fail("vertex (%d, %d) of %s holds channels %s, not %f and %f" % [i, j, chunk, texel, _value("hollow", column), _value("wet", column)])
+				if texel.r != _value("hollow", column) or texel.g != _value("wet", column) or texel.b != _value("cover", column):
+					_fail("vertex (%d, %d) of %s holds channels %s, not %f, %f and %f" % [i, j, chunk, texel, _value("hollow", column), _value("wet", column), _value("cover", column)])
 					return true
 	if seen.size() < 2:
 		_fail("only %d materials on the ground" % seen.size())
@@ -154,6 +156,9 @@ func _height(column: Vector2i) -> float:
 	return values[posmod(column.y, CELLS) * CELLS + posmod(column.x, CELLS)] * CELL.y
 
 func _check_grass() -> bool:
+	# The grass fades out over its radius's last chunk, along the chunk's shorter side: 1 chunk of
+	# 8 cells of 2 units.
+	var fade := Vector2(0, 16)
 	var covered := 0
 	for chunk: Vector3i in world.grass_chunks():
 		if maxi(absi(chunk.x), absi(chunk.y)) > 1:
@@ -162,6 +167,9 @@ func _check_grass() -> bool:
 		var material: ShaderMaterial = world.grass_material_of(chunk)
 		if material.shader.code != world.grass_shader_code() or material.shader.resource_path != "res://addons/wave_forge/shaders/grass.gdshader":
 			_fail("the grass of %s is not drawn with the reference shader's file, but %s" % [chunk, material.shader.resource_path])
+			return true
+		if material.get_shader_parameter("wave_forge_fade") != fade:
+			_fail("the grass of %s fades over %s, not %s" % [chunk, material.get_shader_parameter("wave_forge_fade"), fade])
 			return true
 		var cover: PackedByteArray = material.get_shader_parameter("wave_forge_cover").get_image().get_data()
 		var field: PackedFloat32Array = world.field_values("cover", chunk)
@@ -181,7 +189,12 @@ func _check_grass() -> bool:
 	if covered == 0:
 		_fail("no column has grass")
 		return true
-	print("verify_ground: grass on %d chunks, %d columns covered, each chunk with its cover and the ground's heights" % [world.grass_chunks().size(), covered])
+	for chunk: Vector3i in world.ground_chunks():
+		var ground: ShaderMaterial = world.ground_material_of(chunk)
+		if ground.get_shader_parameter("wave_forge_fade") != fade:
+			_fail("the ground of %s tints in its cover over %s, not the grass's %s" % [chunk, ground.get_shader_parameter("wave_forge_fade"), fade])
+			return true
+	print("verify_ground: grass on %d chunks, %d columns covered, each chunk with its cover and the ground's heights, fading out as the ground's cover tints in" % [world.grass_chunks().size(), covered])
 	before = _height(raised)
 	var centre := Vector3((raised.x + 0.5) * CELL.x, 0, (raised.y + 0.5) * CELL.z)
 	if not world.raise("height", centre, 4.0):

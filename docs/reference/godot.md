@@ -190,7 +190,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_material` | the material the ground is drawn with |
 | | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
-| | `ground_cavity_stage`, `ground_wetness_stage` | field stages whose values, 0 to 1, the reference ground shader takes as channels: a cavity that darkens hollows and a wetness that darkens and smooths the ground |
+| | `ground_cavity_stage`, `ground_wetness_stage`, `ground_cover_stage` | field stages whose values, 0 to 1, the reference ground shader takes as channels: a cavity that darkens hollows, a wetness that darkens and smooths the ground, and a cover that tints it toward the grass where the grass fades out |
 | | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view; empty, or a pack without water, draws none |
 | | `water_stage`, `water_material` | a field stage at the ground's scale holding the level of the lakes' and rivers' water ([packs.md](packs.md#water-surfaces)): each chunk whose ground is drawn also gets its water, drawn with `water_material`, or `sea_material` when that is empty, and with neither, as with the sea, not drawn. `water_chunks()` lists the chunks with water drawn and `water_surface_of(chunk)` gives one's `positions` and `indices`; loading refuses a water stage that is no field |
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
@@ -649,13 +649,18 @@ the look: `rock_colour` (whose alpha, above zero, replaces the muted colour with
 the reference shader given as `ground_material`, whose parameters every chunk's copy keeps. What
 the shader costs is in [measurements.md](../research/measurements.md) (E58).
 
-With `ground_cavity_stage` or `ground_wetness_stage` set to field stages at the ground's scale, a
-chunk's ground also waits for their values at its vertices, those beyond its far edges included,
-and its copy takes them as `wave_forge_channels`: two floats a vertex, the cavity in red and the
-wetness in green, laid out as the material ids and shared exactly along chunk edges
-(`wave_forge::ground_values`, `ground_channels`). The reference shader blends them between the
-vertices as it blends the materials: a cavity darkens the ground by up to `cavity_darkening`, and
-wetness darkens it by up to `wet_darkening` and smooths it toward `wet_roughness`. Compatibility has
+With `ground_cavity_stage`, `ground_wetness_stage` or `ground_cover_stage` set to field stages at
+the ground's scale, a chunk's ground also waits for their values at its vertices, those beyond its
+far edges included, and its copy takes them as `wave_forge_channels`: three floats a vertex, the
+cavity in red, the wetness in green and the cover in blue, laid out as the material ids and shared
+exactly along chunk edges (`wave_forge::ground_values`, `ground_channels`). The reference shader
+blends them between the vertices as it blends the materials: a cavity darkens the ground by up to
+`cavity_darkening`, and wetness darkens it by up to `wet_darkening` and smooths it toward
+`wet_roughness`. The cover, the grass's own cover stage say, tints the ground toward `cover_colour`
+by up to `cover_tint`, coming in over `wave_forge_fade`, the distances over which the grass's
+blades shrink away ([Grass](#grass)): where the blades stand the ground is as it is, and beyond
+them covered ground reads as the same meadow, so the grass's edge leaves no ring. Without grass
+the cover tints nothing. Compatibility has
 no screen-space ambient occlusion, so a cavity stage is how its ground gets darker hollows; one is a
 field like `Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.5)), 0.0, 1.0)` over a Blur
 of the height named `around`. Without either, the texture is black and changes nothing. Loading
@@ -700,7 +705,10 @@ grass material holding `wave_forge_cover` (the chunk's cover per column, one byt
 it, a hashed turn and height, and shows it only where a hash is below the column's cover; it stands
 on the ground's heights, blended between vertices, and sways in the global shader parameter
 `wave_forge_wind` (a direction along x and z, a strength at the tip, a speed), which the node
-registers blowing gently along +x unless the project's settings declare it. Grass casts no shadow,
+registers blowing gently along +x unless the project's settings declare it. Blades shrink away by
+their horizontal distance from the camera over `wave_forge_fade`, which the node sets to the last
+chunk of `grass_radius` (along a chunk's shorter side), so the grass thins out before its edge
+rather than stopping at it; the ground's cover channel tints in over the same distances. Grass casts no shadow,
 takes no GI, and is bounded by its chunk rather than by its blades, which the shader moves. It
 draws on every renderer, Compatibility included. `grass_chunks()` lists the chunks with grass and
 `grass_material_of(chunk)` gives a chunk's material. Loading refuses a `grass_stage` the pack does

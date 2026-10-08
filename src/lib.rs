@@ -74,8 +74,8 @@ pub use far_ground::{FarGround, far_ground, far_ground_categories, far_steps};
 pub use frozen::{DirectoryStore, FrozenStore, StoreError};
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
 pub use ground::{
-    GroundLevel, GroundMesh, ground, ground_channels, ground_height, ground_materials,
-    ground_readers, ground_values,
+    GROUND_CHANNELS, GroundLevel, GroundMesh, ground, ground_channels, ground_height,
+    ground_materials, ground_readers, ground_values,
 };
 pub use occluders::occluders;
 pub use products::{

@@ -180,6 +180,11 @@ pub struct WaveForgeStages {
     /// the green channel of `wave_forge_channels`. Empty for none.
     #[export]
     ground_wetness_stage: GString,
+    /// A field stage at the ground's scale whose values, 0 to 1, tint the ground toward its grass's
+    /// colour where the grass fades out, in the blue channel of `wave_forge_channels`: the grass's
+    /// cover, so covered ground beyond the grass's radius reads as the same meadow. Empty for none.
+    #[export]
+    ground_cover_stage: GString,
     /// The material the pack's sea is drawn with: a plane at its water level under the followed
     /// chunk, as wide as the view. Empty, or a pack without water, draws no sea.
     #[export]
@@ -814,6 +819,7 @@ impl INode for WaveForgeStages {
             ground_palette: PackedColorArray::new(),
             ground_cavity_stage: GString::new(),
             ground_wetness_stage: GString::new(),
+            ground_cover_stage: GString::new(),
             chunk_materials: HashMap::new(),
             palette: None,
             collider_radius: 1,
@@ -1025,6 +1031,7 @@ impl INode for WaveForgeStages {
             self.ground_material_stage.to_string(),
             self.ground_cavity_stage.to_string(),
             self.ground_wetness_stage.to_string(),
+            self.ground_cover_stage.to_string(),
             self.water_stage.to_string(),
         ];
         for event in &events {
@@ -1306,10 +1313,17 @@ impl WaveForgeStages {
                 self.chunk_cells.x.max(1) as u32,
                 self.chunk_cells.y.max(1) as u32,
             ];
+            // Blades shrink away over the last chunk before the grass's edge, which is at least
+            // `grass_radius` chunks from the camera whichever way it looks, so no edge shows.
+            let span =
+                (columns[0] as f32 * self.cell_size.x).min(columns[1] as f32 * self.cell_size.z);
+            let end = (self.grass_radius as f32).max(0.5) * span;
+            let fade = Vector2::new((end - span).max(0.0), end);
             match Grass::new(
                 self.grass_material.as_ref(),
                 self.grass_per_cell.max(1) as u32,
                 columns,
+                fade,
             ) {
                 Ok(grass) => self.grass = Some(grass),
                 Err(error) => {
@@ -3225,6 +3239,7 @@ impl WaveForgeStages {
         let material_stage = self.ground_material_stage.to_string();
         let cavity_stage = self.ground_cavity_stage.to_string();
         let wetness_stage = self.ground_wetness_stage.to_string();
+        let cover_stage = self.ground_cover_stage.to_string();
         let water_stage = self.water_stage.to_string();
         let cell = self.cell_size.to_array();
         // Drops first: a raise drops a chunk and generates it again in one frame, and it is due.
@@ -3287,14 +3302,17 @@ impl WaveForgeStages {
                     ground_values(chunk, |at| worker.field(stage, at)).map(Some)
                 }
             };
-            let (Some(cavity), Some(wetness)) = (channel(&cavity_stage), channel(&wetness_stage))
-            else {
+            let (Some(cavity), Some(wetness), Some(cover)) = (
+                channel(&cavity_stage),
+                channel(&wetness_stage),
+                channel(&cover_stage),
+            ) else {
                 continue;
             };
             built.push((
                 chunk,
                 mesh,
-                Some((ids, ground_channels(cavity, wetness))),
+                Some((ids, ground_channels([cavity, wetness, cover]))),
                 water,
             ));
         }
@@ -3311,8 +3329,16 @@ impl WaveForgeStages {
             add_levelled_surface(rid, &mut arrays, finest, &coarser);
             match (ids, &self.palette) {
                 (Some((ids, channels)), Some((palette, template))) => {
-                    let material =
-                        chunk_material(template, palette, &mesh, &ids, channels.as_deref(), cell);
+                    let fade = self.grass.as_ref().map(Grass::fade);
+                    let material = chunk_material(
+                        template,
+                        palette,
+                        &mesh,
+                        &ids,
+                        channels.as_deref(),
+                        fade,
+                        cell,
+                    );
                     rendering.mesh_surface_set_material(rid, 0, material.get_rid());
                     self.chunk_materials.insert(chunk, material);
                 }
@@ -4653,7 +4679,7 @@ impl WaveForgeStages {
         }
         let at_scale_one = |stage: &str| pack.scale(stage) == Some(1);
         let far_scale = pack.scale(&self.far_ground_stage.to_string());
-        let settings: [(&str, &GString, &str, Fits<'_>); 11] = [
+        let settings: [(&str, &GString, &str, Fits<'_>); 12] = [
             ("ground_stage", &self.ground_stage, "", &|_, _| true),
             ("grass_stage", &self.grass_stage, "", &|_, _| true),
             (
@@ -4684,6 +4710,12 @@ impl WaveForgeStages {
             (
                 "ground_wetness_stage",
                 &self.ground_wetness_stage,
+                "field ",
+                &|stage, _| pack.is_field(stage),
+            ),
+            (
+                "ground_cover_stage",
+                &self.ground_cover_stage,
                 "field ",
                 &|stage, _| pack.is_field(stage),
             ),
@@ -5441,13 +5473,15 @@ fn phase(local: u64) -> f32 {
     (mixed >> 40) as f32 / (1u64 << 24) as f32
 }
 
-/// A chunk's copy of `template` holding the material `ids` of its ground's vertices, one texel each.
+/// A chunk's copy of `template` holding the material `ids` of its ground's vertices, one texel each,
+/// its `channels`, and the grass's `fade`, over which its cover's tint comes in as the blades go.
 fn chunk_material(
     template: &Gd<ShaderMaterial>,
     palette: &Gd<ImageTexture>,
     mesh: &GroundMesh,
     ids: &[u8],
     channels: Option<&[f32]>,
+    fade: Option<Vector2>,
     cell: [f32; 3],
 ) -> Gd<ShaderMaterial> {
     let image = Image::create_from_data(
@@ -5475,12 +5509,15 @@ fn chunk_material(
             mesh.size[0] as i32,
             mesh.size[1] as i32,
             false,
-            ImageFormat::RGF,
+            ImageFormat::RGBF,
             &PackedByteArray::from(bytes.as_slice()),
         )
-        .expect("an image of two floats per vertex");
+        .expect("an image of three floats per vertex");
         let texture = ImageTexture::create_from_image(&image).expect("a texture of the image");
         material.set_shader_parameter("wave_forge_channels", &texture.to_variant());
+    }
+    if let Some(fade) = fade {
+        material.set_shader_parameter("wave_forge_fade", &fade.to_variant());
     }
     material
 }

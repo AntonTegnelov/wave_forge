@@ -25,7 +25,7 @@ use bevy_render::render_resource::{
 };
 use bevy_shader::ShaderRef;
 use wave_forge::stages::Field;
-use wave_forge::{ChunkCoord, GroundMesh, VolumeMesh};
+use wave_forge::{ChunkCoord, GROUND_CHANNELS, GroundMesh, VolumeMesh};
 
 /// How many colours a palette holds: one per category a Rules stage can have.
 const PALETTE: usize = 256;
@@ -53,6 +53,14 @@ pub struct GroundLook {
     pub wet_darkening: f32,
     /// The perceptual roughness fully wet ground takes.
     pub wet_roughness: f32,
+    /// How far fully covered ground beyond the grass tints toward `cover_colour`, 0 to 1.
+    pub cover_tint: f32,
+    /// The colour covered ground tints toward, its grass's seen from afar, linear RGB.
+    pub cover_colour: Vec4,
+    /// The horizontal distances from the camera over which covered ground tints in: the grass's
+    /// [`GrassSettings::fade`], so the ground is as it is where the blades stand and tinted where
+    /// they have gone. Farther than any view by default, so nothing is tinted.
+    pub cover_fade: Vec2,
 }
 
 impl Default for GroundLook {
@@ -71,6 +79,9 @@ impl Default for GroundLook {
             cavity_darkening: 0.6,
             wet_darkening: 0.45,
             wet_roughness: 0.35,
+            cover_tint: 0.5,
+            cover_colour: Color::srgb(0.32, 0.5, 0.18).to_linear().to_vec4(),
+            cover_fade: Vec2::new(1e9, 2e9),
         }
     }
 }
@@ -107,8 +118,8 @@ pub struct GroundMaterials {
     /// How the ground is drawn beyond the palette's colours.
     #[uniform(103)]
     pub look: GroundLook,
-    /// Two floats per ground vertex, its cavity and wetness, 0 to 1 ([`ground_channels_image`]);
-    /// a single texel of zeros for a ground without channels.
+    /// Per ground vertex its cavity, wetness and cover, 0 to 1 ([`ground_channels_image`]); a
+    /// single texel of zeros for a ground without channels.
     #[texture(104, sample_type = "float", filterable = false)]
     pub channels: Handle<Image>,
 }
@@ -199,6 +210,11 @@ pub struct GrassSettings {
     pub base_colour: Vec4,
     /// A blade's colour at its tip, linear RGBA.
     pub tip_colour: Vec4,
+    /// The horizontal distances from the camera at which blades start to shrink and have gone, so
+    /// the grass ends without a visible edge: set it to end where the app stops giving chunks grass,
+    /// and give the ground's [`GroundLook::cover_fade`] the same, so covered ground tints toward the
+    /// grass's colour as the blades go. Farther than any view by default.
+    pub fade: Vec2,
 }
 
 /// What [`GrassMaterial`] adds to a `StandardMaterial`: the chunk's settings, the ground's height
@@ -404,6 +420,7 @@ pub fn grass_material_of(
                 chunk_and_count: IVec4::new(mesh.chunk.x, mesh.chunk.y, per_column as i32, 0),
                 base_colour: Vec4::new(0.03, 0.08, 0.01, 1.0),
                 tip_colour: Vec4::new(0.26, 0.5, 0.07, 1.0),
+                fade: Vec2::new(1e9, 2e9),
             },
             heights: images.add(heights),
             cover: images.add(covered),
@@ -522,17 +539,17 @@ pub fn ground_material(
 }
 
 /// The image of a chunk's ground channels for [`GroundMaterials::channels`]: `channels` as
-/// [`wave_forge::ground_channels`] lays them out, two floats per vertex of a ground of `size`
-/// vertices.
+/// [`wave_forge::ground_channels`] lays them out, [`GROUND_CHANNELS`] floats per vertex of a ground
+/// of `size` vertices, padded to four, since a texture has no format of three floats.
 ///
 /// # Panics
-/// If `channels` does not hold two values per vertex.
+/// If `channels` does not hold [`GROUND_CHANNELS`] values per vertex.
 #[must_use]
 pub fn ground_channels_image(size: [u32; 2], channels: &[f32]) -> Image {
     assert_eq!(
         channels.len(),
-        2 * (size[0] * size[1]) as usize,
-        "two channels per vertex"
+        GROUND_CHANNELS * (size[0] * size[1]) as usize,
+        "a value per channel per vertex"
     );
     Image::new(
         Extent3d {
@@ -542,10 +559,11 @@ pub fn ground_channels_image(size: [u32; 2], channels: &[f32]) -> Image {
         },
         TextureDimension::D2,
         channels
-            .iter()
-            .flat_map(|value| value.to_le_bytes())
+            .chunks(GROUND_CHANNELS)
+            .flat_map(|vertex| [vertex[0], vertex[1], vertex[2], 0.0])
+            .flat_map(f32::to_le_bytes)
             .collect(),
-        TextureFormat::Rg32Float,
+        TextureFormat::Rgba32Float,
         RenderAssetUsages::RENDER_WORLD,
     )
 }
@@ -582,7 +600,7 @@ pub fn ground_material_of(
             materials: images.add(materials),
             palette,
             look: GroundLook::default(),
-            channels: images.add(ground_channels_image([1, 1], &[0.0, 0.0])),
+            channels: images.add(ground_channels_image([1, 1], &[0.0; GROUND_CHANNELS])),
         },
     }
 }
@@ -603,6 +621,7 @@ mod tests {
                     chunk_and_count: IVec4::ZERO,
                     base_colour: Vec4::ONE,
                     tip_colour: Vec4::ONE,
+                    fade: Vec2::new(1e9, 2e9),
                 },
                 heights: Handle::default(),
                 cover: Handle::default(),

@@ -16,8 +16,9 @@ uniform sampler2D wave_forge_materials : filter_nearest, repeat_disable;
 uniform vec2 wave_forge_cell = vec2(1.0);
 // A colour per material id, in texel id of a 256 by 1 texture.
 uniform sampler2D wave_forge_palette : filter_nearest, repeat_disable, source_color;
-// Per ground vertex, 0 to 1: a cavity in red, which darkens the ground, and a wetness in green,
-// which darkens and smooths it. Black, no effect, where the node hands in none.
+// Per ground vertex, 0 to 1: a cavity in red, which darkens the ground, a wetness in green, which
+// darkens and smooths it, and a cover in blue, which tints it toward its grass. Black, no effect,
+// where the node hands in none.
 uniform sampler2D wave_forge_channels : filter_nearest, repeat_disable, hint_default_black;
 uniform float roughness = 0.9;
 // How far a full cavity darkens the ground.
@@ -25,6 +26,13 @@ uniform float cavity_darkening : hint_range(0.0, 1.0) = 0.6;
 // How far full wetness darkens the ground, and the roughness it leaves.
 uniform float wet_darkening : hint_range(0.0, 1.0) = 0.45;
 uniform float wet_roughness : hint_range(0.0, 1.0) = 0.35;
+// The distances from the camera, in world units, over which the grass's blades shrink away: covered
+// ground tints in over them, so where the blades stand the ground is as it is.
+uniform vec2 wave_forge_fade = vec2(1e9, 2e9);
+// The colour fully covered ground tints toward beyond the grass, the grass's own seen from afar,
+// and how far.
+uniform vec3 cover_colour : source_color = vec3(0.32, 0.5, 0.18);
+uniform float cover_tint : hint_range(0.0, 1.0) = 0.5;
 // Rock on steep ground is the ground's own colour muted and darkened, or with this colour's alpha
 // above zero, this colour instead, by that much; and the slopes (one minus the normal's height) at
 // which rock starts and has taken over.
@@ -180,12 +188,15 @@ void fragment() {
 	albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), macro_variation);
 	// The channels, blended between the vertices as the materials are.
 	ivec2 channel_size = textureSize(wave_forge_channels, 0);
-	vec2 channels = vec2(0.0);
+	vec3 channels = vec3(0.0);
 	for (int k = 0; k < 4; k++) {
-		channels += texelFetch(wave_forge_channels, min(corners[k], channel_size - 1), 0).rg * near_weights[k];
+		channels += texelFetch(wave_forge_channels, min(corners[k], channel_size - 1), 0).rgb * near_weights[k];
 	}
 	float cavity = clamp(channels.r, 0.0, 1.0);
 	float wet = clamp(channels.g, 0.0, 1.0);
+	float cover = clamp(channels.b, 0.0, 1.0);
+	float beyond_grass = smoothstep(wave_forge_fade.x, wave_forge_fade.y, length(world.xz - CAMERA_POSITION_WORLD.xz));
+	albedo = mix(albedo, cover_colour, cover * cover_tint * beyond_grass);
 	albedo *= (1.0 - cavity_darkening * cavity) * (1.0 - wet_darkening * wet);
 	albedo *= mix(1.0, 0.86 + 0.28 * fine.x, grain);
 

@@ -309,6 +309,7 @@ fn the_grounds_channels_are_the_librarys_values_of_its_vertices() {
         .with_ground("height")
         .with_ground_materials("cover")
         .with_ground_cavity("hollow")
+        .with_ground_cover("hollow")
         // The ground reads the materials and channels of the chunks beyond its far edges too.
         .with_radius("cover", 2)
         .with_radius("hollow", 2),
@@ -332,7 +333,7 @@ fn the_grounds_channels_are_the_librarys_values_of_its_vertices() {
     let stages = app.world().resource::<WaveForgeStages>();
     for chunk in around_origin() {
         let cavity = ground_values(chunk, |at| direct.field("hollow", at));
-        let expected = ground_channels(cavity, None);
+        let expected = ground_channels([cavity.clone(), None, cavity]);
         assert_eq!(
             stages.ground_channels(chunk),
             expected.as_deref(),

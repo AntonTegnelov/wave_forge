@@ -1,6 +1,7 @@
 //! The ground material drawn by Bevy's own renderer: a chunk whose west half is one material and
 //! east half another. With the flat look it comes out in their palette colours, blended only around
-//! the border; with the default look the colours vary around the palette's.
+//! the border; with the default look the colours vary around the palette's. The ground's channels
+//! darken it where it is hollow or wet and tint it where it is covered.
 //!
 //! ```text
 //! cargo test -p wave_forge_bevy --release --test ground_material_render -- --ignored --nocapture
@@ -44,8 +45,9 @@ const EAST: [u8; 3] = [20, 60, 220];
 struct Pixels(Option<Vec<u8>>);
 
 /// The chunk drawn with `look`, seen from straight above: `SIZE` by `SIZE` pixels, RGBA. With
-/// `channels`, the west half's vertices are fully hollow and the east half's fully wet.
-fn render_halves(look: GroundLook, channels: bool) -> Vec<u8> {
+/// `channels`, the vertices of the half of material id 0 take the first channels and the other
+/// half's the second.
+fn render_halves(look: GroundLook, channels: Option<[[f32; 3]; 2]>) -> Vec<u8> {
     let mut runtime = Runtime::new(
         Arc::new(Pack::parse(PACK).expect("a valid pack")),
         1,
@@ -109,10 +111,10 @@ fn render_halves(look: GroundLook, channels: bool) -> Vec<u8> {
         )
     };
     material.extension.look = look;
-    if channels {
+    if let Some([first, second]) = channels {
         let values: Vec<f32> = ids
             .iter()
-            .flat_map(|&id| if id == 0 { [1.0, 0.0] } else { [0.0, 1.0] })
+            .flat_map(|&id| if id == 0 { first } else { second })
             .collect();
         let image = ground_channels_image(mesh.size, &values);
         material.extension.channels = world.resource_mut::<Assets<Image>>().add(image);
@@ -166,7 +168,7 @@ fn pixel_of(pixels: &[u8], x: u32, y: u32) -> [u8; 3] {
 #[test]
 #[ignore = "needs a device; run with --ignored in release mode"]
 fn with_the_flat_look_a_chunks_materials_come_out_in_their_palette_colours() {
-    let pixels = render_halves(GroundLook::flat(), false);
+    let pixels = render_halves(GroundLook::flat(), None);
 
     let pixel = |x: u32, y: u32| pixel_of(&pixels, x, y);
     let near = |a: [u8; 3], b: [u8; 3]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2);
@@ -199,7 +201,7 @@ fn with_the_flat_look_a_chunks_materials_come_out_in_their_palette_colours() {
 #[test]
 #[ignore = "needs a device; run with --ignored in release mode"]
 fn with_the_default_look_the_colours_vary_around_the_palettes() {
-    let pixels = render_halves(GroundLook::default(), false);
+    let pixels = render_halves(GroundLook::default(), None);
 
     // The two quarters furthest from the border, which lies 3.5 cells into the 8 the camera sees.
     let (left, right): (Vec<[u8; 3]>, Vec<[u8; 3]>) = (0..SIZE)
@@ -237,7 +239,8 @@ fn with_the_default_look_the_colours_vary_around_the_palettes() {
 #[ignore = "needs a device; run with --ignored in release mode"]
 fn a_hollow_darkens_the_ground_and_wetness_darkens_it_less() {
     let look = GroundLook::flat();
-    let pixels = render_halves(look, true);
+    // Fully hollow on one half, fully wet on the other.
+    let pixels = render_halves(look, Some([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]));
 
     // The factors darken the linear colour, which the target stores as sRGB.
     let darkened = |colour: [u8; 3], by: f32| {
@@ -259,4 +262,55 @@ fn a_hollow_darkens_the_ground_and_wetness_darkens_it_less() {
         (near(left, hollow) && near(right, wet)) || (near(left, wet) && near(right, hollow)),
         "left {left:?}, right {right:?}; hollow {hollow:?}, wet {wet:?}"
     );
+}
+
+/// The tint the cover gives: fully covered ground takes it whole beyond the grass.
+const COVER: [u8; 3] = [40, 200, 60];
+
+/// The halves' colours, left and right, with one half fully covered and the other bare, and the
+/// grass fading out over `cover_fade`.
+fn covered_halves(cover_fade: Vec2) -> ([u8; 3], [u8; 3]) {
+    let look = GroundLook {
+        cover_tint: 1.0,
+        cover_colour: Color::srgb_u8(COVER[0], COVER[1], COVER[2])
+            .to_linear()
+            .to_vec4(),
+        cover_fade,
+        ..GroundLook::flat()
+    };
+    let pixels = render_halves(look, Some([[0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]));
+    (
+        pixel_of(&pixels, 4, SIZE / 2),
+        pixel_of(&pixels, SIZE - 5, SIZE / 2),
+    )
+}
+
+fn near(a: [u8; 3], b: [u8; 3]) -> bool {
+    a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2)
+}
+
+fn bare(colour: [u8; 3]) -> bool {
+    near(colour, WEST) || near(colour, EAST)
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn covered_ground_beyond_the_grass_takes_the_cover_colour() {
+    // The camera stands over the chunk, so all of it is beyond a fade that ends behind it.
+    let (left, right) = covered_halves(Vec2::new(-2.0, -1.0));
+
+    println!("left {left:?}, right {right:?}; cover {COVER:?}");
+    assert!(
+        (near(left, COVER) && bare(right)) || (bare(left) && near(right, COVER)),
+        "left {left:?}, right {right:?}; cover {COVER:?}"
+    );
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn covered_ground_where_the_blades_stand_keeps_its_colour() {
+    let (left, right) = covered_halves(Vec2::new(100.0, 200.0));
+
+    println!("left {left:?}, right {right:?}");
+    assert!(bare(left) && bare(right), "left {left:?}, right {right:?}");
 }

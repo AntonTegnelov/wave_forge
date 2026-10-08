@@ -235,14 +235,19 @@ and `GroundLook::flat()` the palette's colours alone, blended between the vertic
 chunks beyond its far edges, so the material stage has to be generated one chunk beyond the ground,
 with `.with_radius` say.
 
-`WaveForgeStagesPlugin::with_ground_cavity(stage)` and `with_ground_wetness(stage)` give the ground
-channels from field stages, as Godot's `ground_cavity_stage` and `ground_wetness_stage` do
+`WaveForgeStagesPlugin::with_ground_cavity(stage)`, `with_ground_wetness(stage)` and
+`with_ground_cover(stage)` give the ground channels from field stages, as Godot's
+`ground_cavity_stage`, `ground_wetness_stage` and `ground_cover_stage` do
 ([godot.md](godot.md#ground-and-colliders)): a chunk's ground waits for them too, generated one
 chunk beyond it as the materials are, and `WaveForgeStages::ground_channels(chunk)` gives them per
-vertex, cavity then wetness. `ground_material` puts them in `GroundMaterials::channels`, a two-float
-texture `ground_channels_image(size, channels)` makes, and a ground built some other way sets that
-field itself; without channels it is a single texel of zeros. `GroundLook`'s `cavity_darkening`,
-`wet_darkening` and `wet_roughness` say how far they darken and smooth the ground.
+vertex, cavity, wetness and cover. `ground_material` puts them in `GroundMaterials::channels`, a
+texture `ground_channels_image(size, channels)` makes of four floats a texel, the fourth unused,
+since a texture has no format of three; a ground built some other way sets that field itself, and
+without channels it is a single texel of zeros. `GroundLook`'s `cavity_darkening`, `wet_darkening`
+and `wet_roughness` say how far they darken and smooth the ground, and `cover_tint` and
+`cover_colour` how far covered ground tints toward the grass, coming in over `cover_fade`: the
+grass's `fade` ([Grass](#grass)), so the ground is as it is where the blades stand. Its default,
+farther than any view, tints nothing.
 
 ## Grass
 
@@ -255,8 +260,11 @@ cover, cell, per_column, base, images)` makes one for a ground built some other 
 ground's height per vertex (one float each) and the cover per column (one byte each) as images. The
 grass shader gives blade *b* its column, a hashed place in it, a hashed turn and height, and shows
 it only where a hash is below the column's cover; it stands on the ground's heights, blended between
-vertices, and sways in the wind. A blade is drawn from both sides, casts no shadow and has no
-prepass.
+vertices, and sways in the wind. Blades shrink away by their horizontal distance from the camera over
+`GrassSettings::fade`, farther than any view by default: an app that gives grass to chunks within
+some distance sets it to end there, and the ground's `cover_fade` to the same, so the grass thins
+out before its edge and the ground beyond takes its colour. A blade is drawn from both sides, casts
+no shadow and has no prepass.
 
 The shader moves the blades far from where the mesh has them, so a chunk's grass needs the bounds
 `grass_bounds(stages, chunk)` gives, or `grass_bounds_of(mesh, cell)`: an `Aabb` over the chunk and
