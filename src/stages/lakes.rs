@@ -11,12 +11,17 @@
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
+use wfc_core::hash::pcg3d;
 
-/// A column waiting in the flood: the height water stands at there, then where it is. Ordered by
-/// height, then position, so the flood visits columns in the same order every time.
+/// A column waiting in the flood: the height water stands at there, a hash of its place in the
+/// world, when it was reached, and where it is. Ordered by height, then by the hash, then by when it
+/// was reached, so the flood visits columns in the same order every time and crosses a flat in a
+/// wandering front rather than in straight lines.
 #[derive(Clone, Copy, PartialEq)]
 struct Wet {
     level: f32,
+    tie: u32,
+    order: usize,
     at: usize,
 }
 
@@ -26,7 +31,8 @@ impl Ord for Wet {
     fn cmp(&self, other: &Self) -> Ordering {
         self.level
             .total_cmp(&other.level)
-            .then(self.at.cmp(&other.at))
+            .then(self.tie.cmp(&other.tie))
+            .then(self.order.cmp(&other.order))
     }
 }
 
@@ -34,6 +40,76 @@ impl PartialOrd for Wet {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
+}
+
+/// What a priority flood over a region gives: the height water stands at over every column, and
+/// the column its water runs to next, toward the region's edge or the sea, `None` where it drains
+/// away there.
+pub(crate) struct Flood {
+    pub(crate) filled: Vec<f32>,
+    pub(crate) toward: Vec<Option<usize>>,
+}
+
+/// A priority flood over a region of `size` columns (x fastest) whose ground is `heights` and whose
+/// first column is `origin` in the world, from its edge columns and the columns at or below the sea
+/// at `sea`: every column filled to the lowest height its water could drain away over, and pointed
+/// at the column it was reached from, so water leaves a hollow over the lowest point it spills over
+/// and crosses a flat toward its way out.
+///
+/// # Panics
+/// If `heights` does not hold `size[0] * size[1]` heights.
+pub(crate) fn flood(heights: &[f32], size: [usize; 2], origin: [i64; 2], sea: f32) -> Flood {
+    let [w, h] = size;
+    assert_eq!(heights.len(), w * h, "a height per column");
+    let mut filled = heights.to_vec();
+    let mut toward = vec![None; heights.len()];
+    let mut visited = vec![false; heights.len()];
+    let mut queue = BinaryHeap::new();
+    let mut order = 0;
+    let tie = |at: usize| {
+        let (x, y) = (origin[0] + (at % w) as i64, origin[1] + (at / w) as i64);
+        pcg3d([x as u32, y as u32, 0x666C_6F77])[0]
+    };
+    for y in 0..h {
+        for x in 0..w {
+            let at = y * w + x;
+            let edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+            if edge || heights[at] <= sea {
+                visited[at] = true;
+                queue.push(Reverse(Wet {
+                    level: heights[at],
+                    tie: tie(at),
+                    order,
+                    at,
+                }));
+                order += 1;
+            }
+        }
+    }
+    while let Some(Reverse(Wet { level, at, .. })) = queue.pop() {
+        let (x, y) = (at % w, at / w);
+        for (dx, dy) in [(1_isize, 0_isize), (-1, 0), (0, 1), (0, -1)] {
+            let (nx, ny) = (x as isize + dx, y as isize + dy);
+            if nx < 0 || ny < 0 || nx >= w as isize || ny >= h as isize {
+                continue;
+            }
+            let next = ny as usize * w + nx as usize;
+            if visited[next] {
+                continue;
+            }
+            visited[next] = true;
+            filled[next] = heights[next].max(level);
+            toward[next] = Some(at);
+            queue.push(Reverse(Wet {
+                level: filled[next],
+                tie: tie(next),
+                order,
+                at: next,
+            }));
+            order += 1;
+        }
+    }
+    Flood { filled, toward }
 }
 
 /// The water surface over a region of `size` columns (x fastest) whose ground is `heights`: a
@@ -49,42 +125,8 @@ pub(crate) fn lake_surface(
     min_columns: u32,
 ) -> Vec<f32> {
     let [w, h] = size;
-    assert_eq!(heights.len(), w * h, "a height per column");
-    let mut filled = heights.to_vec();
-    let mut visited = vec![false; heights.len()];
-    let mut queue = BinaryHeap::new();
-    for y in 0..h {
-        for x in 0..w {
-            let at = y * w + x;
-            let edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
-            if edge || heights[at] <= sea {
-                visited[at] = true;
-                queue.push(Reverse(Wet {
-                    level: heights[at],
-                    at,
-                }));
-            }
-        }
-    }
-    while let Some(Reverse(Wet { level, at })) = queue.pop() {
-        let (x, y) = (at % w, at / w);
-        for (dx, dy) in [(1_isize, 0_isize), (-1, 0), (0, 1), (0, -1)] {
-            let (nx, ny) = (x as isize + dx, y as isize + dy);
-            if nx < 0 || ny < 0 || nx >= w as isize || ny >= h as isize {
-                continue;
-            }
-            let next = ny as usize * w + nx as usize;
-            if visited[next] {
-                continue;
-            }
-            visited[next] = true;
-            filled[next] = heights[next].max(level);
-            queue.push(Reverse(Wet {
-                level: filled[next],
-                at: next,
-            }));
-        }
-    }
+    // The water's surface is the same however the flood breaks ties, so its place is no matter.
+    let filled = flood(heights, size, [0, 0], sea).filled;
 
     // Lakes: connected columns filled above their ground and above the sea.
     let wet = |at: usize| filled[at] > heights[at] && filled[at] > sea;

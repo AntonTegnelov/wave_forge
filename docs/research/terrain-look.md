@@ -73,8 +73,9 @@ erosion suits finite maps generated once.
 - **Water and drainage.** Lakes by priority flood and rivers down steepest descent, both region
   jobs, carved by Apply. Gullies from the Erode filter (#325), and on finite worlds drainage by a
   Droplets stage a region at a time (#329), which the continent runs over its whole coarse map
-  ([packs.md](../reference/packs.md#droplets)). Rivers still stop on flats and in enclosed basins
-  (#347), and nothing transports sediment (#348).
+  ([packs.md](../reference/packs.md#droplets)). Rivers follow a priority flood's flow through
+  hollows and flats, and the continent's run on through its lakes to the sea (#347); nothing
+  transports sediment (#348).
 - **Ground shading.** The reference ground shader (#322) takes a palette colour per category per
   vertex and draws it procedurally: borders broken by noise rather than following the 2 m grid,
   rock by the fragment's slope in muted strata, a broad colour variation, and a fine bump and grain
@@ -107,8 +108,8 @@ erosion suits finite maps generated once.
    done in both engines.
 7. **Erosion for finite worlds** (#329, then #348). A region job of droplets, then transport, for
    real drainage on worlds run ahead of time. The droplets are in (#329), about 0.58 s a region of
-   512 by 512 columns ([measurements.md](measurements.md), E61); transport is #348, and rivers that
-   follow the drainage across flats and basins are #347. Its time competes with M1's 10 minutes,
+   512 by 512 columns ([measurements.md](measurements.md), E61), and rivers follow the drainage
+   across flats and basins (#347); transport is #348. Its time competes with M1's 10 minutes,
    already exceeded on the desktop (#319).
 
 Not on the list: a clipmap renderer of our own, which [engine-integration.md](../architecture/engine-integration.md)

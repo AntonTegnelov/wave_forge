@@ -1057,16 +1057,23 @@ registers its own jobs in the runtime it builds; a Godot game, which cannot, use
 
 `Rivers(height: "terrain", region: 16, sources: 3, width: (0.6, 2.0), step: 2)`: rivers down a
 height field, a region job built into the library, so a pack names it without Rust. In every square
-region of `region` chunks, each of `sources` rivers (1 to `MAX_SOURCES`, 64) starts at the highest
-of a few hashed columns of the region and steps `step` cells (default 1) at a time to the lowest of
-the eight columns around it, until it reaches a height below the pack's water ([Water](#water)), a
-lake of the pack's water (a column where the lake's water stands above the ground its Lakes stage
-filled), a hollow where no step goes lower, or the region's edge. A river may run down another field
-than the lakes' ground, a smoother one say, and still ends at their lakes. Its values, the radius an Apply stage carves
-by, grow from `width.0` at its source to `width.1` at its mouth (default 1 to 3). A river never
-leaves its region, so regions never read each other, and rivers are the same in any order; a river
-that reaches its region's edge stops there, so large regions suit an island whose rivers run to its
-coast. The ring world's rivers run from its high ground to the sea and are carved into its `ground`.
+region of `region` chunks, a priority flood (Barnes, Lehman and Mulla, 2014) from the region's edge
+columns and the columns at or below the pack's water ([Water](#water)) points every column at the
+one its water runs to next: down the slope, out of a hollow over the lowest point it spills over,
+and across a flat toward its way out, ties broken by a hash of the column so a river crosses a flat
+in a wandering line. Each of `sources` rivers (1 to `MAX_SOURCES`, 64) starts at the highest of a
+few hashed columns within the region's edge and follows those columns, with a point every `step`
+cells (default 1), until it reaches the sea, the region's edge, a river an earlier source traced
+(where it joins it), or a lake of the pack's water (a column where the lake's water stands above the
+ground its Lakes stage filled). With `through_lakes: true` it runs on through a lake to its outlet
+instead, so a world whose ground is full of small lakes still has rivers that reach the sea. A
+river may run down another field than the lakes' ground and still ends at their lakes. Its values,
+the radius an Apply stage carves by, grow from `width.0` at its source to `width.1` at its mouth
+(default 1 to 3). A river never leaves its region, so regions never read each other, and rivers
+are the same in any order; a river that reaches its region's edge stops there, so large regions
+suit an island whose rivers run to its coast. The ring world's rivers run from its high ground to
+the sea and are carved into its `ground`; the continent's run through its lakes, down the drained
+terrain, from its ranges to the sea or their region's edge.
 
 ### Lakes
 
