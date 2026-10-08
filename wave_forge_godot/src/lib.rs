@@ -146,6 +146,11 @@ pub struct WaveForgeWorld {
     #[export_group(name = "Streaming")]
     #[export]
     view_radius: i32,
+    /// Whether to follow the viewport's current camera each frame while the game runs, so a world
+    /// generates around the player with no code. A script that calls `follow` takes over, turning
+    /// it off.
+    #[export]
+    follow_camera: bool,
     /// Chunks further than `view_radius` plus this many are dropped. Below one, a chunk that is
     /// about to be asked for again would be dropped, because the chunks a focus needs reach one
     /// beyond its radius. Zero keeps everything.
@@ -225,6 +230,10 @@ pub struct WaveForgeWorld {
     /// its saves. Empty generates an evicted chunk again, tile for tile, when it is needed.
     #[export]
     frozen_directory: GString,
+    /// Where compiled GPU kernels are kept across runs, so a world started at boot does not compile
+    /// them on every launch; `user://` paths are resolved. Empty keeps none.
+    #[export]
+    kernel_cache: GString,
 
     /// Tiles allowed on each layer, from the world's lowest layer up, as set by
     /// [`WaveForgeWorld::set_layer_tiles`].
@@ -329,11 +338,13 @@ impl INode for WaveForgeWorld {
             chunk_cells: Vector3i::new(8, 8, 8),
             cell_size: Vector3::ONE,
             view_radius: 2,
+            follow_camera: true,
             halo: 1,
             evict_margin: 0,
             world_chunks: Vector3i::ZERO,
             warm_kernels: true,
             frozen_directory: GString::new(),
+            kernel_cache: GString::from("user://wave_forge/kernels"),
             layers: Vec::new(),
             face_bans: Default::default(),
             rules: None,
@@ -420,6 +431,15 @@ impl INode for WaveForgeWorld {
                 self.base_mut().update_configuration_warnings();
             }
         }
+        if self.follow_camera && !Engine::singleton().is_editor_hint() {
+            let camera = self
+                .base()
+                .get_viewport()
+                .and_then(|viewport| viewport.get_camera_3d());
+            if let Some(camera) = camera {
+                self.follow_position(camera.get_global_position());
+            }
+        }
         let processing = std::time::Instant::now();
         let (events, failure) = match &mut self.worker {
             Some(worker) => (worker.drain(), worker.failure().map(ToOwned::to_owned)),
@@ -486,6 +506,9 @@ impl WaveForgeWorld {
         }
         warnings.extend(warnings::physics(self.collider_radius));
         warnings.extend(warnings::occlusion(self.occluder_radius));
+        if self.follow_camera {
+            warnings.extend(warnings::camera(&self.to_gd().upcast()));
+        }
         if self.audio_radius >= 0 {
             warnings.extend(warnings::buses(&[
                 ("interior_reverb_bus", &self.interior_reverb_bus),
@@ -667,15 +690,20 @@ impl WaveForgeWorld {
         let frozen = (!self.frozen_directory.is_empty()).then(|| {
             std::path::PathBuf::from(crate::paths::directory_path(&self.frozen_directory))
         });
+        let cache = (!self.kernel_cache.is_empty())
+            .then(|| std::path::PathBuf::from(crate::paths::directory_path(&self.kernel_cache)));
         self.followed = None;
         // Everything here happens on the generating thread, including building the device and
         // compiling the kernels, so Godot's own thread never waits for either.
         self.worker = Some(ending::Ending::new(Worker::spawn(move || {
-            let mut world = Builder::new(ruleset, prior)
+            let builder = Builder::new(ruleset, prior)
                 .seed(seed)
                 .extent(extent)
-                .halo(halo)
-                .build()?;
+                .halo(halo);
+            let mut world = match &cache {
+                Some(dir) => builder.build_cached(dir)?,
+                None => builder.build()?,
+            };
             if let Some(directory) = frozen {
                 world = world.with_store(Box::new(DirectoryStore::new(directory)));
             }
@@ -735,9 +763,18 @@ impl WaveForgeWorld {
 
     /// Asks for the chunks around `position`, which is where the player is.
     ///
-    /// Call it every frame: nothing happens until the position crosses into another chunk.
+    /// Call it every frame: nothing happens until the position crosses into another chunk. Called
+    /// while the game runs, it turns `follow_camera` off: the script follows from then on.
     #[func]
     fn follow(&mut self, position: Vector3) {
+        if !Engine::singleton().is_editor_hint() {
+            self.follow_camera = false;
+        }
+        self.follow_position(position);
+    }
+
+    /// What `follow` does, without turning `follow_camera` off.
+    fn follow_position(&mut self, position: Vector3) {
         let chunk = from_vector(self.chunk_at(position));
         if self.followed == Some(chunk) {
             return;
