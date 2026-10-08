@@ -280,13 +280,11 @@
             otherwise: Input("height"),
             blend: 4,
         ))),
-        // Lakes in the terrain's hollows, and rivers from the high ground to the sea or a lake,
-        // in regions of 64 chunks, carved into the terrain. The rivers run down the drained
-        // height between its columns, which the droplets left without the terrain's small hollows,
-        // so they follow the drainage's valleys as far as the sea or a lake.
+        // Lakes in the terrain's hollows, and rivers from the high ground,
+        // in regions of 64 chunks, carved into the terrain. The rivers run on through lakes and
+        // hollows to the sea or their region's edge, following the drainage's valleys.
         (name: "lakes", kind: Lakes(height: "terrain", region: 64, min_columns: 12)),
-        (name: "drainage", kind: Field(Input("drained"))),
-        (name: "rivers", kind: Rivers(height: "drainage", region: 64, sources: 6, width: (0.8, 3.0), step: 2)),
+        (name: "rivers", kind: Rivers(height: "terrain", region: 64, sources: 6, width: (0.8, 3.0), step: 2, through_lakes: true)),
         (name: "carved", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
             profile: Carve(0.8))),
         // The lakes' and rivers' water an engine draws (docs/reference/packs.md, "Water surfaces"):
