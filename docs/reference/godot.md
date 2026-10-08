@@ -22,7 +22,7 @@ extension needs none of godot-rust's thread-safety features.
 | | `cell_size` | one cell in Godot's world units, along Godot's axes |
 | | `world_chunks` | the world's size in chunks along each lattice axis; 0 is unbounded |
 | Streaming | `view_radius` | chunks kept generated around the followed position |
-| | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off. In the editor the plugin follows the editor's camera instead |
+| | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off |
 | | `evict_margin` | chunks further than `view_radius` plus this are dropped |
 | Physics | `collider_radius` | chunks around the player that get colliders |
 | Navigation | `navigation_radius` | chunks around the player that get navigation meshes |
