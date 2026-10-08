@@ -2516,7 +2516,19 @@ impl Runtime {
                         .water()
                         .expect("a pack with rivers declares water")
                         .level,
-                    lakes: self.pack.water().and_then(|water| water.lakes.as_deref()),
+                    lakes: self
+                        .pack
+                        .water()
+                        .and_then(|water| water.lakes.as_deref())
+                        .map(|lakes| {
+                            let Some(StageKind::Lakes { height, .. }) = self.pack.kind(lakes)
+                            else {
+                                unreachable!(
+                                    "the pack's water names a Lakes stage, checked when loaded"
+                                )
+                            };
+                            (lakes, height.as_str())
+                        }),
                     width: *width,
                     step: *step,
                 };

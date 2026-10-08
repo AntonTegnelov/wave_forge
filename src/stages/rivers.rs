@@ -15,8 +15,10 @@ pub(crate) struct DownhillRivers<'a> {
     pub(crate) height: &'a str,
     pub(crate) sources: u32,
     pub(crate) sea: f32,
-    /// The pack's Lakes stage, whose water a river ends in.
-    pub(crate) lakes: Option<&'a str>,
+    /// The pack's Lakes stage, whose water a river ends in, and the ground its lakes were filled
+    /// on: a column is under a lake where the water stands above that ground, whatever height the
+    /// river runs down.
+    pub(crate) lakes: Option<(&'a str, &'a str)>,
     pub(crate) width: (f32, f32),
     pub(crate) step: u32,
 }
@@ -50,8 +52,8 @@ impl RegionJob for DownhillRivers<'_> {
                 if height < self.sea {
                     break;
                 }
-                if let Some(lakes) = self.lakes
-                    && input.field(lakes, at.0, at.1)? > height
+                if let Some((lakes, ground)) = self.lakes
+                    && input.field(lakes, at.0, at.1)? > input.field(ground, at.0, at.1)?
                 {
                     break;
                 }

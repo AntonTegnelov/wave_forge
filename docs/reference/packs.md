@@ -1060,7 +1060,9 @@ height field, a region job built into the library, so a pack names it without Ru
 region of `region` chunks, each of `sources` rivers (1 to `MAX_SOURCES`, 64) starts at the highest
 of a few hashed columns of the region and steps `step` cells (default 1) at a time to the lowest of
 the eight columns around it, until it reaches a height below the pack's water ([Water](#water)), a
-lake of the pack's water, a hollow where no step goes lower, or the region's edge. Its values, the radius an Apply stage carves
+lake of the pack's water (a column where the lake's water stands above the ground its Lakes stage
+filled), a hollow where no step goes lower, or the region's edge. A river may run down another field
+than the lakes' ground, a smoother one say, and still ends at their lakes. Its values, the radius an Apply stage carves
 by, grow from `width.0` at its source to `width.1` at its mouth (default 1 to 3). A river never
 leaves its region, so regions never read each other, and rivers are the same in any order; a river
 that reaches its region's edge stops there, so large regions suit an island whose rivers run to its

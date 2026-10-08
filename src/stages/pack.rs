@@ -2053,6 +2053,13 @@ impl Pack {
         }
         check_ambience(&file)?;
         let lakes = file.water.as_ref().and_then(|water| water.lakes.as_deref());
+        // The ground the pack's lakes are filled on, which rivers read to tell where a lake is.
+        let lakes_ground: Option<String> = lakes.and_then(|lakes| {
+            file.stages.iter().find_map(|def| match &def.kind {
+                StageKind::Lakes { height, .. } if def.name == lakes => Some(height.clone()),
+                _ => None,
+            })
+        });
         let (tables, table_by_name, table_order) = link_tables(file.tables)?;
         for def in &file.stages {
             let mut unknown = None;
@@ -2592,10 +2599,14 @@ impl Pack {
                     {
                         return Err(invalid(format!("widths of {width:?}")));
                     }
-                    // The rivers read the whole region's height, and its lakes, where they end.
+                    // The rivers read the whole region's height, and its lakes, where they end: where
+                    // the water stands above the ground the lakes were filled on.
                     let mut reads = vec![(height.as_str(), Reach::region(*region), Output::Field)];
                     if let Some(lakes) = lakes {
                         reads.push((lakes, Reach::region(*region), Output::Field));
+                        if let Some(ground) = &lakes_ground {
+                            reads.push((ground.as_str(), Reach::region(*region), Output::Field));
+                        }
                     }
                     reads
                 }
