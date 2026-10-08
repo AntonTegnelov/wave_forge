@@ -2575,8 +2575,17 @@ impl Runtime {
             .inputs
             .iter()
             .filter(fields)
-            .map(|&(input, _)| {
-                let view = self.view_over(index, input, (min, max), (halo * sx) as u32);
+            .map(|&(input, reach)| {
+                // An input read a few cells beyond the region and its halo is viewed that far.
+                let cells = match reach {
+                    Reach::Region { cells, .. } => i64::from(cells),
+                    _ => 0,
+                };
+                let (min, max) = (
+                    [min[0] - cells, min[1] - cells],
+                    [max[0] + cells, max[1] + cells],
+                );
+                let view = self.view_over(index, input, (min, max), (halo * sx + cells) as u32);
                 (self.pack.stages[input].name.as_str(), view)
             })
             .collect();

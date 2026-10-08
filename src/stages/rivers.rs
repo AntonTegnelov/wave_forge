@@ -1,11 +1,17 @@
 //! Rivers that run downhill, the region job a pack names with a Rivers stage.
 //!
-//! Every region sends a few rivers from high ground down its height field. A priority flood over
-//! the region points every column at the one its water runs to next, toward the region's edge or
-//! the sea; from each source a river follows those columns, through any hollow over the lowest point
-//! it spills over and across flats toward their way out, until it reaches the sea, a lake or the
-//! edge of its region. A river never leaves its region, so no region reads another's rivers, and
-//! every region comes out the same in any order.
+//! Every region's water leaves it through the sea and through crossings: on each side of the
+//! region, the lowest pair of columns facing each other across the border, which the regions on
+//! both sides find alike from the border's heights alone. Water crosses from the higher column of
+//! the pair to the lower, so a crossing lets water out of one region and into the other.
+//!
+//! A priority flood from the sea and the crossings water leaves by points every column at the one
+//! its water runs to next, through any hollow over the lowest point it spills over and across flats
+//! toward their way out. A river runs up from every crossing water leaves by, along the columns that
+//! gather the most water, and on from every crossing water comes in by, so a river that leaves one
+//! region carries on in the next without either reading the other's rivers; a few more start on
+//! high ground. Each follows the flood's columns until it reaches the sea, a crossing, a river traced
+//! before it, or a lake. Every region comes out the same in any order.
 
 use super::lakes::flood;
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob};
@@ -28,6 +34,17 @@ pub(crate) struct DownhillRivers<'a> {
 
 /// How many columns a source is chosen among: the highest wins, so rivers start on high ground.
 const SOURCE_TRIES: u32 = 8;
+/// How many columns' water a river running up from a crossing still gathers where it starts.
+const STEM_GATHERS: u32 = 64;
+
+/// A side of a region, named by the direction it faces.
+#[derive(Clone, Copy)]
+enum Side {
+    West,
+    East,
+    South,
+    North,
+}
 
 impl RegionJob for DownhillRivers<'_> {
     fn run(&self, input: &RegionInput<'_>) -> Result<Attempt, StageError> {
@@ -43,17 +60,115 @@ impl RegionJob for DownhillRivers<'_> {
                 heights.push(input.field(self.height, x, y)?);
             }
         }
-        let toward = flood(&heights, [width, depth], [x0, y0], self.sea).toward;
         let column = |at: usize| (x0 + (at % width) as i64, y0 + (at / width) as i64);
-        let step = self.step as usize;
+        let index = |(x, y): (i64, i64)| (y - y0) as usize * width + (x - x0) as usize;
+
+        // Each side's crossing: the pair of columns facing each other across the border whose
+        // lower column is lowest, the first along the side on a tie, which the region beyond finds
+        // alike. Water leaves by it where the column inside stands higher; on a level pair it runs
+        // toward +x and +y.
+        let (mut leaving, mut entering) = (Vec::new(), Vec::new());
+        for side in [Side::West, Side::East, Side::South, Side::North] {
+            let along: Vec<((i64, i64), (i64, i64))> = match side {
+                Side::West => (y0..=y1).map(|y| ((x0, y), (x0 - 1, y))).collect(),
+                Side::East => (y0..=y1).map(|y| ((x1, y), (x1 + 1, y))).collect(),
+                Side::South => (x0..=x1).map(|x| ((x, y0), (x, y0 - 1))).collect(),
+                Side::North => (x0..=x1).map(|x| ((x, y1), (x, y1 + 1))).collect(),
+            };
+            let mut lowest: Option<(f32, usize, f32)> = None;
+            for &(inside, outside) in &along {
+                let (here, there) = (
+                    heights[index(inside)],
+                    input.field(self.height, outside.0, outside.1)?,
+                );
+                if lowest.is_none_or(|(low, ..)| here.min(there) < low) {
+                    lowest = Some((here.min(there), index(inside), there));
+                }
+            }
+            let (_, at, there) = lowest.expect("a side has columns");
+            let toward_plus = matches!(side, Side::East | Side::North);
+            // A corner column may be two sides' crossing; it takes the first side's way.
+            if leaving.contains(&at) || entering.contains(&at) {
+                continue;
+            }
+            if heights[at] > there || (heights[at] == there && toward_plus) {
+                leaving.push(at);
+            } else {
+                entering.push(at);
+            }
+        }
+        let sea = |at: usize| heights[at] <= self.sea;
+        if leaving.is_empty() && !(0..heights.len()).any(sea) {
+            // A region lower than all around it at every crossing drains off its lowest edge column.
+            let edge = (0..heights.len()).filter(|&at| {
+                let (x, y) = (at % width, at / width);
+                x == 0 || y == 0 || x == width - 1 || y == depth - 1
+            });
+            leaving.push(
+                edge.min_by(|&a, &b| heights[a].total_cmp(&heights[b]))
+                    .expect("an edge"),
+            );
+        }
+        let flood = flood(&heights, [width, depth], [x0, y0], |at| {
+            sea(at) || leaving.contains(&at)
+        });
+        let toward = flood.toward;
+
+        // How many columns' water each column gathers, and the column above it that gives most.
+        let mut gathers = vec![1u32; heights.len()];
+        for &at in flood.reached.iter().rev() {
+            if let Some(next) = toward[at] {
+                gathers[next] += gathers[at];
+            }
+        }
+        let mut most: Vec<Option<usize>> = vec![None; heights.len()];
+        for &at in &flood.reached {
+            if let Some(next) = toward[at]
+                && most[next].is_none_or(|best| gathers[at] > gathers[best])
+            {
+                most[next] = Some(at);
+            }
+        }
+
         // The columns earlier rivers run through: a later one ends where it joins one.
         let mut taken = vec![false; heights.len()];
         let mut curves = Vec::new();
+        let mut add = |taken: &mut Vec<bool>, cells: Vec<usize>, id: u32, from: f32| {
+            for &cell in &cells {
+                taken[cell] = true;
+            }
+            if let Some(curve) = self.curve(&cells, column, input.region(), id, from) {
+                curves.push(curve);
+            }
+        };
+        let mut id = self.sources;
+        // Up from each crossing water leaves by, along the columns that gather most.
+        for &mouth in &leaving {
+            let mut cells = vec![mouth];
+            let mut at = mouth;
+            while let Some(above) = most[at].filter(|&above| gathers[above] >= STEM_GATHERS) {
+                // A river that drains a lake starts where it leaves it.
+                if self.in_lake(input, column(above))? {
+                    break;
+                }
+                at = above;
+                cells.push(at);
+            }
+            cells.reverse();
+            add(&mut taken, cells, id, self.width.0);
+            id += 1;
+        }
+        // On from each crossing water comes in by, already a river.
+        for &start in &entering {
+            let cells = self.downstream(input, start, &toward, &taken, column)?;
+            add(&mut taken, cells, id, self.width.1);
+            id += 1;
+        }
         for source in 0..self.sources {
             let mut start = None;
             for attempt in 0..SOURCE_TRIES {
                 let hash = input.hash(source * SOURCE_TRIES + attempt);
-                // A source within the region's edge, whose columns drain off it.
+                // A source within the region's edge, where the crossings are.
                 let at = 1
                     + (hash & 0xFFFF) as usize % (width - 2)
                     + (1 + (hash >> 16) as usize % (depth - 2)) * width;
@@ -61,50 +176,80 @@ impl RegionJob for DownhillRivers<'_> {
                     start = Some(at);
                 }
             }
-            let mut at = start.expect("a source is chosen among several columns");
-            let mut cells = vec![at];
-            // The flood's columns lead to the edge or the sea without a loop.
-            while let Some(next) = toward[at] {
-                if taken[at] {
-                    break;
-                }
-                let (x, y) = column(at);
-                if let Some((lakes, ground)) = self.lakes
-                    && input.field(lakes, x, y)? > input.field(ground, x, y)?
-                {
-                    break;
-                }
-                at = next;
-                cells.push(at);
-            }
-            for &cell in &cells {
-                taken[cell] = true;
-            }
-            // A point every `step` cells, and the mouth.
-            let mut path: Vec<(i64, i64)> =
-                cells.iter().step_by(step).map(|&at| column(at)).collect();
-            if (cells.len() - 1) % step != 0 {
-                path.push(column(*cells.last().expect("a river has its source")));
-            }
-            if path.len() < 2 {
-                continue;
-            }
-            let last = (path.len() - 1) as f32;
-            curves.push(Curve {
-                id: CurveId::Region {
-                    region: input.region(),
-                    index: source,
-                },
-                points: path
-                    .iter()
-                    .map(|&(x, y)| [x as f32 + 0.5, y as f32 + 0.5])
-                    .collect(),
-                values: (0..path.len())
-                    .map(|i| self.width.0 + (self.width.1 - self.width.0) * i as f32 / last)
-                    .collect(),
-                heights: Vec::new(),
-            });
+            let start = start.expect("a source is chosen among several columns");
+            let cells = self.downstream(input, start, &toward, &taken, column)?;
+            add(&mut taken, cells, source, self.width.0);
         }
         Ok(Attempt::Accepted(curves))
+    }
+}
+
+impl DownhillRivers<'_> {
+    /// The columns a river starting at `start` runs through, following `toward` until it reaches
+    /// an outlet, a column in `taken`, which it joins, or a lake of the pack's water.
+    fn downstream(
+        &self,
+        input: &RegionInput<'_>,
+        start: usize,
+        toward: &[Option<usize>],
+        taken: &[bool],
+        column: impl Fn(usize) -> (i64, i64),
+    ) -> Result<Vec<usize>, StageError> {
+        let mut at = start;
+        let mut cells = vec![at];
+        // The flood's columns lead to an outlet without a loop.
+        while let Some(next) = toward[at] {
+            if taken[at] {
+                break;
+            }
+            if self.in_lake(input, column(at))? {
+                break;
+            }
+            at = next;
+            cells.push(at);
+        }
+        Ok(cells)
+    }
+
+    /// Whether the column at `(x, y)` is under a lake a river ends in: one of the pack's lakes,
+    /// unless rivers run through them.
+    fn in_lake(&self, input: &RegionInput<'_>, (x, y): (i64, i64)) -> Result<bool, StageError> {
+        Ok(match self.lakes {
+            Some((lakes, ground)) => input.field(lakes, x, y)? > input.field(ground, x, y)?,
+            None => false,
+        })
+    }
+
+    /// The curve of a river through `cells`, a point every `step` cells and its mouth, named `id`
+    /// in `region`, widening from `from` at its first point to `width.1` at its mouth; `None` for a
+    /// river of a single point.
+    fn curve(
+        &self,
+        cells: &[usize],
+        column: impl Fn(usize) -> (i64, i64),
+        region: (i32, i32),
+        id: u32,
+        from: f32,
+    ) -> Option<Curve> {
+        let step = self.step as usize;
+        let mut path: Vec<(i64, i64)> = cells.iter().step_by(step).map(|&at| column(at)).collect();
+        if !(cells.len() - 1).is_multiple_of(step) {
+            path.push(column(*cells.last().expect("a river has its source")));
+        }
+        if path.len() < 2 {
+            return None;
+        }
+        let last = (path.len() - 1) as f32;
+        Some(Curve {
+            id: CurveId::Region { region, index: id },
+            points: path
+                .iter()
+                .map(|&(x, y)| [x as f32 + 0.5, y as f32 + 0.5])
+                .collect(),
+            values: (0..path.len())
+                .map(|i| from + (self.width.1 - from) * i as f32 / last)
+                .collect(),
+            heights: Vec::new(),
+        })
     }
 }

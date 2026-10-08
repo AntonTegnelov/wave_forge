@@ -81,8 +81,11 @@ fn a_river_runs_on_through_hollows_to_the_sea_its_regions_edge_or_another_river(
             river.id
         );
         let (source, mouth) = (river.points[0], *river.points.last().expect("points"));
+        // A river from a source on high ground ends lower; one from a crossing may start in a
+        // hollow.
+        let from_source = matches!(river.id, CurveId::Region { index, .. } if index < 3);
         assert!(
-            ground(mouth) < ground(source),
+            !from_source || ground(mouth) < ground(source),
             "{:?} ends higher than it starts",
             river.id
         );
@@ -120,9 +123,13 @@ fn a_river_climbs_out_of_a_hollow_no_higher_than_it_came_in() {
 
     let rivers = rivers(&[area()]);
 
-    // Water fills a hollow only to where it spills, which is below every point it came down from.
+    // Water fills a hollow only to where it spills, which is below every point it came down from,
+    // for a river from a source on high ground; one from a crossing may start in a hollow.
     let mut climbing = 0;
-    for river in &rivers {
+    for river in rivers
+        .iter()
+        .filter(|river| matches!(river.id, CurveId::Region { index, .. } if index < 3))
+    {
         let heights: Vec<f32> = river.points.iter().map(|&point| ground(point)).collect();
         for (i, &height) in heights.iter().enumerate().skip(1) {
             if height > heights[i - 1] {
@@ -165,10 +172,71 @@ fn a_river_that_joins_another_ends_where_it_joins() {
 #[test]
 fn a_river_widens_from_its_source_to_its_mouth() {
     for river in rivers(&[area()]) {
-        assert_eq!(river.values.first(), Some(&1.0));
+        // A river that comes in across its region's side is already as wide as a mouth.
+        let first = river.values[0];
+        assert!(
+            first == 1.0 || first == 3.0,
+            "{:?} starts {first} wide",
+            river.id
+        );
         assert_eq!(river.values.last(), Some(&3.0));
         assert!(river.values.windows(2).all(|pair| pair[1] >= pair[0]));
     }
+}
+
+#[test]
+fn a_river_that_leaves_its_region_carries_on_in_the_next_from_where_it_left() {
+    let sampler = Runtime::new(pack(), 4, SIZE);
+    let ground = |[x, y]: [f32; 2]| sampler.sample("ground", [x, y]).expect("a sample");
+
+    let rivers = rivers(&[area()]);
+
+    // A mouth on a side of its region, above the sea, faces a river in the region across that
+    // side: one that starts on the column across, or that runs past it, where the river coming in
+    // joins it at once.
+    let inside = |c: f32| c.rem_euclid(32.0);
+    let mut carried = 0;
+    for river in &rivers {
+        let mouth = *river.points.last().expect("points");
+        let (x, y) = (inside(mouth[0]), inside(mouth[1]));
+        let mut across = Vec::new();
+        if x < 1.0 {
+            across.push([mouth[0] - 1.0, mouth[1]]);
+        }
+        if x > 31.0 {
+            across.push([mouth[0] + 1.0, mouth[1]]);
+        }
+        if y < 1.0 {
+            across.push([mouth[0], mouth[1] - 1.0]);
+        }
+        if y > 31.0 {
+            across.push([mouth[0], mouth[1] + 1.0]);
+        }
+        across.retain(|point| point.iter().all(|c| (-64.0..64.0).contains(c)));
+        let near = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) <= STEP;
+        // A river that ends where it joins another of its region does not leave it.
+        let joins = rivers.iter().any(|other| {
+            other.id != river.id
+                && region(other) == region(river)
+                && other.points.iter().any(|&p| near(p, mouth))
+        });
+        if across.is_empty() || ground(mouth) <= 0.0 || joins {
+            continue;
+        }
+        let next = rivers.iter().any(|other| {
+            region(other) != region(river)
+                && across
+                    .iter()
+                    .any(|&point| other.points.iter().any(|&p| near(p, point)))
+        });
+        assert!(
+            next,
+            "{:?} leaves its region at {mouth:?}, but no river is across at {across:?}",
+            river.id
+        );
+        carried += 1;
+    }
+    assert!(carried > 0, "no river leaves its region");
 }
 
 #[test]
@@ -252,7 +320,7 @@ fn the_ring_worlds_rivers_are_carved_into_its_ground() {
 }
 
 #[test]
-fn a_chunk_of_rivers_generates_the_height_over_its_region_alone() {
+fn a_chunk_of_rivers_generates_the_height_over_its_region_and_the_columns_beside_it_alone() {
     let mut runtime = Runtime::new(pack(), 4, SIZE);
 
     runtime
@@ -260,10 +328,11 @@ fn a_chunk_of_rivers_generates_the_height_over_its_region_alone() {
         .expect("a stage");
     runtime.run_until_idle().expect("the stages run");
 
-    // Its region of 4 chunks a side runs from chunk 4 to chunk 7 each way.
+    // Its region of 4 chunks a side runs from chunk 4 to chunk 7 each way, and the column beyond
+    // each side, where the crossings are, lies in the ring of chunks around it, 3 and 8.
     for y in -2..12 {
         for x in -2..12 {
-            let inside = (4..8).contains(&x) && (4..8).contains(&y);
+            let inside = (3..9).contains(&x) && (3..9).contains(&y);
             let held = runtime.field("ground", ChunkCoord::new(x, y, 0)).is_some();
             assert_eq!(held, inside, "the height of chunk ({x}, {y})");
         }

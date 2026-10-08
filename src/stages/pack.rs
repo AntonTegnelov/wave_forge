@@ -531,14 +531,17 @@ pub enum StageKind {
         #[serde(default = "one_attempt")]
         budget: u32,
     },
-    /// Rivers down the `height` field: in every square region of `region` chunks, `sources` of
-    /// them, each from the highest of a few hashed columns within the region's edge, following the
-    /// way a priority flood over the region says its water runs, through hollows and across flats,
-    /// with a point every `step` cells, until it reaches the pack's sea, one of its lakes (or, with
-    /// `through_lakes`, on through them to their outlets) or the region's edge. A river's values,
-    /// its radius for an Apply stage, grow from `width.0` at its source to `width.1` at its mouth.
-    /// A river never leaves its region, so regions never read each other. A chunk's product is the
-    /// rivers of its region that pass through it.
+    /// Rivers down the `height` field (docs/reference/packs.md, "Rivers"): in every square region
+    /// of `region` chunks, a priority flood from the pack's sea and the crossings on the region's
+    /// sides that water leaves by, rivers up from those crossings and on from the ones water comes
+    /// in by, and `sources` more from the highest of a few hashed columns within the region's edge,
+    /// each following the flood through hollows and across flats with a point every `step` cells,
+    /// until it reaches the sea, a crossing, an earlier river or one of the pack's lakes (or, with
+    /// `through_lakes`, on through them to their outlets). A river's values, its radius for an
+    /// Apply stage, grow from `width.0` at its source to `width.1` at its mouth. Regions find the
+    /// crossings between them alike from the border's heights, so a river carries on across them
+    /// without either reading the other's rivers. A chunk's product is the rivers of its region
+    /// that pass through it.
     Rivers {
         height: String,
         region: u32,
@@ -2604,13 +2607,19 @@ impl Pack {
                     {
                         return Err(invalid(format!("widths of {width:?}")));
                     }
-                    // The rivers read the whole region's height, and its lakes, where they end: where
-                    // the water stands above the ground the lakes were filled on.
-                    let mut reads = vec![(height.as_str(), Reach::region(*region), Output::Field)];
+                    // The rivers read the whole region's height and the column beyond each side,
+                    // where the crossings are, and its lakes, where they end: where the water
+                    // stands above the ground the lakes were filled on.
+                    let across = Reach::Region {
+                        size: *region,
+                        halo: 0,
+                        cells: 1,
+                    };
+                    let mut reads = vec![(height.as_str(), across, Output::Field)];
                     if let Some(lakes) = lakes.filter(|_| !*through_lakes) {
                         reads.push((lakes, Reach::region(*region), Output::Field));
                         if let Some(ground) = &lakes_ground {
-                            reads.push((ground.as_str(), Reach::region(*region), Output::Field));
+                            reads.push((ground.as_str(), across, Output::Field));
                         }
                     }
                     reads
