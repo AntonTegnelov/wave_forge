@@ -1,5 +1,5 @@
-//! A Rivers stage: rivers that run downhill from high ground in every region to the sea, a hollow
-//! or the region's edge, widening as they go, the same in any order.
+//! A Rivers stage: rivers that run downhill from high ground in every region, on through hollows,
+//! to the sea, the region's edge or a river they join, widening as they go, the same in any order.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -58,23 +58,16 @@ fn region(curve: &Curve) -> (i32, i32) {
 }
 
 #[test]
-fn a_river_runs_downhill_to_the_sea_a_hollow_or_its_regions_edge() {
+fn a_river_runs_on_through_hollows_to_the_sea_its_regions_edge_or_another_river() {
     let sampler = Runtime::new(pack(), 4, SIZE);
     let ground = |[x, y]: [f32; 2]| sampler.sample("ground", [x, y]).expect("a sample");
 
     let rivers = rivers(&[area()]);
 
-    // Three sources in each of 16 regions, less those that start where no step goes lower.
+    // Three sources in each of 16 regions, less those that start at the sea or the edge.
     assert!(rivers.len() > 40, "{} rivers", rivers.len());
     let mut ends = BTreeMap::new();
     for river in &rivers {
-        for pair in river.points.windows(2) {
-            assert!(
-                ground(pair[1]) < ground(pair[0]),
-                "uphill in {:?}",
-                river.id
-            );
-        }
         let (rx, ry) = region(river);
         let (low, high) = (
             [rx as f32 * 32.0, ry as f32 * 32.0],
@@ -87,35 +80,86 @@ fn a_river_runs_downhill_to_the_sea_a_hollow_or_its_regions_edge() {
             "{:?} leaves its region",
             river.id
         );
-        let end = *river.points.last().expect("a river has points");
-        let around: Vec<[f32; 2]> = [
-            (-1.0, -1.0),
-            (0.0, -1.0),
-            (1.0, -1.0),
-            (-1.0, 0.0),
-            (1.0, 0.0),
-            (-1.0, 1.0),
-            (0.0, 1.0),
-            (1.0, 1.0),
-        ]
-        .iter()
-        .map(|(dx, dy)| [end[0] + dx * STEP, end[1] + dy * STEP])
-        .collect();
-        let why = if ground(end) < 0.0 {
+        let (source, mouth) = (river.points[0], *river.points.last().expect("points"));
+        assert!(
+            ground(mouth) < ground(source),
+            "{:?} ends higher than it starts",
+            river.id
+        );
+        // No hollow stops a river: it ends in the sea, on its region's outermost columns, or where
+        // it joins another river.
+        let on_edge = |[x, y]: [f32; 2]| {
+            x < low[0] + 1.0 || y < low[1] + 1.0 || x > high[0] - 1.0 || y > high[1] - 1.0
+        };
+        // A river joining another ends on it, within a step of one of its points.
+        let joins = rivers.iter().any(|other| {
+            other.id != river.id
+                && region(other) == region(river)
+                && other
+                    .points
+                    .iter()
+                    .any(|p| (p[0] - mouth[0]).hypot(p[1] - mouth[1]) <= 2.0 * STEP)
+        });
+        let why = if ground(mouth) <= 0.0 {
             "sea"
-        } else if around.iter().any(|&next| !within(next)) {
+        } else if on_edge(mouth) {
             "edge"
         } else {
-            assert!(
-                around.iter().all(|&next| ground(next) >= ground(end)),
-                "{:?} stops on a slope",
-                river.id
-            );
-            "hollow"
+            assert!(joins, "{:?} stops inland at {mouth:?}", river.id);
+            "another river"
         };
         *ends.entry(why).or_insert(0) += 1;
     }
     assert!(ends.contains_key("sea"), "{ends:?}");
+}
+
+#[test]
+fn a_river_climbs_out_of_a_hollow_no_higher_than_it_came_in() {
+    let sampler = Runtime::new(pack(), 4, SIZE);
+    let ground = |[x, y]: [f32; 2]| sampler.sample("ground", [x, y]).expect("a sample");
+
+    let rivers = rivers(&[area()]);
+
+    // Water fills a hollow only to where it spills, which is below every point it came down from.
+    let mut climbing = 0;
+    for river in &rivers {
+        let heights: Vec<f32> = river.points.iter().map(|&point| ground(point)).collect();
+        for (i, &height) in heights.iter().enumerate().skip(1) {
+            if height > heights[i - 1] {
+                climbing += 1;
+                let came_in = heights[..i]
+                    .iter()
+                    .copied()
+                    .fold(f32::NEG_INFINITY, f32::max);
+                assert!(
+                    height <= came_in,
+                    "{:?} climbs to {height}, above all it came down from",
+                    river.id
+                );
+            }
+        }
+    }
+    assert!(climbing > 0, "no river crossed a hollow");
+}
+
+#[test]
+fn a_river_that_joins_another_ends_where_it_joins() {
+    let rivers = rivers(&[area()]);
+
+    // Every point a river runs through but its mouth, each with the river it belongs to.
+    let mut owner = BTreeMap::new();
+    for river in &rivers {
+        for point in &river.points[..river.points.len() - 1] {
+            let key = (region(river), point[0].to_bits(), point[1].to_bits());
+            let earlier = owner.insert(key, river.id.clone());
+            assert!(
+                earlier.is_none(),
+                "{:?} and {:?} run on together at {point:?}",
+                earlier,
+                river.id
+            );
+        }
+    }
 }
 
 #[test]

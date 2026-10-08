@@ -532,11 +532,13 @@ pub enum StageKind {
         budget: u32,
     },
     /// Rivers down the `height` field: in every square region of `region` chunks, `sources` of
-    /// them, each from the highest of a few hashed columns stepping `step` cells at a time to the
-    /// lowest column around it, until it reaches the pack's water, a hollow it cannot leave or the
-    /// region's edge. A river's values, its radius for an Apply stage, grow from `width.0` at its source
-    /// to `width.1` at its mouth. A river never leaves its region, so regions never read each
-    /// other. A chunk's product is the rivers of its region that pass through it.
+    /// them, each from the highest of a few hashed columns within the region's edge, following the
+    /// way a priority flood over the region says its water runs, through hollows and across flats,
+    /// with a point every `step` cells, until it reaches the pack's sea, one of its lakes (or, with
+    /// `through_lakes`, on through them to their outlets) or the region's edge. A river's values,
+    /// its radius for an Apply stage, grow from `width.0` at its source to `width.1` at its mouth.
+    /// A river never leaves its region, so regions never read each other. A chunk's product is the
+    /// rivers of its region that pass through it.
     Rivers {
         height: String,
         region: u32,
@@ -545,6 +547,8 @@ pub enum StageKind {
         width: (f32, f32),
         #[serde(default = "one_cell")]
         step: u32,
+        #[serde(default)]
+        through_lakes: bool,
     },
     /// Paths between the sites of `sites` over the `height` field: in every square region of
     /// `region` chunks, the sites whose centre lies in it are joined by a minimum spanning tree over
@@ -2576,6 +2580,7 @@ impl Pack {
                     sources,
                     width,
                     step,
+                    through_lakes,
                 } => {
                     if file.water.is_none() {
                         return Err(invalid(
@@ -2602,7 +2607,7 @@ impl Pack {
                     // The rivers read the whole region's height, and its lakes, where they end: where
                     // the water stands above the ground the lakes were filled on.
                     let mut reads = vec![(height.as_str(), Reach::region(*region), Output::Field)];
-                    if let Some(lakes) = lakes {
+                    if let Some(lakes) = lakes.filter(|_| !*through_lakes) {
                         reads.push((lakes, Reach::region(*region), Output::Field));
                         if let Some(ground) = &lakes_ground {
                             reads.push((ground.as_str(), Reach::region(*region), Output::Field));

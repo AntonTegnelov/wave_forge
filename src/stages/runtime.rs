@@ -2507,6 +2507,7 @@ impl Runtime {
                 sources,
                 width,
                 step,
+                through_lakes,
             } => {
                 rivers = DownhillRivers {
                     height,
@@ -2520,6 +2521,7 @@ impl Runtime {
                         .pack
                         .water()
                         .and_then(|water| water.lakes.as_deref())
+                        .filter(|_| !*through_lakes)
                         .map(|lakes| {
                             let Some(StageKind::Lakes { height, .. }) = self.pack.kind(lakes)
                             else {

@@ -382,3 +382,35 @@ fn a_river_down_another_field_ends_at_the_lakes_not_where_that_field_lies_below_
         rivers.len()
     );
 }
+
+#[test]
+fn a_river_through_lakes_runs_on_from_a_lake_to_its_outlet() {
+    let text = PACK.replace(
+        "width: (1.0, 2.0), step: 1)",
+        "width: (1.0, 2.0), step: 1, through_lakes: true)",
+    );
+    assert_ne!(text, PACK, "the pack's rivers take the setting");
+    let mut runtime = Runtime::new(Arc::new(Pack::parse(&text).expect("a valid pack")), 6, SIZE);
+    let focus: Vec<FocusPoint> = area().iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime
+        .request(&focus, &["rivers", "lakes", "ground"])
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+
+    let columns = columns(&runtime);
+    let mut through = 0;
+    for chunk in area() {
+        for river in runtime.curves("rivers", chunk).expect("rivers") {
+            let wet = |point: &[f32; 2]| {
+                columns
+                    .get(&(point[0].floor() as i64, point[1].floor() as i64))
+                    .is_some_and(|&(ground, lake)| lake > ground)
+            };
+            let (last, before) = river.points.split_last().expect("a river has points");
+            if before.iter().any(wet) && !wet(last) {
+                through += 1;
+            }
+        }
+    }
+    assert!(through > 0, "no river runs on out of a lake");
+}
