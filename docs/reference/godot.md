@@ -642,11 +642,14 @@ the materials of the four vertices around every fragment, asset free and on ever
 Compatibility included. Each material is weighted by how near its vertices are plus a noise of its
 own, so materials meet along a broken line rather than the grid's. Steep ground turns to rock by
 its slope: the ground's own colour muted and banded in strata, with a soft border on walls, where
-the per-column materials would otherwise streak down. A broad noise varies the colour across the
-land, and near the camera a fine one bumps the surface and grains its colour. Its parameters set
+the per-column materials would otherwise streak down. Gullies run down steep ground along its fall
+line, from a ridged noise over the ground plane that changes little down a slope and much along it,
+each groove darker and leaning the normal into it: finer than a column, so a wall too narrow for
+the Erode stage, the canyon's mesas say, still shows them. A broad noise varies the colour across
+the land, and near the camera a fine one bumps the surface and grains its colour. Its parameters set
 the look: `rock_colour` (whose alpha, above zero, replaces the muted colour with its own),
 `rock_slope` (the slopes, one minus the normal's height, where rock starts and has taken over),
-`strata`, `edge_noise`, `macro_variation` and `detail`, all on by default; zero noise and
+`strata`, `gullies`, `edge_noise`, `macro_variation` and `detail`, all on by default; zero noise and
 `rock_slope` beyond 1 draw the palette's colours alone. A game sets them on a `ShaderMaterial` of
 the reference shader given as `ground_material`, whose parameters every chunk's copy keeps. What
 the shader costs is in [measurements.md](../research/measurements.md) (E58).
