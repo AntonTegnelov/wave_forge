@@ -36,6 +36,7 @@ extension needs none of godot-rust's thread-safety features.
 | | `proxy_colours` | each module's colour seen from afar, a `Dictionary[StringName, Color]` of module names ([Typed maps](#typed-maps)); a module without one is left out |
 | Advanced | `halo` | the first parity's halo, in cells |
 | | `warm_kernels` | compile the kernels a run needs when generation starts |
+| | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`, shared with `WaveForgeStages`), so a world started at boot compiles them once per machine rather than on every launch; empty keeps none. wgpu caches pipelines on Vulkan only, so on Direct3D 12 or Metal it keeps nothing |
 | | `frozen_directory` | freezes the world: where the chunks it evicts are kept as they are, a file each, and come back from rather than being generated, even after the rule set changes ([world.md](../architecture/world.md#regenerating-exactly)); `user://` paths are resolved, and the game keeps the directory with its saves. Empty generates an evicted chunk again, tile for tile |
 
 ### Functions

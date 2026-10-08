@@ -225,6 +225,10 @@ pub struct WaveForgeWorld {
     /// its saves. Empty generates an evicted chunk again, tile for tile, when it is needed.
     #[export]
     frozen_directory: GString,
+    /// Where compiled GPU kernels are kept across runs, so a world started at boot does not compile
+    /// them on every launch; `user://` paths are resolved. Empty keeps none.
+    #[export]
+    kernel_cache: GString,
 
     /// Tiles allowed on each layer, from the world's lowest layer up, as set by
     /// [`WaveForgeWorld::set_layer_tiles`].
@@ -334,6 +338,7 @@ impl INode for WaveForgeWorld {
             world_chunks: Vector3i::ZERO,
             warm_kernels: true,
             frozen_directory: GString::new(),
+            kernel_cache: GString::from("user://wave_forge/kernels"),
             layers: Vec::new(),
             face_bans: Default::default(),
             rules: None,
@@ -667,15 +672,20 @@ impl WaveForgeWorld {
         let frozen = (!self.frozen_directory.is_empty()).then(|| {
             std::path::PathBuf::from(crate::paths::directory_path(&self.frozen_directory))
         });
+        let cache = (!self.kernel_cache.is_empty())
+            .then(|| std::path::PathBuf::from(crate::paths::directory_path(&self.kernel_cache)));
         self.followed = None;
         // Everything here happens on the generating thread, including building the device and
         // compiling the kernels, so Godot's own thread never waits for either.
         self.worker = Some(ending::Ending::new(Worker::spawn(move || {
-            let mut world = Builder::new(ruleset, prior)
+            let builder = Builder::new(ruleset, prior)
                 .seed(seed)
                 .extent(extent)
-                .halo(halo)
-                .build()?;
+                .halo(halo);
+            let mut world = match &cache {
+                Some(dir) => builder.build_cached(dir)?,
+                None => builder.build()?,
+            };
             if let Some(directory) = frozen {
                 world = world.with_store(Box::new(DirectoryStore::new(directory)));
             }
