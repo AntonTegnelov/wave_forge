@@ -269,6 +269,25 @@ impl Builder {
         self.build_on_backend(backend)
     }
 
+    /// A generator on a GPU device of its own, as [`Builder::build`] makes one, that keeps its
+    /// compiled kernels in `dir` across runs ([`WgpuBackend::cache_pipelines_in`]): compiling them
+    /// takes seconds on some drivers, and a game that starts a world at boot would otherwise pay
+    /// for it on every launch.
+    ///
+    /// # Errors
+    /// If no device is available, the rule set does not fit one, or the cache directory cannot be
+    /// made or read.
+    #[cfg(feature = "wgpu")]
+    pub fn build_cached(
+        self,
+        dir: &std::path::Path,
+    ) -> Result<WorldGenerator<BlockSolver<WgpuBackend>>, Error> {
+        let backend = WgpuBackend::from_env()
+            .and_then(|backend| backend.cache_pipelines_in(dir))
+            .map_err(wfc_gpu::error::GpuError::from)?;
+        self.build_on_backend(backend)
+    }
+
     /// A generator on a device an engine already owns, which is how a Bevy plugin shares Bevy's.
     ///
     /// # Errors
