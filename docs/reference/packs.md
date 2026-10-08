@@ -309,8 +309,8 @@ Data flows only from coarse to fine. A stage reads stages as coarse as itself or
 factor, and loading refuses anything else. A fine stage reads a coarser field between its columns,
 linearly from the four around its column's centre, and a coarser category from the column its own
 lies in. Positions in expressions (`X`, `Y`, `Distance`, `Angle`, and noise) are in WFC cells at
-every scale, so a formula means the same at any scale. Field, Blur, Rules, Region and Lakes stages
-can be coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
+every scale, so a formula means the same at any scale. Field, Blur, Rules, Region, Lakes and
+Droplets stages can be coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
 fields.
 
 ## Stages
@@ -1083,6 +1083,28 @@ The product is a field of the water's surface: a lake's level over its columns, 
 everywhere else, so an expression can read it like any field and never meets a missing value. A
 Lakes stage may be coarse ([Levels](#levels)), filling hollows over a world map. The pack's water
 names it to join the rest of the water; loading refuses a region of 0 chunks or lakes of 0 columns.
+
+### Droplets
+
+`Droplets(height: "uplift", region: 64)`: a height field worn by droplets of water (Beyer, 2015),
+for worlds run ahead of time, where valleys that join as they descend are worth a pass over a whole
+region. In every square region of `region` chunks, `droplets` droplets a column (default 1) start
+one after another at hashed columns and roll downhill, a column a step, for at most `lifetime`
+steps (default 40), keeping a little of their direction each step. Where a droplet speeds down
+with room to carry more, it picks up `erosion` (default 0.3) of that room, wearing the ground
+within `radius` columns (default 3), never deeper than it fell; where it slows, or carries more
+than it can, it drops `deposition` (default 0.3) of the excess, and climbing, it fills the hollow
+behind it. What water can carry is `capacity` cells (default 4) on a slope of one cell's fall per
+cell, times its speed and its water, which evaporates as it runs. A slope is measured in cells, so a
+coarse stage ([Levels](#levels)) drains its world map as a fine one would its columns.
+
+A droplet that leaves its region stops, and the worn field fades into the input over `fade` columns
+(default 16) from the region's edges, so regions never read each other, the field meets its input
+along every region border, and chunks are the same in any order and in every run. A region is
+drained when its first chunk is generated, from its whole height field, so it suits a coarse stage
+over a finite world best: the continent drains its 512 by 512 columns at scale 4 as one region
+([measurements.md](../research/measurements.md), E61). Loading refuses a region, lifetime or radius
+of 0, no droplets, no capacity, and an erosion or deposition beyond 0 to 1.
 
 ### Network
 

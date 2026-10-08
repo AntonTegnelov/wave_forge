@@ -161,7 +161,7 @@ fn the_continents_rivers_sound_along_their_courses_as_loud_as_they_flow() {
             .flat_map(move |y| (low.0..high.0).map(move |x| ChunkCoord::new(x, y, 0)))
             .collect::<Vec<_>>()
     };
-    let part = window((117, 113), (125, 121));
+    let part = window((91, 91), (99, 99));
     let focus: Vec<FocusPoint> = part.iter().map(|&c| FocusPoint::new(c, 0)).collect();
     runtime
         .request(&focus, &["rivers", "terrain", "lakes"])
@@ -180,7 +180,7 @@ fn the_continents_rivers_sound_along_their_courses_as_loud_as_they_flow() {
     // Each river emitter in the part's inner chunks, with the flow of the river under it: its
     // width there times the fall of the terrain along it, measured two cells either way.
     let mut sounds: Vec<(f32, f32)> = Vec::new();
-    for chunk in window((118, 114), (124, 120)) {
+    for chunk in window((92, 92), (98, 98)) {
         let emitters = runtime.ambience(chunk, cell).expect("arrived");
         for emitter in emitters.iter().filter(|e| e.key == "water_river") {
             let (x, y) = (emitter.at[0], emitter.at[2]);

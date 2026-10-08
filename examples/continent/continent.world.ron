@@ -68,16 +68,19 @@
         // Plateaus lifted a score of cells, with steep rims, which give the highlands off the ranges.
         (name: "plateaus", scale: 4, kind: Field(Mul(Smoothstep(0.3, 0.42, FastNoise("plateaus")), Constant(22.0)))),
         // The height before biomes: the landmass scaled to cells, and on land the ranges' ridges,
-        // the plateaus and hills.
+        // the plateaus and hills, worn by the drainage of the coarse height below.
         (name: "uplift", kind: Field(Add(
-            Mul(Input("base"), Constant(40.0)),
-            Mul(
-                Clamp(Mul(Input("base"), Constant(8.0)), 0.0, 1.0),
-                Add(
-                    Add(Mul(Mul(Input("ranges"), Input("ridges")), Constant(95.0)), Input("plateaus")),
-                    Mul(Sub(Input("hills"), Constant(0.5)), Constant(8.0)),
+            Add(
+                Mul(Input("base"), Constant(40.0)),
+                Mul(
+                    Clamp(Mul(Input("base"), Constant(8.0)), 0.0, 1.0),
+                    Add(
+                        Add(Mul(Mul(Input("ranges"), Input("ridges")), Constant(95.0)), Input("plateaus")),
+                        Mul(Sub(Input("hills"), Constant(0.5)), Constant(8.0)),
+                    ),
                 ),
             ),
+            Sub(Input("drained"), Input("coarse_uplift")),
         ))),
         // Gullies cut down the ranges' flanks, branching as they run; the lowlands' gentler slopes
         // keep their shape. Shores and the sea floor are laid down, not cut, so the gullies blend
@@ -90,7 +93,7 @@
         ))),
         // The height a view of the continent out to 2 km stands on beyond the near ground, which an
         // engine draws its far ground from (docs/reference/packs.md, "Far ground"): the height's
-        // terms at the coarse columns, the ridges sampled there and the hills left out, eroded by
+        // terms at the coarse columns, the ridges sampled there and the hills left out, drained, eroded by
         // the near ground's first two octaves of gullies from the same named lattice, and above 70
         // cells the peaks raised as their biomes raise them.
         (name: "coarse_ridges", scale: 4, kind: Field(Pow(Remap(FastNoise("ridges"), (-1.0, 1.0), (0.0, 1.0)), 1.5))),
@@ -101,10 +104,15 @@
                 Add(Mul(Mul(Input("ranges"), Input("coarse_ridges")), Constant(95.0)), Input("plateaus")),
             ),
         ))),
-        (name: "coarse_eroded", scale: 4, kind: Erode(input: "coarse_uplift", spacing: 40.0, octaves: 2, depth: 6.0, slope: 0.8, smooth: 1, name: Some("gullies"))),
+        // The continent drained by droplets of water as one region at the coarse scale, a pass
+        // over its whole map (docs/reference/packs.md, "Droplets"): valleys that join as they
+        // descend to the sea, and fans where they leave the ranges. The near ground takes the
+        // change, so its rivers and gullies follow the drainage.
+        (name: "drained", scale: 4, kind: Droplets(height: "coarse_uplift", region: 64)),
+        (name: "coarse_eroded", scale: 4, kind: Erode(input: "drained", spacing: 40.0, octaves: 2, depth: 6.0, slope: 0.8, smooth: 1, name: Some("gullies"))),
         (name: "coarse_height", scale: 4, kind: Field(Add(
-            Input("coarse_uplift"),
-            Mul(Sub(Input("coarse_eroded"), Input("coarse_uplift")), Clamp(Mul(Input("coarse_uplift"), Constant(0.2)), 0.0, 1.0)),
+            Input("drained"),
+            Mul(Sub(Input("coarse_eroded"), Input("drained")), Clamp(Mul(Input("drained"), Constant(0.2)), 0.0, 1.0)),
         ))),
         (name: "far_height", scale: 4, kind: Field(Max(
             Input("coarse_height"),
@@ -273,9 +281,12 @@
             blend: 4,
         ))),
         // Lakes in the terrain's hollows, and rivers from the high ground to the sea or a lake,
-        // in regions of 64 chunks, carved into the terrain.
+        // in regions of 64 chunks, carved into the terrain. The rivers run down the drained
+        // height between its columns, which the droplets left without the terrain's small hollows,
+        // so they follow the drainage's valleys as far as the sea or a lake.
         (name: "lakes", kind: Lakes(height: "terrain", region: 64, min_columns: 12)),
-        (name: "rivers", kind: Rivers(height: "terrain", region: 64, sources: 6, width: (0.8, 3.0), step: 2)),
+        (name: "drainage", kind: Field(Input("drained"))),
+        (name: "rivers", kind: Rivers(height: "drainage", region: 64, sources: 6, width: (0.8, 3.0), step: 2)),
         (name: "carved", kind: Apply(height: "terrain", curves: "rivers", max_radius: 3, blend: 2,
             profile: Carve(0.8))),
         // The lakes' and rivers' water an engine draws (docs/reference/packs.md, "Water surfaces"):
