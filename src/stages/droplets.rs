@@ -194,7 +194,7 @@ fn run_droplet(
 
 /// `drained` faded into `input` over `fade` columns from the region's edges: the input itself on
 /// the edge columns, the drained field from `fade` columns in.
-fn fade_to(input: &[f32], drained: &[f32], size: [usize; 2], fade: u32) -> Vec<f32> {
+pub(crate) fn fade_to(input: &[f32], drained: &[f32], size: [usize; 2], fade: u32) -> Vec<f32> {
     let [width, depth] = size;
     (0..depth)
         .flat_map(|y| (0..width).map(move |x| (x, y)))

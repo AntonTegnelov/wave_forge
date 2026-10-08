@@ -465,6 +465,29 @@ pub enum StageKind {
         #[serde(default = "sixteen_columns")]
         fade: u32,
     },
+    /// The `height` field worked by rivers carrying sediment (docs/reference/packs.md,
+    /// "Transport"): in every square region of `region` chunks, `passes` passes of water from the
+    /// region's edges and the pack's sea, each column's water carrying `capacity` cells of sediment
+    /// for each cell of ground it gathers, raised to `area`, on a slope of one; taking up
+    /// `erosion` of the room left and laying down `deposition` of the excess, filling hollows and
+    /// the sea up to its level. The change fades in over `fade` columns from the region's edges,
+    /// so regions never read each other. The product is the worked field.
+    Transport {
+        height: String,
+        region: u32,
+        #[serde(default = "fifty_passes")]
+        passes: u32,
+        #[serde(default = "a_hundredth")]
+        capacity: f32,
+        #[serde(default = "half")]
+        area: f32,
+        #[serde(default = "half")]
+        erosion: f32,
+        #[serde(default = "half")]
+        deposition: f32,
+        #[serde(default = "sixteen_columns")]
+        fade: u32,
+    },
     /// A location table: sites of several kinds, placed once per square region of `region` chunks,
     /// the kinds in order of their `priority`, highest first. Each kind tries `tries` hashed
     /// footprints of `size` chunks a side in the region, one chunk in from its edge, and keeps one
@@ -949,6 +972,14 @@ const fn sixteen_columns() -> u32 {
     16
 }
 
+const fn fifty_passes() -> u32 {
+    50
+}
+
+const fn a_hundredth() -> f32 {
+    0.01
+}
+
 const fn one_each() -> (u32, u32) {
     (1, 1)
 }
@@ -1104,7 +1135,9 @@ impl StageKind {
     /// whose every chunk is cut from its region's field.
     pub(crate) const fn field_region(&self) -> Option<u32> {
         match self {
-            Self::Lakes { region, .. } | Self::Droplets { region, .. } => Some(*region),
+            Self::Lakes { region, .. }
+            | Self::Droplets { region, .. }
+            | Self::Transport { region, .. } => Some(*region),
             _ => None,
         }
     }
@@ -1118,7 +1151,8 @@ impl StageKind {
             | Self::Flatten { .. }
             | Self::Apply { .. }
             | Self::Lakes { .. }
-            | Self::Droplets { .. } => Output::Field,
+            | Self::Droplets { .. }
+            | Self::Transport { .. } => Output::Field,
             Self::Volume { .. } | Self::Carve { .. } | Self::Aquifer { .. } => Output::Volume,
             Self::Top { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } | Self::Nearest { .. } => Output::Categories,
@@ -2482,6 +2516,36 @@ impl Pack {
                     // The droplets run over the whole region, from its heights alone.
                     vec![(height.as_str(), Reach::region(*region), Output::Field)]
                 }
+                StageKind::Transport {
+                    height,
+                    region,
+                    passes,
+                    capacity,
+                    area,
+                    erosion,
+                    deposition,
+                    fade: _,
+                } => {
+                    let shares = [("erosion", *erosion), ("deposition", *deposition)];
+                    if let Some((name, share)) = shares
+                        .iter()
+                        .find(|(_, share)| !(0.0..=1.0).contains(share))
+                    {
+                        return Err(invalid(format!("an {name} of {share}, beyond 0 to 1")));
+                    }
+                    if *region == 0
+                        || *passes == 0
+                        || !(*capacity > 0.0 && capacity.is_finite())
+                        || !(*area >= 0.0 && area.is_finite())
+                    {
+                        return Err(invalid(format!(
+                            "a region of {region} chunks and {passes} passes of water carrying \
+                             {capacity} per cell of ground raised to {area}"
+                        )));
+                    }
+                    // The water runs over the whole region, from its heights alone.
+                    vec![(height.as_str(), Reach::region(*region), Output::Field)]
+                }
                 StageKind::Locations {
                     height,
                     region,
@@ -3281,6 +3345,7 @@ impl Pack {
                 | StageKind::Network { .. }
                 | StageKind::Lakes { .. }
                 | StageKind::Droplets { .. }
+                | StageKind::Transport { .. }
                 | StageKind::Carve { .. }
                 | StageKind::Top { .. }
                 | StageKind::Aquifer { .. }
@@ -3471,6 +3536,7 @@ impl Pack {
                 StageKind::Sites { region, .. }
                 | StageKind::Lakes { region, .. }
                 | StageKind::Droplets { region, .. }
+                | StageKind::Transport { region, .. }
                 | StageKind::Locations { region, .. }
                 | StageKind::Region { region, .. }
                 | StageKind::Rivers { region, .. }

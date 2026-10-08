@@ -19,6 +19,7 @@ mod rivers;
 pub mod runtime;
 pub mod save;
 mod town_thread;
+mod transport;
 pub mod worker;
 mod world_run;
 
