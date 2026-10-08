@@ -322,3 +322,63 @@ fn the_ring_world_has_lakes_in_its_hollows_and_rivers_that_reach_them() {
     assert!(lake_columns >= 20, "{lake_columns} columns under lakes");
     assert!(ends_in_lakes > 0, "no river reaches a lake");
 }
+
+#[test]
+fn a_sample_of_the_lakes_is_what_their_chunk_holds() {
+    let generated = columns(&run(&[area()], &["lakes", "ground"]));
+    let sampler = Runtime::new(pack(), 6, SIZE);
+
+    for (&(x, y), &(_, lakes)) in &generated {
+        let sampled = sampler
+            .sample("lakes", [x as f32 + 0.5, y as f32 + 0.5])
+            .expect("a sample");
+
+        assert_eq!(sampled.to_bits(), lakes.to_bits(), "column ({x}, {y})");
+    }
+}
+
+#[test]
+fn a_river_down_another_field_ends_at_the_lakes_not_where_that_field_lies_below_their_ground() {
+    // The rivers run down the ground lowered a cell, everywhere below the lakes' own ground.
+    let text = PACK
+        .replace(
+            "(name: \"rivers\", kind: Rivers(height: \"ground\"",
+            "(name: \"rivers\", kind: Rivers(height: \"lowered\"",
+        )
+        .replace(
+            "        (name: \"lakes\",",
+            "        (name: \"lowered\", kind: Field(Sub(Input(\"ground\"), Constant(1.0)))),\n        (name: \"lakes\",",
+        );
+    let mut runtime = Runtime::new(Arc::new(Pack::parse(&text).expect("a valid pack")), 6, SIZE);
+    let focus: Vec<FocusPoint> = area().iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime
+        .request(&focus, &["rivers", "lakes", "ground"])
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+
+    let columns = columns(&runtime);
+    let mut rivers = BTreeMap::new();
+    for chunk in area() {
+        for river in runtime.curves("rivers", chunk).expect("rivers") {
+            rivers.insert(river.id.clone(), river.points.len());
+            let wet = |point: [f32; 2]| {
+                columns
+                    .get(&(point[0].floor() as i64, point[1].floor() as i64))
+                    .is_some_and(|&(ground, lake)| lake > ground)
+            };
+            let (_, before) = river.points.split_last().expect("a river has points");
+            assert!(
+                !before.iter().any(|&point| wet(point)),
+                "{:?} runs on through a lake",
+                river.id
+            );
+        }
+    }
+    assert!(!rivers.is_empty(), "no river left its source");
+    let flowing = rivers.values().filter(|&&points| points > 2).count();
+    assert!(
+        flowing * 2 > rivers.len(),
+        "only {flowing} of {} rivers left their source",
+        rivers.len()
+    );
+}

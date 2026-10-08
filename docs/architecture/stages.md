@@ -203,7 +203,10 @@ criterion.
   a reader's neighbouring chunks.
 - **Inherently global nodes.** Normalising, auto-levelling and whole-map erosion cannot run on an
   infinite world. A pack will refuse them there, naming the node, and finite imported heightmaps
-  are how such results come in. Today no stage kind is global, so there is nothing to refuse yet.
+  are how such results come in. Today no stage kind is global, so there is nothing to refuse yet:
+  erosion by droplets runs a region at a time, its change faded out toward each region's edges
+  ([packs.md](../reference/packs.md#droplets)), and a finite world drains whole by making its region
+  the world, as the continent does at scale 4.
 
 ## Four tiers over one pack
 
