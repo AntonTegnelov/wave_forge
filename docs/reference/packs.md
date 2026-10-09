@@ -1191,8 +1191,8 @@ let trees = runtime.points("trees", chunk);
   its values over an area of its own columns, row by row with x fastest, without generating any
   chunk: exactly what the chunks would hold. Field, Rules, Nearest, Blur, Delta, Erode and Area stages whose
   inputs are too can be sampled, and so can Lakes and Droplets stages, each computed once over the
-  whole region a sample lies in from samples of its input and kept for later samples; the others
-  need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
+  whole region a sample lies in from samples of its input, the latest eight kept for later
+  samples; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
   takes `&self` and holds no products, so a game can build a runtime just to sample, on any thread:
   an atlas of 256 by 256 world tiles takes 50 ms in release on the dev container. This is how a
   history the game simulates reads the world before play.
