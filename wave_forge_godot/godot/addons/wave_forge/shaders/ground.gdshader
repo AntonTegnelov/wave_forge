@@ -26,9 +26,12 @@ uniform float cavity_darkening : hint_range(0.0, 1.0) = 0.6;
 // How far full wetness darkens the ground, and the roughness it leaves.
 uniform float wet_darkening : hint_range(0.0, 1.0) = 0.45;
 uniform float wet_roughness : hint_range(0.0, 1.0) = 0.35;
-// The distances from the camera, in world units, over which the grass's blades shrink away: covered
-// ground tints in over them, so where the blades stand the ground is as it is.
+// Where the grass's blades shrink away, as the grass shader measures it (in chunks from the followed
+// chunk's centre along the farther axis, with a chunk's width and that centre in world units):
+// covered ground tints in over it, so where the blades stand the ground is as it is.
 uniform vec2 wave_forge_fade = vec2(1e9, 2e9);
+uniform vec2 wave_forge_span = vec2(1.0);
+uniform vec2 wave_forge_focus = vec2(0.0);
 // The colour fully covered ground tints toward beyond the grass, the grass's own seen from afar,
 // and how far.
 uniform vec3 cover_colour : source_color = vec3(0.32, 0.5, 0.18);
@@ -216,7 +219,8 @@ void fragment() {
 	float cavity = clamp(channels.r, 0.0, 1.0);
 	float wet = clamp(channels.g, 0.0, 1.0);
 	float cover = clamp(channels.b, 0.0, 1.0);
-	float beyond_grass = smoothstep(wave_forge_fade.x, wave_forge_fade.y, length(world.xz - CAMERA_POSITION_WORLD.xz));
+	vec2 from_focus = abs(world.xz - wave_forge_focus) / wave_forge_span;
+	float beyond_grass = smoothstep(wave_forge_fade.x, wave_forge_fade.y, max(from_focus.x, from_focus.y));
 	albedo = mix(albedo, cover_colour, cover * cover_tint * beyond_grass);
 	albedo *= (1.0 - cavity_darkening * cavity) * (1.0 - wet_darkening * wet);
 	albedo *= mix(1.0, 0.86 + 0.28 * fine.x, grain);

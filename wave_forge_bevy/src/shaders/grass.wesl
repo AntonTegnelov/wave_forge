@@ -5,12 +5,21 @@
 // heights and sways in the wind.
 import bevy_pbr::render::{
     mesh_functions,
-    mesh_view_bindings::{globals, view},
+    mesh_view_bindings::globals,
     forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
     view_transformations::position_world_to_clip,
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
+};
+
+// What `GrassFade` in materials.rs holds: the chunks from `focus`, along the farther axis, over
+// which blades shrink away, a chunk's width along x and z, and the centre of the chunk the grass is
+// given around, so the fade follows the square of chunks that have grass wherever the camera is.
+struct GrassFade {
+    band: vec2<f32>,
+    span: vec2<f32>,
+    focus: vec2<f32>,
 };
 
 struct GrassSettings {
@@ -22,8 +31,7 @@ struct GrassSettings {
     chunk_and_count: vec4<i32>,
     base_colour: vec4<f32>,
     tip_colour: vec4<f32>,
-    // The horizontal distances from the camera at which blades start to shrink and have gone.
-    fade: vec2<f32>,
+    fade: GrassFade,
 };
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> grass: GrassSettings;
@@ -68,7 +76,8 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let root = mesh_functions::mesh_position_local_to_world(
         world_from_local,
         vec4<f32>(place.x * grass.cell_and_blade.x, 0.0, place.y * grass.cell_and_blade.y, 1.0));
-    let faded = 1.0 - smoothstep(grass.fade.x, grass.fade.y, length(root.xz - view.world_position.xz));
+    let from_focus = abs(root.xz - grass.fade.focus) / grass.fade.span;
+    let faded = 1.0 - smoothstep(grass.fade.band.x, grass.fade.band.y, max(from_focus.x, from_focus.y));
     let shown = column < columns.x * columns.y && unit(seed ^ 0x85EBCA6Bu) < covered && faded > 0.0;
     // The ground's vertices stand at the columns' centres.
     let last = vec2<i32>(textureDimensions(heights)) - 1;

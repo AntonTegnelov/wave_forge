@@ -16,7 +16,7 @@ use bevy_color::{Color, ColorToComponents, ColorToPacked};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::prelude::{MessageReader, Res, ResMut, Resource};
 use bevy_image::Image;
-use bevy_math::{IVec4, Vec2, Vec3, Vec4};
+use bevy_math::{IVec2, IVec4, Vec2, Vec3, Vec4};
 use bevy_mesh::{Mesh, PrimitiveTopology};
 use bevy_pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, StandardMaterial};
 use bevy_reflect::TypePath;
@@ -57,14 +57,16 @@ pub struct GroundLook {
     pub cover_tint: f32,
     /// The colour covered ground tints toward, its grass's seen from afar, linear RGB.
     pub cover_colour: Vec4,
-    /// The horizontal distances from the camera over which covered ground tints in: the grass's
-    /// [`GrassSettings::fade`], so the ground is as it is where the blades stand and tinted where
-    /// they have gone. Farther than any view by default, so nothing is tinted.
-    pub cover_fade: Vec2,
     /// How deep the gullies that run down steep ground along its fall line read, in colour and in
     /// its normal, 0 to 1: finer than a column, so a wall too narrow for the Erode stage still
     /// shows them.
     pub gullies: f32,
+    /// Where covered ground tints in: the grass's fade, which the [`GrassFade`] resource gives
+    /// every ground material, so the ground is as it is where the blades stand and tinted where
+    /// they have gone. Farther than any view by default, so nothing is tinted. Last and aligned to
+    /// 16 bytes, where a struct within a uniform has to start, as the shader lays it out.
+    #[shader(align(16))]
+    pub cover_fade: GrassFade,
 }
 
 impl Default for GroundLook {
@@ -85,7 +87,7 @@ impl Default for GroundLook {
             wet_roughness: 0.35,
             cover_tint: 0.5,
             cover_colour: Color::srgb(0.32, 0.5, 0.18).to_linear().to_vec4(),
-            cover_fade: Vec2::new(1e9, 2e9),
+            cover_fade: GrassFade::default(),
             gullies: 0.5,
         }
     }
@@ -154,10 +156,99 @@ impl Plugin for WaveForgeMaterialsPlugin {
             MaterialPlugin::<VegetationMaterial>::default(),
         ))
         .init_resource::<Wind>()
+        .init_resource::<GrassFade>()
         .add_systems(
             Update,
-            (blow::<GrassMaterials>, blow::<VegetationMaterials>),
+            (
+                blow::<GrassMaterials>,
+                blow::<VegetationMaterials>,
+                fade::<GrassMaterials>,
+                fade::<GroundMaterials>,
+            ),
         );
+    }
+}
+
+/// Where grass fades out, so it ends without a visible edge: by how many chunks a point lies from
+/// `focus` along the farther axis, blades shrink between `band.x` and `band.y` and covered ground
+/// tints in toward its grass's colour over the same band. Measured from the chunk the app gives
+/// grass around rather than from the camera, it follows the square of chunks that have grass
+/// wherever the camera is. Changing it reaches every grass and ground material in the next frame,
+/// and a material added later gets it as it is. Farther than any view by default.
+#[derive(Resource, ShaderType, Clone, Copy, Debug, PartialEq)]
+pub struct GrassFade {
+    /// The chunks from `focus`, along the farther axis, from which blades shrink and at which they
+    /// are gone.
+    pub band: Vec2,
+    /// A chunk's width along x and z, in world units.
+    pub span: Vec2,
+    /// The centre of the chunk the grass is given around, on the ground plane, in world units.
+    pub focus: Vec2,
+}
+
+impl Default for GrassFade {
+    fn default() -> Self {
+        Self {
+            band: Vec2::new(1e9, 2e9),
+            span: Vec2::ONE,
+            focus: Vec2::ZERO,
+        }
+    }
+}
+
+impl GrassFade {
+    /// The fade of grass on the chunks within `radius` of `chunk` (along x and z), chunks `span`
+    /// wide: over the outer chunk of the square they make, or the outer half of it for `chunk`
+    /// alone. As the Godot node's `grass_radius` fades.
+    #[must_use]
+    pub fn of_radius(radius: u32, chunk: IVec2, span: Vec2) -> Self {
+        let end = radius as f32 + 0.5;
+        Self {
+            band: Vec2::new(end - (end / 2.0).min(1.0), end),
+            span,
+            focus: (chunk.as_vec2() + 0.5) * span,
+        }
+    }
+}
+
+/// A reference material that fades with the grass.
+trait Fades: MaterialExtension {
+    fn fade(&mut self) -> &mut GrassFade;
+}
+
+impl Fades for GrassMaterials {
+    fn fade(&mut self) -> &mut GrassFade {
+        &mut self.settings.fade
+    }
+}
+
+impl Fades for GroundMaterials {
+    fn fade(&mut self) -> &mut GrassFade {
+        &mut self.look.cover_fade
+    }
+}
+
+/// Gives every material of `E` the grass's fade when it changes, and a material added since it last
+/// changed the fade as it is.
+fn fade<E: Fades>(
+    grass: Res<GrassFade>,
+    mut added: MessageReader<AssetEvent<ExtendedMaterial<StandardMaterial, E>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, E>>>,
+) {
+    if grass.is_changed() {
+        added.clear();
+        for (_, material) in materials.iter_mut() {
+            *material.extension.fade() = *grass;
+        }
+        return;
+    }
+    for event in added.read() {
+        // A material added and removed within one frame is gone by now.
+        if let AssetEvent::Added { id } = event
+            && let Some(mut material) = materials.get_mut(*id)
+        {
+            *material.extension.fade() = *grass;
+        }
     }
 }
 
@@ -216,11 +307,8 @@ pub struct GrassSettings {
     pub base_colour: Vec4,
     /// A blade's colour at its tip, linear RGBA.
     pub tip_colour: Vec4,
-    /// The horizontal distances from the camera at which blades start to shrink and have gone, so
-    /// the grass ends without a visible edge: set it to end where the app stops giving chunks grass,
-    /// and give the ground's [`GroundLook::cover_fade`] the same, so covered ground tints toward the
-    /// grass's colour as the blades go. Farther than any view by default.
-    pub fade: Vec2,
+    /// Where blades shrink away, as the [`GrassFade`] resource gives it.
+    pub fade: GrassFade,
 }
 
 /// What [`GrassMaterial`] adds to a `StandardMaterial`: the chunk's settings, the ground's height
@@ -426,7 +514,7 @@ pub fn grass_material_of(
                 chunk_and_count: IVec4::new(mesh.chunk.x, mesh.chunk.y, per_column as i32, 0),
                 base_colour: Vec4::new(0.03, 0.08, 0.01, 1.0),
                 tip_colour: Vec4::new(0.26, 0.5, 0.07, 1.0),
-                fade: Vec2::new(1e9, 2e9),
+                fade: GrassFade::default(),
             },
             heights: images.add(heights),
             cover: images.add(covered),
@@ -627,7 +715,7 @@ mod tests {
                     chunk_and_count: IVec4::ZERO,
                     base_colour: Vec4::ONE,
                     tip_colour: Vec4::ONE,
-                    fade: Vec2::new(1e9, 2e9),
+                    fade: GrassFade::default(),
                 },
                 heights: Handle::default(),
                 cover: Handle::default(),
@@ -664,5 +752,48 @@ mod tests {
                 .wind,
             wind.0
         );
+    }
+
+    #[test]
+    fn a_material_added_after_the_fade_changed_takes_that_fade() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<GrassMaterial>()
+            .init_resource::<GrassFade>()
+            .add_systems(Update, fade::<GrassMaterials>);
+        let fade = GrassFade::of_radius(2, IVec2::new(3, -1), Vec2::splat(16.0));
+        app.insert_resource(fade);
+        app.update();
+        app.update();
+
+        let grass = app
+            .world_mut()
+            .resource_mut::<Assets<GrassMaterial>>()
+            .add(grass());
+        app.update();
+        app.update();
+
+        let materials = app.world().resource::<Assets<GrassMaterial>>();
+        assert_eq!(
+            materials
+                .get(&grass)
+                .expect("added")
+                .extension
+                .settings
+                .fade,
+            fade
+        );
+    }
+
+    #[test]
+    fn grass_fades_over_the_outer_chunk_of_its_square_about_the_chunks_centre() {
+        let (one, alone) = (
+            GrassFade::of_radius(1, IVec2::new(3, -1), Vec2::new(16.0, 24.0)),
+            GrassFade::of_radius(0, IVec2::ZERO, Vec2::splat(16.0)),
+        );
+
+        assert_eq!(one.band, Vec2::new(0.75, 1.5));
+        assert_eq!(one.focus, Vec2::new(56.0, -12.0));
+        assert_eq!(alone.band, Vec2::new(0.25, 0.5));
     }
 }

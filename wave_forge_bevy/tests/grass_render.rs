@@ -1,5 +1,5 @@
 //! Grass drawn by Bevy's own renderer: blades grow only where the cover is, sway while the wind
-//! blows and stand still once it drops, and shrink away over the fade's distances from the camera.
+//! blows and stand still once it drops, and shrink away over the fade's band about the chunk.
 //!
 //! ```text
 //! cargo test -p wave_forge_bevy --release --test grass_render -- --ignored --nocapture
@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint, ground};
 use wave_forge_bevy::materials::{
-    GrassMaterial, WaveForgeMaterialsPlugin, Wind, grass_bounds_of, grass_material_of, grass_mesh,
+    GrassFade, GrassMaterial, WaveForgeMaterialsPlugin, Wind, grass_bounds_of, grass_material_of,
+    grass_mesh,
 };
 
 const PACK: &str = r#"(
@@ -192,22 +193,37 @@ fn blades_shrink_away_over_the_fade_and_none_stand_beyond_it() {
     let (mut app, material) = grass_app();
     app.world_mut()
         .insert_resource(Wind(Vec4::new(1.0, 0.0, 0.0, 3.0)));
-    let fade_to = |app: &mut App, fade: Vec2| {
-        app.world_mut()
-            .resource_mut::<Assets<GrassMaterial>>()
-            .get_mut(&material)
-            .expect("the grass material")
-            .extension
-            .settings
-            .fade = fade;
+    // The fade reaches the material through the resource, about the chunk's centre.
+    let fade_to = |app: &mut App, band: Vec2| {
+        app.world_mut().insert_resource(GrassFade {
+            band,
+            span: Vec2::splat(8.0),
+            focus: Vec2::splat(4.0),
+        });
         lit(&run_for(app, 0.3), 0, SIZE)
     };
 
     let whole = fade_to(&mut app, Vec2::new(1e9, 2e9));
-    let partly = fade_to(&mut app, Vec2::new(6.0, 10.0));
-    let gone = fade_to(&mut app, Vec2::new(0.5, 1.0));
+    let partly = fade_to(&mut app, Vec2::new(0.25, 0.45));
+    let gone = fade_to(&mut app, Vec2::new(-2.0, -1.0));
+    let faded = app
+        .world()
+        .resource::<Assets<GrassMaterial>>()
+        .get(&material)
+        .expect("the grass material")
+        .extension
+        .settings
+        .fade
+        .band;
 
-    println!("{whole} pixels lit unfaded, {partly} faded from 6 to 10 cells, {gone} faded by 1");
+    println!(
+        "{whole} pixels lit unfaded, {partly} faded from 2 to 3.6 cells of the centre, {gone} faded before it"
+    );
+    assert_eq!(
+        faded,
+        Vec2::new(-2.0, -1.0),
+        "the material took the resource's fade"
+    );
     assert!(0 < partly && partly < whole, "{partly} of {whole}");
     assert_eq!(gone, 0);
 }
