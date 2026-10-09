@@ -1058,17 +1058,19 @@ registers its own jobs in the runtime it builds; a Godot game, which cannot, use
 `Rivers(height: "terrain", region: 16, sources: 3, width: (0.6, 2.0), step: 2)`: rivers down a
 height field, a region job built into the library, so a pack names it without Rust. A region's
 water leaves it through the pack's sea ([Water](#water)) and through crossings: on each side of the
-region, the pair of columns facing each other across the border whose lower column is lowest, which
-the regions on both sides find alike from the border's heights alone. Water crosses from the higher
+region, the pair of columns facing each other across the border whose lower column is lowest, two
+columns or more from the side's ends, which the regions on both sides find alike from the border's
+heights alone. Water crosses from the higher
 column of the pair to the lower, so a crossing lets water out of one region and into the other. A
-priority flood (Barnes, Lehman and Mulla, 2014) from the sea and the crossings water leaves by
-points every column at the one its water runs to next: down the slope, out of a hollow over the
+priority flood (Barnes, Lehman and Mulla, 2014) from the sea and the columns just inside the
+crossings water leaves by points every column at the one its water runs to next: down the slope, out of a hollow over the
 lowest point it spills over, and across a flat toward its way out, ties broken by a hash of the
 column so a river crosses a flat in a wandering line. A region with no sea and no crossing water
 leaves by drains off its lowest edge column.
 
 A river runs up from every crossing water leaves by, along the columns that gather the most water,
-from where it gathers at least 64 columns' water; a river runs on from every crossing water comes in
+from where it gathers 64 columns' water, or a quarter of what the crossing gathers if that is less,
+so every river that comes in across a border continues one from the region beyond; a river runs on from every crossing water comes in
 by; and `sources` more (1 to `MAX_SOURCES`, 64) start at the highest of a few hashed columns within
 the region's edge. Each follows the flood's columns, with a point every `step` cells (default 1),
 until it reaches the sea, a crossing, a river traced before it (where it joins it), or a lake of
