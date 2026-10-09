@@ -40,12 +40,20 @@ uniform vec4 rock_colour : source_color = vec4(0.42, 0.40, 0.38, 0.0);
 uniform vec2 rock_slope = vec2(0.3, 0.5);
 // How strongly the rock is banded in strata.
 uniform float strata : hint_range(0.0, 1.0) = 0.6;
+// How deep the gullies that run down steep ground along its fall line read, in colour and in its
+// normal: finer than a column, so a wall too narrow for the Erode stage still shows them.
+uniform float gullies : hint_range(0.0, 1.0) = 0.5;
 // How far noise breaks the line where materials meet.
 uniform float edge_noise : hint_range(0.0, 1.0) = 0.5;
 // How much a broad noise varies the colour across the land.
 uniform float macro_variation : hint_range(0.0, 1.0) = 0.5;
 // How much fine grain and detail normal the ground has near the camera.
 uniform float detail : hint_range(0.0, 1.0) = 1.0;
+
+// The slopes (one minus the normal's height) at which gullies start and are cut fully, and how many
+// gullies a world unit of the ground plane holds.
+const vec2 GULLY_SLOPE = vec2(0.08, 0.2);
+const float GULLY_SCALE = 0.7;
 
 varying vec2 column;
 varying vec3 world;
@@ -184,6 +192,19 @@ void fragment() {
 		vec3 muted = mix(albedo, vec3(dot(albedo, vec3(0.299, 0.587, 0.114))), 0.3) * 0.8;
 		vec3 rock_base = mix(muted, rock_colour.rgb, rock_colour.a);
 		albedo = mix(albedo, rock_base * mix(1.0, 0.8 + 0.4 * band, strata), rock);
+	}
+	// Gullies on steep ground: a ridged noise over the ground plane, which on a slope steep enough
+	// changes little down the fall line and much along the slope, so its ridges run down it as
+	// grooves; each groove is darker and the normal leans into it by the noise's own slope. They
+	// come in from the slope of a badland's or a wall's flank, gentler than the rock's.
+	float cut = gullies * smoothstep(GULLY_SLOPE.x, GULLY_SLOPE.y, steepness);
+	if (cut > 0.0) {
+		vec3 gully = value_with_slope(ground * GULLY_SCALE);
+		float side = 2.0 * gully.x - 1.0;
+		float groove = 1.0 - abs(side);
+		vec2 lean = -sign(side) * 2.0 * gully.yz * GULLY_SCALE;
+		albedo *= 1.0 - 0.3 * cut * smoothstep(0.6, 1.0, groove);
+		normal = normalize(normal - vec3(lean.x, 0.0, lean.y) * 0.3 * cut);
 	}
 	albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), macro_variation);
 	// The channels, blended between the vertices as the materials are.

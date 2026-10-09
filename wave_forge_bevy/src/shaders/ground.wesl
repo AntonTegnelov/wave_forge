@@ -29,7 +29,13 @@ struct GroundLook {
     cover_tint: f32,
     cover_colour: vec4<f32>,
     cover_fade: vec2<f32>,
+    gullies: f32,
 }
+
+// The slopes (one minus the normal's height) at which gullies start and are cut fully, and how many
+// gullies a world unit of the ground plane holds.
+const GULLY_SLOPE: vec2<f32> = vec2<f32>(0.08, 0.2);
+const GULLY_SCALE: f32 = 0.7;
 
 // The chunk's corner on the ground plane (x, z) and a cell's width along x and z.
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> grid: vec4<f32>;
@@ -175,6 +181,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let muted = mix(albedo, vec3<f32>(dot(albedo, vec3<f32>(0.299, 0.587, 0.114))), 0.3) * 0.8;
         let rock_base = mix(muted, look.rock_colour.rgb, look.rock_colour.a);
         albedo = mix(albedo, rock_base * mix(1.0, 0.8 + 0.4 * band, look.strata), rock);
+    }
+    // Gullies on steep ground: a ridged noise over the ground plane, which on a slope steep enough
+    // changes little down the fall line and much along the slope, so its ridges run down it as
+    // grooves; each groove is darker and the normal leans into it by the noise's own slope. They
+    // come in from the slope of a badland's or a wall's flank, gentler than the rock's.
+    let cut = look.gullies * smoothstep(GULLY_SLOPE.x, GULLY_SLOPE.y, steepness);
+    if cut > 0.0 {
+        let gully = value_with_slope(ground * GULLY_SCALE);
+        let side = 2.0 * gully.x - 1.0;
+        let groove = 1.0 - abs(side);
+        let lean = -sign(side) * 2.0 * gully.yz * GULLY_SCALE;
+        albedo *= 1.0 - 0.3 * cut * smoothstep(0.6, 1.0, groove);
+        pbr_input.N = normalize(pbr_input.N - vec3<f32>(lean.x, 0.0, lean.y) * 0.3 * cut);
     }
     albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), look.macro_variation);
     // The channels, blended between the vertices as the materials are.

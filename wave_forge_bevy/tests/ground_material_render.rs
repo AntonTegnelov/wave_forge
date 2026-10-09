@@ -48,8 +48,14 @@ struct Pixels(Option<Vec<u8>>);
 /// `channels`, the vertices of the half of material id 0 take the first channels and the other
 /// half's the second.
 fn render_halves(look: GroundLook, channels: Option<[[f32; 3]; 2]>) -> Vec<u8> {
+    render_halves_on("Constant(0.0)", look, channels)
+}
+
+/// What [`render_halves`] draws, on the ground of height `height`, an expression.
+fn render_halves_on(height: &str, look: GroundLook, channels: Option<[[f32; 3]; 2]>) -> Vec<u8> {
+    let text = PACK.replace("Constant(0.0)", height);
     let mut runtime = Runtime::new(
-        Arc::new(Pack::parse(PACK).expect("a valid pack")),
+        Arc::new(Pack::parse(&text).expect("a valid pack")),
         1,
         [8, 8],
     );
@@ -313,4 +319,29 @@ fn covered_ground_where_the_blades_stand_keeps_its_colour() {
 
     println!("left {left:?}, right {right:?}");
     assert!(bare(left) && bare(right), "left {left:?}, right {right:?}");
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn gullies_stripe_a_steep_slope_across_its_fall_line() {
+    // Ground rising a cell a cell toward +x, so its fall line runs along x.
+    let slope = "X";
+    let spread = |gullies: f32| {
+        let look = GroundLook {
+            gullies,
+            ..GroundLook::flat()
+        };
+        let pixels = render_halves_on(slope, look, None);
+        // Down a line of pixels across the fall line, inside the west half.
+        let reds: Vec<u8> = (4..SIZE - 4)
+            .map(|y| pixel_of(&pixels, SIZE / 4, y)[0])
+            .collect();
+        reds.iter().max().expect("pixels") - reds.iter().min().expect("pixels")
+    };
+
+    let (without, with) = (spread(0.0), spread(1.0));
+
+    println!("across the fall line the red spans {without} without gullies, {with} with them");
+    assert!(without <= 2, "the plain slope varies by {without}");
+    assert!(with >= 20, "the gullies vary the slope by only {with}");
 }

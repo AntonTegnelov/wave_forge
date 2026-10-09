@@ -61,6 +61,10 @@ pub struct GroundLook {
     /// [`GrassSettings::fade`], so the ground is as it is where the blades stand and tinted where
     /// they have gone. Farther than any view by default, so nothing is tinted.
     pub cover_fade: Vec2,
+    /// How deep the gullies that run down steep ground along its fall line read, in colour and in
+    /// its normal, 0 to 1: finer than a column, so a wall too narrow for the Erode stage still
+    /// shows them.
+    pub gullies: f32,
 }
 
 impl Default for GroundLook {
@@ -82,6 +86,7 @@ impl Default for GroundLook {
             cover_tint: 0.5,
             cover_colour: Color::srgb(0.32, 0.5, 0.18).to_linear().to_vec4(),
             cover_fade: Vec2::new(1e9, 2e9),
+            gullies: 0.5,
         }
     }
 }
@@ -97,6 +102,7 @@ impl GroundLook {
             edge_noise: 0.0,
             macro_variation: 0.0,
             detail: 0.0,
+            gullies: 0.0,
             ..Self::default()
         }
     }
