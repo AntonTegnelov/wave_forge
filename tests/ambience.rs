@@ -175,3 +175,43 @@ fn ambience_naming_the_wrong_stages_is_refused() {
         );
     }
 }
+
+#[test]
+fn a_river_with_a_point_repeated_still_sounds_along_its_course() {
+    use wave_forge::ambience::river_emitters;
+    use wave_forge::stages::regions::{Curve, CurveId};
+    // Down x across a chunk of 16 columns, its fourth point the third again.
+    let river = Curve {
+        id: CurveId::Region {
+            region: (0, 0),
+            index: 0,
+        },
+        points: vec![
+            [0.5, 8.5],
+            [5.5, 8.5],
+            [10.5, 8.5],
+            [10.5, 8.5],
+            [15.5, 8.5],
+        ],
+        values: vec![1.0; 5],
+        heights: Vec::new(),
+    };
+
+    let emitters = river_emitters(
+        "water_river",
+        &[river],
+        ChunkCoord::new(0, 0, 0),
+        [16, 16],
+        |x, _| Some(20.0 - x as f32),
+        [1.0; 3],
+    )
+    .expect("every height read");
+
+    assert!(!emitters.is_empty(), "no emitters");
+    for emitter in &emitters {
+        assert!(
+            emitter.at.iter().all(|c| c.is_finite()) && emitter.volume.is_finite(),
+            "{emitter:?}"
+        );
+    }
+}
