@@ -32,7 +32,7 @@ use crate::region_tags::Emitter;
 use crate::scheduler::FocusPoint;
 use crate::towns::{Town, TownSolver};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use wfc_core::ChunkCoord;
@@ -627,8 +627,9 @@ pub struct Runtime {
     /// chunk of their region is needed.
     region_fields: BTreeMap<RegionKey, Arc<[f32]>>,
     /// The same fields computed for sampling, from samples of their inputs, when generation holds
-    /// none: kept behind a lock since sampling borrows the runtime shared.
-    sampled_fields: Mutex<BTreeMap<RegionKey, Arc<[f32]>>>,
+    /// none, the latest [`SAMPLED_REGIONS`] of them: kept behind a lock since sampling borrows the
+    /// runtime shared.
+    sampled_fields: Mutex<VecDeque<(RegionKey, Arc<[f32]>)>>,
     /// Cave levels planned, by Cave stage and region, kept while a chunk of their region is needed.
     caves: BTreeMap<RegionKey, Arc<CavePlan>>,
     /// Tunnels found, by Tunnels stage and its cave's region, kept as the cave's plan is.
@@ -758,7 +759,7 @@ impl Runtime {
             regions: BTreeMap::new(),
             placed: BTreeMap::new(),
             region_fields: BTreeMap::new(),
-            sampled_fields: Mutex::new(BTreeMap::new()),
+            sampled_fields: Mutex::new(VecDeque::new()),
             caves: BTreeMap::new(),
             tunnels: BTreeMap::new(),
             budgeted: BTreeMap::new(),
@@ -2359,7 +2360,7 @@ impl Runtime {
                     column[0].div_euclid(side[0]) as i32,
                     column[1].div_euclid(side[1]) as i32,
                 );
-                let field = self.sampled_region_field(index, region, &read)?;
+                let field = self.sampled_region_field(index, region)?;
                 field[(column[1].rem_euclid(side[1]) * side[0] + column[0].rem_euclid(side[0]))
                     as usize]
             }
@@ -2743,7 +2744,6 @@ impl Runtime {
         &self,
         index: usize,
         region: (i32, i32),
-        read: &Read<'_>,
     ) -> Result<Arc<[f32]>, StageError> {
         if let Some(field) = self.region_fields.get(&(index, region)) {
             return Ok(Arc::clone(field));
@@ -2752,8 +2752,9 @@ impl Runtime {
             .sampled_fields
             .lock()
             .expect("no sample panics holding the lock")
-            .get(&(index, region))
-            .cloned();
+            .iter()
+            .find(|(key, _)| *key == (index, region))
+            .map(|(_, field)| Arc::clone(field));
         if let Some(field) = held {
             return Ok(field);
         }
@@ -2763,6 +2764,8 @@ impl Runtime {
         else {
             unreachable!("only region field stages are sampled a region at a time")
         };
+        let input = self.pack.index(height).expect("linked when loaded");
+        let ratio = self.pack.stages[input].scale / stage.scale;
         let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
         let side = i64::from(size);
         let min = [
@@ -2771,15 +2774,24 @@ impl Runtime {
         ];
         let mut heights = Vec::with_capacity((side * sx * side * sy) as usize);
         for y in 0..side * sy {
+            // A memo a row long: the region's whole input memoised at once would hold every
+            // column of every stage it reads.
+            let memo = RefCell::new(HashMap::new());
             for x in 0..side * sx {
-                heights.push(read(height, min[0] + x, min[1] + y)?);
+                heights.push(between(ratio, false, min[0] + x, min[1] + y, |x, y| {
+                    self.sample_column(input, [x, y], &memo)
+                })?);
             }
         }
         let field: Arc<[f32]> = Arc::from(self.region_field(index, region, &heights));
-        self.sampled_fields
+        let mut sampled = self
+            .sampled_fields
             .lock()
-            .expect("no sample panics holding the lock")
-            .insert((index, region), Arc::clone(&field));
+            .expect("no sample panics holding the lock");
+        if sampled.len() == SAMPLED_REGIONS {
+            sampled.pop_front();
+        }
+        sampled.push_back(((index, region), Arc::clone(&field)));
         Ok(field)
     }
 
@@ -5273,6 +5285,10 @@ fn barrier_value(pools: &[Pool; 2], half: f32, z: f32) -> f32 {
     let from_plane = (next.distance - near.distance) / (2.0 * apart);
     (half - from_plane).min(near.level.max(next.level) - z)
 }
+
+/// How many region fields computed for sampling a runtime keeps, the latest first to stay: enough for
+/// a history sampling the regions around a spot, bounded for one sampling a whole unbounded map.
+const SAMPLED_REGIONS: usize = 8;
 
 /// How far outside a tunnel or room, in cells, a Carve stage still lowers a voxel.
 const CARVE_MARGIN: f32 = 1.0;

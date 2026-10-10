@@ -7,8 +7,9 @@
 ## refused, as is a cavity stage that is no field. Each material's channels hold the cavity,
 ## wetness and cover stages' values at every vertex. Grass grows on every chunk of ground within its
 ## radius, each chunk's grass material holding the chunk's cover per column and the ground's height
-## per vertex, and fading out over the last chunk of the radius, over which every chunk's ground
-## takes the cover's tint in. Last, raising the first
+## per vertex, and fading out before the edge of the square of chunks within the radius, measured
+## from the followed chunk's centre, over which every chunk's ground takes the cover's tint in; the
+## centre moves with the followed chunk. Last, raising the first
 ## column of the chunk beside the origin builds the origin's ground again, which reaches to it.
 extends SceneTree
 
@@ -143,6 +144,10 @@ func _check() -> bool:
 	print("verify_ground: %d chunks of ground, each with the categories and channels of its %d vertices, %d materials in all" % [world.ground_chunks().size(), (CELLS + 1) * (CELLS + 1), seen.size()])
 	return false
 
+## Whether `material` fades the grass over `fade` chunks from `focus`, with chunks `span` wide.
+func _fades(material: ShaderMaterial, fade: Vector2, span: Vector2, focus: Vector2) -> bool:
+	return material.get_shader_parameter("wave_forge_fade") == fade and material.get_shader_parameter("wave_forge_span") == span and material.get_shader_parameter("wave_forge_focus") == focus
+
 ## The value of field stage `stage` at the world column `column`.
 func _value(stage: String, column: Vector2i) -> float:
 	var chunk := Vector3i(floori(float(column.x) / CELLS), floori(float(column.y) / CELLS), 0)
@@ -156,9 +161,12 @@ func _height(column: Vector2i) -> float:
 	return values[posmod(column.y, CELLS) * CELLS + posmod(column.x, CELLS)] * CELL.y
 
 func _check_grass() -> bool:
-	# The grass fades out over its radius's last chunk, along the chunk's shorter side: 1 chunk of
-	# 8 cells of 2 units.
-	var fade := Vector2(0, 16)
+	# The grass fades out over the outer three quarters of a chunk of the square of chunks within
+	# its radius of 1, which ends a chunk and a half from the followed chunk's centre; chunks are
+	# 8 cells of 2 by 3 units, and the followed chunk is the origin's.
+	var fade := Vector2(0.75, 1.5)
+	var span := Vector2(CELLS * CELL.x, CELLS * CELL.z)
+	var focus := span / 2.0
 	var covered := 0
 	for chunk: Vector3i in world.grass_chunks():
 		if maxi(absi(chunk.x), absi(chunk.y)) > 1:
@@ -168,8 +176,8 @@ func _check_grass() -> bool:
 		if material.shader.code != world.grass_shader_code() or material.shader.resource_path != "res://addons/wave_forge/shaders/grass.gdshader":
 			_fail("the grass of %s is not drawn with the reference shader's file, but %s" % [chunk, material.shader.resource_path])
 			return true
-		if material.get_shader_parameter("wave_forge_fade") != fade:
-			_fail("the grass of %s fades over %s, not %s" % [chunk, material.get_shader_parameter("wave_forge_fade"), fade])
+		if not _fades(material, fade, span, focus):
+			_fail("the grass of %s fades over %s about %s, not %s about %s" % [chunk, material.get_shader_parameter("wave_forge_fade"), material.get_shader_parameter("wave_forge_focus"), fade, focus])
 			return true
 		var cover: PackedByteArray = material.get_shader_parameter("wave_forge_cover").get_image().get_data()
 		var field: PackedFloat32Array = world.field_values("cover", chunk)
@@ -191,9 +199,16 @@ func _check_grass() -> bool:
 		return true
 	for chunk: Vector3i in world.ground_chunks():
 		var ground: ShaderMaterial = world.ground_material_of(chunk)
-		if ground.get_shader_parameter("wave_forge_fade") != fade:
-			_fail("the ground of %s tints in its cover over %s, not the grass's %s" % [chunk, ground.get_shader_parameter("wave_forge_fade"), fade])
+		if not _fades(ground, fade, span, focus):
+			_fail("the ground of %s tints in its cover over %s about %s, not the grass's %s about %s" % [chunk, ground.get_shader_parameter("wave_forge_fade"), ground.get_shader_parameter("wave_forge_focus"), fade, focus])
 			return true
+	# Following the next chunk along x moves the fade's centre with it, on the ground at once.
+	world.follow(Vector3(span.x * 1.5, 0, 1))
+	var moved: ShaderMaterial = world.ground_material_of(Vector3i.ZERO)
+	if not _fades(moved, fade, span, focus + Vector2(span.x, 0)):
+		_fail("the fade stays about %s after the followed chunk moved" % moved.get_shader_parameter("wave_forge_focus"))
+		return true
+	world.follow(Vector3(1, 0, 1))
 	print("verify_ground: grass on %d chunks, %d columns covered, each chunk with its cover and the ground's heights, fading out as the ground's cover tints in" % [world.grass_chunks().size(), covered])
 	before = _height(raised)
 	var centre := Vector3((raised.x + 0.5) * CELL.x, 0, (raised.y + 0.5) * CELL.z)

@@ -16,9 +16,13 @@ uniform vec2 wave_forge_cell = vec2(1.0);
 uniform int wave_forge_per_column = 8;
 // The chunk, so neighbouring chunks do not repeat each other's blades.
 uniform ivec2 wave_forge_chunk;
-// The distances from the camera, in world units, from which blades shrink and at which they are
-// gone, so the grass fades out before its edge rather than stopping at it.
+// The chunks from the followed chunk's centre, along the farther axis, from which blades shrink and
+// at which they are gone, so the grass fades out before its edge rather than stopping at it; and a
+// chunk's width along x and z and that centre on the ground plane, in world units. Measured so, the
+// fade follows the square of chunks that have grass, wherever the camera is.
 uniform vec2 wave_forge_fade = vec2(1e9, 2e9);
+uniform vec2 wave_forge_span = vec2(1.0);
+uniform vec2 wave_forge_focus = vec2(0.0);
 uniform float blade_height = 0.6;
 uniform float blade_width = 0.1;
 uniform vec3 base_colour : source_color = vec3(0.16, 0.32, 0.09);
@@ -68,7 +72,8 @@ void vertex() {
 	vec2 facing = vec2(cos(angle), sin(angle));
 	along = VERTEX.y;
 	vec3 root = (MODEL_MATRIX * vec4(place.x * wave_forge_cell.x, ground, place.y * wave_forge_cell.y, 1.0)).xyz;
-	float faded = 1.0 - smoothstep(wave_forge_fade.x, wave_forge_fade.y, length(root.xz - CAMERA_POSITION_WORLD.xz));
+	vec2 from_focus = abs(root.xz - wave_forge_focus) / wave_forge_span;
+	float faded = 1.0 - smoothstep(wave_forge_fade.x, wave_forge_fade.y, max(from_focus.x, from_focus.y));
 	shown = shown && faded > 0.0;
 	float tall = blade_height * (0.7 + 0.6 * unit(seed ^ 0x165667B1u)) * faded;
 	vec3 blade = vec3(facing.x * VERTEX.x * blade_width, VERTEX.y * tall, facing.y * VERTEX.x * blade_width);

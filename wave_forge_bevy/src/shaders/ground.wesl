@@ -15,6 +15,13 @@ import bevy_pbr::render::{
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 };
 
+// What `GrassFade` in materials.rs holds, as the grass shader reads it.
+struct GrassFade {
+    band: vec2<f32>,
+    span: vec2<f32>,
+    focus: vec2<f32>,
+}
+
 // What `GroundLook` in materials.rs holds.
 struct GroundLook {
     rock_colour: vec4<f32>,
@@ -28,8 +35,9 @@ struct GroundLook {
     wet_roughness: f32,
     cover_tint: f32,
     cover_colour: vec4<f32>,
-    cover_fade: vec2<f32>,
     gullies: f32,
+    // A struct within a uniform starts on 16 bytes.
+    @align(16) cover_fade: GrassFade,
 }
 
 // The slopes (one minus the normal's height) at which gullies start and are cut fully, and how many
@@ -206,7 +214,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let wet = clamp(near_channels.y, 0.0, 1.0);
     let cover = clamp(near_channels.z, 0.0, 1.0);
     // Covered ground tints in as the grass's blades shrink away, so where they stand it is as it is.
-    let beyond_grass = smoothstep(look.cover_fade.x, look.cover_fade.y, length(world.xz - view.world_position.xz));
+    let from_focus = abs(world.xz - look.cover_fade.focus) / look.cover_fade.span;
+    let beyond_grass = smoothstep(look.cover_fade.band.x, look.cover_fade.band.y, max(from_focus.x, from_focus.y));
     albedo = mix(albedo, look.cover_colour.rgb, cover * look.cover_tint * beyond_grass);
     albedo *= (1.0 - look.cavity_darkening * cavity) * (1.0 - look.wet_darkening * wet);
     pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, look.wet_roughness, wet);

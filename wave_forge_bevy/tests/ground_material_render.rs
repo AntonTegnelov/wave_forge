@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials};
 use wave_forge_bevy::materials::{
-    GroundLook, WaveForgeMaterialsPlugin, ground_channels_image, ground_material_of, palette_image,
+    GrassFade, GroundLook, WaveForgeMaterialsPlugin, ground_channels_image, ground_material_of,
+    palette_image,
 };
 use wave_forge_bevy::stages::ground_mesh;
 
@@ -68,8 +69,10 @@ fn render_halves_on(height: &str, look: GroundLook, channels: Option<[[f32; 3]; 
     let ids = ground_materials(chunk, |at| runtime.categories("side", at)).expect("materials");
 
     let mut app = App::new();
+    // The grass's fade reaches every ground material through its resource, as an app gives it.
     app.add_plugins((DefaultPlugins, WaveForgeMaterialsPlugin))
-        .init_resource::<Pixels>();
+        .init_resource::<Pixels>()
+        .insert_resource(look.cover_fade);
     // What `App::run` does before the first frame: let the renderer's device future resolve.
     let started = Instant::now();
     while app.plugins_state() == PluginsState::Adding {
@@ -275,13 +278,16 @@ const COVER: [u8; 3] = [40, 200, 60];
 
 /// The halves' colours, left and right, with one half fully covered and the other bare, and the
 /// grass fading out over `cover_fade`.
-fn covered_halves(cover_fade: Vec2) -> ([u8; 3], [u8; 3]) {
+fn covered_halves(band: Vec2) -> ([u8; 3], [u8; 3]) {
     let look = GroundLook {
         cover_tint: 1.0,
         cover_colour: Color::srgb_u8(COVER[0], COVER[1], COVER[2])
             .to_linear()
             .to_vec4(),
-        cover_fade,
+        cover_fade: GrassFade {
+            band,
+            ..GrassFade::default()
+        },
         ..GroundLook::flat()
     };
     let pixels = render_halves(look, Some([[0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]));

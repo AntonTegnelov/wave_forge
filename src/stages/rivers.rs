@@ -50,8 +50,8 @@ impl RegionJob for DownhillRivers<'_> {
     fn run(&self, input: &RegionInput<'_>) -> Result<Attempt, StageError> {
         let ([x0, y0], [x1, y1]) = input.columns();
         let (width, depth) = ((x1 - x0 + 1) as usize, (y1 - y0 + 1) as usize);
-        if width < 3 || depth < 3 {
-            // Every column of so small a region is on its edge, where no river starts.
+        if width < 5 || depth < 5 {
+            // So small a region has no column off its edge and away from its corners.
             return Ok(Attempt::Accepted(Vec::new()));
         }
         let mut heights = Vec::with_capacity(width * depth);
@@ -66,8 +66,10 @@ impl RegionJob for DownhillRivers<'_> {
         // Each side's crossing: the pair of columns facing each other across the border whose
         // lower column is lowest, the first along the side on a tie, which the region beyond finds
         // alike. Water leaves by it where the column inside stands higher; on a level pair it runs
-        // toward +x and +y.
-        let (mut leaving, mut entering) = (Vec::new(), Vec::new());
+        // toward +x and +y. Each crossing water leaves by is kept with the column inside it, which
+        // is where the region's water drains to it.
+        let (mut leaving, mut entering): (Vec<(usize, usize)>, Vec<usize>) =
+            (Vec::new(), Vec::new());
         for side in [Side::West, Side::East, Side::South, Side::North] {
             let along: Vec<((i64, i64), (i64, i64))> = match side {
                 Side::West => (y0..=y1).map(|y| ((x0, y), (x0 - 1, y))).collect(),
@@ -76,7 +78,10 @@ impl RegionJob for DownhillRivers<'_> {
                 Side::North => (x0..=x1).map(|x| ((x, y1), (x, y1 + 1))).collect(),
             };
             let mut lowest: Option<(f32, usize, f32)> = None;
-            for &(inside, outside) in &along {
+            // The two columns at each end are left out: a corner lies on two sides, whose regions
+            // across would each take it for a crossing, and the columns beside it share the column
+            // inside them with the next side's.
+            for &(inside, outside) in &along[2..along.len() - 2] {
                 let (here, there) = (
                     heights[index(inside)],
                     input.field(self.height, outside.0, outside.1)?,
@@ -87,12 +92,14 @@ impl RegionJob for DownhillRivers<'_> {
             }
             let (_, at, there) = lowest.expect("a side has columns");
             let toward_plus = matches!(side, Side::East | Side::North);
-            // A corner column may be two sides' crossing; it takes the first side's way.
-            if leaving.contains(&at) || entering.contains(&at) {
-                continue;
-            }
             if heights[at] > there || (heights[at] == there && toward_plus) {
-                leaving.push(at);
+                let inward = match side {
+                    Side::West => at + 1,
+                    Side::East => at - 1,
+                    Side::South => at + width,
+                    Side::North => at - width,
+                };
+                leaving.push((at, inward));
             } else {
                 entering.push(at);
             }
@@ -104,13 +111,15 @@ impl RegionJob for DownhillRivers<'_> {
                 let (x, y) = (at % width, at / width);
                 x == 0 || y == 0 || x == width - 1 || y == depth - 1
             });
-            leaving.push(
-                edge.min_by(|&a, &b| heights[a].total_cmp(&heights[b]))
-                    .expect("an edge"),
-            );
+            let at = edge
+                .min_by(|&a, &b| heights[a].total_cmp(&heights[b]))
+                .expect("an edge");
+            let (x, y) = (at % width, at / width);
+            let inward = y.clamp(1, depth - 2) * width + x.clamp(1, width - 2);
+            leaving.push((at, inward));
         }
         let flood = flood(&heights, [width, depth], [x0, y0], |at| {
-            sea(at) || leaving.contains(&at)
+            sea(at) || leaving.iter().any(|&(_, inward)| inward == at)
         });
         let toward = flood.toward;
 
@@ -143,10 +152,16 @@ impl RegionJob for DownhillRivers<'_> {
         };
         let mut id = self.sources;
         // Up from each crossing water leaves by, along the columns that gather most.
-        for &mouth in &leaving {
-            let mut cells = vec![mouth];
-            let mut at = mouth;
-            while let Some(above) = most[at].filter(|&above| gathers[above] >= STEM_GATHERS) {
+        for &(mouth, inward) in &leaving {
+            // The column inside the crossing is the flood's outlet, so the water about it leaves
+            // by the crossing and the stem runs up from there.
+            let mut cells = vec![mouth, inward];
+            let mut at = inward;
+            // The region across starts a river at every crossing water leaves by, so one always
+            // arrives: from where it gathers enough water, or, from a smaller basin, a quarter of
+            // what the crossing gathers.
+            let enough = STEM_GATHERS.min((gathers[inward] / 4).max(1));
+            while let Some(above) = most[at].filter(|&above| gathers[above] >= enough) {
                 // A river that drains a lake starts where it leaves it.
                 if self.in_lake(input, column(above))? {
                     break;

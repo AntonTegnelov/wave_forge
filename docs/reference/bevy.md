@@ -245,9 +245,9 @@ texture `ground_channels_image(size, channels)` makes of four floats a texel, th
 since a texture has no format of three; a ground built some other way sets that field itself, and
 without channels it is a single texel of zeros. `GroundLook`'s `cavity_darkening`, `wet_darkening`
 and `wet_roughness` say how far they darken and smooth the ground, and `cover_tint` and
-`cover_colour` how far covered ground tints toward the grass, coming in over `cover_fade`: the
-grass's `fade` ([Grass](#grass)), so the ground is as it is where the blades stand. Its default,
-farther than any view, tints nothing.
+`cover_colour` how far covered ground tints toward the grass, coming in where the grass fades out
+([Grass](#grass)), so the ground is as it is where the blades stand; without a fade nothing is
+tinted.
 
 ## Grass
 
@@ -260,10 +260,13 @@ cover, cell, per_column, base, images)` makes one for a ground built some other 
 ground's height per vertex (one float each) and the cover per column (one byte each) as images. The
 grass shader gives blade *b* its column, a hashed place in it, a hashed turn and height, and shows
 it only where a hash is below the column's cover; it stands on the ground's heights, blended between
-vertices, and sways in the wind. Blades shrink away by their horizontal distance from the camera over
-`GrassSettings::fade`, farther than any view by default: an app that gives grass to chunks within
-some distance sets it to end there, and the ground's `cover_fade` to the same, so the grass thins
-out before its edge and the ground beyond takes its colour. A blade is drawn from both sides, casts
+vertices, and sways in the wind. Blades shrink away where the `GrassFade` resource says: by how
+many chunks they lie from `focus` along the farther axis, between `band.x` and `band.y`, so the fade
+follows the square of chunks that have grass wherever the camera is. An app that gives grass to the
+chunks within `radius` of the player's sets it to `GrassFade::of_radius(radius, chunk, span)` when
+the player's chunk changes, as the Godot node does with `grass_radius`; the plugin hands it to
+every grass material and to every ground material's `cover_fade`, so the grass thins out before
+its edge and the ground beyond takes its colour. By default it is farther than any view. A blade is drawn from both sides, casts
 no shadow and has no prepass.
 
 The shader moves the blades far from where the mesh has them, so a chunk's grass needs the bounds

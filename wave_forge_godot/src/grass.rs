@@ -17,21 +17,53 @@ use std::collections::HashMap;
 use wave_forge::stages::Field;
 use wave_forge::{ChunkCoord, GroundMesh};
 
+/// Where the grass fades out, as the reference grass and ground shaders read it: by how many chunks
+/// a point lies from the followed chunk's centre along the farther axis, so the band follows the
+/// square of chunks that have grass wherever the camera is.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GrassFade {
+    /// The chunks from the followed chunk's centre over which blades shrink away.
+    pub(crate) band: Vector2,
+    /// A chunk's width along x and z, in world units.
+    pub(crate) span: Vector2,
+    /// The followed chunk's centre on the ground plane, in world units.
+    pub(crate) focus: Vector2,
+}
+
+impl GrassFade {
+    /// The fade of grass on the chunks within `radius` of the followed one, chunks `span` wide: over
+    /// the outer chunk of the square they make, or the outer half of it for the followed chunk alone.
+    pub(crate) fn of_radius(radius: u32, span: Vector2) -> Self {
+        let end = radius as f32 + 0.5;
+        Self {
+            band: Vector2::new(end - (end / 2.0).min(1.0), end),
+            span,
+            focus: Vector2::ZERO,
+        }
+    }
+
+    /// Hands the fade to a copy of the reference grass or ground shader.
+    pub(crate) fn apply(&self, material: &mut Gd<ShaderMaterial>) {
+        material.set_shader_parameter("wave_forge_fade", &self.band.to_variant());
+        material.set_shader_parameter("wave_forge_span", &self.span.to_variant());
+        material.set_shader_parameter("wave_forge_focus", &self.focus.to_variant());
+    }
+}
+
 /// The shared blades, the material each chunk's is copied from, and each chunk's instance.
 pub(crate) struct Grass {
     blade: Rid,
     multimesh: Rid,
     per_column: u32,
-    /// The distances from the camera, in world units, over which blades shrink away.
-    fade: Vector2,
+    /// Where blades shrink away.
+    fade: GrassFade,
     template: Gd<ShaderMaterial>,
     chunks: HashMap<ChunkCoord, (Rid, Gd<ShaderMaterial>)>,
 }
 
 impl Grass {
     /// Blades for chunks of `columns`, `per_column` to a column, drawn with `material`, or with
-    /// the reference grass shader when it is `None`, shrinking away between the distances from
-    /// the camera `fade` gives in world units.
+    /// the reference grass shader when it is `None`, shrinking away where `fade` says.
     ///
     /// # Errors
     /// If `material` is not a `ShaderMaterial`.
@@ -39,7 +71,7 @@ impl Grass {
         material: Option<&Gd<Material>>,
         per_column: u32,
         columns: [u32; 2],
-        fade: Vector2,
+        fade: GrassFade,
     ) -> Result<Self, String> {
         let template = match material {
             None => {
@@ -92,9 +124,17 @@ impl Grass {
         })
     }
 
-    /// The distances from the camera, in world units, over which blades shrink away.
-    pub(crate) fn fade(&self) -> Vector2 {
+    /// Where blades shrink away.
+    pub(crate) fn fade(&self) -> GrassFade {
         self.fade
+    }
+
+    /// Follows the followed chunk's centre, `focus`, with every chunk's grass.
+    pub(crate) fn set_focus(&mut self, focus: Vector2) {
+        self.fade.focus = focus;
+        for (_, material) in self.chunks.values_mut() {
+            self.fade.apply(material);
+        }
     }
 
     /// Frees the grass of chunks for which `keep` fails, then grows grass on at most `budget` of
@@ -241,10 +281,10 @@ impl Grass {
                 "wave_forge_chunk",
                 Vector2i::new(chunk.x, chunk.y).to_variant(),
             ),
-            ("wave_forge_fade", self.fade.to_variant()),
         ] {
             material.set_shader_parameter(name, &value);
         }
+        self.fade.apply(&mut material);
         material
     }
 }

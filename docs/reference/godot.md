@@ -22,7 +22,7 @@ extension needs none of godot-rust's thread-safety features.
 | | `cell_size` | one cell in Godot's world units, along Godot's axes |
 | | `world_chunks` | the world's size in chunks along each lattice axis; 0 is unbounded |
 | Streaming | `view_radius` | chunks kept generated around the followed position |
-| | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off |
+| | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off. A game that follows from a script turns it off in the scene, or the world generates around the camera until the script's first `follow` |
 | | `evict_margin` | chunks further than `view_radius` plus this are dropped |
 | Physics | `collider_radius` | chunks around the player that get colliders |
 | Navigation | `navigation_radius` | chunks around the player that get navigation meshes |
@@ -662,8 +662,7 @@ exactly along chunk edges (`wave_forge::ground_values`, `ground_channels`). The 
 blends them between the vertices as it blends the materials: a cavity darkens the ground by up to
 `cavity_darkening`, and wetness darkens it by up to `wet_darkening` and smooths it toward
 `wet_roughness`. The cover, the grass's own cover stage say, tints the ground toward `cover_colour`
-by up to `cover_tint`, coming in over `wave_forge_fade`, the distances over which the grass's
-blades shrink away ([Grass](#grass)): where the blades stand the ground is as it is, and beyond
+by up to `cover_tint`, coming in where the grass's blades shrink away ([Grass](#grass)): where the blades stand the ground is as it is, and beyond
 them covered ground reads as the same meadow, so the grass's edge leaves no ring. Without grass
 the cover tints nothing. Compatibility has
 no screen-space ambient occlusion, so a cavity stage is how its ground gets darker hollows; one is a
@@ -711,9 +710,13 @@ it, a hashed turn and height, and shows it only where a hash is below the column
 on the ground's heights, blended between vertices, and sways in the global shader parameter
 `wave_forge_wind` (a direction along x and z, a strength at the tip, a speed), which the node
 registers blowing gently along +x unless the project's settings declare it. Blades shrink away by
-their horizontal distance from the camera over `wave_forge_fade`, which the node sets to the last
-chunk of `grass_radius` (along a chunk's shorter side), so the grass thins out before its edge
-rather than stopping at it; the ground's cover channel tints in over the same distances. Grass casts no shadow,
+how many chunks they lie from the followed chunk's centre along the farther axis, so the fade
+follows the square of chunks that have grass wherever the camera is: over the outer chunk of that
+square, or the outer half of it with a `grass_radius` of 0. The node hands every grass and ground
+copy the band (`wave_forge_fade`, in chunks), a chunk's width (`wave_forge_span`) and that centre
+(`wave_forge_focus`), and moves the centre when the followed chunk changes, so the grass thins out
+before its edge rather than stopping at it; the ground's cover channel tints in over the same
+band. Grass casts no shadow,
 takes no GI, and is bounded by its chunk rather than by its blades, which the shader moves. It
 draws on every renderer, Compatibility included. `grass_chunks()` lists the chunks with grass and
 `grass_material_of(chunk)` gives a chunk's material. Loading refuses a `grass_stage` the pack does

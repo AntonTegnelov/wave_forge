@@ -12,7 +12,7 @@
 
 use crate::audio::{InteriorBuses, RegionAudio};
 use crate::gi::Gi;
-use crate::grass::Grass;
+use crate::grass::{Grass, GrassFade};
 use crate::lods::{add_levelled_surface, godot_triangles, levelled_mesh};
 use crate::occlusion::Occluders;
 use crate::placements::{Item, Placements};
@@ -1313,12 +1313,13 @@ impl WaveForgeStages {
                 self.chunk_cells.x.max(1) as u32,
                 self.chunk_cells.y.max(1) as u32,
             ];
-            // Blades shrink away over the last chunk before the grass's edge, which is at least
-            // `grass_radius` chunks from the camera whichever way it looks, so no edge shows.
-            let span =
-                (columns[0] as f32 * self.cell_size.x).min(columns[1] as f32 * self.cell_size.z);
-            let end = (self.grass_radius as f32).max(0.5) * span;
-            let fade = Vector2::new((end - span).max(0.0), end);
+            // Blades shrink away before the edge of the square of chunks that have grass, so no
+            // edge shows.
+            let span = Vector2::new(
+                columns[0] as f32 * self.cell_size.x,
+                columns[1] as f32 * self.cell_size.z,
+            );
+            let fade = GrassFade::of_radius(self.grass_radius.max(0) as u32, span);
             match Grass::new(
                 self.grass_material.as_ref(),
                 self.grass_per_cell.max(1) as u32,
@@ -1507,6 +1508,18 @@ impl WaveForgeStages {
             return;
         }
         self.followed = Some(chunk);
+        // The grass, and the ground's tint toward it, fade about the followed chunk's centre.
+        if let Some(grass) = &mut self.grass {
+            let focus = Vector2::new(
+                (chunk.x as f32 + 0.5) * size[0],
+                (chunk.y as f32 + 0.5) * size[1],
+            );
+            grass.set_focus(focus);
+            let fade = grass.fade();
+            for material in self.chunk_materials.values_mut() {
+                fade.apply(material);
+            }
+        }
         let targets: Vec<(String, Option<u32>)> = self
             .targets
             .as_slice()
@@ -5481,7 +5494,7 @@ fn chunk_material(
     mesh: &GroundMesh,
     ids: &[u8],
     channels: Option<&[f32]>,
-    fade: Option<Vector2>,
+    fade: Option<GrassFade>,
     cell: [f32; 3],
 ) -> Gd<ShaderMaterial> {
     let image = Image::create_from_data(
@@ -5517,7 +5530,7 @@ fn chunk_material(
         material.set_shader_parameter("wave_forge_channels", &texture.to_variant());
     }
     if let Some(fade) = fade {
-        material.set_shader_parameter("wave_forge_fade", &fade.to_variant());
+        fade.apply(&mut material);
     }
     material
 }

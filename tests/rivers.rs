@@ -170,6 +170,44 @@ fn a_river_that_joins_another_ends_where_it_joins() {
 }
 
 #[test]
+fn a_river_that_comes_into_its_region_continues_one_that_left_the_next() {
+    let rivers = rivers(&[area()]);
+
+    // A river starting on a side of its region as wide as a mouth came in by a crossing: a river
+    // of the region across ends on the column facing its first point.
+    let inside = |c: f32| c.rem_euclid(32.0);
+    let mut continued = 0;
+    for river in rivers.iter().filter(|river| river.values[0] == 3.0) {
+        let first = river.points[0];
+        let (x, y) = (inside(first[0]), inside(first[1]));
+        let across = if x < 1.0 {
+            [first[0] - 1.0, first[1]]
+        } else if x > 31.0 {
+            [first[0] + 1.0, first[1]]
+        } else if y < 1.0 {
+            [first[0], first[1] - 1.0]
+        } else if y > 31.0 {
+            [first[0], first[1] + 1.0]
+        } else {
+            panic!("{:?} starts as wide as a mouth inside its region", river.id);
+        };
+        if across.iter().any(|c| !(-64.0..64.0).contains(c)) {
+            continue;
+        }
+        let fed = rivers
+            .iter()
+            .any(|other| region(other) != region(river) && other.points.last() == Some(&across));
+        assert!(
+            fed,
+            "{:?} comes in at {first:?}, but no river ends across at {across:?}",
+            river.id
+        );
+        continued += 1;
+    }
+    assert!(continued > 0, "no river comes into a region");
+}
+
+#[test]
 fn a_river_widens_from_its_source_to_its_mouth() {
     for river in rivers(&[area()]) {
         // A river that comes in across its region's side is already as wide as a mouth.
