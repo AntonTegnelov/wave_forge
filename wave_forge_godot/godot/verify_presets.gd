@@ -3,9 +3,9 @@
 ## Run by `../verify.sh` after `verify_inspector.gd`, which also fails if this prints an error or
 ## a warning. For each preset: a fresh WaveForgeStages node is given the preset's settings and
 ## added to a scene with a sun and an environment, and it starts on its own, as on a first play.
-## Once nothing is pending around the followed point it warns of nothing, stands ground there (its
-## ground's, or the top of its volume for a preset drawn from a volume alone), has bodies and
-## navigation, draws its sea when it has one, draws its far ground when it has one, draws its props
+## Once nothing is pending around the followed point it warns of nothing, draws ground on every
+## chunk of the view, stands ground there (its ground's, or the top of its volume for a preset drawn
+## from a volume alone), has bodies and navigation, draws its sea when it has one, draws its far ground when it has one, draws its props
 ## (trees, cacti, palms) as MultiMesh instances, and has a palette colour per material of its ground
 ## or volume.
 extends SceneTree
@@ -89,6 +89,11 @@ func _settled(path: String, stats: Dictionary) -> String:
 	return "ok"
 
 ## The chunks the preset draws its ground in: its ground's, or its volume's surface's for a preset
+	# The ground fills the view: every chunk within its radius, the outer ring too, whose ground
+	# reads its materials and channels from the chunks beyond.
+	var view: int = (2 * stages.view_radius + 1) * (2 * stages.view_radius + 1)
+	if not stages.ground_stage.is_empty() and stages.ground_chunks().size() != view:
+		return "%s draws ground on %d chunks of the view's %d" % [path, stages.ground_chunks().size(), view]
 ## drawn from a volume alone.
 func _drawn() -> Array:
 	return stages.volume_chunks() if stages.ground_stage.is_empty() else stages.ground_chunks()

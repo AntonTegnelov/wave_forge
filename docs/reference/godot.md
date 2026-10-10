@@ -185,7 +185,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | World | `seed` | every choice derives from it |
 | | `chunk_cells` | columns per chunk along the lattice's x and y, and a town chunk's height along z |
 | | `cell_size` | one cell in Godot's world units |
-| Streaming | `view_radius` | chunks kept generated around the followed position |
+| Streaming | `view_radius` | chunks kept generated around the followed position; the ground is drawn on each of them, its height, material, channel and water stages generated a chunk further, since a chunk's ground reads the chunks beyond its +x and +y edges |
 | | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off. In the editor the plugin follows the editor's camera instead |
 | Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
 | | `ground_material` | the material the ground is drawn with |

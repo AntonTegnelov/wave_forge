@@ -1522,6 +1522,17 @@ impl WaveForgeStages {
             return;
         }
         self.followed = Some(chunk);
+        // The view's chunks without ground may have had their fields all along, out past the old
+        // view, where no ground is drawn.
+        let view = self.view_radius.max(0);
+        for y in -view..=view {
+            for x in -view..=view {
+                let near = ChunkCoord::new(chunk.x + x, chunk.y + y, 0);
+                if !self.grounds.contains_key(&near) {
+                    self.ground_due.insert(near);
+                }
+            }
+        }
         // The grass, and the ground's tint toward it, fade about the followed chunk's centre.
         if let Some(grass) = &mut self.grass {
             let focus = Vector2::new(
@@ -1534,6 +1545,18 @@ impl WaveForgeStages {
                 fade.apply(material);
             }
         }
+        // A chunk's ground reads its heights, materials, channels and water from the chunks beyond
+        // its +x and +y edges too, so those stages reach a chunk past the view, or the view's outer
+        // ring would have no ground.
+        let ground_inputs = [
+            &self.ground_stage,
+            &self.ground_material_stage,
+            &self.ground_cavity_stage,
+            &self.ground_wetness_stage,
+            &self.ground_cover_stage,
+            &self.water_stage,
+        ];
+        let beyond = self.view_radius.max(0) as u32 + 1;
         let targets: Vec<(String, Option<u32>)> = self
             .targets
             .as_slice()
@@ -1543,6 +1566,11 @@ impl WaveForgeStages {
                     .target_radii
                     .get(&StringName::from(target))
                     .map(|radius| radius.max(0) as u32);
+                let radius = if ground_inputs.contains(&target) {
+                    Some(radius.map_or(beyond, |radius| radius.max(beyond)))
+                } else {
+                    radius
+                };
                 (target.to_string(), radius)
             })
             .collect();
@@ -3285,13 +3313,18 @@ impl WaveForgeStages {
         });
         let building = std::time::Instant::now();
         let mut built = Vec::new();
+        let view = self.view_radius.max(0);
         for chunk in due {
             if built.len() == GROUNDS_PER_FRAME {
                 break;
             }
             // Looked at now: built, already built, or waiting for a field around it, whose arrival
-            // makes it due again.
+            // makes it due again. The ground's inputs reach a chunk past the view, where no ground
+            // is drawn; the view reaching it makes it due again.
             self.ground_due.remove(&chunk);
+            if (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()) > view {
+                continue;
+            }
             if self.grounds.contains_key(&chunk) {
                 continue;
             }
