@@ -176,6 +176,19 @@ pub struct WaveForgeStages {
     /// colours of their own from their index.
     #[export]
     ground_palette: PackedColorArray,
+    /// Per category of `ground_material_stage`, by index as `ground_palette`: the colour its ramp
+    /// runs toward from its palette colour. A category past its end has no ramp.
+    #[export]
+    ground_ramp_colours: PackedColorArray,
+    /// Per category, by index: how far the ground's height (0 to 1 over `ground_ramp_heights`),
+    /// its slope (0 flat to 1 sheer), its cavity and its wetness each move the category's colour
+    /// along its ramp, from -1 to 1, summed and clamped to the ramp. A category past its end has no
+    /// ramp.
+    #[export]
+    ground_ramp_drivers: PackedVector4Array,
+    /// The heights, in Godot's world units, over which a ramp's height runs from 0 to 1.
+    #[export]
+    ground_ramp_heights: Vector2,
     /// A field stage at the ground's scale whose values, 0 to 1, darken the ground's hollows: its
     /// cavity, handed to the ground material with `ground_material_stage`'s categories, in the red
     /// channel of `wave_forge_channels`. Empty for none.
@@ -827,6 +840,9 @@ impl INode for WaveForgeStages {
             grass_material: None,
             grass: None,
             ground_palette: PackedColorArray::new(),
+            ground_ramp_colours: PackedColorArray::new(),
+            ground_ramp_drivers: PackedVector4Array::new(),
+            ground_ramp_heights: Vector2::new(0.0, 1.0),
             ground_cavity_stage: GString::new(),
             ground_wetness_stage: GString::new(),
             ground_cover_stage: GString::new(),
@@ -4993,11 +5009,18 @@ impl WaveForgeStages {
                 ));
                 material
             }
-            Some(material) => material.clone().try_cast::<ShaderMaterial>().map_err(|_| {
-                "ground_material must be a ShaderMaterial when ground_material_stage is set"
-                    .to_owned()
-            })?,
+            // A copy, since the ramps go into it.
+            Some(material) => material
+                .duplicate_resource()
+                .try_cast::<ShaderMaterial>()
+                .map_err(|_| {
+                    "ground_material must be a ShaderMaterial when ground_material_stage is set"
+                        .to_owned()
+                })?,
         };
+        let mut template = template;
+        template.set_shader_parameter("wave_forge_ramps", &self.ramps_texture()?.to_variant());
+        template.set_shader_parameter("ramp_heights", &self.ground_ramp_heights.to_variant());
         let colours: Vec<u8> = (0..MAX_CATEGORIES)
             .flat_map(|index| {
                 let colour = palette_colour(&self.ground_palette, index);
@@ -5015,6 +5038,35 @@ impl WaveForgeStages {
         let palette = ImageTexture::create_from_image(&image)
             .ok_or("the ground palette could not be made")?;
         Ok((palette, template))
+    }
+
+    /// The ramps' texture for the ground material: per category, the colour its ramp runs toward,
+    /// linear, in row 0, and its drivers in row 1; zero, no ramp, past the ramps given.
+    fn ramps_texture(&self) -> Result<Gd<ImageTexture>, String> {
+        let toward = (0..MAX_CATEGORIES).flat_map(|index| {
+            let colour = self
+                .ground_ramp_colours
+                .get(index)
+                .map_or(Color::from_rgba(0.0, 0.0, 0.0, 0.0), |colour| {
+                    colour.srgb_to_linear()
+                });
+            [colour.r, colour.g, colour.b, 1.0]
+        });
+        let drivers = (0..MAX_CATEGORIES).flat_map(|index| {
+            let by = self.ground_ramp_drivers.get(index).unwrap_or(Vector4::ZERO);
+            [by.x, by.y, by.z, by.w]
+        });
+        let bytes: Vec<u8> = toward.chain(drivers).flat_map(f32::to_le_bytes).collect();
+        let image = Image::create_from_data(
+            MAX_CATEGORIES as i32,
+            2,
+            false,
+            ImageFormat::RGBAF,
+            &PackedByteArray::from(bytes.as_slice()),
+        )
+        .ok_or("the ground ramps could not be made")?;
+        ImageTexture::create_from_image(&image)
+            .ok_or_else(|| "the ground ramps could not be made".to_owned())
     }
 
     fn clear_ground_and_bodies(&mut self) {
