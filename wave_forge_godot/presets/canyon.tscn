@@ -4,7 +4,7 @@
 
 [node name="Canyon" type="WaveForgeStages"]
 pack_file = "res://addons/wave_forge/presets/canyon.world.ron"
-targets = PackedStringArray("height", "surface", "cacti", "far_height", "far_surface")
+targets = PackedStringArray("height", "surface", "cacti", "far_height", "far_surface", "hollow")
 start_on_ready = true
 preview_in_editor = true
 view_radius = 3
@@ -15,8 +15,9 @@ target_radii = Dictionary[StringName, int]({
 ground_stage = "height"
 far_ground_stage = "far_height"
 far_ground_material_stage = "far_surface"
+ground_cavity_stage = "hollow"
 ground_material_stage = "surface"
-ground_palette = PackedColorArray(0.72, 0.45, 0.3, 1, 0.46, 0.21, 0.13, 1, 0.8, 0.6, 0.38, 1, 0.8, 0.54, 0.36, 1, 0.64, 0.31, 0.18, 1)
+ground_palette = PackedColorArray(0.72, 0.45, 0.3, 1, 0.586, 0.275, 0.175, 1, 0.8, 0.6, 0.38, 1, 0.8, 0.54, 0.36, 1, 0.64, 0.31, 0.18, 1)
 collider_radius = 1
 navigation_radius = 1
 scenes = {
