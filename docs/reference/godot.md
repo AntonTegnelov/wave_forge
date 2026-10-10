@@ -399,14 +399,36 @@ the player first, each at least one a frame. `stats()` reports what waits as `pe
 what is placed as `placed_nodes` and `placed_instances`, and the nodes of pooled scenes waiting to
 be placed again as `pooled_nodes` ([Scenes](#scenes)).
 
+### First look
+
+Wave Forge owns no lighting: a sun and a sky are the engine's, and the presets carry none. Godot's
+editor lights its viewport with a preview sun and sky while the scene has none of its own, and a
+running game has neither, so a preset dropped into an empty scene looks lit in the editor and dark
+when it runs. Three things close that gap without the addon growing a lighting system:
+- both nodes warn in the editor when the scene has no `DirectionalLight3D` or no
+  `WorldEnvironment` (and no project default), judged as the editor's preview judges it, so a lamp
+  is no sun ([Editor](#editor));
+- both nodes' inspector has **Add sun and sky**, which copies the addon's `sun_and_sky.tscn` into
+  the scene: a `DirectionalLight3D` 35 degrees up with shadows, and a `WorldEnvironment` with a
+  procedural sky for background, ambient and reflections and a filmic tonemap. It adds each only
+  when the scene lacks one, as one undo action, at the top of the scene; they are plain nodes the
+  scene owns, with an environment of its own, to change or delete;
+- a running game prints a warning once, when the node first draws its ground, surface or chunks,
+  if the scene has no sun or no sky.
+
+The addon's optional `demo/demo.tscn` lights the hills preset with `sun_and_sky.tscn` and has a fly
+camera (right mouse button to look, WASD, Q and E, Shift); delete the folder when it is not
+wanted.
+
 ### Editor
 
 Both nodes are tool classes and show configuration warnings in the editor's scene tree, refreshed
 about twice a second, for settings that would leave the world dark, without bodies, occluders or
 sound, or that name no fitting stage; `configuration_warnings()` gives the same list to a script.
 `WaveForgeStages` warns when:
-- the scene has no light, or no `WorldEnvironment` and no default environment (the editor lights its
-  viewport with a preview sun and sky that a running game has not);
+- the scene has no `DirectionalLight3D`, or no `WorldEnvironment` and no default environment (the
+  editor lights its viewport with a preview sun and sky that a running game has not; [First
+  look](#first-look));
 - `pack_file` is empty or not a pack;
 - a target names no stage, or a stage setting (`ground_stage`, `grass_stage`, `candidates_stage`,
   `ground_material_stage`, `far_ground_stage`, `far_ground_material_stage`, `fluid_stage`,
@@ -419,7 +441,7 @@ which bakes the chunks within `view_radius` of the followed one, as `bake` does,
 at `bake_path` (`res://wave_forge_bake.tscn` unless changed).
 
 `WaveForgeWorld` warns when `start_on_ready` is set with no `rules_file`, or when an interior bus it
-names is not in the project's bus layout. Both warn when `collider_radius` builds bodies while the
+names is not in the project's bus layout. Both warn when the scene has no sun or no sky, and `collider_radius` builds bodies while the
 project's 3D physics is not Jolt, and when `occluder_radius` builds occluders while occlusion culling
 is off. `WaveForgeWorld` never starts in the editor.
 
