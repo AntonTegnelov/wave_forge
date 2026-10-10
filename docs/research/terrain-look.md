@@ -160,6 +160,29 @@ references' look leans on it heavily (Ghost of Tsushima's tonemapping and atmosp
 https://www.advances.realtimerendering.com/s2021/jpatry_advances2021.pdf), which is why our own
 renders have to give the terrain a fair light before it is judged.
 
+## Measured albedo
+
+The presets' palettes and the reference grass take their colours from measured materials, so a
+terrain lit by a real sun and sky is as bright as real ground. Each value below is a spectrophotometer
+measurement from the Spectral Materials Database (J. A. Jakubiec, https://spectraldb.com, the id is
+its measurement number) or physicallybased.info (CC0, https://physicallybased.info), given as the
+database gives it: an sRGB colour and its luminous reflectance V, which is the linear luminance a
+renderer's albedo has. Wave Forge picks one value per class and keeps every colour of a class
+within its range; a preset's own hue (the canyon's red rock) is kept and only its luminance placed
+in the range.
+
+| Class | Range of V | Measurements | Wave Forge uses (sRGB) |
+|---|---|---|---|
+| Grass, meadow | 0.074 to 0.168 | 16 grasses, 00339 (#4F4E28, 0.074) to 01125 (#777149, 0.168); 01110 Grass #60623B, 0.120 | meadow and grass `#60623B`; grass blades from `#4F4E28` at the base to `#6F6F44` (01119, 0.157) at the tip |
+| Foliage, woodland floor | 0.062 to 0.156 | tree foliage 00641, 01113, 01115, 01124; 00329 Pine Needles #585F45, 0.107; 01064 Green Tropical Grass #626841, 0.133 | conifer forest floor `#585F45`; jungle `#626841` |
+| Rock | 0.095 to 0.344 | 00315 to 00328, Rock 1 to 14: 00320 Rock 6 #83857A, 0.229; 00317 Rock 3 #9B9993, 0.319; 00315 Rock 1 #735A4C, 0.118 | rock `#83857A`; pale coral rock `#9B9993`; the canyon's red and pale rock in their own hues within the range |
+| Sand | 0.24 to 0.45 | 00464 Sand #B09E7B, 0.357; physicallybased.info Sand (177, 167, 132), linear luminance 0.386; DONTNOD's white dry sand 0.24 to 0.32 | sand `#B09E7B`; coral sand `#B1A784` |
+| Bare soil | 0.03 to 0.17 | 00340 Soil #3A3028, 0.032 (moist); bare soil 0.17 (University of Colorado albedo table) | the cave's dirt |
+
+Broadband albedo tables (grass 0.25 in solar-energy references) count near-infrared light, which
+foliage reflects strongly; a renderer's albedo is the visible part, which is why the measured
+grasses sit near 0.12. The preset palettes' luminance is checked by `verify_presets.gd`.
+
 ## Licences to watch
 
 runevision's erosion filter is MPL-2.0, so Wave Forge writes its own from the published
@@ -176,3 +199,9 @@ LGPL-3.0.
 - runevision, "Fast and Gorgeous Erosion Filter", March 2026:
   https://blog.runevision.com/2026/03/fast-and-gorgeous-erosion-filter.html
 - Terrain3D: https://github.com/TokisanGames/Terrain3D (README, `doc/docs/`, `src/shaders/`).
+- Spectral Materials Database, J. A. Jakubiec: https://spectraldb.com, read 2026-10-10 (the table
+  embedded in its home page: id, name, type, CIELAB, sRGB hex, V and M reflectance).
+- physicallybased.info materials API, CC0: https://api.physicallybased.info/v2/materials, read
+  2026-10-10.
+- Albedo list compiled on the Corona renderer forum (DONTNOD's chart among its sources):
+  https://forums.chaos.com/index.php/topic,2359.msg17366.html
