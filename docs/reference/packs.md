@@ -957,6 +957,9 @@ column lies in it, with positional ids, so `Edit::Remove` keeps a killed one gon
 
 `Scatter(kind: "tree", height: "field", spacing: s, ...)`: points of `kind` standing on the height
 field, made by a chain of modifiers applied in this order. Every field after `spacing` is optional.
+In place of `kind`, `kinds: [(kind: "oak", weight: 3.0, variants: 4), (kind: "birch")]` names
+several kinds, each with a weight (default 1) and a number of variants (default 1); with one `kind`,
+`variants: n` gives its number.
 
 1. **Candidates.** `count: (low, high)` candidates per square block of `s` cells (default one), a
    hashed number in the range for each block, each at a hashed column inside it with a hashed
@@ -981,19 +984,29 @@ field, made by a chain of modifiers applied in this order. Every field after `sp
    priority lies closer than `apart` cells. Candidates are judged by their own tests, never by
    whether spacing kept them, so the decision agrees across chunk seams. A kept candidate's group
    members skip this test and pass or fail on their own.
-4. **Attributes.** `scale: (low, high)` (default 1), a `tilt: (low, high)` in degrees from the
-   vertical in a hashed direction, and with probability `align` (default 0) standing along the
-   ground's normal instead.
+4. **Attributes.** `scale: (low, high)` (default 1), a `stretch: (low, high)` of its height over
+   its width (default 1), a `tilt: (low, high)` in degrees from the vertical in a hashed direction,
+   and with probability `align` (default 0) standing along the ground's normal instead. A
+   candidate's kind is drawn by weight, and its group's members share it, so a clump is of one
+   species; each point draws a variant of its kind evenly, and a random from 0 to 1. With
+   `appearance: ["dryness", ...]`, at most two field stages, each point carries their values at its
+   column, for an engine's shader to tint it by.
 
 Loading refuses counts and group sizes outside 1 to 255, a negative radius, a tilt outside 0 to
-180 degrees, an `align` outside 0 to 1, a scale that is not a positive range, an empty depth range,
-and conditions that read what a stage cannot. The reach grows with `apart`, the group's radius and
+180 degrees, an `align` outside 0 to 1, a scale or a stretch that is not a positive range, an empty
+depth range, conditions that read what a stage cannot, a stage with both `kind` and `kinds` or
+neither, a stage-wide `variants` beside `kinds`, a kind's weight of 0 or less, variants outside 1
+to 256, and more than two appearance fields. The reach grows with `apart`, the group's radius and
 what the conditions read.
 
 A `Point` has a positional `InstanceId`, a `kind`, a `position` in cells (x and y on the ground, z
-the field's value), a `turn` about its up as a fraction of a whole turn, a `scale`, and its `up`, a
-unit vector along the lattice's x, y and height. `Point::y_up_basis` gives its rotation and scale
-in a Y-up engine's axes. The id holds the candidate's chunk, 15 bits of the stage's salt, the
+the field's value), a `turn` about its up as a fraction of a whole turn, a `scale`, its `up`, a
+unit vector along the lattice's x, y and height, its `variant` of the kind, its `random`, its
+`stretch`, and its `appearance`, the values of its appearance fields (0 past them); points other
+stages place have the first variant, a random of 0, no stretch and no appearance.
+`Point::y_up_basis` gives its rotation and scale, the stretch along its height, in a Y-up engine's
+axes, and `Point::look` its random and appearance packed for a shader, each in 255ths: the random
+in bits 0 to 7, the appearance values in bits 8 to 15 and 16 to 23. The id holds the candidate's chunk, 15 bits of the stage's salt, the
 candidate's column, and a slot of the candidate's place in its block times 256 plus the member's
 place in its group, so a group member standing in the next chunk still has an id of its own, and
 one candidate per block with no group gives the ids a Scatter stage always gave. Loading refuses

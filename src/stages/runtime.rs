@@ -17,8 +17,8 @@ use super::facts::{Facts, Row, RowId, Table};
 use super::lakes::lake_surface;
 use super::network::SitePaths;
 use super::pack::{
-    Column, Expr, LocationKind, MAX_SCATTER_SLOTS, Output, Pack, Persist, Profile, Reach, Rule,
-    Stage, StageKind, TableKind, point_stage_id, salt,
+    Column, Expr, LocationKind, MAX_APPEARANCE, MAX_SCATTER_SLOTS, Output, Pack, Persist, Profile,
+    Reach, Rule, Stage, StageKind, TableKind, point_stage_id, salt,
 };
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use super::rivers::DownhillRivers;
@@ -248,12 +248,42 @@ pub struct Point {
     /// Its up, a unit vector along the lattice's x, y and height: straight up unless the stage
     /// tilts it or stands it along the ground.
     pub up: [f32; 3],
+    /// Which of its kind's variants it is, from 0: the model an engine binds it to among its
+    /// kind's. Always 0 but for a Scatter stage's points.
+    #[serde(default)]
+    pub variant: u8,
+    /// A hashed number from 0 to 1, the same for the point whenever and in whatever order it is
+    /// placed, for an engine to vary its look by. Always 0 but for a Scatter stage's points.
+    #[serde(default)]
+    pub random: f32,
+    /// How much taller than wide it stands against its model: its height is scaled by `scale`
+    /// times this, its width by `scale` alone.
+    #[serde(default = "unstretched")]
+    pub stretch: f32,
+    /// The values of its Scatter stage's appearance fields at its column, in their order, 0 past
+    /// them: what an engine's shader tints it by, a dryness say.
+    #[serde(default)]
+    pub appearance: [f32; MAX_APPEARANCE],
+}
+
+const fn unstretched() -> f32 {
+    1.0
 }
 
 impl Point {
+    /// Its random and its appearance packed into one number for an engine's shader, each in 255ths
+    /// of 0 to 1: the random in bits 0 to 7, the first appearance value in bits 8 to 15 and the
+    /// second in bits 16 to 23, an appearance outside 0 to 1 clamped. Below 2^24, so a 32-bit float
+    /// holds it exactly.
+    #[must_use]
+    pub fn look(&self) -> u32 {
+        let byte = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
+        byte(self.random) | byte(self.appearance[0]) << 8 | byte(self.appearance[1]) << 16
+    }
+
     /// Its rotation and scale in a Y-up engine's axes (the lattice's x, the height, the lattice's
-    /// y), as the rows of a 3x3 matrix: turned by `turn` about the vertical, leant so the vertical
-    /// becomes `up`, and scaled by `scale`.
+    /// y), as the rows of a 3x3 matrix: stretched along its height by `stretch`, turned by `turn`
+    /// about the vertical, leant so the vertical becomes `up`, and scaled by `scale`.
     #[must_use]
     pub fn y_up_basis(&self) -> [[f32; 3]; 3] {
         let (sin, cos) = sin_cos(self.turn * std::f32::consts::TAU);
@@ -283,7 +313,8 @@ impl Point {
         for (row, basis_row) in basis.iter_mut().enumerate() {
             for (col, value) in basis_row.iter_mut().enumerate() {
                 let sum: f32 = (0..3).map(|k| leant[row][k] * turned[k][col]).sum();
-                *value = sum * self.scale;
+                let stretch = if col == 1 { self.stretch } else { 1.0 };
+                *value = sum * self.scale * stretch;
             }
         }
         basis
@@ -3047,6 +3078,10 @@ impl Runtime {
                 turn: unit(turn),
                 scale: 1.0,
                 up: [0.0, 0.0, 1.0],
+                variant: 0,
+                random: 0.0,
+                stretch: 1.0,
+                appearance: [0.0; MAX_APPEARANCE],
             });
         }
         if kept.len() < *total as usize {
@@ -3123,6 +3158,10 @@ impl Runtime {
                     turn: unit(pick.rotate_left(16)),
                     scale: 1.0,
                     up: [0.0, 0.0, 1.0],
+                    variant: 0,
+                    random: 0.0,
+                    stretch: 1.0,
+                    appearance: [0.0; MAX_APPEARANCE],
                 });
             }
         }
@@ -4556,6 +4595,10 @@ impl Runtime {
                         turn: unit(turn.rotate_left(16)),
                         scale: 1.0,
                         up: [0.0, 0.0, 1.0],
+                        variant: 0,
+                        random: 0.0,
+                        stretch: 1.0,
+                        appearance: [0.0; MAX_APPEARANCE],
                     });
                 }
             }
@@ -4581,6 +4624,8 @@ impl Runtime {
         let stage = &self.pack.stages[index];
         let StageKind::Scatter {
             kind,
+            kinds,
+            variants,
             height,
             spacing,
             count,
@@ -4594,8 +4639,10 @@ impl Runtime {
             block,
             apart,
             scale,
+            stretch,
             tilt,
             align,
+            appearance,
         } = &stage.kind
         else {
             unreachable!("called for Scatter stages")
@@ -4766,7 +4813,22 @@ impl Runtime {
             });
         }
         let point_stage = point_stage_id(stage.salt);
-        let kind: Arc<str> = Arc::from(kind.as_str());
+        // The kinds to draw from, each with its weight and its number of variants.
+        let choices: Vec<(Arc<str>, f32, u32)> = if kinds.is_empty() {
+            vec![(Arc::from(kind.as_str()), 1.0, *variants)]
+        } else {
+            kinds
+                .iter()
+                .map(|choice| {
+                    (
+                        Arc::from(choice.kind.as_str()),
+                        choice.weight,
+                        choice.variants,
+                    )
+                })
+                .collect()
+        };
+        let total_weight: f32 = choices.iter().map(|choice| choice.1).sum();
         let inside = |(x, y): (i64, i64)| (x0..x0 + sx).contains(&x) && (y0..y0 + sy).contains(&y);
         let mut points = Vec::new();
         for (i, candidate) in candidates.iter().enumerate() {
@@ -4833,6 +4895,17 @@ impl Runtime {
                 0,
             );
             let cell = (column.1.rem_euclid(sy) * sx + column.0.rem_euclid(sx)) as u32;
+            // A candidate's group is of one kind, drawn by weight.
+            let mut left = unit(pcg3d([world ^ stage.salt ^ KIND_STREAM, stream[0], stream[1]])[0])
+                * total_weight;
+            let (kind, _, kind_variants) = choices
+                .iter()
+                .find(|choice| {
+                    let here = left < choice.1;
+                    left -= choice.1;
+                    here
+                })
+                .unwrap_or_else(|| choices.last().expect("a Scatter stage has a kind"));
             for member in 0..members {
                 let slot = candidate.slot * MAX_SCATTER_SLOTS + member;
                 let key = stream[1] ^ slot.wrapping_mul(0x2545_F491);
@@ -4875,13 +4948,23 @@ impl Runtime {
                         sin_cos(unit(lean.rotate_left(16)) * std::f32::consts::TAU);
                     [sin * towards_x, sin * towards_y, cos]
                 };
+                let [variant, random, tall] =
+                    pcg3d([world ^ stage.salt ^ VARIETY_STREAM, stream[0], key]);
+                let mut looks = [0.0; MAX_APPEARANCE];
+                for (look, name) in looks.iter_mut().zip(appearance) {
+                    *look = read(name, standing.0, standing.1)?;
+                }
                 points.push(Point {
                     id: InstanceId::new(owner, point_stage, cell, slot as u16),
-                    kind: Arc::clone(&kind),
+                    kind: Arc::clone(kind),
                     position: [at.0, at.1, z],
                     turn,
                     scale: scale.0 + (scale.1 - scale.0) * unit(size),
                     up,
+                    variant: (variant % kind_variants) as u8,
+                    random: unit(random),
+                    stretch: stretch.0 + (stretch.1 - stretch.0) * unit(tall),
+                    appearance: looks,
                 });
             }
         }
@@ -5563,6 +5646,10 @@ const COUNT_STREAM: u32 = 0x636E_7473;
 const GROUP_STREAM: u32 = 0x6772_7570;
 /// Mixed into a Scatter stage's stream for a point's scale, tilt and alignment.
 const LOOK_STREAM: u32 = 0x6C6F_6F6B;
+/// Mixed into a Scatter stage's stream for a candidate's kind.
+const KIND_STREAM: u32 = 0x6B69_6E64;
+/// Mixed into a Scatter stage's stream for a point's variant, random and stretch.
+const VARIETY_STREAM: u32 = 0x7661_7279;
 
 /// The sine and cosine of `angle` in radians, the same on every platform: a point's place, turn
 /// and lean come from them, and spacing decides by where points stand.
