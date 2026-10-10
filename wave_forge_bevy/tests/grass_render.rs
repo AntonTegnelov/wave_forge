@@ -1,5 +1,6 @@
 //! Grass drawn by Bevy's own renderer: blades grow only where the cover is, sway while the wind
-//! blows and stand still once it drops, and shrink away over the fade's band about the chunk.
+//! blows and stand still once it drops, shrink away over the fade's band about the chunk, and take
+//! the colour of the ground under them at their base.
 //!
 //! ```text
 //! cargo test -p wave_forge_bevy --release --test grass_render -- --ignored --nocapture
@@ -19,11 +20,11 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, T
 use bevy::render::view::Msaa;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wave_forge::stages::{Pack, Runtime};
-use wave_forge::{ChunkCoord, FocusPoint, ground};
+use wave_forge::stages::{Field, Pack, Runtime};
+use wave_forge::{ChunkCoord, FocusPoint, GroundMesh, ground};
 use wave_forge_bevy::materials::{
     GrassFade, GrassMaterial, WaveForgeMaterialsPlugin, Wind, grass_bounds_of, grass_material_of,
-    grass_mesh,
+    grass_mesh, ground_material_of, palette_image,
 };
 
 const PACK: &str = r#"(
@@ -66,14 +67,20 @@ fn lit(pixels: &[u8], from: u32, to: u32) -> usize {
         .count()
 }
 
+/// How many pixels are mostly red, a colour no blade of grass has.
+fn red(pixels: &[u8]) -> usize {
+    pixels
+        .chunks(4)
+        .filter(|pixel| pixel[0] > 40 && pixel[0] > 2 * pixel[1].max(pixel[2]))
+        .count()
+}
+
 fn changed(a: &[u8], b: &[u8]) -> usize {
     a.chunks(4).zip(b.chunks(4)).filter(|(a, b)| a != b).count()
 }
 
-/// An app drawing a chunk of grass covered on its west half, seen from its south edge, a few cells
-/// up: the chunk's rows lie 5 to 13 cells from the camera along the ground. Returns the app and the
-/// grass's material.
-fn grass_app() -> (App, Handle<GrassMaterial>) {
+/// The pack's chunk at the origin: its ground and its cover.
+fn chunk_ground() -> (GroundMesh, Field) {
     let mut runtime = Runtime::new(
         Arc::new(Pack::parse(PACK).expect("a valid pack")),
         1,
@@ -86,6 +93,14 @@ fn grass_app() -> (App, Handle<GrassMaterial>) {
     runtime.run_until_idle().expect("the stages run");
     let mesh = ground(chunk, |at| runtime.field("height", at), [1.0; 3]).expect("a ground");
     let cover = runtime.field("cover", chunk).expect("cover").clone();
+    (mesh, cover)
+}
+
+/// An app drawing a chunk of grass covered on its west half, seen from its south edge, a few cells
+/// up: the chunk's rows lie 5 to 13 cells from the camera along the ground. Returns the app, the
+/// grass's material and the ground it stands on.
+fn grass_app() -> (App, Handle<GrassMaterial>, GroundMesh) {
+    let (mesh, cover) = chunk_ground();
 
     let mut app = App::new();
     app.add_plugins((DefaultPlugins, WaveForgeMaterialsPlugin))
@@ -160,13 +175,13 @@ fn grass_app() -> (App, Handle<GrassMaterial>) {
             "nothing was drawn"
         );
     }
-    (app, handle)
+    (app, handle, mesh)
 }
 
 #[test]
 #[ignore = "needs a device; run with --ignored in release mode"]
 fn blades_grow_only_where_the_cover_is_and_sway_in_the_wind() {
-    let (mut app, _) = grass_app();
+    let (mut app, _, _) = grass_app();
     app.world_mut()
         .insert_resource(Wind(Vec4::new(1.0, 0.0, 0.3, 3.0)));
 
@@ -190,7 +205,7 @@ fn blades_grow_only_where_the_cover_is_and_sway_in_the_wind() {
 #[test]
 #[ignore = "needs a device; run with --ignored in release mode"]
 fn blades_shrink_away_over_the_fade_and_none_stand_beyond_it() {
-    let (mut app, material) = grass_app();
+    let (mut app, material, _) = grass_app();
     app.world_mut()
         .insert_resource(Wind(Vec4::new(1.0, 0.0, 0.0, 3.0)));
     // The fade reaches the material through the resource, about the chunk's centre.
@@ -226,4 +241,61 @@ fn blades_shrink_away_over_the_fade_and_none_stand_beyond_it() {
     );
     assert!(0 < partly && partly < whole, "{partly} of {whole}");
     assert_eq!(gone, 0);
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn blades_take_the_colour_of_the_ground_under_them_at_their_base() {
+    let (mut app, material, mesh) = grass_app();
+    app.world_mut()
+        .insert_resource(Wind(Vec4::new(1.0, 0.0, 0.0, 3.0)));
+    let world = app.world_mut();
+    let ground = {
+        let mut images = world.resource_mut::<Assets<Image>>();
+        let palette = images.add(palette_image(&[Color::BLACK, Color::srgb(1.0, 0.0, 0.0)]));
+        ground_material_of(
+            &mesh,
+            &vec![1; (mesh.size[0] * mesh.size[1]) as usize],
+            Vec3::ZERO,
+            Vec3::ONE,
+            StandardMaterial::default(),
+            palette,
+            &mut images,
+        )
+    };
+
+    let own = red(&run_for(&mut app, 0.3));
+    app.world_mut()
+        .resource_mut::<Assets<GrassMaterial>>()
+        .get_mut(&material)
+        .expect("the grass material")
+        .extension
+        .take_ground_colours(&ground.extension);
+    let taken = red(&run_for(&mut app, 0.3));
+
+    println!("{own} red pixels with the grass's own colours, {taken} on a red ground");
+    assert_eq!(own, 0);
+    assert!(taken > 50, "{taken}");
+}
+
+#[test]
+fn blades_are_drawn_from_both_sides_with_the_skys_normal_whatever_the_base() {
+    let (mesh, cover) = chunk_ground();
+    let base = StandardMaterial {
+        double_sided: true,
+        ..default()
+    };
+
+    let grass = grass_material_of(
+        &mesh,
+        &cover,
+        Vec3::ONE,
+        16,
+        base,
+        &mut Assets::<Image>::default(),
+    );
+
+    // A double-sided material flips a back face's normal, so a blade's back would face the ground.
+    assert!(!grass.base.double_sided);
+    assert_eq!(grass.base.cull_mode, None);
 }
