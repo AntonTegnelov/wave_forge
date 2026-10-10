@@ -396,7 +396,8 @@ renders every preset at its defaults from three fixed cameras: eye level (1.7 m 
 the followed point, looking toward the horizon), oblique (about 60 m away) and top-down (the
 view's whole square), the sun to the side and behind, once on Compatibility and once on Forward+,
 a sheet each. Below the horizon, where the generated world ends, the sky's dark ground colour
-shows. The scripts that check or time something keep the fixed light they were measured or
+shows. Compatibility draws the same scene markedly brighter than Forward+ (the hills' meadow at
+about 0.95 green against 0.65, both sheets of 2026-10-10), so compare a look within one renderer. The scripts that check or time something keep the fixed light they were measured or
 checked under: the gap checks (`render_lods.gd`, `render_far.gd`, `render_water.gd`) need their
 magenta background, and the timings of `render_ground.gd` and `render_city.gd`
 ([measurements.md](../research/measurements.md), E7, E45 and E58) were taken under theirs.
