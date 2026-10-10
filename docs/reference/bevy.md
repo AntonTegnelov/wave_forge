@@ -244,8 +244,9 @@ base, palette, images)` makes one for a ground built some other way. Its id imag
 ground vertex, the category / 255 in red; `palette_image(colours)` makes the 256 by 1 palette,
 categories past the colours given taking colours of their own. The fragment shader is the Godot
 reference ground shader's ([godot.md](godot.md#ground-and-colliders)): materials meeting along a
-noise-broken line, rock on steep ground, a broad colour variation and a fine bump and grain near
-the camera, then Bevy's lighting, or none for an unlit base. Its `look`, a `GroundLook`, holds the
+noise-broken line and each material's micro-height, rock on steep ground, a broad colour variation
+and the micro-height's bump and grain near the camera, then Bevy's lighting, or none for an unlit
+base. Its `look`, a `GroundLook`, holds the
 Godot shader's parameters under the same names; `GroundLook::default()` is what both makers give,
 and `GroundLook::flat()` the palette's colours alone, blended between the vertices. A chunk's ground reads the materials of the
 chunks beyond its far edges, so the material stage has to be generated one chunk beyond the ground,
@@ -264,6 +265,13 @@ and `wet_roughness` say how far they darken and smooth the ground, and `cover_ti
 `cover_colour` how far covered ground tints toward the grass, coming in where the grass fades out
 ([Grass](#grass)), so the ground is as it is where the blades stand; without a fade nothing is
 tinted.
+
+`GroundMaterials::relief` gives each palette colour a micro-height, as Godot's `ground_relief`
+does ([godot.md](godot.md#ground-and-colliders)): `relief_image(reliefs)` makes it from a
+`wave_forge::GroundRelief` per colour by index, how much of it is pebbles, cracks and tufts and how
+wide one feature is, colours past the reliefs given taking `GroundRelief::DEFAULT`, fine tufts.
+Both makers give every colour the default. `GroundLook::relief_blend` says how far the
+micro-heights move the line where materials meet; `GroundLook::flat()` sets it to zero.
 
 `GroundMaterials::ramps` gives each palette colour a ramp, as Godot's `ground_ramp_colours` and
 `ground_ramp_drivers` do ([godot.md](godot.md#ground-and-colliders)): `ramp_image(ramps)` makes it
