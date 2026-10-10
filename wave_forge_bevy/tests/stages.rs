@@ -7,9 +7,9 @@
 use bevy_app::{App, Startup, Update};
 use bevy_color::{Color, ColorToComponents};
 use bevy_ecs::message::{MessageReader, Messages};
-use bevy_ecs::prelude::{Commands, IntoScheduleConfigs, Query, ResMut, Resource, With};
+use bevy_ecs::prelude::{Commands, Has, IntoScheduleConfigs, Query, ResMut, Resource, With};
 use bevy_math::Vec3;
-use bevy_mesh::{Mesh, VertexAttributeValues};
+use bevy_mesh::{Mesh, MeshTag, VertexAttributeValues};
 use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -36,7 +36,7 @@ const PACK: &str = r#"(
     version: 1,
     stages: [
         (name: "height", kind: Field(Mul(Noise(frequency: 0.04, octaves: 3), Constant(20.0)))),
-        (name: "trees", kind: Scatter(kind: "tree", height: "height", spacing: 3, apart: 3)),
+        (name: "trees", kind: Scatter(kind: "tree", variants: 3, height: "height", spacing: 3, apart: 3)),
         (name: "cover", kind: Rules(rules: [(category: "high", when: [Greater(Input("height"), Constant(10.0))])], otherwise: "low")),
     ],
 )"#;
@@ -964,6 +964,54 @@ fn every_tree_of_a_bound_kind_gets_an_entity_that_goes_with_its_chunk() {
             .iter()
             .all(|(_, placed)| stages.points("trees", placed.chunk).is_some())
     );
+}
+
+/// What the second of a kind's two bindings gives.
+#[derive(bevy_ecs::prelude::Component)]
+struct Second;
+
+#[test]
+fn a_point_takes_its_variants_binding_and_carries_its_look_as_its_tag() {
+    let mut app = app();
+    app.insert_resource(
+        StagePlacements::default()
+            .bind("tree", |entity| {
+                entity.insert(Tree);
+            })
+            .bind("tree", |entity| {
+                entity.insert((Tree, Second));
+            }),
+    );
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        around_origin()
+            .iter()
+            .all(|&chunk| stages.points("trees", chunk).is_some())
+    });
+
+    let mut query = app
+        .world_mut()
+        .query_filtered::<(&Placed, &MeshTag, Has<Second>), With<Tree>>();
+    let entities: Vec<(Placed, u32, bool)> = query
+        .iter(app.world())
+        .map(|(placed, tag, second)| (placed.clone(), tag.value, second))
+        .collect();
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    let mut variants = [0; 3];
+    for chunk in around_origin() {
+        for point in stages.points("trees", chunk).expect("arrived") {
+            let (_, tag, second) = entities
+                .iter()
+                .find(|(placed, _, _)| placed.id == point.id)
+                .expect("an entity for every tree");
+            // Three variants over two bindings: the third takes the first again.
+            assert_eq!(*second, point.variant == 1, "variant {}", point.variant);
+            assert_eq!(*tag, point.look());
+            variants[usize::from(point.variant)] += 1;
+        }
+    }
+    assert!(variants.iter().all(|&count| count > 0), "{variants:?}");
 }
 
 #[test]

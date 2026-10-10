@@ -97,7 +97,11 @@ itself, and holds no shapes for a town's modules: a game adds its towns' collide
   in a chunk that arrives gets an entity with its `Transform` (`transform_of` or `stamp_transform`)
   and a `Placed { stage, chunk, id }` component, announced by an `InstanceSpawned { entity, placed }`
   message, and despawned when its chunk is dropped. A piece overlapping several chunks gets one
-  entity, from the chunk holding its footprint's centre. Insert it before the stages it binds arrive.
+  entity, from the chunk holding its footprint's centre. Binding a kind again adds a variant: a
+  point takes the binding its `variant` names, counting round the bindings again past the last
+  ([packs.md](packs.md#scatter)), so a game's own models bind as variants as any do. A point's
+  entity also gets a `MeshTag` of its look (`Point::look`), which the vegetation shader reads
+  ([Wind](#wind)). Insert it before the stages it binds arrive.
 - `.with_ground_materials(stage)` gives the ground the categories of a Rules or Area stage as
   materials ([Ground materials](#ground-materials)); `WaveForgeStages::ground_materials(chunk)`
   gives them per ground vertex, and `settings()` how chunks and cells sit in Bevy's world.
@@ -311,4 +315,8 @@ stiffness is its scale, so every plant's top sways by about the wind's strength 
 larger plant leaning less, and no two move alike. The same vertex shader runs in the prepass, so
 depth, shadows and motion vectors follow the swaying plant; that is why the flutter goes out from
 the axis rather than along the normals, which Bevy's prepass has only when a normal prepass runs.
-A plant's mesh stands on its origin with +y up, and is neither skinned nor morphed.
+A plant's mesh stands on its origin with +y up, and is neither skinned nor morphed. Its fragment
+shader varies the plant's colour by the look in its `MeshTag`, as the Godot shader does: brighter
+and warmer or darker and cooler by its random, as far as `settings.look.x` (0.15), and toward
+`settings.dry_albedo`, a measured dry grass, by its first appearance value, as far as
+`settings.look.y` (0.6).

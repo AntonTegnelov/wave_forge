@@ -8,9 +8,10 @@
 //! own there rather than Bevy's.
 //!
 //! A game binds a kind (a point's kind, or a piece's or cave room's name) to what its entities
-//! hold through [`StagePlacements`]: every point or piece of a bound kind gets an entity at its
-//! transform with a [`Placed`] component, announced by [`InstanceSpawned`] and despawned with its
-//! chunk.
+//! hold through [`StagePlacements`], once per variant: every point or piece of a bound kind gets an
+//! entity at its transform with a [`Placed`] component and what its variant's binding gives, a
+//! point's also a `MeshTag` of its look for the vegetation shader, announced by [`InstanceSpawned`]
+//! and despawned with its chunk.
 //!
 //! With [`WaveForgeStagesPlugin::with_ground`], the plugin also builds each chunk's ground from a
 //! height field stage once the fields around it have arrived, and says so with [`GroundReady`]: a
@@ -35,7 +36,7 @@ use bevy_ecs::system::{EntityCommands, Local, SystemParam};
 use bevy_light::DirectionalLight;
 use bevy_log::warn;
 use bevy_math::{Mat3, Quat, Vec3};
-use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
+use bevy_mesh::{Indices, Mesh, MeshTag, PrimitiveTopology};
 use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
@@ -80,25 +81,32 @@ pub struct StagesFailed(pub String);
 /// a `SceneRoot` of a glTF scene, a mesh and a material, a collider, anything.
 type Spawn = Box<dyn Fn(&mut EntityCommands) + Send + Sync>;
 
-/// Kinds bound to what their entities hold, and the entities each stage's chunk has.
+/// Kinds bound to what their entities hold, one binding per variant, and the entities each stage's
+/// chunk has.
 ///
 /// Insert it, and bind kinds with [`StagePlacements::bind`], before the stages it binds arrive:
 /// a chunk is placed as it arrives.
 #[derive(Resource, Default)]
 pub struct StagePlacements {
-    bound: HashMap<String, Spawn>,
+    bound: HashMap<String, Vec<Spawn>>,
     placed: HashMap<(String, ChunkCoord), Vec<Entity>>,
 }
 
 impl StagePlacements {
-    /// Gives every entity of `kind` what `spawn` inserts, beside its [`Transform`] and [`Placed`].
+    /// Gives the entities of the next variant of `kind`, the first the first time, what `spawn`
+    /// inserts, beside its [`Transform`] and [`Placed`]: binding a kind again adds a variant. A
+    /// point takes the binding its `variant` names, counting round the bindings again past the
+    /// last, so a kind whose stage draws four variants may be bound twice.
     #[must_use]
     pub fn bind(
         mut self,
         kind: &str,
         spawn: impl Fn(&mut EntityCommands) + Send + Sync + 'static,
     ) -> Self {
-        self.bound.insert(kind.to_owned(), Box::new(spawn));
+        self.bound
+            .entry(kind.to_owned())
+            .or_default()
+            .push(Box::new(spawn));
         self
     }
 }
@@ -1178,6 +1186,9 @@ fn drain(
     }
 }
 
+/// A point's or piece's kind, transform and id, and a point's variant and look.
+type Item<'a> = (&'a str, Transform, InstanceId, Option<(u8, u32)>);
+
 /// Spawns an entity for every point or piece of a bound kind in each chunk that arrived, and
 /// despawns those of each chunk dropped. A piece overlapping several chunks is placed once, by the
 /// chunk holding its footprint's centre.
@@ -1205,32 +1216,43 @@ fn place(
         }
     }
     for StageReady { stage, chunk } in ready.read() {
-        let items: Vec<(&str, Transform, InstanceId)> =
-            if let Some(points) = stages.points(stage, *chunk) {
-                points
-                    .iter()
-                    .map(|point| (&*point.kind, stages.transform_of(point), point.id))
-                    .collect()
-            } else if let Some(stamps) = stages.stamps(stage, *chunk) {
-                stamps
-                    .iter()
-                    .filter(|stamp| stamp.id.chunk == *chunk)
-                    .map(|stamp| (&*stamp.piece, stages.stamp_transform(stamp), stamp.id))
-                    .collect()
-            } else {
-                continue;
-            };
+        let items: Vec<Item<'_>> = if let Some(points) = stages.points(stage, *chunk) {
+            points
+                .iter()
+                .map(|point| {
+                    (
+                        &*point.kind,
+                        stages.transform_of(point),
+                        point.id,
+                        Some((point.variant, point.look())),
+                    )
+                })
+                .collect()
+        } else if let Some(stamps) = stages.stamps(stage, *chunk) {
+            stamps
+                .iter()
+                .filter(|stamp| stamp.id.chunk == *chunk)
+                .map(|stamp| (&*stamp.piece, stages.stamp_transform(stamp), stamp.id, None))
+                .collect()
+        } else {
+            continue;
+        };
         let mut entities = Vec::new();
-        for (kind, transform, id) in items {
-            let Some(spawn) = placements.bound.get(kind) else {
+        for (kind, transform, id, point) in items {
+            let Some(variants) = placements.bound.get(kind) else {
                 continue;
             };
+            let variant = point.map_or(0, |(variant, _)| usize::from(variant));
+            let spawn = &variants[variant % variants.len()];
             let placed = Placed {
                 stage: stage.clone(),
                 chunk: *chunk,
                 id,
             };
             let mut entity = commands.spawn((transform, placed.clone()));
+            if let Some((_, look)) = point {
+                entity.insert(MeshTag::new(look));
+            }
             spawn(&mut entity);
             let entity = entity.id();
             spawned.write(InstanceSpawned { entity, placed });
