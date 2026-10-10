@@ -13,6 +13,7 @@ extends SceneTree
 
 const Presets := preload("res://addons/wave_forge/presets.gd")
 const ReferenceLook := preload("res://reference_look.gd")
+const Generated := preload("res://generated.gd")
 const TILE := Vector2i(640, 360)
 const TIMEOUT_S := 120.0
 ## Frames to draw after a view settles, so what arrived last is on screen.
@@ -83,22 +84,10 @@ func _process(_delta: float) -> bool:
 				camera.look_at_from_position(at + Vector3(0, reach * 2.0, 0), at, Vector3(0, 0, -1))
 	var stats: Dictionary = stages.stats()
 	var drawn: Array = stages.volume_chunks() if stages.ground_stage.is_empty() else stages.ground_chunks()
-	# Every target stage has generated every chunk within its radius: a stage that reads a slow one,
-	# trees on a volume's top say, or a town still being solved, arrives after the ground is drawn.
-	# A target without a radius of its own has the view's, in chunks of its own. One with a radius
-	# of its own, a far ground's coarse stage say, has it in chunks of the lattice, which cover an
-	# unknown number of its own, so it has to have stopped growing.
-	var generated := true
-	var products := {}
-	for target: String in stages.targets:
-		# A stage that has not run yet has no entry.
-		products[target] = stats["stages"][target]["products"] if stats["stages"].has(target) else 0
-		if stages.target_radii.has(target):
-			generated = generated and products[target] > 0 and products[target] == last_products.get(target, -1)
-		else:
-			generated = generated and products[target] >= (2 * stages.view_radius + 1) * (2 * stages.view_radius + 1)
-	last_products = products
-	if not generated or is_nan(ground) or drawn.is_empty() or stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_placements"] > 0 or stats["pending_far_grounds"] > 0:
+	# Every target stage has generated what it will: a stage that reads a slow one, trees on a
+	# volume's top say, or a town still being solved, arrives after the ground is drawn.
+	var generated := Generated.all_generated(stages, stats, last_products)
+	if not generated or is_nan(ground) or drawn.is_empty() or stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_placements"] > 0:
 		settled_frames = 0
 		return false
 	settled_frames += 1

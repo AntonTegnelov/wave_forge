@@ -5,11 +5,13 @@
 ## added to a scene with a sun and an environment, and it starts on its own, as on a first play.
 ## Once nothing is pending around the followed point it warns of nothing, stands ground there (its
 ## ground's, or the top of its volume for a preset drawn from a volume alone), has bodies and
-## navigation, draws its sea when it has one, draws its props (trees, cacti, palms) as MultiMesh
-## instances, and has a palette colour per material of its ground or volume.
+## navigation, draws its sea when it has one, draws its far ground when it has one, draws its props
+## (trees, cacti, palms) as MultiMesh instances, and has a palette colour per material of its ground
+## or volume.
 extends SceneTree
 
 const Presets := preload("res://addons/wave_forge/presets.gd")
+const Generated := preload("res://generated.gd")
 const TIMEOUT_S := 120.0
 const AT := Vector3(1, 0, 1)
 
@@ -18,6 +20,8 @@ var index := -1
 var scene: Node3D
 var stages: Node
 var started_usec := 0
+## Each target's products on the frame before, by name.
+var last_products := {}
 
 func _initialize() -> void:
 	paths = Presets.paths()
@@ -36,7 +40,7 @@ func _process(_delta: float) -> bool:
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
 		return _fail("%s: not settled after %.0f s: %s" % [paths[index], TIMEOUT_S, stages.stats()])
 	var stats: Dictionary = stages.stats()
-	if not _generated(stats) or _drawn().is_empty() or stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_colliders"] > 0 or stats["pending_placements"] > 0 or stages.navigation_chunks().is_empty():
+	if not Generated.all_generated(stages, stats, last_products) or _drawn().is_empty() or stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_colliders"] > 0 or stats["pending_placements"] > 0 or stages.navigation_chunks().is_empty():
 		return false
 	var problem = _settled(paths[index], stats)
 	if problem != "ok":
@@ -60,6 +64,7 @@ func _take(path: String) -> void:
 	root.add_child(scene)
 	stages.follow(AT)
 	started_usec = Time.get_ticks_usec()
+	last_products = {}
 
 ## What is wrong with the settled preset at `path`, or "ok". A script error gives null.
 func _settled(path: String, stats: Dictionary) -> String:
@@ -72,6 +77,8 @@ func _settled(path: String, stats: Dictionary) -> String:
 		return "%s has %d bodies and %d navigation regions" % [path, stages.collider_chunks().size(), stages.navigation_chunks().size()]
 	if stages.sea_material != null and not stages.water().is_empty() and not stats["sea_drawn"]:
 		return "%s has a sea and water but draws no sea" % path
+	if not String(stages.far_ground_stage).is_empty() and stages.far_ground_chunks().is_empty():
+		return "%s draws no far ground" % path
 	if stats["placed_instances"] == 0:
 		return "%s draws no props as MultiMesh instances: %s" % [path, stats]
 	var volume: bool = stages.ground_stage.is_empty()
@@ -80,17 +87,6 @@ func _settled(path: String, stats: Dictionary) -> String:
 	if materials.size() != palette.size():
 		return "%s has %d palette colours for the materials %s" % [path, palette.size(), materials]
 	return "ok"
-
-## Whether every target stage has generated every chunk within its radius, since a stage that
-## reads a slow one, trees on a volume's top say, or a town still being solved, arrives after the
-## ground is drawn. A target without a radius of its own has the view's.
-func _generated(stats: Dictionary) -> bool:
-	for target: String in stages.targets:
-		var radius: int = stages.target_radii.get(target, stages.view_radius)
-		# A stage that has not run yet has no entry.
-		if not stats["stages"].has(target) or stats["stages"][target]["products"] < (2 * radius + 1) * (2 * radius + 1):
-			return false
-	return true
 
 ## The chunks the preset draws its ground in: its ground's, or its volume's surface's for a preset
 ## drawn from a volume alone.
