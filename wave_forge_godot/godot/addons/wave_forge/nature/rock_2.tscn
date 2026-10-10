@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/nature/rock_2.res" id="1_ydqm4"]
+
+[node name="Rock2" type="MeshInstance3D" unique_id=2006974952]
+mesh = ExtResource("1_ydqm4")
