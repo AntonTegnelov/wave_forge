@@ -3,7 +3,7 @@
 ## `measure_world_run.gd`, then run with a display and the renderer to measure, never headless:
 ##     godot --path . --rendering-driver vulkan --script measure_playback.gd -- --directory <dir> --seconds 20 --out results.txt
 ## `continent.tscn`'s node plays `--directory` around a camera in a window of 1920 by 1080 with vsync
-## off, its far ground reaching 2 km. Once the view around the first settlement is drawn it measures
+## off, its far ground reaching about 500 m. Once the view around the first settlement is drawn it measures
 ## two phases of `--seconds` each: `walk`, at eye height along +x at 4.2 m/s, and `fly`, 60 m above
 ## the ground along +x at 30 m/s. Each prints one line of `key=value` fields (the window's size,
 ## frames, median, 99th percentile and slowest frame in milliseconds, the most memory the process
