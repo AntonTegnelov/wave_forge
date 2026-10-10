@@ -362,6 +362,7 @@ GODOT=/path/to/godot bash wave_forge_godot/verify.sh release                # ne
 GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_city.sh           # a picture of the city
 GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_ground.sh         # the ground, grass, wind and levels
 GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_presets.sh        # a contact sheet per preset, each parameter at its minimum, default and maximum
+GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_views.sh          # every preset from the reference views, on Compatibility and Forward+
 GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_occlusion.sh      # what occluders cull and cost
 GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_proxies.sh        # modules near, proxies far
 ```
@@ -384,6 +385,21 @@ coordinate mapping. It draws either through the extension's `instance_sets` and 
 `cell_position` as the renderer stores it, or through nodes from GDScript (`nodes`), and prints
 Godot's cost per chunk. The layout check needs a real renderer: headless, Godot's dummy renderer
 stores no multimesh data.
+
+The pictures the terrain's look is judged by share one environment, `godot/reference_look.gd`: the
+addon's `sun_and_sky.tscn` (a sun 35 degrees up with shadows, a procedural sky for background,
+ambient at half the sky's energy and reflections, a filmic tonemap), which is what a game gets from
+"Add sun and sky", with gentle depth fog added (about 5 % at 100 m, 40 % at 1 km) that leaves the
+sky alone. A terrain judged under flat light and a flat background looks worse than it is.
+`render_presets.sh`'s contact sheets and `render_continent_far.gd` use it, and `render_views.sh`
+renders every preset at its defaults from three fixed cameras: eye level (1.7 m over the ground at
+the followed point, looking toward the horizon), oblique (about 60 m away) and top-down (the
+view's whole square), the sun to the side and behind, once on Compatibility and once on Forward+,
+a sheet each. Below the horizon, where the generated world ends, the sky's dark ground colour
+shows. The scripts that check or time something keep the fixed light they were measured or
+checked under: the gap checks (`render_lods.gd`, `render_far.gd`, `render_water.gd`) need their
+magenta background, and the timings of `render_ground.gd` and `render_city.gd`
+([measurements.md](../research/measurements.md), E7, E45 and E58) were taken under theirs.
 
 ## Known gaps
 

@@ -334,6 +334,10 @@ verification project) walks the default preset, standing on its ground, with not
 (`verify_walk.gd`). The ground is drawn asset free by the procedural reference shader, its
 materials meeting along broken lines and steep ground turning to rock, on every renderer
 (`render_presets.sh`'s contact sheets, [#322](https://github.com/AntonTegnelov/wave_forge/issues/322)).
+`render_views.sh` shows every preset from eye level, oblique and top-down under the sun and sky a
+game gets from the inspector, on Compatibility and Forward+, for judging the look
+([testing.md](../guides/testing.md#the-engine-integrations),
+[#357](https://github.com/AntonTegnelov/wave_forge/issues/357)).
 Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 

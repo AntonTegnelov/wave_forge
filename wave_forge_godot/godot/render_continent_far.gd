@@ -3,11 +3,13 @@
 ##
 ## Run through `../render_ground.sh`. `continent.tscn` is instanced with only its ground, biomes and
 ## far ground asked for, the far ground out to 128 chunks, about 2 km. The camera stands 40 m over
-## the lowland east of the central range and looks west across it, so the range's silhouette
-## stands against the sky. The picture lands in Godot's user directory, and the script prints
-## where, with how many chunks each coarse stage generated per second of its own time (P2).
+## the lowland east of the central range and looks west across it under the reference look
+## (`reference_look.gd`), so the range's silhouette stands against the sky. The picture lands in
+## Godot's user directory, and the script prints where, with how many chunks each coarse stage
+## generated per second of its own time (P2).
 extends SceneTree
 
+const ReferenceLook := preload("res://reference_look.gd")
 const FAR_RADIUS := 128
 const TIMEOUT_S := 300.0
 ## The camera's column and the column it looks at, in cells of the lattice.
@@ -35,16 +37,7 @@ func _initialize() -> void:
 	camera.far = 4000
 	camera.fov = 50
 	root.add_child(camera)
-	var sun := DirectionalLight3D.new()
-	root.add_child(sun)
-	sun.rotation_degrees = Vector3(-35, 120, 0)
-	var environment := WorldEnvironment.new()
-	environment.environment = Environment.new()
-	environment.environment.background_mode = Environment.BG_COLOR
-	environment.environment.background_color = Color(0.62, 0.74, 0.88)
-	environment.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.environment.ambient_light_color = Color(0.45, 0.47, 0.5)
-	root.add_child(environment)
+	ReferenceLook.add_to(root)
 	if not world.start():
 		printerr("render_continent_far: the continent did not start")
 		quit(1)
