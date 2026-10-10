@@ -343,6 +343,11 @@ ground out to about 1 km, so at eye level its horizon is terrain, not sky; its f
 where the ground does (`tests/presets.rs`, [#358](https://github.com/AntonTegnelov/wave_forge/issues/358)).
 Every preset's ground fills its view, and its colours are as bright as measured ground of their
 kind (`verify_presets.gd`, [#359](https://github.com/AntonTegnelov/wave_forge/issues/359)).
+Grass grows in clumps that share a height, a lean and a colour between healthy and dry, each
+blade's base in the colour of the ground under it, on both renderers and in Bevy; it thins with
+distance, so the hills preset draws grass out to three chunks for fewer blades than two chunks of
+every blade (`verify_ground.gd`, `grass_render.rs`, [measurements.md](../research/measurements.md)
+E65, [#361](https://github.com/AntonTegnelov/wave_forge/issues/361)).
 Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 

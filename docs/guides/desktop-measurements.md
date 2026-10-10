@@ -15,7 +15,7 @@ On Vulkan and on Direct3D 12:
 |---|---|---|
 | A city streamed around a moving focus in Bevy and drawn at 1080p: on Bevy's device and on one of the solver's own, at 4.2 m/s and 30 m/s, and at 30 m/s with batches of at most 16 and 4 regions. An idle phase first, the cost of drawing alone | `wave_forge_bevy/examples/frame_times.rs` | where the solver runs in both engines, and whether a smaller batch buys smoother frames ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)) |
 | The city walked in Godot with its module models drawn, on Forward+, at 4.2 m/s and 30 m/s, with the node's own time, each chunk drawn as a MultiMesh per module and as one merged mesh, and what drawing a chunk costs Godot's thread | `wave_forge_godot/godot/measure_city.gd` | the solver on a device of its own in a desktop Godot ([#39](https://github.com/AntonTegnelov/wave_forge/issues/39)), P1's frame rate, and how a chunk is drawn ([#203](https://github.com/AntonTegnelov/wave_forge/issues/203)) |
-| Grass on 25 chunks with and without it, the ground's levels of detail, and the far ground beyond the near ground, each with a check for gaps, on Forward+ | `render_ground.gd`, `render_lods.gd`, `render_far.gd` | E45, E47 and E52 on a desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166), P2) |
+| Grass on 25 chunks with and without it, the ground's levels of detail, and the far ground beyond the near ground, each with a check for gaps, on Forward+; and grass at eye level on the hills preset, at a radius of 2 with every blade and at radii of 3 and 4 thinning with distance, in a window of 1920 by 1080 | `render_ground.gd`, `render_lods.gd`, `render_far.gd`, `measure_grass.gd` | E45, E47 and E52 on a desktop ([#166](https://github.com/AntonTegnelov/wave_forge/issues/166), P2), and E65's frame time, whether thinning lets `grass_radius` grow at the same cost |
 | The maximal preset's continent played from the directory its world run baked, in a window of 1920 by 1080 on Forward+, its far ground out to about 500 m: walking at 4.2 m/s, then flying at 30 m/s, with the most memory the process held and a check that no stage ran | `wave_forge_godot/godot/measure_playback.gd` | M1's frame rate and bounded memory ([#197](https://github.com/AntonTegnelov/wave_forge/issues/197), [#247](https://github.com/AntonTegnelov/wave_forge/issues/247)) |
 | The small city preset walked by a camera at 4.2 m/s from the world's origin into the city, its town, grass, bodies and navigation built around it, in a window of 1920 by 1080 on Forward+, with the node's own time | `wave_forge_godot/godot/measure_city_preset.gd` | P1's bars on a stage world with a town drawn ([#307](https://github.com/AntonTegnelov/wave_forge/issues/307)) |
 
@@ -34,7 +34,7 @@ through it at 4.2 m/s, for P1 ([#71](https://github.com/AntonTegnelov/wave_forge
 [measurements.md](../research/measurements.md) E53).
 
 Each measured phase lasts 20 seconds and prints the median, 99th percentile and slowest frame. The
-whole run takes about 80 minutes, most of it the first build and the continent's two whole runs.
+whole run takes about 90 minutes, most of it the first build and the continent's two whole runs.
 
 It does not measure a second GPU vendor, which #39 also asks for.
 
