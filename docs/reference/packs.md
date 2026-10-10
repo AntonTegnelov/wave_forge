@@ -967,6 +967,9 @@ several kinds, each with a weight (default 1) and a number of variants (default 
    `group: Some((size: (low, high), radius: r))`, each candidate is the first point of a group of
    that many points scattered within `r` cells of it.
 2. **Tests at each point's column**, the candidate's and each group member's own:
+   - with `density: Some("field")`, kept as often as the field's value there says, 0 to 1, by a
+     hash of the column: where a forest's density falls off its edge thins, with no pattern, and
+     spacing then keeps the survivors apart;
    - the height within `between`;
    - the slope at most `max_slope`, in height per cell;
    - every condition of `when`, which takes the conditions a Rules stage takes over any
@@ -984,16 +987,18 @@ several kinds, each with a weight (default 1) and a number of variants (default 
    priority lies closer than `apart` cells. Candidates are judged by their own tests, never by
    whether spacing kept them, so the decision agrees across chunk seams. A kept candidate's group
    members skip this test and pass or fail on their own.
-4. **Attributes.** `scale: (low, high)` (default 1), a `stretch: (low, high)` of its height over
-   its width (default 1), a `tilt: (low, high)` in degrees from the vertical in a hashed direction,
-   and with probability `align` (default 0) standing along the ground's normal instead. A
+4. **Attributes.** `scale: (low, high)` (default 1), times a `clump: (low, high)` factor a
+   candidate's group shares (default 1), so a clump is of one size, a `stretch: (low, high)` of
+   its height over its width (default 1), a `tilt: (low, high)` in degrees from the vertical in a
+   hashed direction, and with probability `align` (default 0) standing along the ground's normal
+   instead. A
    candidate's kind is drawn by weight, and its group's members share it, so a clump is of one
    species; each point draws a variant of its kind evenly, and a random from 0 to 1. With
    `appearance: ["dryness", ...]`, at most two field stages, each point carries their values at its
    column, for an engine's shader to tint it by.
 
 Loading refuses counts and group sizes outside 1 to 255, a negative radius, a tilt outside 0 to
-180 degrees, an `align` outside 0 to 1, a scale or a stretch that is not a positive range, an empty
+180 degrees, an `align` outside 0 to 1, a scale, a clump or a stretch that is not a positive range, an empty
 depth range, conditions that read what a stage cannot, a stage with both `kind` and `kinds` or
 neither, a stage-wide `variants` beside `kinds`, a kind's weight of 0 or less, variants outside 1
 to 256, and more than two appearance fields. The reach grows with `apart`, the group's radius and
@@ -1016,12 +1021,12 @@ fixes it.
 `Runtime::scatter_report(stage, chunk)` says what became of every candidate whose column lies in
 a chunk, a group's first point for a group, as a `Judgement`: where it stood, and whether it became
 a point or which modifier rejected it first, as a `Rejection`:
-- `Chance`, `Height`, `Slope`, `Condition(n)` (the `n`th condition of `when`), `Water`, `Sites`
-  or `Blocked` for its own tests;
+- `Chance`, `Density`, `Height`, `Slope`, `Condition(n)` (the `n`th condition of `when`), `Water`,
+  `Sites` or `Blocked` for its own tests;
 - `Spacing` for a candidate that passed but lay too near one of higher priority.
 
 Each judgement also holds its `Readings`, what the stage's modifiers read at the candidate's column
-whatever became of it: the ground's `height` in cells, its `slope` (the steeper rise per column,
+whatever became of it: the `density` for a stage with one, the ground's `height` in cells, its `slope` (the steeper rise per column,
 along x or y) for a stage with `max_slope`, `conditions`, each condition of `when` in order with the
 value it tests (its left side) and whether it held, and the `water_depth` over the ground for a
 stage with `water`. They are what a viewer shows to say why a candidate went as it did

@@ -2634,8 +2634,8 @@ impl WaveForgeStages {
     }
 
     /// What the drawn candidates of `candidates_stage` came to, over every chunk drawn: each
-    /// verdict's `name` (`"kept"`, or the modifier that rejected it, as `"chance"`, `"height"`,
-    /// `"slope"`, `"condition 0"`, `"water"`, `"sites"`, `"blocked"` or `"spacing"`), the `colour`
+    /// verdict's `name` (`"kept"`, or the modifier that rejected it, as `"chance"`, `"density"`,
+    /// `"height"`, `"slope"`, `"condition 0"`, `"water"`, `"sites"`, `"blocked"` or `"spacing"`), the `colour`
     /// its candidates are drawn in, and their `count`.
     #[func]
     fn candidate_legend(&self) -> Array<VarDictionary> {
@@ -2664,8 +2664,8 @@ impl WaveForgeStages {
     /// farther than `radius` along the ground, for a viewer to say why it went as it did: its
     /// `verdict` and `colour` as [`WaveForgeStages::candidate_legend`] names them, its `position` on
     /// the ground, and what the stage's modifiers read there
-    /// ([packs.md](packs.md#scatter)): the ground's `height` in cells, its `slope` and the
-    /// `water_depth` for a stage with those modifiers, and `conditions`, each condition of `when`
+    /// ([packs.md](packs.md#scatter)): the ground's `height` in cells, its `slope`, the
+    /// `water_depth` and the `density` for a stage with those modifiers, and `conditions`, each condition of `when`
     /// in order with the `value` it tests and whether it `holds`. Empty when none lies that near.
     #[func]
     fn candidate_near(&self, position: Vector3, radius: f32) -> VarDictionary {
@@ -2712,6 +2712,9 @@ impl WaveForgeStages {
         }
         if let Some(depth) = readings.water_depth {
             out.set(&"water_depth".to_variant(), &depth.to_variant());
+        }
+        if let Some(density) = readings.density {
+            out.set(&"density".to_variant(), &density.to_variant());
         }
         let conditions: Array<VarDictionary> = readings
             .conditions
@@ -5319,6 +5322,7 @@ fn verdict_name(verdict: Result<(), Rejection>) -> String {
     match verdict {
         Ok(()) => "kept".to_owned(),
         Err(Rejection::Chance) => "chance".to_owned(),
+        Err(Rejection::Density) => "density".to_owned(),
         Err(Rejection::Height) => "height".to_owned(),
         Err(Rejection::Slope) => "slope".to_owned(),
         Err(Rejection::Condition(number)) => format!("condition {number}"),
@@ -5339,6 +5343,7 @@ fn verdict_colour_of(name: &str) -> Color {
     match name {
         "kept" => Color::from_rgb(0.2, 0.9, 0.2),
         "chance" => Color::from_rgb(0.5, 0.5, 0.5),
+        "density" => Color::from_rgb(0.75, 0.75, 0.75),
         "height" => Color::from_rgb(0.2, 0.4, 1.0),
         "slope" => Color::from_rgb(1.0, 0.55, 0.1),
         "water" => Color::from_rgb(0.1, 0.9, 0.9),
