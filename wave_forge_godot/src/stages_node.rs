@@ -542,8 +542,10 @@ const GROUNDS_PER_FRAME: usize = 8;
 /// a ground's surface and its material costs a millisecond and more on some drivers
 /// (measurements.md E55).
 const GROUNDS_BUDGET_MS: f64 = 2.0;
-/// How long one frame may spend building bodies, in milliseconds, after its first.
-const BODIES_BUDGET_MS: f64 = 2.0;
+/// How long one frame may spend building bodies, in milliseconds, after its first: half the node's
+/// whole frame bar of 2 ms at the 99th percentile (measurements.md, the stages check, E64), so a
+/// frame that builds bodies leaves room for the rest of its work.
+const BODIES_BUDGET_MS: f64 = 1.0;
 
 /// How many coarse chunks get their far ground built per frame at most.
 const FAR_GROUNDS_PER_FRAME: usize = 4;
