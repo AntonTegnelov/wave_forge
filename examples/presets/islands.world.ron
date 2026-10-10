@@ -49,9 +49,15 @@
         ], otherwise: "grass")),
         // Broadleaf trees of five variants on the grass, where the woods noise lies under the tree
         // density, and bushes among them.
+        // 0 to 1: how far into the woods a column lies, rising from their edge, so the trees thin
+        // out toward it.
+        (name: "thicket", kind: Field(Clamp(Mul(
+            Sub(Param("trees"), Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0)),
+            Constant(10.0),
+        ), 0.0, 1.0))),
         (name: "trees", kind: Scatter(height: "height", spacing: 3, apart: 3,
             kinds: [(kind: "broadleaf", weight: 3.0, variants: 5), (kind: "bush", variants: 2)],
-            scale: (0.6, 1.0), stretch: (0.9, 1.15),
+            density: Some("thicket"), scale: (0.6, 1.0), stretch: (0.9, 1.15),
             when: [
                 Greater(Is("surface", ["grass"]), Constant(0.5)),
                 Less(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("trees")),
