@@ -58,5 +58,12 @@
             when: [
                 Less(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("trees")),
             ])),
+        // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the hills over a
+        // world map of 4 by 4 cells a column, coloured by the same categories as the surface.
+        (name: "far_height", scale: 4, kind: Field(Add(
+            Constant(4.0),
+            Mul(Add(FastNoise("hills"), Constant(1.0)), Add(Constant(2.0), Mul(Param("hills"), Constant(5.0)))),
+        ))),
+        (name: "far_surface", scale: 4, kind: Rules(rules: [], otherwise: "grass")),
     ],
 )

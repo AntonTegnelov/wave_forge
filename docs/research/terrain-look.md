@@ -62,7 +62,7 @@ erosion suits finite maps generated once.
 - **Scale.** Cells of 2 m; the near ground has a vertex per column, 2 m apart, with levels of
   detail at 1, 2, 4 and 8 and skirts (`src/ground.rs`). The continent's ground reaches three chunks,
   about 48 m, from the player; beyond, the far ground has a vertex per coarse column, 8 m, out to
-  about 2 km (`src/far_ground.rs`).
+  about 500 m in `continent.tscn` and 2 km in `render_continent_far.gd` (`src/far_ground.rs`).
 - **Shape.** Field expressions over the built-in `Noise` (fractal value noise, no rotation between
   octaves) and `FastNoise` (Godot's FastNoiseLite exactly, with ridged fractals and domain warp);
   neighbourhood stages Blur, Delta, Erode and Area; per-biome formulas through Match

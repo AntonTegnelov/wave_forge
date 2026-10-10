@@ -13,6 +13,7 @@ extends SceneTree
 
 const Presets := preload("res://addons/wave_forge/presets.gd")
 const ReferenceLook := preload("res://reference_look.gd")
+const Generated := preload("res://generated.gd")
 const TILE := Vector2i(640, 360)
 const TIMEOUT_S := 120.0
 ## Frames to draw after a view settles, so what arrived last is on screen.
@@ -27,6 +28,8 @@ var scene: Node3D
 var stages: Node
 var started_usec := 0
 var settled_frames := 0
+## Each target's products on the frame before, by name.
+var last_products := {}
 var camera: Camera3D
 
 func _initialize() -> void:
@@ -81,14 +84,9 @@ func _process(_delta: float) -> bool:
 				camera.look_at_from_position(at + Vector3(0, reach * 2.0, 0), at, Vector3(0, 0, -1))
 	var stats: Dictionary = stages.stats()
 	var drawn: Array = stages.volume_chunks() if stages.ground_stage.is_empty() else stages.ground_chunks()
-	# Every target stage has generated every chunk within its radius: a stage that reads a slow one,
-	# trees on a volume's top say, or a town still being solved, arrives after the ground is drawn.
-	# A target without a radius of its own has the view's.
-	var generated := true
-	for target: String in stages.targets:
-		var radius: int = stages.target_radii.get(target, stages.view_radius)
-		# A stage that has not run yet has no entry.
-		generated = generated and stats["stages"].has(target) and stats["stages"][target]["products"] >= (2 * radius + 1) * (2 * radius + 1)
+	# Every target stage has generated what it will: a stage that reads a slow one, trees on a
+	# volume's top say, or a town still being solved, arrives after the ground is drawn.
+	var generated := Generated.all_generated(stages, stats, last_products)
 	if not generated or is_nan(ground) or drawn.is_empty() or stats["pending_grounds"] > 0 or stats["pending_volumes"] > 0 or stats["pending_placements"] > 0:
 		settled_frames = 0
 		return false
@@ -117,7 +115,8 @@ func _take(spec: Dictionary) -> void:
 	scene = Node3D.new()
 	var sun := ReferenceLook.add_to(scene)
 	camera = Camera3D.new()
-	camera.far = 1000
+	# Past the far ground, which reaches about 1 km.
+	camera.far = 2000
 	scene.add_child(camera)
 	stages = ClassDB.instantiate("WaveForgeStages")
 	var settings := Presets.settings(spec["path"])
@@ -133,6 +132,7 @@ func _take(spec: Dictionary) -> void:
 	stages.follow(AT)
 	started_usec = Time.get_ticks_usec()
 	settled_frames = 0
+	last_products = {}
 
 func _capture(spec: Dictionary) -> void:
 	var picture := root.get_texture().get_image()

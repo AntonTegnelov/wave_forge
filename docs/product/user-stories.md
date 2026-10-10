@@ -337,7 +337,9 @@ materials meeting along broken lines and steep ground turning to rock, on every 
 `render_views.sh` shows every preset from eye level, oblique and top-down under the sun and sky a
 game gets from the inspector, on Compatibility and Forward+, for judging the look
 ([testing.md](../guides/testing.md#the-engine-integrations),
-[#357](https://github.com/AntonTegnelov/wave_forge/issues/357)).
+[#357](https://github.com/AntonTegnelov/wave_forge/issues/357)). Every preset with a ground draws a far
+ground out to about 1 km, so at eye level its horizon is terrain, not sky; its far height stands
+where the ground does (`tests/presets.rs`, [#358](https://github.com/AntonTegnelov/wave_forge/issues/358)).
 Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 
@@ -648,7 +650,8 @@ history of settlements of eight cultures that a game gives as a table of facts, 
 the ground with a town of its culture, each culture a WFC module set of 61 modules
 (`examples/continent/cultures`), 209 Assemble pieces in eleven stages of dungeons and buildings
 grown on the larger places, 59 stages of vegetation and clutter by rule chains, and a coarse height
-and coarse biomes an engine draws and colours its far ground from, out to 2 km in `continent.tscn`,
+and coarse biomes an engine draws and colours its far ground from, out to about 500 m in
+`continent.tscn` and 2 km in `render_continent_far.gd`,
 106 stages in all, in chunks of 8 by 8 columns
 (`wfc-devtools/tests/continent.rs` and `cultures.rs`, [measurements.md](../research/measurements.md)
 L34 to L41). The whole continent runs ahead of time in 526 s in the dev container, into 0.61 GB

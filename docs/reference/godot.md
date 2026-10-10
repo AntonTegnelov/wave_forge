@@ -192,7 +192,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
 | | `ground_cavity_stage`, `ground_wetness_stage`, `ground_cover_stage` | field stages whose values, 0 to 1, the reference ground shader takes as channels: a cavity that darkens hollows, a wetness that darkens and smooths the ground, and a cover that tints it toward the grass where the grass fades out |
-| | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view; empty, or a pack without water, draws none |
+| | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view or, when it reaches further, the far ground; empty, or a pack without water, draws none |
 | | `water_stage`, `water_material` | a field stage at the ground's scale holding the level of the lakes' and rivers' water ([packs.md](packs.md#water-surfaces)): each chunk whose ground is drawn also gets its water, drawn with `water_material`, or `sea_material` when that is empty, and with neither, as with the sea, not drawn. `water_chunks()` lists the chunks with water drawn and `water_surface_of(chunk)` gives one's `positions` and `indices`; loading refuses a water stage that is no field |
 | | `far_ground_stage` | a coarse field stage the far ground beyond the ground is drawn from ([packs.md](packs.md#far-ground)), with `ground_material`; give it a radius of its own in `target_radii`, as far as the ground should reach. Empty for none |
 | | `far_ground_material_stage` | a Rules stage at `far_ground_stage`'s scale whose categories colour the far ground, each vertex by the coarse column under it: in the colour `ground_palette` gives the category of `ground_material_stage` of the same name, or in a colour of its own for a category that stage does not name. It has to be a target with the far ground's radius in `target_radii`, which `start` checks, since a far chunk is drawn only once its colours are there. Empty to draw the far ground with `ground_material` alone |
@@ -242,8 +242,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   which arrives as the `saved` signal's text a game writes to disk; `load_save(text)` brings a world
   back from it. A text that is not a save, or holds an edit the pack refuses, is reported as an
   error, returns false and changes nothing.
-- `target_radii`: a `Dictionary[StringName, int]` of target stage names to a radius in chunks of their own; the
-  other targets keep `view_radius`.
+- `target_radii`: a `Dictionary[StringName, int]` of target stage names to a radius in chunks of the
+  WFC lattice, whatever the stage's scale: a coarse stage generates the chunks of its own that
+  cover them (`Runtime::request_each`). The other targets keep `view_radius`.
 - `start()` loads the pack and the rule sets and starts the stages' thread, where a town solver
   builds its device.
 - `follow(position)` generates around a position in Godot's world space, asking again only when it
@@ -457,7 +458,7 @@ under the key `wave_forge`, on the right by default:
   targets, no ground) takes the default preset, islands, when it is first selected. The copying is
   `addons/wave_forge/presets.gd`. Below it, Edit as a stack turns the node's `pack_file` into a
   stack the scene holds ([Stacks](#stacks)), and the Rules panel lists the categories of the
-  pack's Rules stages: a scene dragged from the FileSystem dock onto one adds a Scatter stage
+  pack's Rules stages at scale 1: a scene dragged from the FileSystem dock onto one adds a Scatter stage
   placing it on that category, standing on `ground_stage`, at least 2 cells apart and off steep
   ground, named after the scene (a number added if taken), bound to the scene in `scenes` and
   added to `targets`, as one undo action that makes the node's pack a stack if it was a file and
@@ -467,7 +468,9 @@ under the key `wave_forge`, on the right by default:
   `addons/wave_forge/sea.tres`, or the archipelago's clearer `lagoon.tres`. The small city binds
   the city module set's modules to the plugin's city kit (`addons/wave_forge/city/`, the module set
   and a lone-mesh scene per module, written from its models by `tools/make_city_kit.gd`), so its
-  city is drawn and collided with no code ([Scenes](#scenes)). The node follows the current camera,
+  city is drawn and collided with no code ([Scenes](#scenes)). Every preset but the cave draws a far
+ground from its pack's `far_height` and `far_surface` out to about 1 km beyond the view, so its
+horizon is terrain, and the islands' and archipelago's sea reaches as far. The node follows the current camera,
   so a game's own player, or any camera, sees the world come in around it; a player is the game's
   (the checks and examples use a walker of their own, `wave_forge_godot/godot/walker.tscn`, which
   waits until the ground and its body are under it before it stands, as a game's player has to);
@@ -567,7 +570,7 @@ inspector reorders by dragging, and `rest`, the pack's other fields as plain dat
 (`stack_stage.gd`) has its `name`, its `kind` as a pack names it, its `settings` (the kind's fields
 as plain data, [Packs as data](#packs-as-data)), its `scale` and its `persist`. `read_pack_text`
 makes a stack of a pack's text and `to_pack_text` saves the pack it holds; `rule_categories` lists
-its Rules stages' categories and `add_scatter_on` adds the Scatter stage a scene dropped onto one
+its Rules stages' categories at scale 1 and `add_scatter_on` adds the Scatter stage a scene dropped onto one
 makes. A node given one in
 `stack` generates that pack instead of `pack_file`, reading it again on every `start`, so a stack
 edited in place and started again generates the edited pack; it warns when both are set. The
