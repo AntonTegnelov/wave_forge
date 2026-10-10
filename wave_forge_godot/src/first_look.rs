@@ -4,7 +4,7 @@
 //! game gives once when it draws Wave Forge content with neither.
 
 use godot::classes::resource::DeepDuplicateMode;
-use godot::classes::{EditorInterface, Engine, Node, PackedScene, WorldEnvironment};
+use godot::classes::{DisplayServer, EditorInterface, Engine, Node, PackedScene, WorldEnvironment};
 use godot::prelude::*;
 
 /// The scene the inspector's "Add sun and sky" copies its nodes from.
@@ -100,9 +100,10 @@ pub(crate) fn add_sun_and_sky(scene: &Gd<Node>) -> Vec<String> {
 }
 
 /// Warns once, in a running game, that `node` draws Wave Forge content in a world with no sun or
-/// no sky: the editor's preview sun and sky are not the game's. Returns whether it warned.
+/// no sky: the editor's preview sun and sky are not the game's. A headless run, a dedicated server
+/// say, draws nothing, so it is not warned. Returns whether it warned.
 pub(crate) fn warn_if_unlit(node: &Gd<Node>) -> bool {
-    if Engine::singleton().is_editor_hint() {
+    if Engine::singleton().is_editor_hint() || DisplayServer::singleton().get_name() == "headless" {
         return false;
     }
     if !node.is_inside_tree() {

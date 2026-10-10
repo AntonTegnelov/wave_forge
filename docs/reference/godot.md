@@ -414,7 +414,7 @@ when it runs. Three things close that gap without the addon growing a lighting s
   when the scene lacks one, as one undo action, at the top of the scene; they are plain nodes the
   scene owns, with an environment of its own, to change or delete;
 - a running game prints a warning once, when the node first draws its ground, surface or chunks,
-  if the scene has no sun or no sky.
+  if the scene has no sun or no sky; a headless run, which draws nothing, does not.
 
 The addon's optional `demo/demo.tscn` lights the hills preset with `sun_and_sky.tscn` and has a fly
 camera (right mouse button to look, WASD, Q and E, Shift); delete the folder when it is not
