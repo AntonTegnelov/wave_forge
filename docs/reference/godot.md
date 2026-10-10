@@ -191,6 +191,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_material` | the material the ground is drawn with |
 | | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
+| | `ground_ramp_colours`, `ground_ramp_drivers`, `ground_ramp_heights` | a ramp per category, by index as `ground_palette`, along which the reference ground shader moves the category's colour: the colour it runs toward, and a `Vector4` of how far the ground's height (0 to 1 over `ground_ramp_heights`, in world units), its slope (0 flat to 1 sheer), its cavity and its wetness each move it, from -1 to 1, summed and clamped to the ramp. A category past either array's end has none. Handed to the shader as `wave_forge_ramps` and `ramp_heights` |
 | | `ground_cavity_stage`, `ground_wetness_stage`, `ground_cover_stage` | field stages whose values, 0 to 1, the reference ground shader takes as channels: a cavity that darkens hollows, a wetness that darkens and smooths the ground, and a cover that tints it toward the grass where the grass fades out |
 | | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view or, when it reaches further, the far ground; empty, or a pack without water, draws none |
 | | `water_stage`, `water_material` | a field stage at the ground's scale holding the level of the lakes' and rivers' water ([packs.md](packs.md#water-surfaces)): each chunk whose ground is drawn also gets its water, drawn with `water_material`, or `sea_material` when that is empty, and with neither, as with the sea, not drawn. `water_chunks()` lists the chunks with water drawn and `water_surface_of(chunk)` gives one's `positions` and `indices`; loading refuses a water stage that is no field |
@@ -472,7 +473,9 @@ under the key `wave_forge`, on the right by default:
 ground from its pack's `far_height` and `far_surface` out to about 1 km beyond the view, so its
 horizon is terrain, and the islands' and archipelago's sea reaches as far. The presets' colours are
 measured ground's ([terrain-look.md](../research/terrain-look.md#measured-albedo)); they darken
-their hollows through a cavity channel, wet their shores and tint covered ground toward the grass. The node follows the current camera,
+their hollows through a cavity channel, wet their shores and tint covered ground toward the grass.
+The hills' and islands' meadows dry toward a measured dry grass up the hills and on slopes, and
+stay lush in the hollows, through a ramp. The node follows the current camera,
   so a game's own player, or any camera, sees the world come in around it; a player is the game's
   (the checks and examples use a walker of their own, `wave_forge_godot/godot/walker.tscn`, which
   waits until the ground and its body are under it before it stands, as a game's player has to);

@@ -261,6 +261,13 @@ and `wet_roughness` say how far they darken and smooth the ground, and `cover_ti
 ([Grass](#grass)), so the ground is as it is where the blades stand; without a fade nothing is
 tinted.
 
+`GroundMaterials::ramps` gives each palette colour a ramp, as Godot's `ground_ramp_colours` and
+`ground_ramp_drivers` do ([godot.md](godot.md#ground-and-colliders)): `ramp_image(ramps)` makes it
+from a `GroundRamp` per colour by index, the colour it runs toward and a `Vec4` of how far the
+ground's height (0 to 1 over `GroundLook::ramp_heights`), slope, cavity and wetness each move it,
+from -1 to 1. Both makers give a single texel of zeros, no ramp; a game sets the field, one image
+shared by every chunk.
+
 ## Grass
 
 `GrassMaterial` is an `ExtendedMaterial` over `StandardMaterial` with a vertex shader of its own.
