@@ -5,8 +5,9 @@
 // materials meet along a broken line rather than the grid's. Steep ground turns to rock by its own
 // slope, its colour muted and banded in strata; a broad noise varies the colour across the land,
 // and a fine one bumps the ground and grains its colour near the camera. Channels the stages hand
-// in darken hollows and wet ground. Bevy's own lighting does the rest. `wave_forge_godot/godot/addons/wave_forge/shaders/ground.gdshader` is the same
-// shader for Godot.
+// in darken hollows and wet ground, and each material's colour may run along a ramp of its own by
+// height, slope, cavity and wetness. Bevy's own lighting does the rest.
+// `wave_forge_godot/godot/addons/wave_forge/shaders/ground.gdshader` is the same shader for Godot.
 import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
@@ -36,6 +37,7 @@ struct GroundLook {
     cover_tint: f32,
     cover_colour: vec4<f32>,
     gullies: f32,
+    ramp_heights: vec2<f32>,
     // A struct within a uniform starts on 16 bytes.
     @align(16) cover_fade: GrassFade,
 }
@@ -56,6 +58,11 @@ const GULLY_SCALE: f32 = 0.7;
 // darkens and smooths it, and a cover in blue, which tints it toward the grass's colour. A single
 // texel of zeros for a ground without channels.
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var channels: texture_2d<f32>;
+// Per material id, in texel id of a 256 by 2 texture: the colour, linear, its ramp runs toward in
+// row 0, and in row 1 how far the ground's height (0 to 1 over `look.ramp_heights`), slope, cavity
+// and wetness each move its colour along that ramp, from -1 to 1. A single texel of zeros, no ramp,
+// for a ground without ramps.
+@group(constants::MATERIAL_BIND_GROUP) @binding(105) var ramps: texture_2d<f32>;
 
 // A hash without trigonometry, cheaper than sin and the same on every GPU.
 fn hash(p: vec2<f32>) -> f32 {
@@ -115,8 +122,14 @@ fn id_at(vertex: vec2<i32>) -> i32 {
     return i32(textureLoad(materials, vertex, 0).r * 255.0 + 0.5);
 }
 
-fn colour_of(id: i32) -> vec3<f32> {
-    return textureLoad(palette, vec2<i32>(id, 0), 0).rgb;
+// Material `id`'s colour, moved along its ramp by `drivers`: the ground's height, slope, cavity and
+// wetness here.
+fn colour_of(id: i32, drivers: vec4<f32>) -> vec3<f32> {
+    let colour = textureLoad(palette, vec2<i32>(id, 0), 0).rgb;
+    let last = vec2<i32>(textureDimensions(ramps)) - 1;
+    let toward = textureLoad(ramps, min(vec2<i32>(id, 0), last), 0).rgb;
+    let by = textureLoad(ramps, min(vec2<i32>(id, 1), last), 0);
+    return mix(colour, toward, clamp(dot(by, drivers), 0.0, 1.0));
 }
 
 @fragment
@@ -144,11 +157,23 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Each material's weight is the sum of its corners', so its edge follows the smooth line between
     // the vertices; raised by a noise of the material's own, the highest wins, blending over a band
     // of the border's width. A material on several corners is counted once.
+    // The channels, blended between the vertices as the materials are.
+    let channel_size = vec2<i32>(textureDimensions(channels));
+    var near_channels = vec3<f32>(0.0);
+    for (var k = 0; k < 4; k++) {
+        near_channels += textureLoad(channels, min(corners[k], channel_size - 1), 0).rgb * near_weights[k];
+    }
+    let cavity = clamp(near_channels.x, 0.0, 1.0);
+    let wet = clamp(near_channels.y, 0.0, 1.0);
+    let cover = clamp(near_channels.z, 0.0, 1.0);
+    // What moves each material's colour along its ramp.
+    let height = clamp((world.y - look.ramp_heights.x) / max(look.ramp_heights.y - look.ramp_heights.x, 1e-6), 0.0, 1.0);
+    let drivers = vec4<f32>(height, steepness, cavity, wet);
     var ids: array<i32, 4>;
     for (var k = 0; k < 4; k++) {
         ids[k] = id_at(corners[k]);
     }
-    var albedo = colour_of(ids[0]);
+    var albedo = colour_of(ids[0], drivers);
     // Most fragments have one material on all four corners and need no border.
     if ids[1] != ids[0] || ids[2] != ids[0] || ids[3] != ids[0] {
         var heights: array<f32, 4>;
@@ -171,7 +196,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         var total = 0.0;
         for (var k = 0; k < 4; k++) {
             let weight = max(heights[k] - highest + border_width, 0.0) * shares[k];
-            albedo += colour_of(ids[k]) * weight;
+            albedo += colour_of(ids[k], drivers) * weight;
             total += weight;
         }
         albedo /= total;
@@ -204,15 +229,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         pbr_input.N = normalize(pbr_input.N - vec3<f32>(lean.x, 0.0, lean.y) * 0.3 * cut);
     }
     albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), look.macro_variation);
-    // The channels, blended between the vertices as the materials are.
-    let channel_size = vec2<i32>(textureDimensions(channels));
-    var near_channels = vec3<f32>(0.0);
-    for (var k = 0; k < 4; k++) {
-        near_channels += textureLoad(channels, min(corners[k], channel_size - 1), 0).rgb * near_weights[k];
-    }
-    let cavity = clamp(near_channels.x, 0.0, 1.0);
-    let wet = clamp(near_channels.y, 0.0, 1.0);
-    let cover = clamp(near_channels.z, 0.0, 1.0);
     // Covered ground tints in as the grass's blades shrink away, so where they stand it is as it is.
     let from_focus = abs(world.xz - look.cover_fade.focus) / look.cover_fade.span;
     let beyond_grass = smoothstep(look.cover_fade.band.x, look.cover_fade.band.y, max(from_focus.x, from_focus.y));

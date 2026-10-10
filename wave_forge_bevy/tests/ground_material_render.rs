@@ -1,7 +1,8 @@
 //! The ground material drawn by Bevy's own renderer: a chunk whose west half is one material and
 //! east half another. With the flat look it comes out in their palette colours, blended only around
 //! the border; with the default look the colours vary around the palette's. The ground's channels
-//! darken it where it is hollow or wet and tint it where it is covered.
+//! darken it where it is hollow or wet and tint it where it is covered, and a material's ramp
+//! carries its colour toward another by the ground's cavity or height.
 //!
 //! ```text
 //! cargo test -p wave_forge_bevy --release --test ground_material_render -- --ignored --nocapture
@@ -24,8 +25,8 @@ use std::time::{Duration, Instant};
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials};
 use wave_forge_bevy::materials::{
-    GrassFade, GroundLook, WaveForgeMaterialsPlugin, ground_channels_image, ground_material_of,
-    palette_image,
+    GrassFade, GroundLook, GroundRamp, WaveForgeMaterialsPlugin, ground_channels_image,
+    ground_material_of, palette_image, ramp_image,
 };
 use wave_forge_bevy::stages::ground_mesh;
 
@@ -54,6 +55,16 @@ fn render_halves(look: GroundLook, channels: Option<[[f32; 3]; 2]>) -> Vec<u8> {
 
 /// What [`render_halves`] draws, on the ground of height `height`, an expression.
 fn render_halves_on(height: &str, look: GroundLook, channels: Option<[[f32; 3]; 2]>) -> Vec<u8> {
+    render_halves_with(height, look, channels, &[])
+}
+
+/// What [`render_halves_on`] draws, with the materials' `ramps`.
+fn render_halves_with(
+    height: &str,
+    look: GroundLook,
+    channels: Option<[[f32; 3]; 2]>,
+    ramps: &[GroundRamp],
+) -> Vec<u8> {
     let text = PACK.replace("Constant(0.0)", height);
     let mut runtime = Runtime::new(
         Arc::new(Pack::parse(&text).expect("a valid pack")),
@@ -120,6 +131,7 @@ fn render_halves_on(height: &str, look: GroundLook, channels: Option<[[f32; 3]; 
         )
     };
     material.extension.look = look;
+    material.extension.ramps = world.resource_mut::<Assets<Image>>().add(ramp_image(ramps));
     if let Some([first, second]) = channels {
         let values: Vec<f32> = ids
             .iter()
@@ -350,4 +362,76 @@ fn gullies_stripe_a_steep_slope_across_its_fall_line() {
     println!("across the fall line the red spans {without} without gullies, {with} with them");
     assert!(without <= 2, "the plain slope varies by {without}");
     assert!(with >= 20, "the gullies vary the slope by only {with}");
+}
+
+/// What the ramps carry the west material toward.
+const TOWARD: [u8; 3] = [40, 200, 60];
+
+/// `colour` a `share` of the way to `toward`, mixed in linear light as the shader mixes it.
+fn mixed(colour: [u8; 3], toward: [u8; 3], share: f32) -> [u8; 3] {
+    let from = Color::srgb_u8(colour[0], colour[1], colour[2]).to_linear();
+    let to = Color::srgb_u8(toward[0], toward[1], toward[2]).to_linear();
+    let srgb = Srgba::from(from.mix(&to, share)).to_u8_array();
+    [srgb[0], srgb[1], srgb[2]]
+}
+
+/// The west material's ramp, to [`TOWARD`] by `by`, and none for the east.
+fn west_ramp(by: Vec4) -> [GroundRamp; 1] {
+    [GroundRamp {
+        toward: Color::srgb_u8(TOWARD[0], TOWARD[1], TOWARD[2]),
+        by,
+    }]
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn a_ramp_by_cavity_carries_a_hollow_material_to_its_far_colour() {
+    // Both halves fully hollow, darkening nothing, so only the ramps change them.
+    let look = GroundLook {
+        cavity_darkening: 0.0,
+        ..GroundLook::flat()
+    };
+    let pixels = render_halves_with(
+        "Constant(0.0)",
+        look,
+        Some([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+        &west_ramp(Vec4::new(0.0, 0.0, 1.0, 0.0)),
+    );
+
+    let (left, right) = (
+        pixel_of(&pixels, 4, SIZE / 2),
+        pixel_of(&pixels, SIZE - 5, SIZE / 2),
+    );
+    println!("left {left:?}, right {right:?}; toward {TOWARD:?}");
+    assert!(
+        (near(left, TOWARD) && near(right, EAST)) || (near(left, EAST) && near(right, TOWARD)),
+        "left {left:?}, right {right:?}; toward {TOWARD:?}"
+    );
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn a_ramp_by_height_goes_as_far_as_the_ground_stands_within_its_heights() {
+    // The ground stands at 5, halfway up heights of 0 to 10.
+    let look = GroundLook {
+        ramp_heights: Vec2::new(0.0, 10.0),
+        ..GroundLook::flat()
+    };
+    let pixels = render_halves_with(
+        "Constant(5.0)",
+        look,
+        None,
+        &west_ramp(Vec4::new(1.0, 0.0, 0.0, 0.0)),
+    );
+
+    let halfway = mixed(WEST, TOWARD, 0.5);
+    let (left, right) = (
+        pixel_of(&pixels, 4, SIZE / 2),
+        pixel_of(&pixels, SIZE - 5, SIZE / 2),
+    );
+    println!("left {left:?}, right {right:?}; halfway {halfway:?}");
+    assert!(
+        (near(left, halfway) && near(right, EAST)) || (near(left, EAST) && near(right, halfway)),
+        "left {left:?}, right {right:?}; halfway {halfway:?}"
+    );
 }
