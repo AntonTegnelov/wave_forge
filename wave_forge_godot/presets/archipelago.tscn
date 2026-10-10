@@ -5,11 +5,17 @@
 
 [node name="Archipelago" type="WaveForgeStages"]
 pack_file = "res://addons/wave_forge/presets/archipelago.world.ron"
-targets = PackedStringArray("height", "surface", "cover", "palms")
+targets = PackedStringArray("height", "surface", "cover", "palms", "far_height", "far_surface")
 start_on_ready = true
 preview_in_editor = true
 view_radius = 3
+target_radii = Dictionary[StringName, int]({
+&"far_height": 133,
+&"far_surface": 133
+})
 ground_stage = "height"
+far_ground_stage = "far_height"
+far_ground_material_stage = "far_surface"
 ground_material_stage = "surface"
 sea_material = ExtResource("2_lagoon")
 ground_palette = PackedColorArray(0.08, 0.14, 0.2, 1, 0.9, 0.84, 0.62, 1, 0.5, 0.48, 0.45, 1, 0.2, 0.46, 0.18, 1)

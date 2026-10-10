@@ -468,7 +468,9 @@ under the key `wave_forge`, on the right by default:
   `addons/wave_forge/sea.tres`, or the archipelago's clearer `lagoon.tres`. The small city binds
   the city module set's modules to the plugin's city kit (`addons/wave_forge/city/`, the module set
   and a lone-mesh scene per module, written from its models by `tools/make_city_kit.gd`), so its
-  city is drawn and collided with no code ([Scenes](#scenes)). The node follows the current camera,
+  city is drawn and collided with no code ([Scenes](#scenes)). Every preset but the cave draws a far
+ground from its pack's `far_height` and `far_surface` out to about 1 km beyond the view, so its
+horizon is terrain, and the islands' and archipelago's sea reaches as far. The node follows the current camera,
   so a game's own player, or any camera, sees the world come in around it; a player is the game's
   (the checks and examples use a walker of their own, `wave_forge_godot/godot/walker.tscn`, which
   waits until the ground and its body are under it before it stands, as a game's player has to);

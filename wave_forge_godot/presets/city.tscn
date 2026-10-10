@@ -38,12 +38,18 @@ pack_file = "res://addons/wave_forge/presets/city.world.ron"
 rules_files = {
 "city": "res://addons/wave_forge/city/city.ron"
 }
-targets = PackedStringArray("level", "surface", "cover", "city", "trees")
+targets = PackedStringArray("level", "surface", "cover", "city", "trees", "far_height", "far_surface")
 start_on_ready = true
 preview_in_editor = true
 cell_size = Vector3(2, 2, 2)
 view_radius = 4
+target_radii = Dictionary[StringName, int]({
+&"far_height": 67,
+&"far_surface": 67
+})
 ground_stage = "level"
+far_ground_stage = "far_height"
+far_ground_material_stage = "far_surface"
 ground_material_stage = "surface"
 ground_palette = PackedColorArray(0.5, 0.48, 0.45, 1, 0.38, 0.6, 0.27, 1)
 grass_stage = "cover"
