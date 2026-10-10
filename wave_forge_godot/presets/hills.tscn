@@ -4,7 +4,7 @@
 
 [node name="Hills" type="WaveForgeStages"]
 pack_file = "res://addons/wave_forge/presets/hills.world.ron"
-targets = PackedStringArray("height", "surface", "cover", "trees", "far_height", "far_surface")
+targets = PackedStringArray("height", "surface", "cover", "trees", "far_height", "far_surface", "hollow")
 start_on_ready = true
 preview_in_editor = true
 view_radius = 3
@@ -15,8 +15,10 @@ target_radii = Dictionary[StringName, int]({
 ground_stage = "height"
 far_ground_stage = "far_height"
 far_ground_material_stage = "far_surface"
+ground_cover_stage = "cover"
+ground_cavity_stage = "hollow"
 ground_material_stage = "surface"
-ground_palette = PackedColorArray(0.55, 0.53, 0.5, 1, 0.24, 0.33, 0.17, 1, 0.38, 0.6, 0.27, 1)
+ground_palette = PackedColorArray(0.514, 0.522, 0.478, 1, 0.345, 0.373, 0.271, 1, 0.376, 0.384, 0.231, 1)
 grass_stage = "cover"
 grass_radius = 2
 collider_radius = 1

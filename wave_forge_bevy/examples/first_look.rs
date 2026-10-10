@@ -128,10 +128,11 @@ fn spawn_sun_sky_and_camera(
         Transform::from_xyz(0.0, 30.0, 0.0).looking_at(Vec3::new(60.0, 10.0, 60.0), Vec3::Y),
         GenerationFocus::new(RADIUS),
     ));
+    // Measured rock, pine needles and grass (docs/research/terrain-look.md, "Measured albedo").
     let palette = palette_image(&[
-        Color::srgb(0.42, 0.40, 0.37),
-        Color::srgb(0.20, 0.27, 0.13),
-        Color::srgb(0.27, 0.40, 0.18),
+        Color::srgb(0.514, 0.522, 0.478),
+        Color::srgb(0.345, 0.373, 0.271),
+        Color::srgb(0.376, 0.384, 0.231),
     ]);
     commands.insert_resource(Palette(images.add(palette)));
 }

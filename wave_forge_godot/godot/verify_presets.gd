@@ -3,17 +3,35 @@
 ## Run by `../verify.sh` after `verify_inspector.gd`, which also fails if this prints an error or
 ## a warning. For each preset: a fresh WaveForgeStages node is given the preset's settings and
 ## added to a scene with a sun and an environment, and it starts on its own, as on a first play.
-## Once nothing is pending around the followed point it warns of nothing, stands ground there (its
-## ground's, or the top of its volume for a preset drawn from a volume alone), has bodies and
-## navigation, draws its sea when it has one, draws its far ground when it has one, draws its props
+## Once nothing is pending around the followed point it warns of nothing, draws ground on every
+## chunk of the view, stands ground there (its ground's, or the top of its volume for a preset drawn
+## from a volume alone), has bodies and navigation, draws its sea when it has one, draws its far ground when it has one, draws its props
 ## (trees, cacti, palms) as MultiMesh instances, and has a palette colour per material of its ground
-## or volume.
+## or volume, each as bright as the measured ground of its class.
 extends SceneTree
 
 const Presets := preload("res://addons/wave_forge/presets.gd")
 const Generated := preload("res://generated.gd")
 const TIMEOUT_S := 120.0
 const AT := Vector3(1, 0, 1)
+## The measured range of linear luminance of each class of ground, lowest and highest
+## (docs/research/terrain-look.md, "Measured albedo").
+const ALBEDO := {
+	"grass": Vector2(0.074, 0.168),
+	"foliage": Vector2(0.062, 0.156),
+	"rock": Vector2(0.095, 0.344),
+	"sand": Vector2(0.24, 0.45),
+	"soil": Vector2(0.03, 0.17),
+}
+## The class of ground of each material the presets name.
+const CLASSES := {
+	"meadow": "grass", "grass": "grass", "forest_floor": "foliage", "jungle": "foliage",
+	"rock": "rock", "stone": "rock", "cliff": "rock", "pale_cliff": "rock", "pale_rock": "rock",
+	"red_rock": "rock", "sand": "sand", "dirt": "soil",
+}
+## Materials whose colour is no ground's albedo: the sea floor seen through the water, and a crystal
+## that stands out by glowing.
+const NOT_GROUND := ["deep", "crystal"]
 
 var paths: PackedStringArray
 var index := -1
@@ -71,6 +89,11 @@ func _settled(path: String, stats: Dictionary) -> String:
 	var warned: PackedStringArray = stages.configuration_warnings()
 	if not warned.is_empty():
 		return "%s warns: %s" % [path, warned]
+	# The ground fills the view: every chunk within its radius, the outer ring too, whose ground
+	# reads its materials and channels from the chunks beyond.
+	var view: int = (2 * stages.view_radius + 1) * (2 * stages.view_radius + 1)
+	if not stages.ground_stage.is_empty() and stages.ground_chunks().size() != view:
+		return "%s draws ground on %d chunks of the view's %d" % [path, stages.ground_chunks().size(), view]
 	if is_nan(stages.ground_height(AT)):
 		return "%s stands no ground at %s" % [path, AT]
 	if stages.collider_chunks().is_empty() or stages.navigation_chunks().is_empty():
@@ -86,6 +109,16 @@ func _settled(path: String, stats: Dictionary) -> String:
 	var palette: PackedColorArray = stages.volume_palette if volume else stages.ground_palette
 	if materials.size() != palette.size():
 		return "%s has %d palette colours for the materials %s" % [path, palette.size(), materials]
+	for index in materials.size():
+		if materials[index] in NOT_GROUND:
+			continue
+		if not CLASSES.has(materials[index]):
+			return "%s names %s, a material of no class of ground" % [path, materials[index]]
+		var linear := palette[index].srgb_to_linear()
+		var luminance := 0.2126 * linear.r + 0.7152 * linear.g + 0.0722 * linear.b
+		var range: Vector2 = ALBEDO[CLASSES[materials[index]]]
+		if luminance < range.x or luminance > range.y:
+			return "%s colours %s %s, a luminance of %.3f outside the measured %s" % [path, materials[index], palette[index], luminance, range]
 	return "ok"
 
 ## The chunks the preset draws its ground in: its ground's, or its volume's surface's for a preset

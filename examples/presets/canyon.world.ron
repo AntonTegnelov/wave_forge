@@ -63,6 +63,10 @@
                 Greater(Is("surface", ["sand"]), Constant(0.5)),
                 Less(Clamp(Remap(FastNoise("patches"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("cacti")),
             ])),
+        // 0 to 1: how far a column lies below the ground around it, for the ground shader's cavity
+        // channel, which darkens the hollows.
+        (name: "around", kind: Blur(input: "height", radius: 4)),
+        (name: "hollow", kind: Field(Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.3)), 0.0, 1.0))),
         // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the plateaus,
         // mesas and strata over a world map of 8 by 8 cells a column, coloured by the same
         // categories as the surface.

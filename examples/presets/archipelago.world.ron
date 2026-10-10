@@ -61,6 +61,9 @@
             when: [
                 Less(Clamp(Remap(FastNoise("groves"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("palms")),
             ])),
+        // 0 to 1: wet at the water's edge and drying over the first cell above it, for the ground
+        // shader's wetness channel.
+        (name: "wet", kind: Field(Clamp(Remap(Input("height"), (0.0, 1.0), (1.0, 0.0)), 0.0, 1.0))),
         // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the shores and
         // heights over a world map of 8 by 8 cells a column, coloured by the same categories as the
         // surface.

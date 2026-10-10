@@ -25,8 +25,10 @@ uniform vec2 wave_forge_span = vec2(1.0);
 uniform vec2 wave_forge_focus = vec2(0.0);
 uniform float blade_height = 0.6;
 uniform float blade_width = 0.1;
-uniform vec3 base_colour : source_color = vec3(0.16, 0.32, 0.09);
-uniform vec3 tip_colour : source_color = vec3(0.55, 0.74, 0.3);
+// Measured grass, dark at the base and light at the tip (docs/research/terrain-look.md, "Measured
+// albedo").
+uniform vec3 base_colour : source_color = vec3(0.31, 0.306, 0.157);
+uniform vec3 tip_colour : source_color = vec3(0.435, 0.435, 0.267);
 // The wind: a direction along x and z, a strength in world units at a blade's tip, and a speed.
 global uniform vec4 wave_forge_wind;
 

@@ -2,9 +2,9 @@
 ## where some near ground is missing, and coloured by its own surface.
 ##
 ## Run by `../verify.sh` after `verify_ground.gd`. The far ground check's pack (`far.world.ron`) has
-## the same ground at full detail and at a coarse scale of 8; the near ground reaches 7 chunks from
-## the focus, one less than the fields it is built from, so it covers the coarse chunk at the
-## origin whole, which gets no far ground, and part of the ring around it, which does. The far
+## the same ground at full detail and at a coarse scale of 8; the near ground fills the view, 7
+## chunks from the focus, so it covers the coarse chunk at the origin whole, which gets no far
+## ground, and part of the ring around it, which does. The far
 ## ground's surface (`far_surface`) colours each vertex with the palette's colour of the near
 ## surface's category of the same name, a far category without one a colour of its own. A far
 ## ground material stage at another scale than the far ground's, or one generated nearer than the
@@ -12,7 +12,7 @@
 extends SceneTree
 
 const CELLS := 8
-const RADIUS := 8
+const RADIUS := 7
 const SCALE := 8
 const FAR_RADIUS := 24
 const TIMEOUT_S := 60.0
@@ -74,7 +74,7 @@ func _process(_delta: float) -> bool:
 		_fail("the ground had not arrived: %d near grounds, %d far" % [world.ground_chunks().size(), world.far_ground_chunks().size()])
 		return true
 	var stats: Dictionary = world.stats()
-	var side := 2 * (RADIUS - 1) + 1
+	var side := 2 * RADIUS + 1
 	# Every far chunk within its radius whose fields have arrived around it: those of the coarse
 	# chunks two from the edge of the radius.
 	if stats["pending_grounds"] > 0 or stats["pending_far_grounds"] > 0 \

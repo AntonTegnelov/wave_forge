@@ -185,7 +185,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | World | `seed` | every choice derives from it |
 | | `chunk_cells` | columns per chunk along the lattice's x and y, and a town chunk's height along z |
 | | `cell_size` | one cell in Godot's world units |
-| Streaming | `view_radius` | chunks kept generated around the followed position |
+| Streaming | `view_radius` | chunks kept generated around the followed position; the ground is drawn on each of them, its height, material, channel and water stages generated a chunk further, since a chunk's ground reads the chunks beyond its +x and +y edges |
 | | `follow_camera` | follow the viewport's current camera each frame while the game runs (the default), so a world generates around the player with no code; a script that calls `follow` takes over, turning it off. In the editor the plugin follows the editor's camera instead |
 | Ground | `ground_stage` | the field stage the ground is built from, a height in cells per column; empty for none |
 | | `ground_material` | the material the ground is drawn with |
@@ -470,7 +470,9 @@ under the key `wave_forge`, on the right by default:
   and a lone-mesh scene per module, written from its models by `tools/make_city_kit.gd`), so its
   city is drawn and collided with no code ([Scenes](#scenes)). Every preset but the cave draws a far
 ground from its pack's `far_height` and `far_surface` out to about 1 km beyond the view, so its
-horizon is terrain, and the islands' and archipelago's sea reaches as far. The node follows the current camera,
+horizon is terrain, and the islands' and archipelago's sea reaches as far. The presets' colours are
+measured ground's ([terrain-look.md](../research/terrain-look.md#measured-albedo)); they darken
+their hollows through a cavity channel, wet their shores and tint covered ground toward the grass. The node follows the current camera,
   so a game's own player, or any camera, sees the world come in around it; a player is the game's
   (the checks and examples use a walker of their own, `wave_forge_godot/godot/walker.tscn`, which
   waits until the ground and its body are under it before it stands, as a game's player has to);

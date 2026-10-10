@@ -86,7 +86,8 @@ impl Default for GroundLook {
             wet_darkening: 0.45,
             wet_roughness: 0.35,
             cover_tint: 0.5,
-            cover_colour: Color::srgb(0.32, 0.5, 0.18).to_linear().to_vec4(),
+            // Measured grass (docs/research/terrain-look.md, "Measured albedo").
+            cover_colour: Color::srgb(0.376, 0.384, 0.231).to_linear().to_vec4(),
             cover_fade: GrassFade::default(),
             gullies: 0.5,
         }
@@ -512,8 +513,10 @@ pub fn grass_material_of(
                 cell_and_blade: Vec4::new(cell.x, cell.z, 0.6, 0.1),
                 wind: Wind::default().0,
                 chunk_and_count: IVec4::new(mesh.chunk.x, mesh.chunk.y, per_column as i32, 0),
-                base_colour: Vec4::new(0.03, 0.08, 0.01, 1.0),
-                tip_colour: Vec4::new(0.26, 0.5, 0.07, 1.0),
+                // Measured grass, dark at the base and light at the tip
+                // (docs/research/terrain-look.md, "Measured albedo").
+                base_colour: Color::srgb(0.31, 0.306, 0.157).to_linear().to_vec4(),
+                tip_colour: Color::srgb(0.435, 0.435, 0.267).to_linear().to_vec4(),
                 fade: GrassFade::default(),
             },
             heights: images.add(heights),

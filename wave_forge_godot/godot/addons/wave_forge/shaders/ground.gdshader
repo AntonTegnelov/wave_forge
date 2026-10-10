@@ -32,9 +32,9 @@ uniform float wet_roughness : hint_range(0.0, 1.0) = 0.35;
 uniform vec2 wave_forge_fade = vec2(1e9, 2e9);
 uniform vec2 wave_forge_span = vec2(1.0);
 uniform vec2 wave_forge_focus = vec2(0.0);
-// The colour fully covered ground tints toward beyond the grass, the grass's own seen from afar,
-// and how far.
-uniform vec3 cover_colour : source_color = vec3(0.32, 0.5, 0.18);
+// The colour fully covered ground tints toward beyond the grass, the grass's own seen from afar
+// (measured grass, docs/research/terrain-look.md, "Measured albedo"), and how far.
+uniform vec3 cover_colour : source_color = vec3(0.376, 0.384, 0.231);
 uniform float cover_tint : hint_range(0.0, 1.0) = 0.5;
 // Rock on steep ground is the ground's own colour muted and darkened, or with this colour's alpha
 // above zero, this colour instead, by that much; and the slopes (one minus the normal's height) at
