@@ -53,5 +53,28 @@
                 Greater(Is("surface", ["grass"]), Constant(0.5)),
                 Less(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("trees")),
             ])),
+        // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the islands'
+        // height over a world map of 8 by 8 cells a column, coloured by the same categories as the
+        // surface.
+        (name: "far_height", scale: 8, kind: Field(Add(
+            Mul(
+                Add(
+                    Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))),
+                    Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))),
+                ),
+                Constant(14.0),
+            ),
+            Mul(
+                Mul(
+                    Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0),
+                    Clamp(Mul(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(3.0)), 0.0, 1.0),
+                ),
+                Add(Constant(2.0), Mul(Param("roughness"), Constant(6.0))),
+            ),
+        ))),
+        (name: "far_surface", scale: 8, kind: Rules(rules: [
+            (category: "sand", when: [Less(Input("far_height"), Constant(1.2))]),
+            (category: "rock", when: [Greater(Input("far_height"), Constant(9.0))]),
+        ], otherwise: "grass")),
     ],
 )

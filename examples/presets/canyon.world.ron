@@ -63,5 +63,32 @@
                 Greater(Is("surface", ["sand"]), Constant(0.5)),
                 Less(Clamp(Remap(FastNoise("patches"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("cacti")),
             ])),
+        // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the plateaus,
+        // mesas and strata over a world map of 8 by 8 cells a column, coloured by the same
+        // categories as the surface.
+        (name: "far_plateau", scale: 8, kind: Field(Smoothstep(0.0, 0.25, Sub(
+            Abs(FastNoise("canyons")),
+            Add(Constant(0.03), Mul(Param("canyons"), Constant(0.27))),
+        )))),
+        (name: "far_rise", scale: 8, kind: Field(Add(
+            Add(Constant(1.0), Mul(Add(FastNoise("detail"), Constant(1.0)), Constant(0.25))),
+            Mul(Input("far_plateau"), Add(Constant(9.0), Mul(FastNoise("mesas"), Constant(4.0)))),
+        ))),
+        (name: "far_height", scale: 8, kind: Field(Add(Input("far_rise"), Mul(Param("strata"), Sub(
+            Mul(Add(
+                Floor(Mul(Input("far_rise"), Constant(0.4))),
+                Smoothstep(0.75, 1.0, Sub(
+                    Mul(Input("far_rise"), Constant(0.4)),
+                    Floor(Mul(Input("far_rise"), Constant(0.4))),
+                )),
+            ), Constant(2.5)),
+            Input("far_rise"),
+        ))))),
+        // A coarse column spans too much ground to tell a cliff, so the far walls take the rock's
+        // bands.
+        (name: "far_surface", scale: 8, kind: Rules(rules: [
+            (category: "sand", when: [Less(Input("far_plateau"), Constant(0.1))]),
+            (category: "pale_rock", when: [Greater(Sin(Mul(Input("far_height"), Constant(2.0))), Constant(0.35))]),
+        ], otherwise: "red_rock")),
     ],
 )

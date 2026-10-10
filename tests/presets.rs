@@ -778,3 +778,63 @@ fn more_density_more_hills_and_more_trees_each_make_more_of_theirs() {
     );
     assert!(trees.windows(2).all(|pair| pair[0] < pair[1]), "{trees:?}");
 }
+
+/// Every preset with a ground has a far ground beyond it, drawn from a coarse copy of the ground's
+/// height that has to stand where the ground does, or the far ground floats over the view's edge or
+/// sinks under it: over the columns each coarse column spans, the far height and the ground's
+/// average differ by little.
+#[test]
+fn every_far_ground_stands_where_its_ground_does() {
+    for (name, ground) in [
+        ("hills", "height"),
+        ("islands", "height"),
+        ("archipelago", "height"),
+        ("canyon", "height"),
+        ("city", "level"),
+    ] {
+        let pack = preset(name);
+        let scale = pack.scale("far_height").expect("a far height") as i32;
+        let mut runtime = if name == "city" {
+            city_runtime(1)
+        } else {
+            Runtime::new(Arc::clone(&pack), 1, SIZE)
+        };
+
+        generate(&mut runtime, &[ground, "far_height", "far_surface"]);
+
+        // The ground's sum and count over each coarse column, by the coarse column's coordinates.
+        let side = SIZE[0] as i32;
+        let mut near: BTreeMap<(i32, i32), (f32, i32)> = BTreeMap::new();
+        for chunk in area() {
+            let field = runtime.field(ground, chunk).expect("generated");
+            for (index, &value) in field.values.iter().enumerate() {
+                let x = chunk.x * side + index as i32 % side;
+                let y = chunk.y * side + index as i32 / side;
+                let entry = near
+                    .entry((x.div_euclid(scale), y.div_euclid(scale)))
+                    .or_default();
+                entry.0 += value;
+                entry.1 += 1;
+            }
+        }
+        let mut differences: Vec<f32> = Vec::new();
+        for (&(x, y), &(sum, count)) in &near {
+            let coarse = ChunkCoord::new(x.div_euclid(side), y.div_euclid(side), 0);
+            let far = runtime.field("far_height", coarse).expect("generated");
+            assert!(
+                runtime.categories("far_surface", coarse).is_some(),
+                "{name}: no far surface"
+            );
+            let index = (y.rem_euclid(side) * side + x.rem_euclid(side)) as usize;
+            differences.push((far.values[index] - sum / count as f32).abs());
+        }
+        let mean = differences.iter().sum::<f32>() / differences.len() as f32;
+        // Within a coarse column the ground's detail, gullies and shores differ from one value at its
+        // centre, by 0.1 to 0.8 cells on average at the presets' defaults; a far formula that has
+        // drifted from its ground's shifts whole hills.
+        assert!(
+            mean < 1.0,
+            "{name}: the far ground stands {mean} cells from the ground"
+        );
+    }
+}

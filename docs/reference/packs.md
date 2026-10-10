@@ -160,6 +160,12 @@ The presets in `examples/presets`, each with three parameters:
   whose `density` runs from parks with no building to every block built, whose `hills` run from
   gentle swells to steep hills, and whose `trees` run from open country to thick woods.
 
+Each preset with a ground, every one but the cave, also has a coarse `far_height`, its ground's
+height formula over a world map, and a `far_surface` of its ground's categories, for a far ground
+beyond the view ([Far ground](#far-ground)). `tests/presets.rs` checks that the far height stands
+where the ground does: over each coarse column it differs from the ground's average by under a cell
+on average.
+
 ## Edits
 
 What a player changes in a world is a log, `Edits`, which a game keeps and saves beside its facts:

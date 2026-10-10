@@ -51,5 +51,22 @@
         // Trees through the woods.
         (name: "trees", kind: Scatter(kind: "tree", height: "height", spacing: 2, apart: 2,
             when: [Greater(Is("surface", ["forest_floor"]), Constant(0.5))])),
+        // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the hills' shape
+        // without the gullies over a world map of 8 by 8 cells a column, coloured by the same
+        // categories as the surface.
+        (name: "far_height", scale: 8, kind: Field(Add(
+            Constant(2.0),
+            Mul(
+                Add(
+                    Add(Add(FastNoise("hills"), Constant(1.0)), Mul(FastNoise("detail"), Constant(0.15))),
+                    Mul(Pow(Remap(FastNoise("crests"), (-1.0, 1.0), (0.0, 1.0)), 2.5), Constant(1.0)),
+                ),
+                Add(Constant(3.0), Mul(Param("hills"), Constant(7.0))),
+            ),
+        ))),
+        (name: "far_surface", scale: 8, kind: Rules(rules: [
+            (category: "rock", when: [Greater(Input("far_height"), Add(Constant(8.3), Mul(Param("hills"), Constant(14.7))))]),
+            (category: "forest_floor", when: [Less(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("forest"))]),
+        ], otherwise: "meadow")),
     ],
 )
