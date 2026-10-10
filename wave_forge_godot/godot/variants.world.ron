@@ -1,0 +1,12 @@
+// The variants check's pack (verify_variants.gd): trees of two kinds, one with two variants, on a
+// gentle ground, each carrying a dryness that rises along x.
+(
+    version: 1,
+    stages: [
+        (name: "height", kind: Field(Mul(Noise(frequency: 0.04, octaves: 2), Constant(4.0)))),
+        (name: "dryness", kind: Field(Clamp(Mul(X, Constant(0.05)), 0.0, 1.0))),
+        (name: "trees", kind: Scatter(height: "height", spacing: 2,
+            kinds: [(kind: "oak", weight: 2.0, variants: 2), (kind: "birch")],
+            stretch: (0.9, 1.1), appearance: ["dryness"])),
+    ],
+)

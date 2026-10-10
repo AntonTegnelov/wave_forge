@@ -1,8 +1,9 @@
 //! Scenes bound to what Scatter, Assemble and Solve stages place (docs/reference/godot.md).
 //!
-//! A kind (a point's kind, a piece's or cave room's name, or a town's module) is bound to a scene. A scene whose
-//! root is a lone `MeshInstance3D` without a script is drawn as one `RenderingServer` MultiMesh per
-//! chunk and kind, never as nodes; any other scene is instantiated as nodes, off the tree, and
+//! A kind (a point's kind, a piece's or cave room's name, or a town's module) is bound to a scene,
+//! or to a list of scenes, its variants, of which each point takes the one its variant names. A
+//! scene whose root is a lone `MeshInstance3D` without a script is drawn as one `RenderingServer`
+//! MultiMesh per chunk, kind and variant, never as nodes; any other scene is instantiated as nodes, off the tree, and
 //! attached under a per-frame time budget nearest the followed position first. With promotion, a
 //! scene placed as nodes is so only near the followed position; farther out it is drawn as a
 //! MultiMesh of its first mesh, and a chunk crossing the radius is placed again. A chunk that is
@@ -46,12 +47,15 @@ enum Binding {
     },
 }
 
-/// One thing to place: its kind, where it stands in Godot's world, its id within its chunk, how
-/// it sways (a phase as a fraction of a turn and a stiffness, which a MultiMesh carries as each
-/// instance's custom data for a wind shader), and the global illumination it takes part in, which
-/// is its content class's: a stage's items all share one.
+/// One thing to place: its kind and its variant of it, where it stands in Godot's world, its id
+/// within its chunk, how it sways (a phase as a fraction of a turn and a stiffness) and looks (its
+/// random and its first appearance value), which a MultiMesh carries as each instance's custom
+/// data for the vegetation shader, and the global illumination it takes part in, which is its
+/// content class's: a stage's items all share one.
 pub(crate) struct Item {
     pub(crate) kind: String,
+    pub(crate) variant: u8,
+    pub(crate) look: [f32; 2],
     pub(crate) transform: Transform3D,
     pub(crate) id: i64,
     pub(crate) sway: [f32; 2],
@@ -64,20 +68,24 @@ pub(crate) struct Item {
 struct Placed {
     multimeshes: Vec<(Rid, Rid, usize)>,
     nodes: Vec<Gd<Node3D>>,
-    pooled: BTreeMap<String, Vec<Gd<Node3D>>>,
+    pooled: BTreeMap<Bound, Vec<Gd<Node3D>>>,
     /// Whether it was placed within the promotion radius.
     near: bool,
 }
 
-/// Every kind's binding, the chunks waiting to be placed, what each placed, and the nodes of
-/// pooled scenes waiting outside the tree to be placed again. A pool only holds nodes that were
-/// placed at once before, so it never outgrows the most its kind has had placed.
+/// A kind and the index of one of its bound scenes.
+type Bound = (String, usize);
+
+/// Every kind's bindings, one per variant, the chunks waiting to be placed, what each placed, and
+/// the nodes of pooled scenes waiting outside the tree to be placed again, by kind and variant. A
+/// pool only holds nodes that were placed at once before, so it never outgrows the most its
+/// variant has had placed.
 #[derive(Default)]
 pub(crate) struct Placements {
-    bindings: BTreeMap<String, Binding>,
+    bindings: BTreeMap<String, Vec<Binding>>,
     due: BTreeSet<(String, ChunkCoord)>,
     placed: HashMap<(String, ChunkCoord), Placed>,
-    pools: HashMap<String, Vec<Gd<Node3D>>>,
+    pools: HashMap<Bound, Vec<Gd<Node3D>>>,
 }
 
 /// A node a bake made, with the item it stands for; none for a MultiMesh of many.
@@ -87,35 +95,28 @@ pub(crate) type Baked<'a> = (Gd<Node3D>, Option<&'a Item>);
 pub(crate) type Spawned = (Gd<Node3D>, ChunkCoord, i64);
 
 impl Placements {
-    /// The bindings of `scenes`, kind to a `PackedScene` or a path to one, whose loading starts
-    /// on Godot's loader threads.
+    /// The bindings of `scenes`, kind to a `PackedScene` or a path to one, or to an array of
+    /// them, its variants, whose loading starts on Godot's loader threads.
     ///
     /// # Errors
-    /// Naming the kind whose value is neither, or whose path cannot be loaded.
+    /// Naming the kind whose value is none of these or an empty array, or whose path cannot be
+    /// loaded.
     pub(crate) fn new(scenes: &VarDictionary) -> Result<Self, String> {
         let mut bindings = BTreeMap::new();
         for (kind, value) in scenes.iter_shared() {
             let kind = kind.to::<GString>().to_string();
-            let binding = if let Ok(scene) = value.try_to::<Gd<PackedScene>>() {
-                classify(&scene)
-            } else if let Ok(path) = value.try_to::<GString>() {
-                // godot-rust leaves the threaded loader out of builds with its thread safeguards,
-                // because a Rust resource loaded on a loader thread aborts the process
-                // (docs/architecture/engine-integration.md); a plain scene holds none.
-                let started = ResourceLoader::singleton().call(
-                    "load_threaded_request",
-                    &[path.to_variant(), "PackedScene".to_variant()],
-                );
-                if started.try_to::<i64>().ok() != Some(0) {
-                    return Err(format!("scene of {kind:?}: {path} could not be loaded"));
-                }
-                Binding::Loading(path)
-            } else {
-                return Err(format!(
-                    "scene of {kind:?}: a PackedScene or a path to one, not {value}"
-                ));
+            let variants: Vec<Variant> = match value.try_to::<VarArray>() {
+                Ok(array) => array.iter_shared().collect(),
+                Err(_) => vec![value],
             };
-            bindings.insert(kind, binding);
+            if variants.is_empty() {
+                return Err(format!("scene of {kind:?}: an empty array of variants"));
+            }
+            let variants = variants
+                .into_iter()
+                .map(|value| binding(&kind, &value))
+                .collect::<Result<Vec<Binding>, String>>()?;
+            bindings.insert(kind, variants);
         }
         Ok(Self {
             bindings,
@@ -128,14 +129,19 @@ impl Placements {
         !self.bindings.is_empty()
     }
 
-    /// Each kind drawn as a lone mesh with its mesh, once no scene is still loading; none before.
+    /// Each kind whose first variant is drawn as a lone mesh with that mesh, once no scene is
+    /// still loading; none before.
     pub(crate) fn lone_meshes(&self) -> Option<Vec<(String, Gd<Mesh>)>> {
         let mut meshes = Vec::new();
-        for (kind, binding) in &self.bindings {
-            match binding {
-                Binding::Loading(_) => return None,
-                Binding::Mesh(mesh) => meshes.push((kind.clone(), mesh.clone())),
-                Binding::Nodes { .. } => {}
+        for (kind, variants) in &self.bindings {
+            for (index, binding) in variants.iter().enumerate() {
+                match binding {
+                    Binding::Loading(_) => return None,
+                    Binding::Mesh(mesh) if index == 0 => {
+                        meshes.push((kind.clone(), mesh.clone()));
+                    }
+                    Binding::Mesh(_) | Binding::Nodes { .. } => {}
+                }
             }
         }
         Some(meshes)
@@ -235,16 +241,13 @@ impl Placements {
             let Some(items) = items(&key.0, chunk) else {
                 continue;
             };
-            let mut by_kind: BTreeMap<&str, Vec<&Item>> = BTreeMap::new();
-            for item in &items {
-                by_kind.entry(&item.kind).or_default().push(item);
-            }
+            let by_variant = self.by_variant(&items);
             let mut placed = Placed {
                 near: near(chunk),
                 ..Placed::default()
             };
-            for (kind, items) in by_kind {
-                match &self.bindings[kind] {
+            for ((kind, variant), items) in by_variant {
+                match &self.bindings[&kind][variant] {
                     Binding::Mesh(mesh) => placed.multimeshes.push(multimesh(
                         mesh,
                         Transform3D::IDENTITY,
@@ -260,7 +263,7 @@ impl Placements {
                     }
                     Binding::Nodes { scene, pooled, .. } => {
                         let mut pool =
-                            pooled.then(|| self.pools.entry(kind.to_owned()).or_default());
+                            pooled.then(|| self.pools.entry((kind.clone(), variant)).or_default());
                         let mut nodes = Vec::with_capacity(items.len());
                         for item in items {
                             let reused = pool.as_mut().and_then(|pool| pool.pop());
@@ -276,7 +279,7 @@ impl Placements {
                             nodes.push(node);
                         }
                         if *pooled {
-                            placed.pooled.insert(kind.to_owned(), nodes);
+                            placed.pooled.insert((kind, variant), nodes);
                         } else {
                             placed.nodes.extend(nodes);
                         }
@@ -298,13 +301,9 @@ impl Placements {
     /// # Errors
     /// While a kind's scene is still loading, naming it.
     pub(crate) fn baked<'a>(&self, items: &'a [Item]) -> Result<Vec<Baked<'a>>, String> {
-        let mut by_kind: BTreeMap<&str, Vec<&Item>> = BTreeMap::new();
-        for item in items {
-            by_kind.entry(&item.kind).or_default().push(item);
-        }
         let mut nodes = Vec::new();
-        for (kind, items) in by_kind {
-            match &self.bindings[kind] {
+        for ((kind, variant), items) in self.by_variant(items) {
+            match &self.bindings[&kind][variant] {
                 Binding::Mesh(mesh) => {
                     let mut multimesh = MultiMesh::new_gd();
                     multimesh.set_transform_format(TransformFormat::TRANSFORM_3D);
@@ -315,7 +314,11 @@ impl Placements {
                     multimesh.set_instance_count(items.len() as i32);
                     multimesh.set_buffer(&buffer(&items, Transform3D::IDENTITY));
                     let mut instance = MultiMeshInstance3D::new_alloc();
-                    instance.set_name(kind);
+                    instance.set_name(&if variant == 0 {
+                        kind.clone()
+                    } else {
+                        format!("{kind}{variant}")
+                    });
                     instance.set_multimesh(&multimesh);
                     instance.set_gi_mode(items[0].gi.mode());
                     nodes.push((instance.upcast(), None));
@@ -370,8 +373,8 @@ impl Placements {
             nodes,
             ..Placed::default()
         });
-        for (kind, nodes) in pooled {
-            let pool = self.pools.entry(kind).or_default();
+        for (bound, nodes) in pooled {
+            let pool = self.pools.entry(bound).or_default();
             for mut node in nodes {
                 if !node.is_instance_valid() || node.is_queued_for_deletion() {
                     continue;
@@ -385,11 +388,29 @@ impl Placements {
         }
     }
 
+    /// `items` by kind and the index of the variant each is drawn with: its variant, past the
+    /// scenes bound to its kind counted round them again.
+    fn by_variant<'a>(&self, items: &'a [Item]) -> BTreeMap<Bound, Vec<&'a Item>> {
+        let mut by_variant: BTreeMap<Bound, Vec<&Item>> = BTreeMap::new();
+        for item in items {
+            let variant = usize::from(item.variant) % self.bindings[&item.kind].len();
+            by_variant
+                .entry((item.kind.clone(), variant))
+                .or_default()
+                .push(item);
+        }
+        by_variant
+    }
+
     /// Whether every scene has loaded, classifying those that just did.
     fn loaded(&mut self) -> Result<bool, String> {
         let mut loader = ResourceLoader::singleton();
         let mut all = true;
-        for (kind, binding) in &mut self.bindings {
+        for (kind, binding) in self
+            .bindings
+            .iter_mut()
+            .flat_map(|(kind, variants)| variants.iter_mut().map(move |binding| (kind, binding)))
+        {
             let Binding::Loading(path) = binding else {
                 continue;
             };
@@ -408,6 +429,30 @@ impl Placements {
         }
         Ok(all)
     }
+}
+
+/// The binding of `value` for `kind`: a `PackedScene`, or a path to one whose loading starts on
+/// Godot's loader threads.
+fn binding(kind: &str, value: &Variant) -> Result<Binding, String> {
+    if let Ok(scene) = value.try_to::<Gd<PackedScene>>() {
+        return Ok(classify(&scene));
+    }
+    let Ok(path) = value.try_to::<GString>() else {
+        return Err(format!(
+            "scene of {kind:?}: a PackedScene or a path to one, or an array of them, not {value}"
+        ));
+    };
+    // godot-rust leaves the threaded loader out of builds with its thread safeguards, because a
+    // Rust resource loaded on a loader thread aborts the process
+    // (docs/architecture/engine-integration.md); a plain scene holds none.
+    let started = ResourceLoader::singleton().call(
+        "load_threaded_request",
+        &[path.to_variant(), "PackedScene".to_variant()],
+    );
+    if started.try_to::<i64>().ok() != Some(0) {
+        return Err(format!("scene of {kind:?}: {path} could not be loaded"));
+    }
+    Ok(Binding::Loading(path))
 }
 
 /// How a scene is drawn: as a MultiMesh when its root is a lone `MeshInstance3D` without a script
@@ -484,7 +529,7 @@ fn multimesh(
 }
 
 /// A MultiMesh's buffer of `items`, each standing at its transform times `offset`: its transform's
-/// rows and each item's sway as custom data.
+/// rows, a white colour, and each item's sway and look as custom data.
 fn buffer(items: &[&Item], offset: Transform3D) -> PackedFloat32Array {
     items
         .iter()
@@ -492,9 +537,11 @@ fn buffer(items: &[&Item], offset: Transform3D) -> PackedFloat32Array {
             let Transform3D { basis, origin } = item.transform * offset;
             let [a, b, c] = basis.rows;
             let [phase, stiffness] = item.sway;
+            // Apart rather than packed, since Compatibility keeps custom data at half precision.
+            let [random, appearance] = item.look;
             [
                 a.x, a.y, a.z, origin.x, b.x, b.y, b.z, origin.y, c.x, c.y, c.z, origin.z, 1.0,
-                1.0, 1.0, 1.0, phase, stiffness, 0.0, 0.0,
+                1.0, 1.0, 1.0, phase, stiffness, random, appearance,
             ]
         })
         .collect()

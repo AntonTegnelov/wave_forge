@@ -1,5 +1,6 @@
 //! Plants drawn by Bevy's own renderer with the reference vegetation material: they sway while the
-//! wind blows and stand still once it drops, and so do their shadows, which the prepass draws.
+//! wind blows and stand still once it drops, and so do their shadows, which the prepass draws; and
+//! each takes the colour its `MeshTag` gives, varied by its random and dried by its appearance.
 //!
 //! ```text
 //! cargo test -p wave_forge_bevy --release --test vegetation_render -- --ignored --nocapture
@@ -13,9 +14,11 @@
 
 use bevy::app::PluginsState;
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::ScalingMode;
 use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
+use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
@@ -193,4 +196,129 @@ fn plants_and_their_shadows_sway_in_the_wind() {
     assert!(swaying > 0);
     assert!(shadows > 0);
     assert_eq!(standing, 0);
+}
+
+/// The colour the shader gives an unlit plant of linear `base` whose tag holds `random` and `dry`
+/// in 255ths, with the material's defaults (a variation of 0.15, drying 0.6 of the way to a
+/// measured dry grass), as sRGB bytes.
+fn tinted(base: LinearRgba, random: u32, dry: u32) -> [u8; 3] {
+    let dry_albedo = Color::srgb(0.365, 0.322, 0.212).to_linear();
+    let (random, dry) = (random as f32 / 255.0, dry as f32 / 255.0);
+    let shift = 0.15 * (random - 0.5) * 2.0;
+    let mix = |a: f32, b: f32| a + (b - a) * dry * 0.6;
+    let colour = LinearRgba::rgb(
+        mix(base.red, dry_albedo.red) * (1.0 + shift) * (1.0 + 0.3 * shift),
+        mix(base.green, dry_albedo.green) * (1.0 + shift),
+        mix(base.blue, dry_albedo.blue) * (1.0 + shift) * (1.0 - 0.3 * shift),
+    );
+    let srgb = Srgba::from(colour).to_u8_array();
+    [srgb[0], srgb[1], srgb[2]]
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn a_plant_takes_the_colour_its_tag_gives() {
+    let mut app = App::new();
+    app.add_plugins((DefaultPlugins, WaveForgeMaterialsPlugin))
+        .init_resource::<Pixels>()
+        .insert_resource(ClearColor(Color::srgb(1.0, 0.0, 1.0)))
+        // No wind, so the plants stand still.
+        .insert_resource(Wind(Vec4::new(1.0, 0.0, 0.0, 3.0)));
+    let started = Instant::now();
+    while app.plugins_state() == PluginsState::Adding {
+        bevy::tasks::tick_global_task_pools_on_main_thread();
+        assert!(started.elapsed() < Duration::from_secs(60), "no renderer");
+    }
+    app.finish();
+    app.cleanup();
+    let world = app.world_mut();
+    let mut target = Image::new_fill(
+        Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[0, 0, 0, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    target.texture_descriptor.usage |=
+        TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC | TextureUsages::TEXTURE_BINDING;
+    let target = world.resource_mut::<Assets<Image>>().add(target);
+    let block = world
+        .resource_mut::<Assets<Mesh>>()
+        .add(Mesh::from(Cuboid::new(2.0, 2.0, 2.0)));
+    let base = Color::srgb(0.3, 0.5, 0.2);
+    let material = world
+        .resource_mut::<Assets<VegetationMaterial>>()
+        .add(vegetation_material(
+            StandardMaterial {
+                base_color: base,
+                unlit: true,
+                ..default()
+            },
+            4.0,
+            0.0,
+        ));
+    // Darkest random, brightest random, and a middling random fully dry.
+    let tags = [0, 255, 128 | 255 << 8];
+    for (index, tag) in tags.iter().enumerate() {
+        world.spawn((
+            Mesh3d(block.clone()),
+            MeshMaterial3d(material.clone()),
+            MeshTag::new(*tag),
+            Transform::from_xyz(index as f32 * 3.0 - 3.0, 0.0, 0.0),
+        ));
+    }
+    // Straight down on the blocks' tops, 9 units across.
+    world.spawn((
+        Camera3d::default(),
+        RenderTarget::Image(ImageRenderTarget::from(target.clone())),
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: ScalingMode::Fixed {
+                width: 9.0,
+                height: 9.0,
+            },
+            ..OrthographicProjection::default_3d()
+        }),
+        Tonemapping::None,
+        DebandDither::Disabled,
+        Msaa::Off,
+        Transform::from_xyz(0.0, 10.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
+    ));
+    world.spawn(Readback::texture(target)).observe(
+        |readback: On<ReadbackComplete>, mut pixels: ResMut<Pixels>| {
+            pixels.0 = Some(readback.data.clone());
+        },
+    );
+
+    // Pipelines compile over the first seconds, drawing nothing until they are ready.
+    let started = Instant::now();
+    while run_for(&mut app, 0.1)
+        .chunks(4)
+        .filter(|p| !is_clear(p))
+        .count()
+        < 100
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "no block was drawn"
+        );
+    }
+    let pixels = run_for(&mut app, 0.5);
+
+    let linear = base.to_linear();
+    for (index, tag) in tags.iter().enumerate() {
+        // Each block's top centre, 3 units apart along x across 9 units of picture.
+        let x = ((index as f32 * 3.0 - 3.0 + 4.5) / 9.0 * SIZE as f32) as u32;
+        let at = ((SIZE / 2 * SIZE + x) * 4) as usize;
+        let pixel = [pixels[at], pixels[at + 1], pixels[at + 2]];
+        let expected = tinted(linear, tag & 0xFF, (tag >> 8) & 0xFF);
+        println!("tag {tag}: {pixel:?}, expected {expected:?}");
+        assert!(
+            pixel.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 2),
+            "tag {tag}: {pixel:?}, expected {expected:?}"
+        );
+    }
 }

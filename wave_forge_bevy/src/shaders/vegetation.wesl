@@ -2,10 +2,12 @@
 // mesh bends in the wind, after GPU Gems 3, chapter 16. The main bending leans the whole plant
 // downwind, more the higher up a vertex is and the less stiff the plant; the detail bending flutters
 // the outer parts out from the plant's axis. The chapter flutters along the normals, but Bevy's
-// prepass has no normals unless a normal prepass runs, and both passes must move a vertex alike. A plant's phase is hashed from where it stands and its
-// stiffness is its scale, so no two plants move alike and a larger one bends less. The same vertex
-// shader serves the main pass and the prepass, so depth, shadows and motion vectors follow the
-// swaying plant.
+// prepass has no normals unless a normal prepass runs, and both passes must move a vertex alike. A
+// plant's phase is hashed from where it stands and its stiffness is its scale, so no two plants
+// move alike and a larger one bends less. The same vertex shader serves the main pass and the
+// prepass, so depth, shadows and motion vectors follow the swaying plant. The fragment shader
+// varies the plant's colour by its look, its `MeshTag`: the random in bits 0 to 7 and the first
+// appearance value in bits 8 to 15, each in 255ths.
 import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
 
 @if(PREPASS_PIPELINE)
@@ -18,6 +20,14 @@ import bevy_render::globals::Globals;
 @else
 import bevy_pbr::render::mesh_view_bindings::globals;
 
+@if(!PREPASS_PIPELINE)
+import bevy_pbr::render::{
+    forward_io::FragmentOutput,
+    pbr_fragment::pbr_input_from_standard_material,
+    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
+};
+
 // The prepass binds the frame's globals at a binding of its own.
 @if(PREPASS_PIPELINE)
 @group(0) @binding(1) var<uniform> globals: Globals;
@@ -28,6 +38,10 @@ struct VegetationSettings {
     // The height, in the mesh's own units, at which a plant bends fully, then how far its outer
     // parts flutter, in the mesh's own units at full wind.
     bend: vec4<f32>,
+    // How far a plant's random varies its colour, then how far it dries.
+    look: vec4<f32>,
+    // The colour a plant goes toward as it dries, linear.
+    dry_albedo: vec4<f32>,
 };
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> vegetation: VegetationSettings;
@@ -102,5 +116,29 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     out.instance_index = vertex_in.instance_index;
 @if(VISIBILITY_RANGE_DITHER)
     out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex_in.instance_index, world_from_local[3]);
+    return out;
+}
+
+@if(!PREPASS_PIPELINE)
+@fragment
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    let tag = mesh_functions::get_tag(in.instance_index);
+    let random = f32(tag & 0xFFu) / 255.0;
+    let dry = f32((tag >> 8u) & 0xFFu) / 255.0;
+    let shift = vegetation.look.x * (random - 0.5) * 2.0;
+    let base = pbr_input.material.base_color.rgb;
+    let colour = mix(base, vegetation.dry_albedo.rgb, dry * vegetation.look.y);
+    pbr_input.material.base_color = vec4<f32>(
+        colour * (1.0 + shift) * vec3<f32>(1.0 + 0.3 * shift, 1.0, 1.0 - 0.3 * shift),
+        pbr_input.material.base_color.a,
+    );
+    var out: FragmentOutput;
+    if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
+        out.color = apply_pbr_lighting(pbr_input);
+    } else {
+        out.color = pbr_input.material.base_color;
+    }
+    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

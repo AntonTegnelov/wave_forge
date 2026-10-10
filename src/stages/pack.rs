@@ -608,10 +608,19 @@ pub enum StageKind {
     /// 3. spacing: no candidate that passes its tests and has a higher priority closer than
     ///    `apart` cells, a test that reads neighbours' candidates, never their results, so points
     ///    keep their distance across chunk seams;
-    /// 4. attributes: a `scale`, a `tilt` in degrees and, with probability `align`, standing
-    ///    along the ground's normal.
+    /// 4. attributes: a `scale`, a `stretch` of its height over its width, a `tilt` in degrees
+    ///    and, with probability `align`, standing along the ground's normal; a kind from `kinds`
+    ///    by weight for each candidate and its group, a variant of it and a random in 0 to 1 for
+    ///    each point, and the values of the `appearance` fields at its column.
+    ///
+    /// It places one `kind` with its `variants`, or several `kinds` each with its own.
     Scatter {
+        #[serde(default)]
         kind: String,
+        #[serde(default)]
+        kinds: Vec<ScatterKind>,
+        #[serde(default = "one_variant")]
+        variants: u32,
         height: String,
         spacing: u32,
         #[serde(default = "one_each")]
@@ -636,10 +645,14 @@ pub enum StageKind {
         apart: u32,
         #[serde(default = "unscaled")]
         scale: (f32, f32),
+        #[serde(default = "unscaled")]
+        stretch: (f32, f32),
         #[serde(default)]
         tilt: (f32, f32),
         #[serde(default)]
         align: f32,
+        #[serde(default)]
+        appearance: Vec<String>,
     },
     /// A cave level per square region of `region` chunks, planned once for the whole region: a
     /// pattern drawn from `patterns` and a room count from `count.0` to `count.1`, then each room,
@@ -904,6 +917,31 @@ pub struct Group {
     pub size: (u32, u32),
     pub radius: f32,
 }
+
+/// One of a Scatter stage's kinds: drawn for a candidate by its `weight` against the others', with
+/// `variants` models an engine binds to it, a point's variant drawn evenly among them.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScatterKind {
+    pub kind: String,
+    #[serde(default = "unit_weight")]
+    pub weight: f32,
+    #[serde(default = "one_variant")]
+    pub variants: u32,
+}
+
+const fn unit_weight() -> f32 {
+    1.0
+}
+
+const fn one_variant() -> u32 {
+    1
+}
+
+/// The most variants a kind may have, and appearance fields a Scatter stage may read: what a
+/// point carries.
+pub const MAX_VARIANTS: u32 = 256;
+pub const MAX_APPEARANCE: usize = 2;
 
 /// The water a Scatter stage's points stand in: a point is kept where the ground lies between
 /// `depth.0` and `depth.1` cells below the pack's water, and with `float` stands on the water's
@@ -3053,6 +3091,9 @@ impl Pack {
                     reads
                 }
                 StageKind::Scatter {
+                    kind,
+                    kinds,
+                    variants,
                     height,
                     spacing,
                     count,
@@ -3066,10 +3107,58 @@ impl Pack {
                     block,
                     apart,
                     scale,
+                    stretch,
                     tilt,
                     align,
-                    ..
+                    appearance,
                 } => {
+                    if kind.is_empty() == kinds.is_empty() {
+                        return Err(invalid(
+                            "it names a kind or several kinds, and not both".to_owned(),
+                        ));
+                    }
+                    if !kinds.is_empty() && *variants != 1 {
+                        return Err(invalid(
+                            "variants for the stage beside several kinds; each kind gives its own"
+                                .to_owned(),
+                        ));
+                    }
+                    for choice in kinds {
+                        if choice.kind.is_empty()
+                            || !(choice.weight.is_finite() && choice.weight > 0.0)
+                        {
+                            return Err(invalid(format!(
+                                "the kind {:?} of weight {}; a kind is named and weighs more \
+                                 than 0",
+                                choice.kind, choice.weight
+                            )));
+                        }
+                    }
+                    for many in kinds
+                        .iter()
+                        .map(|choice| choice.variants)
+                        .chain([*variants])
+                    {
+                        if !(1..=MAX_VARIANTS).contains(&many) {
+                            return Err(invalid(format!(
+                                "{many} variants; 1 to {MAX_VARIANTS} are allowed"
+                            )));
+                        }
+                    }
+                    if !(stretch.0.is_finite() && stretch.0 > 0.0 && stretch.0 <= stretch.1)
+                        || !stretch.1.is_finite()
+                    {
+                        return Err(invalid(format!(
+                            "a stretch from {} to {}",
+                            stretch.0, stretch.1
+                        )));
+                    }
+                    if appearance.len() > MAX_APPEARANCE {
+                        return Err(invalid(format!(
+                            "{} appearance fields; at most {MAX_APPEARANCE} are allowed",
+                            appearance.len()
+                        )));
+                    }
                     if *spacing == 0 {
                         return Err(invalid("a spacing of 0 cells".to_owned()));
                     }
@@ -3152,6 +3241,12 @@ impl Pack {
                     if let (Some(_), Some(lakes)) = (water, lakes) {
                         fields.push((lakes, Output::Field, base));
                     }
+                    // A point's appearance is read at its own column, in the chunk.
+                    fields.extend(
+                        appearance
+                            .iter()
+                            .map(|name| (name.as_str(), Output::Field, 0)),
+                    );
                     for condition in when {
                         let mut names = Vec::new();
                         condition.inputs(&mut names);

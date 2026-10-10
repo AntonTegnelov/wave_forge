@@ -414,9 +414,17 @@ pub struct VegetationSettings {
     /// The height, in the mesh's own units, at which the plant bends fully, then how far its outer
     /// parts flutter, in the mesh's own units at full wind.
     pub bend: Vec4,
+    /// How far each plant's random varies its colour, brighter and warmer or darker and cooler,
+    /// then how far it goes toward `dry_albedo` as its first appearance value goes to 1: both from
+    /// its `MeshTag`, the point's look (`Point::look`), which the stages plugin gives every point's
+    /// entity.
+    pub look: Vec4,
+    /// The colour a plant goes toward as it dries, linear RGB.
+    pub dry_albedo: Vec4,
 }
 
-/// What [`VegetationMaterial`] adds to a `StandardMaterial`: how the plant bends.
+/// What [`VegetationMaterial`] adds to a `StandardMaterial`: how the plant bends and how its
+/// colour varies.
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 pub struct VegetationMaterials {
     /// The plant's bending and the wind.
@@ -426,6 +434,11 @@ pub struct VegetationMaterials {
 
 impl MaterialExtension for VegetationMaterials {
     fn vertex_shader() -> ShaderRef {
+        "embedded://wave_forge_bevy/shaders/vegetation.wesl".into()
+    }
+
+    /// The plant's colour varied by its look.
+    fn fragment_shader() -> ShaderRef {
         "embedded://wave_forge_bevy/shaders/vegetation.wesl".into()
     }
 
@@ -448,7 +461,9 @@ pub type VegetationMaterial = ExtendedMaterial<StandardMaterial, VegetationMater
 /// A plant's material: `base` for its looks, bending fully at `bend_height` and fluttering its
 /// outer parts by `flutter`, both in the mesh's own units. Its phase in the wind is hashed from
 /// where each plant stands and its stiffness is its scale, so every plant's top sways by about the
-/// wind's strength in world units, a larger plant leaning less.
+/// wind's strength in world units, a larger plant leaning less. Its colour varies by its random by
+/// 0.15 and dries toward a measured dry grass by its first appearance value, as far as 0.6, as the
+/// Godot shader's defaults do.
 #[must_use]
 pub fn vegetation_material(
     base: StandardMaterial,
@@ -461,6 +476,9 @@ pub fn vegetation_material(
             settings: VegetationSettings {
                 wind: Wind::default().0,
                 bend: Vec4::new(bend_height, flutter, 0.0, 0.0),
+                look: Vec4::new(0.15, 0.6, 0.0, 0.0),
+                // A measured dry grass (docs/research/terrain-look.md, "Measured albedo").
+                dry_albedo: Color::srgb(0.365, 0.322, 0.212).to_linear().to_vec4(),
             },
         },
     }

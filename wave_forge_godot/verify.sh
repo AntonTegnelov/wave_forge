@@ -53,6 +53,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_frozen.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_assemble.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_scenes.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_variants.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_cave_scenes.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_pooling.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_ground.gd
