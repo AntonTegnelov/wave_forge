@@ -116,6 +116,50 @@ Not on the list: a clipmap renderer of our own, which [engine-integration.md](..
 decided against, with Terrain3D as the route for Godot users who want one; and a ground finer than
 the 2 m cell, which is tied to the WFC cell, since detail comes from shading instead.
 
+## A second look, 2026-10-10
+
+With #322 to #329 done the terrain still read as amateurish to the owner, so the hills preset was
+rendered four ways under Compatibility: as our render scripts light it (a flat background and
+ambient, no shadows, a linear tonemap); under a procedural sky, a sun 28 degrees high with shadows,
+a filmic tonemap and gentle fog; with its palette calibrated to real albedo; and at eye level.
+
+- The lighting our tools use makes any terrain look like a toy: under the fair environment the same
+  ground reads as natural light on hills. So we cannot judge the terrain until our renders are fair
+  (#357).
+- At eye level what gives it away is not the lighting: the stand-in cone trees, one size and evenly
+  spread; the ground up close, one colour per material with blotchy noise, like smeared paint; a
+  meadow with almost no visible grass; and the world ending against the sky about 70 m out, since no
+  preset has a far ground.
+- The palettes are about twice as bright as real ground (Far Cry 3 calibrated its materials against
+  a colour chart for this reason), and the presets leave the cavity, wetness and cover channels
+  unused.
+
+The gaps, by look gained per work, each an issue:
+
+1. **Fair reference renders** (#357): sky, low sun with shadows, filmic tonemap, fixed cameras
+   including eye level. Tooling only.
+2. **A far ground in every preset** (#358), so the world does not visibly end.
+3. **Calibrated colours and ramps per material** (#359), and the presets using their channels.
+4. **Grass that reads as a meadow** (#361): clumps, colour variation, bases tinted by the ground,
+   density thinning with distance.
+5. **Ground detail up close** (#360): per-material micro-height driving the near normal and
+   height-based blending between materials, without textures; #323 remains the textured path.
+6. **Vegetation that varies** (#364): Scatter density from a field, variation per instance and
+   clump, several kinds per biome.
+7. **Preset landforms with structure** (#366): ridgelines, valleys and flat floors under the noise.
+8. **Erosion data maps** (#362): the Erode stage's creases and the Droplets stage's flow and
+   deposition as fields, for colour and placement.
+9. **Talus** (#363): debris at the angle of repose below steep ground.
+10. **Water by depth** (#365): tint, shoreline and wet banks from the depth we already know.
+11. **Large-scale occlusion** (#367): a horizon-angle field for ambient occlusion near and far.
+
+Three things only the owner can decide are in #368: the vegetation and rock models (stand-in
+cones are the loudest sign of a demo), whether preset scenes ship a light and an environment as a
+starting point, and the textured ground (#323). A scene's atmosphere stays out of scope: the
+references' look leans on it heavily (Ghost of Tsushima's tonemapping and atmosphere,
+https://www.advances.realtimerendering.com/s2021/jpatry_advances2021.pdf), which is why our own
+renders have to give the terrain a fair light before it is judged.
+
 ## Licences to watch
 
 runevision's erosion filter is MPL-2.0, so Wave Forge writes its own from the published
