@@ -1,6 +1,11 @@
 [gd_scene format=3]
 
-[ext_resource type="PackedScene" path="res://addons/wave_forge/tree.tscn" id="1_tree"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_1.tscn" id="k1_broadleaf_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_2.tscn" id="k2_broadleaf_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_3.tscn" id="k3_broadleaf_3"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_4.tscn" id="k4_broadleaf_4"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_5.tscn" id="k5_broadleaf_5"]
+
 [ext_resource type="PackedScene" path="res://addons/wave_forge/city/building_arcade.tscn" id="2_building_arcade"]
 [ext_resource type="PackedScene" path="res://addons/wave_forge/city/building_balcony.tscn" id="3_building_balcony"]
 [ext_resource type="PackedScene" path="res://addons/wave_forge/city/building_base.tscn" id="4_building_base"]
@@ -59,7 +64,7 @@ grass_radius = 2
 collider_radius = 1
 navigation_radius = 1
 scenes = {
-"tree": ExtResource("1_tree"),
+"broadleaf": [ExtResource("k1_broadleaf_1"), ExtResource("k2_broadleaf_2"), ExtResource("k3_broadleaf_3"), ExtResource("k4_broadleaf_4"), ExtResource("k5_broadleaf_5")],
 "building_arcade": ExtResource("2_building_arcade"),
 "building_balcony": ExtResource("3_building_balcony"),
 "building_base": ExtResource("4_building_base"),

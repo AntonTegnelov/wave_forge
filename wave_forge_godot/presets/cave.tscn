@@ -1,6 +1,15 @@
 [gd_scene format=3]
 
-[ext_resource type="PackedScene" path="res://addons/wave_forge/tree.tscn" id="1_tree"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_1.tscn" id="k_pine_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_2.tscn" id="k_pine_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_3.tscn" id="k_pine_3"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_4.tscn" id="k_pine_4"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_5.tscn" id="k_pine_5"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_1.tscn" id="k_broadleaf_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_2.tscn" id="k_broadleaf_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_3.tscn" id="k_broadleaf_3"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_4.tscn" id="k_broadleaf_4"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_5.tscn" id="k_broadleaf_5"]
 
 [node name="Cave" type="WaveForgeStages"]
 pack_file = "res://addons/wave_forge/presets/cave.world.ron"
@@ -13,5 +22,6 @@ volume_palette = PackedColorArray(0.376, 0.384, 0.231, 1, 0.45, 0.33, 0.22, 1, 0
 collider_radius = 1
 navigation_radius = 1
 scenes = {
-"tree": ExtResource("1_tree")
+"pine": [ExtResource("k_pine_1"), ExtResource("k_pine_2"), ExtResource("k_pine_3"), ExtResource("k_pine_4"), ExtResource("k_pine_5")],
+"broadleaf": [ExtResource("k_broadleaf_1"), ExtResource("k_broadleaf_2"), ExtResource("k_broadleaf_3"), ExtResource("k_broadleaf_4"), ExtResource("k_broadleaf_5")]
 }

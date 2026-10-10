@@ -464,9 +464,21 @@ under the key `wave_forge`, on the right by default:
   placing it on that category, standing on `ground_stage`, at least 2 cells apart and off steep
   ground, named after the scene (a number added if taken), bound to the scene in `scenes` and
   added to `targets`, as one undo action that makes the node's pack a stack if it was a file and
-  starts a preview again (`rule_drop.gd`, N3). The presets bind `tree`, `cactus` and `palm` to the plugin's
-  built-in props (`addons/wave_forge/tree.tscn`, `cactus.tscn` and `palm.tscn`, each one
-  vertex-coloured mesh written by `tools/make_props.gd`) and draw the sea with
+  starts a preview again (`rule_drop.gd`, N3). The hills, islands and city bind their trees,
+  undergrowth and rocks to the plugin's nature kit, several variants a kind
+  ([Scenes](#scenes)): `pine` and `broadleaf` trees of five variants each, `bush` of two, `fern` of
+  three and `rock` of three, a curated subset of Quaternius's Stylized Nature MegaKit (CC0,
+  `addons/wave_forge/nature/LICENSE_Quaternius.txt`). Each is a lone-mesh scene drawn with the
+  vegetation shader, swaying and varying by its look, or a plain material for a rock, its textures
+  shrunk to 512 texels a side and kept losslessly compressed in resources of their own, and its
+  colour scaled to the measured brightness of its class
+  ([terrain-look.md](../research/terrain-look.md#measured-albedo)); `tools/make_nature_kit.gd`
+  writes the kit from the kit's Standard download. The kit is 2.4 MB; a game that binds its own
+  models can leave it out of an export with `addons/wave_forge/nature/*` in the export preset's
+  filters to exclude, as long as it uses none of the presets that bind it. The canyon and the
+  archipelago bind `cactus` and `palm` to the plugin's built-in props (`addons/wave_forge/cactus.tscn`
+  and `palm.tscn`, each one vertex-coloured mesh written by `tools/make_props.gd`), the cave its
+  trees to the kit's as the hills do, and the presets draw the sea with
   `addons/wave_forge/sea.tres`, or the archipelago's clearer `lagoon.tres`. The small city binds
   the city module set's modules to the plugin's city kit (`addons/wave_forge/city/`, the module set
   and a lone-mesh scene per module, written from its models by `tools/make_city_kit.gd`), so its

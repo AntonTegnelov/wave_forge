@@ -1,10 +1,28 @@
 [gd_scene format=3]
 
-[ext_resource type="PackedScene" path="res://addons/wave_forge/tree.tscn" id="1_tree"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_1.tscn" id="k1_pine_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_2.tscn" id="k2_pine_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_3.tscn" id="k3_pine_3"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_4.tscn" id="k4_pine_4"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/pine_5.tscn" id="k5_pine_5"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_1.tscn" id="k6_broadleaf_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_2.tscn" id="k7_broadleaf_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_3.tscn" id="k8_broadleaf_3"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_4.tscn" id="k9_broadleaf_4"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_5.tscn" id="k10_broadleaf_5"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/bush_1.tscn" id="k11_bush_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/bush_2.tscn" id="k12_bush_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/fern_1.tscn" id="k13_fern_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/fern_2.tscn" id="k14_fern_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/fern_3.tscn" id="k15_fern_3"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/rock_1.tscn" id="k16_rock_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/rock_2.tscn" id="k17_rock_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/rock_3.tscn" id="k18_rock_3"]
+
 
 [node name="Hills" type="WaveForgeStages"]
 pack_file = "res://addons/wave_forge/presets/hills.world.ron"
-targets = PackedStringArray("height", "surface", "cover", "trees", "far_height", "far_surface", "hollow")
+targets = PackedStringArray("height", "surface", "cover", "trees", "far_height", "far_surface", "hollow", "undergrowth", "rocks")
 start_on_ready = true
 preview_in_editor = true
 view_radius = 3
@@ -27,5 +45,9 @@ grass_radius = 2
 collider_radius = 1
 navigation_radius = 1
 scenes = {
-"tree": ExtResource("1_tree")
+"pine": [ExtResource("k1_pine_1"), ExtResource("k2_pine_2"), ExtResource("k3_pine_3"), ExtResource("k4_pine_4"), ExtResource("k5_pine_5")],
+"broadleaf": [ExtResource("k6_broadleaf_1"), ExtResource("k7_broadleaf_2"), ExtResource("k8_broadleaf_3"), ExtResource("k9_broadleaf_4"), ExtResource("k10_broadleaf_5")],
+"bush": [ExtResource("k11_bush_1"), ExtResource("k12_bush_2")],
+"fern": [ExtResource("k13_fern_1"), ExtResource("k14_fern_2"), ExtResource("k15_fern_3")],
+"rock": [ExtResource("k16_rock_1"), ExtResource("k17_rock_2"), ExtResource("k18_rock_3")]
 }
