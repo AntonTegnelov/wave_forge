@@ -215,7 +215,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | Occlusion | `occluder_radius` | chunks around the followed position whose towns get occluders of their solid cells, for Godot's occlusion culling; below zero, none (the default) |
 | Audio | `audio_radius` | chunks around the followed position that play the terrain's sounds, the pack's ambience ([packs.md](packs.md#ambience)): each chunk with ground gets an `AudioStreamPlayer3D` per emitter whose key `sounds` maps to a stream, at the emitter's position and volume, from a pool as the world node's are ([Sound and surfaces](#sound-and-surfaces)); below zero, none (the default). `ambience(chunk)` gives a chunk's emitters, a dictionary each with its `position`, `key` and `volume`, for a game that maps them itself |
 | | `sounds` | the stream each sound key plays: `water_river` and `water_lake` for the continent's rivers and lakes |
-| Scenes | `scenes` | a kind (a Scatter, Embed, Deposit or Spawn point's kind, an Assemble piece's or Cave room's name, or a Solve stage's module) to a `PackedScene` or a path to one ([Scenes](#scenes)) |
+| Scenes | `scenes` | a kind (a Scatter, Embed, Deposit or Spawn point's kind, an Assemble piece's or Cave room's name, or a Solve stage's module) to a `PackedScene` or a path to one, or an array of them, its variants ([Scenes](#scenes)) |
 | | `placement_budget_ms` | how long a frame may spend placing scenes (default 2 ms) |
 | | `promotion_radius` | chunks around the followed position within which a node scene is placed as nodes; beyond, its first mesh stands in for it (default -1, always nodes) |
 | Advanced | `kernel_cache` | where compiled GPU kernels are kept across runs (default `user://wave_forge/kernels`); empty keeps none |
@@ -273,7 +273,8 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   `WaveForgeWorld.instance_sets`, raised to the site's height.
 - `point_sets(stage, chunk)`: a Scatter stage's points, one dictionary per kind, with `transforms`
   as a MultiMesh buffer standing on the field, turned, leant and scaled as each point is, and each
-  point's `ids`.
+  point's `ids`, `variants` and `looks` (`Point::look`: its random and appearance values packed in
+  255ths, [packs.md](packs.md#scatter)).
 - `stamps(stage, chunk)`: an Assemble stage's pieces overlapping a chunk, one dictionary each, with
   the `piece` name, what names its site (as `sites` gives it), its `id`, its `transform` in Godot's
   world space, where a scene of the piece authored at turn 0 with its footprint centred on its
@@ -592,8 +593,11 @@ holds it, turned by the tile's rotation, a unit model scaled to the cell as `tow
 gives it, so a town is drawn with no code. A module drawn from a lone mesh collides with that mesh
 too, its triangles scaled to the cell as a concave shape, unless `set_collision_shape` gives it a
 shape of its own, so a town drawn with no code is walked on and into as it is drawn. A value is a
-`PackedScene`, or a path the node loads on
-Godot's loader threads when it starts; placing waits until every scene has loaded. A scene holding
+`PackedScene`, or a path the node loads on Godot's loader threads when it starts, or an array of
+them: the kind's variants, of which each point takes the one its `variant` names
+([packs.md](packs.md#scatter)), counting round the array again past its end, so a kind whose stage
+draws four variants may be bound to two scenes. Placing waits until every scene has loaded. A
+user's own models bind as variants exactly as the plugin's do. A scene holding
 another extension's Rust resource has to be given as a `PackedScene`, since such a resource aborts
 the process when loaded on a loader thread
 ([engine-integration.md](../architecture/engine-integration.md#godot-tiers-of-disclosure)).
@@ -762,10 +766,14 @@ changes it with `RenderingServer.global_shader_parameter_set`. The grass shader 
 the reference vegetation shader, which `vegetation_shader_code()` gives: on a plant's mesh bound in
 `scenes`, it bends the plant downwind, more the higher up a vertex is (up to `bend_height`) and the
 less stiff the plant, keeping each vertex's distance from the root, and flutters its outer parts
-along their normals, after GPU Gems 3, chapter 16. Every MultiMesh the node places carries each
-instance's custom data: its phase in the wind, as a fraction of a turn hashed from its id, and its
-stiffness, a point's scale, so every plant's top sways by about the wind's strength in world units, a
-larger plant leaning less, and no two move alike.
+along their normals, after GPU Gems 3, chapter 16. Every MultiMesh the node places, one per chunk,
+kind and variant, carries each instance's custom data: its phase in the wind, as a fraction of a turn
+hashed from its id, and its stiffness, a point's scale, so every plant's top sways by about the
+wind's strength in world units, a larger plant leaning less, and no two move alike; then the
+point's random and its first appearance value, as floats, since Compatibility keeps custom data at
+half precision. Its colour is white. The vegetation shader varies a plant's colour by its random,
+brighter and warmer or darker and cooler, as far as `variation` (0.15), and takes it toward
+`dry_albedo`, a measured dry grass, as its first appearance value rises, as far as `dryness` (0.6).
 
 ## Checking it
 

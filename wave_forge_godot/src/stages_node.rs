@@ -2970,7 +2970,8 @@ impl WaveForgeStages {
 
     /// A Scatter stage's points in a chunk, one dictionary per kind: its `kind`, its `transforms`
     /// as a MultiMesh buffer of twelve floats per point in Godot's world space (turned about +Y,
-    /// unscaled, standing on the field), and each point's `ids` within the chunk.
+    /// unscaled, standing on the field), and each point's `ids` within the chunk, `variants` and
+    /// `looks` (`Point::look`, the random and the appearance packed in 255ths).
     #[func]
     fn point_sets(&self, stage: GString, chunk: Vector3i) -> Array<VarDictionary> {
         let Some(points) = self
@@ -2981,9 +2982,14 @@ impl WaveForgeStages {
             return Array::new();
         };
         let cell = self.cell_size;
-        let mut kinds: BTreeMap<&str, (Vec<f32>, Vec<i64>)> = BTreeMap::new();
+        let mut kinds: BTreeMap<&str, PointSet> = BTreeMap::new();
         for point in points {
-            let (transforms, ids) = kinds.entry(&point.kind).or_default();
+            let PointSet {
+                transforms,
+                ids,
+                variants,
+                looks,
+            } = kinds.entry(&point.kind).or_default();
             let [row_x, row_y, row_z] = point.y_up_basis();
             let [x, y, height] = point.position;
             transforms.extend(row_x);
@@ -2993,10 +2999,18 @@ impl WaveForgeStages {
             transforms.extend(row_z);
             transforms.push(y * cell.z);
             ids.push(local_id(point.id.local));
+            variants.push(point.variant);
+            looks.push(i32::try_from(point.look()).expect("a look below 2^24"));
         }
         kinds
             .into_iter()
-            .map(|(kind, (transforms, ids))| {
+            .map(|(kind, set)| {
+                let PointSet {
+                    transforms,
+                    ids,
+                    variants,
+                    looks,
+                } = set;
                 let mut out = VarDictionary::new();
                 out.set(&"kind".to_variant(), &GString::from(kind).to_variant());
                 out.set(
@@ -3006,6 +3020,14 @@ impl WaveForgeStages {
                 out.set(
                     &"ids".to_variant(),
                     &PackedInt64Array::from(ids.as_slice()).to_variant(),
+                );
+                out.set(
+                    &"variants".to_variant(),
+                    &PackedByteArray::from(variants.as_slice()).to_variant(),
+                );
+                out.set(
+                    &"looks".to_variant(),
+                    &PackedInt32Array::from(looks.as_slice()).to_variant(),
                 );
                 out
             })
@@ -5527,6 +5549,8 @@ fn placement_items(placing: &Placing, stage: &str, chunk: ChunkCoord) -> Option<
             .filter(|point| binds(&point.kind))
             .map(|point| Item {
                 kind: point.kind.to_string(),
+                variant: point.variant,
+                look: [point.random, point.appearance[0]],
                 transform: place(point.y_up_basis(), point.position),
                 id: local_id(point.id.local),
                 // The shader bends a plant by the wind over its stiffness in the mesh's
@@ -5543,6 +5567,8 @@ fn placement_items(placing: &Placing, stage: &str, chunk: ChunkCoord) -> Option<
             .filter(|stamp| stamp.id.chunk == chunk && binds(&stamp.piece))
             .map(|stamp| Item {
                 kind: stamp.piece.to_string(),
+                variant: 0,
+                look: [0.0; 2],
                 transform: place(stamp.y_up_basis(), stamp.position),
                 id: local_id(stamp.id.local),
                 sway: [phase(stamp.id.local), 1.0],
@@ -5560,6 +5586,8 @@ fn placement_items(placing: &Placing, stage: &str, chunk: ChunkCoord) -> Option<
                         .collect();
                     rows.into_iter().zip(&set.ids).map(move |(row, id)| Item {
                         kind: set.name.clone(),
+                        variant: 0,
+                        look: [0.0; 2],
                         transform: Transform3D::new(
                             Basis::from_rows(
                                 Vector3::new(row[0], row[1], row[2]),
@@ -5586,6 +5614,15 @@ struct FarDrawn {
     instance: Rid,
     positions: Vec<[f32; 3]>,
     colours: Vec<Color>,
+}
+
+/// One kind's points of a chunk as `point_sets` gives them, in parallel.
+#[derive(Default)]
+struct PointSet {
+    transforms: Vec<f32>,
+    ids: Vec<i64>,
+    variants: Vec<u8>,
+    looks: Vec<i32>,
 }
 
 /// The colour of category `index` from `palette`, the categories past its end taking colours of

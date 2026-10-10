@@ -370,7 +370,7 @@ GODOT=/path/to/godot xvfb-run -a wave_forge_godot/render_proxies.sh        # mod
 `prepare.sh`, which both Godot scripts run first, builds the extension and puts what the Godot
 project loads next to it ([environment.md](environment.md)). `verify.sh` then runs `verify.gd`,
 `verify_stages.gd`, `verify_tables.gd`, `verify_noise.gd`, `verify_edits.gd`, `verify_frozen.gd`,
-`verify_assemble.gd`, `verify_scenes.gd`, `verify_cave_scenes.gd`, `verify_pooling.gd`, `verify_ground.gd`, `verify_far.gd`, `verify_volume.gd`, `verify_bake.gd`, `verify_import.gd`, `verify_params.gd`, `verify_pack_data.gd`, `verify_stack.gd`, `verify_paint.gd`, `verify_candidates.gd`, `verify_world.gd`, `verify_continent.gd`, `verify_inspector.gd`, `verify_typed_maps.gd`, `verify_presets.gd`, `verify_walk.gd`, the editor with the plugin, `verify_sound.gd`,
+`verify_assemble.gd`, `verify_scenes.gd`, `verify_variants.gd`, `verify_cave_scenes.gd`, `verify_pooling.gd`, `verify_ground.gd`, `verify_far.gd`, `verify_volume.gd`, `verify_bake.gd`, `verify_import.gd`, `verify_params.gd`, `verify_pack_data.gd`, `verify_stack.gd`, `verify_paint.gd`, `verify_candidates.gd`, `verify_world.gd`, `verify_continent.gd`, `verify_inspector.gd`, `verify_typed_maps.gd`, `verify_presets.gd`, `verify_walk.gd`, the editor with the plugin, `verify_sound.gd`,
 `verify_names.gd`, `verify_occlusion.gd` and `verify_proxies.gd` headless, prepares `examples/history` and `examples/new_world` and runs each one's `check.gd`. Each exits non-zero on any failure and prints what it generated and how
 long frames took. Headless, Godot's renderer is a dummy, so the frame time they check is Godot's own
 thread (the extension and the script), not drawing, and the node's own share of it comes from its

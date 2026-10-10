@@ -4,7 +4,8 @@
 # draws a wide view at the ground's levels of detail and checks no gap opens between chunks; then
 # draws the far ground beyond the near ground and checks no view sees between them, at a coarse
 # scale of 8 and of 4; then draws a valley's lakes and river and checks the water shows with no gap
-# against its banks; then draws the continent's far ground toward a mountain range 1 to 2 km away
+# against its banks; then checks each scattered point is drawn with its variant's mesh and its look
+# in the MultiMesh's custom data, which only a real renderer keeps; then draws the continent's far ground toward a mountain range 1 to 2 km away
 # (developer tool).
 #
 # Needs a Godot 4 binary (GODOT, or `godot` on PATH) and a display; without one, run it under
@@ -20,4 +21,5 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script render_far.gd
 "${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script render_far.gd -- far4
 "${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script render_water.gd
+"${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script verify_variants.gd
 exec "${GODOT:-godot}" --rendering-driver opengl3 --resolution 1600x900 --path "$here/godot" --script render_continent_far.gd
