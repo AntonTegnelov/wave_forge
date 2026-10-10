@@ -1,8 +1,8 @@
 // The hills and forests preset (docs/product/user-stories.md, N2): rolling hills of meadow under
-// woods, rock on the highest crowns, grass over the meadows and trees through the woods. Three
-// parameters tune it: how tall the hills rise, how much of the land the woods cover, and how thick
-// the meadows' grass grows. Every value in their ranges gives a sound world (tests/presets.rs
-// sweeps them).
+// woods, rock on the highest crowns, grass over the meadows, trees, bushes and ferns through the
+// woods and rocks on the crowns. Three parameters tune it: how tall the hills rise, how much of the
+// land the woods cover, and how thick the meadows' grass grows. Every value in their ranges gives a
+// sound world (tests/presets.rs sweeps them).
 (
     version: 1,
     params: {
@@ -48,9 +48,21 @@
         ], otherwise: "meadow")),
         // Grass over the meadows, as thick as the meadows amount.
         (name: "cover", kind: Field(Mul(Is("surface", ["meadow"]), Param("meadows")))),
-        // Trees through the woods.
-        (name: "trees", kind: Scatter(kind: "tree", height: "height", spacing: 2, apart: 2,
+        // Trees through the woods, three pines to a broadleaf, each of five variants, of varied sizes
+        // and some taller for their width than others.
+        (name: "trees", kind: Scatter(height: "height", spacing: 3, apart: 3,
+            kinds: [(kind: "pine", weight: 3.0, variants: 5), (kind: "broadleaf", variants: 5)],
+            scale: (0.6, 1.0), stretch: (0.9, 1.15),
             when: [Greater(Is("surface", ["forest_floor"]), Constant(0.5))])),
+        // Bushes and ferns under the trees, clear of their trunks.
+        (name: "undergrowth", kind: Scatter(height: "height", spacing: 2, chance: 0.6,
+            kinds: [(kind: "bush", variants: 2), (kind: "fern", weight: 2.0, variants: 3)],
+            scale: (0.6, 1.2), block: [("trees", 1.0)],
+            when: [Greater(Is("surface", ["forest_floor"]), Constant(0.5))])),
+        // Rocks on the bare crowns, half sunk and leant into the slope.
+        (name: "rocks", kind: Scatter(kind: "rock", variants: 3, height: "height", spacing: 5,
+            chance: 0.7, scale: (0.4, 1.1), tilt: (0.0, 15.0), align: 0.6,
+            when: [Greater(Is("surface", ["rock"]), Constant(0.5))])),
         // 0 to 1: how far a column lies below the ground around it, for the ground shader's cavity
         // channel, which darkens the hollows.
         (name: "around", kind: Blur(input: "height", radius: 4)),

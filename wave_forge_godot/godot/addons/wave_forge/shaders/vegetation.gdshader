@@ -6,12 +6,18 @@
 // two plants move alike; so does its look, a random and its appearance values, by which its colour
 // varies and dries. Works on every renderer, Compatibility included.
 shader_type spatial;
+// Leaves are cards seen from both sides.
+render_mode cull_disabled;
 
 // The height, in the mesh's own units, at which a plant bends fully.
 uniform float bend_height = 4.0;
 // How far the outer parts flutter, in the mesh's own units at full wind.
 uniform float flutter = 0.03;
 uniform vec3 albedo : source_color = vec3(0.3, 0.5, 0.2);
+// A texture the albedo multiplies, and the alpha below which a texel is cut out, for leaves drawn
+// on cards; white and nothing cut by default.
+uniform sampler2D albedo_texture : source_color, hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.0;
 uniform float roughness = 0.9;
 // How far each plant's random varies its colour, brighter and warmer or darker and cooler.
 uniform float variation : hint_range(0.0, 1.0) = 0.15;
@@ -46,8 +52,11 @@ void vertex() {
 }
 
 void fragment() {
+	vec4 texel = texture(albedo_texture, UV);
 	float shift = variation * (random - 0.5) * 2.0;
-	vec3 colour = mix(albedo, dry_albedo, dry * dryness);
+	vec3 colour = mix(albedo * texel.rgb, dry_albedo, dry * dryness);
+	ALPHA = texel.a;
+	ALPHA_SCISSOR_THRESHOLD = alpha_scissor;
 	ALBEDO = colour * (1.0 + shift) * vec3(1.0 + 0.3 * shift, 1.0, 1.0 - 0.3 * shift);
 	ROUGHNESS = roughness;
 }

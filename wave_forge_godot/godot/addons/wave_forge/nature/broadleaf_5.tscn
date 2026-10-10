@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://addons/wave_forge/nature/broadleaf_5.res" id="1_s61ki"]
+
+[node name="Broadleaf5" type="MeshInstance3D" unique_id=662743949]
+mesh = ExtResource("1_s61ki")

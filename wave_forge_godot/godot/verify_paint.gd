@@ -34,7 +34,7 @@ func _world() -> Node:
 	var node: Node = ClassDB.instantiate("WaveForgeStages")
 	node.pack_file = "res://islands.world.ron"
 	node.targets = PackedStringArray(["height", "trees"])
-	node.seed = 5
+	node.seed = 6
 	node.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	node.cell_size = CELL
 	node.view_radius = 1
@@ -68,7 +68,8 @@ func _process(_delta: float) -> bool:
 				return false
 	match phase:
 		"arrive":
-			if _trees_near(3.0 * CELL.x) < 3:
+			# The islands' trees stand 3 cells apart, so a stroke 6 cells long passes two or three.
+			if _trees_near(3.0 * CELL.x) < 2:
 				_fail("only %d trees near the stroke to remove" % _trees_near(3.0 * CELL.x))
 				return true
 			if world.paint({"brush": "nothing"}, PackedVector3Array(STROKE)):

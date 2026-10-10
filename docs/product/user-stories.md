@@ -326,8 +326,9 @@ reroll the seed, bake the view and add a plain sun and sky to the scene in one u
 [#370](https://github.com/AntonTegnelov/wave_forge/issues/370)). A running game with neither warns
 once, and the addon's demo scene shows the hills preset under the same sun and sky with a fly
 camera (`verify_demo.gd`). A node added with nothing set
-takes the default preset, islands: its ground with sand, grass and rock, its sea, trees bound to the
-plugin's built-in tree, bodies and navigation; given to a fresh node in a lit scene, it starts on its
+takes the default preset, islands: its ground with sand, grass and rock, its sea, broadleaf trees
+of five variants, bushes and rocks from the plugin's nature kit
+([#372](https://github.com/AntonTegnelov/wave_forge/issues/372)), bodies and navigation; given to a fresh node in a lit scene, it starts on its
 own, stands that world and prints no error or warning (`verify_presets.gd`). The node follows the camera
 with no code, and a walker standing in for a game's player (the checks' own, `walker.tscn` in the
 verification project) walks the default preset, standing on its ground, with nothing printed

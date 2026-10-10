@@ -1,11 +1,21 @@
 [gd_scene format=3]
 
-[ext_resource type="PackedScene" path="res://addons/wave_forge/tree.tscn" id="1_tree"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_1.tscn" id="k1_broadleaf_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_2.tscn" id="k2_broadleaf_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_3.tscn" id="k3_broadleaf_3"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_4.tscn" id="k4_broadleaf_4"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/broadleaf_5.tscn" id="k5_broadleaf_5"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/bush_1.tscn" id="k6_bush_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/bush_2.tscn" id="k7_bush_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/rock_1.tscn" id="k8_rock_1"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/rock_2.tscn" id="k9_rock_2"]
+[ext_resource type="PackedScene" path="res://addons/wave_forge/nature/rock_3.tscn" id="k10_rock_3"]
+
 [ext_resource type="StandardMaterial3D" path="res://addons/wave_forge/sea.tres" id="2_sea"]
 
 [node name="Islands" type="WaveForgeStages"]
 pack_file = "res://addons/wave_forge/presets/islands.world.ron"
-targets = PackedStringArray("height", "surface", "trees", "far_height", "far_surface", "hollow", "wet")
+targets = PackedStringArray("height", "surface", "trees", "far_height", "far_surface", "hollow", "wet", "rocks")
 start_on_ready = true
 preview_in_editor = true
 view_radius = 3
@@ -27,5 +37,7 @@ ground_ramp_heights = Vector2(2, 12)
 collider_radius = 1
 navigation_radius = 1
 scenes = {
-"tree": ExtResource("1_tree")
+"broadleaf": [ExtResource("k1_broadleaf_1"), ExtResource("k2_broadleaf_2"), ExtResource("k3_broadleaf_3"), ExtResource("k4_broadleaf_4"), ExtResource("k5_broadleaf_5")],
+"bush": [ExtResource("k6_bush_1"), ExtResource("k7_bush_2")],
+"rock": [ExtResource("k8_rock_1"), ExtResource("k9_rock_2"), ExtResource("k10_rock_3")]
 }

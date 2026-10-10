@@ -160,6 +160,21 @@ references' look leans on it heavily (Ghost of Tsushima's tonemapping and atmosp
 https://www.advances.realtimerendering.com/s2021/jpatry_advances2021.pdf), which is why our own
 renders have to give the terrain a fair light before it is judged.
 
+## Default vegetation, and a tree generator revisited
+
+The owner chose in #368 (3b) to ship a curated subset of Quaternius's CC0 Stylized Nature MegaKit
+now and to reconsider an in-library tree generator (a port of a parametric generator such as
+EZ-Tree) once the kit's renders were in. The kit (#372) gives the presets pines and broadleaves of
+five variants each, bushes, ferns and rocks; with the variation layers of #371 (a kind by weight per
+group, a variant per tree, a size and a stretch, a random tint) the forests of `render_views.sh`'s
+sheets read as a mixed wood rather than one cloned tree, at eye level and from above.
+
+What a generator would add is a tree unique to each point and species beyond the kit's, at the
+cost of a mesh generator in the library, its tests and its leaf shading in both engines, and of
+meshes built at run time where the kit's are loaded once. Neither gain is needed for the presets
+to stop reading as a demo, so it is not built now. It is worth revisiting when a game asks for
+species the kit lacks, growth stages (saplings, dead trees) or seasons beyond what tinting gives.
+
 ## Measured albedo
 
 The presets' palettes and the reference grass take their colours from measured materials, so a

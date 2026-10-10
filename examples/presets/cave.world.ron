@@ -71,8 +71,10 @@
         )),
         // What stands on the rock in each column: the hills' surface, or a sinkhole's floor.
         (name: "top", kind: Top(volume: "rock")),
-        // Trees on the hills, never down a sinkhole.
-        (name: "trees", kind: Scatter(kind: "tree", height: "top", spacing: 3, apart: 2,
+        // Trees on the hills, pines and broadleaves of five variants each, never down a sinkhole.
+        (name: "trees", kind: Scatter(height: "top", spacing: 3, apart: 3,
+            kinds: [(kind: "pine", variants: 5), (kind: "broadleaf", variants: 5)],
+            scale: (0.5, 0.9), stretch: (0.9, 1.15),
             max_slope: Some(0.8),
             when: [
                 Less(Abs(Sub(Input("top"), Input("height"))), Constant(0.5)),
