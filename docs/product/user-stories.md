@@ -337,7 +337,9 @@ materials meeting along broken lines and steep ground turning to rock, on every 
 `render_views.sh` shows every preset from eye level, oblique and top-down under the sun and sky a
 game gets from the inspector, on Compatibility and Forward+, for judging the look
 ([testing.md](../guides/testing.md#the-engine-integrations),
-[#357](https://github.com/AntonTegnelov/wave_forge/issues/357)).
+[#357](https://github.com/AntonTegnelov/wave_forge/issues/357)). Every preset with a ground draws a far
+ground out to about 1 km, so at eye level its horizon is terrain, not sky; its far height stands
+where the ground does (`tests/presets.rs`, [#358](https://github.com/AntonTegnelov/wave_forge/issues/358)).
 Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 
