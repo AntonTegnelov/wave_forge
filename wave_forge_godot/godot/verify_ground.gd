@@ -5,7 +5,9 @@
 ## texture holds the category of every vertex of the ground, the chunks beyond the far edges
 ## included, and whose cell is the node's. A material stage that is no Rules or Area stage is
 ## refused, as is a cavity stage that is no field. Each material's channels hold the cavity,
-## wetness and cover stages' values at every vertex. Grass grows on every chunk of ground within its
+## wetness and cover stages' values at every vertex, and its ramps the ramp given for the first
+## category, its far colour in linear light and its drivers, none for the others, and the ramps'
+## heights. Grass grows on every chunk of ground within its
 ## radius, each chunk's grass material holding the chunk's cover per column and the ground's height
 ## per vertex, and fading out before the edge of the square of chunks within the radius, measured
 ## from the followed chunk's centre, over which every chunk's ground takes the cover's tint in; the
@@ -17,6 +19,10 @@ const CELLS := 8
 const RADIUS := 2
 const CELL := Vector3(2, 1, 3)
 const TIMEOUT_S := 30.0
+## The first category's ramp: its far colour, its drivers, and the heights of the ramps.
+const RAMP_COLOUR := Color(0.2, 0.6, 0.3)
+const RAMP_DRIVERS := Vector4(0.25, -0.5, 1.0, 0.0)
+const RAMP_HEIGHTS := Vector2(2.0, 9.0)
 
 var world: Node
 var ready := {}
@@ -63,6 +69,9 @@ func _world(material_stage: String) -> Node:
 	node.ground_cavity_stage = "hollow"
 	node.ground_wetness_stage = "wet"
 	node.ground_cover_stage = "cover"
+	node.ground_ramp_colours = PackedColorArray([RAMP_COLOUR])
+	node.ground_ramp_drivers = PackedVector4Array([RAMP_DRIVERS])
+	node.ground_ramp_heights = RAMP_HEIGHTS
 	node.grass_stage = "cover"
 	node.grass_radius = 1
 	root.add_child(node)
@@ -122,6 +131,17 @@ func _check() -> bool:
 				if texel.r != _value("hollow", column) or texel.g != _value("wet", column) or texel.b != _value("cover", column):
 					_fail("vertex (%d, %d) of %s holds channels %s, not %f, %f and %f" % [i, j, chunk, texel, _value("hollow", column), _value("wet", column), _value("cover", column)])
 					return true
+		var ramps: Image = material.get_shader_parameter("wave_forge_ramps").get_image()
+		var toward := RAMP_COLOUR.srgb_to_linear()
+		var first_toward := ramps.get_pixel(0, 0)
+		var first_by := ramps.get_pixel(0, 1)
+		if ramps.get_format() != Image.FORMAT_RGBAF or ramps.get_size() != Vector2i(256, 2) \
+				or not Vector3(first_toward.r, first_toward.g, first_toward.b).is_equal_approx(Vector3(toward.r, toward.g, toward.b)) \
+				or not Vector4(first_by.r, first_by.g, first_by.b, first_by.a).is_equal_approx(RAMP_DRIVERS) \
+				or ramps.get_pixel(1, 1) != Color(0, 0, 0, 0) \
+				or material.get_shader_parameter("ramp_heights") != RAMP_HEIGHTS:
+			_fail("the ramps of %s are %s texels of format %d, the first toward %s by %s, the second by %s, over %s" % [chunk, ramps.get_size(), ramps.get_format(), first_toward, first_by, ramps.get_pixel(1, 1), material.get_shader_parameter("ramp_heights")])
+			return true
 	if seen.size() < 2:
 		_fail("only %d materials on the ground" % seen.size())
 		return true
@@ -141,7 +161,7 @@ func _check() -> bool:
 					_fail("the ground at %s is %f high, off its triangles' diagonal %f" % [middle, world.ground_height(middle), diagonal])
 					return true
 	print("verify_ground: the ground's height stands on its mesh at every column centre and on every square's diagonal")
-	print("verify_ground: %d chunks of ground, each with the categories and channels of its %d vertices, %d materials in all" % [world.ground_chunks().size(), (CELLS + 1) * (CELLS + 1), seen.size()])
+	print("verify_ground: %d chunks of ground, each with the categories and channels of its %d vertices and the ramps, %d materials in all" % [world.ground_chunks().size(), (CELLS + 1) * (CELLS + 1), seen.size()])
 	return false
 
 ## Whether `material` fades the grass over `fade` chunks from `focus`, with chunks `span` wide.

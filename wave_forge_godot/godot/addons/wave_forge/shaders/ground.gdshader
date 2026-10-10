@@ -5,7 +5,8 @@
 // meet along a broken line rather than the grid's. Steep ground turns to rock by its own slope,
 // its colour muted and banded in strata; a broad noise varies the colour across the land, and a
 // fine one bumps the ground and grains its colour near the camera. Asset free; works on every
-// renderer, Compatibility included. Channels the node hands in darken hollows and wet ground.
+// renderer, Compatibility included. Channels the node hands in darken hollows and wet ground, and
+// each material's colour may run along a ramp of its own by height, slope, cavity and wetness.
 // `wave_forge_bevy/src/shaders/ground.wesl` is the same shader for Bevy.
 shader_type spatial;
 
@@ -16,6 +17,13 @@ uniform sampler2D wave_forge_materials : filter_nearest, repeat_disable;
 uniform vec2 wave_forge_cell = vec2(1.0);
 // A colour per material id, in texel id of a 256 by 1 texture.
 uniform sampler2D wave_forge_palette : filter_nearest, repeat_disable, source_color;
+// Per material id, in texel id of a 256 by 2 texture: the colour, linear, its ramp runs toward in
+// row 0, and in row 1 how far the ground's height (0 to 1 over `ramp_heights`), slope, cavity and
+// wetness each move its colour along that ramp, from -1 to 1. Black, no ramp, where the node hands
+// in none.
+uniform sampler2D wave_forge_ramps : filter_nearest, repeat_disable, hint_default_black;
+// The heights, in world units, over which the ramps' height runs from 0 to 1.
+uniform vec2 ramp_heights = vec2(0.0, 1.0);
 // Per ground vertex, 0 to 1: a cavity in red, which darkens the ground, a wetness in green, which
 // darkens and smooths it, and a cover in blue, which tints it toward its grass. Black, no effect,
 // where the node hands in none.
@@ -126,8 +134,14 @@ int id_at(ivec2 vertex) {
 	return int(texelFetch(wave_forge_materials, vertex, 0).r * 255.0 + 0.5);
 }
 
-vec3 colour_of(int id) {
-	return texelFetch(wave_forge_palette, ivec2(id, 0), 0).rgb;
+// Material `id`'s colour, moved along its ramp by `drivers`: the ground's height, slope, cavity and
+// wetness here.
+vec3 colour_of(int id, vec4 drivers) {
+	vec3 colour = texelFetch(wave_forge_palette, ivec2(id, 0), 0).rgb;
+	ivec2 last = textureSize(wave_forge_ramps, 0) - 1;
+	vec3 toward = texelFetch(wave_forge_ramps, min(ivec2(id, 0), last), 0).rgb;
+	vec4 by = texelFetch(wave_forge_ramps, min(ivec2(id, 1), last), 0);
+	return mix(colour, toward, clamp(dot(by, drivers), 0.0, 1.0));
 }
 
 void fragment() {
@@ -150,11 +164,23 @@ void fragment() {
 	// Each material's weight is the sum of its corners', so its edge follows the smooth line between
 	// the vertices; raised by a noise of the material's own, the highest wins, blending over a band
 	// of the border's width. A material on several corners is counted once.
+	// The channels, blended between the vertices as the materials are.
+	ivec2 channel_size = textureSize(wave_forge_channels, 0);
+	vec3 channels = vec3(0.0);
+	for (int k = 0; k < 4; k++) {
+		channels += texelFetch(wave_forge_channels, min(corners[k], channel_size - 1), 0).rgb * near_weights[k];
+	}
+	float cavity = clamp(channels.r, 0.0, 1.0);
+	float wet = clamp(channels.g, 0.0, 1.0);
+	float cover = clamp(channels.b, 0.0, 1.0);
+	// What moves each material's colour along its ramp.
+	float height = clamp((world.y - ramp_heights.x) / max(ramp_heights.y - ramp_heights.x, 1e-6), 0.0, 1.0);
+	vec4 drivers = vec4(height, steepness, cavity, wet);
 	int ids[4];
 	for (int k = 0; k < 4; k++) {
 		ids[k] = id_at(corners[k]);
 	}
-	vec3 albedo = colour_of(ids[0]);
+	vec3 albedo = colour_of(ids[0], drivers);
 	// Most fragments have one material on all four corners and need no border.
 	if (ids[1] != ids[0] || ids[2] != ids[0] || ids[3] != ids[0]) {
 		float heights[4];
@@ -177,7 +203,7 @@ void fragment() {
 		float total = 0.0;
 		for (int k = 0; k < 4; k++) {
 			float weight = max(heights[k] - highest + border_width, 0.0) * shares[k];
-			albedo += colour_of(ids[k]) * weight;
+			albedo += colour_of(ids[k], drivers) * weight;
 			total += weight;
 		}
 		albedo /= total;
@@ -210,15 +236,6 @@ void fragment() {
 		normal = normalize(normal - vec3(lean.x, 0.0, lean.y) * 0.3 * cut);
 	}
 	albedo *= mix(1.0, 0.8 + 0.4 * fbm(ground / 48.0), macro_variation);
-	// The channels, blended between the vertices as the materials are.
-	ivec2 channel_size = textureSize(wave_forge_channels, 0);
-	vec3 channels = vec3(0.0);
-	for (int k = 0; k < 4; k++) {
-		channels += texelFetch(wave_forge_channels, min(corners[k], channel_size - 1), 0).rgb * near_weights[k];
-	}
-	float cavity = clamp(channels.r, 0.0, 1.0);
-	float wet = clamp(channels.g, 0.0, 1.0);
-	float cover = clamp(channels.b, 0.0, 1.0);
 	vec2 from_focus = abs(world.xz - wave_forge_focus) / wave_forge_span;
 	float beyond_grass = smoothstep(wave_forge_fade.x, wave_forge_fade.y, max(from_focus.x, from_focus.y));
 	albedo = mix(albedo, cover_colour, cover * cover_tint * beyond_grass);

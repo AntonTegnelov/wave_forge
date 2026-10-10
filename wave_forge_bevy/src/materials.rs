@@ -61,6 +61,9 @@ pub struct GroundLook {
     /// its normal, 0 to 1: finer than a column, so a wall too narrow for the Erode stage still
     /// shows them.
     pub gullies: f32,
+    /// The heights, in world units, over which a ramp's height runs from 0 to 1
+    /// ([`GroundMaterials::ramps`]).
+    pub ramp_heights: Vec2,
     /// Where covered ground tints in: the grass's fade, which the [`GrassFade`] resource gives
     /// every ground material, so the ground is as it is where the blades stand and tinted where
     /// they have gone. Farther than any view by default, so nothing is tinted. Last and aligned to
@@ -90,6 +93,7 @@ impl Default for GroundLook {
             cover_colour: Color::srgb(0.376, 0.384, 0.231).to_linear().to_vec4(),
             cover_fade: GrassFade::default(),
             gullies: 0.5,
+            ramp_heights: Vec2::new(0.0, 1.0),
         }
     }
 }
@@ -131,6 +135,50 @@ pub struct GroundMaterials {
     /// single texel of zeros for a ground without channels.
     #[texture(104, sample_type = "float", filterable = false)]
     pub channels: Handle<Image>,
+    /// Each material's ramp ([`ramp_image`]); a single texel of zeros, no ramp, by default.
+    #[texture(105, sample_type = "float", filterable = false)]
+    pub ramps: Handle<Image>,
+}
+
+/// A palette colour's ramp: the colour it runs toward, and how far the ground's height (0 to 1 over
+/// [`GroundLook::ramp_heights`]), its slope (0 flat to 1 sheer), its cavity and its wetness each move
+/// it along, from -1 to 1, summed and clamped to the ramp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GroundRamp {
+    /// The colour at the ramp's far end.
+    pub toward: Color,
+    /// How far height, slope, cavity and wetness move the colour along, in that order.
+    pub by: Vec4,
+}
+
+/// The image of the ground's ramps for [`GroundMaterials::ramps`], one per palette colour by index,
+/// 256 by 2: each ramp's far colour, linear, in row 0 and its drivers in row 1. Colours past the
+/// ramps given have none; with none given it is a single texel of zeros.
+#[must_use]
+pub fn ramp_image(ramps: &[GroundRamp]) -> Image {
+    let (width, texels): (usize, Vec<f32>) = if ramps.is_empty() {
+        (1, vec![0.0; 4])
+    } else {
+        let toward = (0..PALETTE).flat_map(|index| {
+            ramps
+                .get(index)
+                .map_or([0.0; 4], |ramp| ramp.toward.to_linear().to_f32_array())
+        });
+        let by = (0..PALETTE)
+            .flat_map(|index| ramps.get(index).map_or([0.0; 4], |ramp| ramp.by.to_array()));
+        (PALETTE, toward.chain(by).collect())
+    };
+    Image::new(
+        Extent3d {
+            width: width as u32,
+            height: (texels.len() / 4 / width) as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        texels.iter().copied().flat_map(f32::to_le_bytes).collect(),
+        TextureFormat::Rgba32Float,
+        RenderAssetUsages::RENDER_WORLD,
+    )
 }
 
 impl MaterialExtension for GroundMaterials {
@@ -698,6 +746,7 @@ pub fn ground_material_of(
             palette,
             look: GroundLook::default(),
             channels: images.add(ground_channels_image([1, 1], &[0.0; GROUND_CHANNELS])),
+            ramps: images.add(ramp_image(&[])),
         },
     }
 }
