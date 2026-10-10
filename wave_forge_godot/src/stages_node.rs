@@ -4682,8 +4682,17 @@ impl WaveForgeStages {
             else {
                 return;
             };
-            // As wide as the view, and a chunk more on each side so its edge is never in it.
-            let side = (2 * self.view_radius.max(0) + 3) as f32 * size[0].max(size[1]);
+            // As wide as the view or the far ground, whichever reaches further, in chunks of the
+            // lattice, and a chunk more on each side so its edge is never in it.
+            let far_reach = if self.far_ground_stage.is_empty() {
+                0
+            } else {
+                self.target_radii
+                    .get(&StringName::from(&self.far_ground_stage))
+                    .unwrap_or(0)
+            };
+            let reach = self.view_radius.max(0).max(far_reach);
+            let side = (2 * reach + 3) as f32 * size[0].max(size[1]);
             self.sea = Some(crate::sea::Sea::new(
                 material,
                 side,
