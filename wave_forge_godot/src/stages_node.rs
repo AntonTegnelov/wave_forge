@@ -4643,7 +4643,8 @@ impl WaveForgeStages {
     }
 
     /// Grows grass on the chunks within `grass_radius` of the followed one whose ground is built,
-    /// nearest first and a few a frame, and frees the grass of the others.
+    /// nearest first and a few a frame, and frees the grass of the others; each draws as many
+    /// blades as the shader shows at its distance from the viewport's camera.
     fn update_grass(&mut self) {
         let Some(scenario) = self
             .base()
@@ -4653,9 +4654,18 @@ impl WaveForgeStages {
         else {
             return;
         };
+        let camera = self
+            .base()
+            .get_viewport()
+            .and_then(|viewport| viewport.get_camera_3d())
+            .map(|camera| camera.get_global_position());
         let (Some(worker), Some(grass)) = (&self.worker, &mut self.grass) else {
             return;
         };
+        // The shader thins blades by their distance from the camera, so the tiers follow it.
+        if let Some(camera) = camera {
+            grass.set_camera(Vector2::new(camera.x, camera.z));
+        }
         let focus = self.followed.unwrap_or(ChunkCoord::new(0, 0, 0));
         let radius = self.grass_radius;
         let distance = |chunk: ChunkCoord| (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs());
@@ -4676,6 +4686,7 @@ impl WaveForgeStages {
             )
         };
         let stage = self.grass_stage.to_string();
+        let chunk_materials = &self.chunk_materials;
         grass.update(
             scenario,
             cell,
@@ -4685,6 +4696,7 @@ impl WaveForgeStages {
             GRASS_PER_FRAME,
             |chunk| grounds.get(&chunk).map(|(mesh, _, _)| mesh),
             |chunk| worker.field(&stage, chunk),
+            |chunk| chunk_materials.get(&chunk),
         );
     }
 

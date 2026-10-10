@@ -8,8 +8,8 @@
 ## wetness and cover stages' values at every vertex, and its ramps the ramp given for the first
 ## category, its far colour in linear light and its drivers, none for the others, and the ramps'
 ## heights. Grass grows on every chunk of ground within its
-## radius, each chunk's grass material holding the chunk's cover per column and the ground's height
-## per vertex, and fading out before the edge of the square of chunks within the radius, measured
+## radius, each chunk's grass material holding the chunk's cover per column, the ground's height
+## per vertex and the ground's materials and palette, and fading out before the edge of the square of chunks within the radius, measured
 ## from the followed chunk's centre, over which every chunk's ground takes the cover's tint in; the
 ## centre moves with the followed chunk. Last, raising the first
 ## column of the chunk beside the origin builds the origin's ground again, which reaches to it.
@@ -207,6 +207,14 @@ func _check_grass() -> bool:
 				return true
 			if cover[i] > 0:
 				covered += 1
+		# The blades' bases take the ground's colours: its materials and palette, as its own
+		# material holds them.
+		var ground: ShaderMaterial = world.ground_material_of(chunk)
+		if not material.get_shader_parameter("wave_forge_ground_colours") \
+				or material.get_shader_parameter("wave_forge_materials") != ground.get_shader_parameter("wave_forge_materials") \
+				or material.get_shader_parameter("wave_forge_palette") != ground.get_shader_parameter("wave_forge_palette"):
+			_fail("the grass of %s does not take its ground's materials and palette" % chunk)
+			return true
 		var heights: Image = material.get_shader_parameter("wave_forge_heights").get_image()
 		for j in CELLS + 1:
 			for i in CELLS + 1:
