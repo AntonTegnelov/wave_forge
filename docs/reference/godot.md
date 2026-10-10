@@ -746,14 +746,28 @@ Godot 4.7.2.
 
 With `grass_stage` set, every chunk within `grass_radius` of the followed position whose ground is
 built gets grass, a few chunks a frame, nearest first, and loses it when it leaves the radius. All
-chunks share one MultiMesh of `grass_per_cell` blades per column, each with the identity transform,
-so its buffer is uploaded once. Each chunk draws it as an instance of its own, with a copy of the
-grass material holding `wave_forge_cover` (the chunk's cover per column, one byte each),
-`wave_forge_heights` (the ground's height per vertex, one float each), `wave_forge_cell`,
-`wave_forge_per_column` and `wave_forge_chunk`. The reference grass shader
-(`addons/wave_forge/shaders/grass.gdshader`; `grass_shader_code()` gives its code) gives blade `INSTANCE_ID` its column, a hashed place in
-it, a hashed turn and height, and shows it only where a hash is below the column's cover; it stands
-on the ground's heights, blended between vertices, and sways in the global shader parameter
+chunks share a few MultiMeshes of blades, each blade with the identity transform, so their buffers
+are uploaded once: one of `grass_per_cell` blades per column, and smaller ones of a half, a quarter
+and an eighth of them, a column's first by rank. Each chunk draws, as an instance of its own, the
+smallest that holds every blade the shader shows on it while the viewport's camera stays within a
+metre of where it stood (`wave_forge::grass_blades_needed`), and moves to another once the camera
+has gone farther; the blades are the same in each, so a chunk far away costs less and looks the
+same.
+Its copy of the grass material holds `wave_forge_cover` (the chunk's cover per column, one byte
+each), `wave_forge_heights` (the ground's height per vertex, one float each), `wave_forge_cell`,
+`wave_forge_per_column` (its MultiMesh's blades per column), `wave_forge_blades` (a full one's) and
+`wave_forge_chunk`, and, when the ground has materials, the ground material's
+`wave_forge_materials` and `wave_forge_palette`. The reference grass shader
+(`addons/wave_forge/shaders/grass.gdshader`; `grass_shader_code()` gives its code) gives a blade its
+column and its rank in it, a hashed place, and shows it only where a hash is below the column's
+cover. Blades grow in clumps, the cells of a cellular noise `clump_size` wide (1.5): a clump's
+blades share a height, a lean its way (`clump_lean`, 0.15) and a colour, a share of the clumps
+(`dry_clumps`, 0.2) dry toward `dry_colour`, a measured dry grass. A blade's base takes the ground's
+colour under it, as far as `ground_tint` (0.6); its normal is mostly the sky's, rounded across it,
+so a meadow is lit evenly; and a blade seen edge-on widens by half, to keep its cover. From
+`thin_distance.x` to `thin_distance.y` from the camera (4 to 14 units) fewer blades show, a column's
+first by rank, down to `thin_keep` (0.12) of them, each wider by as much as their number fell. A
+blade stands on the ground's heights, blended between vertices, and sways in the global shader parameter
 `wave_forge_wind` (a direction along x and z, a strength at the tip, a speed), which the node
 registers blowing gently along +x unless the project's settings declare it. Blades shrink away by
 how many chunks they lie from the followed chunk's centre along the farther axis, so the fade
@@ -767,7 +781,7 @@ takes no GI, and is bounded by its chunk rather than by its blades, which the sh
 draws on every renderer, Compatibility included. `grass_chunks()` lists the chunks with grass and
 `grass_material_of(chunk)` gives a chunk's material. Loading refuses a `grass_stage` the pack does
 not have, or grass without `ground_stage`. What it costs is in
-[measurements.md](../research/measurements.md) (E45).
+[measurements.md](../research/measurements.md) (E45, and E65 for the thinning).
 
 ### Wind
 

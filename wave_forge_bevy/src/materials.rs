@@ -25,7 +25,7 @@ use bevy_render::render_resource::{
 };
 use bevy_shader::ShaderRef;
 use wave_forge::stages::Field;
-use wave_forge::{ChunkCoord, GROUND_CHANNELS, GroundMesh, VolumeMesh};
+use wave_forge::{ChunkCoord, GROUND_CHANNELS, GrassThinning, GroundMesh, VolumeMesh};
 
 /// How many colours a palette holds: one per category a Rules stage can have.
 const PALETTE: usize = 256;
@@ -350,12 +350,23 @@ pub struct GrassSettings {
     pub cell_and_blade: Vec4,
     /// The wind, as [`Wind`] gives it.
     pub wind: Vec4,
-    /// The chunk along x and z, then blades per column.
+    /// The chunk along x and z, then the blades per column its mesh has ([`grass_mesh`]), then the
+    /// blades per column of a full set, of which a smaller mesh holds a column's first by rank
+    /// ([`GrassMaterials::draw_blades`]).
     pub chunk_and_count: IVec4,
     /// A blade's colour at its root, linear RGBA.
     pub base_colour: Vec4,
     /// A blade's colour at its tip, linear RGBA.
     pub tip_colour: Vec4,
+    /// A dry blade's colour at its tip, linear RGBA.
+    pub dry_colour: Vec4,
+    /// Clumps: how wide one is in world units, how far its blades lean its way at the tip, the share
+    /// of them that are dry, then how far a blade's base takes the ground's colour, 0 without the
+    /// ground's colours ([`GrassMaterials::take_ground_colours`]).
+    pub clump: Vec4,
+    /// From how far and to how far from the camera, in world units, blades thin out, then the share
+    /// of them still standing at the far end ([`wave_forge::GrassThinning`]).
+    pub thinning: Vec4,
     /// Where blades shrink away, as the [`GrassFade`] resource gives it.
     pub fade: GrassFade,
 }
@@ -373,6 +384,29 @@ pub struct GrassMaterials {
     /// One texel per column, its cover from 0 to 1.
     #[texture(102, sample_type = "float", filterable = false)]
     pub cover: Handle<Image>,
+    /// The ground's material per vertex and its palette, as its [`GroundMaterials`] has them; a
+    /// texel of zeros each until [`GrassMaterials::take_ground_colours`] gives them.
+    #[texture(103, sample_type = "float", filterable = false)]
+    pub materials: Handle<Image>,
+    #[texture(104, sample_type = "float", filterable = false)]
+    pub palette: Handle<Image>,
+}
+
+impl GrassMaterials {
+    /// Gives the blades' bases the colours of the ground `ground` draws, as far as the reference
+    /// shader's 0.6: its material per vertex and its palette.
+    pub fn take_ground_colours(&mut self, ground: &GroundMaterials) {
+        self.materials = ground.materials.clone();
+        self.palette = ground.palette.clone();
+        self.settings.clump.w = 0.6;
+    }
+
+    /// Draws the grass from a mesh of `blades` per column ([`grass_mesh`]), a column's first of the
+    /// full set by rank: as many as [`wave_forge::grass_blades_needed`] says the chunk shows, so a
+    /// chunk far away costs less and looks the same.
+    pub fn draw_blades(&mut self, blades: u32) {
+        self.settings.chunk_and_count.z = blades as i32;
+    }
 }
 
 impl MaterialExtension for GrassMaterials {
@@ -569,24 +603,47 @@ pub fn grass_material_of(
         RenderAssetUsages::RENDER_WORLD,
     );
     GrassMaterial {
-        // A blade is one triangle, seen from both sides.
+        // A blade is one triangle, seen from both sides, its normal the sky's on either: a double-sided
+        // material would flip it on the back and draw the back black.
         base: StandardMaterial {
             cull_mode: None,
+            double_sided: false,
             ..base
         },
         extension: GrassMaterials {
             settings: GrassSettings {
-                cell_and_blade: Vec4::new(cell.x, cell.z, 0.6, 0.1),
+                cell_and_blade: Vec4::new(cell.x, cell.z, 0.6, 0.07),
                 wind: Wind::default().0,
-                chunk_and_count: IVec4::new(mesh.chunk.x, mesh.chunk.y, per_column as i32, 0),
-                // Measured grass, dark at the base and light at the tip
+                chunk_and_count: IVec4::new(
+                    mesh.chunk.x,
+                    mesh.chunk.y,
+                    per_column as i32,
+                    per_column as i32,
+                ),
+                // Measured grass, dark at the base and light at the tip, and dry grass
                 // (docs/research/terrain-look.md, "Measured albedo").
                 base_colour: Color::srgb(0.31, 0.306, 0.157).to_linear().to_vec4(),
                 tip_colour: Color::srgb(0.435, 0.435, 0.267).to_linear().to_vec4(),
+                dry_colour: Color::srgb(0.365, 0.322, 0.212).to_linear().to_vec4(),
+                clump: Vec4::new(1.5, 0.15, 0.2, 0.0),
+                thinning: Vec4::new(
+                    GrassThinning::REFERENCE.from,
+                    GrassThinning::REFERENCE.to,
+                    GrassThinning::REFERENCE.keep,
+                    0.0,
+                ),
                 fade: GrassFade::default(),
             },
             heights: images.add(heights),
             cover: images.add(covered),
+            materials: images.add(Image::new_fill(
+                Extent3d::default(),
+                TextureDimension::D2,
+                &[0],
+                TextureFormat::R8Unorm,
+                RenderAssetUsages::RENDER_WORLD,
+            )),
+            palette: images.add(palette_image(&[])),
         },
     }
 }
@@ -785,10 +842,15 @@ mod tests {
                     chunk_and_count: IVec4::ZERO,
                     base_colour: Vec4::ONE,
                     tip_colour: Vec4::ONE,
+                    dry_colour: Vec4::ONE,
+                    clump: Vec4::ONE,
+                    thinning: Vec4::ONE,
                     fade: GrassFade::default(),
                 },
                 heights: Handle::default(),
                 cover: Handle::default(),
+                materials: Handle::default(),
+                palette: Handle::default(),
             },
         }
     }

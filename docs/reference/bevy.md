@@ -281,9 +281,18 @@ column, each a triangle carrying nothing but its index, in its second UV channel
 is built and `cover`, a field stage's product for the chunk, has arrived; `grass_material_of(mesh,
 cover, cell, per_column, base, images)` makes one for a ground built some other way. It holds the
 ground's height per vertex (one float each) and the cover per column (one byte each) as images. The
-grass shader gives blade *b* its column, a hashed place in it, a hashed turn and height, and shows
-it only where a hash is below the column's cover; it stands on the ground's heights, blended between
-vertices, and sways in the wind. Blades shrink away where the `GrassFade` resource says: by how
+grass shader gives blade *b* its column and its rank in it, a hashed place, and shows it only where
+a hash is below the column's cover; it stands on the ground's heights, blended between vertices,
+and sways in the wind. As the Godot shader does ([godot.md](godot.md#grass)), it grows the blades in
+clumps of one height, lean and colour between healthy and dry (`settings.clump`, `dry_colour`),
+rounds their normals, widens a blade seen edge-on, and thins them with distance from the camera,
+a column's first by rank, each wider (`settings.thinning`, `wave_forge::GrassThinning::REFERENCE`
+by default). `GrassMaterials::take_ground_colours(&ground)` gives the blades' bases the colours of
+the chunk's ground material, its material per vertex and its palette. A chunk far away needs fewer
+blades: `wave_forge::grass_blades_needed(chunk, camera, room, span, thinning, per_column)` says
+how many while the camera stays within `room` of `camera`, and an app draws it from a `grass_mesh`
+of that many per column with `GrassMaterials::draw_blades(blades)`, the same blades, a column's
+first, at less cost, choosing again once the camera has moved farther. Blades shrink away where the `GrassFade` resource says: by how
 many chunks they lie from `focus` along the farther axis, between `band.x` and `band.y`, so the fade
 follows the square of chunks that have grass wherever the camera is. An app that gives grass to the
 chunks within `radius` of the player's sets it to `GrassFade::of_radius(radius, chunk, span)` when
