@@ -31,6 +31,9 @@ bevy_reflect = "0.20.0-rc.1"
 bevy_shader = "0.20.0-rc.1"
 bevy_render = "0.20.0-rc.1"
 bevy_transform = "0.20.0-rc.1"
+# For the warning that a world draws with no sun: Bevy's own crates, already built through bevy_pbr.
+bevy_light = "0.20.0-rc.1"
+bevy_log = "0.20.0-rc.1"
 # With `Reflect` on its noise configuration, so a game edits it as its own components.
 wave_forge = { path = "..", features = ["bevy_reflect"] }
 # The types Bevy's device and queue are, handed straight to `Builder::build_on`. Declaring it is

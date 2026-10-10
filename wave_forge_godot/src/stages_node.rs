@@ -121,6 +121,11 @@ pub struct WaveForgeStages {
     /// at `bake_path`.
     #[export_tool_button(fn = Self::bake_view, name = "Bake the view", icon = "PackedScene")]
     bake_button: PhantomVar<Callable>,
+    /// Adds a sun and a sky to the scene, each only if it has none: plain Godot nodes copied from the
+    /// addon's `sun_and_sky.tscn`, which the scene then owns, as Godot's own "Add Sun to Scene"
+    /// does (docs/reference/godot.md, "First look").
+    #[export_tool_button(fn = Self::add_sun_and_sky, name = "Add sun and sky", icon = "DirectionalLight3D")]
+    sun_and_sky_button: PhantomVar<Callable>,
     /// Where "Bake the view" saves the scene it bakes.
     #[export(file = "*.tscn")]
     bake_path: GString,
@@ -387,6 +392,9 @@ pub struct WaveForgeStages {
     ground_due: std::collections::BTreeSet<ChunkCoord>,
     /// The chunks whose ground is built: its mesh, and its `RenderingServer` mesh and instance.
     grounds: HashMap<ChunkCoord, (GroundMesh, Rid, Rid)>,
+    /// Whether a running game has looked, once its first ground or surface was drawn, for a sun
+    /// and a sky to draw it under.
+    unlit_checked: bool,
     /// Each drawn ground's water, with water in it, and its mesh and instance.
     waters: HashMap<ChunkCoord, (WaterMesh, Rid, Rid)>,
     /// The revision each built ground was built as, so a chunk's body tells a ground built again
@@ -770,6 +778,8 @@ impl INode for WaveForgeStages {
             regenerate_button: PhantomVar::default(),
             reroll_button: PhantomVar::default(),
             bake_button: PhantomVar::default(),
+            sun_and_sky_button: PhantomVar::default(),
+            unlit_checked: false,
             bake_path: GString::from("res://wave_forge_bake.tscn"),
             rules_files: VarDictionary::new(),
             noises: Dictionary::new(),
@@ -952,6 +962,10 @@ impl INode for WaveForgeStages {
             }
         }
         self.update_world_run();
+        if !self.unlit_checked && (!self.grounds.is_empty() || !self.volume_chunks().is_empty()) {
+            self.unlit_checked = true;
+            crate::first_look::warn_if_unlit(&self.to_gd().upcast());
+        }
         if self.follow_camera && !Engine::singleton().is_editor_hint() {
             let camera = self
                 .base()
@@ -4601,6 +4615,14 @@ impl WaveForgeStages {
     /// The inspector's "Start or regenerate".
     fn regenerate(&mut self) {
         self.start();
+    }
+
+    /// The inspector's "Add sun and sky".
+    fn add_sun_and_sky(&mut self) {
+        let node: Gd<Node> = self.to_gd().upcast();
+        if let Some(scene) = crate::warnings::scene_of(&node) {
+            crate::first_look::add_sun_and_sky(&scene);
+        }
     }
 
     /// The inspector's "Reroll seed".

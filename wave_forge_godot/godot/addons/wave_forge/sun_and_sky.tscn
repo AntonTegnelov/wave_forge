@@ -1,0 +1,24 @@
+[gd_scene format=3]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_ejinu"]
+
+[sub_resource type="Sky" id="Sky_7t6sp"]
+sky_material = SubResource("ProceduralSkyMaterial_ejinu")
+
+[sub_resource type="Environment" id="Environment_6lwr3"]
+background_mode = 2
+sky = SubResource("Sky_7t6sp")
+ambient_light_source = 3
+ambient_light_sky_contribution = 0.5
+reflected_light_source = 2
+tonemap_mode = 2
+
+[node name="SunAndSky" type="Node3D" unique_id=503031216]
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1495356903]
+transform = Transform3D(0.8660254, -0.28678823, 0.40957603, 0, 0.81915206, 0.57357645, -0.5, -0.49673176, 0.7094065, 0, 0, 0)
+shadow_enabled = true
+directional_shadow_max_distance = 300.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1815410299]
+environment = SubResource("Environment_6lwr3")

@@ -151,6 +151,18 @@ products arrive as messages equal to what the runtime generates, placed where th
 them and dropped when the focus moves away, and its ground equals the library's for the same
 fields. New facts drop the stages that read them and regenerate them with the new rows. See [testing.md](../guides/testing.md).
 
+## First look
+
+Bevy has no sun or sky of its own, and the plugin owns no lighting: a world drawn with no
+`DirectionalLight` shows only the flat ambient light. The stages plugin warns once, when the first
+ground or volume surface arrives, if no `DirectionalLight` exists. The `first_look` example draws
+the hills preset under a sun with shadows and an `Atmosphere` for the sky, which is the setup a game
+copies:
+
+```text
+cargo run -p wave_forge_bevy --release --example first_look
+```
+
 ## Sound and names
 
 `wave_forge_bevy/examples/sound_and_names.rs` is the mapping a game writes from region tags and

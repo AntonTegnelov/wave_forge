@@ -9,36 +9,26 @@ use std::time::{Duration, Instant};
 /// them, and nothing tells the node so.
 const REFRESH_EVERY: Duration = Duration::from_millis(500);
 
-/// That the scene the node is in has no light and no environment, which leaves the world dark: the
-/// editor lights its viewport with a preview sun and sky of its own, which a running game has not.
+/// That the scene the node is in has no sun or no sky, which leaves the world dark: the editor
+/// lights its viewport with a preview sun and sky of its own, which a running game has not. Judged
+/// as the editor's preview judges it, by `DirectionalLight3D` and `WorldEnvironment` nodes.
 pub(crate) fn lighting(node: &Gd<Node>) -> Vec<String> {
     let Some(scene) = scene_of(node) else {
         return Vec::new();
     };
-    let has = |class: &str| {
-        scene.is_class(class)
-            || !scene
-                .find_children_ex("*")
-                .type_(class)
-                .owned(false)
-                .done()
-                .is_empty()
-    };
+    let (no_sun, no_sky) = crate::first_look::missing(&scene);
     let mut warnings = Vec::new();
-    if !has("Light3D") {
+    if no_sun {
         warnings.push(
-            "The scene has no light, so the world is drawn dark when the game runs: add a \
-             DirectionalLight3D as its sun."
+            "The scene has no DirectionalLight3D, so the world has no sun when the game runs (the \
+             editor's preview sun is not the game's): add one, or press \"Add sun and sky\"."
                 .to_owned(),
         );
     }
-    let default_environment = ProjectSettings::singleton()
-        .get_setting("rendering/environment/defaults/default_environment")
-        .to::<GString>();
-    if !has("WorldEnvironment") && default_environment.is_empty() {
+    if no_sky {
         warnings.push(
-            "The scene has no WorldEnvironment, so the world has no sky and no ambient light \
-             when the game runs: add one."
+            "The scene has no WorldEnvironment, so the world has no sky and no ambient light when \
+             the game runs: add one, or press \"Add sun and sky\"."
                 .to_owned(),
         );
     }
@@ -102,7 +92,7 @@ pub(crate) fn buses(named: &[(&str, &StringName)]) -> Vec<String> {
 
 /// The scene the node is in: the one being edited in the editor, otherwise the topmost node above
 /// it below the tree's root.
-fn scene_of(node: &Gd<Node>) -> Option<Gd<Node>> {
+pub(crate) fn scene_of(node: &Gd<Node>) -> Option<Gd<Node>> {
     if !node.is_inside_tree() {
         return None;
     }

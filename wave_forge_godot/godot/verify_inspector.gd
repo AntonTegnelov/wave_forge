@@ -2,8 +2,9 @@
 ## buttons of WaveForgeStages.
 ##
 ## Run by `../verify.sh` after `verify_continent.gd`. A WaveForgeStages node in a scene with no
-## light, no environment, no camera to follow and no pack warns of all four, and of none once the
-## scene has them and the node a pack. A target or a stage setting naming the wrong stage warns, and `start` refuses
+## sun (a lamp is no sun, as Godot's editor preview has it), no environment, no camera to follow and
+## no pack warns of all four; "Add sun and sky" gives the scene its own sun and sky, once however
+## often it is pressed; and the node warns of none once the scene has a camera and the node a pack. A target or a stage setting naming the wrong stage warns, and `start` refuses
 ## it with the same words. Colliders without Jolt, occluders without occlusion culling, and a
 ## WaveForgeWorld that starts with no rules or names an interior bus the project lacks warn too.
 ## Then the buttons: "Start or regenerate" starts the node, "Reroll seed" takes another seed and
@@ -26,7 +27,7 @@ func _process(_delta: float) -> bool:
 		var problem = _check()
 		if problem != "ok":
 			return _fail(problem)
-		print("verify_inspector: a dark scene and a node without a pack warn, a lit scene with a pack does not; a target or setting naming the wrong stage warns and is refused at start; colliders without Jolt, occluders without culling, a start with no rules and a missing interior bus warn")
+		print("verify_inspector: a dark scene and a node without a pack warn, a lamp is no sun, Add sun and sky gives the scene one sun and one sky however often it is pressed, a lit scene with a pack does not warn; a target or setting naming the wrong stage warns and is refused at start; colliders without Jolt, occluders without culling, a start with no rules and a missing interior bus warn")
 		var problem_buttons = _buttons()
 		if problem_buttons != "ok":
 			return _fail(problem_buttons)
@@ -93,12 +94,26 @@ func _check() -> String:
 	scene.add_child(stages)
 
 	var warned := Array(stages.configuration_warnings())
-	for expected in ["no light", "no WorldEnvironment", "No pack_file", "no Camera3D"]:
+	for expected in ["no DirectionalLight3D", "no WorldEnvironment", "No pack_file", "no Camera3D"]:
 		if not _any(warned, expected):
 			return "a dark scene without a pack does not warn of %s: %s" % [expected, warned]
+	# A lamp is no sun: Godot's editor preview still lights the scene, and the game will not.
+	scene.add_child(OmniLight3D.new())
+	if not _any(Array(stages.configuration_warnings()), "no DirectionalLight3D"):
+		return "a scene lit only by an OmniLight3D does not warn that it has no sun"
 
-	scene.add_child(DirectionalLight3D.new())
-	scene.add_child(WorldEnvironment.new())
+	# "Add sun and sky" adds the addon's sun and sky, each once, as the scene's own nodes.
+	(stages.sun_and_sky_button as Callable).call()
+	(stages.sun_and_sky_button as Callable).call()
+	var suns := scene.find_children("*", "DirectionalLight3D", true, false)
+	var skies := scene.find_children("*", "WorldEnvironment", true, false)
+	if suns.size() != 1 or skies.size() != 1:
+		return "Add sun and sky, pressed twice, gave %d suns and %d skies, not one each" % [suns.size(), skies.size()]
+	if not suns[0].shadow_enabled or suns[0].owner != scene or skies[0].owner != scene:
+		return "the sun casts no shadow, or the nodes are not the scene's own"
+	var environment: Environment = skies[0].environment
+	if environment == null or environment.background_mode != Environment.BG_SKY or environment.sky == null or environment.resource_path.contains("sun_and_sky"):
+		return "the sky is no environment of the scene's own with a sky background: %s" % [environment]
 	scene.add_child(Camera3D.new())
 	stages.pack_file = "res://islands.world.ron"
 	stages.targets = PackedStringArray(["height", "trees"])

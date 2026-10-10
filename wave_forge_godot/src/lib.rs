@@ -64,6 +64,7 @@ use wave_forge::{
 
 mod audio;
 mod ending;
+mod first_look;
 mod gi;
 mod grass;
 mod kit;
@@ -116,6 +117,14 @@ unsafe impl ExtensionLibrary for WaveForgeExtension {
 #[class(tool, base = Node)]
 pub struct WaveForgeWorld {
     base: Base<Node>,
+
+    /// Adds a sun and a sky to the scene, each only if it has none: plain Godot nodes copied from the
+    /// addon's `sun_and_sky.tscn`, which the scene then owns, as Godot's own "Add Sun to Scene"
+    /// does (docs/reference/godot.md, "First look").
+    #[export_tool_button(fn = Self::add_sun_and_sky, name = "Add sun and sky", icon = "DirectionalLight3D")]
+    sun_and_sky_button: PhantomVar<Callable>,
+    /// Whether a running game has looked, once its first chunk arrived, for a sun and a sky.
+    unlit_checked: bool,
 
     /// The rule set to generate from: a Wave Forge rule file, tiles with their adjacency or
     /// modules described by connectors. Read when the node starts on its own; a script can call
@@ -339,6 +348,8 @@ impl INode for WaveForgeWorld {
             cell_size: Vector3::ONE,
             view_radius: 2,
             follow_camera: true,
+            sun_and_sky_button: PhantomVar::default(),
+            unlit_checked: false,
             halo: 1,
             evict_margin: 0,
             world_chunks: Vector3i::ZERO,
@@ -475,6 +486,10 @@ impl INode for WaveForgeWorld {
             }
         }
         frame.signals_ms = elapsed_ms(processing);
+        if !self.unlit_checked && !updated.is_empty() {
+            self.unlit_checked = true;
+            first_look::warn_if_unlit(&self.to_gd().upcast());
+        }
         let colliding = std::time::Instant::now();
         frame.colliders = self.update_colliders(&updated);
         frame.colliders_ms = elapsed_ms(colliding);
@@ -494,10 +509,18 @@ impl INode for WaveForgeWorld {
 }
 
 impl WaveForgeWorld {
+    /// The inspector's "Add sun and sky".
+    fn add_sun_and_sky(&mut self) {
+        let node: Gd<Node> = self.to_gd().upcast();
+        if let Some(scene) = warnings::scene_of(&node) {
+            first_look::add_sun_and_sky(&scene);
+        }
+    }
+
     /// The node's configuration warnings: a start with no rules, and the project's settings that
     /// would leave its world without bodies, occluders or interior sound ([`warnings`]).
     fn warnings(&self) -> Vec<String> {
-        let mut warnings = Vec::new();
+        let mut warnings = warnings::lighting(&self.to_gd().upcast());
         if self.start_on_ready && self.rules_file.is_empty() {
             warnings.push(
                 "start_on_ready is set, but rules_file is empty: set it to a rule set (*.ron)."

@@ -29,9 +29,11 @@ use bevy_asset::RenderAssetUsages;
 use bevy_camera::visibility::VisibilityRange;
 use bevy_ecs::message::{Message, MessageReader, MessageWriter};
 use bevy_ecs::prelude::{
-    Commands, Component, Entity, IntoScheduleConfigs, Query, ResMut, Resource,
+    Commands, Component, Entity, IntoScheduleConfigs, Query, ResMut, Resource, With,
 };
-use bevy_ecs::system::{EntityCommands, SystemParam};
+use bevy_ecs::system::{EntityCommands, Local, SystemParam};
+use bevy_light::DirectionalLight;
+use bevy_log::warn;
 use bevy_math::{Mat3, Quat, Vec3};
 use bevy_mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy_transform::components::{GlobalTransform, Transform};
@@ -863,9 +865,32 @@ impl Plugin for WaveForgeStagesPlugin {
         .register_type::<NoiseConfig>()
         .add_systems(
             Update,
-            (follow_focus, drain, place)
+            (follow_focus, drain, place, warn_if_unlit)
                 .chain()
                 .in_set(WaveForgeStagesSystems),
+        );
+    }
+}
+
+/// Warns once, when the first ground or volume surface arrives, if no `DirectionalLight` lights the
+/// world: Bevy has no sun of its own, so the terrain would be drawn by its flat ambient light
+/// alone (docs/reference/bevy.md, "First look").
+fn warn_if_unlit(
+    mut grounds: MessageReader<GroundReady>,
+    mut volumes: MessageReader<VolumeReady>,
+    suns: Query<(), With<DirectionalLight>>,
+    mut looked: Local<bool>,
+) {
+    let arrived = grounds.read().count() + volumes.read().count() > 0;
+    if *looked || !arrived {
+        return;
+    }
+    *looked = true;
+    if suns.is_empty() {
+        warn!(
+            "wave forge: the world has no DirectionalLight, so the terrain is drawn by the flat \
+             ambient light alone; spawn a sun (and an atmosphere for a sky), as the first_look \
+             example does"
         );
     }
 }
