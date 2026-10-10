@@ -31,12 +31,14 @@ func read_pack_text(text: String) -> bool:
 	rest = data
 	return true
 
-## Every category of the stack's Rules stages, by stage name in stack order, as a pack file
-## orders them: each rule's category where it first appears, then the one otherwise takes.
+## Every category of the stack's Rules stages at scale 1, by stage name in stack order, as a pack
+## file orders them: each rule's category where it first appears, then the one otherwise takes. A
+## coarse Rules stage, a far ground's world map say, is left out: a scene dropped on a rule is
+## scattered over the lattice, which a coarse column's category would cover in blocks.
 func rule_categories() -> Dictionary:
 	var categories := {}
 	for stage: StackStage in stages:
-		if stage.kind != "Rules":
+		if stage.kind != "Rules" or stage.scale != 1:
 			continue
 		var names := PackedStringArray()
 		for rule: Dictionary in stage.settings["rules"]:
