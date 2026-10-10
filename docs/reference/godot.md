@@ -242,8 +242,9 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   which arrives as the `saved` signal's text a game writes to disk; `load_save(text)` brings a world
   back from it. A text that is not a save, or holds an edit the pack refuses, is reported as an
   error, returns false and changes nothing.
-- `target_radii`: a `Dictionary[StringName, int]` of target stage names to a radius in chunks of their own; the
-  other targets keep `view_radius`.
+- `target_radii`: a `Dictionary[StringName, int]` of target stage names to a radius in chunks of the
+  WFC lattice, whatever the stage's scale: a coarse stage generates the chunks of its own that
+  cover them (`Runtime::request_each`). The other targets keep `view_radius`.
 - `start()` loads the pack and the rule sets and starts the stages' thread, where a town solver
   builds its device.
 - `follow(position)` generates around a position in Godot's world space, asking again only when it
