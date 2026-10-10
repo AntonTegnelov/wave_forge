@@ -56,9 +56,10 @@ use wave_forge::stages::{
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
-    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, InstanceSet, RegionTags, SurfaceWorker,
-    VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories, ground, ground_channels,
-    ground_height, ground_materials, ground_readers, ground_values, volume_height, water_surface,
+    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, GroundRelief, InstanceSet, RegionTags,
+    SurfaceWorker, VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories, ground,
+    ground_channels, ground_height, ground_materials, ground_readers, ground_values, volume_height,
+    water_surface,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -189,6 +190,11 @@ pub struct WaveForgeStages {
     /// The heights, in Godot's world units, over which a ramp's height runs from 0 to 1.
     #[export]
     ground_ramp_heights: Vector2,
+    /// Per category, by index: its micro-height in the reference ground shader, how much of it is
+    /// pebbles, cracks and tufts, and how wide one of its features is in world units
+    /// (`wave_forge::GroundRelief`). A category past its end has the default, fine tufts.
+    #[export]
+    ground_relief: PackedVector4Array,
     /// A field stage at the ground's scale whose values, 0 to 1, darken the ground's hollows: its
     /// cavity, handed to the ground material with `ground_material_stage`'s categories, in the red
     /// channel of `wave_forge_channels`. Empty for none.
@@ -845,6 +851,7 @@ impl INode for WaveForgeStages {
             ground_ramp_colours: PackedColorArray::new(),
             ground_ramp_drivers: PackedVector4Array::new(),
             ground_ramp_heights: Vector2::new(0.0, 1.0),
+            ground_relief: PackedVector4Array::new(),
             ground_cavity_stage: GString::new(),
             ground_wetness_stage: GString::new(),
             ground_cover_stage: GString::new(),
@@ -5060,6 +5067,7 @@ impl WaveForgeStages {
         let mut template = template;
         template.set_shader_parameter("wave_forge_ramps", &self.ramps_texture()?.to_variant());
         template.set_shader_parameter("ramp_heights", &self.ground_ramp_heights.to_variant());
+        template.set_shader_parameter("wave_forge_relief", &self.relief_texture()?.to_variant());
         let colours: Vec<u8> = (0..MAX_CATEGORIES)
             .flat_map(|index| {
                 let colour = palette_colour(&self.ground_palette, index);
@@ -5106,6 +5114,36 @@ impl WaveForgeStages {
         .ok_or("the ground ramps could not be made")?;
         ImageTexture::create_from_image(&image)
             .ok_or_else(|| "the ground ramps could not be made".to_owned())
+    }
+
+    /// The reliefs' texture for the ground material: per category, its pebbles, cracks, tufts and
+    /// feature size, the default past the reliefs given.
+    fn relief_texture(&self) -> Result<Gd<ImageTexture>, String> {
+        let reliefs: Vec<GroundRelief> = self
+            .ground_relief
+            .as_slice()
+            .iter()
+            .map(|relief| GroundRelief {
+                pebbles: relief.x,
+                cracks: relief.y,
+                tufts: relief.z,
+                size: relief.w,
+            })
+            .collect();
+        let bytes: Vec<u8> = GroundRelief::texels(&reliefs, MAX_CATEGORIES)
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        let image = Image::create_from_data(
+            MAX_CATEGORIES as i32,
+            1,
+            false,
+            ImageFormat::RGBAF,
+            &PackedByteArray::from(bytes.as_slice()),
+        )
+        .ok_or("the ground reliefs could not be made")?;
+        ImageTexture::create_from_image(&image)
+            .ok_or_else(|| "the ground reliefs could not be made".to_owned())
     }
 
     fn clear_ground_and_bodies(&mut self) {
