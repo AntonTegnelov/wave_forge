@@ -15,7 +15,8 @@ const Presets := preload("res://addons/wave_forge/presets.gd")
 const ReferenceLook := preload("res://reference_look.gd")
 const Generated := preload("res://generated.gd")
 const TILE := Vector2i(640, 360)
-const TIMEOUT_S := 120.0
+## Long enough for the slowest preset's far ground on Forward+ under a virtual display.
+const TIMEOUT_S := 300.0
 ## Frames to draw after a view settles, so what arrived last is on screen.
 const SETTLE_FRAMES := 30
 const AT := Vector3(1, 0, 1)
@@ -61,7 +62,7 @@ func _process(_delta: float) -> bool:
 		_take(tiles[tile])
 		return false
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
-		printerr("render_presets: tile %d did not settle" % tile)
+		printerr("render_presets: tile %d did not settle: %s" % [tile, stages.stats()])
 		quit(1)
 		return true
 	# Above the ground at the followed point, however high it stands, and above the water over it.
