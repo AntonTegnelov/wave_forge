@@ -49,10 +49,13 @@
         // Grass over the meadows, as thick as the meadows amount.
         (name: "cover", kind: Field(Mul(Is("surface", ["meadow"]), Param("meadows")))),
         // Trees through the woods, three pines to a broadleaf, each of five variants, of varied sizes
-        // and some taller for their width than others.
+        // and some taller for their width than others, thinning toward the woods' edge.
+        // 0 to 1: how far into the woods a column lies, rising from their edge, so the trees thin
+        // out toward it.
+        (name: "thicket", kind: Field(Clamp(Mul(Sub(Param("forest"), Input("woods")), Constant(10.0)), 0.0, 1.0))),
         (name: "trees", kind: Scatter(height: "height", spacing: 3, apart: 3,
             kinds: [(kind: "pine", weight: 3.0, variants: 5), (kind: "broadleaf", variants: 5)],
-            scale: (0.6, 1.0), stretch: (0.9, 1.15),
+            density: Some("thicket"), scale: (0.6, 1.0), stretch: (0.9, 1.15),
             when: [Greater(Is("surface", ["forest_floor"]), Constant(0.5))])),
         // Bushes and ferns under the trees, clear of their trunks.
         (name: "undergrowth", kind: Scatter(height: "height", spacing: 2, chance: 0.6,

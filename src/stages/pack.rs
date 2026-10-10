@@ -600,15 +600,17 @@ pub enum StageKind {
     /// 1. candidates: `count` per square block of `spacing` cells, each at a hashed column inside
     ///    it and kept with probability `chance`, and each the first of a `group` of points
     ///    scattered around it;
-    /// 2. tests at each point's column: the height within `between`, the slope at most
-    ///    `max_slope` (height per cell), every condition of `when`, the depth under `water`, at
+    /// 2. tests at each point's column: kept as often as the `density` field says there (0 to 1),
+    ///    by a hash of the column, the height within `between`, the slope at most `max_slope`
+    ///    (height per cell), every condition of `when`, the depth under `water`, at
     ///    least `margin` cells from every footprint of `avoid` (a sites stage's sites or an
     ///    Assemble stage's pieces), and at least its clearance from every point of each Scatter
     ///    stage `block` names, which is placed first and so wins;
     /// 3. spacing: no candidate that passes its tests and has a higher priority closer than
     ///    `apart` cells, a test that reads neighbours' candidates, never their results, so points
     ///    keep their distance across chunk seams;
-    /// 4. attributes: a `scale`, a `stretch` of its height over its width, a `tilt` in degrees
+    /// 4. attributes: a `scale`, times a `clump` factor its group shares, a `stretch` of its height
+    ///    over its width, a `tilt` in degrees
     ///    and, with probability `align`, standing along the ground's normal; a kind from `kinds`
     ///    by weight for each candidate and its group, a variant of it and a random in 0 to 1 for
     ///    each point, and the values of the `appearance` fields at its column.
@@ -630,6 +632,8 @@ pub enum StageKind {
         #[serde(default = "always")]
         chance: f32,
         #[serde(default)]
+        density: Option<String>,
+        #[serde(default)]
         between: Option<(f32, f32)>,
         #[serde(default)]
         max_slope: Option<f32>,
@@ -645,6 +649,8 @@ pub enum StageKind {
         apart: u32,
         #[serde(default = "unscaled")]
         scale: (f32, f32),
+        #[serde(default = "unscaled")]
+        clump: (f32, f32),
         #[serde(default = "unscaled")]
         stretch: (f32, f32),
         #[serde(default)]
@@ -3099,6 +3105,7 @@ impl Pack {
                     count,
                     group,
                     chance,
+                    density,
                     between,
                     max_slope,
                     when,
@@ -3107,6 +3114,7 @@ impl Pack {
                     block,
                     apart,
                     scale,
+                    clump,
                     stretch,
                     tilt,
                     align,
@@ -3145,13 +3153,15 @@ impl Pack {
                             )));
                         }
                     }
-                    if !(stretch.0.is_finite() && stretch.0 > 0.0 && stretch.0 <= stretch.1)
-                        || !stretch.1.is_finite()
-                    {
-                        return Err(invalid(format!(
-                            "a stretch from {} to {}",
-                            stretch.0, stretch.1
-                        )));
+                    for (what, range) in [("stretch", stretch), ("clump", clump)] {
+                        if !(range.0.is_finite() && range.0 > 0.0 && range.0 <= range.1)
+                            || !range.1.is_finite()
+                        {
+                            return Err(invalid(format!(
+                                "a {what} from {} to {}",
+                                range.0, range.1
+                            )));
+                        }
                     }
                     if appearance.len() > MAX_APPEARANCE {
                         return Err(invalid(format!(
@@ -3241,6 +3251,12 @@ impl Pack {
                     if let (Some(_), Some(lakes)) = (water, lakes) {
                         fields.push((lakes, Output::Field, base));
                     }
+                    // A candidate's density is read at its column, as its conditions are.
+                    fields.extend(
+                        density
+                            .iter()
+                            .map(|name| (name.as_str(), Output::Field, base)),
+                    );
                     // A point's appearance is read at its own column, in the chunk.
                     fields.extend(
                         appearance

@@ -2,9 +2,10 @@
 ##
 ## Run by `../verify.sh` after `verify_paint.gd`. With `candidates_stage` set to the islands
 ## preset's trees, every chunk around the player gets its candidates drawn, and the legend counts
-## as many kept as there are trees, each in its colour, and candidates rejected by the tree's
-## conditions: off the grass, or outside the woods. Hovering (N5): the candidate under a tree is a
-## kept one with both conditions holding and no slope or water read, one off the grass reads 0 for
+## as many kept as there are trees, each in its colour, candidates rejected off the grass by the
+## tree's first condition, and candidates thinned by its density, which is nothing outside the woods
+## and falls off toward their edge. Hovering (N5): the candidate under a tree is a kept one with
+## both conditions holding, a density above nothing read and no slope or water read, one off the grass reads 0 for
 ## its first condition, which fails, nothing lies far away, and the dock's panel shows what the
 ## node gives.
 extends SceneTree
@@ -56,8 +57,8 @@ func _process(_delta: float) -> bool:
 	if counts.get("kept", 0) != trees or trees == 0:
 		_fail("%d kept candidates for %d trees: %s" % [counts.get("kept", 0), trees, counts])
 		return true
-	if counts.get("condition 0", 0) == 0 or counts.get("condition 1", 0) == 0:
-		_fail("no candidate rejected off the grass or outside the woods: %s" % counts)
+	if counts.get("condition 0", 0) == 0 or counts.get("density", 0) == 0:
+		_fail("no candidate rejected off the grass or thinned by the woods' density: %s" % counts)
 		return true
 	print("verify_candidates: %d chunks drawn, the legend %s, the kept ones exactly the trees" % [drawn.size(), counts])
 	var problem := _hovering(drawn)
@@ -88,6 +89,8 @@ func _hovering(drawn: Array) -> String:
 	for condition: Dictionary in under["conditions"]:
 		if not condition["holds"]:
 			return "a kept candidate with a condition failing: %s" % under
+	if under.get("density", 0.0) <= 0.0:
+		return "a kept candidate reading no density: %s" % under
 	if under.has("slope") or under.has("water_depth"):
 		return "a slope or water read by a stage with neither: %s" % under
 	var off := {}

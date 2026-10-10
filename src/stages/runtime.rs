@@ -4631,6 +4631,7 @@ impl Runtime {
             count,
             group,
             chance,
+            density,
             between,
             max_slope,
             when,
@@ -4639,6 +4640,7 @@ impl Runtime {
             block,
             apart,
             scale,
+            clump,
             stretch,
             tilt,
             align,
@@ -4761,11 +4763,26 @@ impl Runtime {
                 None => pack_water.level,
             })
         };
+        // The density field's value there, 0 to 1; read only by a stage with `density`.
+        let density_at = |x: i64, y: i64| -> Result<Option<f32>, StageError> {
+            density
+                .as_ref()
+                .map(|name| read(name, x, y).map(|value| value.clamp(0.0, 1.0)))
+                .transpose()
+        };
         // The height of a point standing at `at` in `column`, on the ground or on the water if it
         // floats, if it passes the stage's tests there.
         let passes =
             |column: (i64, i64), at: (f32, f32)| -> Result<Result<f32, Rejection>, StageError> {
                 let (x, y) = column;
+                // Kept as often as the density there, by a hash of the column compared as an
+                // integer, so the same on every machine.
+                if let Some(value) = density_at(x, y)? {
+                    let hash = pcg3d([world ^ stage.salt ^ DENSITY_STREAM, x as u32, y as u32])[0];
+                    if u64::from(hash) >= (f64::from(value) * 4_294_967_296.0) as u64 {
+                        return Ok(Err(Rejection::Density));
+                    }
+                }
                 let here = heights.get(x, y)?;
                 if between.is_some_and(|(low, high)| !(low..=high).contains(&here)) {
                     return Ok(Err(Rejection::Height));
@@ -4865,6 +4882,7 @@ impl Runtime {
                     at: [candidate.at.0, candidate.at.1],
                     verdict: verdict.map(|_| ()),
                     readings: Readings {
+                        density: density_at(x, y)?,
                         height: here,
                         slope: max_slope.map(|_| slope(x, y)).transpose()?,
                         conditions,
@@ -4898,6 +4916,10 @@ impl Runtime {
             // A candidate's group is of one kind, drawn by weight.
             let mut left = unit(pcg3d([world ^ stage.salt ^ KIND_STREAM, stream[0], stream[1]])[0])
                 * total_weight;
+            // A candidate's group shares one clump factor of its size.
+            let clump_factor = clump.0
+                + (clump.1 - clump.0)
+                    * unit(pcg3d([world ^ stage.salt ^ CLUMP_STREAM, stream[0], stream[1]])[0]);
             let (kind, _, kind_variants) = choices
                 .iter()
                 .find(|choice| {
@@ -4959,7 +4981,7 @@ impl Runtime {
                     kind: Arc::clone(kind),
                     position: [at.0, at.1, z],
                     turn,
-                    scale: scale.0 + (scale.1 - scale.0) * unit(size),
+                    scale: (scale.0 + (scale.1 - scale.0) * unit(size)) * clump_factor,
                     up,
                     variant: (variant % kind_variants) as u8,
                     random: unit(random),
@@ -5591,6 +5613,8 @@ fn noise_stream(name: &str) -> u32 {
 pub enum Rejection {
     /// It did not exist: its hash fell outside the stage's `chance`.
     Chance,
+    /// Its column's hash fell above the stage's `density` there.
+    Density,
     /// The ground's height lay outside `between`.
     Height,
     /// The ground was steeper than `max_slope`.
@@ -5621,6 +5645,8 @@ pub struct Judgement {
 /// became of the candidate: what a viewer shows to say why ([`Judgement`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Readings {
+    /// The density field's value, 0 to 1, for a stage with `density`.
+    pub density: Option<f32>,
     /// The ground's height, in cells.
     pub height: f32,
     /// The ground's steeper rise per column, along x or y, for a stage with `max_slope`.
@@ -5650,6 +5676,10 @@ const LOOK_STREAM: u32 = 0x6C6F_6F6B;
 const KIND_STREAM: u32 = 0x6B69_6E64;
 /// Mixed into a Scatter stage's stream for a point's variant, random and stretch.
 const VARIETY_STREAM: u32 = 0x7661_7279;
+/// Mixed into a Scatter stage's stream for whether a column passes its density.
+const DENSITY_STREAM: u32 = 0x6465_6E73;
+/// Mixed into a Scatter stage's stream for a group's clump factor.
+const CLUMP_STREAM: u32 = 0x636C_756D;
 
 /// The sine and cosine of `angle` in radians, the same on every platform: a point's place, turn
 /// and lean come from them, and spacing decides by where points stand.

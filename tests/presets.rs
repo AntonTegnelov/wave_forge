@@ -150,8 +150,11 @@ fn a_changed_parameter_drops_only_what_reads_it() {
         ]))
         .expect("values in range");
 
+    // The trees and the thicket they thin by read the tree density; nothing else does.
     assert!(
-        dropped.iter().all(|(stage, _)| stage == "trees"),
+        dropped
+            .iter()
+            .all(|(stage, _)| stage == "trees" || stage == "thicket"),
         "{dropped:?}"
     );
     assert!(!dropped.is_empty());

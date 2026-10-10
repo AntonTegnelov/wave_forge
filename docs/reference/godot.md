@@ -343,13 +343,13 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
     id, where it stood and its transform;
   - everything else the generator made has `wave_forge_generated`.
 - `candidate_legend()` gives what the drawn candidates of `candidates_stage` came to, over every
-  chunk drawn: each verdict's `name` (`"kept"`, or `"chance"`, `"height"`, `"slope"`,
+  chunk drawn: each verdict's `name` (`"kept"`, or `"chance"`, `"density"`, `"height"`, `"slope"`,
   `"condition n"`, `"water"`, `"sites"`, `"blocked"` or `"spacing"`), the `colour` it is drawn in
   and its `count`; `candidate_chunks()` lists the chunks drawn. The node asks the stages' thread
   for each chunk's `scatter_report` as the chunk arrives. `candidate_near(position, radius)` gives
   the drawn candidate nearest a point in world space, no farther than `radius` along the ground:
   its `verdict` and `colour`, its `position`, and what the stage's modifiers read there, `height`,
-  `slope` and `water_depth` when the stage has those modifiers, and `conditions`, each with the
+  `slope`, `water_depth` and `density` when the stage has those modifiers, and `conditions`, each with the
   `value` it tests and whether it `holds` ([packs.md](packs.md#scatter)); empty when none lies that
   near. `candidate_under(from, along)` gives the same for the candidate under a ray, within a cell
   of where the ray first meets the ground the candidates stand on, the Scatter stage's height
