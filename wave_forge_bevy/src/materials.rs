@@ -28,6 +28,7 @@ use bevy_shader::ShaderRef;
 use wave_forge::stages::Field;
 use wave_forge::{
     ChunkCoord, GROUND_CHANNELS, GrassThinning, GroundMesh, GroundRelief, VolumeMesh,
+    far_ground_categories, far_steps,
 };
 
 /// How many colours a palette holds: one per category a Rules stage can have.
@@ -150,6 +151,16 @@ pub struct GroundMaterials {
     /// [`GroundRelief::DEFAULT`], unless a game gives others.
     #[texture(106, sample_type = "float", filterable = false)]
     pub relief: Handle<Image>,
+    /// Where the first vertex stands from `grid`'s corner, in cells along x and z, and how many
+    /// fine cells wide one cell is: [`GroundMaterials::NEAR_LAYOUT`] for a chunk's ground, and
+    /// [`far_ground_material`]'s for the far ground, whose cells are coarse columns.
+    #[uniform(107)]
+    pub layout: Vec4,
+}
+
+impl GroundMaterials {
+    /// A chunk's ground's layout: its first vertex at its first cell's centre, cells of one cell.
+    pub const NEAR_LAYOUT: Vec4 = Vec4::new(0.5, 0.5, 1.0, 0.0);
 }
 
 /// The image of the ground's reliefs for [`GroundMaterials::relief`], one per palette colour by
@@ -921,8 +932,72 @@ pub fn ground_material_of(
             channels: images.add(ground_channels_image([1, 1], &[0.0; GROUND_CHANNELS])),
             ramps: images.add(ramp_image(&[])),
             relief: images.add(relief_image(&[])),
+            layout: GroundMaterials::NEAR_LAYOUT,
         },
     }
+}
+
+/// The ground material of a coarse chunk's far ground, once it is built and its chunk of the
+/// Rules stage `categories` (at the far ground's scale) has arrived: each vertex of its grid of
+/// coarse columns takes the category of the column under it ([`wave_forge::far_ground_categories`]),
+/// which `palette_index` maps to a colour of `palette`, the near ground's say, so the ramps and
+/// reliefs the game gives the near ground's materials by index serve it too. Its cells are the
+/// coarse columns and the noise breaking its borders as coarse, so its colours, borders and rock
+/// meet the near ground's. Spawn it with [`crate::stages::far_ground_mesh`] at
+/// [`WaveForgeStages::far_ground_corner`]; `base` for all but the colour. `None` until both are
+/// there, or without a far ground.
+#[must_use]
+pub fn far_ground_material(
+    stages: &WaveForgeStages,
+    chunk: ChunkCoord,
+    categories: &str,
+    palette_index: impl Fn(u8) -> u8,
+    base: StandardMaterial,
+    palette: Handle<Image>,
+    images: &mut Assets<Image>,
+) -> Option<GroundMaterial> {
+    let far = stages.far_ground(chunk)?;
+    let columns = stages.categories(categories, chunk)?;
+    let scale = stages.far_ground_scale()?;
+    let cell = stages.settings().cell_size;
+    let steps = far_steps(columns.size[0], scale);
+    let side = scale * steps + 1;
+    let ids: Vec<u8> = far_ground_categories(far, columns, scale, cell.to_array())
+        .into_iter()
+        .take((side * side) as usize)
+        .map(&palette_index)
+        .collect();
+    let chunk_cells = stages.settings().chunk;
+    let spacing = Vec2::new(
+        chunk_cells[0] as f32 * cell.x,
+        chunk_cells[1] as f32 * cell.z,
+    ) / steps as f32;
+    let first = Vec2::new(0.5 * cell.x, 0.5 * cell.z) / spacing;
+    let corner = stages.far_ground_corner(chunk);
+    let materials = Image::new(
+        Extent3d {
+            width: side,
+            height: side,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        ids,
+        TextureFormat::R8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    Some(GroundMaterial {
+        base,
+        extension: GroundMaterials {
+            grid: Vec4::new(corner.x, corner.z, spacing.x, spacing.y),
+            materials: images.add(materials),
+            palette,
+            look: GroundLook::default(),
+            channels: images.add(ground_channels_image([1, 1], &[0.0; GROUND_CHANNELS])),
+            ramps: images.add(ramp_image(&[])),
+            relief: images.add(relief_image(&[])),
+            layout: Vec4::new(first.x, first.y, spacing.x / cell.x, 0.0),
+        },
+    })
 }
 
 #[cfg(test)]

@@ -5,11 +5,14 @@
 //! bound kinds get an entity per point, piece or cave room, which goes with its chunk.
 
 use bevy_app::{App, Startup, Update};
+use bevy_asset::{Assets, Handle};
 use bevy_color::{Color, ColorToComponents};
 use bevy_ecs::message::{MessageReader, Messages};
 use bevy_ecs::prelude::{Commands, Has, IntoScheduleConfigs, Query, ResMut, Resource, With};
-use bevy_math::Vec3;
+use bevy_image::Image;
+use bevy_math::{Vec3, Vec4};
 use bevy_mesh::{Mesh, MeshTag, VertexAttributeValues};
+use bevy_pbr::StandardMaterial;
 use bevy_transform::components::{GlobalTransform, Transform};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -24,7 +27,7 @@ use wave_forge::{
     ground_materials, ground_values, volume_height, volume_mesh, water_banks, water_surface,
 };
 use wave_forge_bevy::GenerationFocus;
-use wave_forge_bevy::materials::coloured_surface_mesh;
+use wave_forge_bevy::materials::{GroundMaterials, coloured_surface_mesh, far_ground_material};
 use wave_forge_bevy::stages::{
     FarGroundDropped, FluidDropped, FluidReady, GroundDropped, GroundReady, InstanceSpawned,
     Placed, StageDropped, StagePlacements, StageReady, StagesSaved, StagesSettings, VolumeDropped,
@@ -1207,6 +1210,7 @@ const FAR_PACK: &str = r#"(
     stages: [
         (name: "height", kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
         (name: "far", scale: 8, kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
+        (name: "far_surface", scale: 8, kind: Rules(rules: [(category: "high", when: [Greater(Input("far"), Constant(0.0))])], otherwise: "low")),
     ],
 )"#;
 
@@ -1223,6 +1227,65 @@ fn far_app() -> App {
         .with_far_ground("far", 8)
         .with_radius("far", 24),
     )
+}
+
+#[test]
+fn a_far_grounds_material_holds_its_categories_on_its_grid_of_coarse_columns() {
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["height", "far", "far_surface"], SETTINGS, || {
+            Ok(Runtime::new(
+                Arc::new(Pack::parse(FAR_PACK).expect("a valid pack")),
+                4,
+                SETTINGS.chunk,
+            ))
+        })
+        .with_ground("height")
+        .with_far_ground("far", 8)
+        .with_radius("far", 24)
+        .with_radius("far_surface", 24),
+    );
+    let chunk = ChunkCoord::new(1, 0, 0);
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        stages.far_ground(chunk).is_some() && stages.categories("far_surface", chunk).is_some()
+    });
+    let stages = app.world().resource::<WaveForgeStages>();
+    let mut images = Assets::<Image>::default();
+
+    let material = far_ground_material(
+        stages,
+        chunk,
+        "far_surface",
+        |category| category + 3,
+        StandardMaterial::default(),
+        Handle::default(),
+        &mut images,
+    )
+    .expect("its far ground and its categories arrived");
+
+    // A coarse column of 8 cells to a lattice chunk of 8: one far square a chunk, 9 vertices a side
+    // for the 8 chunks a coarse chunk covers, 16 world units apart.
+    let far = stages.far_ground(chunk).expect("built");
+    let columns = stages.categories("far_surface", chunk).expect("arrived");
+    let expected: Vec<u8> =
+        wave_forge::far_ground_categories(far, columns, 8, SETTINGS.cell_size.to_array())
+            .into_iter()
+            .take(9 * 9)
+            .map(|category| category + 3)
+            .collect();
+    let ids = images.get(&material.extension.materials).expect("the ids");
+    assert_eq!((ids.width(), ids.height()), (9, 9));
+    assert_eq!(ids.data.as_deref(), Some(expected.as_slice()));
+    let corner = stages.far_ground_corner(chunk);
+    assert_eq!(
+        material.extension.grid,
+        Vec4::new(corner.x, corner.z, 16.0, 16.0)
+    );
+    assert_eq!(
+        material.extension.layout,
+        Vec4::new(1.0 / 16.0, 1.0 / 16.0, 8.0, 0.0)
+    );
+    assert_ne!(material.extension.layout, GroundMaterials::NEAR_LAYOUT);
 }
 
 #[test]

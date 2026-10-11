@@ -71,6 +71,11 @@ const RELIEF_BUMP: f32 = 0.25;
 // Per material id, in texel id of a 256 by 1 texture: how much of it is pebbles, cracks and tufts,
 // and how wide one of its features is in world units (`wave_forge::GroundRelief`).
 @group(constants::MATERIAL_BIND_GROUP) @binding(106) var relief: texture_2d<f32>;
+// Where the first vertex stands from the grid's corner, in cells (x, y), and how many fine cells
+// wide one cell is (z): (0.5, 0.5, 1) for a near ground, less and more for the far ground, whose
+// cells are coarse columns with their first vertex at a fine cell's centre, so the noise breaking
+// its borders is as coarse as its cells.
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var<uniform> vertex_layout: vec4<f32>;
 
 // A hash without trigonometry, cheaper than sin and the same on every GPU.
 fn hash(p: vec2<f32>) -> f32 {
@@ -200,7 +205,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     let size = vec2<i32>(textureDimensions(materials));
     // The ground's vertices stand at the columns' centres.
-    let column = (in.world_position.xz - grid.xy) / grid.zw - 0.5;
+    let column = (in.world_position.xz - grid.xy) / grid.zw - vertex_layout.xy;
     let at = clamp(column, vec2<f32>(0.0), vec2<f32>(size - 1));
     let low = vec2<i32>(floor(at));
     let high = min(low + 1, size - 1);
@@ -270,7 +275,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             }
             // The material standing higher, by its micro-height, wins: sand settles between
             // pebbles, rock plates stand out of their cracks.
-            heights[k] = weight + border_noise * (fbm(ground / 2.0 + f32(ids[k]) * 17.31) - 0.5) * 2.0
+            heights[k] = weight + border_noise * (fbm(ground / (2.0 * vertex_layout.z) + f32(ids[k]) * 17.31) - 0.5) * 2.0
                 + (1.0 - rock) * look.relief_blend * reliefs[k].w * (reliefs[k].x - 0.5);
             shares[k] = 1.0 / same;
             highest = max(highest, heights[k]);
