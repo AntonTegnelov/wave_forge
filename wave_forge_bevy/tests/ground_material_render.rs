@@ -562,3 +562,36 @@ fn the_materials_stand_where_the_layout_puts_the_first_vertex() {
     );
     assert!((3..=5).contains(&shift.abs()), "moved {shift} pixels");
 }
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn the_noise_breaking_a_border_is_as_coarse_as_the_layout_says() {
+    // Only the noise that breaks the border between the halves, at the near ground's coarseness
+    // and at a far ground's of 8 fine cells to one of its own.
+    let noisy = GroundLook {
+        edge_noise: 1.0,
+        ..GroundLook::flat()
+    };
+    let border = |coarseness: f32| {
+        border_by_row(&render_halves_shaped(
+            "Constant(0.0)",
+            noisy,
+            None,
+            &[],
+            &[],
+            Vec4::new(0.5, 0.5, coarseness, 0.0),
+        ))
+    };
+    // How far the border moves from row to row, in all.
+    let wiggle = |rows: &[u32]| -> i64 {
+        rows.windows(2)
+            .map(|pair| (i64::from(pair[0]) - i64::from(pair[1])).abs())
+            .sum()
+    };
+
+    let (fine, coarse) = (wiggle(&border(1.0)), wiggle(&border(8.0)));
+
+    println!("the border moves {fine} pixels in all at a coarseness of 1, {coarse} at 8");
+    assert!(fine > 0, "the noise breaks no border");
+    assert!(coarse * 2 < fine, "{coarse} against {fine}");
+}
