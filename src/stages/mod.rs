@@ -18,6 +18,7 @@ pub mod regions;
 mod rivers;
 pub mod runtime;
 pub mod save;
+mod talus;
 mod town_thread;
 pub mod worker;
 mod world_run;

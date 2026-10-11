@@ -315,8 +315,8 @@ Data flows only from coarse to fine. A stage reads stages as coarse as itself or
 factor, and loading refuses anything else. A fine stage reads a coarser field between its columns,
 linearly from the four around its column's centre, and a coarser category from the column its own
 lies in. Positions in expressions (`X`, `Y`, `Distance`, `Angle`, and noise) are in WFC cells at
-every scale, so a formula means the same at any scale. Field, Blur, Rules, Region, Lakes and
-Droplets stages can be coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
+every scale, so a formula means the same at any scale. Field, Blur, Rules, Region, Lakes,
+Droplets and Talus stages can be coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
 fields.
 
 ## Stages
@@ -1148,6 +1148,32 @@ over a finite world best: the continent drains its 512 by 512 columns at scale 4
 ([measurements.md](../research/measurements.md), E61). Loading refuses a region, lifetime or radius
 of 0, no droplets, no capacity, and an erosion or deposition beyond 0 to 1.
 
+### Talus
+
+`Talus(height: "rock", region: 4, slope: 0.8)`: a height field weathered as steep ground sheds
+debris that settles below it at the slope it can rest at (thermal weathering; Musgrave, Kolb and
+Mace, 1989). In every square region of `region` chunks, wherever a column stands above one of its
+eight neighbours by more than `slope` cells of height per cell along the ground (times the
+diagonal's length for a diagonal neighbour), it sheds `rate` (default 0.5) of half its steepest
+excess to the lower ones, shared by how far each lies below; `passes` (default 100) passes run, each
+working out every column's shedding from the field as the pass found it and applying all of it at
+once, so the result is the same in any order. A slope is measured in cells, as a Droplets stage's
+is. The change fades into the input over `fade` columns (default 16) from the region's edges, so
+regions never read each other, the field meets its input along every region border, and chunks are
+the same in any order and in every run. Loading refuses a region or passes of 0, a negative slope,
+and a rate beyond 0 to 1.
+
+Enough passes bring ground to rest at `slope` everywhere, cliffs included. To keep a cliff's face
+and gather the debris at its foot, as the canyon preset does, the ground is the higher of the rock
+and the weathered rock, and the debris how far the weathered rock stands above the rock, which the
+ground's colour and a Scatter stage's rules can read:
+
+```ron
+(name: "weathered", kind: Talus(height: "rock", region: 4, slope: 0.8, passes: 30, fade: 8)),
+(name: "height", kind: Field(Max(Input("rock"), Input("weathered")))),
+(name: "debris", kind: Field(Max(Sub(Input("weathered"), Input("rock")), Constant(0.0)))),
+```
+
 ### Network
 
 `Network(sites: "towns", height: "ground", region: 12, width: 1.5, climb: 4.0, dry: Some(0.05))`:
@@ -1214,7 +1240,7 @@ let trees = runtime.points("trees", chunk);
 - `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
   its values over an area of its own columns, row by row with x fastest, without generating any
   chunk: exactly what the chunks would hold. Field, Rules, Nearest, Blur, Delta, Erode and Area stages whose
-  inputs are too can be sampled, and so can Lakes and Droplets stages, each computed once over the
+  inputs are too can be sampled, and so can Lakes, Droplets and Talus stages, each computed once over the
   whole region a sample lies in from samples of its input, the latest eight kept for later
   samples; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
   takes `&self` and holds no products, so a game can build a runtime just to sample, on any thread:
