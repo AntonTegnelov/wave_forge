@@ -362,6 +362,11 @@ colours, borders and rock meet: from the top the far ground is within 5 % of the
 brightness without shadows, where it was 18 % lighter on Compatibility
 (`verify_far.gd`, [measurements.md](../research/measurements.md) E67,
 [#376](https://github.com/AntonTegnelov/wave_forge/issues/376)).
+Steep ground sheds debris that settles in aprons at its foot (a Talus stage): the canyon's cliffs
+keep their faces with scree below them, and the continent's boulders stand wherever the debris lies
+deep, where its rocky biomes alone placed none (`tests/talus.rs`,
+[measurements.md](../research/measurements.md) L52,
+[#363](https://github.com/AntonTegnelov/wave_forge/issues/363)).
 Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 
