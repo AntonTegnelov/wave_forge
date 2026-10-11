@@ -465,6 +465,25 @@ pub enum StageKind {
         #[serde(default = "sixteen_columns")]
         fade: u32,
     },
+    /// The `height` field weathered (docs/reference/packs.md, "Talus"): in every square region of
+    /// `region` chunks, wherever a column stands above a neighbour by more than `slope` cells of
+    /// height per cell along the ground, it sheds `rate` of half the steepest excess to the lower
+    /// ones, `passes` times over, every pass from the field as the pass found it, so debris
+    /// settles in aprons at the feet of steep ground. The change fades in over `fade` columns from
+    /// the region's edges, so regions never read each other. The product is the weathered field;
+    /// a Field stage of `Max(Sub(Input(talus), Input(height)), Constant(0))` gives the debris's
+    /// depth.
+    Talus {
+        height: String,
+        region: u32,
+        slope: f32,
+        #[serde(default = "a_hundred_passes")]
+        passes: u32,
+        #[serde(default = "half")]
+        rate: f32,
+        #[serde(default = "sixteen_columns")]
+        fade: u32,
+    },
     /// A location table: sites of several kinds, placed once per square region of `region` chunks,
     /// the kinds in order of their `priority`, highest first. Each kind tries `tries` hashed
     /// footprints of `size` chunks a side in the region, one chunk in from its edge, and keeps one
@@ -993,6 +1012,10 @@ const fn sixteen_columns() -> u32 {
     16
 }
 
+const fn a_hundred_passes() -> u32 {
+    100
+}
+
 const fn one_each() -> (u32, u32) {
     (1, 1)
 }
@@ -1148,7 +1171,9 @@ impl StageKind {
     /// whose every chunk is cut from its region's field.
     pub(crate) const fn field_region(&self) -> Option<u32> {
         match self {
-            Self::Lakes { region, .. } | Self::Droplets { region, .. } => Some(*region),
+            Self::Lakes { region, .. }
+            | Self::Droplets { region, .. }
+            | Self::Talus { region, .. } => Some(*region),
             _ => None,
         }
     }
@@ -1162,7 +1187,8 @@ impl StageKind {
             | Self::Flatten { .. }
             | Self::Apply { .. }
             | Self::Lakes { .. }
-            | Self::Droplets { .. } => Output::Field,
+            | Self::Droplets { .. }
+            | Self::Talus { .. } => Output::Field,
             Self::Volume { .. } | Self::Carve { .. } | Self::Aquifer { .. } => Output::Volume,
             Self::Top { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } | Self::Nearest { .. } => Output::Categories,
@@ -2526,6 +2552,26 @@ impl Pack {
                     // The droplets run over the whole region, from its heights alone.
                     vec![(height.as_str(), Reach::region(*region), Output::Field)]
                 }
+                StageKind::Talus {
+                    height,
+                    region,
+                    slope,
+                    passes,
+                    rate,
+                    fade: _,
+                } => {
+                    if *region == 0
+                        || *passes == 0
+                        || !(*slope >= 0.0 && slope.is_finite())
+                        || !(0.0..=1.0).contains(rate)
+                    {
+                        return Err(invalid(format!(
+                            "a region of {region} chunks, {passes} passes shedding {rate} of the                              excess over a slope of {slope}"
+                        )));
+                    }
+                    // The debris settles over the whole region, from its heights alone.
+                    vec![(height.as_str(), Reach::region(*region), Output::Field)]
+                }
                 StageKind::Locations {
                     height,
                     region,
@@ -3392,6 +3438,7 @@ impl Pack {
                 | StageKind::Network { .. }
                 | StageKind::Lakes { .. }
                 | StageKind::Droplets { .. }
+                | StageKind::Talus { .. }
                 | StageKind::Carve { .. }
                 | StageKind::Top { .. }
                 | StageKind::Aquifer { .. }
@@ -3582,6 +3629,7 @@ impl Pack {
                 StageKind::Sites { region, .. }
                 | StageKind::Lakes { region, .. }
                 | StageKind::Droplets { region, .. }
+                | StageKind::Talus { region, .. }
                 | StageKind::Locations { region, .. }
                 | StageKind::Region { region, .. }
                 | StageKind::Rivers { region, .. }

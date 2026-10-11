@@ -27,7 +27,7 @@ const ALBEDO := {
 const CLASSES := {
 	"meadow": "grass", "grass": "grass", "forest_floor": "foliage", "jungle": "foliage",
 	"rock": "rock", "stone": "rock", "cliff": "rock", "pale_cliff": "rock", "pale_rock": "rock",
-	"red_rock": "rock", "sand": "sand", "dirt": "soil",
+	"red_rock": "rock", "scree": "rock", "sand": "sand", "dirt": "soil",
 }
 ## Materials whose colour is no ground's albedo: the sea floor seen through the water, and a crystal
 ## that stands out by glowing.

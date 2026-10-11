@@ -23,6 +23,7 @@ use super::pack::{
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use super::rivers::DownhillRivers;
 use super::save::{FrozenChunk, Save};
+use super::talus::{Talus, slump};
 use super::town_thread::{Done, Job, Masked, Stopped, TownKey, TownThread};
 use crate::ambience::chunk_ambience;
 use crate::frozen::{FrozenStore, StoreError};
@@ -2383,7 +2384,7 @@ impl Runtime {
             | StageKind::Network { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
-            StageKind::Lakes { .. } | StageKind::Droplets { .. } => {
+            StageKind::Lakes { .. } | StageKind::Droplets { .. } | StageKind::Talus { .. } => {
                 let size = stage.kind.field_region().expect("a region field stage");
                 let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
                 let side = [i64::from(size) * sx, i64::from(size) * sy];
@@ -2688,8 +2689,12 @@ impl Runtime {
     /// ground.
     fn fill_region_field_of(&mut self, index: usize, chunk: ChunkCoord) -> Result<(), StageError> {
         let stage = &self.pack.stages[index];
-        let (Some(size), StageKind::Lakes { height, .. } | StageKind::Droplets { height, .. }) =
-            (stage.kind.field_region(), &stage.kind)
+        let (
+            Some(size),
+            StageKind::Lakes { height, .. }
+            | StageKind::Droplets { height, .. }
+            | StageKind::Talus { height, .. },
+        ) = (stage.kind.field_region(), &stage.kind)
         else {
             return Ok(());
         };
@@ -2764,7 +2769,24 @@ impl Runtime {
                     droplet_start(world, stage.salt, region, droplet)
                 })
             }
-            _ => unreachable!("only Lakes and Droplets stages compute a region's field"),
+            StageKind::Talus {
+                slope,
+                passes,
+                rate,
+                fade,
+                ..
+            } => slump(
+                heights,
+                columns,
+                stage.scale as f32,
+                &Talus {
+                    slope,
+                    passes,
+                    rate,
+                    fade,
+                },
+            ),
+            _ => unreachable!("only Lakes, Droplets and Talus stages compute a region's field"),
         }
     }
 
@@ -2790,8 +2812,12 @@ impl Runtime {
             return Ok(field);
         }
         let stage = &self.pack.stages[index];
-        let (Some(size), StageKind::Lakes { height, .. } | StageKind::Droplets { height, .. }) =
-            (stage.kind.field_region(), &stage.kind)
+        let (
+            Some(size),
+            StageKind::Lakes { height, .. }
+            | StageKind::Droplets { height, .. }
+            | StageKind::Talus { height, .. },
+        ) = (stage.kind.field_region(), &stage.kind)
         else {
             unreachable!("only region field stages are sampled a region at a time")
         };
@@ -3577,9 +3603,9 @@ impl Runtime {
     fn region_held(&self, index: usize, chunk: ChunkCoord) -> bool {
         let key = |size: u32| (index, region_of(chunk, size));
         match &self.pack.stages[index].kind {
-            StageKind::Lakes { region, .. } | StageKind::Droplets { region, .. } => {
-                self.region_fields.contains_key(&key(*region))
-            }
+            StageKind::Lakes { region, .. }
+            | StageKind::Droplets { region, .. }
+            | StageKind::Talus { region, .. } => self.region_fields.contains_key(&key(*region)),
             StageKind::Locations { region, .. } => self.placed.contains_key(&key(*region)),
             StageKind::Region { region, .. }
             | StageKind::Rivers { region, .. }
@@ -4170,7 +4196,8 @@ impl Runtime {
                     | StageKind::Rivers { .. }
                     | StageKind::Network { .. }
                     | StageKind::Lakes { .. }
-                    | StageKind::Droplets { .. } => {
+                    | StageKind::Droplets { .. }
+                    | StageKind::Talus { .. } => {
                         unreachable!("handled above")
                     }
                 };
