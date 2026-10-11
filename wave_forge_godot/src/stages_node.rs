@@ -541,6 +541,10 @@ impl VolumeLayer {
 /// thousands of products at once, and emitting each costs a microsecond or two before any handler
 /// a game connected runs, so the rest wait for the next frames.
 const SIGNALS_PER_FRAME: usize = 256;
+/// How long one frame may spend emitting those signals, in milliseconds, after its first: the
+/// handlers a game connected run inside it, and on a shared CPU one that reads what arrived can
+/// take ten microseconds, which 256 of make two milliseconds (measurements.md, E68).
+const SIGNALS_BUDGET_MS: f64 = 0.5;
 
 /// The most chunks one frame gives ground. A wide request makes dozens buildable at once, and
 /// building each takes tenths of a millisecond on Godot's thread, so the rest wait for the next
@@ -1147,13 +1151,15 @@ impl INode for WaveForgeStages {
                 .into_iter()
                 .filter(|event| !matches!(event, StageEvent::Saved | StageEvent::Judged { .. })),
         );
-        let emitted = self.pending.len().min(SIGNALS_PER_FRAME);
-        let mut frame = FrameCost {
-            events: emitted,
-            ..FrameCost::default()
-        };
+        let mut frame = FrameCost::default();
         let signalling = std::time::Instant::now();
-        for event in self.pending.drain(..emitted).collect::<Vec<_>>() {
+        while frame.events < SIGNALS_PER_FRAME
+            && (frame.events == 0 || elapsed_ms(signalling) < SIGNALS_BUDGET_MS)
+        {
+            let Some(event) = self.pending.pop_front() else {
+                break;
+            };
+            frame.events += 1;
             match event {
                 StageEvent::Generated { stage, chunk } => self
                     .signals()
@@ -1230,7 +1236,8 @@ impl WaveForgeStages {
     }
 
     /// A stage's product for a chunk is ready to read. At most 256 of these and `stage_dropped`
-    /// together are emitted per frame, in the order the products arrived, so after a wide request
+    /// together are emitted per frame, fewer once a frame has spent half a millisecond emitting
+    /// them with the handlers connected, in the order the products arrived, so after a wide request
     /// some come a few frames later; by then a product can have been dropped again, and its
     /// `stage_dropped` follows.
     #[signal]

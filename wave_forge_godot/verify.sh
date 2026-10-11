@@ -47,6 +47,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_follow.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_stages.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_signals.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_tables.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_noise.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_edits.gd
