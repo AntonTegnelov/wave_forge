@@ -353,6 +353,10 @@ stones, their rock plates and cracks and their grass tufts, which bumps the grou
 and decides where materials meet, in both engines and on both renderers (`verify_ground.gd`,
 `ground_material_render.rs`, [measurements.md](../research/measurements.md) E66,
 [#360](https://github.com/AntonTegnelov/wave_forge/issues/360)).
+Lakes and rivers are drawn by their depth, light where shallow and dark where deep, fading out at
+the shore, with their banks wet, in both engines and on both renderers (`verify_water.gd`,
+`render_water.gd -- look`, `water_render.rs`,
+[#365](https://github.com/AntonTegnelov/wave_forge/issues/365)).
 Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 

@@ -59,7 +59,7 @@ use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, GroundRelief, InstanceSet, RegionTags,
     SurfaceWorker, VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories, ground,
     ground_channels, ground_height, ground_materials, ground_readers, ground_values, volume_height,
-    water_surface,
+    water_banks, water_surface,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -2446,9 +2446,10 @@ impl WaveForgeStages {
     }
 
     /// A chunk's water, relative to the chunk's corner on the ground plane: `positions`
-    /// (PackedVector3Array) on the ground's grid and `indices` (PackedInt32Array, three per
-    /// triangle, clockwise seen from above as Godot's front faces are, as drawn). Empty if the
-    /// chunk has no water drawn.
+    /// (PackedVector3Array) on the ground's grid, `depths` (PackedFloat32Array, how deep the water
+    /// stands over the ground at each vertex, 0 where it is dry, as the water's mesh holds it in its
+    /// second UV's x) and `indices` (PackedInt32Array, three per triangle, clockwise seen from
+    /// above as Godot's front faces are, as drawn). Empty if the chunk has no water drawn.
     #[func]
     fn water_surface_of(&self, chunk: Vector3i) -> VarDictionary {
         let mut out = VarDictionary::new();
@@ -2459,6 +2460,10 @@ impl WaveForgeStages {
                 .map(|&[x, y, z]| Vector3::new(x, y, z))
                 .collect();
             out.set(&"positions".to_variant(), &positions.to_variant());
+            out.set(
+                &"depths".to_variant(),
+                &PackedFloat32Array::from(water.depths.as_slice()).to_variant(),
+            );
             out.set(
                 &"indices".to_variant(),
                 &godot_triangles(&water.indices).to_variant(),
@@ -3418,6 +3423,22 @@ impl WaveForgeStages {
                 channel(&cover_stage),
             ) else {
                 continue;
+            };
+            // The water's banks are wet too, or wait for the water around the chunk.
+            let wetness = if water_stage.is_empty() {
+                wetness
+            } else {
+                let Some(banks) = water_banks(
+                    chunk,
+                    |at| worker.field(&water_stage, at),
+                    |at| worker.field(&stage, at),
+                ) else {
+                    continue;
+                };
+                Some(match wetness {
+                    Some(wetness) => wetness.iter().zip(&banks).map(|(a, b)| a.max(*b)).collect(),
+                    None => banks,
+                })
             };
             built.push((
                 chunk,
@@ -5251,8 +5272,15 @@ fn water_arrays(water: &WaterMesh) -> VarArray {
         .iter()
         .map(|&[x, y, z]| Vector3::new(x, y, z))
         .collect();
+    // Each vertex's depth in the second UV's x, which a water shader tints and fades the water by.
+    let depths: PackedVector2Array = water
+        .depths
+        .iter()
+        .map(|&depth| Vector2::new(depth, 0.0))
+        .collect();
     arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
     arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+    arrays.set(ArrayType::TEX_UV2.ord() as usize, &depths.to_variant());
     arrays
 }
 

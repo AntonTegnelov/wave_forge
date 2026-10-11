@@ -52,7 +52,7 @@ use wave_forge::{
     ChunkCoord, Emitter, FarGround, FocusPoint, FrozenStore, GROUND_CHANNELS, GroundMesh,
     InstanceId, NavSource, NavSourceError, VolumeMesh, WaterMesh, far_ground, ground,
     ground_channels, ground_materials, ground_readers, ground_values, surface_nav_source,
-    volume_mesh, water_surface,
+    volume_mesh, water_banks, water_surface,
 };
 
 /// A stage's product for a chunk is ready to read from [`WaveForgeStages`].
@@ -537,12 +537,16 @@ pub fn ground_mesh(ground: &GroundMesh) -> Mesh {
 /// [`WaveForgeStages::chunk_corner`].
 #[must_use]
 pub fn water_mesh(water: &WaterMesh) -> Mesh {
+    // Each vertex's depth in the first UV's x, which the reference water shader tints and fades
+    // the water by.
+    let depths: Vec<[f32; 2]> = water.depths.iter().map(|&depth| [depth, 0.0]).collect();
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water.positions.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water.normals.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, depths)
     .with_inserted_indices(Indices::U32(water.indices.clone()))
 }
 
@@ -1116,6 +1120,25 @@ fn drain(
                         continue;
                     };
                     Some(surface)
+                }
+            };
+            // The water's banks are wet too, or wait for the water around the chunk.
+            let wetness = match &water_stage {
+                None => wetness,
+                Some(water) => {
+                    let Some(banks) = water_banks(
+                        chunk,
+                        |at| stages.worker.field(water, at),
+                        |at| stages.worker.field(stage, at),
+                    ) else {
+                        continue;
+                    };
+                    Some(match wetness {
+                        Some(wetness) => {
+                            wetness.iter().zip(&banks).map(|(a, b)| a.max(*b)).collect()
+                        }
+                        None => banks,
+                    })
                 }
             };
             if let Some(channels) = ground_channels([cavity, wetness, cover]) {

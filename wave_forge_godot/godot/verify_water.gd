@@ -3,8 +3,11 @@
 ## Run by `../verify.sh` after `verify_ground.gd`. The water check's pack has a valley with a hollow
 ## in it and a river the script gives as a table row: each chunk of drawn ground along the river
 ## gets its water, every vertex where the water stands above the ground at the water's level and
-## every other one under the ground, so the water meets its banks with no gap, and every triangle
-## facing up as Godot draws its front faces; a chunk on the valley's dry side gets none. A water stage that is no field is refused.
+## every other one under the ground, so the water meets its banks with no gap, each vertex as deep
+## as the water stands over its ground and a dry one not at all, and every triangle facing up as
+## Godot draws its front faces; a chunk on the valley's dry side gets none. The ground's wetness is
+## whole under the water, partial on its banks and none on the dry side. A water stage that is no
+## field is refused.
 extends SceneTree
 
 const CELLS := 8
@@ -38,7 +41,7 @@ func _initialize() -> void:
 func _world(water_stage: String) -> Node:
 	var node: Node = ClassDB.instantiate("WaveForgeStages")
 	node.pack_file = "res://water.world.ron"
-	node.targets = PackedStringArray(["ground", "water"])
+	node.targets = PackedStringArray(["ground", "water", "surface"])
 	node.seed = 9
 	node.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
 	node.cell_size = CELL
@@ -46,6 +49,8 @@ func _world(water_stage: String) -> Node:
 	node.collider_radius = -1
 	node.ground_stage = "ground"
 	node.water_stage = water_stage
+	node.ground_material_stage = "surface"
+	node.ground_palette = PackedColorArray([Color(0.376, 0.384, 0.231)])
 	node.water_material = StandardMaterial3D.new()
 	root.add_child(node)
 	return node
@@ -64,6 +69,7 @@ func _process(_delta: float) -> bool:
 		_fail("water on %s, the valley's dry side" % DRY)
 		return true
 	var wet := 0
+	var banks := 0
 	for chunk: Vector3i in RIVER:
 		var surface: Dictionary = world.water_surface_of(chunk)
 		if surface.is_empty() or surface["indices"].is_empty():
@@ -84,20 +90,43 @@ func _process(_delta: float) -> bool:
 				var level := _value("water", column)
 				var ground := _value("ground", column)
 				var height := positions[j * (CELLS + 1) + i].y
+				var depth: float = surface["depths"][j * (CELLS + 1) + i]
+				var wetness := _wetness(chunk, i, j)
 				if level - ground > WET:
 					wet += 1
 					if absf(height - level * CELL.y) > 1e-4:
 						_fail("vertex (%d, %d) of %s stands at %f, not the water's %f" % [i, j, chunk, height, level * CELL.y])
 						return true
+					if absf(depth - (level - ground) * CELL.y) > 1e-4 or wetness != 1.0:
+						_fail("vertex (%d, %d) of %s is %f deep and its ground %f wet, its water %f over the ground" % [i, j, chunk, depth, wetness, (level - ground) * CELL.y])
+						return true
 				elif height >= ground * CELL.y:
 					_fail("vertex (%d, %d) of %s stands at %f, over its dry ground %f" % [i, j, chunk, height, ground * CELL.y])
 					return true
+				elif depth != 0.0:
+					_fail("dry vertex (%d, %d) of %s is %f deep" % [i, j, chunk, depth])
+					return true
+				elif wetness > 0.0 and wetness < 1.0:
+					banks += 1
 	if wet < 10:
 		_fail("only %d wet vertices along the river" % wet)
 		return true
-	print("verify_water: water on %d chunks; along the river %d wet vertices at the water's level and the rest under the ground, none on the dry side" % [world.water_chunks().size(), wet])
+	if banks < 10:
+		_fail("only %d vertices of wet bank along the river" % banks)
+		return true
+	for j in CELLS + 1:
+		for i in CELLS + 1:
+			if _wetness(DRY, i, j) != 0.0:
+				_fail("vertex (%d, %d) of %s, the valley's dry side, is %f wet" % [i, j, DRY, _wetness(DRY, i, j)])
+				return true
+	print("verify_water: water on %d chunks; along the river %d wet vertices at the water's level and as deep as it stands, the rest under the ground; %d vertices of wet bank, none on the dry side" % [world.water_chunks().size(), wet, banks])
 	quit(0)
 	return true
+
+## How wet the ground of `chunk` is at its vertex (`i`, `j`), as its material's channels hold it.
+func _wetness(chunk: Vector3i, i: int, j: int) -> float:
+	var material: ShaderMaterial = world.ground_material_of(chunk)
+	return material.get_shader_parameter("wave_forge_channels").get_image().get_pixel(i, j).g
 
 ## The value of field stage `stage` at the world column `column`.
 func _value(stage: String, column: Vector2i) -> float:

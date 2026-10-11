@@ -1309,8 +1309,13 @@ the ground's grid, the +x and +y edges from the chunks beyond, so neighbouring c
 exactly. A vertex is wet where the water's level stands more than `water::WET` (0.05 cells) above
 the ground, and takes that level; a dry one sits just under the ground. Every square with a wet
 corner is drawn, so the water runs out to where it dips under the bank and the ground hides its
-edge, whatever the bank's slope. A chunk without water has no triangles. It returns `None` until
-both fields of the chunk and of the chunks beyond its far edges have arrived.
+edge, whatever the bank's slope. Each vertex carries its depth, the water's level less the ground
+in world units, 0 where dry, which a shader tints the water and fades its shore by. A chunk without
+water has no triangles. It returns `None` until both fields of the chunk and of the chunks beyond
+its far edges have arrived. `wave_forge::water_banks(chunk, water, ground)` gives how wet the
+ground is at each of its vertices from the same fields: 1 under the water, and on dry ground falling
+to nothing `water::BANK_REACH` (2) columns from the nearest wet vertex, for the ground's wetness
+channel. It reads the chunks all around, since water just over an edge wets the bank beside it.
 
 A pack makes the water's field from what it has: a Lakes stage's level where it stands above the
 ground, and its rivers as an Apply stage that carves less deep than the bed, so the river's water

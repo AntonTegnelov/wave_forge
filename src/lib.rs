@@ -90,7 +90,7 @@ pub use scheduler::FocusPoint;
 pub use space::YUpSpace;
 pub use surface_worker::SurfaceWorker;
 pub use volume_mesh::{VolumeMesh, volume_height, volume_mesh};
-pub use water::{WaterMesh, water_surface};
+pub use water::{WaterMesh, water_banks, water_surface};
 pub use worker::Worker;
 
 pub use wfc_core::{

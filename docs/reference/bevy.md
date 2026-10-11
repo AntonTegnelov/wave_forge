@@ -222,7 +222,13 @@ holding the water's level at the ground's scale ([packs.md](packs.md#water-surfa
 `water_stage` does: a chunk's ground also waits for it, generated one chunk beyond the ground with
 `.with_radius`, and `WaveForgeStages::water(chunk)` gives the chunk's `WaterMesh`, built with the
 ground and dropped with it, with no triangles where the chunk has no water. `water_mesh(water)` makes
-a Bevy mesh of it to spawn at `chunk_corner(chunk)` with a material of the game's own.
+a Bevy mesh of it to spawn at `chunk_corner(chunk)`, each vertex's depth over the ground in its
+first UV's x. `water_material()` gives the reference water material, a blended `StandardMaterial`
+whose `WaterLook` tints the water from `shallow_colour` to `deep_colour` and from `opacity.x` to
+`opacity.y` over `clarity` world units of depth and fades it in over `shore`, as Godot's reference
+water shader does; a game may draw it with a material of its own. With a ground material stage,
+the ground's wetness channel also takes the water's banks, wet out to two columns from the water
+(`wave_forge::water_banks`), and a chunk's ground waits for the water of the chunks around it.
 
 ## Ambience
 
