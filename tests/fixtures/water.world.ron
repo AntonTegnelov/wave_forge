@@ -2,7 +2,8 @@
 // verify_water.gd, which prepare.sh copies it for): a valley falling along +x with a hollow in it,
 // a river from the `rivers` table down its floor, its bed carved 0.8 cells deep and its water 0.3
 // cells below the banks, and the water's level: the lakes where they stand above the ground, and
-// the river's water.
+// the river's water. One category of ground all over, for a ground material whose wetness channel
+// the water's banks take.
 (
     version: 1,
     // A sea far below the valley, so its lakes stand above it.
@@ -27,5 +28,6 @@
             ),
             Input("river_water"),
         ))),
+        (name: "surface", kind: Rules(rules: [], otherwise: "meadow")),
     ],
 )

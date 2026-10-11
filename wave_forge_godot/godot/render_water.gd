@@ -6,7 +6,13 @@
 ## has, so its pixels can be counted: along the river from above at an angle, across it from low
 ## down, and over the lake in the hollow. It prints what each view drew, saves the pictures in
 ## Godot's user directory, and fails on a gap or a view without water.
+##
+## With `-- look` it draws the same views for judging the look instead, checking nothing: under the
+## reference sun and sky, the ground in a meadow's colour with its banks wet, and the water through
+## the reference water shader, tinted by its depth and fading out at the shore.
 extends SceneTree
+
+const ReferenceLook := preload("res://reference_look.gd")
 
 const CELLS := 8
 const CELL := Vector3(2, 1, 2)
@@ -28,6 +34,7 @@ var arrived := false
 var view_at := 0
 var lines := PackedStringArray()
 var failures := PackedStringArray()
+var look := false
 
 func _initialize() -> void:
 	world = ClassDB.instantiate("WaveForgeStages")
@@ -40,24 +47,24 @@ func _initialize() -> void:
 	world.collider_radius = -1
 	world.ground_stage = "ground"
 	world.water_stage = "water"
-	var water := StandardMaterial3D.new()
-	water.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	water.albedo_color = WATER
-	world.water_material = water
+	look = "look" in OS.get_cmdline_user_args()
+	if look:
+		world.targets = PackedStringArray(["ground", "water", "surface"])
+		world.ground_material_stage = "surface"
+		world.ground_palette = PackedColorArray([Color(0.376, 0.384, 0.231)])
+		world.water_material = load("res://addons/wave_forge/water.tres")
+		ReferenceLook.add_to(root)
+	else:
+		var water := StandardMaterial3D.new()
+		water.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		water.albedo_color = WATER
+		world.water_material = water
 	root.add_child(world)
 	camera = Camera3D.new()
 	camera.fov = 40
 	root.add_child(camera)
-	var sun := DirectionalLight3D.new()
-	root.add_child(sun)
-	sun.rotation_degrees = Vector3(-60, 30, 0)
-	var environment := WorldEnvironment.new()
-	environment.environment = Environment.new()
-	environment.environment.background_mode = Environment.BG_COLOR
-	environment.environment.background_color = GAP
-	environment.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.environment.ambient_light_color = Color(0.5, 0.5, 0.5)
-	root.add_child(environment)
+	if not look:
+		_add_check_lighting()
 	if not world.start():
 		printerr("render_water: the stages did not start")
 		quit(1)
@@ -86,6 +93,15 @@ func _process(_delta: float) -> bool:
 		return false
 	waited_frames = 0
 	var image := root.get_viewport().get_texture().get_image()
+	if look:
+		image.save_png("user://water_look_%d.png" % view_at)
+		view_at += 1
+		if view_at < VIEWS.size():
+			_look(view_at)
+			return false
+		print("render_water: %d chunks of water drawn for the look; pictures in %s" % [world.water_chunks().size(), ProjectSettings.globalize_path("user://")])
+		quit(0)
+		return true
 	var gaps := 0
 	var water := 0
 	for y in image.get_height():
@@ -110,6 +126,19 @@ func _process(_delta: float) -> bool:
 		return true
 	quit(0)
 	return true
+
+## The checks' light: a plain sun, grey ambient light and the magenta background a gap shows.
+func _add_check_lighting() -> void:
+	var sun := DirectionalLight3D.new()
+	root.add_child(sun)
+	sun.rotation_degrees = Vector3(-60, 30, 0)
+	var environment := WorldEnvironment.new()
+	environment.environment = Environment.new()
+	environment.environment.background_mode = Environment.BG_COLOR
+	environment.environment.background_color = GAP
+	environment.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.environment.ambient_light_color = Color(0.5, 0.5, 0.5)
+	root.add_child(environment)
 
 func _look(view: int) -> void:
 	camera.look_at_from_position(VIEWS[view][0], VIEWS[view][1])
