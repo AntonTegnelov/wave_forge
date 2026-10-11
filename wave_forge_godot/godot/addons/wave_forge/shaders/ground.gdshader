@@ -17,6 +17,14 @@ uniform sampler2D wave_forge_materials : filter_nearest, repeat_disable;
 // One cell's width along x and z in world units: the ground's vertices stand at the centres of
 // the cells, (i + 0.5) cells from the chunk's corner.
 uniform vec2 wave_forge_cell = vec2(1.0);
+// Where the first vertex stands from the mesh's origin, in cells of `wave_forge_cell`: the centre
+// of the first cell for a near ground, less for the far ground, whose squares are coarse columns
+// with their first vertex at a fine cell's centre.
+uniform vec2 wave_forge_first = vec2(0.5);
+// How many fine cells wide one of this mesh's cells is: 1 for a near ground, a coarse column's
+// width for the far ground, so the noise that breaks the borders between materials is as coarse as
+// the cells whose borders it breaks.
+uniform float wave_forge_coarseness = 1.0;
 // A colour per material id, in texel id of a 256 by 1 texture.
 uniform sampler2D wave_forge_palette : filter_nearest, repeat_disable, source_color;
 // Per material id, in texel id of a 256 by 2 texture: the colour, linear, its ramp runs toward in
@@ -81,7 +89,7 @@ varying vec3 world;
 varying vec3 world_normal;
 
 void vertex() {
-	column = VERTEX.xz / wave_forge_cell - 0.5;
+	column = VERTEX.xz / wave_forge_cell - wave_forge_first;
 	world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	world_normal = (MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz;
 }
@@ -274,7 +282,7 @@ void fragment() {
 			reliefs[k] = first == k ? relief_of(ids[k], ground) : reliefs[first];
 			// The material standing higher, by its micro-height, wins: sand settles between
 			// pebbles, rock plates stand out of their cracks.
-			heights[k] = weight + border_noise * (fbm(ground / 2.0 + float(ids[k]) * 17.31) - 0.5) * 2.0
+			heights[k] = weight + border_noise * (fbm(ground / (2.0 * wave_forge_coarseness) + float(ids[k]) * 17.31) - 0.5) * 2.0
 				+ (1.0 - rock) * relief_blend * reliefs[k].w * (reliefs[k].x - 0.5);
 			shares[k] = 1.0 / same;
 			highest = max(highest, heights[k]);
