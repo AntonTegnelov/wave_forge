@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{ChunkCoord, FocusPoint, GroundRelief, ground, ground_materials};
 use wave_forge_bevy::materials::{
-    GrassFade, GroundLook, GroundRamp, WaveForgeMaterialsPlugin, ground_channels_image,
-    ground_material_of, palette_image, ramp_image, relief_image,
+    GrassFade, GroundLook, GroundMaterials, GroundRamp, WaveForgeMaterialsPlugin,
+    ground_channels_image, ground_material_of, palette_image, ramp_image, relief_image,
 };
 use wave_forge_bevy::stages::ground_mesh;
 
@@ -65,16 +65,24 @@ fn render_halves_with(
     channels: Option<[[f32; 3]; 2]>,
     ramps: &[GroundRamp],
 ) -> Vec<u8> {
-    render_halves_shaped(height, look, channels, ramps, &[])
+    render_halves_shaped(
+        height,
+        look,
+        channels,
+        ramps,
+        &[],
+        GroundMaterials::NEAR_LAYOUT,
+    )
 }
 
-/// What [`render_halves_with`] draws, with the materials' `reliefs`.
+/// What [`render_halves_with`] draws, with the materials' `reliefs` and the material's `layout`.
 fn render_halves_shaped(
     height: &str,
     look: GroundLook,
     channels: Option<[[f32; 3]; 2]>,
     ramps: &[GroundRamp],
     reliefs: &[GroundRelief],
+    layout: Vec4,
 ) -> Vec<u8> {
     let text = PACK.replace("Constant(0.0)", height);
     let mut runtime = Runtime::new(
@@ -146,6 +154,7 @@ fn render_halves_shaped(
     material.extension.relief = world
         .resource_mut::<Assets<Image>>()
         .add(relief_image(reliefs));
+    material.extension.layout = layout;
     if let Some([first, second]) = channels {
         let values: Vec<f32> = ids
             .iter()
@@ -501,6 +510,7 @@ fn materials_meet_along_the_micro_height_of_the_one_standing_higher() {
         None,
         &[],
         &reliefs,
+        GroundMaterials::NEAR_LAYOUT,
     ));
     let following = border_by_row(&render_halves_shaped(
         "Constant(0.0)",
@@ -508,6 +518,7 @@ fn materials_meet_along_the_micro_height_of_the_one_standing_higher() {
         None,
         &[],
         &reliefs,
+        GroundMaterials::NEAR_LAYOUT,
     ));
 
     let spread = |rows: &[u32]| rows.iter().max().unwrap() - rows.iter().min().unwrap();
@@ -518,4 +529,36 @@ fn materials_meet_along_the_micro_height_of_the_one_standing_higher() {
     );
     assert!(spread(&straight) <= 1, "{straight:?}");
     assert!(spread(&following) >= 3, "{following:?}");
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn the_materials_stand_where_the_layout_puts_the_first_vertex() {
+    // The first vertex at the grid's corner instead of its first cell's centre: every vertex half
+    // a cell, 4 pixels, nearer the corner, and the border between the halves with them.
+    let at_corner = Vec4::new(0.0, 0.0, 1.0, 0.0);
+
+    let centred = border_by_row(&render_halves_shaped(
+        "Constant(0.0)",
+        GroundLook::flat(),
+        None,
+        &[],
+        &[],
+        GroundMaterials::NEAR_LAYOUT,
+    ));
+    let cornered = border_by_row(&render_halves_shaped(
+        "Constant(0.0)",
+        GroundLook::flat(),
+        None,
+        &[],
+        &[],
+        at_corner,
+    ));
+
+    let shift = i64::from(centred[32]) - i64::from(cornered[32]);
+    println!(
+        "the border at {} pixels with the first vertex centred, {} at the corner",
+        centred[32], cornered[32]
+    );
+    assert!((3..=5).contains(&shift.abs()), "moved {shift} pixels");
 }

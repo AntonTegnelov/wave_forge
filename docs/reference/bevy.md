@@ -114,7 +114,14 @@ itself, and holds no shapes for a town's modules: a game adds its towns' collide
   `FarGroundDropped` announce it. Give the stage a radius of its own with `.with_radius`. To
   colour it as the Godot node does, generate a Rules stage at the same scale with the same radius
   and give `wave_forge::far_ground_categories` the far ground and that stage's
-  `categories(stage, chunk)`: the category each vertex stands on, for the mesh's colours.
+  `categories(stage, chunk)`: the category each vertex stands on, for the mesh's colours. To draw
+  it as the near ground is drawn instead, `materials::far_ground_material(stages, chunk, stage,
+  palette_index, base, palette, images)` gives a coarse chunk's far ground a `GroundMaterial`: its
+  categories per vertex of its grid of coarse columns, each mapped by `palette_index` to a colour of
+  the near ground's palette (by category name, as the Godot node maps them), so the near ground's
+  ramps and reliefs serve it too, its cells the coarse columns and the noise breaking its borders
+  as coarse ([Ground materials](#ground-materials)). `far_ground_scale()` gives the coarse stage's
+  scale.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
   have arrived ([packs.md](packs.md#ground)): `WaveForgeStages::ground(chunk)` returns the
   `GroundMesh`, relative to `chunk_corner(chunk)`, `GroundReady(chunk)` and `GroundDropped(chunk)`
@@ -271,6 +278,10 @@ and `wet_roughness` say how far they darken and smooth the ground, and `cover_ti
 `cover_colour` how far covered ground tints toward the grass, coming in where the grass fades out
 ([Grass](#grass)), so the ground is as it is where the blades stand; without a fade nothing is
 tinted.
+
+`GroundMaterials::layout` says where a mesh's first vertex stands from `grid`'s corner, in cells,
+and how many fine cells wide one of its cells is: `GroundMaterials::NEAR_LAYOUT` for a chunk's
+ground, and `far_ground_material`'s for the far ground, whose cells are coarse columns.
 
 `GroundMaterials::relief` gives each palette colour a micro-height, as Godot's `ground_relief`
 does ([godot.md](godot.md#ground-and-colliders)): `relief_image(reliefs)` makes it from a

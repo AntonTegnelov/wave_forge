@@ -338,6 +338,12 @@ impl WaveForgeStages {
         self.far_grounds.get(&chunk)
     }
 
+    /// The scale of the coarse stage the far ground is drawn from; `None` without a far ground.
+    #[must_use]
+    pub fn far_ground_scale(&self) -> Option<u32> {
+        self.far_ground_stage.as_ref().map(|&(_, scale)| scale)
+    }
+
     /// Where the far ground of a chunk of the coarse stage goes in Bevy's world: the corner of the
     /// first chunk of the lattice it covers.
     ///
