@@ -692,8 +692,8 @@ the materials of the four vertices around every fragment, asset free and on ever
 Compatibility included. Each material is weighted by how near its vertices are plus a noise of its
 own, so materials meet along a broken line rather than the grid's. Each material also has a
 micro-height of its own, from `ground_relief` (per category, by index as `ground_palette`: how much
-of it is pebbles, round stones in about half the cells of a grid; cracks, plates parted where a
-noise crosses its middle; and tufts, fine bumps; and how wide one feature is in world units,
+of it is pebbles, round stones in about half the cells of a grid; cracks, plates parted by narrow
+cracks along the edges of a cellular noise; and tufts, fine bumps; and how wide one feature is in world units,
 `wave_forge::GroundRelief`), fine tufts for a category given none. Where materials meet, the
 micro-height raises each by up to `relief_blend` (0.6) and the one standing higher wins, so sand
 settles between pebbles and rock plates stand out of their cracks; near the camera it bumps the
@@ -710,8 +710,8 @@ the look: `rock_colour` (whose alpha, above zero, replaces the muted colour with
 default; zero noise and
 `rock_slope` beyond 1 draw the palette's colours alone. A game sets them on a `ShaderMaterial` of
 the reference shader given as `ground_material`, whose parameters every chunk's copy keeps. What
-the shader costs is in [measurements.md](../research/measurements.md) (E58, and E66 for the
-micro-heights).
+the shader costs is in [measurements.md](../research/measurements.md) (E58, and E66 and E69 for
+the micro-heights).
 
 With `ground_cavity_stage`, `ground_wetness_stage` or `ground_cover_stage` set to field stages at
 the ground's scale, a chunk's ground also waits for their values at its vertices, those beyond its
