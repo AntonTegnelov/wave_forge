@@ -56,10 +56,10 @@ use wave_forge::stages::{
 };
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
-    Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, GroundRelief, InstanceSet, RegionTags,
-    SurfaceWorker, VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories, far_steps,
-    ground, ground_channels, ground_height, ground_materials, ground_readers, ground_values,
-    volume_height, water_banks, water_surface,
+    Chunk, ChunkCoord, ChunkShape, FarGround, FocusPoint, GroundMesh, GroundRelief, InstanceSet,
+    RegionTags, SurfaceWorker, VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories,
+    far_steps, ground, ground_channels, ground_height, ground_materials, ground_readers,
+    ground_values, volume_height, water_banks, water_surface,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -428,8 +428,12 @@ pub struct WaveForgeStages {
     far_colours: Vec<Color>,
     /// The far categories' palette, ramps and reliefs, with a ground material stage.
     far_look: Option<FarLook>,
-    /// The chunks of `far_ground_stage` whose far ground is drawn.
+    /// Each group of [`FAR_GROUP`] by [`FAR_GROUP`] coarse chunks with far ground drawn, by the
+    /// group's coordinates: one mesh and one material for all of them.
     far_grounds: HashMap<ChunkCoord, FarDrawn>,
+    /// Each coarse chunk's far ground as built, with what colours it; drawn by its group of
+    /// [`FAR_GROUP`] by [`FAR_GROUP`] coarse chunks.
+    far_built: HashMap<ChunkCoord, FarBuilt>,
     /// The surfaces of `volume_stage`, while there is one.
     rock: Option<VolumeLayer>,
     /// The surfaces of `fluid_stage`, while there is one.
@@ -561,6 +565,11 @@ const BODIES_BUDGET_MS: f64 = 1.0;
 
 /// How many coarse chunks get their far ground built per frame at most.
 const FAR_GROUNDS_PER_FRAME: usize = 4;
+
+/// How many coarse chunks of far ground, along each side, one mesh draws with one material: a
+/// far ground out to 2 km has thousands of coarse chunks, and a mesh and a material each would cost
+/// a draw call each and stop the renderer batching them (measurements.md, L50).
+const FAR_GROUP: i32 = 4;
 
 /// The most chunks one frame gives grass: each uploads two small textures.
 const GRASS_PER_FRAME: usize = 4;
@@ -872,6 +881,7 @@ impl INode for WaveForgeStages {
             ground_builds: 0,
             far_due: std::collections::BTreeSet::new(),
             far_grounds: HashMap::new(),
+            far_built: HashMap::new(),
             far_colours: Vec::new(),
             far_look: None,
             volume_stage: GString::new(),
@@ -2344,8 +2354,12 @@ impl WaveForgeStages {
     /// or before its far ground is drawn.
     #[func]
     fn far_ground_material_of(&self, chunk: Vector3i) -> Option<Gd<ShaderMaterial>> {
+        let chunk = from_vector(chunk);
+        if !self.far_built.contains_key(&chunk) {
+            return None;
+        }
         self.far_grounds
-            .get(&from_vector(chunk))
+            .get(&far_group_of(chunk))
             .and_then(|drawn| drawn.material.clone())
     }
 
@@ -2409,7 +2423,7 @@ impl WaveForgeStages {
     /// The chunks of `far_ground_stage` whose far ground is drawn.
     #[func]
     fn far_ground_chunks(&self) -> Array<Vector3i> {
-        self.far_grounds
+        self.far_built
             .keys()
             .map(|&chunk| to_vector(chunk))
             .collect()
@@ -2421,13 +2435,14 @@ impl WaveForgeStages {
     #[func]
     fn far_ground_surface(&self, chunk: Vector3i) -> VarDictionary {
         let mut out = VarDictionary::new();
-        if let Some(drawn) = self.far_grounds.get(&from_vector(chunk)) {
-            let positions: PackedVector3Array = drawn
+        if let Some(built) = self.far_built.get(&from_vector(chunk)) {
+            let positions: PackedVector3Array = built
+                .far
                 .positions
                 .iter()
                 .map(|&[x, y, z]| Vector3::new(x, y, z))
                 .collect();
-            let colours: PackedColorArray = drawn.colours.iter().copied().collect();
+            let colours: PackedColorArray = built.colours.iter().copied().collect();
             out.set(&"positions".to_variant(), &positions.to_variant());
             out.set(&"colours".to_variant(), &colours.to_variant());
         }
@@ -4042,12 +4057,11 @@ impl WaveForgeStages {
             return;
         };
         let scale = scale as i32;
-        let mut rendering = RenderingServer::singleton();
+        let mut regroup = std::collections::BTreeSet::new();
         for chunk in gone {
             self.far_due.remove(chunk);
-            if let Some(drawn) = self.far_grounds.remove(chunk) {
-                rendering.free_rid(drawn.instance);
-                rendering.free_rid(drawn.mesh);
+            if self.far_built.remove(chunk).is_some() {
+                regroup.insert(far_group_of(*chunk));
             }
         }
         for chunk in arrived {
@@ -4117,91 +4131,152 @@ impl WaveForgeStages {
                 .iter()
                 .map(|&category| self.far_colours[usize::from(category)])
                 .collect();
-            // The far ground's own copy of the ground material, its categories per vertex of its
-            // grid of coarse columns.
-            let copy = match (&self.far_look, &self.palette) {
-                (Some(look), Some((_, template))) if !categories.is_empty() => {
-                    let columns = worker
-                        .field(&stage, chunk)
-                        .expect("the far ground was built from it")
-                        .size[0];
-                    let steps = far_steps(columns, scale as u32);
-                    let side = scale as u32 * steps + 1;
-                    let spacing = Vector2::new(
-                        self.chunk_cells.x.max(1) as f32 * cell[0],
-                        self.chunk_cells.y.max(1) as f32 * cell[2],
-                    ) / steps as f32;
-                    let first = Vector2::new(0.5 * cell[0], 0.5 * cell[2]) / spacing;
-                    let grid = &categories[..(side * side) as usize];
-                    let coarseness = spacing.x / cell[0];
-                    Some(far_material(
-                        template, look, grid, side, spacing, first, coarseness,
-                    ))
-                }
-                _ => None,
-            };
-            built.push((far, colours, copy));
+            // The categories of its grid of coarse columns, for its group's copy of the ground
+            // material.
+            let columns = worker
+                .field(&stage, chunk)
+                .expect("the far ground was built from it")
+                .size[0];
+            let side = scale as u32 * far_steps(columns, scale as u32) + 1;
+            let grid = categories
+                .get(..(side * side) as usize)
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default();
+            built.push(FarBuilt {
+                far,
+                colours,
+                grid,
+                side,
+            });
         }
-        for (far, colours, copy) in built {
+        for far in built {
+            regroup.insert(far_group_of(far.far.chunk));
             // The near ground covers the whole coarse chunk: there is nothing of it to draw.
-            if far.indices.is_empty() {
-                if let Some(drawn) = self.far_grounds.remove(&far.chunk) {
-                    rendering.free_rid(drawn.instance);
-                    rendering.free_rid(drawn.mesh);
+            if far.far.indices.is_empty() {
+                self.far_built.remove(&far.far.chunk);
+            } else {
+                self.far_built.insert(far.far.chunk, far);
+            }
+        }
+        for group in regroup {
+            self.draw_far_group(group, scale, scenario);
+        }
+    }
+
+    /// Draws the far ground of the coarse chunks of `group` as one mesh with one material, or
+    /// frees it when none of them has any: their meshes side by side from the group's first, and
+    /// with a ground material, a copy of it holding all their categories on one grid.
+    fn draw_far_group(&mut self, group: ChunkCoord, scale: i32, scenario: Rid) {
+        let mut rendering = RenderingServer::singleton();
+        if let Some(old) = self.far_grounds.remove(&group) {
+            rendering.free_rid(old.instance);
+            rendering.free_rid(old.mesh);
+        }
+        let lattice = |coarse: ChunkCoord| ChunkCoord::new(coarse.x * scale, coarse.y * scale, 0);
+        let first = ChunkCoord::new(group.x * FAR_GROUP, group.y * FAR_GROUP, 0);
+        let origin = self.chunk_corner(lattice(first));
+        let members: Vec<(ChunkCoord, &FarBuilt)> = (0..FAR_GROUP)
+            .flat_map(|y| (0..FAR_GROUP).map(move |x| (x, y)))
+            .filter_map(|(x, y)| {
+                let chunk = ChunkCoord::new(first.x + x, first.y + y, 0);
+                self.far_built.get(&chunk).map(|built| (chunk, built))
+            })
+            .collect();
+        let Some(&(_, any)) = members.first() else {
+            return;
+        };
+        let side = any.side;
+        let mut vertices = PackedVector3Array::new();
+        let mut normals = PackedVector3Array::new();
+        let mut colours = PackedColorArray::new();
+        let mut indices: Vec<u32> = Vec::new();
+        // One grid of categories for the group, the members' side by side, sharing their edges.
+        let group_side = FAR_GROUP as u32 * (side - 1) + 1;
+        let mut grid = vec![0u8; (group_side * group_side) as usize];
+        for &(chunk, built) in &members {
+            let offset = self.chunk_corner(lattice(chunk)) - origin;
+            let base = vertices.len() as u32;
+            for &[x, y, z] in &built.far.positions {
+                vertices.push(Vector3::new(x, y, z) + offset);
+            }
+            for &[x, y, z] in &built.far.normals {
+                normals.push(Vector3::new(x, y, z));
+            }
+            for &colour in &built.colours {
+                colours.push(colour);
+            }
+            indices.extend(built.far.indices.iter().map(|&index| index + base));
+            if built.grid.len() == (side * side) as usize {
+                let (at_x, at_y) = (
+                    (chunk.x - first.x) as u32 * (side - 1),
+                    (chunk.y - first.y) as u32 * (side - 1),
+                );
+                for j in 0..side {
+                    for i in 0..side {
+                        grid[((at_y + j) * group_side + at_x + i) as usize] =
+                            built.grid[(j * side + i) as usize];
+                    }
                 }
-                continue;
             }
-            let rid = rendering.mesh_create();
-            let mut arrays = VarArray::new();
-            arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
-            let vertices: PackedVector3Array = far
-                .positions
-                .iter()
-                .map(|&[x, y, z]| Vector3::new(x, y, z))
-                .collect();
-            let normals: PackedVector3Array = far
-                .normals
-                .iter()
-                .map(|&[x, y, z]| Vector3::new(x, y, z))
-                .collect();
-            arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
-            arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
-            if !colours.is_empty() {
-                let packed: PackedColorArray = colours.iter().copied().collect();
-                arrays.set(ArrayType::COLOR.ord() as usize, &packed.to_variant());
+        }
+        let coloured = colours.len() == vertices.len();
+        // The group's own copy of the ground material.
+        let copy = match (&self.far_look, &self.palette) {
+            (Some(look), Some((_, template)))
+                if members.iter().all(|(_, built)| !built.grid.is_empty()) =>
+            {
+                let cell = self.cell_size;
+                let steps = (side - 1) / scale as u32;
+                let spacing = Vector2::new(
+                    self.chunk_cells.x.max(1) as f32 * cell.x,
+                    self.chunk_cells.y.max(1) as f32 * cell.z,
+                ) / steps as f32;
+                let first_vertex = Vector2::new(0.5 * cell.x, 0.5 * cell.z) / spacing;
+                let coarseness = spacing.x / cell.x;
+                Some(far_material(
+                    template,
+                    look,
+                    &grid,
+                    group_side,
+                    spacing,
+                    first_vertex,
+                    coarseness,
+                ))
             }
-            add_levelled_surface(rid, &mut arrays, &far.indices, &[]);
-            let material = match (&copy, &self.ground_material, colours.is_empty()) {
-                (Some(copy), _, _) => Some(copy.get_rid()),
-                (None, Some(material), _) => Some(material.get_rid()),
-                (None, None, false) => self
-                    .vertex_colours
-                    .as_ref()
-                    .map(|colours| colours.get_rid()),
-                (None, None, true) => None,
-            };
-            if let Some(material) = material {
-                rendering.mesh_surface_set_material(rid, 0, material);
-            }
-            let instance = rendering.instance_create2(rid, scenario);
-            let first = ChunkCoord::new(far.chunk.x * scale, far.chunk.y * scale, 0);
-            rendering.instance_set_transform(
-                instance,
-                Transform3D::new(Basis::IDENTITY, self.chunk_corner(first)),
-            );
-            Gi::Static.apply(instance);
-            let drawn = FarDrawn {
+            _ => None,
+        };
+        let rid = rendering.mesh_create();
+        let mut arrays = VarArray::new();
+        arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
+        arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
+        arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+        if coloured {
+            arrays.set(ArrayType::COLOR.ord() as usize, &colours.to_variant());
+        }
+        add_levelled_surface(rid, &mut arrays, &indices, &[]);
+        let material = match (&copy, &self.ground_material, coloured) {
+            (Some(copy), _, _) => Some(copy.get_rid()),
+            (None, Some(material), _) => Some(material.get_rid()),
+            (None, None, true) => self
+                .vertex_colours
+                .as_ref()
+                .map(|colours| colours.get_rid()),
+            (None, None, false) => None,
+        };
+        if let Some(material) = material {
+            rendering.mesh_surface_set_material(rid, 0, material);
+        }
+        let instance = rendering.instance_create2(rid, scenario);
+        rendering.instance_set_transform(instance, Transform3D::new(Basis::IDENTITY, origin));
+        Gi::Static.apply(instance);
+        self.far_grounds.insert(
+            group,
+            FarDrawn {
                 mesh: rid,
                 instance,
-                positions: far.positions,
-                colours,
                 material: copy,
-            };
-            if let Some(old) = self.far_grounds.insert(far.chunk, drawn) {
-                rendering.free_rid(old.instance);
-                rendering.free_rid(old.mesh);
-            }
-        }
+            },
+        );
     }
 
     /// Keeps one static body on every chunk within `collider_radius` of the followed chunk that
@@ -5262,6 +5337,7 @@ impl WaveForgeStages {
             rendering.free_rid(instance);
             rendering.free_rid(mesh);
         }
+        self.far_built.clear();
         for (_, (_, mesh, instance)) in self.grounds.drain() {
             rendering.free_rid(instance);
             rendering.free_rid(mesh);
@@ -5774,13 +5850,31 @@ fn placement_items(placing: &Placing, stage: &str, chunk: ChunkCoord) -> Option<
 }
 /// A coarse chunk's far ground as it is drawn: its `RenderingServer` mesh and instance, and its
 /// vertices and their colours for `far_ground_surface`.
+/// A group of coarse chunks' far ground as drawn.
 struct FarDrawn {
     mesh: Rid,
     instance: Rid,
-    positions: Vec<[f32; 3]>,
-    colours: Vec<Color>,
-    /// The far chunk's own copy of the ground material, which the drawn mesh refers to by its RID.
+    /// The group's own copy of the ground material, which the drawn mesh refers to by its RID.
     material: Option<Gd<ShaderMaterial>>,
+}
+
+/// A coarse chunk's far ground as built: its mesh, each vertex's colour from
+/// `far_ground_material_stage` (empty without one), and the category of each vertex of its grid,
+/// `side` by `side`, for its group's copy of the ground material.
+struct FarBuilt {
+    far: FarGround,
+    colours: Vec<Color>,
+    grid: Vec<u8>,
+    side: u32,
+}
+
+/// The group of [`FAR_GROUP`] by [`FAR_GROUP`] coarse chunks `chunk` is drawn with.
+fn far_group_of(chunk: ChunkCoord) -> ChunkCoord {
+    ChunkCoord::new(
+        chunk.x.div_euclid(FAR_GROUP),
+        chunk.y.div_euclid(FAR_GROUP),
+        0,
+    )
 }
 
 /// The far categories' palette, ramps and reliefs for the far ground's copies of the ground

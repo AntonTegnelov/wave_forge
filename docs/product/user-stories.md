@@ -672,8 +672,8 @@ history of settlements of eight cultures that a game gives as a table of facts, 
 the ground with a town of its culture, each culture a WFC module set of 61 modules
 (`examples/continent/cultures`), 209 Assemble pieces in eleven stages of dungeons and buildings
 grown on the larger places, 59 stages of vegetation and clutter by rule chains, and a coarse height
-and coarse biomes an engine draws and colours its far ground from, out to about 500 m in
-`continent.tscn` and 2 km in `render_continent_far.gd`,
+and coarse biomes an engine draws and colours its far ground from, out to about 2 km in
+`continent.tscn` and `render_continent_far.gd`,
 106 stages in all, in chunks of 8 by 8 columns
 (`wfc-devtools/tests/continent.rs` and `cultures.rs`, [measurements.md](../research/measurements.md)
 L34 to L41). The whole continent runs ahead of time in 526 s in the dev container, into 0.61 GB
@@ -682,9 +682,12 @@ run, `continent.tscn`, whose script gives the node the history; the first settle
 of its culture's module set in 25 to 31 s (`verify_continent.gd`, L44). Baked from that scene
 through the node's world run, the whole continent takes 579 s in the dev container, holds at most
 1.86 GB, and fills 65 536 files of 729 MB on disk; a bake stopped and resumed gives the same bytes
-as one made at once, and it quits cleanly part way or after (L45, L47). With its far ground the
-bake takes 628 s and holds at most 1.87 GB, and the baked world plays walking and flying at 1080p
-with no stage run (`measure_world_run.gd`, `measure_playback.gd`, L48). On the reference desktop
+as one made at once, and it stops cleanly part way or after (L45, L47), though Godot's process
+then exits with a segfault, its stages thread outliving the extension
+([#393](https://github.com/AntonTegnelov/wave_forge/issues/393)). With its far ground out to about
+2 km the bake takes 866 s and holds at most 2.08 GB, and the baked world plays walking and flying
+at 1080p with no stage run, at p50 21 and 13 ms a frame in the dev container
+(`measure_world_run.gd`, `measure_playback.gd`, L48 at 500 m, L50, L51). On the reference desktop
 the library's whole run took 676 s, over the 10 minutes
 ([measurements.md](../research/measurements.md) D10,
 [#319](https://github.com/AntonTegnelov/wave_forge/issues/319)); the bake's time and the playback's
