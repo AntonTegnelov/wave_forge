@@ -348,6 +348,11 @@ blade's base in the colour of the ground under it, on both renderers and in Bevy
 distance, so the hills preset draws grass out to three chunks for fewer blades than two chunks of
 every blade (`verify_ground.gd`, `grass_render.rs`, [measurements.md](../research/measurements.md)
 E65, [#361](https://github.com/AntonTegnelov/wave_forge/issues/361)).
+Up close each of the ground's materials has a micro-height of its own, the presets' sand a few
+stones, their rock plates and cracks and their grass tufts, which bumps the ground near the camera
+and decides where materials meet, in both engines and on both renderers (`verify_ground.gd`,
+`ground_material_render.rs`, [measurements.md](../research/measurements.md) E66,
+[#360](https://github.com/AntonTegnelov/wave_forge/issues/360)).
 Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 

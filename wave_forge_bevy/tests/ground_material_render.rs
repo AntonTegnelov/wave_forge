@@ -23,10 +23,10 @@ use bevy::render::view::Msaa;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wave_forge::stages::{Pack, Runtime};
-use wave_forge::{ChunkCoord, FocusPoint, ground, ground_materials};
+use wave_forge::{ChunkCoord, FocusPoint, GroundRelief, ground, ground_materials};
 use wave_forge_bevy::materials::{
     GrassFade, GroundLook, GroundRamp, WaveForgeMaterialsPlugin, ground_channels_image,
-    ground_material_of, palette_image, ramp_image,
+    ground_material_of, palette_image, ramp_image, relief_image,
 };
 use wave_forge_bevy::stages::ground_mesh;
 
@@ -64,6 +64,17 @@ fn render_halves_with(
     look: GroundLook,
     channels: Option<[[f32; 3]; 2]>,
     ramps: &[GroundRamp],
+) -> Vec<u8> {
+    render_halves_shaped(height, look, channels, ramps, &[])
+}
+
+/// What [`render_halves_with`] draws, with the materials' `reliefs`.
+fn render_halves_shaped(
+    height: &str,
+    look: GroundLook,
+    channels: Option<[[f32; 3]; 2]>,
+    ramps: &[GroundRamp],
+    reliefs: &[GroundRelief],
 ) -> Vec<u8> {
     let text = PACK.replace("Constant(0.0)", height);
     let mut runtime = Runtime::new(
@@ -132,6 +143,9 @@ fn render_halves_with(
     };
     material.extension.look = look;
     material.extension.ramps = world.resource_mut::<Assets<Image>>().add(ramp_image(ramps));
+    material.extension.relief = world
+        .resource_mut::<Assets<Image>>()
+        .add(relief_image(reliefs));
     if let Some([first, second]) = channels {
         let values: Vec<f32> = ids
             .iter()
@@ -434,4 +448,74 @@ fn a_ramp_by_height_goes_as_far_as_the_ground_stands_within_its_heights() {
         (near(left, halfway) && near(right, EAST)) || (near(left, EAST) && near(right, halfway)),
         "left {left:?}, right {right:?}; halfway {halfway:?}"
     );
+}
+
+/// Per row, how many pixels from the west edge the east material starts, the pixel nearer its
+/// colour than the west's.
+fn border_by_row(pixels: &[u8]) -> Vec<u32> {
+    let distance = |a: [u8; 3], b: [u8; 3]| -> u32 {
+        a.iter().zip(b).map(|(a, b)| u32::from(a.abs_diff(b))).sum()
+    };
+    let west_is_left = distance(pixel_of(pixels, 4, SIZE / 2), WEST)
+        < distance(pixel_of(pixels, 4, SIZE / 2), EAST);
+    (0..SIZE)
+        .map(|y| {
+            (0..SIZE)
+                .find(|&step| {
+                    let x = if west_is_left { step } else { SIZE - 1 - step };
+                    let colour = pixel_of(pixels, x, y);
+                    distance(colour, EAST) < distance(colour, WEST)
+                })
+                .expect("the east material shows in every row")
+        })
+        .collect()
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn materials_meet_along_the_micro_height_of_the_one_standing_higher() {
+    // Rock plates parted by cracks in the west, a flat east: where a plate stands the west reaches
+    // farther east, and where a crack runs less far.
+    let reliefs = [
+        GroundRelief {
+            pebbles: 0.0,
+            cracks: 1.0,
+            tufts: 0.0,
+            size: 2.0,
+        },
+        GroundRelief {
+            pebbles: 0.0,
+            cracks: 0.0,
+            tufts: 0.0,
+            size: 0.0,
+        },
+    ];
+    let shaped = GroundLook {
+        relief_blend: 1.0,
+        ..GroundLook::flat()
+    };
+
+    let straight = border_by_row(&render_halves_shaped(
+        "Constant(0.0)",
+        GroundLook::flat(),
+        None,
+        &[],
+        &reliefs,
+    ));
+    let following = border_by_row(&render_halves_shaped(
+        "Constant(0.0)",
+        shaped,
+        None,
+        &[],
+        &reliefs,
+    ));
+
+    let spread = |rows: &[u32]| rows.iter().max().unwrap() - rows.iter().min().unwrap();
+    println!(
+        "the border moves {} pixels between rows following the cracks, {} without",
+        spread(&following),
+        spread(&straight)
+    );
+    assert!(spread(&straight) <= 1, "{straight:?}");
+    assert!(spread(&following) >= 3, "{following:?}");
 }

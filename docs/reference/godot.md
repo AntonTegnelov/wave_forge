@@ -192,6 +192,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_material_stage` | a Rules, Area or Nearest stage whose categories are the ground's materials ([Ground and colliders](#ground-and-colliders)); empty for none |
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
 | | `ground_ramp_colours`, `ground_ramp_drivers`, `ground_ramp_heights` | a ramp per category, by index as `ground_palette`, along which the reference ground shader moves the category's colour: the colour it runs toward, and a `Vector4` of how far the ground's height (0 to 1 over `ground_ramp_heights`, in world units), its slope (0 flat to 1 sheer), its cavity and its wetness each move it, from -1 to 1, summed and clamped to the ramp. A category past either array's end has none. Handed to the shader as `wave_forge_ramps` and `ramp_heights` |
+| | `ground_relief` | a micro-height per category, by index as `ground_palette`: a `Vector4` of how much of it is pebbles, cracks and tufts, and how wide one feature is in world units (`wave_forge::GroundRelief`); a category past its end has fine tufts. The reference ground shader bumps the ground near the camera by it and lets the material standing higher win where materials meet. Handed to the shader as `wave_forge_relief` |
 | | `ground_cavity_stage`, `ground_wetness_stage`, `ground_cover_stage` | field stages whose values, 0 to 1, the reference ground shader takes as channels: a cavity that darkens hollows, a wetness that darkens and smooths the ground, and a cover that tints it toward the grass where the grass fades out |
 | | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view or, when it reaches further, the far ground; empty, or a pack without water, draws none |
 | | `water_stage`, `water_material` | a field stage at the ground's scale holding the level of the lakes' and rivers' water ([packs.md](packs.md#water-surfaces)): each chunk whose ground is drawn also gets its water, drawn with `water_material`, or `sea_material` when that is empty, and with neither, as with the sea, not drawn. `water_chunks()` lists the chunks with water drawn and `water_surface_of(chunk)` gives one's `positions` and `indices`; loading refuses a water stage that is no field |
@@ -686,19 +687,28 @@ With `ground_material` empty, the copy is of the reference ground shader
 (`addons/wave_forge/shaders/ground.gdshader`, [Reference shaders](#reference-shaders)), which draws
 the materials of the four vertices around every fragment, asset free and on every renderer,
 Compatibility included. Each material is weighted by how near its vertices are plus a noise of its
-own, so materials meet along a broken line rather than the grid's. Steep ground turns to rock by
+own, so materials meet along a broken line rather than the grid's. Each material also has a
+micro-height of its own, from `ground_relief` (per category, by index as `ground_palette`: how much
+of it is pebbles, round stones in about half the cells of a grid; cracks, plates parted where a
+noise crosses its middle; and tufts, fine bumps; and how wide one feature is in world units,
+`wave_forge::GroundRelief`), fine tufts for a category given none. Where materials meet, the
+micro-height raises each by up to `relief_blend` (0.6) and the one standing higher wins, so sand
+settles between pebbles and rock plates stand out of their cracks; near the camera it bumps the
+surface and grains its colour. Steep ground turns to rock by
 its slope: the ground's own colour muted and banded in strata, with a soft border on walls, where
 the per-column materials would otherwise streak down. Gullies run down steep ground along its fall
 line, from a ridged noise over the ground plane that changes little down a slope and much along it,
 each groove darker and leaning the normal into it: finer than a column, so a wall too narrow for
 the Erode stage, the canyon's mesas say, still shows them. A broad noise varies the colour across
-the land, and near the camera a fine one bumps the surface and grains its colour. Its parameters set
+the land. Its parameters set
 the look: `rock_colour` (whose alpha, above zero, replaces the muted colour with its own),
 `rock_slope` (the slopes, one minus the normal's height, where rock starts and has taken over),
-`strata`, `gullies`, `edge_noise`, `macro_variation` and `detail`, all on by default; zero noise and
+`strata`, `gullies`, `edge_noise`, `macro_variation`, `relief_blend` and `detail`, all on by
+default; zero noise and
 `rock_slope` beyond 1 draw the palette's colours alone. A game sets them on a `ShaderMaterial` of
 the reference shader given as `ground_material`, whose parameters every chunk's copy keeps. What
-the shader costs is in [measurements.md](../research/measurements.md) (E58).
+the shader costs is in [measurements.md](../research/measurements.md) (E58, and E66 for the
+micro-heights).
 
 With `ground_cavity_stage`, `ground_wetness_stage` or `ground_cover_stage` set to field stages at
 the ground's scale, a chunk's ground also waits for their values at its vertices, those beyond its

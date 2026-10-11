@@ -76,7 +76,7 @@ pub use frozen::{DirectoryStore, FrozenStore, StoreError};
 pub use generator::{ChunkEvent, GeneratorStats, REPAIR_REACH, WorldGenerator};
 pub use grass::{GrassThinning, grass_blades_needed};
 pub use ground::{
-    GROUND_CHANNELS, GroundLevel, GroundMesh, ground, ground_channels, ground_height,
+    GROUND_CHANNELS, GroundLevel, GroundMesh, GroundRelief, ground, ground_channels, ground_height,
     ground_materials, ground_readers, ground_values,
 };
 pub use occluders::occluders;

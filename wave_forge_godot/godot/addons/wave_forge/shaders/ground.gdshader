@@ -2,9 +2,11 @@
 // carries its vertices' materials as an id texture, one texel per vertex, and every fragment draws
 // the materials of the four vertices around it. Where they differ, each is weighted by how near
 // its vertices are plus a noise of its own, and the highest wins with a short blend, so materials
-// meet along a broken line rather than the grid's. Steep ground turns to rock by its own slope,
-// its colour muted and banded in strata; a broad noise varies the colour across the land, and a
-// fine one bumps the ground and grains its colour near the camera. Asset free; works on every
+// meet along a broken line rather than the grid's. Each material has a micro-height of its own,
+// pebbles, cracks or tufts, which bumps the ground and grains its colour near the camera and
+// decides where materials meet, the one standing higher winning. Steep ground turns to rock by its
+// own slope, its colour muted and banded in strata; a broad noise varies the colour across the
+// land. Asset free; works on every
 // renderer, Compatibility included. Channels the node hands in darken hollows and wet ground, and
 // each material's colour may run along a ramp of its own by height, slope, cavity and wetness.
 // `wave_forge_bevy/src/shaders/ground.wesl` is the same shader for Bevy.
@@ -22,6 +24,12 @@ uniform sampler2D wave_forge_palette : filter_nearest, repeat_disable, source_co
 // wetness each move its colour along that ramp, from -1 to 1. Black, no ramp, where the node hands
 // in none.
 uniform sampler2D wave_forge_ramps : filter_nearest, repeat_disable, hint_default_black;
+// Per material id, in texel id of a 256 by 1 texture: how much of it is pebbles, cracks and tufts,
+// and how wide one of its features is in world units (`wave_forge::GroundRelief`). Black, a flat
+// ground, where the node hands in none.
+uniform sampler2D wave_forge_relief : filter_nearest, repeat_disable, hint_default_black;
+// How far the materials' micro-heights move the line where they meet.
+uniform float relief_blend : hint_range(0.0, 1.0) = 0.6;
 // The heights, in world units, over which the ramps' height runs from 0 to 1.
 uniform vec2 ramp_heights = vec2(0.0, 1.0);
 // Per ground vertex, 0 to 1: a cavity in red, which darkens the ground, a wetness in green, which
@@ -58,13 +66,15 @@ uniform float gullies : hint_range(0.0, 1.0) = 0.5;
 uniform float edge_noise : hint_range(0.0, 1.0) = 0.5;
 // How much a broad noise varies the colour across the land.
 uniform float macro_variation : hint_range(0.0, 1.0) = 0.5;
-// How much fine grain and detail normal the ground has near the camera.
+// How much the micro-heights bump the ground and grain its colour near the camera.
 uniform float detail : hint_range(0.0, 1.0) = 1.0;
 
 // The slopes (one minus the normal's height) at which gullies start and are cut fully, and how many
 // gullies a world unit of the ground plane holds.
 const vec2 GULLY_SLOPE = vec2(0.08, 0.2);
 const float GULLY_SCALE = 0.7;
+// How far a micro-height of full depth leans the normal, per unit of its slope in feature widths.
+const float RELIEF_BUMP = 0.25;
 
 varying vec2 column;
 varying vec3 world;
@@ -130,6 +140,60 @@ vec3 fbm_with_slope(vec2 p) {
 	return vec3(v, slope) / 7.0;
 }
 
+// Round stones in about half the cells of a grid over `p`, in feature widths, each at a hashed
+// place and of a hashed size up to a third of a feature: (height 0 to 1, its slope along x and z).
+vec3 pebbles(vec2 p) {
+	vec2 cell = floor(p);
+	vec3 stone = vec3(0.0);
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec2 c = cell + vec2(float(x), float(y));
+			float size = hash(c + 7.7);
+			if (size < 0.45) {
+				continue;
+			}
+			float radius = 0.15 + 0.35 * (size - 0.45);
+			vec2 d = (p - (c + 0.25 + 0.5 * vec2(hash(c), hash(c + 19.19)))) / radius;
+			float h = 1.0 - dot(d, d);
+			if (h > stone.x) {
+				stone = vec3(h, -2.0 * d / radius);
+			}
+		}
+	}
+	return stone;
+}
+
+// Plates parted by narrow cracks where a value noise crosses its middle: (height 0 to 1, its slope
+// along x and z), in feature widths.
+vec3 cracks(vec2 p) {
+	vec3 v = value_with_slope(p);
+	float side = 2.0 * v.x - 1.0;
+	float x = clamp(abs(side) * 4.0, 0.0, 1.0);
+	return vec3(x * x * (3.0 - 2.0 * x), 6.0 * x * (1.0 - x) * 4.0 * sign(side) * 2.0 * v.yz);
+}
+
+// Material `id`'s micro-height at `ground`, world units along x and z: (height 0 to 1, its slope
+// along x and z in feature widths, its depth 0 to 1).
+vec4 relief_of(int id, vec2 ground) {
+	vec4 shape = texelFetch(wave_forge_relief, ivec2(id, 0), 0);
+	float total = shape.x + shape.y + shape.z;
+	if (total <= 0.0 || shape.w <= 0.0) {
+		return vec4(0.5, 0.0, 0.0, 0.0);
+	}
+	vec2 p = ground / shape.w;
+	vec3 h = vec3(0.0);
+	if (shape.x > 0.0) {
+		h += shape.x * pebbles(p);
+	}
+	if (shape.y > 0.0) {
+		h += shape.y * cracks(p + 31.7);
+	}
+	if (shape.z > 0.0) {
+		h += shape.z * fbm_with_slope(p + 57.3);
+	}
+	return vec4(h / total, min(total, 1.0));
+}
+
 int id_at(ivec2 vertex) {
 	return int(texelFetch(wave_forge_materials, vertex, 0).r * 255.0 + 0.5);
 }
@@ -180,11 +244,16 @@ void fragment() {
 	for (int k = 0; k < 4; k++) {
 		ids[k] = id_at(corners[k]);
 	}
+	float near = 1.0 - smoothstep(30.0, 120.0, length(world - CAMERA_POSITION_WORLD));
+	float grain = detail * near;
 	vec3 albedo = colour_of(ids[0], drivers);
+	// The micro-height here: its height, its slope in feature widths times its depth.
+	vec3 micro = vec3(0.5, 0.0, 0.0);
 	// Most fragments have one material on all four corners and need no border.
 	if (ids[1] != ids[0] || ids[2] != ids[0] || ids[3] != ids[0]) {
 		float heights[4];
 		float shares[4];
+		vec4 reliefs[4];
 		float highest = -2.0;
 		for (int k = 0; k < 4; k++) {
 			float weight = 0.0;
@@ -195,26 +264,38 @@ void fragment() {
 					same += 1.0;
 				}
 			}
-			heights[k] = weight + border_noise * (fbm(ground / 2.0 + float(ids[k]) * 17.31) - 0.5) * 2.0;
+			// A material on several corners has its micro-height worked out once.
+			int first = k;
+			for (int j = k - 1; j >= 0; j--) {
+				if (ids[j] == ids[k]) {
+					first = j;
+				}
+			}
+			reliefs[k] = first == k ? relief_of(ids[k], ground) : reliefs[first];
+			// The material standing higher, by its micro-height, wins: sand settles between
+			// pebbles, rock plates stand out of their cracks.
+			heights[k] = weight + border_noise * (fbm(ground / 2.0 + float(ids[k]) * 17.31) - 0.5) * 2.0
+				+ (1.0 - rock) * relief_blend * reliefs[k].w * (reliefs[k].x - 0.5);
 			shares[k] = 1.0 / same;
 			highest = max(highest, heights[k]);
 		}
 		albedo = vec3(0.0);
+		micro = vec3(0.0);
 		float total = 0.0;
 		for (int k = 0; k < 4; k++) {
 			float weight = max(heights[k] - highest + border_width, 0.0) * shares[k];
 			albedo += colour_of(ids[k], drivers) * weight;
+			micro += vec3(reliefs[k].x, reliefs[k].yz * reliefs[k].w) * weight;
 			total += weight;
 		}
 		albedo /= total;
+		micro /= total;
+	} else if (grain > 0.0) {
+		vec4 relief = relief_of(ids[0], ground);
+		micro = vec3(relief.x, relief.yz * relief.w);
 	}
-
-	float near = 1.0 - smoothstep(30.0, 120.0, length(world - CAMERA_POSITION_WORLD));
-	float grain = detail * near;
-	// The fine noise bumps the surface by its slope, fading with distance.
-	vec3 fine = fbm_with_slope(ground * 1.7);
-	vec2 slope = fine.yz * 1.7;
-	vec3 normal = normalize(surface + vec3(-slope.x, 0.0, -slope.y) * 0.25 * grain);
+	// The micro-height bumps the surface by its slope, fading with distance.
+	vec3 normal = normalize(surface + vec3(-micro.y, 0.0, -micro.z) * RELIEF_BUMP * grain);
 	// The rock is the ground's colour muted, banded in warped strata.
 	if (rock > 0.0) {
 		float band = 0.5 + 0.5 * sin(world.y * 1.8 + fbm(ground / 12.0) * 2.0);
@@ -240,7 +321,7 @@ void fragment() {
 	float beyond_grass = smoothstep(wave_forge_fade.x, wave_forge_fade.y, max(from_focus.x, from_focus.y));
 	albedo = mix(albedo, cover_colour, cover * cover_tint * beyond_grass);
 	albedo *= (1.0 - cavity_darkening * cavity) * (1.0 - wet_darkening * wet);
-	albedo *= mix(1.0, 0.86 + 0.28 * fine.x, grain);
+	albedo *= mix(1.0, 0.86 + 0.28 * micro.x, grain);
 
 	ALBEDO = albedo;
 	ROUGHNESS = mix(roughness, wet_roughness, wet);

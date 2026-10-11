@@ -38,6 +38,8 @@ func _initialize() -> void:
 	world.ground_stage = "height"
 	world.ground_material_stage = "surface"
 	world.ground_palette = PackedColorArray([Color(0.85, 0.78, 0.55), Color(0.52, 0.5, 0.48), Color(0.3, 0.55, 0.25)])
+	# Sand with a few small stones, rock in plates and cracks, grass in tufts.
+	world.ground_relief = PackedVector4Array([Vector4(0.15, 0, 0.35, 0.3), Vector4(0.25, 0.75, 0, 0.9), Vector4(0, 0, 1, 0.45)])
 	world.targets = PackedStringArray(["height", "surface", "cover", "hollow", "wet"])
 	world.ground_cavity_stage = "hollow"
 	world.ground_wetness_stage = "wet"

@@ -2,9 +2,11 @@
 // chunk's ground carries its vertices' materials as an id texture, one texel per vertex, and every
 // fragment draws the materials of the four vertices around it. Where they differ, each is weighted
 // by how near its vertices are plus a noise of its own, and the highest wins with a short blend, so
-// materials meet along a broken line rather than the grid's. Steep ground turns to rock by its own
-// slope, its colour muted and banded in strata; a broad noise varies the colour across the land,
-// and a fine one bumps the ground and grains its colour near the camera. Channels the stages hand
+// materials meet along a broken line rather than the grid's. Each material has a micro-height of its
+// own, pebbles, cracks or tufts, which bumps the ground and grains its colour near the camera and
+// decides where materials meet, the one standing higher winning. Steep ground turns to rock by its
+// own slope, its colour muted and banded in strata; a broad noise varies the colour across the
+// land. Channels the stages hand
 // in darken hollows and wet ground, and each material's colour may run along a ramp of its own by
 // height, slope, cavity and wetness. Bevy's own lighting does the rest.
 // `wave_forge_godot/godot/addons/wave_forge/shaders/ground.gdshader` is the same shader for Godot.
@@ -37,6 +39,7 @@ struct GroundLook {
     cover_tint: f32,
     cover_colour: vec4<f32>,
     gullies: f32,
+    relief_blend: f32,
     ramp_heights: vec2<f32>,
     // A struct within a uniform starts on 16 bytes.
     @align(16) cover_fade: GrassFade,
@@ -46,6 +49,8 @@ struct GroundLook {
 // gullies a world unit of the ground plane holds.
 const GULLY_SLOPE: vec2<f32> = vec2<f32>(0.08, 0.2);
 const GULLY_SCALE: f32 = 0.7;
+// How far a micro-height of full depth leans the normal, per unit of its slope in feature widths.
+const RELIEF_BUMP: f32 = 0.25;
 
 // The chunk's corner on the ground plane (x, z) and a cell's width along x and z.
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> grid: vec4<f32>;
@@ -63,6 +68,9 @@ const GULLY_SCALE: f32 = 0.7;
 // and wetness each move its colour along that ramp, from -1 to 1. A single texel of zeros, no ramp,
 // for a ground without ramps.
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var ramps: texture_2d<f32>;
+// Per material id, in texel id of a 256 by 1 texture: how much of it is pebbles, cracks and tufts,
+// and how wide one of its features is in world units (`wave_forge::GroundRelief`).
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var relief: texture_2d<f32>;
 
 // A hash without trigonometry, cheaper than sin and the same on every GPU.
 fn hash(p: vec2<f32>) -> f32 {
@@ -116,6 +124,61 @@ fn fbm_with_slope(p: vec2<f32>) -> vec3<f32> {
     let v = first.x * 4.0 + second.x * 2.0 + third.x;
     let slope = first.yz * 4.0 + back * (second.yz * 2.0 + back * third.yz);
     return vec3<f32>(v, slope) / 7.0;
+}
+
+// Round stones in about half the cells of a grid over `p`, in feature widths, each at a hashed
+// place and of a hashed size up to a third of a feature: (height 0 to 1, its slope along x and z).
+fn pebbles(p: vec2<f32>) -> vec3<f32> {
+    let cell = floor(p);
+    var stone = vec3<f32>(0.0);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let c = cell + vec2<f32>(f32(x), f32(y));
+            let size = hash(c + 7.7);
+            if size < 0.45 {
+                continue;
+            }
+            let radius = 0.15 + 0.35 * (size - 0.45);
+            let d = (p - (c + 0.25 + 0.5 * vec2<f32>(hash(c), hash(c + 19.19)))) / radius;
+            let h = 1.0 - dot(d, d);
+            if h > stone.x {
+                stone = vec3<f32>(h, -2.0 * d / radius);
+            }
+        }
+    }
+    return stone;
+}
+
+// Plates parted by narrow cracks where a value noise crosses its middle: (height 0 to 1, its slope
+// along x and z), in feature widths.
+fn cracks(p: vec2<f32>) -> vec3<f32> {
+    let v = value_with_slope(p);
+    let side = 2.0 * v.x - 1.0;
+    let x = clamp(abs(side) * 4.0, 0.0, 1.0);
+    return vec3<f32>(x * x * (3.0 - 2.0 * x), 6.0 * x * (1.0 - x) * 4.0 * sign(side) * 2.0 * v.yz);
+}
+
+// Material `id`'s micro-height at `ground`, world units along x and z: (height 0 to 1, its slope
+// along x and z in feature widths, its depth 0 to 1).
+fn relief_of(id: i32, ground: vec2<f32>) -> vec4<f32> {
+    let last = i32(textureDimensions(relief).x) - 1;
+    let shape = textureLoad(relief, vec2<i32>(min(id, last), 0), 0);
+    let total = shape.x + shape.y + shape.z;
+    if total <= 0.0 || shape.w <= 0.0 {
+        return vec4<f32>(0.5, 0.0, 0.0, 0.0);
+    }
+    let p = ground / shape.w;
+    var h = vec3<f32>(0.0);
+    if shape.x > 0.0 {
+        h += shape.x * pebbles(p);
+    }
+    if shape.y > 0.0 {
+        h += shape.y * cracks(p + 31.7);
+    }
+    if shape.z > 0.0 {
+        h += shape.z * fbm_with_slope(p + 57.3);
+    }
+    return vec4<f32>(h / total, min(total, 1.0));
 }
 
 fn id_at(vertex: vec2<i32>) -> i32 {
@@ -173,11 +236,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     for (var k = 0; k < 4; k++) {
         ids[k] = id_at(corners[k]);
     }
+    let near = 1.0 - smoothstep(30.0, 120.0, length(world - view.world_position));
+    let grain = look.detail * near;
     var albedo = colour_of(ids[0], drivers);
+    // The micro-height here: its height, its slope in feature widths times its depth.
+    var micro = vec3<f32>(0.5, 0.0, 0.0);
     // Most fragments have one material on all four corners and need no border.
     if ids[1] != ids[0] || ids[2] != ids[0] || ids[3] != ids[0] {
         var heights: array<f32, 4>;
         var shares: array<f32, 4>;
+        var reliefs: array<vec4<f32>, 4>;
         var highest = -2.0;
         for (var k = 0; k < 4; k++) {
             var weight = 0.0;
@@ -188,26 +256,42 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
                     same += 1.0;
                 }
             }
-            heights[k] = weight + border_noise * (fbm(ground / 2.0 + f32(ids[k]) * 17.31) - 0.5) * 2.0;
+            // A material on several corners has its micro-height worked out once.
+            var first = k;
+            for (var j = k - 1; j >= 0; j--) {
+                if ids[j] == ids[k] {
+                    first = j;
+                }
+            }
+            if first == k {
+                reliefs[k] = relief_of(ids[k], ground);
+            } else {
+                reliefs[k] = reliefs[first];
+            }
+            // The material standing higher, by its micro-height, wins: sand settles between
+            // pebbles, rock plates stand out of their cracks.
+            heights[k] = weight + border_noise * (fbm(ground / 2.0 + f32(ids[k]) * 17.31) - 0.5) * 2.0
+                + (1.0 - rock) * look.relief_blend * reliefs[k].w * (reliefs[k].x - 0.5);
             shares[k] = 1.0 / same;
             highest = max(highest, heights[k]);
         }
         albedo = vec3<f32>(0.0);
+        micro = vec3<f32>(0.0);
         var total = 0.0;
         for (var k = 0; k < 4; k++) {
             let weight = max(heights[k] - highest + border_width, 0.0) * shares[k];
             albedo += colour_of(ids[k], drivers) * weight;
+            micro += vec3<f32>(reliefs[k].x, reliefs[k].yz * reliefs[k].w) * weight;
             total += weight;
         }
         albedo /= total;
+        micro /= total;
+    } else if grain > 0.0 {
+        let here = relief_of(ids[0], ground);
+        micro = vec3<f32>(here.x, here.yz * here.w);
     }
-
-    let near = 1.0 - smoothstep(30.0, 120.0, length(world - view.world_position));
-    let grain = look.detail * near;
-    // The fine noise bumps the surface by its slope, fading with distance.
-    let fine = fbm_with_slope(ground * 1.7);
-    let slope = fine.yz * 1.7;
-    pbr_input.N = normalize(pbr_input.N + vec3<f32>(-slope.x, 0.0, -slope.y) * 0.25 * grain);
+    // The micro-height bumps the surface by its slope, fading with distance.
+    pbr_input.N = normalize(pbr_input.N + vec3<f32>(-micro.y, 0.0, -micro.z) * RELIEF_BUMP * grain);
     // The rock is the ground's colour muted, banded in warped strata.
     if rock > 0.0 {
         let band = 0.5 + 0.5 * sin(world.y * 1.8 + fbm(ground / 12.0) * 2.0);
@@ -235,7 +319,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     albedo = mix(albedo, look.cover_colour.rgb, cover * look.cover_tint * beyond_grass);
     albedo *= (1.0 - look.cavity_darkening * cavity) * (1.0 - look.wet_darkening * wet);
     pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, look.wet_roughness, wet);
-    albedo *= mix(1.0, 0.86 + 0.28 * fine.x, grain);
+    albedo *= mix(1.0, 0.86 + 0.28 * micro.x, grain);
 
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
     var out: FragmentOutput;

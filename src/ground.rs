@@ -365,6 +365,42 @@ pub fn ground_channels(channels: [Option<Vec<f32>>; GROUND_CHANNELS]) -> Option<
     )
 }
 
+/// A ground material's micro-height in the reference ground shaders: how much of it is pebbles
+/// (round stones in cells), cracks (plates parted by narrow cracks) and tufts (fine bumps), and how
+/// wide one of its features is, in world units. Near the camera the shaders bump the ground's
+/// normal and grain its colour by it, and where materials meet the one standing higher wins, so
+/// sand settles between pebbles and rock plates stand out of their cracks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GroundRelief {
+    pub pebbles: f32,
+    pub cracks: f32,
+    pub tufts: f32,
+    pub size: f32,
+}
+
+impl GroundRelief {
+    /// The relief of a material given none: fine bumps a little over half a unit wide.
+    pub const DEFAULT: Self = Self {
+        pebbles: 0.0,
+        cracks: 0.0,
+        tufts: 0.6,
+        size: 0.6,
+    };
+
+    /// The reliefs of `count` materials by index for a ground shader's float texture, four values
+    /// a material in the order of the fields: `reliefs` by index, [`GroundRelief::DEFAULT`] for a
+    /// material past its end.
+    #[must_use]
+    pub fn texels(reliefs: &[GroundRelief], count: usize) -> Vec<f32> {
+        (0..count)
+            .flat_map(|index| {
+                let relief = reliefs.get(index).copied().unwrap_or(Self::DEFAULT);
+                [relief.pebbles, relief.cracks, relief.tufts, relief.size]
+            })
+            .collect()
+    }
+}
+
 /// A stage's value at every vertex of `chunk`'s ground, the +x and +y edges from the chunks
 /// beyond, read from the chunks `lookup` finds with `get`.
 fn per_vertex<'a, S: 'a, T>(
@@ -866,5 +902,21 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_material_past_the_reliefs_given_takes_the_default() {
+        let rock = GroundRelief {
+            pebbles: 0.2,
+            cracks: 0.8,
+            tufts: 0.0,
+            size: 0.9,
+        };
+
+        let texels = GroundRelief::texels(&[rock], 3);
+
+        assert_eq!(texels.len(), 12);
+        assert_eq!(texels[..4], [0.2, 0.8, 0.0, 0.9]);
+        assert_eq!(texels[8..], [0.0, 0.0, 0.6, 0.6]);
     }
 }
