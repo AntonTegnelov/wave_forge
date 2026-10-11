@@ -590,6 +590,16 @@ fn the_pack_holds_what_m1_names() {
     assert!(count(|kind| matches!(kind, StageKind::Scatter { .. })) >= 40);
 }
 
+/// The biomes `test` asks for: an `Is` of the biome stage's, or either side's of a `Max` of them,
+/// as a stage that also grows where something else holds asks.
+fn biomes_named(test: &Expr) -> Vec<&String> {
+    match test {
+        Expr::Is(stage, names) if stage == "biome" => names.iter().collect(),
+        Expr::Max(a, b) => biomes_named(a).into_iter().chain(biomes_named(b)).collect(),
+        _ => Vec::new(),
+    }
+}
+
 #[test]
 fn every_vegetation_and_clutter_stage_grows_in_biomes_the_continent_has() {
     let pack = pack();
@@ -601,14 +611,10 @@ fn every_vegetation_and_clutter_stage_grows_in_biomes_the_continent_has() {
         };
         let wanted: Vec<&String> = when
             .iter()
-            .filter_map(|condition| match condition {
-                Condition::Greater(test, _) => match test.as_ref() {
-                    Expr::Is(stage, names) if stage == "biome" => Some(names),
-                    _ => None,
-                },
-                _ => None,
+            .flat_map(|condition| match condition {
+                Condition::Greater(test, _) => biomes_named(test),
+                _ => Vec::new(),
             })
-            .flatten()
             .collect();
 
         assert!(!wanted.is_empty(), "{name} names no biome");
