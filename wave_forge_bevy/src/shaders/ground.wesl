@@ -51,6 +51,9 @@ const GULLY_SLOPE: vec2<f32> = vec2<f32>(0.08, 0.2);
 const GULLY_SCALE: f32 = 0.7;
 // How far a micro-height of full depth leans the normal, per unit of its slope in feature widths.
 const RELIEF_BUMP: f32 = 0.25;
+// How wide a crack is, in feature widths, and how far its sides lean the normal against a plate's.
+const CRACK_WIDTH: f32 = 0.06;
+const CRACK_DEPTH: f32 = 0.15;
 
 // The chunk's corner on the ground plane (x, z) and a cell's width along x and z.
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> grid: vec4<f32>;
@@ -154,13 +157,36 @@ fn pebbles(p: vec2<f32>) -> vec3<f32> {
     return stone;
 }
 
-// Plates parted by narrow cracks where a value noise crosses its middle: (height 0 to 1, its slope
-// along x and z), in feature widths.
+// Plates parted by narrow cracks: the cells of a cellular noise over `p`, in feature widths, a
+// plate standing at 1 and a crack falling to 0 where its two nearest features are about as near,
+// shallow, so it reads as a line: (height 0 to 1, its slope along x and z).
 fn cracks(p: vec2<f32>) -> vec3<f32> {
-    let v = value_with_slope(p);
-    let side = 2.0 * v.x - 1.0;
-    let x = clamp(abs(side) * 4.0, 0.0, 1.0);
-    return vec3<f32>(x * x * (3.0 - 2.0 * x), 6.0 * x * (1.0 - x) * 4.0 * sign(side) * 2.0 * v.yz);
+    let cell = floor(p);
+    var first = 1e9;
+    var second = 1e9;
+    var to_first = vec2<f32>(0.0);
+    var to_second = vec2<f32>(0.0);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let c = cell + vec2<f32>(f32(x), f32(y));
+            let d = p - (c + vec2<f32>(hash(c + 3.7), hash(c + 41.3)));
+            let squared = dot(d, d);
+            if squared < first {
+                second = first;
+                to_second = to_first;
+                first = squared;
+                to_first = d;
+            } else if squared < second {
+                second = squared;
+                to_second = d;
+            }
+        }
+    }
+    let near = sqrt(first);
+    let far = sqrt(second);
+    let x = clamp((far - near) / CRACK_WIDTH, 0.0, 1.0);
+    let across = to_second / max(far, 1e-4) - to_first / max(near, 1e-4);
+    return vec3<f32>(x * x * (3.0 - 2.0 * x), CRACK_DEPTH * 6.0 * x * (1.0 - x) / CRACK_WIDTH * across);
 }
 
 // Material `id`'s micro-height at `ground`, world units along x and z: (height 0 to 1, its slope

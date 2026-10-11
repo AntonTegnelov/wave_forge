@@ -83,6 +83,9 @@ const vec2 GULLY_SLOPE = vec2(0.08, 0.2);
 const float GULLY_SCALE = 0.7;
 // How far a micro-height of full depth leans the normal, per unit of its slope in feature widths.
 const float RELIEF_BUMP = 0.25;
+// How wide a crack is, in feature widths, and how far its sides lean the normal against a plate's.
+const float CRACK_WIDTH = 0.06;
+const float CRACK_DEPTH = 0.15;
 
 varying vec2 column;
 varying vec3 world;
@@ -171,13 +174,36 @@ vec3 pebbles(vec2 p) {
 	return stone;
 }
 
-// Plates parted by narrow cracks where a value noise crosses its middle: (height 0 to 1, its slope
-// along x and z), in feature widths.
+// Plates parted by narrow cracks: the cells of a cellular noise over `p`, in feature widths, a
+// plate standing at 1 and a crack falling to 0 where its two nearest features are about as near,
+// shallow, so it reads as a line: (height 0 to 1, its slope along x and z).
 vec3 cracks(vec2 p) {
-	vec3 v = value_with_slope(p);
-	float side = 2.0 * v.x - 1.0;
-	float x = clamp(abs(side) * 4.0, 0.0, 1.0);
-	return vec3(x * x * (3.0 - 2.0 * x), 6.0 * x * (1.0 - x) * 4.0 * sign(side) * 2.0 * v.yz);
+	vec2 cell = floor(p);
+	float first = 1e9;
+	float second = 1e9;
+	vec2 to_first = vec2(0.0);
+	vec2 to_second = vec2(0.0);
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec2 c = cell + vec2(float(x), float(y));
+			vec2 d = p - (c + vec2(hash(c + 3.7), hash(c + 41.3)));
+			float squared = dot(d, d);
+			if (squared < first) {
+				second = first;
+				to_second = to_first;
+				first = squared;
+				to_first = d;
+			} else if (squared < second) {
+				second = squared;
+				to_second = d;
+			}
+		}
+	}
+	float near = sqrt(first);
+	float far = sqrt(second);
+	float x = clamp((far - near) / CRACK_WIDTH, 0.0, 1.0);
+	vec2 across = to_second / max(far, 1e-4) - to_first / max(near, 1e-4);
+	return vec3(x * x * (3.0 - 2.0 * x), CRACK_DEPTH * 6.0 * x * (1.0 - x) / CRACK_WIDTH * across);
 }
 
 // Material `id`'s micro-height at `ground`, world units along x and z: (height 0 to 1, its slope
