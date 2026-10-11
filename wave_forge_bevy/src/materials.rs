@@ -16,6 +16,7 @@ use bevy_color::{Color, ColorToComponents, ColorToPacked};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::prelude::{MessageReader, Res, ResMut, Resource};
 use bevy_image::Image;
+use bevy_material::AlphaMode;
 use bevy_math::{IVec2, IVec4, Vec2, Vec3, Vec4};
 use bevy_mesh::{Mesh, PrimitiveTopology};
 use bevy_pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, StandardMaterial};
@@ -231,10 +232,12 @@ impl Plugin for WaveForgeMaterialsPlugin {
         embedded_asset!(app, "shaders/ground.wesl");
         embedded_asset!(app, "shaders/grass.wesl");
         embedded_asset!(app, "shaders/vegetation.wesl");
+        embedded_asset!(app, "shaders/water.wesl");
         app.add_plugins((
             MaterialPlugin::<GroundMaterial>::default(),
             MaterialPlugin::<GrassMaterial>::default(),
             MaterialPlugin::<VegetationMaterial>::default(),
+            MaterialPlugin::<WaterMaterial>::default(),
         ))
         .init_resource::<Wind>()
         .init_resource::<GrassFade>()
@@ -523,6 +526,69 @@ impl Sways for VegetationMaterials {
 /// A plant that bends in the [`Wind`]: Bevy's `StandardMaterial` for its looks, the vegetation
 /// shader for its vertices.
 pub type VegetationMaterial = ExtendedMaterial<StandardMaterial, VegetationMaterials>;
+
+/// How the reference water shader draws lakes and rivers by their depth, which
+/// [`crate::stages::water_mesh`] gives every vertex.
+#[derive(ShaderType, Clone, Copy, Debug)]
+pub struct WaterLook {
+    /// The water's colour where it is shallow, linear RGB.
+    pub shallow_colour: Vec4,
+    /// The water's colour where it is deep, linear RGB.
+    pub deep_colour: Vec4,
+    /// How opaque the water is at its shallowest and its deepest.
+    pub opacity: Vec2,
+    /// The depth, in world units, over which the water turns from shallow to deep and from clear to
+    /// opaque: about two thirds of the way at this depth.
+    pub clarity: f32,
+    /// The depth, in world units, over which the water fades in from the shore.
+    pub shore: f32,
+}
+
+impl Default for WaterLook {
+    /// The Godot reference water shader's defaults.
+    fn default() -> Self {
+        Self {
+            shallow_colour: Color::srgb(0.30, 0.42, 0.38).to_linear().to_vec4(),
+            deep_colour: Color::srgb(0.03, 0.10, 0.13).to_linear().to_vec4(),
+            opacity: Vec2::new(0.6, 0.95),
+            clarity: 1.0,
+            shore: 0.25,
+        }
+    }
+}
+
+/// What [`WaterMaterial`] adds to a `StandardMaterial`: how the water is drawn by its depth.
+#[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
+pub struct WaterMaterials {
+    #[uniform(100)]
+    pub look: WaterLook,
+}
+
+impl MaterialExtension for WaterMaterials {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://wave_forge_bevy/shaders/water.wesl".into()
+    }
+}
+
+/// Lakes and rivers drawn by their depth: Bevy's `StandardMaterial` for the light, the reference
+/// water shader for the colour and how opaque the water is.
+pub type WaterMaterial = ExtendedMaterial<StandardMaterial, WaterMaterials>;
+
+/// The reference water material: a smooth, blended `StandardMaterial` under the default
+/// [`WaterLook`].
+#[must_use]
+pub fn water_material() -> WaterMaterial {
+    WaterMaterial {
+        base: StandardMaterial {
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 0.06,
+            ..StandardMaterial::default()
+        },
+        extension: WaterMaterials {
+            look: WaterLook::default(),
+        },
+    }
+}
 
 /// A plant's material: `base` for its looks, bending fully at `bend_height` and fluttering its
 /// outer parts by `flutter`, both in the mesh's own units. Its phase in the wind is hashed from

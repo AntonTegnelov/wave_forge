@@ -1,6 +1,7 @@
 //! The water checks' valley drawn by Bevy's own renderer: its ground and its river's water, unlit,
 //! seen from straight above over a magenta background. Water shows along the river and no magenta
-//! pixel shows between it and its banks.
+//! pixel shows between it and its banks; through the reference water material it turns from its
+//! shallow colour toward its deep one toward the river's middle and fades into the bank.
 //!
 //! ```text
 //! cargo test -p wave_forge_bevy --release --test water_render -- --ignored --nocapture
@@ -23,6 +24,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wave_forge::stages::{Facts, GivenRow, Pack, Runtime, Value};
 use wave_forge::{ChunkCoord, FocusPoint, ground, water_surface};
+use wave_forge_bevy::materials::{
+    WaterLook, WaterMaterial, WaveForgeMaterialsPlugin, water_material,
+};
 use wave_forge_bevy::stages::{ground_mesh, water_mesh};
 
 const SIZE: u32 = 128;
@@ -69,11 +73,13 @@ fn runtime() -> Runtime {
 }
 
 /// The valley's ground and water around the river, unlit, from straight above: `SIZE` by `SIZE`
-/// pixels, RGBA.
-fn render() -> Vec<u8> {
+/// pixels, RGBA. The water is drawn in a colour of its own, or with `reference` through the
+/// reference water material under that look.
+fn render(reference: Option<WaterLook>) -> Vec<u8> {
     let runtime = runtime();
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins).init_resource::<Pixels>();
+    app.add_plugins((DefaultPlugins, WaveForgeMaterialsPlugin))
+        .init_resource::<Pixels>();
     // What `App::run` does before the first frame: let the renderer's device future resolve.
     let started = Instant::now();
     while app.plugins_state() == PluginsState::Adding {
@@ -108,9 +114,15 @@ fn render() -> Vec<u8> {
     let ground_material = world
         .resource_mut::<Assets<StandardMaterial>>()
         .add(unlit(GROUND));
-    let water_material = world
+    let plain_water = world
         .resource_mut::<Assets<StandardMaterial>>()
         .add(unlit(WATER));
+    let reference_water = reference.map(|look| {
+        let mut material = water_material();
+        material.base.unlit = true;
+        material.extension.look = look;
+        world.resource_mut::<Assets<WaterMaterial>>().add(material)
+    });
     for y in 2..=5 {
         for x in 2..=5 {
             let chunk = ChunkCoord::new(x, y, 0);
@@ -133,11 +145,11 @@ fn render() -> Vec<u8> {
             ));
             if !water.indices.is_empty() {
                 let water = world.resource_mut::<Assets<Mesh>>().add(water_mesh(&water));
-                world.spawn((
-                    Mesh3d(water),
-                    MeshMaterial3d(water_material.clone()),
-                    Transform::from_translation(corner),
-                ));
+                let mut entity = world.spawn((Mesh3d(water), Transform::from_translation(corner)));
+                match &reference_water {
+                    Some(material) => entity.insert(MeshMaterial3d(material.clone())),
+                    None => entity.insert(MeshMaterial3d(plain_water.clone())),
+                };
             }
         }
     }
@@ -185,7 +197,7 @@ fn render() -> Vec<u8> {
 #[test]
 #[ignore = "needs a device; run with --ignored in release mode"]
 fn water_shows_along_the_river_with_no_gap_against_its_banks() {
-    let pixels = render();
+    let pixels = render(None);
 
     let pixel = |x: u32, y: u32| {
         let at = ((y * SIZE + x) * 4) as usize;
@@ -208,4 +220,60 @@ fn water_shows_along_the_river_with_no_gap_against_its_banks() {
     assert_eq!(gaps, 0, "the background shows through");
     assert!(near(across, WATER), "{across:?} on the river's line");
     assert!(water > 200, "only {water} water pixels");
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn the_reference_water_deepens_toward_the_rivers_middle_and_fades_into_its_banks() {
+    // Red where shallow, blue where deep, and opaque, so a pixel's share of blue is how deep the
+    // water reads and any grey in it is the bank showing through at the shore.
+    let look = WaterLook {
+        shallow_colour: Vec4::new(1.0, 0.0, 0.0, 1.0),
+        deep_colour: Vec4::new(0.0, 0.0, 1.0, 1.0),
+        opacity: Vec2::ONE,
+        clarity: 0.3,
+        shore: 0.25,
+    };
+
+    let pixels = render(Some(look));
+
+    // Down the image's middle column, across the river at z = 64 world units.
+    let column: Vec<[u8; 3]> = (0..SIZE)
+        .map(|y| {
+            let at = ((y * SIZE + SIZE / 2) * 4) as usize;
+            [pixels[at], pixels[at + 1], pixels[at + 2]]
+        })
+        .collect();
+    let blue = |[r, _, b]: [u8; 3]| f32::from(b) / (f32::from(r) + f32::from(b)).max(1.0);
+    let watery: Vec<f32> = column
+        .iter()
+        .filter(|&&[r, g, b]| r.max(b) > g.saturating_add(40))
+        .map(|&colour| blue(colour))
+        .collect();
+    let deepest = watery.iter().copied().fold(0.0, f32::max);
+    let shallowest = watery.iter().copied().fold(1.0, f32::min);
+    // Between the bank's grey and the water's colour: the water fading in at the shore.
+    let fading = column
+        .iter()
+        .filter(|&&[r, g, b]| {
+            g > 40 && r.max(b) > g.saturating_add(10) && r.max(b) < g.saturating_add(60)
+        })
+        .count();
+    println!(
+        "{} pixels of water across the river, blue from {shallowest:.2} to {deepest:.2}; {fading} fading into the bank",
+        watery.len()
+    );
+
+    let middle = watery
+        .iter()
+        .position(|&share| share == deepest)
+        .expect("the deepest is among them");
+    assert!(watery.len() >= 4, "{column:?}");
+    assert!(deepest - shallowest > 0.1, "{column:?}");
+    assert!(
+        (watery.len() / 4..watery.len() * 3 / 4).contains(&middle),
+        "the deepest at {middle} of {}",
+        watery.len()
+    );
+    assert!(fading > 0, "{column:?}");
 }

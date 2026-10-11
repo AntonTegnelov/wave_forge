@@ -20,8 +20,8 @@ use wave_forge::stages::{
 };
 use wave_forge::towns::{Town, TownError, TownRequest, TownSolver};
 use wave_forge::{
-    ChunkCoord, ChunkShape, FocusPoint, ground, ground_channels, ground_materials, ground_values,
-    volume_height, volume_mesh, water_surface,
+    ChunkCoord, ChunkShape, FocusPoint, GROUND_CHANNELS, WaterMesh, ground, ground_channels,
+    ground_materials, ground_values, volume_height, volume_mesh, water_banks, water_surface,
 };
 use wave_forge_bevy::GenerationFocus;
 use wave_forge_bevy::materials::coloured_surface_mesh;
@@ -29,7 +29,7 @@ use wave_forge_bevy::stages::{
     FarGroundDropped, FluidDropped, FluidReady, GroundDropped, GroundReady, InstanceSpawned,
     Placed, StageDropped, StagePlacements, StageReady, StagesSaved, StagesSettings, VolumeDropped,
     WaveForgeStages, WaveForgeStagesPlugin, WaveForgeStagesSystems, far_ground_mesh, ground_mesh,
-    surface_mesh,
+    surface_mesh, water_mesh,
 };
 
 const PACK: &str = r#"(
@@ -342,32 +342,34 @@ fn the_grounds_channels_are_the_librarys_values_of_its_vertices() {
     }
 }
 
+/// The water checks' valley, with its river given as a row.
+fn water_runtime() -> Runtime {
+    let text = std::fs::read_to_string(format!(
+        "{}/../tests/fixtures/water.world.ron",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("the water pack");
+    let pack = Arc::new(Pack::parse(&text).expect("a valid pack"));
+    let mut facts = Facts::new(Arc::clone(&pack), 9).expect("facts");
+    let river = GivenRow {
+        id: 1,
+        values: BTreeMap::from([
+            ("x0".to_owned(), Value::Number(2.0)),
+            ("y0".to_owned(), Value::Number(32.0)),
+            ("x1".to_owned(), Value::Number(62.0)),
+            ("y1".to_owned(), Value::Number(32.0)),
+            ("width".to_owned(), Value::Number(1.5)),
+        ]),
+    };
+    facts.give("rivers", vec![river]).expect("the river");
+    let mut runtime = Runtime::new(pack, 9, SETTINGS.chunk);
+    runtime.set_facts(facts).expect("facts");
+    runtime
+}
+
 #[test]
 fn a_chunks_water_is_the_librarys_of_its_level_and_ground() {
-    // The water checks' valley, with its river given as a row.
-    let runtime = || {
-        let text = std::fs::read_to_string(format!(
-            "{}/../tests/fixtures/water.world.ron",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .expect("the water pack");
-        let pack = Arc::new(Pack::parse(&text).expect("a valid pack"));
-        let mut facts = Facts::new(Arc::clone(&pack), 9).expect("facts");
-        let river = GivenRow {
-            id: 1,
-            values: BTreeMap::from([
-                ("x0".to_owned(), Value::Number(2.0)),
-                ("y0".to_owned(), Value::Number(32.0)),
-                ("x1".to_owned(), Value::Number(62.0)),
-                ("y1".to_owned(), Value::Number(32.0)),
-                ("width".to_owned(), Value::Number(1.5)),
-            ]),
-        };
-        facts.give("rivers", vec![river]).expect("the river");
-        let mut runtime = Runtime::new(pack, 9, SETTINGS.chunk);
-        runtime.set_facts(facts).expect("facts");
-        runtime
-    };
+    let runtime = water_runtime;
     let mut app = App::new();
     app.add_plugins(
         WaveForgeStagesPlugin::new(&["ground", "water"], SETTINGS, move || Ok(runtime()))
@@ -411,6 +413,77 @@ fn a_chunks_water_is_the_librarys_of_its_level_and_ground() {
             "no water on {chunk:?}"
         );
     }
+}
+
+#[test]
+fn a_chunks_ground_is_wet_along_its_waters_banks() {
+    let mut app = App::new();
+    app.add_plugins(
+        WaveForgeStagesPlugin::new(&["ground", "water"], SETTINGS, || Ok(water_runtime()))
+            .with_ground("ground")
+            .with_water("water")
+            .with_radius("water", 4),
+    )
+    .add_systems(Startup, |mut commands: Commands| {
+        commands.spawn((
+            GlobalTransform::from_translation(Vec3::new(48.0, 0.0, 64.0)),
+            GenerationFocus::new(3),
+        ));
+    });
+    let river = [ChunkCoord::new(2, 4, 0), ChunkCoord::new(3, 4, 0)];
+    let mut direct = water_runtime();
+    direct
+        .request(
+            &[FocusPoint::new(ChunkCoord::new(3, 4, 0), 2)],
+            &["ground", "water"],
+        )
+        .expect("stages");
+    direct.run_until_idle().expect("the stages run");
+
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        river.iter().all(|&c| stages.ground_channels(c).is_some())
+    });
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    for chunk in river {
+        let banks = water_banks(
+            chunk,
+            |at| direct.field("water", at),
+            |at| direct.field("ground", at),
+        )
+        .expect("the fields around the chunk");
+        let wetness: Vec<f32> = stages
+            .ground_channels(chunk)
+            .expect("channels")
+            .chunks(GROUND_CHANNELS)
+            .map(|vertex| vertex[1])
+            .collect();
+        assert_eq!(wetness, banks, "chunk {chunk:?}");
+        assert!(
+            banks.iter().any(|&wet| wet > 0.0 && wet < 1.0),
+            "no bank on {chunk:?}"
+        );
+    }
+}
+
+#[test]
+fn a_water_mesh_carries_each_vertexs_depth_in_its_first_uv() {
+    let water = WaterMesh {
+        chunk: ChunkCoord::new(0, 0, 0),
+        size: [2, 1],
+        positions: vec![[0.5, 1.0, 0.5], [1.5, 0.2, 0.5]],
+        normals: vec![[0.0, 1.0, 0.0]; 2],
+        depths: vec![0.8, 0.0],
+        indices: Vec::new(),
+    };
+
+    let mesh = water_mesh(&water);
+
+    let Some(VertexAttributeValues::Float32x2(uvs)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0) else {
+        panic!("no first UV");
+    };
+    assert_eq!(uvs, &vec![[0.8, 0.0], [0.0, 0.0]]);
 }
 
 #[test]
