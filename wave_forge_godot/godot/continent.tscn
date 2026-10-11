@@ -31,8 +31,8 @@ chunk_cells = Vector3i(8, 8, 6)
 cell_size = Vector3(2, 2, 2)
 view_radius = 4
 target_radii = Dictionary[StringName, int]({
-&"far_height": 32,
-&"far_biome": 32
+&"far_height": 128,
+&"far_biome": 128
 })
 ground_stage = "ground"
 far_ground_stage = "far_height"
