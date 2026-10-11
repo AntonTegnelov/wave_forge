@@ -35,7 +35,7 @@
         ))),
         // The rise moved towards terraces 2.5 cells apart by the strata amount: flat over most of
         // each step and climbing over its last quarter.
-        (name: "height", kind: Field(Add(Input("rise"), Mul(Param("strata"), Sub(
+        (name: "rock", kind: Field(Add(Input("rise"), Mul(Param("strata"), Sub(
             Mul(Add(
                 Floor(Mul(Input("rise"), Constant(0.4))),
                 Smoothstep(0.75, 1.0, Sub(
@@ -45,6 +45,12 @@
             ), Constant(2.5)),
             Input("rise"),
         ))))),
+        // Debris shed by the steep rock settles in aprons at its feet (docs/reference/packs.md,
+        // "Talus"); the cliffs keep their faces, so the ground is the higher of the rock and the
+        // weathered rock, and the debris is how far the weathered rock stands above the rock.
+        (name: "weathered", kind: Talus(height: "rock", region: 4, slope: 0.8, passes: 30, fade: 8)),
+        (name: "height", kind: Field(Max(Input("rock"), Input("weathered")))),
+        (name: "debris", kind: Field(Max(Sub(Input("weathered"), Input("rock")), Constant(0.0)))),
         (name: "steep", kind: Delta(input: "height", radius: 1)),
         (name: "surface", kind: Rules(rules: [
             // Bands of paler rock a cell or so thick, as strata are, through the cliffs and the rock.
@@ -53,6 +59,8 @@
                 Greater(Sin(Mul(Input("height"), Constant(2.0))), Constant(0.35)),
             ]),
             (category: "cliff", when: [Greater(Input("steep"), Constant(1.6))]),
+            // Aprons of debris at the cliffs' feet, broken rock lighter than the walls above.
+            (category: "scree", when: [Greater(Input("debris"), Constant(0.4))]),
             (category: "sand", when: [Less(Input("plateau"), Constant(0.1))]),
             (category: "pale_rock", when: [Greater(Sin(Mul(Input("height"), Constant(2.0))), Constant(0.35))]),
         ], otherwise: "red_rock")),
