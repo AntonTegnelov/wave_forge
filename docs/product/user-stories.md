@@ -357,6 +357,11 @@ Lakes and rivers are drawn by their depth, light where shallow and dark where de
 the shore, with their banks wet, in both engines and on both renderers (`verify_water.gd`,
 `render_water.gd -- look`, `water_render.rs`,
 [#365](https://github.com/AntonTegnelov/wave_forge/issues/365)).
+The far ground is drawn with the near ground's material where it has one, so at their edge their
+colours, borders and rock meet: from the top the far ground is within 5 % of the near ground's
+brightness without shadows, where it was 18 % lighter on Compatibility
+(`verify_far.gd`, [measurements.md](../research/measurements.md) E67,
+[#376](https://github.com/AntonTegnelov/wave_forge/issues/376)).
 Left: the timed walkthrough with five newcomers, near the release
 ([#190](https://github.com/AntonTegnelov/wave_forge/issues/190)), and the four other presets.
 

@@ -11,8 +11,9 @@ guide. In short, on each graphics API in -Apis:
     each chunk drawn as a MultiMesh per module and as one merged mesh, with what drawing a chunk
     costs Godot's thread (wave_forge_godot/godot/measure_city.gd).
   - Godot (#166, P2): grass, ground levels of detail and far ground on Forward+ (render_ground.gd,
-    render_lods.gd, render_far.gd), and what grass costs at eye level at a radius of 2 with every
-    blade and at radii of 3 and 4 thinning with distance (measure_grass.gd).
+    render_lods.gd, render_far.gd), what grass costs at eye level at a radius of 2 with every
+    blade and at radii of 3 and 4 thinning with distance (measure_grass.gd), and the hills preset
+    seen oblique and from the top, where its far ground fills the picture (measure_far.gd).
 And once, P3: the history example's first towns, on a first run and a second one; the golden
 stages test, which checks the stages come out on Windows bit for bit as recorded on Linux; and
 (#71, P1) what a cave volume costs a chunk, three times, while a player walks through it
@@ -320,6 +321,10 @@ foreach ($api in $Apis) {
             [void](Invoke-Logged $name $Godot (@("--path", $GodotProject) + $renderer + @(
                 "--resolution", "1920x1080", "--script", "measure_grass.gd", "--") + ($grass -split ' ')))
         }
+        foreach ($view in @("oblique", "top")) {
+            [void](Invoke-Logged "godot-measure_far-$view-$api" $Godot (@("--path", $GodotProject) + $renderer + @(
+                "--resolution", "1920x1080", "--script", "measure_far.gd", "--", $view)))
+        }
     }
 }
 if ($Only -contains "history") {
@@ -353,7 +358,7 @@ foreach ($file in @("bevy.txt", "godot_city.txt", "m1.txt", "m2.txt", "preset.tx
 }
 foreach ($log in Get-ChildItem $Logs -Filter "*.log") {
     foreach ($line in Get-Content $log.FullName) {
-        if ($line -match "^(render_ground|render_lods|render_far|measure_grass|check|measure_volume): ") { $summary.Add("$($log.BaseName): $line") }
+        if ($line -match "^(render_ground|render_lods|render_far|measure_grass|measure_far|check|measure_volume): ") { $summary.Add("$($log.BaseName): $line") }
     }
 }
 $summary.Add("")
