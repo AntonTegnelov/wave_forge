@@ -7,9 +7,10 @@
 ## ground, and part of the ring around it, which does. The far
 ## ground's surface (`far_surface`) colours each vertex with the palette's colour of the near
 ## surface's category of the same name, a far category without one a colour of its own. With the
-## near ground drawn by a ground material, each far chunk is drawn with a copy of it of its own,
-## holding the category of every vertex of its grid of coarse columns, a coarse column's width as
-## its cell and its first vertex at a fine cell's centre, and the far categories' palette. A far
+## near ground drawn by a ground material, each group of `GROUP` by `GROUP` far chunks is drawn with
+## a copy of it of its own, holding the category of every vertex of their grids of coarse columns
+## side by side, a coarse column's width as its cell and its first vertex at a fine cell's centre,
+## and the far categories' palette. A far
 ## ground material stage at another scale than the far ground's, or one generated nearer than the
 ## far ground, is warned of and refused.
 extends SceneTree
@@ -20,6 +21,9 @@ const SCALE := 8
 const FAR_RADIUS := 24
 const TIMEOUT_S := 60.0
 const PALETTE := [Color(0.3, 0.6, 0.2), Color(0.6, 0.55, 0.5)]
+## How many coarse chunks along each side one far mesh and material draw (`FAR_GROUP` in
+## stages_node.rs).
+const GROUP := 4
 
 var world: Node
 var started_usec := 0
@@ -102,7 +106,7 @@ func _process(_delta: float) -> bool:
 			_fail(wrong)
 			return true
 		coloured += world.far_ground_surface(chunk)["colours"].size()
-	print("verify_far: %d near grounds, %d far grounds, none on a coarse chunk the near ground covers; %d far vertices coloured by their surface, each far chunk drawn with its own copy of the ground material holding its categories" % [near.size(), far.size(), coloured])
+	print("verify_far: %d near grounds, %d far grounds, none on a coarse chunk the near ground covers; %d far vertices coloured by their surface, each group of far chunks drawn with its own copy of the ground material holding their categories" % [near.size(), far.size(), coloured])
 	quit(0)
 	return true
 
@@ -129,22 +133,26 @@ func _wrong_colour(chunk: Vector3i) -> String:
 			return "a far vertex of %s over %s, which the near surface does not name, is a palette colour" % [chunk, name]
 	return ""
 
-## Why the far ground of `chunk` is not drawn with a copy of the ground material holding the
-## category of every vertex of its grid, a coarse column apart from the centre of the first fine
-## cell, in the far categories' palette; empty if it is.
+## Why the far ground of `chunk` is not drawn with its group's copy of the ground material holding
+## the category of every vertex of its grid where the chunk lies in the group's, a coarse column
+## apart from the centre of the first fine cell, in the far categories' palette; empty if it is.
 func _wrong_material(chunk: Vector3i) -> String:
 	var material: ShaderMaterial = world.far_ground_material_of(chunk)
 	if material == null:
 		return "the far ground of %s has no ground material of its own" % chunk
 	var categories: PackedByteArray = world.categories("far_surface", chunk)
 	var ids: Image = material.get_shader_parameter("wave_forge_materials").get_image()
-	# One far square per chunk of the lattice: a vertex at every one's first column, SCALE + 1 a side.
-	if ids.get_size() != Vector2i(SCALE + 1, SCALE + 1):
+	# One far square per chunk of the lattice: a vertex at every one's first column, SCALE + 1 a side
+	# for a coarse chunk, its group's side by side and sharing their edges.
+	if ids.get_size() != Vector2i(GROUP * SCALE + 1, GROUP * SCALE + 1):
 		return "the far material of %s holds %s categories" % [chunk, ids.get_size()]
-	for j in SCALE + 1:
-		for i in SCALE + 1:
+	var at := Vector2i(posmod(chunk.x, GROUP), posmod(chunk.y, GROUP)) * SCALE
+	# Along the chunk's far edges the next chunk's first vertex is held, and its own column only
+	# where the next chunk has no far ground.
+	for j in SCALE:
+		for i in SCALE:
 			var expected := categories[mini(j, CELLS - 1) * CELLS + mini(i, CELLS - 1)]
-			var held := roundi(ids.get_pixel(i, j).r * 255.0)
+			var held := roundi(ids.get_pixel(at.x + i, at.y + j).r * 255.0)
 			if held != expected:
 				return "vertex (%d, %d) of the far material of %s holds category %d, not %d" % [i, j, chunk, held, expected]
 	var column_size: Vector3 = world.cell_size * SCALE
