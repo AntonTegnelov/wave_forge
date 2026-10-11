@@ -682,9 +682,8 @@ run, `continent.tscn`, whose script gives the node the history; the first settle
 of its culture's module set in 25 to 31 s (`verify_continent.gd`, L44). Baked from that scene
 through the node's world run, the whole continent takes 579 s in the dev container, holds at most
 1.86 GB, and fills 65 536 files of 729 MB on disk; a bake stopped and resumed gives the same bytes
-as one made at once, and it stops cleanly part way or after (L45, L47), though Godot's process
-then exits with a segfault, its stages thread outliving the extension
-([#393](https://github.com/AntonTegnelov/wave_forge/issues/393)). With its far ground out to about
+as one made at once, and it stops cleanly part way or after (L45, L47), Godot then exiting with
+status 0 (`verify_run_exit.gd`, [#393](https://github.com/AntonTegnelov/wave_forge/issues/393)). With its far ground out to about
 2 km the bake takes 866 s and holds at most 2.08 GB, and the baked world plays walking and flying
 at 1080p with no stage run, at p50 21 and 13 ms a frame in the dev container
 (`measure_world_run.gd`, `measure_playback.gd`, L48 at 500 m, L50, L51). On the reference desktop

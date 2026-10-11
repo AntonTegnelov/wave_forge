@@ -71,6 +71,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_candidates.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_world.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_continent.gd
+"${GODOT:-godot}" --headless --path "$here/godot" --script verify_run_exit.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_inspector.gd
 "${GODOT:-godot}" --headless --path "$here/godot" --script verify_typed_maps.gd
 # N1: a preset's first play, and walking it, print no error and no warning; the device's own

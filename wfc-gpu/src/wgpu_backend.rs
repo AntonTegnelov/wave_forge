@@ -10,8 +10,8 @@
 
 use crate::backend::{BackendError, BackendLimits, BufferUsage, ComputeBackend};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 /// The workgroup memory the solver asks for when it makes its own device. Chunks of 8x8x8 with a
 /// one-cell halo at 81 tiles need about 23 KiB, over the 16 KiB every device must offer.
@@ -55,10 +55,9 @@ impl WgpuBackend {
     /// # Errors
     /// If no adapter or device can be had, or `WGPU_ADAPTER_NAME` matches no adapter.
     pub fn from_env() -> Result<Self, BackendError> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance = instance();
         let adapter = match std::env::var("WGPU_ADAPTER_NAME") {
-            Ok(wanted) => adapter_named(&instance, &wanted)?,
+            Ok(wanted) => adapter_named(instance, &wanted)?,
             Err(_) => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
@@ -197,6 +196,17 @@ impl WgpuBackend {
 }
 
 /// The first adapter whose name contains `wanted`, ignoring case.
+/// The process's one wgpu instance, made on first use and never dropped. Dropping the last
+/// instance lets the Vulkan loader unload its driver while a thread that used a device of it may
+/// still be ending, and that thread's thread-local destructors, the driver's code, then fault as it
+/// exits; Godot quitting after a world run did exactly that.
+fn instance() -> &'static wgpu::Instance {
+    static INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
+    INSTANCE.get_or_init(|| {
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env())
+    })
+}
+
 fn adapter_named(instance: &wgpu::Instance, wanted: &str) -> Result<wgpu::Adapter, BackendError> {
     let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
     let wanted_lower = wanted.to_lowercase();

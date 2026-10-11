@@ -141,7 +141,10 @@ towns' GPU device is torn down before the drop returns. Dropping a worker does n
 thread, since an engine drops it on its main thread and a thread still building a device takes
 seconds. A device still being torn down when the process exits faults in the driver, so an engine
 takes each worker's thread with `finish` and joins it before exiting: the Godot extension when it
-is unloaded.
+is unloaded. A thread ending after the last wgpu instance has gone faults too, since the Vulkan
+loader then unloads the driver whose thread-local destructors the thread still has to run; so
+`WgpuBackend::from_env` makes every device from one instance the process keeps until it exits
+(`verify_run_exit.gd`).
 
 CPU parallelism beyond that is the integration's choice: a game already has a thread budget, so the
 library shares it rather than spawning a pool of its own.
