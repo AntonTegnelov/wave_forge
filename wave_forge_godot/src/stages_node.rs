@@ -57,9 +57,9 @@ use wave_forge::stages::{
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FocusPoint, GroundMesh, GroundRelief, InstanceSet, RegionTags,
-    SurfaceWorker, VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories, ground,
-    ground_channels, ground_height, ground_materials, ground_readers, ground_values, volume_height,
-    water_banks, water_surface,
+    SurfaceWorker, VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories, far_steps,
+    ground, ground_channels, ground_height, ground_materials, ground_readers, ground_values,
+    volume_height, water_banks, water_surface,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -426,6 +426,8 @@ pub struct WaveForgeStages {
     far_due: std::collections::BTreeSet<ChunkCoord>,
     /// The colour of each category of `far_ground_material_stage`, by index, from `ground_palette`.
     far_colours: Vec<Color>,
+    /// The far categories' palette, ramps and reliefs, with a ground material stage.
+    far_look: Option<FarLook>,
     /// The chunks of `far_ground_stage` whose far ground is drawn.
     far_grounds: HashMap<ChunkCoord, FarDrawn>,
     /// The surfaces of `volume_stage`, while there is one.
@@ -867,6 +869,7 @@ impl INode for WaveForgeStages {
             far_due: std::collections::BTreeSet::new(),
             far_grounds: HashMap::new(),
             far_colours: Vec::new(),
+            far_look: None,
             volume_stage: GString::new(),
             volume_material: None,
             volume_palette: PackedColorArray::new(),
@@ -1318,6 +1321,18 @@ impl WaveForgeStages {
         self.far_colours = self.far_category_colours(&pack);
         if !self.far_colours.is_empty() {
             self.ensure_vertex_colours();
+        }
+        // With a ground material, the far ground is drawn with copies of it, so its colours,
+        // borders and rock match the near ground's where they meet.
+        self.far_look = None;
+        if self.palette.is_some() && !self.far_colours.is_empty() {
+            match self.far_look(&pack) {
+                Ok(look) => self.far_look = Some(look),
+                Err(error) => {
+                    godot_error!("wave forge: {error}");
+                    return false;
+                }
+            }
         }
         self.rock = None;
         self.fluid = None;
@@ -2315,6 +2330,16 @@ impl WaveForgeStages {
     #[func]
     fn ground_material_of(&self, chunk: Vector3i) -> Option<Gd<ShaderMaterial>> {
         self.chunk_materials.get(&from_vector(chunk)).cloned()
+    }
+
+    /// The material a coarse chunk's far ground is drawn with, when `ground_material_stage` and
+    /// `far_ground_material_stage` give it a copy of the ground material of its own; null otherwise
+    /// or before its far ground is drawn.
+    #[func]
+    fn far_ground_material_of(&self, chunk: Vector3i) -> Option<Gd<ShaderMaterial>> {
+        self.far_grounds
+            .get(&from_vector(chunk))
+            .and_then(|drawn| drawn.material.clone())
     }
 
     /// The reference ground shader's code, to copy into a shader of a game's own.
@@ -4073,20 +4098,44 @@ impl WaveForgeStages {
             };
             // Coloured by the far material stage once its chunk is there too, whose arrival makes
             // the chunk due again.
-            let colours = if material.is_empty() {
+            let categories = if material.is_empty() {
                 Vec::new()
             } else {
                 let Some(categories) = worker.categories(&material, chunk) else {
                     continue;
                 };
                 far_ground_categories(&far, categories, scale as u32, cell)
-                    .into_iter()
-                    .map(|category| self.far_colours[usize::from(category)])
-                    .collect()
             };
-            built.push((far, colours));
+            let colours: Vec<Color> = categories
+                .iter()
+                .map(|&category| self.far_colours[usize::from(category)])
+                .collect();
+            // The far ground's own copy of the ground material, its categories per vertex of its
+            // grid of coarse columns.
+            let copy = match (&self.far_look, &self.palette) {
+                (Some(look), Some((_, template))) if !categories.is_empty() => {
+                    let columns = worker
+                        .field(&stage, chunk)
+                        .expect("the far ground was built from it")
+                        .size[0];
+                    let steps = far_steps(columns, scale as u32);
+                    let side = scale as u32 * steps + 1;
+                    let spacing = Vector2::new(
+                        self.chunk_cells.x.max(1) as f32 * cell[0],
+                        self.chunk_cells.y.max(1) as f32 * cell[2],
+                    ) / steps as f32;
+                    let first = Vector2::new(0.5 * cell[0], 0.5 * cell[2]) / spacing;
+                    let grid = &categories[..(side * side) as usize];
+                    let coarseness = spacing.x / cell[0];
+                    Some(far_material(
+                        template, look, grid, side, spacing, first, coarseness,
+                    ))
+                }
+                _ => None,
+            };
+            built.push((far, colours, copy));
         }
-        for (far, colours) in built {
+        for (far, colours, copy) in built {
             // The near ground covers the whole coarse chunk: there is nothing of it to draw.
             if far.indices.is_empty() {
                 if let Some(drawn) = self.far_grounds.remove(&far.chunk) {
@@ -4115,13 +4164,14 @@ impl WaveForgeStages {
                 arrays.set(ArrayType::COLOR.ord() as usize, &packed.to_variant());
             }
             add_levelled_surface(rid, &mut arrays, &far.indices, &[]);
-            let material = match (&self.ground_material, colours.is_empty()) {
-                (Some(material), _) => Some(material.get_rid()),
-                (None, false) => self
+            let material = match (&copy, &self.ground_material, colours.is_empty()) {
+                (Some(copy), _, _) => Some(copy.get_rid()),
+                (None, Some(material), _) => Some(material.get_rid()),
+                (None, None, false) => self
                     .vertex_colours
                     .as_ref()
                     .map(|colours| colours.get_rid()),
-                (None, true) => None,
+                (None, None, true) => None,
             };
             if let Some(material) = material {
                 rendering.mesh_surface_set_material(rid, 0, material);
@@ -4138,6 +4188,7 @@ impl WaveForgeStages {
                 instance,
                 positions: far.positions,
                 colours,
+                material: copy,
             };
             if let Some(old) = self.far_grounds.insert(far.chunk, drawn) {
                 rendering.free_rid(old.instance);
@@ -5046,6 +5097,20 @@ impl WaveForgeStages {
     /// `ground_palette` gives the category of `ground_material_stage` of the same name, or a colour
     /// of its own. Empty without a far ground material stage.
     fn far_category_colours(&self, pack: &Pack) -> Vec<Color> {
+        self.far_category_near(pack)
+            .into_iter()
+            .enumerate()
+            .map(|(index, near)| match near {
+                Some(near) => palette_colour(&self.ground_palette, near),
+                None => palette_colour(&PackedColorArray::new(), index),
+            })
+            .collect()
+    }
+
+    /// For each category of `far_ground_material_stage`, by index, the category of
+    /// `ground_material_stage` of the same name, if it has one. Empty without a far ground material
+    /// stage.
+    fn far_category_near(&self, pack: &Pack) -> Vec<Option<usize>> {
         let Some(far) = pack.kind(&self.far_ground_material_stage.to_string()) else {
             return Vec::new();
         };
@@ -5055,14 +5120,26 @@ impl WaveForgeStages {
             .unwrap_or_default();
         far.categories()
             .iter()
-            .enumerate()
-            .map(
-                |(index, name)| match near.iter().position(|near| near == name) {
-                    Some(near) => palette_colour(&self.ground_palette, near),
-                    None => palette_colour(&PackedColorArray::new(), index),
-                },
-            )
+            .map(|name| near.iter().position(|near| near == name))
             .collect()
+    }
+
+    /// What the far ground's materials are copied from when the near ground is drawn with a ground
+    /// material: the far categories' palette, ramps and reliefs, each that of the near category of
+    /// the same name.
+    fn far_look(&self, pack: &Pack) -> Result<FarLook, String> {
+        let near = self.far_category_near(pack);
+        let near_of = |index: usize| near.get(index).copied().flatten();
+        Ok(FarLook {
+            palette: palette_texture(|index| {
+                self.far_colours
+                    .get(index)
+                    .copied()
+                    .unwrap_or_else(|| palette_colour(&PackedColorArray::new(), index))
+            })?,
+            ramps: self.ramps_texture(near_of)?,
+            relief: self.relief_texture(near_of)?,
+        })
     }
 
     /// The palette texture and the material each chunk's ground material is copied from.
@@ -5086,42 +5163,33 @@ impl WaveForgeStages {
                 })?,
         };
         let mut template = template;
-        template.set_shader_parameter("wave_forge_ramps", &self.ramps_texture()?.to_variant());
+        let own = |index: usize| Some(index);
+        template.set_shader_parameter("wave_forge_ramps", &self.ramps_texture(own)?.to_variant());
         template.set_shader_parameter("ramp_heights", &self.ground_ramp_heights.to_variant());
-        template.set_shader_parameter("wave_forge_relief", &self.relief_texture()?.to_variant());
-        let colours: Vec<u8> = (0..MAX_CATEGORIES)
-            .flat_map(|index| {
-                let colour = palette_colour(&self.ground_palette, index);
-                [colour.r8(), colour.g8(), colour.b8(), 255]
-            })
-            .collect();
-        let image = Image::create_from_data(
-            MAX_CATEGORIES as i32,
-            1,
-            false,
-            ImageFormat::RGBA8,
-            &PackedByteArray::from(colours.as_slice()),
-        )
-        .ok_or("the ground palette could not be made")?;
-        let palette = ImageTexture::create_from_image(&image)
-            .ok_or("the ground palette could not be made")?;
+        template.set_shader_parameter("wave_forge_relief", &self.relief_texture(own)?.to_variant());
+        let palette = palette_texture(|index| palette_colour(&self.ground_palette, index))?;
         Ok((palette, template))
     }
 
-    /// The ramps' texture for the ground material: per category, the colour its ramp runs toward,
-    /// linear, in row 0, and its drivers in row 1; zero, no ramp, past the ramps given.
-    fn ramps_texture(&self) -> Result<Gd<ImageTexture>, String> {
+    /// The ramps' texture for a ground material: per category, the colour its ramp runs toward,
+    /// linear, in row 0, and its drivers in row 1, those of the category of `ground_material_stage`
+    /// `near_of` names; zero, no ramp, for one it names none of or past the ramps given.
+    fn ramps_texture(
+        &self,
+        near_of: impl Fn(usize) -> Option<usize>,
+    ) -> Result<Gd<ImageTexture>, String> {
         let toward = (0..MAX_CATEGORIES).flat_map(|index| {
-            let colour = self
-                .ground_ramp_colours
-                .get(index)
+            let colour = near_of(index)
+                .and_then(|near| self.ground_ramp_colours.get(near))
                 .map_or(Color::from_rgba(0.0, 0.0, 0.0, 0.0), |colour| {
                     colour.srgb_to_linear()
                 });
             [colour.r, colour.g, colour.b, 1.0]
         });
         let drivers = (0..MAX_CATEGORIES).flat_map(|index| {
-            let by = self.ground_ramp_drivers.get(index).unwrap_or(Vector4::ZERO);
+            let by = near_of(index)
+                .and_then(|near| self.ground_ramp_drivers.get(near))
+                .unwrap_or(Vector4::ZERO);
             [by.x, by.y, by.z, by.w]
         });
         let bytes: Vec<u8> = toward.chain(drivers).flat_map(f32::to_le_bytes).collect();
@@ -5137,18 +5205,23 @@ impl WaveForgeStages {
             .ok_or_else(|| "the ground ramps could not be made".to_owned())
     }
 
-    /// The reliefs' texture for the ground material: per category, its pebbles, cracks, tufts and
-    /// feature size, the default past the reliefs given.
-    fn relief_texture(&self) -> Result<Gd<ImageTexture>, String> {
-        let reliefs: Vec<GroundRelief> = self
-            .ground_relief
-            .as_slice()
-            .iter()
-            .map(|relief| GroundRelief {
-                pebbles: relief.x,
-                cracks: relief.y,
-                tufts: relief.z,
-                size: relief.w,
+    /// The reliefs' texture for a ground material: per category, the pebbles, cracks, tufts and
+    /// feature size of the category of `ground_material_stage` `near_of` names; the default for one
+    /// it names none of or past the reliefs given.
+    fn relief_texture(
+        &self,
+        near_of: impl Fn(usize) -> Option<usize>,
+    ) -> Result<Gd<ImageTexture>, String> {
+        let reliefs: Vec<GroundRelief> = (0..MAX_CATEGORIES)
+            .map(|index| {
+                near_of(index)
+                    .and_then(|near| self.ground_relief.get(near))
+                    .map_or(GroundRelief::DEFAULT, |relief| GroundRelief {
+                        pebbles: relief.x,
+                        cracks: relief.y,
+                        tufts: relief.z,
+                        size: relief.w,
+                    })
             })
             .collect();
         let bytes: Vec<u8> = GroundRelief::texels(&reliefs, MAX_CATEGORIES)
@@ -5699,6 +5772,16 @@ struct FarDrawn {
     instance: Rid,
     positions: Vec<[f32; 3]>,
     colours: Vec<Color>,
+    /// The far chunk's own copy of the ground material, which the drawn mesh refers to by its RID.
+    material: Option<Gd<ShaderMaterial>>,
+}
+
+/// The far categories' palette, ramps and reliefs for the far ground's copies of the ground
+/// material.
+struct FarLook {
+    palette: Gd<ImageTexture>,
+    ramps: Gd<ImageTexture>,
+    relief: Gd<ImageTexture>,
 }
 
 /// One kind's points of a chunk as `point_sets` gives them, in parallel.
@@ -5726,6 +5809,60 @@ fn phase(local: u64) -> f32 {
 
 /// A chunk's copy of `template` holding the material `ids` of its ground's vertices, one texel each,
 /// its `channels`, and the grass's `fade`, over which its cover's tint comes in as the blades go.
+/// A ground palette's texture, 256 by 1: `colour` of each category by index, in sRGB as the
+/// inspector picks them.
+fn palette_texture(colour: impl Fn(usize) -> Color) -> Result<Gd<ImageTexture>, String> {
+    let colours: Vec<u8> = (0..MAX_CATEGORIES)
+        .flat_map(|index| {
+            let colour = colour(index);
+            [colour.r8(), colour.g8(), colour.b8(), 255]
+        })
+        .collect();
+    let image = Image::create_from_data(
+        MAX_CATEGORIES as i32,
+        1,
+        false,
+        ImageFormat::RGBA8,
+        &PackedByteArray::from(colours.as_slice()),
+    )
+    .ok_or("the ground palette could not be made")?;
+    ImageTexture::create_from_image(&image)
+        .ok_or_else(|| "the ground palette could not be made".to_owned())
+}
+
+/// A far chunk's copy of the ground material `template`: its categories per vertex of its grid,
+/// `side` vertices each way `spacing` apart in world units, `coarseness` fine cells, with the first
+/// `first` spacings from the mesh's origin, drawn in the far categories' palette, ramps and reliefs
+/// from `look`.
+fn far_material(
+    template: &Gd<ShaderMaterial>,
+    look: &FarLook,
+    categories: &[u8],
+    side: u32,
+    spacing: Vector2,
+    first: Vector2,
+    coarseness: f32,
+) -> Gd<ShaderMaterial> {
+    let image = Image::create_from_data(
+        side as i32,
+        side as i32,
+        false,
+        ImageFormat::R8,
+        &PackedByteArray::from(categories),
+    )
+    .expect("an image of one byte per vertex");
+    let materials = ImageTexture::create_from_image(&image).expect("a texture of the image");
+    let mut material = template.duplicate_resource();
+    material.set_shader_parameter("wave_forge_materials", &materials.to_variant());
+    material.set_shader_parameter("wave_forge_palette", &look.palette.to_variant());
+    material.set_shader_parameter("wave_forge_ramps", &look.ramps.to_variant());
+    material.set_shader_parameter("wave_forge_relief", &look.relief.to_variant());
+    material.set_shader_parameter("wave_forge_cell", &spacing.to_variant());
+    material.set_shader_parameter("wave_forge_first", &first.to_variant());
+    material.set_shader_parameter("wave_forge_coarseness", &coarseness.to_variant());
+    material
+}
+
 fn chunk_material(
     template: &Gd<ShaderMaterial>,
     palette: &Gd<ImageTexture>,

@@ -7,8 +7,9 @@
 ## names, columns minimum, default and maximum. Given `-- views`, it renders one sheet of every
 ## preset at its defaults from the reference views instead: a row per preset, columns eye level
 ## (1.7 m over the ground, looking toward the horizon), oblique (about 60 m away) and top-down, the
-## sun to the side and behind, named for the renderer. Each sheet lands in Godot's user directory, and the script prints where and
-## what each row is.
+## sun to the side and behind, named for the renderer; preset names after `views`, `-- views hills`
+## say, render those alone. Each sheet lands in Godot's user directory, and the script prints where
+## and what each row is.
 extends SceneTree
 
 const Presets := preload("res://addons/wave_forge/presets.gd")
@@ -36,7 +37,9 @@ var camera: Camera3D
 func _initialize() -> void:
 	root.size = TILE
 	if "views" in OS.get_cmdline_user_args():
-		var paths := Presets.paths()
+		# Presets named after `views` only, or every one.
+		var named := OS.get_cmdline_user_args().slice(OS.get_cmdline_user_args().find("views") + 1)
+		var paths := Array(Presets.paths()).filter(func(path: String) -> bool: return named.is_empty() or path.get_file().get_basename() in named)
 		var out := "views_%s" % RenderingServer.get_current_rendering_method()
 		for row in paths.size():
 			for column in VIEWS.size():
