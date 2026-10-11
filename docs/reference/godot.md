@@ -390,12 +390,13 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 `stage_ready(stage, chunk)`, `stage_dropped(stage, chunk)`, `generation_failed(reason)`,
 `saved(text)`, `instance_spawned(node, chunk, id)`, `navigation_ready(chunk)`.
 
-At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, in the order the
+At most 256 `stage_ready` and `stage_dropped` signals are emitted per frame, fewer once the frame
+has spent half a millisecond emitting them with the handlers a game connected, in the order the
 products arrived (nearest first), so after a wide request some come a few frames later; by then a
 product can have been dropped again, and its `stage_dropped` follows. Ground is built for at most
 8 chunks and 2 ms per frame, since uploading a ground costs a millisecond and more on some drivers
 ([measurements.md](../research/measurements.md) E55), volume surfaces for `volume_budget_ms`, far ground for at most 4 coarse chunks,
-again when ground comes or goes on or beside one, and bodies for at most 3 and 2 ms, since a
+again when ground comes or goes on or beside one, and bodies for at most 3 and 1 ms, since a
 volume's collider takes milliseconds ([measurements.md](../research/measurements.md) E53), nearest
 the player first, each at least one a frame. `stats()` reports what waits as `pending_signals`,
 `pending_grounds`, `pending_volumes`,
