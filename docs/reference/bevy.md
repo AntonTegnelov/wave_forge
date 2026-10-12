@@ -71,7 +71,7 @@ itself, and holds no shapes for a town's modules: a game adds its towns' collide
 `InstanceSet::placed`.
 
 - `StagesSettings`: `chunk`, columns per chunk as the runtime was built with, and `cell_size`.
-- `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles`, `points` and `stamps` per stage and chunk, `timings()` per stage,
+- `WaveForgeStages`, a resource: `field`, `categories`, `curves`, `sites`, `tiles`, `points` and `stamps` per stage and chunk, `product_hash` per stage and chunk and `chunk_hash` per chunk ([packs.md](packs.md#hashes)), `timings()` per stage,
   `translation_of(point)` and `transform_of(point)` (turned, leant and scaled) in Bevy's world,
   `stamp_transform(stamp)`, where a scene of an assembled piece goes
   ([packs.md](packs.md#assemble)), and

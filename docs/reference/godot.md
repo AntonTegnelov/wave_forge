@@ -254,6 +254,10 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 - `follow(position)` generates around a position in Godot's world space, asking again only when it
   enters another chunk.
 - `field_values(stage, chunk)`: a field's values, column by column, x fastest.
+- `product_hash(stage, chunk)` and `chunk_hash(chunk)`: a 64-bit hash of what a stage holds for a
+  chunk, and of every one of `targets` in their order, as 16 hexadecimal digits, empty until it has
+  arrived; the same on every machine given the same seed, pack and edits
+  ([packs.md](packs.md#hashes)).
 - `categories(stage, chunk)`: a Rules stage's categories, a byte per column, as indices into
   `category_names(stage)`.
 - `sites(stage, chunk)`: the sites overlapping a chunk, each with what names it (its `region` for

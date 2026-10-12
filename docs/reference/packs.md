@@ -252,6 +252,18 @@ first byte names the form, and a store written in another is refused rather than
 the store with its saves; a runtime of a changed pack given the same store reads a stored chunk as
 it was first generated.
 
+## Hashes
+
+`Runtime::product_hash(stage, chunk)` is a 64-bit FNV-1a hash of the product a stage holds for a
+chunk, over its exact binary form uncompressed, so it depends on every bit of the product and on
+nothing else. `Runtime::chunk_hash(chunk, stages)` hashes those of several stages in the order
+given, once the chunk holds every one. Two machines given the same seed, pack and edits hash every
+chunk alike whatever order they generate it in, towns solved on the GPU included, so players sharing
+a world compare hashes to confirm they agree (`tests/hashes.rs`; `golden_chunks.rs` in
+[testing.md](../guides/testing.md) across GPU vendors). Another seed or an edit gives another hash.
+A hash is for agreeing, not for security: FNV-1a is fast and stable, not hard to forge. Both engines
+give them ([godot.md](godot.md#waveforgestages), [bevy.md](bevy.md#packs-of-stages)).
+
 ## A whole world ahead of time
 
 A finite world can be generated whole before it is played, as a maximal world is (M1):
