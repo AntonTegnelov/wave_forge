@@ -87,7 +87,7 @@
         (name: "bridge_on_pillar", sides: ["walkway", "walkway", "air", "air"], up: "open", down: "pillar", weight: 0.15, tags: ["walkway"], surface: "wood"),
         (name: "timber_post", sides: ["air", "air", "air", "air"], up: "pillar", down: "pillar", weight: 0.5, tags: ["pillar"]),
         (name: "market_stall", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 0.06, tags: ["street_level"], surface: "stone"),
-        (name: "well", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 0.06, tags: ["street_level"], surface: "stone"),
+        (name: "village_well", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 0.06, tags: ["street_level"], surface: "stone"),
         (name: "notice_board", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 0.06, tags: ["street_level"], surface: "stone"),
         (name: "statue", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 0.06, tags: ["street_level"], surface: "stone"),
         (name: "wood_pile", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 0.06, tags: ["street_level"], surface: "stone"),

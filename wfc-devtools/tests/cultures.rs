@@ -161,3 +161,42 @@ fn every_culture_is_a_set_of_sixty_modules_that_solves_a_standing_walkable_town(
         );
     }
 }
+
+/// The prototypes' names of the module set at `path`, from the repository's root.
+fn module_names(path: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(format!("{}/../{path}", env!("CARGO_MANIFEST_DIR")))
+        .expect("the module set");
+    let RuleFile::Modules(modules) = parse_rule_file(&text).expect("a valid module set") else {
+        panic!("{path} is a module set");
+    };
+    modules
+        .prototypes
+        .into_iter()
+        .map(|module| module.name)
+        .collect()
+}
+
+#[test]
+fn a_module_of_a_cultures_own_is_named_apart_from_every_other_cultures() {
+    // An engine binds a model to a module by its name, so a name two cultures share draws alike in
+    // both, and a name that means different pieces in two cultures cannot draw right in either.
+    let city = module_names("examples/city.ron");
+    let mut cultures_of: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+
+    for culture in CULTURES {
+        for name in module_names(&format!("examples/continent/cultures/{culture}.ron")) {
+            if !city.contains(&name) {
+                cultures_of.entry(name).or_default().push(culture);
+            }
+        }
+    }
+
+    let shared: Vec<_> = cultures_of
+        .iter()
+        .filter(|(_, cultures)| cultures.len() > 1)
+        .collect();
+    assert!(
+        shared.is_empty(),
+        "named alike in several cultures: {shared:?}"
+    );
+}

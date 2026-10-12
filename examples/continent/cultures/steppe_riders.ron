@@ -83,7 +83,7 @@
         (name: "banner_pole", sides: ["railing", "walkway", "walkway", "walkway"], up: "open", down: "solid", weight: 0.045, tags: ["roof"], surface: "tiles"),
         (name: "hide_canopy", sides: ["air", "air", "air", "air"], up: "open", down: "solid", weight: 0.6, tags: ["roof"]),
         (name: "plank_bridge", sides: ["walkway", "walkway", "air", "air"], up: "open", down: "open", weight: 0.045, tags: ["walkway"], surface: "wood"),
-        (name: "plank_corner", sides: ["walkway", "air", "walkway", "air"], up: "open", down: "open", weight: 0.015, tags: ["walkway"], surface: "wood"),
+        (name: "plank_bridge_corner", sides: ["walkway", "air", "walkway", "air"], up: "open", down: "open", weight: 0.015, tags: ["walkway"], surface: "wood"),
         (name: "plank_on_post", sides: ["walkway", "walkway", "air", "air"], up: "open", down: "pillar", weight: 0.045, tags: ["walkway"], surface: "wood"),
         (name: "post", sides: ["air", "air", "air", "air"], up: "pillar", down: "pillar", weight: 0.5, tags: ["pillar"]),
         (name: "horse_pen", sides: ["ground", "ground", "ground", "ground"], up: "open", down: "bedrock", weight: 0.06, tags: ["street_level"], surface: "stone"),
