@@ -43,7 +43,8 @@ uniform float relief_blend : hint_range(0.0, 1.0) = 0.6;
 // Texture sets a material can be drawn with instead of its colour: layers of two arrays, the
 // colour with the height in alpha and the OpenGL normal with the roughness in alpha. Per material
 // id, in texel id of a 256 by 1 texture, its set's layer plus one, as id / 255 in red; 0, and black
-// where the node hands in none, draws the material in its colour.
+// where the node hands in none, draws the material in its colour. A textured material's palette
+// colour is its set's mean, and its ramp tints the set by how far it moves that colour.
 uniform sampler2DArray wave_forge_albedo_height : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2DArray wave_forge_normal_roughness : filter_linear_mipmap, repeat_enable;
 uniform sampler2D wave_forge_texture_layers : filter_nearest, repeat_disable, hint_default_black;
@@ -313,7 +314,9 @@ Look look_of(int id, vec3 at, vec2 ground, vec3 surface, vec4 drivers, bool reli
 		normal = normal * weights.y + side_x_normal * weights.x + side_z_normal * weights.z;
 		lean *= weights.y;
 	}
-	look.albedo = colour.rgb;
+	// Its ramp moves the set's colour as it would the set's mean, its palette colour.
+	vec3 mean = texelFetch(wave_forge_palette, ivec2(id, 0), 0).rgb;
+	look.albedo = colour.rgb * colour_of(id, drivers) / max(mean, vec3(1e-3));
 	look.micro = vec3(colour.a, -lean * texture_normal);
 	look.depth = 1.0;
 	look.roughness = mix(roughness, normal.a, texture_roughness);

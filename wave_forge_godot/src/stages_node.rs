@@ -197,10 +197,10 @@ pub struct WaveForgeStages {
     #[export]
     ground_relief: PackedVector4Array,
     /// Per category, by index: the layer of the texture set the reference ground shader draws it
-    /// with instead of its colour, ramp and relief, or -1 for its colour, as for a category past
-    /// its end. Without `ground_albedo_height` the layers are the plugin's own sets: 0 grass,
-    /// 1 dirt, 2 gravel, 3 sand, 4 rock, 5 cliff, 6 snow, 7 mud. Its grass and the far ground take
-    /// the set's mean colour.
+    /// with instead of its colour and relief, or -1 for its colour, as for a category past its end.
+    /// Without `ground_albedo_height` the layers are the plugin's own sets: 0 grass, 1 dirt,
+    /// 2 gravel, 3 sand, 4 rock, 5 cliff, 6 snow, 7 mud. Its palette colour, which its grass and
+    /// the far ground draw it in, is the set's mean, and its ramp tints the set.
     #[export]
     ground_texture_layers: PackedInt32Array,
     /// The texture sets of `ground_texture_layers`, one layer each: its colour with its height in
@@ -5251,9 +5251,6 @@ impl WaveForgeStages {
     fn far_look(&self, pack: &Pack) -> Result<FarLook, String> {
         let near = self.far_category_near(pack);
         let near_of = |index: usize| near.get(index).copied().flatten();
-        // The far ground draws a textured category in its set's mean colour, without a ramp.
-        let ramped =
-            |index: usize| near_of(index).filter(|&near| self.texture_layer(near).is_none());
         Ok(FarLook {
             palette: palette_texture(|index| {
                 self.far_colours
@@ -5261,7 +5258,7 @@ impl WaveForgeStages {
                     .copied()
                     .unwrap_or_else(|| palette_colour(&PackedColorArray::new(), index))
             })?,
-            ramps: self.ramps_texture(ramped)?,
+            ramps: self.ramps_texture(near_of)?,
             relief: self.relief_texture(near_of)?,
         })
     }

@@ -744,3 +744,48 @@ fn steep_ground_turns_a_colour_to_rock_but_not_a_texture_set() {
         "the coloured half did not turn to rock"
     );
 }
+
+/// A set's colour for the ramp's tint: low in green, which the ramp multiplies most.
+const DARK_GREEN_SET: [u8; 3] = [120, 12, 20];
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn a_ramp_tints_a_texture_set_by_as_much_as_it_moves_the_palette_colour() {
+    // The ground at 5, halfway up heights of 0 to 10, and the west's ramp by height: its palette
+    // colour goes halfway toward `TOWARD`, and its set is tinted by the same factor.
+    let look = GroundLook {
+        ramp_heights: Vec2::new(0.0, 10.0),
+        ..GroundLook::flat()
+    };
+    let linear = |colour: [u8; 3]| Color::srgb_u8(colour[0], colour[1], colour[2]).to_linear();
+    // A set dark where the tint is strong, so no channel of it clips.
+    let sets = SolidSets {
+        colours: vec![UNUSED, DARK_GREEN_SET],
+        layers: vec![Some(1), None],
+    };
+    let (set, palette, ramped) = (
+        linear(DARK_GREEN_SET),
+        linear(WEST),
+        linear(mixed(WEST, TOWARD, 0.5)),
+    );
+    let tinted = Color::LinearRgba(LinearRgba::rgb(
+        set.red * ramped.red / palette.red,
+        set.green * ramped.green / palette.green,
+        set.blue * ramped.blue / palette.blue,
+    ))
+    .to_srgba()
+    .to_u8_array();
+    let expected = [tinted[0], tinted[1], tinted[2]];
+
+    let pixels = render_halves_textured(
+        "Constant(5.0)",
+        look,
+        None,
+        &west_ramp(Vec4::new(1.0, 0.0, 0.0, 0.0)),
+        &[],
+        GroundMaterials::NEAR_LAYOUT,
+        Some(&sets),
+    );
+
+    assert!(halves_are(&pixels, expected, EAST), "expected {expected:?}");
+}

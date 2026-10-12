@@ -307,7 +307,7 @@ in alpha. The plugin's own sets ship with the Godot addon, from ambientCG's CC0 
 load as well. Both makers give no layers and `no_texture_sets()`, a one-texel array, so a game sets
 all three fields, one image each shared by every chunk; `far_ground_material` always draws colours,
 so a game gives a textured colour its set's mean colour in the palette, which the far ground and
-the grass draw it in. `GroundLook`'s `texture_size`, `texture_normal` and `texture_roughness` are
+the grass draw it in, and which a ramp's tint of the set is measured against. `GroundLook`'s `texture_size`, `texture_normal` and `texture_roughness` are
 the Godot shader's. The shader samples the sets with explicit derivatives, taken before the
 per-material branch, since WGSL samples with implicit ones only in uniform control flow.
 

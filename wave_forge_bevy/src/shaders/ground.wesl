@@ -89,7 +89,8 @@ const CRACK_DEPTH: f32 = 0.15;
 // its colour.
 @group(constants::MATERIAL_BIND_GROUP) @binding(108) var texture_layers: texture_2d<f32>;
 // Texture sets a material can be drawn with instead of its colour: layers of two arrays, the colour
-// with the height in alpha and the OpenGL normal with the roughness in alpha.
+// with the height in alpha and the OpenGL normal with the roughness in alpha. A textured material's
+// palette colour is its set's mean, and its ramp tints the set by how far it moves that colour.
 @group(constants::MATERIAL_BIND_GROUP) @binding(109) var albedo_height: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(110) var albedo_height_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(111) var normal_roughness: texture_2d_array<f32>;
@@ -317,7 +318,9 @@ fn look_of(id: i32, at: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, surface: vec3<f
         normal = normal * weights.y + side_x.normal * weights.x + side_z.normal * weights.z;
         lean *= weights.y;
     }
-    out.albedo = colour.rgb;
+    // Its ramp moves the set's colour as it would the set's mean, its palette colour.
+    let mean = textureLoad(palette, vec2<i32>(id, 0), 0).rgb;
+    out.albedo = colour.rgb * colour_of(id, drivers) / max(mean, vec3<f32>(1e-3));
     out.micro = vec3<f32>(colour.a, -lean * look.texture_normal);
     out.depth = 1.0;
     out.roughness = mix(roughness, normal.a, look.texture_roughness);
