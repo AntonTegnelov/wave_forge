@@ -22,7 +22,8 @@ use bevy_mesh::{Mesh, PrimitiveTopology};
 use bevy_pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, StandardMaterial};
 use bevy_reflect::TypePath;
 use bevy_render::render_resource::{
-    AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat,
+    AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat, TextureViewDescriptor,
+    TextureViewDimension,
 };
 use bevy_shader::ShaderRef;
 use wave_forge::stages::Field;
@@ -71,6 +72,13 @@ pub struct GroundLook {
     /// The heights, in world units, over which a ramp's height runs from 0 to 1
     /// ([`GroundMaterials::ramps`]).
     pub ramp_heights: Vec2,
+    /// How wide one tile of a texture set ([`GroundMaterials::texture_layers`]) is, in world units.
+    pub texture_size: f32,
+    /// How far a texture set's normal leans the ground's, 0 to 2.
+    pub texture_normal: f32,
+    /// How far a texture set's own roughness moves the ground's from the base material's, 0 to 1:
+    /// photographed sets tend to read glossier than ground does in sunlight.
+    pub texture_roughness: f32,
     /// Where covered ground tints in: the grass's fade, which the [`GrassFade`] resource gives
     /// every ground material, so the ground is as it is where the blades stand and tinted where
     /// they have gone. Farther than any view by default, so nothing is tinted. Last and aligned to
@@ -102,6 +110,9 @@ impl Default for GroundLook {
             gullies: 0.5,
             relief_blend: 0.6,
             ramp_heights: Vec2::new(0.0, 1.0),
+            texture_size: 3.0,
+            texture_normal: 1.0,
+            texture_roughness: 0.25,
         }
     }
 }
@@ -156,6 +167,22 @@ pub struct GroundMaterials {
     /// [`far_ground_material`]'s for the far ground, whose cells are coarse columns.
     #[uniform(107)]
     pub layout: Vec4,
+    /// Per material, the layer of the texture set it is drawn with instead of its colour, ramp and
+    /// relief ([`texture_layer_image`]); a single texel of zeros, every material in its colour, by
+    /// default.
+    #[texture(108, sample_type = "float", filterable = false)]
+    pub texture_layers: Handle<Image>,
+    /// The texture sets' colours with their heights in alpha, a 2D array of a layer per set, with
+    /// mipmaps and a repeating sampler, as a game loads them (a KTX2 array, say);
+    /// [`no_texture_sets`] by default.
+    #[texture(109, dimension = "2d_array")]
+    #[sampler(110)]
+    pub albedo_height: Handle<Image>,
+    /// The texture sets' OpenGL normals with their roughness in alpha, by layer as
+    /// `albedo_height`; [`no_texture_sets`] by default.
+    #[texture(111, dimension = "2d_array")]
+    #[sampler(112)]
+    pub normal_roughness: Handle<Image>,
 }
 
 impl GroundMaterials {
@@ -182,6 +209,62 @@ pub fn relief_image(reliefs: &[GroundRelief]) -> Image {
         TextureFormat::Rgba32Float,
         RenderAssetUsages::RENDER_WORLD,
     )
+}
+
+/// The image of the ground's texture layers for [`GroundMaterials::texture_layers`], one per
+/// palette colour by index, 256 by 1: the layer of the texture set each material is drawn with, or
+/// none for its colour, as for a material past the layers given. With none given it is a single
+/// texel of zeros.
+///
+/// # Panics
+///
+/// If a layer is 255 or more: the image holds a layer plus one in a byte.
+#[must_use]
+pub fn texture_layer_image(layers: &[Option<u8>]) -> Image {
+    let texels: Vec<u8> = if layers.is_empty() {
+        vec![0]
+    } else {
+        (0..PALETTE)
+            .map(|index| {
+                layers.get(index).copied().flatten().map_or(0, |layer| {
+                    layer.checked_add(1).expect("a texture layer below 255")
+                })
+            })
+            .collect()
+    };
+    Image::new(
+        Extent3d {
+            width: texels.len() as u32,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        texels,
+        TextureFormat::R8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+}
+
+/// A texture array of one black texel, for a ground drawn without texture sets.
+#[must_use]
+pub fn no_texture_sets() -> Image {
+    let mut image = Image::new(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0; 4],
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    // One layer would otherwise be viewed as a plain 2D texture.
+    image.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::D2Array),
+        ..TextureViewDescriptor::default()
+    });
+    image
 }
 
 /// A palette colour's ramp: the colour it runs toward, and how far the ground's height (0 to 1 over
@@ -933,6 +1016,9 @@ pub fn ground_material_of(
             ramps: images.add(ramp_image(&[])),
             relief: images.add(relief_image(&[])),
             layout: GroundMaterials::NEAR_LAYOUT,
+            texture_layers: images.add(texture_layer_image(&[])),
+            albedo_height: images.add(no_texture_sets()),
+            normal_roughness: images.add(no_texture_sets()),
         },
     }
 }
@@ -996,6 +1082,10 @@ pub fn far_ground_material(
             ramps: images.add(ramp_image(&[])),
             relief: images.add(relief_image(&[])),
             layout: Vec4::new(first.x, first.y, spacing.x / cell.x, 0.0),
+            // The far ground draws every category in its colour.
+            texture_layers: images.add(texture_layer_image(&[])),
+            albedo_height: images.add(no_texture_sets()),
+            normal_roughness: images.add(no_texture_sets()),
         },
     })
 }

@@ -2,7 +2,8 @@
 //! east half another. With the flat look it comes out in their palette colours, blended only around
 //! the border; with the default look the colours vary around the palette's. The ground's channels
 //! darken it where it is hollow or wet and tint it where it is covered, and a material's ramp
-//! carries its colour toward another by the ground's cavity or height.
+//! carries its colour toward another by the ground's cavity or height. A material drawn with a
+//! texture set comes out in the set's colour, which steep ground does not turn to rock.
 //!
 //! ```text
 //! cargo test -p wave_forge_bevy --release --test ground_material_render -- --ignored --nocapture
@@ -16,9 +17,13 @@ use bevy::app::PluginsState;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::{ImageRenderTarget, RenderTarget, ScalingMode};
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete};
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+use bevy::render::render_resource::{
+    Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
+    TextureViewDimension,
+};
 use bevy::render::view::Msaa;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -27,6 +32,7 @@ use wave_forge::{ChunkCoord, FocusPoint, GroundRelief, ground, ground_materials}
 use wave_forge_bevy::materials::{
     GrassFade, GroundLook, GroundMaterials, GroundRamp, WaveForgeMaterialsPlugin,
     ground_channels_image, ground_material_of, palette_image, ramp_image, relief_image,
+    texture_layer_image,
 };
 use wave_forge_bevy::stages::ground_mesh;
 
@@ -83,6 +89,55 @@ fn render_halves_shaped(
     ramps: &[GroundRamp],
     reliefs: &[GroundRelief],
     layout: Vec4,
+) -> Vec<u8> {
+    render_halves_textured(height, look, channels, ramps, reliefs, layout, None)
+}
+
+/// Texture sets of one colour each, and the layer each material is drawn with.
+struct SolidSets {
+    colours: Vec<[u8; 3]>,
+    layers: Vec<Option<u8>>,
+}
+
+/// A 2D array of a layer per colour of `colours`, 4 by 4 texels of it each, in `format`, sampled
+/// repeating, as a game's texture sets are.
+fn solid_array(colours: &[[u8; 4]], format: TextureFormat) -> Image {
+    let data: Vec<u8> = colours
+        .iter()
+        .flat_map(|colour| colour.repeat(16))
+        .collect();
+    let mut image = Image::new(
+        Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: colours.len() as u32,
+        },
+        TextureDimension::D2,
+        data,
+        format,
+        RenderAssetUsages::default(),
+    );
+    image.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::D2Array),
+        ..TextureViewDescriptor::default()
+    });
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        ..ImageSamplerDescriptor::linear()
+    });
+    image
+}
+
+/// What [`render_halves_shaped`] draws, the materials drawn with `sets`' layers.
+fn render_halves_textured(
+    height: &str,
+    look: GroundLook,
+    channels: Option<[[f32; 3]; 2]>,
+    ramps: &[GroundRamp],
+    reliefs: &[GroundRelief],
+    layout: Vec4,
+    sets: Option<&SolidSets>,
 ) -> Vec<u8> {
     let text = PACK.replace("Constant(0.0)", height);
     let mut runtime = Runtime::new(
@@ -155,6 +210,21 @@ fn render_halves_shaped(
         .resource_mut::<Assets<Image>>()
         .add(relief_image(reliefs));
     material.extension.layout = layout;
+    if let Some(sets) = sets {
+        // Each set half as high as it can stand, its normal straight up and fully rough.
+        let albedo: Vec<[u8; 4]> = sets
+            .colours
+            .iter()
+            .map(|&[r, g, b]| [r, g, b, 128])
+            .collect();
+        let normal = vec![[128, 128, 255, 255]; sets.colours.len()];
+        let mut images = world.resource_mut::<Assets<Image>>();
+        material.extension.albedo_height =
+            images.add(solid_array(&albedo, TextureFormat::Rgba8UnormSrgb));
+        material.extension.normal_roughness =
+            images.add(solid_array(&normal, TextureFormat::Rgba8Unorm));
+        material.extension.texture_layers = images.add(texture_layer_image(&sets.layers));
+    }
     if let Some([first, second]) = channels {
         let values: Vec<f32> = ids
             .iter()
@@ -594,4 +664,83 @@ fn the_noise_breaking_a_border_is_as_coarse_as_the_layout_says() {
     println!("the border moves {fine} pixels in all at a coarseness of 1, {coarse} at 8");
     assert!(fine > 0, "the noise breaks no border");
     assert!(coarse * 2 < fine, "{coarse} against {fine}");
+}
+
+/// The colour of the texture set the west material is drawn with, and of the set before it, which
+/// no material is.
+const TEXTURED: [u8; 3] = [40, 200, 60];
+const UNUSED: [u8; 3] = [200, 200, 0];
+
+/// The west material, id 0, drawn with the second of two sets, the east in its colour.
+fn west_textured() -> SolidSets {
+    SolidSets {
+        colours: vec![UNUSED, TEXTURED],
+        layers: vec![Some(1), None],
+    }
+}
+
+/// Whether `pixels` show one half `west` and the other `east`, either way round.
+fn halves_are(pixels: &[u8], west: [u8; 3], east: [u8; 3]) -> bool {
+    let (left, right) = (
+        pixel_of(pixels, 4, SIZE / 2),
+        pixel_of(pixels, SIZE - 5, SIZE / 2),
+    );
+    println!("left {left:?}, right {right:?}");
+    (near(left, west) && near(right, east)) || (near(left, east) && near(right, west))
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn a_material_drawn_with_a_texture_set_comes_out_in_the_sets_colour() {
+    let pixels = render_halves_textured(
+        "Constant(0.0)",
+        GroundLook::flat(),
+        None,
+        &[],
+        &[],
+        GroundMaterials::NEAR_LAYOUT,
+        Some(&west_textured()),
+    );
+
+    assert!(halves_are(&pixels, TEXTURED, EAST));
+}
+
+#[test]
+#[ignore = "needs a device; run with --ignored in release mode"]
+fn steep_ground_turns_a_colour_to_rock_but_not_a_texture_set() {
+    // Ground rising three cells a cell toward +x, steeper than the rock's slope, seen from the sides
+    // as much as from above.
+    let look = GroundLook {
+        rock_slope: GroundLook::default().rock_slope,
+        ..GroundLook::flat()
+    };
+
+    let pixels = render_halves_textured(
+        "Mul(X, Constant(3.0))",
+        look,
+        None,
+        &[],
+        &[],
+        GroundMaterials::NEAR_LAYOUT,
+        Some(&west_textured()),
+    );
+
+    let (left, right) = (
+        pixel_of(&pixels, 4, SIZE / 2),
+        pixel_of(&pixels, SIZE - 5, SIZE / 2),
+    );
+    let (textured, coloured) = if near(left, TEXTURED) {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    println!("the textured half {textured:?}, the coloured half {coloured:?}");
+    assert!(
+        near(textured, TEXTURED),
+        "the textured half is {textured:?}"
+    );
+    assert!(
+        !near(coloured, EAST),
+        "the coloured half did not turn to rock"
+    );
 }
