@@ -1346,13 +1346,16 @@ coarse columns, one for each of them along its edges and inside (`far_steps(colu
 a scale of 4 with chunks of 8 columns, a vertex every 8 m at cells of 2 m), each with the height a
 fine stage reading the coarse field there gets. So each lattice chunk is a block of far squares with
 exactly a near ground's outline, and two neighbouring coarse chunks meet exactly. `near` gives the
-near ground drawn on a lattice chunk, if any: its block is left out, so the two never overlap. Along
-every edge a block shares with a near ground a wall stands, from the higher of the two edges to
-below the lower by as much as the near ground's skirt hangs, so no view sees between them at any
-level of detail the near ground is drawn at; a block beside a near ground fans out from its centre
-through the wall's feet and its other edges' vertices, so it shares its vertices with the walls and
-the far squares beside it and no crack opens. Positions are relative to the corner of the first
-lattice chunk the coarse chunk covers, with heights absolute; the walls face both ways. It returns
+near ground drawn on a lattice chunk, if any: its block is left out, so the two never overlap. The
+far ground meets the near ground's edge at that edge's height: a far vertex standing on a near
+ground's vertex takes its height, and a block beside a near ground fans out from its centre through
+a vertex on each of the near edge's vertices and its other edges' vertices, so where the coarse and
+the full-detail ground disagree the step between them slopes across the block instead of standing
+as a wall at the edge. Under each such edge a curtain hangs as far as the near ground's skirt, so no
+view sees between them at any level of detail the near ground is drawn at. The block shares its
+vertices with the curtains and the far squares beside it, so no crack opens, and neighbouring coarse
+chunks move the vertices they share alike. Positions are relative to the corner of the first lattice
+chunk the coarse chunk covers, with heights absolute; the curtains face both ways. It returns
 `None` until the coarse fields of the chunk and the eight around it have arrived, so the far ground
 reaches one coarse chunk less than its field.
 `wave_forge::far_ground_categories(far, categories, scale, cell_size)` gives the category each

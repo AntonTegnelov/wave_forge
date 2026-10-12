@@ -50,8 +50,8 @@ use wave_forge::stages::{
 };
 use wave_forge::{
     ChunkCoord, Emitter, FarGround, FocusPoint, FrozenStore, GROUND_CHANNELS, GroundMesh,
-    InstanceId, NavSource, NavSourceError, VolumeMesh, WaterMesh, far_ground, ground,
-    ground_channels, ground_materials, ground_readers, ground_values, surface_nav_source,
+    InstanceId, NavSource, NavSourceError, VolumeMesh, WaterMesh, far_chunks_reading, far_ground,
+    ground, ground_channels, ground_materials, ground_readers, ground_values, surface_nav_source,
     volume_mesh, water_banks, water_surface,
 };
 
@@ -1185,15 +1185,9 @@ fn drain(
         }
     }
     if let Some((stage, scale)) = &far_stage {
-        let scale = *scale as i32;
+        let scale = *scale;
         for fine in near_changed {
-            for (dx, dy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
-                stages.far_due.insert(ChunkCoord::new(
-                    (fine.x + dx).div_euclid(scale),
-                    (fine.y + dy).div_euclid(scale),
-                    0,
-                ));
-            }
+            stages.far_due.extend(far_chunks_reading(fine, scale));
         }
         let cell = stages.settings.cell_size.to_array();
         let due: Vec<ChunkCoord> = std::mem::take(&mut stages.far_due).into_iter().collect();
@@ -1201,7 +1195,7 @@ fn drain(
             // Waits for a field around it, whose arrival makes it due again.
             let Some(far) = far_ground(
                 chunk,
-                scale as u32,
+                scale,
                 |at| stages.worker.field(stage, at),
                 cell,
                 |fine| stages.grounds.get(&fine),

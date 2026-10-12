@@ -58,9 +58,9 @@ use wave_forge::stages::{
 use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FarGround, FocusPoint, GroundMesh, GroundRelief, InstanceSet,
-    RegionTags, SurfaceWorker, VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories,
-    far_ground_values, far_steps, ground, ground_channels, ground_height, ground_materials,
-    ground_readers, ground_values, volume_height, water_banks, water_surface,
+    RegionTags, SurfaceWorker, VolumeMesh, WaterMesh, YUpSpace, far_chunks_reading, far_ground,
+    far_ground_categories, far_ground_values, far_steps, ground, ground_channels, ground_height,
+    ground_materials, ground_readers, ground_values, volume_height, water_banks, water_surface,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -4152,14 +4152,8 @@ impl WaveForgeStages {
         }
         // A chunk's colours and cavity read its own chunks of their stages alone.
         self.far_due.extend(coloured.iter().copied());
-        for fine in near_changed {
-            for (dx, dy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
-                self.far_due.insert(ChunkCoord::new(
-                    (fine.x + dx).div_euclid(scale),
-                    (fine.y + dy).div_euclid(scale),
-                    0,
-                ));
-            }
+        for &fine in near_changed {
+            self.far_due.extend(far_chunks_reading(fine, scale as u32));
         }
         let Some(scenario) = self
             .base()
