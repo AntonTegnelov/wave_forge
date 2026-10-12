@@ -15,17 +15,19 @@
 
 [node name="Islands" type="WaveForgeStages"]
 pack_file = "res://addons/wave_forge/presets/islands.world.ron"
-targets = PackedStringArray("height", "surface", "trees", "far_height", "far_surface", "hollow", "wet", "rocks")
+targets = PackedStringArray("height", "surface", "trees", "far_height", "far_surface", "hollow", "wet", "rocks", "far_occlusion")
 start_on_ready = true
 preview_in_editor = true
 view_radius = 3
 target_radii = Dictionary[StringName, int]({
 &"far_height": 133,
-&"far_surface": 133
+&"far_surface": 133,
+&"far_occlusion": 133
 })
 ground_stage = "height"
 far_ground_stage = "far_height"
 far_ground_material_stage = "far_surface"
+far_ground_cavity_stage = "far_occlusion"
 ground_wetness_stage = "wet"
 ground_cavity_stage = "hollow"
 ground_material_stage = "surface"

@@ -66,10 +66,11 @@
         (name: "rocks", kind: Scatter(kind: "rock", variants: 3, height: "height", spacing: 5,
             chance: 0.7, scale: (0.4, 1.1), tilt: (0.0, 15.0), align: 0.6,
             when: [Greater(Is("surface", ["rock"]), Constant(0.5))])),
-        // 0 to 1: how far a column lies below the ground around it, for the ground shader's cavity
-        // channel, which darkens the hollows.
+        // 0 to 1: how far a column lies below the ground around it, or how much of the sky the land
+        // around hides from it (`far_occlusion`), for the ground shader's cavity channel, which
+        // darkens the hollows and the valleys.
         (name: "around", kind: Blur(input: "height", radius: 4)),
-        (name: "hollow", kind: Field(Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.6)), 0.0, 1.0))),
+        (name: "hollow", kind: Field(Max(Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.6)), 0.0, 1.0), Input("far_occlusion")))),
         // 0 to 1: wet at the water's edge and drying over the first cell above it, for the ground
         // shader's wetness channel.
         (name: "wet", kind: Field(Clamp(Remap(Input("height"), (0.0, 1.0), (1.0, 0.0)), 0.0, 1.0))),
@@ -92,6 +93,10 @@
                 Add(Constant(2.0), Mul(Param("roughness"), Constant(6.0))),
             ),
         ))),
+        // How much of the sky the land within 8 coarse columns hides from each, at the far
+        // ground's scale (docs/reference/packs.md, "Horizon"): the far ground's cavity, and the
+        // near ground's in its valleys, so the two darken alike where they meet.
+        (name: "far_occlusion", scale: 8, kind: Horizon(input: "far_height", reach: 8)),
         (name: "far_surface", scale: 8, kind: Rules(rules: [
             (category: "sand", when: [Less(Input("far_height"), Constant(1.2))]),
             (category: "rock", when: [Greater(Input("far_height"), Constant(9.0))]),
