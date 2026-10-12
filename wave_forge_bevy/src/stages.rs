@@ -1108,14 +1108,19 @@ fn drain(
             let Some(mesh) = ground(chunk, |at| stages.worker.field(stage, at), cell) else {
                 continue;
             };
-            if let Some(materials) = &material_stage {
-                let Some(ids) =
-                    ground_materials(chunk, |at| stages.worker.categories(materials, at))
-                else {
-                    continue;
-                };
-                stages.ground_ids.insert(chunk, ids);
-            }
+            // The materials wait with the ground and are kept only with it, so a chunk that drops
+            // while it waits for another stage leaves nothing behind.
+            let ids = match &material_stage {
+                None => None,
+                Some(materials) => {
+                    let Some(ids) =
+                        ground_materials(chunk, |at| stages.worker.categories(materials, at))
+                    else {
+                        continue;
+                    };
+                    Some(ids)
+                }
+            };
             // A channel's values, none for a channel not set, or wait for its stage.
             let channel = |stage: &Option<String>| match stage {
                 None => Some(None),
@@ -1169,6 +1174,9 @@ fn drain(
             }
             if let Some(water) = water {
                 stages.waters.insert(chunk, water);
+            }
+            if let Some(ids) = ids {
+                stages.ground_ids.insert(chunk, ids);
             }
             stages.grounds.insert(chunk, mesh);
             near_changed.push(chunk);

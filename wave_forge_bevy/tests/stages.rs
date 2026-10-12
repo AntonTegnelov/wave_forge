@@ -137,6 +137,54 @@ fn around_origin() -> Vec<ChunkCoord> {
 }
 
 #[test]
+fn a_ground_has_materials_only_once_it_is_built() {
+    // The cavity's stage generated a chunk nearer than the ground's and the materials' keeps the
+    // grounds around the origin waiting for it with their materials known.
+    let pack = PACK.replacen(
+        "stages: [",
+        r#"stages: [
+        (name: "shade", kind: Field(Mul(Noise(frequency: 0.1, octaves: 1), Constant(0.5)))),"#,
+        1,
+    );
+    let plugin = WaveForgeStagesPlugin::new(
+        &["height", "trees", "cover", "shade"],
+        SETTINGS,
+        move || {
+            Ok(Runtime::new(
+                Arc::new(Pack::parse(&pack).expect("a valid pack")),
+                4,
+                SETTINGS.chunk,
+            ))
+        },
+    )
+    .with_ground("height")
+    .with_ground_materials("cover")
+    .with_ground_cavity("shade")
+    .with_radius("height", 2)
+    .with_radius("cover", 2);
+    let mut app = app_with(plugin);
+
+    run_until(&mut app, |app| {
+        app.world()
+            .resource::<WaveForgeStages>()
+            .ground(ChunkCoord::new(0, 0, 0))
+            .is_some()
+    });
+    for _ in 0..30 {
+        app.update();
+    }
+
+    let stages = app.world().resource::<WaveForgeStages>();
+    for chunk in around_origin() {
+        assert_eq!(
+            stages.ground_materials(chunk).is_some(),
+            stages.ground(chunk).is_some(),
+            "{chunk:?}"
+        );
+    }
+}
+
+#[test]
 fn what_arrives_is_what_the_runtime_generates() {
     let mut app = app();
     let mut direct = runtime();
