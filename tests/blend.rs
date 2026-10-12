@@ -148,6 +148,33 @@ fn without_a_blend_each_column_takes_its_own_categorys_expression() {
 }
 
 #[test]
+fn matches_over_one_input_blend_each_as_far_as_its_own_blend_inside_one_expression() {
+    let match_of = |blend: u32| Expr::Match {
+        input: "halves".to_owned(),
+        cases: vec![("low".to_owned(), Expr::Constant(0.0))],
+        otherwise: constant(10.0),
+        blend,
+    };
+    let both = stage(
+        "both",
+        StageKind::Field(Expr::Add(b(match_of(1)), b(match_of(3)))),
+    );
+    let narrow = stage("narrow", StageKind::Field(match_of(1)));
+    let wide = stage("wide", StageKind::Field(match_of(3)));
+    let runtime = run(
+        pack(vec![halves(), both, narrow, wide]).expect("a valid pack"),
+        &["both", "narrow", "wide"],
+        ChunkCoord::new(0, 0, 0),
+        1,
+    );
+
+    for x in -8..16 {
+        let alone = value(&runtime, "narrow", (x, 5)) + value(&runtime, "wide", (x, 5));
+        assert_eq!(value(&runtime, "both", (x, 5)), alone, "x {x}");
+    }
+}
+
+#[test]
 fn the_categories_a_match_reads_are_generated_as_far_out_as_it_blends() {
     let pack = pack(vec![halves(), step(5)]).expect("a valid pack");
 
