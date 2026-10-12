@@ -8,11 +8,15 @@
 //! so the world is a function of the pack, the seed and the facts.
 
 use super::evaluate::{Leaves, evaluate};
-use super::pack::{Column, Expr, MAX_CHILDREN, Pack, Schema, TableKind, salt};
+use super::pack::{AuthoredRow, Column, Expr, MAX_CHILDREN, Pack, Schema, TableKind, salt};
 use super::runtime::StageError;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use wfc_core::hash::pcg3d;
+
+/// What an authored row's last id part starts from: no generated row's index reaches it, so an
+/// authored row never takes a generated one's id ([`crate::stages::AuthoredRow`]).
+pub const AUTHORED: u64 = 1 << 63;
 
 /// A row's id. A given row's is the game's own id alone; a generated row's is its parent's id
 /// followed by its index among the parent's children, or its index alone without a parent. Either
@@ -169,7 +173,13 @@ impl Facts {
     /// Generated table `index`'s rows from its parent's as they are now.
     fn generate(&self, index: usize) -> Result<Table, StageError> {
         let schema = &self.pack.tables[index];
-        let TableKind::Generated { count, columns, .. } = &schema.kind else {
+        let TableKind::Generated {
+            count,
+            columns,
+            authored,
+            ..
+        } = &schema.kind
+        else {
             unreachable!("called for generated tables")
         };
         let failed = |message: String| StageError::Table {
@@ -250,6 +260,42 @@ impl Facts {
                     values,
                 });
             }
+            // The authored rows under this parent come after its generated ones, in the order of
+            // their numbers, as their ids sort.
+            let mut under: Vec<&AuthoredRow> =
+                authored.iter().filter(|row| row.parent == id).collect();
+            under.sort_by_key(|row| row.id);
+            for row in under {
+                let mut path = id.to_vec();
+                path.push(AUTHORED + row.id);
+                let values = schema
+                    .columns
+                    .iter()
+                    .map(|column| {
+                        row.values
+                            .iter()
+                            .find(|(name, _)| name == column)
+                            .map(|&(_, value)| value)
+                            .expect("checked when loaded")
+                    })
+                    .collect();
+                rows.push(Row {
+                    id: RowId(path),
+                    values,
+                });
+            }
+        }
+        let placed = |row: &&AuthoredRow| {
+            let mut path = row.parent.clone();
+            path.push(AUTHORED + row.id);
+            rows.binary_search_by(|placed| placed.id.0.cmp(&path))
+                .is_ok()
+        };
+        if let Some(orphan) = authored.iter().find(|row| !placed(row)) {
+            return Err(failed(format!(
+                "authored row {} names a parent {:?} the table's parent does not hold",
+                orphan.id, orphan.parent
+            )));
         }
         Ok(Table {
             columns: schema.columns.clone(),
