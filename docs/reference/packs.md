@@ -1105,7 +1105,9 @@ columns, its own hash stream (`hash(purpose)`, which changes with the retry inde
 regions agree on what crosses between them, a river's crossing point say, without reading each
 other. `Attempt::Rejected(reason)` makes the runtime try again with the next retry index; when the
 budget is spent, generation fails with `StageError::RegionRejected`, carrying every reason. A
-missing job fails with `StageError::NoRegionJob`. A computed region is kept while any chunk of it
+region accepted after some rejected attempts keeps their reasons: `Runtime::region_log(stage,
+region)` gives them in order, empty when the first attempt was accepted, so a game can show why its
+world was generated again. A missing job fails with `StageError::NoRegionJob`. A computed region is kept while any chunk of it
 is needed, so a finite world is one region computed once.
 
 A `Curve` has a positional id, `CurveId::Region` with its region and index, points in world

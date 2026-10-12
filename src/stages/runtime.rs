@@ -613,6 +613,12 @@ impl FieldView<'_> {
 /// A Region stage's index and one of its regions.
 type RegionKey = (usize, (i32, i32));
 
+/// A region a Region stage's job accepted: its curves, and why each attempt before was rejected.
+struct ComputedRegion {
+    curves: Arc<[Curve]>,
+    rejected: Vec<String>,
+}
+
 /// How an expression reads its inputs: a stage's value at one of the reading stage's columns,
 /// already brought to the reading stage's scale.
 type Read<'r> = dyn Fn(&str, i64, i64) -> Result<f32, StageError> + 'r;
@@ -650,7 +656,7 @@ pub struct Runtime {
     /// The region jobs Region stages name, by name.
     region_jobs: BTreeMap<String, Box<dyn RegionJob>>,
     /// Regions computed, by Region stage and region, kept while a chunk of their region is needed.
-    regions: BTreeMap<RegionKey, Arc<[Curve]>>,
+    regions: BTreeMap<RegionKey, ComputedRegion>,
     /// Location tables placed, by Locations stage and region, kept while a chunk of their region
     /// is needed.
     placed: BTreeMap<RegionKey, Arc<Placed>>,
@@ -2451,6 +2457,18 @@ impl Runtime {
         )
     }
 
+    /// Why each attempt at `region` of `stage`, a Region stage, was rejected before one was
+    /// accepted, in the order they were made: empty if the first was, `None` if the region is not
+    /// computed. A region is kept, and its log with it, while a chunk of it is needed, or for good in
+    /// a bounded world.
+    #[must_use]
+    pub fn region_log(&self, stage: &str, region: (i32, i32)) -> Option<&[String]> {
+        let index = self.pack.index(stage)?;
+        self.regions
+            .get(&(index, region))
+            .map(|computed| computed.rejected.as_slice())
+    }
+
     /// The curves `stage` holds for `chunk`: those of its region that pass through it, if it is a
     /// Region stage and the chunk is generated.
     #[must_use]
@@ -2694,7 +2712,13 @@ impl Runtime {
             input.retry = retry;
             match job.run(&input)? {
                 Attempt::Accepted(curves) => {
-                    self.regions.insert((index, region), Arc::from(curves));
+                    self.regions.insert(
+                        (index, region),
+                        ComputedRegion {
+                            curves: Arc::from(curves),
+                            rejected: log,
+                        },
+                    );
                     return Ok(());
                 }
                 Attempt::Rejected(reason) => log.push(reason),
@@ -3979,7 +4003,7 @@ impl Runtime {
             return self.embed(index, chunk).map(Product::Points);
         }
         if let Some(region) = stage.kind.job_region() {
-            let curves = &self.regions[&(index, region_of(chunk, region))];
+            let curves = &self.regions[&(index, region_of(chunk, region))].curves;
             let (min, max) = self.chunk_rect(chunk);
             return Ok(Product::Curves(
                 curves
