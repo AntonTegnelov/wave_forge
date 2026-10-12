@@ -502,6 +502,8 @@ pub struct WaveForgeStages {
     /// Each chunk's navigation region, and what the colliders of the chunk and its neighbours
     /// held when it was baked.
     navigation: StageNavigation<Vec<BodyContents>>,
+    /// When a frame last might start a navigation bake; none before the first frame.
+    navigation_chance: Option<std::time::Instant>,
     /// Each chunk's walkable triangles for its navigation source, with what the chunk held when
     /// they were worked out: derived one chunk a frame, so starting a bake only joins them.
     walkable: HashMap<ChunkCoord, (BodyContents, Vec<[f32; 3]>)>,
@@ -820,6 +822,19 @@ fn elapsed_ms(since: std::time::Instant) -> f64 {
 /// after 1 ms carried frames past the bound; most frames spend a tenth of a millisecond, so bakes still start.
 const NAVIGATION_START_MS: f64 = 0.5;
 
+/// How long, in milliseconds, navigation waits for a frame quiet enough to start a bake before it
+/// starts one on a busy frame anyway. While the player moves, every frame can bring grounds, bodies
+/// and placements, and on a slow machine none stays under `NAVIGATION_START_MS`; without this no
+/// bake would ever start (measurements.md L58). A quarter of a second is 15 frames at 60 frames a
+/// second, so a busy start stays rare where quiet frames come at all.
+const NAVIGATION_PATIENCE_MS: f64 = 250.0;
+
+/// Whether a frame that has already spent `spent_ms` on Godot's thread may start a navigation bake,
+/// when the last frame that might start one was `waited_ms` ago.
+fn may_start_navigation(spent_ms: f64, waited_ms: f64) -> bool {
+    spent_ms < NAVIGATION_START_MS || waited_ms >= NAVIGATION_PATIENCE_MS
+}
+
 /// The names of the pack's Solve stages, in the pack's order.
 fn solve_stages(pack: &Pack) -> Vec<String> {
     pack.stage_names()
@@ -945,6 +960,7 @@ impl INode for WaveForgeStages {
             navigation_radius: -1,
             navigation_template: None,
             navigation: StageNavigation::new(),
+            navigation_chance: None,
             walkable: HashMap::new(),
             shape_faces: HashMap::new(),
             occluder_radius: -1,
@@ -1257,8 +1273,14 @@ impl INode for WaveForgeStages {
         frame.bodies_ms = elapsed_ms(building);
         let navigating = std::time::Instant::now();
         // A bake is started only on a frame that has not already spent much of Godot's time, so
-        // it does not land on one that built grounds or bodies.
-        let may_start = elapsed_ms(processing) < NAVIGATION_START_MS;
+        // it does not land on one that built grounds or bodies, unless none has been for a while.
+        let chance = *self
+            .navigation_chance
+            .get_or_insert_with(std::time::Instant::now);
+        let may_start = may_start_navigation(elapsed_ms(processing), elapsed_ms(chance));
+        if may_start {
+            self.navigation_chance = Some(std::time::Instant::now());
+        }
         for chunk in self.update_navigation(may_start) {
             self.signals().navigation_ready().emit(to_vector(chunk));
         }
@@ -6418,7 +6440,20 @@ fn chunk_material(
 
 #[cfg(test)]
 mod tests {
-    use super::{RunEvent, received};
+    use super::{
+        NAVIGATION_PATIENCE_MS, NAVIGATION_START_MS, RunEvent, may_start_navigation, received,
+    };
+
+    #[test]
+    fn a_busy_frame_starts_a_bake_only_once_no_frame_could_for_a_while() {
+        let busy = NAVIGATION_START_MS * 4.0;
+
+        let soon = may_start_navigation(busy, NAVIGATION_PATIENCE_MS / 2.0);
+        let late = may_start_navigation(busy, NAVIGATION_PATIENCE_MS);
+        let quiet = may_start_navigation(NAVIGATION_START_MS / 2.0, 0.0);
+
+        assert!(!soon && late && quiet);
+    }
     use wave_forge::stages::RunProgress;
 
     fn progress(done: usize) -> RunProgress {
