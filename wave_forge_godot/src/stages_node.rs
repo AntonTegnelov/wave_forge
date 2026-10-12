@@ -362,8 +362,8 @@ pub struct WaveForgeStages {
     #[export]
     scenes: VarDictionary,
     /// How long each frame may spend placing scenes, in milliseconds; chunks still due wait for
-    /// the next frames, nearest the followed position first. A chunk is placed whole, so a frame
-    /// can go over by one chunk's placing.
+    /// the next frames, nearest the followed position first. A chunk is placed whole, and a frame
+    /// places at least one, so a frame can go over by one chunk's placing.
     #[export]
     placement_budget_ms: f64,
     /// Chunks around the followed position within which a scene placed as nodes is so; farther
