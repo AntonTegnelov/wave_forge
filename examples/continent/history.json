@@ -1,13 +1,13 @@
 [
   {
     "culture": "coastfolk",
-    "fate": "thriving",
-    "founded": 178.0,
+    "fate": "declining",
+    "founded": 5.0,
     "id": 0,
-    "population": 1615.0,
+    "population": 2000.0,
     "size": 4.0,
-    "x": 464.0,
-    "y": 1373.0
+    "x": 588.0,
+    "y": 1522.0
   },
   {
     "culture": "steppe_riders",
@@ -90,7 +90,7 @@
     "y": 1183.0
   },
   {
-    "culture": "steppe_riders",
+    "culture": "highlanders",
     "fate": "thriving",
     "founded": 280.0,
     "id": 9,
@@ -152,18 +152,8 @@
   {
     "culture": "marsh_folk",
     "fate": "thriving",
-    "founded": 412.0,
-    "id": 15,
-    "population": 950.0,
-    "size": 2.0,
-    "x": 811.0,
-    "y": 804.0
-  },
-  {
-    "culture": "marsh_folk",
-    "fate": "thriving",
     "founded": 494.0,
-    "id": 16,
+    "id": 15,
     "population": 1653.0,
     "size": 4.0,
     "x": 485.0,
@@ -173,27 +163,17 @@
     "culture": "steppe_riders",
     "fate": "abandoned",
     "founded": 300.0,
-    "id": 17,
+    "id": 16,
     "population": 1653.0,
     "size": 4.0,
     "x": 1695.0,
     "y": 1042.0
   },
   {
-    "culture": "steppe_riders",
-    "fate": "declining",
-    "founded": 262.0,
-    "id": 18,
-    "population": 2787.0,
-    "size": 4.0,
-    "x": 1623.0,
-    "y": 1295.0
-  },
-  {
     "culture": "marsh_folk",
     "fate": "abandoned",
     "founded": 44.0,
-    "id": 19,
+    "id": 17,
     "population": 4138.0,
     "size": 6.0,
     "x": 301.0,
@@ -203,7 +183,7 @@
     "culture": "steppe_riders",
     "fate": "declining",
     "founded": 78.0,
-    "id": 20,
+    "id": 18,
     "population": 3477.0,
     "size": 6.0,
     "x": 1435.0,
@@ -213,27 +193,17 @@
     "culture": "steppe_riders",
     "fate": "abandoned",
     "founded": 116.0,
-    "id": 21,
+    "id": 19,
     "population": 2981.0,
     "size": 4.0,
     "x": 1499.0,
     "y": 994.0
   },
   {
-    "culture": "sand_dwellers",
-    "fate": "thriving",
-    "founded": 36.0,
-    "id": 22,
-    "population": 2523.0,
-    "size": 4.0,
-    "x": 1519.0,
-    "y": 860.0
-  },
-  {
     "culture": "jungle_folk",
     "fate": "thriving",
     "founded": 385.0,
-    "id": 23,
+    "id": 20,
     "population": 2809.0,
     "size": 4.0,
     "x": 1049.0,
@@ -241,19 +211,39 @@
   },
   {
     "culture": "steppe_riders",
+    "fate": "declining",
+    "founded": 339.0,
+    "id": 21,
+    "population": 158.0,
+    "size": 2.0,
+    "x": 1612.0,
+    "y": 1299.0
+  },
+  {
+    "culture": "steppe_riders",
     "fate": "abandoned",
     "founded": 143.0,
-    "id": 24,
+    "id": 22,
     "population": 3366.0,
     "size": 6.0,
     "x": 1207.0,
     "y": 1139.0
   },
   {
+    "culture": "jungle_folk",
+    "fate": "thriving",
+    "founded": 369.0,
+    "id": 23,
+    "population": 1224.0,
+    "size": 2.0,
+    "x": 1001.0,
+    "y": 555.0
+  },
+  {
     "culture": "highlanders",
     "fate": "thriving",
     "founded": 262.0,
-    "id": 25,
+    "id": 24,
     "population": 563.0,
     "size": 2.0,
     "x": 867.0,
@@ -263,17 +253,37 @@
     "culture": "sand_dwellers",
     "fate": "ruined",
     "founded": 71.0,
-    "id": 26,
+    "id": 25,
     "population": 226.0,
     "size": 2.0,
     "x": 1620.0,
     "y": 628.0
   },
   {
+    "culture": "marsh_folk",
+    "fate": "abandoned",
+    "founded": 254.0,
+    "id": 26,
+    "population": 1003.0,
+    "size": 2.0,
+    "x": 801.0,
+    "y": 807.0
+  },
+  {
+    "culture": "woodlanders",
+    "fate": "ruined",
+    "founded": 117.0,
+    "id": 27,
+    "population": 2556.0,
+    "size": 4.0,
+    "x": 1241.0,
+    "y": 819.0
+  },
+  {
     "culture": "jungle_folk",
     "fate": "thriving",
     "founded": 376.0,
-    "id": 27,
+    "id": 28,
     "population": 401.0,
     "size": 2.0,
     "x": 877.0,
@@ -283,7 +293,7 @@
     "culture": "marsh_folk",
     "fate": "thriving",
     "founded": 258.0,
-    "id": 28,
+    "id": 29,
     "population": 746.0,
     "size": 2.0,
     "x": 664.0,
@@ -293,61 +303,51 @@
     "culture": "frostfolk",
     "fate": "thriving",
     "founded": 209.0,
-    "id": 29,
+    "id": 30,
     "population": 2378.0,
     "size": 4.0,
     "x": 995.0,
     "y": 1397.0
   },
   {
-    "culture": "sand_dwellers",
+    "culture": "steppe_riders",
     "fate": "thriving",
-    "founded": 325.0,
-    "id": 30,
-    "population": 1681.0,
-    "size": 4.0,
-    "x": 1065.0,
-    "y": 594.0
-  },
-  {
-    "culture": "sand_dwellers",
-    "fate": "thriving",
-    "founded": 365.0,
+    "founded": 321.0,
     "id": 31,
-    "population": 805.0,
-    "size": 2.0,
-    "x": 1453.0,
-    "y": 737.0
-  },
-  {
-    "culture": "frostfolk",
-    "fate": "abandoned",
-    "founded": 407.0,
-    "id": 32,
-    "population": 3540.0,
+    "population": 3783.0,
     "size": 6.0,
-    "x": 1395.0,
-    "y": 1492.0
-  },
-  {
-    "culture": "woodlanders",
-    "fate": "thriving",
-    "founded": 16.0,
-    "id": 33,
-    "population": 1640.0,
-    "size": 4.0,
-    "x": 1292.0,
-    "y": 822.0
+    "x": 1107.0,
+    "y": 1233.0
   },
   {
     "culture": "frostfolk",
     "fate": "thriving",
-    "founded": 258.0,
-    "id": 34,
-    "population": 2675.0,
+    "founded": 91.0,
+    "id": 32,
+    "population": 1637.0,
     "size": 4.0,
-    "x": 1322.0,
-    "y": 1356.0
+    "x": 1417.0,
+    "y": 1508.0
+  },
+  {
+    "culture": "marsh_folk",
+    "fate": "thriving",
+    "founded": 390.0,
+    "id": 33,
+    "population": 507.0,
+    "size": 2.0,
+    "x": 524.0,
+    "y": 1352.0
+  },
+  {
+    "culture": "sand_dwellers",
+    "fate": "thriving",
+    "founded": 499.0,
+    "id": 34,
+    "population": 754.0,
+    "size": 2.0,
+    "x": 1420.0,
+    "y": 859.0
   },
   {
     "culture": "jungle_folk",
@@ -380,20 +380,40 @@
     "y": 529.0
   },
   {
-    "culture": "frostfolk",
+    "culture": "jungle_folk",
     "fate": "declining",
-    "founded": 5.0,
+    "founded": 3.0,
     "id": 38,
-    "population": 2000.0,
+    "population": 3271.0,
+    "size": 6.0,
+    "x": 755.0,
+    "y": 366.0
+  },
+  {
+    "culture": "marsh_folk",
+    "fate": "thriving",
+    "founded": 156.0,
+    "id": 39,
+    "population": 1588.0,
     "size": 4.0,
-    "x": 588.0,
-    "y": 1522.0
+    "x": 400.0,
+    "y": 1264.0
+  },
+  {
+    "culture": "sand_dwellers",
+    "fate": "thriving",
+    "founded": 450.0,
+    "id": 40,
+    "population": 2183.0,
+    "size": 4.0,
+    "x": 1437.0,
+    "y": 727.0
   },
   {
     "culture": "steppe_riders",
     "fate": "thriving",
     "founded": 467.0,
-    "id": 39,
+    "id": 41,
     "population": 1966.0,
     "size": 4.0,
     "x": 1253.0,
@@ -403,70 +423,50 @@
     "culture": "marsh_folk",
     "fate": "thriving",
     "founded": 21.0,
-    "id": 40,
+    "id": 42,
     "population": 3822.0,
     "size": 6.0,
     "x": 931.0,
     "y": 986.0
   },
   {
-    "culture": "coastfolk",
-    "fate": "thriving",
-    "founded": 240.0,
-    "id": 41,
-    "population": 1811.0,
-    "size": 4.0,
-    "x": 1355.0,
-    "y": 1677.0
-  },
-  {
-    "culture": "jungle_folk",
-    "fate": "thriving",
-    "founded": 453.0,
-    "id": 42,
-    "population": 616.0,
-    "size": 2.0,
-    "x": 725.0,
-    "y": 406.0
-  },
-  {
-    "culture": "highlanders",
-    "fate": "thriving",
-    "founded": 274.0,
+    "culture": "sand_dwellers",
+    "fate": "abandoned",
+    "founded": 75.0,
     "id": 43,
-    "population": 299.0,
+    "population": 2195.0,
+    "size": 4.0,
+    "x": 1549.0,
+    "y": 815.0
+  },
+  {
+    "culture": "frostfolk",
+    "fate": "thriving",
+    "founded": 221.0,
+    "id": 44,
+    "population": 292.0,
     "size": 2.0,
-    "x": 1049.0,
-    "y": 1254.0
+    "x": 1333.0,
+    "y": 1356.0
   },
   {
     "culture": "marsh_folk",
-    "fate": "declining",
-    "founded": 40.0,
-    "id": 44,
-    "population": 557.0,
-    "size": 2.0,
-    "x": 941.0,
-    "y": 809.0
+    "fate": "thriving",
+    "founded": 129.0,
+    "id": 45,
+    "population": 1872.0,
+    "size": 4.0,
+    "x": 928.0,
+    "y": 759.0
   },
   {
     "culture": "jungle_folk",
     "fate": "thriving",
     "founded": 285.0,
-    "id": 45,
+    "id": 46,
     "population": 2443.0,
     "size": 4.0,
     "x": 1182.0,
     "y": 346.0
-  },
-  {
-    "culture": "marsh_folk",
-    "fate": "ruined",
-    "founded": 70.0,
-    "id": 46,
-    "population": 3622.0,
-    "size": 6.0,
-    "x": 527.0,
-    "y": 1250.0
   }
 ]
