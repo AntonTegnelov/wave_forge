@@ -404,7 +404,9 @@ seeds finds a sound world at each, more land as `land` or `islands` rises, more 
 regenerates only what reads it (`tests/presets.rs`, `verify_params.gd`). The hills are shaped
 rather than evenly bumpy: they run along ridgelines over flat valley floors, about a fifth of their
 land against a thirtieth before, with outcrops stepped in rock bands that shed scree, and wet lines
-where droplets drain the land, lower than its median (`tests/presets.rs`,
+where droplets drain the land, lower than its median; the islands rise from shelves through a
+narrow beach and coastal plains, about a quarter of their land, to rough hills whose spines shed
+scree, wet where they drain (`tests/presets.rs`,
 [#366](https://github.com/AntonTegnelov/wave_forge/issues/366)). The inspector shows each parameter as a slider over its
 range that changes the running stages as it moves, reads its default until set and reverts to it
 (`verify_params.gd`), and Godot's inspector makes each change undoable. The editor plugin's dock

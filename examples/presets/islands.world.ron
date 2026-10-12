@@ -24,28 +24,32 @@
         "woods": (noise_type: Perlin, seed: 13, frequency: 0.05, fractal_octaves: 2),
     },
     stages: [
-        // The coast lies where the island noise crosses the land amount; the land rises from it and
-        // roughness adds detail, the sea floor falling away below it. Inland, away from the coast,
-        // ridges raise spines as tall as the roughness lets them.
-        (name: "height", kind: Field(Add(
+        // The coast lies where the island noise crosses the land amount (`coast` crosses 0 there),
+        // roughness adding detail inland only. From it the land is shaped by a curve: a shelf off
+        // the coast that falls only gently before the sea floor drops away, a narrow beach, coastal
+        // plains that rise slowly, and beyond them hills, rough as the roughness lets them, where
+        // ridges raise spines of rock.
+        (name: "coast", kind: Field(Add(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Mul(Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(3.0)), 0.0, 1.0))))),
+        (name: "land", kind: Field(Add(
+            Mul(Curve(Input("coast"), [(-1.0, -1.0), (-0.35, -0.6), (-0.12, -0.08), (0.0, 0.02), (0.04, 0.09), (0.35, 0.17), (0.55, 0.42), (1.0, 1.0)]), Constant(14.0)),
             Mul(
-                Add(
-                    Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))),
-                    Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))),
-                ),
-                Constant(14.0),
-            ),
-            Mul(
-                Mul(
-                    Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0),
-                    Clamp(Mul(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(3.0)), 0.0, 1.0),
-                ),
+                Mul(Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(3.0)), 0.0, 1.0)),
                 Add(Constant(2.0), Mul(Param("roughness"), Constant(6.0))),
             ),
         ))),
+        // Gullies cut down the hills' steeper slopes, leaving the plains and the beaches as they lie.
+        (name: "eroded", kind: Erode(input: "land", spacing: 16.0, octaves: 4, depth: 1.0, slope: 0.4, smooth: 3)),
+        // Debris shed by the spines' steep rock settles below them (docs/reference/packs.md,
+        // "Talus"): the ground is the higher of the eroded and the weathered ground, and the debris
+        // how far the weathered ground stands above the eroded ground.
+        (name: "weathered", kind: Talus(height: "eroded", region: 4, slope: 0.8, passes: 30, fade: 8)),
+        (name: "height", kind: Field(Max(Input("eroded"), Input("weathered")))),
+        (name: "debris", kind: Field(Max(Sub(Input("weathered"), Input("eroded")), Constant(0.0)))),
         (name: "surface", kind: Rules(rules: [
             (category: "sand", when: [Less(Input("height"), Constant(1.2))]),
             (category: "rock", when: [Greater(Input("height"), Constant(9.0))]),
+            // Scree where the spines' debris lies deep enough to show.
+            (category: "scree", when: [Greater(Input("debris"), Constant(0.25))]),
         ], otherwise: "grass")),
         // Broadleaf trees of five variants on the grass, where the woods noise lies under the tree
         // density, and bushes among them.
@@ -71,25 +75,23 @@
         // darkens the hollows and the valleys.
         (name: "around", kind: Blur(input: "height", radius: 4)),
         (name: "hollow", kind: Field(Max(Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.6)), 0.0, 1.0), Input("far_occlusion")))),
-        // 0 to 1: wet at the water's edge and drying over the first cell above it, for the ground
-        // shader's wetness channel.
-        (name: "wet", kind: Field(Clamp(Remap(Input("height"), (0.0, 1.0), (1.0, 0.0)), 0.0, 1.0))),
+        // The water that drains over the islands, from droplets rolling down the far ground's shape
+        // at 4 cells a column (docs/reference/packs.md, "Droplets").
+        (name: "flow", scale: 4, kind: Droplets(height: "far_height", region: 16, gives: Flow)),
+        // 0 to 1, for the ground shader's wetness channel: wet at the water's edge and drying over
+        // the first cell above it, and along the lines the land drains by.
+        (name: "wet", kind: Field(Max(
+            Clamp(Remap(Input("height"), (0.0, 1.0), (1.0, 0.0)), 0.0, 1.0),
+            Clamp(Remap(Input("flow"), (4.0, 16.0), (0.0, 1.0)), 0.0, 1.0),
+        ))),
         // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the islands'
-        // height over a world map of 8 by 8 cells a column, coloured by the same categories as the
-        // surface.
+        // coast and height over a world map of 8 by 8 cells a column, coloured by the same
+        // categories as the surface.
+        (name: "far_coast", scale: 8, kind: Field(Add(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Mul(Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(3.0)), 0.0, 1.0))))),
         (name: "far_height", scale: 8, kind: Field(Add(
+            Mul(Curve(Input("far_coast"), [(-1.0, -1.0), (-0.35, -0.6), (-0.12, -0.08), (0.0, 0.02), (0.04, 0.09), (0.35, 0.17), (0.55, 0.42), (1.0, 1.0)]), Constant(14.0)),
             Mul(
-                Add(
-                    Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))),
-                    Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))),
-                ),
-                Constant(14.0),
-            ),
-            Mul(
-                Mul(
-                    Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0),
-                    Clamp(Mul(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(3.0)), 0.0, 1.0),
-                ),
+                Mul(Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(3.0)), 0.0, 1.0)),
                 Add(Constant(2.0), Mul(Param("roughness"), Constant(6.0))),
             ),
         ))),
