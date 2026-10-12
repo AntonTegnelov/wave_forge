@@ -17,8 +17,8 @@ use super::facts::{Facts, Row, RowId, Table};
 use super::lakes::lake_surface;
 use super::network::SitePaths;
 use super::pack::{
-    Column, DropletsGive, Expr, LocationKind, MAX_APPEARANCE, MAX_SCATTER_SLOTS, Output, Pack,
-    Persist, Profile, Reach, Rule, Stage, StageKind, TableKind, point_stage_id, salt,
+    Column, DropletsGive, Expr, LocationKind, MAX_APPEARANCE, MAX_CATEGORIES, MAX_SCATTER_SLOTS,
+    Output, Pack, Persist, Profile, Reach, Rule, Stage, StageKind, TableKind, point_stage_id, salt,
 };
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use super::rivers::DownhillRivers;
@@ -2364,14 +2364,16 @@ impl Runtime {
             StageKind::Rules { .. } | StageKind::Nearest { .. } => {
                 f32::from(self.categorise(index, column, &read)?)
             }
-            StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
-            StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
+            StageKind::Blur { input, radius } => blur(*radius, column, |x, y| read(input, x, y))?,
+            StageKind::Delta { input, radius } => delta(*radius, column, |x, y| read(input, x, y))?,
             StageKind::Horizon {
                 input,
                 reach,
                 directions,
             } => horizon(input, *reach, *directions, stage.scale, column, &read)?,
-            StageKind::Erode { input, .. } => eroded(self.seed, stage, input, column, &read)?,
+            StageKind::Erode { input, .. } => {
+                eroded(self.seed, stage, column, |x, y| read(input, x, y))?
+            }
             StageKind::Area { input, distance } => {
                 f32::from(area(input, *distance, column, &read)?)
             }
@@ -4151,6 +4153,34 @@ impl Runtime {
             _ => Vec::new(),
         };
         let [sx, sy] = self.size;
+        // The inputs the stage reads around each column, read once for the chunk.
+        let around: Vec<(&str, i64)> = match &stage.kind {
+            StageKind::Field(expr) => {
+                let mut blends: BTreeMap<usize, i64> = BTreeMap::new();
+                expr.visit(&mut |inner| {
+                    if let Expr::Match { input, blend, .. } = inner {
+                        let input = self.pack.index(input).expect("linked when loaded");
+                        let reach = blends.entry(input).or_default();
+                        *reach = (*reach).max(i64::from(*blend));
+                    }
+                });
+                blends
+                    .into_iter()
+                    .map(|(input, reach)| (self.pack.stages[input].name.as_str(), reach))
+                    .collect()
+            }
+            StageKind::Blur { input, radius } | StageKind::Delta { input, radius } => {
+                vec![(input.as_str(), i64::from(*radius))]
+            }
+            StageKind::Erode { input, smooth, .. } => vec![(input.as_str(), i64::from(*smooth))],
+            _ => Vec::new(),
+        };
+        let windows = around
+            .into_iter()
+            .map(|(input, reach)| InputWindow::read(input, chunk, self.size, reach, &read))
+            .collect::<Result<Vec<_>, _>>()?;
+        // A stage reading one input around each column reads it from that input's window.
+        let windowed = |x: i64, y: i64| Ok(windows[0].get(x, y));
         let mut values = Vec::with_capacity((sx * sy) as usize);
         for y in 0..sy {
             for x in 0..sx {
@@ -4159,17 +4189,21 @@ impl Runtime {
                     i64::from(chunk.y) * i64::from(sy) + i64::from(y),
                 ];
                 let value = match &stage.kind {
-                    StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
-                    StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
-                    StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
+                    StageKind::Field(expr) => evaluate(
+                        expr,
+                        &ColumnPlace {
+                            windows: &windows,
+                            ..self.place(index, column, &read)
+                        },
+                    )?,
+                    StageKind::Blur { radius, .. } => blur(*radius, column, windowed)?,
+                    StageKind::Delta { radius, .. } => delta(*radius, column, windowed)?,
                     StageKind::Horizon {
                         input,
                         reach,
                         directions,
                     } => horizon(input, *reach, *directions, stage.scale, column, &read)?,
-                    StageKind::Erode { input, .. } => {
-                        eroded(self.seed, stage, input, column, &read)?
-                    }
+                    StageKind::Erode { .. } => eroded(self.seed, stage, column, windowed)?,
                     StageKind::Flatten { height, blend, .. } => {
                         let view = &views[&self.pack.index(height).expect("linked when loaded")];
                         let base = view.get(column[0], column[1])?;
@@ -5113,6 +5147,7 @@ impl Runtime {
             column,
             height: None,
             read,
+            windows: &[],
         }
     }
 }
@@ -5126,6 +5161,62 @@ struct ColumnPlace<'p, 'r> {
     column: [i64; 2],
     height: Option<f32>,
     read: &'p Read<'r>,
+    /// The inputs a `Match` blends over, read once for the column's chunk; a `Match` whose input
+    /// has no window here reads its categories itself.
+    windows: &'p [InputWindow<'p>],
+}
+
+/// One input's values over a chunk and as far around it as a stage reads it from each column, read
+/// once for the chunk: the windows a stage reads from neighbouring columns overlap almost whole,
+/// and a value looked up here costs no search by name and chunk.
+struct InputWindow<'n> {
+    input: &'n str,
+    /// The window's first column, in columns of the reading stage.
+    min: [i64; 2],
+    side: [i64; 2],
+    values: Vec<f32>,
+}
+
+impl<'n> InputWindow<'n> {
+    /// `input`'s values over `chunk` of `size` columns and `reach` columns around it, read through
+    /// `read`.
+    fn read(
+        input: &'n str,
+        chunk: ChunkCoord,
+        size: [u32; 2],
+        reach: i64,
+        read: &Read<'_>,
+    ) -> Result<Self, StageError> {
+        let [sx, sy] = size.map(i64::from);
+        let min = [
+            i64::from(chunk.x) * sx - reach,
+            i64::from(chunk.y) * sy - reach,
+        ];
+        let side = [sx + 2 * reach, sy + 2 * reach];
+        let mut values = Vec::with_capacity((side[0] * side[1]) as usize);
+        for y in 0..side[1] {
+            for x in 0..side[0] {
+                values.push(read(input, min[0] + x, min[1] + y)?);
+            }
+        }
+        Ok(Self {
+            input,
+            min,
+            side,
+            values,
+        })
+    }
+
+    /// The value at the world column `x`, `y`, which a stage reads only within its reach.
+    fn get(&self, x: i64, y: i64) -> f32 {
+        let (i, j) = (x - self.min[0], y - self.min[1]);
+        assert!(
+            (0..self.side[0]).contains(&i) && (0..self.side[1]).contains(&j),
+            "{} read at ({x}, {y}), outside the window it was read into",
+            self.input
+        );
+        self.values[(j * self.side[0] + i) as usize]
+    }
 }
 
 impl Leaves for ColumnPlace<'_, '_> {
@@ -5176,20 +5267,33 @@ impl Leaves for ColumnPlace<'_, '_> {
                 let index = pack.index(stage).expect("linked when loaded");
                 let names = &self.runtime.categories[index];
                 let reach = i64::from(*blend);
+                let window = self.windows.iter().find(|window| window.input == stage);
                 // A tent in each direction, so a category's weight falls off smoothly with its
-                // distance from the column and the blend moves by a small step per column.
-                let mut weights: Vec<(usize, f32)> = Vec::new();
+                // distance from the column and the blend moves by a small step per column. The
+                // categories are kept in the order the window first meets them, the order the blend
+                // sums them in.
+                let mut weight_of = [0.0_f32; MAX_CATEGORIES];
+                let mut order = [0_u8; MAX_CATEGORIES];
+                let mut seen = 0;
                 for dy in -reach..=reach {
                     for dx in -reach..=reach {
                         let weight = ((reach + 1 - dx.abs()) * (reach + 1 - dy.abs())) as f32;
-                        let category = read(stage, column[0] + dx, column[1] + dy)? as usize;
-                        match weights.iter_mut().find(|(known, _)| *known == category) {
-                            Some((_, sum)) => *sum += weight,
-                            None => weights.push((category, weight)),
+                        let (x, y) = (column[0] + dx, column[1] + dy);
+                        let category = match window {
+                            Some(window) => window.get(x, y),
+                            None => read(stage, x, y)?,
+                        } as u8;
+                        if weight_of[usize::from(category)] == 0.0 {
+                            order[seen] = category;
+                            seen += 1;
                         }
+                        weight_of[usize::from(category)] += weight;
                     }
                 }
-                let total: f32 = weights.iter().map(|(_, weight)| weight).sum();
+                let weights = order[..seen]
+                    .iter()
+                    .map(|&category| (usize::from(category), weight_of[usize::from(category)]));
+                let total: f32 = weights.clone().map(|(_, weight)| weight).sum();
                 let mut blended = 0.0;
                 for (category, weight) in weights {
                     let case = cases
@@ -5525,25 +5629,28 @@ fn box_distance(at: [f32; 3], low: [f32; 3], high: [f32; 3]) -> f32 {
     outside + inside
 }
 
-/// The average of `input` over the square of `radius` columns around `column`.
-fn blur(input: &str, radius: u32, column: [i64; 2], read: &Read<'_>) -> Result<f32, StageError> {
+/// The average of the input `value` reads over the square of `radius` columns around `column`.
+fn blur(
+    radius: u32,
+    column: [i64; 2],
+    value: impl Fn(i64, i64) -> Result<f32, StageError>,
+) -> Result<f32, StageError> {
     let r = i64::from(radius);
     let mut sum = 0.0_f32;
     for dy in -r..=r {
         for dx in -r..=r {
-            sum += read(input, column[0] + dx, column[1] + dy)?;
+            sum += value(column[0] + dx, column[1] + dy)?;
         }
     }
     Ok(sum / ((2 * r + 1) * (2 * r + 1)) as f32)
 }
 
-/// `input` at `column` with the gullies of `stage`, an Erode stage, cut into it.
+/// The input `value` reads at `column` with the gullies of `stage`, an Erode stage, cut into it.
 fn eroded(
     seed: u64,
     stage: &Stage,
-    input: &str,
     column: [i64; 2],
-    read: &Read<'_>,
+    value: impl Fn(i64, i64) -> Result<f32, StageError>,
 ) -> Result<f32, StageError> {
     let StageKind::Erode {
         spacing,
@@ -5565,8 +5672,8 @@ fn eroded(
         gain,
         slope,
     };
-    let base = read(input, column[0], column[1])?;
-    let fitted = fitted_slope(column, smooth, |x, y| read(input, x, y))?;
+    let base = value(column[0], column[1])?;
+    let fitted = fitted_slope(column, smooth, value)?;
     // Columns of a coarser stage span `scale` cells: the slope and the position are in cells.
     let scale = stage.scale as f32;
     let at = [
@@ -5578,14 +5685,18 @@ fn eroded(
     Ok(base + erode(seed, stream, &erosion, at, slope))
 }
 
-/// The highest value of `input` less its lowest over the square of `radius` columns around
-/// `column`.
-fn delta(input: &str, radius: u32, column: [i64; 2], read: &Read<'_>) -> Result<f32, StageError> {
+/// The highest value of the input `value` reads less its lowest over the square of `radius`
+/// columns around `column`.
+fn delta(
+    radius: u32,
+    column: [i64; 2],
+    value: impl Fn(i64, i64) -> Result<f32, StageError>,
+) -> Result<f32, StageError> {
     let r = i64::from(radius);
     let (mut low, mut high) = (f32::INFINITY, f32::NEG_INFINITY);
     for dy in -r..=r {
         for dx in -r..=r {
-            let value = read(input, column[0] + dx, column[1] + dy)?;
+            let value = value(column[0] + dx, column[1] + dy)?;
             low = low.min(value);
             high = high.max(value);
         }
