@@ -1,6 +1,10 @@
-[gd_resource type="StandardMaterial3D" format=3]
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://addons/wave_forge/shaders/water.gdshader" id="1_water"]
 
 [resource]
-transparency = 1
-albedo_color = Color(0.1, 0.5, 0.58, 0.62)
-roughness = 0.12
+shader = ExtResource("1_water")
+shader_parameter/shallow_colour = Color(0.42, 0.74, 0.7, 1)
+shader_parameter/deep_colour = Color(0.1, 0.5, 0.58, 1)
+shader_parameter/clarity = 3.0
+shader_parameter/opacity = Vector2(0.3, 0.7)

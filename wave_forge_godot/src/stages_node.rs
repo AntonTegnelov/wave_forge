@@ -3190,11 +3190,17 @@ impl WaveForgeStages {
     /// `slowest_ms` for one product. And `pending_signals`, `pending_grounds` and
     /// `pending_colliders`: the signals, grounds and bodies waiting for a later frame. And
     /// `navigation_baked`, how many navigation bakes have gone into their regions. And
-    /// `sea_drawn`, whether the sea's plane is drawn.
+    /// `sea_drawn`, whether the sea's plane is drawn, and `sea_hole`, the hole it leaves over the
+    /// chunks that draw their own water, along x and z, zero for none.
     #[func]
     fn stats(&self) -> VarDictionary {
         let mut out = VarDictionary::new();
         out.set(&"sea_drawn".to_variant(), &self.sea.is_some().to_variant());
+        let hole = self.sea.as_ref().map_or([0.0, 0.0], |sea| sea.hole);
+        out.set(
+            &"sea_hole".to_variant(),
+            &Vector2::new(hole[0], hole[1]).to_variant(),
+        );
         let stages = stage_costs(self.worker.iter().flat_map(|worker| worker.timings()));
         out.set(&"stages".to_variant(), &stages.to_variant());
         out.set(
@@ -5023,9 +5029,20 @@ impl WaveForgeStages {
             };
             let reach = self.view_radius.max(0).max(far_reach);
             let side = (2 * reach + 3) as f32 * size[0].max(size[1]);
+            // With a water stage the chunks with ground draw their own water, the sea's level
+            // among it, so the plane leaves them out: their meshes stand on the columns' centres,
+            // half a cell on from the chunks' corners.
+            let hole = if self.water_stage.is_empty() {
+                [0.0, 0.0]
+            } else {
+                let across = (2 * self.view_radius.max(0) + 1) as f32;
+                [across * size[0], across * size[1]]
+            };
             self.sea = Some(crate::sea::Sea::new(
                 material,
                 side,
+                hole,
+                [0.5 * self.cell_size.x, 0.5 * self.cell_size.z],
                 level * self.cell_size.y,
                 scenario,
             ));

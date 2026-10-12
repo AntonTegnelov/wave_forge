@@ -6,7 +6,9 @@
 ## Once nothing is pending around the followed point it warns of nothing, draws ground on every
 ## chunk of the view, stands ground there (its ground's, or the top of its volume for a preset drawn
 ## from a volume alone), has bodies and navigation, draws its sea when it has one, draws its far ground when it has one, draws its props
-## (trees, cacti, palms) as MultiMesh instances, and has a palette colour per material of its ground
+## (trees, cacti, palms) as MultiMesh instances, draws its sea near the player as chunks' water,
+## leaving the sea's plane a hole there, when it has a water stage, and has a palette colour per
+## material of its ground
 ## or volume, each drawn as bright as the measured ground of its class: for a ground, the colour its
 ## material's palette holds, a textured material's its texture set's mean.
 extends SceneTree
@@ -101,6 +103,15 @@ func _settled(path: String, stats: Dictionary) -> String:
 		return "%s has %d bodies and %d navigation regions" % [path, stages.collider_chunks().size(), stages.navigation_chunks().size()]
 	if stages.sea_material != null and not stages.water().is_empty() and not stats["sea_drawn"]:
 		return "%s has a sea and water but draws no sea" % path
+	# With a water stage the chunks around the player draw the sea as water, by its depth, and the
+	# sea's plane leaves them to it: a hole the size of the chunks with ground, all the way round.
+	if not String(stages.water_stage).is_empty() and stats["sea_drawn"]:
+		var across: float = 2 * stages.view_radius + 1
+		var hole := Vector2(across * stages.chunk_cells.x * stages.cell_size.x, across * stages.chunk_cells.y * stages.cell_size.z)
+		if not stats["sea_hole"].is_equal_approx(hole):
+			return "%s's sea leaves a hole of %s for the chunks' water, not %s" % [path, stats["sea_hole"], hole]
+		if stages.water_chunks().is_empty():
+			return "%s draws no water in its chunks" % path
 	if not String(stages.far_ground_stage).is_empty() and stages.far_ground_chunks().is_empty():
 		return "%s draws no far ground" % path
 	if stats["placed_instances"] == 0:
