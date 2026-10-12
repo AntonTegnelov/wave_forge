@@ -29,11 +29,11 @@
         // the coast that falls only gently before the sea floor drops away, a narrow beach, coastal
         // plains that rise slowly, and beyond them hills, rough as the roughness lets them, where
         // ridges raise spines of rock.
-        (name: "coast", kind: Field(Add(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Mul(Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(3.0)), 0.0, 1.0))))),
+        (name: "coast", kind: Field(Add(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Mul(Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(1.5)), 0.0, 1.0))))),
         (name: "land", kind: Field(Add(
-            Mul(Curve(Input("coast"), [(-1.0, -1.0), (-0.35, -0.6), (-0.12, -0.08), (0.0, 0.02), (0.04, 0.09), (0.35, 0.17), (0.55, 0.42), (1.0, 1.0)]), Constant(14.0)),
+            Mul(Curve(Input("coast"), [(-1.0, -1.0), (-0.35, -0.6), (-0.12, -0.08), (0.0, 0.02), (0.04, 0.09), (0.35, 0.17), (0.6, 0.4), (1.0, 0.85)]), Constant(14.0)),
             Mul(
-                Mul(Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(3.0)), 0.0, 1.0)),
+                Mul(Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(1.5)), 0.0, 1.0)),
                 Add(Constant(2.0), Mul(Param("roughness"), Constant(6.0))),
             ),
         ))),
@@ -87,11 +87,11 @@
         // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the islands'
         // coast and height over a world map of 8 by 8 cells a column, coloured by the same
         // categories as the surface.
-        (name: "far_coast", scale: 8, kind: Field(Add(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Mul(Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(3.0)), 0.0, 1.0))))),
+        (name: "far_coast", scale: 8, kind: Field(Add(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Mul(Mul(FastNoise("detail"), Mul(Param("roughness"), Constant(0.35))), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(1.5)), 0.0, 1.0))))),
         (name: "far_height", scale: 8, kind: Field(Add(
-            Mul(Curve(Input("far_coast"), [(-1.0, -1.0), (-0.35, -0.6), (-0.12, -0.08), (0.0, 0.02), (0.04, 0.09), (0.35, 0.17), (0.55, 0.42), (1.0, 1.0)]), Constant(14.0)),
+            Mul(Curve(Input("far_coast"), [(-1.0, -1.0), (-0.35, -0.6), (-0.12, -0.08), (0.0, 0.02), (0.04, 0.09), (0.35, 0.17), (0.6, 0.4), (1.0, 0.85)]), Constant(14.0)),
             Mul(
-                Mul(Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(3.0)), 0.0, 1.0)),
+                Mul(Pow(Remap(FastNoise("spines"), (-1.0, 1.0), (0.0, 1.0)), 2.0), Clamp(Mul(Sub(Add(FastNoise("islands"), Sub(Mul(Param("land"), Constant(1.2)), Constant(0.6))), Constant(0.3)), Constant(1.5)), 0.0, 1.0)),
                 Add(Constant(2.0), Mul(Param("roughness"), Constant(6.0))),
             ),
         ))),
