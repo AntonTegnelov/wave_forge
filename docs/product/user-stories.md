@@ -632,8 +632,19 @@ reference desktop with compiled kernels cached, and the first-run time recorded.
 *A long session does not grow in memory.*
 
 **Acceptance criteria.** Over a 30-minute scripted walk, process memory and GPU memory stay within 5%
-of their level after the first minute, with every cache and timing window bounded. **Status:** not
-started (2026-09-23).
+of their level after the first minute, with every cache and timing window bounded. **Status:**
+verified by measurement in the dev container (2026-10-12). Two 30-minute walks through the small
+city preset, 7.5 km each with its towns, grass and navigation coming and going, kept resident memory
+within 1.5 %, Godot's static memory within 2.2 % and video memory within 2.9 % of their level after
+the first minute (`measure_memory.gd`, [measurements.md](../research/measurements.md) L58). The
+first walk found navigation never baking while the player kept moving, now fixed. Every collection
+the Godot node, the stage runtime and worker and Bevy's resource keep is dropped with its chunks,
+keyed by something finite or capped, the frame times among them (`RECENT_FRAMES`); the audit found
+Bevy keeping a dropped chunk's ground materials, now fixed (`wave_forge_bevy/tests/stages.rs`). Two
+stay bounded by what the game does: frozen chunks without a store, which a save holds by design
+([packs.md](../reference/packs.md#persistence-and-saves)), and the Godot node's queue of stage
+signals, drained 256 a frame within its budget, which grows only if the game's handlers fall behind.
+The walk reads `/proc`, so it runs on Linux only.
 
 ### P5. Usable on an integrated GPU
 
