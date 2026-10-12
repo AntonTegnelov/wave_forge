@@ -9,6 +9,7 @@
 
 use super::assemble::Growth;
 use super::caves::{self, CavePlan, CaveRules};
+use super::connected::connected;
 use super::droplets::{Droplets, drain, droplet_start};
 use super::edits::{Edit, Edits};
 use super::erode::{Erosion, erode, fitted_slope};
@@ -2413,7 +2414,10 @@ impl Runtime {
             | StageKind::Network { .. } => {
                 return Err(StageError::NotSampled(stage.name.clone()));
             }
-            StageKind::Lakes { .. } | StageKind::Droplets { .. } | StageKind::Talus { .. } => {
+            StageKind::Lakes { .. }
+            | StageKind::Droplets { .. }
+            | StageKind::Talus { .. }
+            | StageKind::Connected { .. } => {
                 let size = stage.kind.field_region().expect("a region field stage");
                 let [sx, sy] = [i64::from(self.size[0]), i64::from(self.size[1])];
                 let side = [i64::from(size) * sx, i64::from(size) * sy];
@@ -2740,7 +2744,8 @@ impl Runtime {
             Some(size),
             StageKind::Lakes { height, .. }
             | StageKind::Droplets { height, .. }
-            | StageKind::Talus { height, .. },
+            | StageKind::Talus { height, .. }
+            | StageKind::Connected { input: height, .. },
         ) = (stage.kind.field_region(), &stage.kind)
         else {
             return Ok(());
@@ -2838,7 +2843,17 @@ impl Runtime {
                     fade,
                 },
             ),
-            _ => unreachable!("only Lakes, Droplets and Talus stages compute a region's field"),
+            // A category's index is a small whole number, read as a field's value.
+            StageKind::Connected { .. } => connected(
+                &heights
+                    .iter()
+                    .map(|&category| category as u8)
+                    .collect::<Vec<u8>>(),
+                columns,
+            ),
+            _ => unreachable!(
+                "only Lakes, Droplets, Talus and Connected stages compute a region's field"
+            ),
         }
     }
 
@@ -2868,7 +2883,8 @@ impl Runtime {
             Some(size),
             StageKind::Lakes { height, .. }
             | StageKind::Droplets { height, .. }
-            | StageKind::Talus { height, .. },
+            | StageKind::Talus { height, .. }
+            | StageKind::Connected { input: height, .. },
         ) = (stage.kind.field_region(), &stage.kind)
         else {
             unreachable!("only region field stages are sampled a region at a time")
@@ -3657,7 +3673,8 @@ impl Runtime {
         match &self.pack.stages[index].kind {
             StageKind::Lakes { region, .. }
             | StageKind::Droplets { region, .. }
-            | StageKind::Talus { region, .. } => self.region_fields.contains_key(&key(*region)),
+            | StageKind::Talus { region, .. }
+            | StageKind::Connected { region, .. } => self.region_fields.contains_key(&key(*region)),
             StageKind::Locations { region, .. } => self.placed.contains_key(&key(*region)),
             StageKind::Region { region, .. }
             | StageKind::Rivers { region, .. }
@@ -4302,7 +4319,8 @@ impl Runtime {
                     | StageKind::Network { .. }
                     | StageKind::Lakes { .. }
                     | StageKind::Droplets { .. }
-                    | StageKind::Talus { .. } => {
+                    | StageKind::Talus { .. }
+                    | StageKind::Connected { .. } => {
                         unreachable!("handled above")
                     }
                 };

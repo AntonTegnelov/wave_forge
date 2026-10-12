@@ -502,6 +502,12 @@ pub enum StageKind {
         #[serde(default = "sixteen_columns")]
         fade: u32,
     },
+    /// The connected areas of `input`'s categories (docs/reference/packs.md, "Connected"): in every
+    /// square region of `region` chunks, each column takes the id of the area of columns of its
+    /// category joined to it edge to edge, counting up from 0 in the order each area's first column
+    /// comes row by row. An area does not reach across a region's border, so a finite world labels
+    /// its whole map as one region.
+    Connected { input: String, region: u32 },
     /// A location table: sites of several kinds, placed once per square region of `region` chunks,
     /// the kinds in order of their `priority`, highest first. Each kind tries `tries` hashed
     /// footprints of `size` chunks a side in the region, one chunk in from its edge, and keeps one
@@ -1201,7 +1207,8 @@ impl StageKind {
         match self {
             Self::Lakes { region, .. }
             | Self::Droplets { region, .. }
-            | Self::Talus { region, .. } => Some(*region),
+            | Self::Talus { region, .. }
+            | Self::Connected { region, .. } => Some(*region),
             _ => None,
         }
     }
@@ -1217,7 +1224,8 @@ impl StageKind {
             | Self::Apply { .. }
             | Self::Lakes { .. }
             | Self::Droplets { .. }
-            | Self::Talus { .. } => Output::Field,
+            | Self::Talus { .. }
+            | Self::Connected { .. } => Output::Field,
             Self::Volume { .. } | Self::Carve { .. } | Self::Aquifer { .. } => Output::Volume,
             Self::Top { .. } => Output::Field,
             Self::Rules { .. } | Self::Area { .. } | Self::Nearest { .. } => Output::Categories,
@@ -2617,6 +2625,13 @@ impl Pack {
                     // The debris settles over the whole region, from its heights alone.
                     vec![(height.as_str(), Reach::region(*region), Output::Field)]
                 }
+                StageKind::Connected { input, region } => {
+                    if *region == 0 {
+                        return Err(invalid("a region of 0 chunks".to_owned()));
+                    }
+                    // The areas are labelled over the whole region, from its categories alone.
+                    vec![(input.as_str(), Reach::region(*region), Output::Categories)]
+                }
                 StageKind::Locations {
                     height,
                     region,
@@ -3485,6 +3500,7 @@ impl Pack {
                 | StageKind::Lakes { .. }
                 | StageKind::Droplets { .. }
                 | StageKind::Talus { .. }
+                | StageKind::Connected { .. }
                 | StageKind::Carve { .. }
                 | StageKind::Top { .. }
                 | StageKind::Aquifer { .. }
@@ -3676,6 +3692,7 @@ impl Pack {
                 | StageKind::Lakes { region, .. }
                 | StageKind::Droplets { region, .. }
                 | StageKind::Talus { region, .. }
+                | StageKind::Connected { region, .. }
                 | StageKind::Locations { region, .. }
                 | StageKind::Region { region, .. }
                 | StageKind::Rivers { region, .. }
