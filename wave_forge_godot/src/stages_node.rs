@@ -1348,11 +1348,12 @@ impl WaveForgeStages {
             return false;
         }
         self.ground_textures = None;
-        if self
-            .ground_texture_layers
-            .as_slice()
-            .iter()
-            .any(|&layer| layer >= 0)
+        if !self.ground_material_stage.is_empty()
+            && self
+                .ground_texture_layers
+                .as_slice()
+                .iter()
+                .any(|&layer| layer >= 0)
         {
             match self.load_ground_textures() {
                 Ok(textures) => self.ground_textures = Some(textures),
@@ -6014,8 +6015,6 @@ fn far_group_of(chunk: ChunkCoord) -> ChunkCoord {
     )
 }
 
-/// The far categories' palette, ramps and reliefs for the far ground's copies of the ground
-/// material.
 /// The texture sets the reference ground shader draws categories with.
 struct GroundTextures {
     albedo_height: Gd<Texture2DArray>,
@@ -6025,9 +6024,9 @@ struct GroundTextures {
     means: Vec<Option<Color>>,
 }
 
-/// Where the plugin keeps its own texture sets (`tools/make_ground_textures.gd`), and their names in
-/// the order of their layers.
+/// Where the plugin keeps its own texture sets (`tools/make_ground_textures.gd`).
 const PLUGIN_TEXTURES: &str = "res://addons/wave_forge/ground_textures";
+/// The plugin's own texture sets' names, in the order of their layers.
 const PLUGIN_TEXTURE_SETS: [&str; 8] = [
     "grass", "dirt", "gravel", "sand", "rock", "cliff", "snow", "mud",
 ];
@@ -6079,6 +6078,8 @@ fn mean_colour(image: &Gd<Image>) -> Color {
     Color::from_rgb(sum[0] / count, sum[1] / count, sum[2] / count).linear_to_srgb()
 }
 
+/// The far categories' palette, ramps and reliefs for the far ground's copies of the ground
+/// material.
 struct FarLook {
     palette: Gd<ImageTexture>,
     ramps: Gd<ImageTexture>,
