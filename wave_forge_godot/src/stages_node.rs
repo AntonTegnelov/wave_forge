@@ -59,8 +59,8 @@ use wave_forge::towns::WfcTowns;
 use wave_forge::{
     Chunk, ChunkCoord, ChunkShape, FarGround, FocusPoint, GroundMesh, GroundRelief, InstanceSet,
     RegionTags, SurfaceWorker, VolumeMesh, WaterMesh, YUpSpace, far_ground, far_ground_categories,
-    far_steps, ground, ground_channels, ground_height, ground_materials, ground_readers,
-    ground_values, volume_height, water_banks, water_surface,
+    far_ground_values, far_steps, ground, ground_channels, ground_height, ground_materials,
+    ground_readers, ground_values, volume_height, water_banks, water_surface,
 };
 
 /// Generates a world from a pack of stages around a position the game keeps handing it.
@@ -253,6 +253,13 @@ pub struct WaveForgeStages {
     /// `target_radii`.
     #[export]
     far_ground_material_stage: GString,
+    /// A field stage at `far_ground_stage`'s scale whose values, 0 to 1, darken the far ground as
+    /// `ground_cavity_stage`'s darken the ground: its copies of the ground material, with
+    /// `far_ground_material_stage`, take them per vertex as the cavity of their channels. A Horizon
+    /// stage over the far height shades its valleys. Give it the far ground's radius in
+    /// `target_radii`; empty for none.
+    #[export]
+    far_ground_cavity_stage: GString,
 
     /// A Volume or Carve stage at scale 1 whose surface is drawn and, within `collider_radius`,
     /// collided with, for overhangs and caves; empty for none. It has to be generated, as a target or as
@@ -868,6 +875,7 @@ impl INode for WaveForgeStages {
             ground_stage: GString::new(),
             far_ground_stage: GString::new(),
             far_ground_material_stage: GString::new(),
+            far_ground_cavity_stage: GString::new(),
             kernel_cache: GString::from("user://wave_forge/kernels"),
             frozen_directory: GString::new(),
             play_directory: GString::new(),
@@ -1155,6 +1163,7 @@ impl INode for WaveForgeStages {
         }
         let far_stage = self.far_ground_stage.to_string();
         let far_material = self.far_ground_material_stage.to_string();
+        let far_cavity = self.far_ground_cavity_stage.to_string();
         let (mut far_arrived, mut far_gone, mut far_coloured) =
             (Vec::new(), Vec::new(), Vec::new());
         for event in &events {
@@ -1163,7 +1172,8 @@ impl INode for WaveForgeStages {
                     far_arrived.push(*chunk);
                 }
                 StageEvent::Generated { stage, chunk }
-                    if !far_material.is_empty() && *stage == far_material =>
+                    if (!far_material.is_empty() && *stage == far_material)
+                        || (!far_cavity.is_empty() && *stage == far_cavity) =>
                 {
                     far_coloured.push(*chunk);
                 }
@@ -1795,7 +1805,7 @@ impl WaveForgeStages {
 
     /// A stage's value at a position in Godot's world space, on the ground plane, computed on the
     /// spot without generating chunks: a field's value, or a category's index. Field, Rules,
-    /// Nearest, Blur, Delta, Erode and Area stages can be sampled, with whatever they read; another stage
+    /// Nearest, Blur, Delta, Horizon, Erode and Area stages can be sampled, with whatever they read; another stage
     /// is reported as an error and gives NaN.
     #[func]
     fn sample(&self, stage: GString, position: Vector3) -> f32 {
@@ -4093,6 +4103,7 @@ impl WaveForgeStages {
     ) {
         let stage = self.far_ground_stage.to_string();
         let material = self.far_ground_material_stage.to_string();
+        let cavity_stage = self.far_ground_cavity_stage.to_string();
         let (Some(worker), Some(pack)) = (&self.worker, &self.pack) else {
             return;
         };
@@ -4113,7 +4124,7 @@ impl WaveForgeStages {
                     .insert(ChunkCoord::new(chunk.x + dx, chunk.y + dy, 0));
             }
         }
-        // A chunk's colours read its own categories alone.
+        // A chunk's colours and cavity read its own chunks of their stages alone.
         self.far_due.extend(coloured.iter().copied());
         for fine in near_changed {
             for (dx, dy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
@@ -4185,10 +4196,23 @@ impl WaveForgeStages {
                 .get(..(side * side) as usize)
                 .map(<[u8]>::to_vec)
                 .unwrap_or_default();
+            // Shaded by the far cavity stage once its chunk is there too, whose arrival makes the
+            // chunk due again.
+            let cavity = if cavity_stage.is_empty() {
+                Vec::new()
+            } else {
+                let Some(field) = worker.field(&cavity_stage, chunk) else {
+                    continue;
+                };
+                let mut values = far_ground_values(&far, field, scale as u32, cell);
+                values.truncate((side * side) as usize);
+                values
+            };
             built.push(FarBuilt {
                 far,
                 colours,
                 grid,
+                cavity,
                 side,
             });
         }
@@ -4236,6 +4260,7 @@ impl WaveForgeStages {
         // One grid of categories for the group, the members' side by side, sharing their edges.
         let group_side = FAR_GROUP as u32 * (side - 1) + 1;
         let mut grid = vec![0u8; (group_side * group_side) as usize];
+        let mut cavity = vec![0.0_f32; (group_side * group_side) as usize];
         for &(chunk, built) in &members {
             let offset = self.chunk_corner(lattice(chunk)) - origin;
             let base = vertices.len() as u32;
@@ -4249,15 +4274,21 @@ impl WaveForgeStages {
                 colours.push(colour);
             }
             indices.extend(built.far.indices.iter().map(|&index| index + base));
-            if built.grid.len() == (side * side) as usize {
-                let (at_x, at_y) = (
-                    (chunk.x - first.x) as u32 * (side - 1),
-                    (chunk.y - first.y) as u32 * (side - 1),
-                );
-                for j in 0..side {
-                    for i in 0..side {
-                        grid[((at_y + j) * group_side + at_x + i) as usize] =
-                            built.grid[(j * side + i) as usize];
+            let (at_x, at_y) = (
+                (chunk.x - first.x) as u32 * (side - 1),
+                (chunk.y - first.y) as u32 * (side - 1),
+            );
+            for j in 0..side {
+                for i in 0..side {
+                    let (to, from) = (
+                        ((at_y + j) * group_side + at_x + i) as usize,
+                        (j * side + i) as usize,
+                    );
+                    if let Some(&category) = built.grid.get(from) {
+                        grid[to] = category;
+                    }
+                    if let Some(&value) = built.cavity.get(from) {
+                        cavity[to] = value;
                     }
                 }
             }
@@ -4276,7 +4307,7 @@ impl WaveForgeStages {
                 ) / steps as f32;
                 let first_vertex = Vector2::new(0.5 * cell.x, 0.5 * cell.z) / spacing;
                 let coarseness = spacing.x / cell.x;
-                Some(far_material(
+                let mut copy = far_material(
                     template,
                     look,
                     &grid,
@@ -4284,7 +4315,14 @@ impl WaveForgeStages {
                     spacing,
                     first_vertex,
                     coarseness,
-                ))
+                );
+                if !self.far_ground_cavity_stage.is_empty() {
+                    copy.set_shader_parameter(
+                        "wave_forge_channels",
+                        &far_channels(&cavity, group_side).to_variant(),
+                    );
+                }
+                Some(copy)
             }
             _ => None,
         };
@@ -5015,7 +5053,7 @@ impl WaveForgeStages {
         }
         let at_scale_one = |stage: &str| pack.scale(stage) == Some(1);
         let far_scale = pack.scale(&self.far_ground_stage.to_string());
-        let settings: [(&str, &GString, &str, Fits<'_>); 12] = [
+        let settings: [(&str, &GString, &str, Fits<'_>); 13] = [
             ("ground_stage", &self.ground_stage, "", &|_, _| true),
             ("grass_stage", &self.grass_stage, "", &|_, _| true),
             (
@@ -5075,6 +5113,14 @@ impl WaveForgeStages {
                 },
             ),
             (
+                "far_ground_cavity_stage",
+                &self.far_ground_cavity_stage,
+                "field ",
+                &|stage, _| {
+                    far_scale.is_some() && pack.scale(stage) == far_scale && pack.is_field(stage)
+                },
+            ),
+            (
                 "fluid_stage",
                 &self.fluid_stage,
                 "Volume, Carve or Aquifer ",
@@ -5106,7 +5152,7 @@ impl WaveForgeStages {
             if !pack.kind(&stage).is_some_and(|kind| fits(&stage, kind)) {
                 let scale = if kinds.starts_with("Volume") {
                     " at scale 1"
-                } else if setting == "far_ground_material_stage" {
+                } else if setting.starts_with("far_ground_") && setting != "far_ground_stage" {
                     " at far_ground_stage's scale"
                 } else {
                     ""
@@ -5116,22 +5162,32 @@ impl WaveForgeStages {
                 ));
             }
         }
-        // A far chunk is drawn only once its colours have arrived, so the colouring stage has to
-        // reach as far as the far ground.
-        if !self.far_ground_material_stage.is_empty() {
-            let material = self.far_ground_material_stage.to_string();
-            let radius = |stage: &GString| self.target_radii.get(&StringName::from(stage));
-            if !self
-                .targets
-                .as_slice()
-                .contains(&self.far_ground_material_stage)
-            {
+        // A far chunk is drawn only once its colours and its cavity have arrived, so the stages
+        // giving them have to reach as far as the far ground.
+        let radius = |stage: &GString| self.target_radii.get(&StringName::from(stage));
+        for (setting, value, gives) in [
+            (
+                "far_ground_material_stage",
+                &self.far_ground_material_stage,
+                "colours",
+            ),
+            (
+                "far_ground_cavity_stage",
+                &self.far_ground_cavity_stage,
+                "cavity",
+            ),
+        ] {
+            if value.is_empty() {
+                continue;
+            }
+            let stage = value.to_string();
+            if !self.targets.as_slice().contains(value) {
                 problems.push(format!(
-                    "far_ground_material_stage {material:?} is no target, so the far ground is never coloured"
+                    "{setting} {stage:?} is no target, so the far ground never gets its {gives}"
                 ));
-            } else if radius(&self.far_ground_material_stage) != radius(&self.far_ground_stage) {
+            } else if radius(value) != radius(&self.far_ground_stage) {
                 problems.push(format!(
-                    "far_ground_material_stage {material:?} needs far_ground_stage's radius in target_radii, or the far ground ends where its colours do"
+                    "{setting} {stage:?} needs far_ground_stage's radius in target_radii, or the far ground ends where its {gives} do"
                 ));
             }
         }
@@ -6011,12 +6067,14 @@ struct FarDrawn {
 }
 
 /// A coarse chunk's far ground as built: its mesh, each vertex's colour from
-/// `far_ground_material_stage` (empty without one), and the category of each vertex of its grid,
-/// `side` by `side`, for its group's copy of the ground material.
+/// `far_ground_material_stage` (empty without one), and the category and cavity of each vertex of
+/// its grid, `side` by `side`, for its group's copy of the ground material.
 struct FarBuilt {
     far: FarGround,
     colours: Vec<Color>,
     grid: Vec<u8>,
+    /// The cavity of each vertex of its grid from `far_ground_cavity_stage`, empty without one.
+    cavity: Vec<f32>,
     side: u32,
 }
 
@@ -6180,6 +6238,25 @@ fn far_material(
     material.set_shader_parameter("wave_forge_first", &first.to_variant());
     material.set_shader_parameter("wave_forge_coarseness", &coarseness.to_variant());
     material
+}
+
+/// The channels of a far group's copy of the ground material, `side` by `side` vertices: each
+/// one's `cavity` in red, as a near ground's channels hold it, and no wetness or cover.
+fn far_channels(cavity: &[f32], side: u32) -> Gd<ImageTexture> {
+    let bytes: Vec<u8> = cavity
+        .iter()
+        .flat_map(|&value| [value, 0.0, 0.0])
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    let image = Image::create_from_data(
+        side as i32,
+        side as i32,
+        false,
+        ImageFormat::RGBF,
+        &PackedByteArray::from(bytes.as_slice()),
+    )
+    .expect("an image of three floats per vertex");
+    ImageTexture::create_from_image(&image).expect("a texture of the image")
 }
 
 fn chunk_material(

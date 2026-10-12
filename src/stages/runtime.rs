@@ -483,10 +483,10 @@ pub enum StageError {
     #[error("stage {0:?} names a region job the runtime was not given")]
     NoRegionJob(String),
     /// Only stages computed column by column from what they read (Field, Rules, Nearest, Blur,
-    /// Delta, Erode and Area stages over such stages) can be sampled without chunks.
+    /// Delta, Horizon, Erode and Area stages over such stages) can be sampled without chunks.
     #[error(
-        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, nearest, blur, delta \
-         or area stage"
+        "stage {0:?} cannot be sampled without chunks: it is not a field, rules, nearest, blur, delta, \
+         horizon or area stage"
     )]
     NotSampled(String),
     /// Only a Sites stage's sites, a hash of their region, can be found without chunks.
@@ -2203,7 +2203,7 @@ impl Runtime {
 
     /// A stage's value at a point in WFC cells without generating any chunk: a field's value, or a
     /// category's index, at the column of the stage the point lies in. It equals what the chunk
-    /// holding that column would hold. Only Field, Rules, Blur, Delta, Erode and Area stages, and
+    /// holding that column would hold. Only Field, Rules, Blur, Delta, Horizon, Erode and Area stages, and
     /// Lakes and Droplets stages, whose inputs are too can be sampled; the pack's other kinds need
     /// neighbouring chunks. A Lakes or Droplets stage is computed over the whole region a sample
     /// lies in, once, from samples of its input. A runtime made only to sample
@@ -2366,6 +2366,11 @@ impl Runtime {
             }
             StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
             StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
+            StageKind::Horizon {
+                input,
+                reach,
+                directions,
+            } => horizon(input, *reach, *directions, stage.scale, column, &read)?,
             StageKind::Erode { input, .. } => eroded(self.seed, stage, input, column, &read)?,
             StageKind::Area { input, distance } => {
                 f32::from(area(input, *distance, column, &read)?)
@@ -4157,6 +4162,11 @@ impl Runtime {
                     StageKind::Field(expr) => evaluate(expr, &self.place(index, column, &read))?,
                     StageKind::Blur { input, radius } => blur(input, *radius, column, &read)?,
                     StageKind::Delta { input, radius } => delta(input, *radius, column, &read)?,
+                    StageKind::Horizon {
+                        input,
+                        reach,
+                        directions,
+                    } => horizon(input, *reach, *directions, stage.scale, column, &read)?,
                     StageKind::Erode { input, .. } => {
                         eroded(self.seed, stage, input, column, &read)?
                     }
@@ -5581,6 +5591,39 @@ fn delta(input: &str, radius: u32, column: [i64; 2], read: &Read<'_>) -> Result<
         }
     }
     Ok(high - low)
+}
+
+/// How much of the sky `input` hides from `column`, 0 to 1: in each of `directions` directions,
+/// the steepest rise of `input` over the columns out to `reach` columns along it, as the sine of
+/// its angle above the horizontal, averaged. A column of a stage at `scale` spans that many cells,
+/// and the angles are taken in cells.
+fn horizon(
+    input: &str,
+    reach: u32,
+    directions: u32,
+    scale: u32,
+    column: [i64; 2],
+    read: &Read<'_>,
+) -> Result<f32, StageError> {
+    let here = read(input, column[0], column[1])?;
+    let mut hidden = 0.0_f32;
+    for direction in 0..directions {
+        let angle = std::f32::consts::TAU * (direction as f32 + 0.5) / directions as f32;
+        let (along_x, along_y) = (angle.cos(), angle.sin());
+        // The steepest rise's tangent, never below the horizontal.
+        let mut steepest = 0.0_f32;
+        for step in 1..=reach {
+            let offset = [
+                (along_x * step as f32).round() as i64,
+                (along_y * step as f32).round() as i64,
+            ];
+            let rise = read(input, column[0] + offset[0], column[1] + offset[1])? - here;
+            let distance = (offset[0] as f32).hypot(offset[1] as f32) * scale as f32;
+            steepest = steepest.max(rise / distance);
+        }
+        hidden += steepest / steepest.hypot(1.0);
+    }
+    Ok(hidden / directions as f32)
 }
 
 /// 1, `edge`, where one of the eight columns `distance` columns from `column` along the axes and

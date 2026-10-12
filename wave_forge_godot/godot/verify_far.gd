@@ -10,11 +10,12 @@
 ## near ground drawn by a ground material, each group of `GROUP` by `GROUP` far chunks is drawn with
 ## a copy of it of its own, holding the category of every vertex of their grids of coarse columns
 ## side by side, a coarse column's width as its cell and its first vertex at a fine cell's centre,
-## and the far categories' palette. The near surface's second category is drawn with a texture set,
+## and the far categories' palette, and each vertex's cavity, the far occlusion of the coarse column
+## under it, in its channels. The near surface's second category is drawn with a texture set,
 ## which the far ground draws in the colour the near ground's palette gives it, its set's mean, and
 ## without textures. A far
 ## ground material stage at another scale than the far ground's, or one generated nearer than the
-## far ground, is warned of and refused.
+## far ground, is warned of and refused, as is a far ground cavity stage at another scale.
 extends SceneTree
 
 const CELLS := 8
@@ -58,11 +59,17 @@ func _initialize() -> void:
 	if wrong.start():
 		_fail("the node started with a far ground material stage nearer than the far ground")
 		return
+	wrong.far_ground_material_stage = ""
+	wrong.far_ground_cavity_stage = "height"
+	warned = " ".join(wrong.configuration_warnings())
+	if not warned.contains("far_ground_cavity_stage \"height\" is no field stage of the pack at far_ground_stage's scale"):
+		_fail("a far ground cavity stage at scale 1 does not warn: %s" % warned)
+		return
 	wrong.free()
 	world = ClassDB.instantiate("WaveForgeStages")
 	world.pack_file = "res://far.world.ron"
-	world.targets = PackedStringArray(["height", "far", "surface", "far_surface"])
-	var radii: Dictionary[StringName, int] = {&"far": FAR_RADIUS, &"far_surface": FAR_RADIUS}
+	world.targets = PackedStringArray(["height", "far", "surface", "far_surface", "far_occlusion"])
+	var radii: Dictionary[StringName, int] = {&"far": FAR_RADIUS, &"far_surface": FAR_RADIUS, &"far_occlusion": FAR_RADIUS}
 	world.target_radii = radii
 	world.seed = 3
 	world.chunk_cells = Vector3i(CELLS, CELLS, CELLS)
@@ -74,6 +81,7 @@ func _initialize() -> void:
 	world.ground_palette = PackedColorArray(PALETTE)
 	world.ground_texture_layers = PackedInt32Array([-1, TEXTURED_LAYER])
 	world.far_ground_material_stage = "far_surface"
+	world.far_ground_cavity_stage = "far_occlusion"
 	root.add_child(world)
 	if not world.start():
 		_fail("the stages did not start")
@@ -105,13 +113,18 @@ func _process(_delta: float) -> bool:
 			_fail("the coarse chunk %s, partly beyond the near ground, has no far ground" % chunk)
 			return true
 	var coloured := 0
+	var shaded := 0
 	for chunk in far:
 		var wrong := _wrong_colour(chunk) + _wrong_material(chunk)
 		if not wrong.is_empty():
 			_fail(wrong)
 			return true
 		coloured += world.far_ground_surface(chunk)["colours"].size()
-	print("verify_far: %d near grounds, %d far grounds, none on a coarse chunk the near ground covers; %d far vertices coloured by their surface, each group of far chunks drawn with its own copy of the ground material holding their categories" % [near.size(), far.size(), coloured])
+		shaded += Array(world.field_values("far_occlusion", chunk)).filter(func(value: float) -> bool: return value > 0.0).size()
+	if shaded == 0:
+		_fail("no coarse column under the far ground is occluded, so its cavity was not checked")
+		return true
+	print("verify_far: %d near grounds, %d far grounds, none on a coarse chunk the near ground covers; %d far vertices coloured by their surface, each group of far chunks drawn with its own copy of the ground material holding their categories and the cavity of %d occluded coarse columns" % [near.size(), far.size(), coloured, shaded])
 	quit(0)
 	return true
 
@@ -188,6 +201,17 @@ func _wrong_material(chunk: Vector3i) -> String:
 			return "the far palette of %s gives %s %s, not %s" % [chunk, far_names[index], held, _near_colour(near)]
 	if material.get_shader_parameter("wave_forge_texture_layers") != null:
 		return "the far material of %s draws texture sets" % chunk
+	# Each vertex's cavity is the far occlusion of the coarse column under it, as its category is.
+	var channels: Image = material.get_shader_parameter("wave_forge_channels").get_image()
+	if channels.get_size() != ids.get_size():
+		return "the far material of %s holds %s channels for %s categories" % [chunk, channels.get_size(), ids.get_size()]
+	var occlusion: PackedFloat32Array = world.field_values("far_occlusion", chunk)
+	for j in SCALE:
+		for i in SCALE:
+			var expected := occlusion[mini(j, CELLS - 1) * CELLS + mini(i, CELLS - 1)]
+			var held := channels.get_pixel(at.x + i, at.y + j)
+			if absf(held.r - expected) > 1e-6 or held.g != 0.0 or held.b != 0.0:
+				return "vertex (%d, %d) of the far material of %s holds channels %s, not the cavity %f" % [i, j, chunk, held, expected]
 	return ""
 
 ## Whether every chunk of the WFC lattice the coarse `chunk` covers has near ground.

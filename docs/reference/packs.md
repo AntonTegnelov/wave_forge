@@ -315,7 +315,7 @@ Data flows only from coarse to fine. A stage reads stages as coarse as itself or
 factor, and loading refuses anything else. A fine stage reads a coarser field between its columns,
 linearly from the four around its column's centre, and a coarser category from the column its own
 lies in. Positions in expressions (`X`, `Y`, `Distance`, `Angle`, and noise) are in WFC cells at
-every scale, so a formula means the same at any scale. Field, Blur, Rules, Region, Lakes,
+every scale, so a formula means the same at any scale. Field, Blur, Horizon, Rules, Region, Lakes,
 Droplets and Talus stages can be coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
 fields.
 
@@ -397,6 +397,7 @@ sites, tiles, points, curves or stamps), and loading refuses a stage that reads 
 | `Nearest` | Categories | what its climate reads, 0 cells |
 | `Blur` | Field | one field, `radius` cells |
 | `Delta` | Field | one field, `radius` cells |
+| `Horizon` | Field | one field, `reach` cells |
 | `Erode` | Field | one field, `smooth` cells |
 | `Area` | Categories | one Rules stage, `distance` cells |
 | `Sites` | Sites | a height field, over its region |
@@ -658,6 +659,22 @@ column.
 `Delta(input: "field", radius: r)`: the highest value of the input less its lowest over the square
 of `r` cells around each column: how uneven the ground is there, what Valheim's location table calls
 terrain delta. A Rules condition or a Select over it keeps a location or a plant off steep ground.
+
+### Horizon
+
+`Horizon(input: "height", reach: 32)`: how much of the sky the input's ground hides from each
+column, 0 on open ground to 1 at the bottom of a shaft. In each of `directions` directions (8 unless
+given, 4 to 32) spread evenly around the column, it finds the steepest rise of the input over the
+columns out to `reach` columns away (at least 1), takes the sine of its angle above the horizontal,
+none below it, and averages them: the horizon-based occlusion terrain renderers shade with
+(Timonen and Westerholm 2010, https://diglib.eg.org/handle/10.2312/CGF.v29i2pp723-731). Heights and
+distances are both taken in cells, a coarser stage's distances too, so the angles are true where
+cells are as tall as they are wide. A ridge narrower than the gap between two directions' rays at
+its distance can be missed. It reads `reach` columns around each column and nothing else, so chunks
+generate in any order and meet without seams, and it can be sampled. Handed to the ground as its
+cavity channel, alone or with a finer cavity (`Max(Input("hollow"), Input("occlusion"))`), it shades
+valleys and the feet of slopes near and far
+([godot.md](godot.md#ground-and-colliders), [bevy.md](bevy.md#ground-materials)).
 
 ### Erode
 
@@ -1254,7 +1271,7 @@ let trees = runtime.points("trees", chunk);
   between; `is_idle` says whether anything is left.
 - `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
   its values over an area of its own columns, row by row with x fastest, without generating any
-  chunk: exactly what the chunks would hold. Field, Rules, Nearest, Blur, Delta, Erode and Area stages whose
+  chunk: exactly what the chunks would hold. Field, Rules, Nearest, Blur, Delta, Horizon, Erode and Area stages whose
   inputs are too can be sampled, and so can Lakes, Droplets and Talus stages, each computed once over the
   whole region a sample lies in from samples of its input, the latest eight kept for later
   samples; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling

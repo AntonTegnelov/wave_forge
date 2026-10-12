@@ -71,10 +71,11 @@
                 Greater(Is("surface", ["sand"]), Constant(0.5)),
                 Less(Clamp(Remap(FastNoise("patches"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0), Param("cacti")),
             ])),
-        // 0 to 1: how far a column lies below the ground around it, for the ground shader's cavity
-        // channel, which darkens the hollows.
+        // 0 to 1: how far a column lies below the ground around it, or how much of the sky the land
+        // around hides from it (`far_occlusion`), for the ground shader's cavity channel, which
+        // darkens the hollows and the valleys.
         (name: "around", kind: Blur(input: "height", radius: 4)),
-        (name: "hollow", kind: Field(Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.3)), 0.0, 1.0))),
+        (name: "hollow", kind: Field(Max(Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.3)), 0.0, 1.0), Input("far_occlusion")))),
         // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the plateaus,
         // mesas and strata over a world map of 8 by 8 cells a column, coloured by the same
         // categories as the surface.
@@ -98,6 +99,10 @@
         ))))),
         // A coarse column spans too much ground to tell a cliff, so the far walls take the rock's
         // bands.
+        // How much of the sky the land within 8 coarse columns hides from each, at the far
+        // ground's scale (docs/reference/packs.md, "Horizon"): the far ground's cavity, and the
+        // near ground's in its valleys, so the two darken alike where they meet.
+        (name: "far_occlusion", scale: 8, kind: Horizon(input: "far_height", reach: 8)),
         (name: "far_surface", scale: 8, kind: Rules(rules: [
             (category: "sand", when: [Less(Input("far_plateau"), Constant(0.1))]),
             (category: "pale_rock", when: [Greater(Sin(Mul(Input("far_height"), Constant(2.0))), Constant(0.35))]),

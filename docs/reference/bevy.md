@@ -120,8 +120,11 @@ itself, and holds no shapes for a town's modules: a game adds its towns' collide
   categories per vertex of its grid of coarse columns, each mapped by `palette_index` to a colour of
   the near ground's palette (by category name, as the Godot node maps them), so the near ground's
   ramps and reliefs serve it too, its cells the coarse columns and the noise breaking its borders
-  as coarse ([Ground materials](#ground-materials)). `far_ground_scale()` gives the coarse stage's
-  scale.
+  as coarse ([Ground materials](#ground-materials)). `materials::far_ground_channels(stages, chunk,
+  cavity)` gives it channels to set as `extension.channels`: each vertex's cavity the value of
+  `cavity`, a field stage at the same scale and radius, under it, a Horizon stage over the far
+  height say ([packs.md](packs.md#horizon)), so its valleys darken as the near ground's hollows do
+  (as Godot's `far_ground_cavity_stage`). `far_ground_scale()` gives the coarse stage's scale.
 - `.with_ground(stage)` builds each chunk's ground from a field stage once the fields around it
   have arrived ([packs.md](packs.md#ground)): `WaveForgeStages::ground(chunk)` returns the
   `GroundMesh`, relative to `chunk_corner(chunk)`, `GroundReady(chunk)` and `GroundDropped(chunk)`
