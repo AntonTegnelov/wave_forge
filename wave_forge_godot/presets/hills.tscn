@@ -22,7 +22,7 @@
 
 [node name="Hills" type="WaveForgeStages"]
 pack_file = "res://addons/wave_forge/presets/hills.world.ron"
-targets = PackedStringArray("height", "surface", "cover", "trees", "far_height", "far_surface", "hollow", "undergrowth", "rocks", "far_occlusion")
+targets = PackedStringArray("height", "surface", "cover", "trees", "far_height", "far_surface", "hollow", "undergrowth", "rocks", "far_occlusion", "wet")
 start_on_ready = true
 preview_in_editor = true
 view_radius = 3
@@ -37,12 +37,13 @@ far_ground_material_stage = "far_surface"
 far_ground_cavity_stage = "far_occlusion"
 ground_cover_stage = "cover"
 ground_cavity_stage = "hollow"
+ground_wetness_stage = "wet"
 ground_material_stage = "surface"
-ground_palette = PackedColorArray(0.514, 0.522, 0.478, 1, 0.345, 0.373, 0.271, 1, 0.376, 0.384, 0.231, 1)
-ground_relief = PackedVector4Array(0.25, 0.75, 0, 0.9, 0.15, 0, 0.85, 0.35, 0, 0, 1, 0.45)
-ground_texture_layers = PackedInt32Array(4, 1, 0)
-ground_ramp_colours = PackedColorArray(0, 0, 0, 1, 0, 0, 0, 1, 0.365, 0.322, 0.212, 1)
-ground_ramp_drivers = PackedVector4Array(0, 0, 0, 0, 0, 0, 0, 0, 0.7, 0.6, -0.8, 0)
+ground_palette = PackedColorArray(0.514, 0.522, 0.478, 1, 0.56, 0.54, 0.5, 1, 0.345, 0.373, 0.271, 1, 0.376, 0.384, 0.231, 1)
+ground_relief = PackedVector4Array(0.25, 0.75, 0, 0.9, 0.7, 0, 0.2, 0.45, 0.15, 0, 0.85, 0.35, 0, 0, 1, 0.45)
+ground_texture_layers = PackedInt32Array(4, 2, 1, 0)
+ground_ramp_colours = PackedColorArray(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.365, 0.322, 0.212, 1)
+ground_ramp_drivers = PackedVector4Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.7, 0.6, -0.8, 0)
 ground_ramp_heights = Vector2(4, 20)
 grass_stage = "cover"
 grass_radius = 3

@@ -39,12 +39,20 @@
         )))),
         // Gullies cut down the steeper slopes, so the tallest hills come out dissected and the
         // gentle ones keep their shape.
-        (name: "height", kind: Erode(input: "shape", spacing: 20.0, octaves: 5, depth: 1.5, slope: 0.3, smooth: 3)),
+        (name: "eroded", kind: Erode(input: "shape", spacing: 20.0, octaves: 5, depth: 1.5, slope: 0.3, smooth: 3)),
+        // Debris shed by the outcrops' risers settles below them (docs/reference/packs.md, "Talus");
+        // the risers keep their faces, so the ground is the higher of the two, and the debris how
+        // far the weathered ground stands above the eroded ground.
+        (name: "weathered", kind: Talus(height: "eroded", region: 4, slope: 0.8, passes: 30, fade: 8)),
+        (name: "height", kind: Field(Max(Input("eroded"), Input("weathered")))),
+        (name: "debris", kind: Field(Max(Sub(Input("weathered"), Input("eroded")), Constant(0.0)))),
         // 0 to 1: where the woods lie under the forest amount.
         (name: "woods", kind: Field(Clamp(Remap(FastNoise("woods"), (-0.6, 0.6), (0.0, 1.0)), 0.0, 1.0))),
         (name: "surface", kind: Rules(rules: [
             // The crowns of the tallest hills, a share of the way up whatever their height.
             (category: "rock", when: [Greater(Input("height"), Add(Constant(8.3), Mul(Param("hills"), Constant(14.7))))]),
+            // Scree where the outcrops' debris lies deep enough to show.
+            (category: "scree", when: [Greater(Input("debris"), Constant(0.25))]),
             (category: "forest_floor", when: [Less(Input("woods"), Param("forest"))]),
         ], otherwise: "meadow")),
         // Grass over the meadows, as thick as the meadows amount.
@@ -77,6 +85,11 @@
         // cells a column, coloured by the same categories as the surface.
         (name: "far_relief", scale: 8, kind: Field(Add(Add(Mul(Add(FastNoise("hills"), Constant(1.0)), Constant(0.45)), Mul(Pow(Remap(FastNoise("chains"), (-1.0, 1.0), (0.0, 1.0)), 1.5), Constant(1.5))), Mul(FastNoise("detail"), Constant(0.08))))),
         (name: "far_height", scale: 8, kind: Field(Add(Constant(2.0), Mul(Curve(Input("far_relief"), [(0.0, 0.55), (0.8, 0.6), (0.95, 0.7), (1.1, 0.95), (1.35, 1.45), (2.6, 3.2)]), Add(Constant(3.0), Mul(Param("hills"), Constant(7.0))))))),
+        // The water that drains over the land, from droplets rolling down the far ground's shape
+        // at 4 cells a column (docs/reference/packs.md, "Droplets"), and 0 to 1, how wet that
+        // leaves the ground along the lines it runs by, for the ground shader's wetness channel.
+        (name: "flow", scale: 4, kind: Droplets(height: "far_height", region: 16, gives: Flow)),
+        (name: "wet", kind: Field(Clamp(Remap(Input("flow"), (15.0, 60.0), (0.0, 1.0)), 0.0, 1.0))),
         // How much of the sky the land within 8 coarse columns hides from each, at the far
         // ground's scale (docs/reference/packs.md, "Horizon"): the far ground's cavity, and the
         // near ground's in its valleys, so the two darken alike where they meet.
