@@ -410,6 +410,7 @@ fn a_chunks_water_is_the_librarys_of_its_level_and_ground() {
             |at| direct.field("water", at),
             |at| direct.field("ground", at),
             SETTINGS.cell_size.to_array(),
+            None,
         );
         let water = stages.water(chunk);
         assert_eq!(water, expected.as_ref(), "chunk {chunk:?}");
@@ -456,6 +457,7 @@ fn a_chunks_ground_is_wet_along_its_waters_banks() {
             chunk,
             |at| direct.field("water", at),
             |at| direct.field("ground", at),
+            None,
         )
         .expect("the fields around the chunk");
         let wetness: Vec<f32> = stages

@@ -133,6 +133,7 @@ fn render(reference: Option<WaterLook>) -> Vec<u8> {
                 |at| runtime.field("water", at),
                 |at| runtime.field("ground", at),
                 CELL,
+                None,
             )
             .expect("its water");
             let floor = world

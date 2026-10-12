@@ -54,6 +54,7 @@ fn water(runtime: &Runtime, chunk: ChunkCoord) -> WaterMesh {
         |at| runtime.field("water", at),
         |at| runtime.field("ground", at),
         CELL,
+        None,
     )
     .expect("the fields around it arrived")
 }

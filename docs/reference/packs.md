@@ -1360,7 +1360,7 @@ vertex stands on, from a Rules stage at the far ground's scale, for an engine to
 
 ### Water surfaces
 
-`wave_forge::water_surface(chunk, water, ground, cell_size)` builds a chunk's lakes and rivers as a
+`wave_forge::water_surface(chunk, water, ground, cell_size, sea)` builds a chunk's lakes and rivers as a
 `WaterMesh`, from a field of the water's level and the field of the ground the engine draws, both at
 the ground's scale ([#328](https://github.com/AntonTegnelov/wave_forge/issues/328)). It stands on
 the ground's grid, the +x and +y edges from the chunks beyond, so neighbouring chunks' water meets
@@ -1369,9 +1369,11 @@ the ground, and takes that level; a dry one sits just under the ground. Every sq
 corner is drawn, so the water runs out to where it dips under the bank and the ground hides its
 edge, whatever the bank's slope. Each vertex carries its depth, the water's level less the ground
 in world units, 0 where dry, which a shader tints the water and fades its shore by. A chunk without
-water has no triangles. It returns `None` until both fields of the chunk and of the chunks beyond
-its far edges have arrived. `wave_forge::water_banks(chunk, water, ground)` gives how wet the
-ground is at each of its vertices from the same fields: 1 under the water, and on dry ground falling
+water has no triangles. With `sea`, the sea's level in cells, a column's water stands at the higher
+of its field's level and the sea's, so the sea is drawn as water too whatever the field holds. It
+returns `None` until both fields of the chunk and of the chunks beyond its far edges have arrived.
+`wave_forge::water_banks(chunk, water, ground, sea)` gives how wet the ground is at each of its
+vertices from the same fields and sea: 1 under the water, and on dry ground falling
 to nothing `water::BANK_REACH` (2) columns from the nearest wet vertex, for the ground's wetness
 channel. It reads the chunks all around, since water just over an edge wets the bank beside it.
 

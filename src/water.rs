@@ -43,9 +43,10 @@ pub struct WaterMesh {
 
 /// The water of `chunk`: from the field of the water's level whose chunks `water` looks up and the
 /// height field of the ground the engine draws, whose chunks `ground` looks up, both at the ground's
-/// scale and in cells, with cells `cell_size` along the engine's x, y and z. A pack makes the
-/// water's field from its Lakes stage and its rivers ([`WET`] says how far above the ground counts
-/// as water).
+/// scale and in cells, with cells `cell_size` along the engine's x, y and z, and the sea's level,
+/// in cells, where the pack has a sea: a column's water stands at the higher of its field's level
+/// and the sea's, so the sea is drawn as water too. A pack makes the water's field from its Lakes
+/// stage and its rivers ([`WET`] says how far above the ground counts as water).
 ///
 /// Returns `None` until both fields of `chunk` and of the chunks beyond its +x edge, its +y edge and
 /// its +x+y corner have arrived.
@@ -58,9 +59,13 @@ pub fn water_surface<'a>(
     water: impl Fn(ChunkCoord) -> Option<&'a Field>,
     ground: impl Fn(ChunkCoord) -> Option<&'a Field>,
     cell_size: [f32; 3],
+    sea: Option<f32>,
 ) -> Option<WaterMesh> {
     let [columns_x, columns_y] = water(chunk)?.size;
-    let levels = ground_values(chunk, &water)?;
+    let levels: Vec<f32> = ground_values(chunk, &water)?
+        .into_iter()
+        .map(|level| sea.map_or(level, |sea| level.max(sea)))
+        .collect();
     let floor = ground_values(chunk, &ground)?;
     assert_eq!(
         levels.len(),
@@ -141,8 +146,8 @@ pub const BANK_REACH: u32 = 2;
 /// How wet the banks of `chunk`'s water are at every vertex of its ground, laid out as
 /// [`crate::ground_values`] lays a field out: 1 under the water, and on dry ground falling from the
 /// water's edge to nothing [`BANK_REACH`] columns out, by the distance to the nearest vertex under
-/// water. `water` and `ground` look up chunks of the same fields [`water_surface`] reads. A ground
-/// shader takes it as wetness, so the banks darken and shine.
+/// water. `water`, `ground` and `sea` are what [`water_surface`] reads, so the sea's shores are wet
+/// too. A ground shader takes it as wetness, so the banks darken and shine.
 ///
 /// Returns `None` until both fields of `chunk` and of the eight chunks around it have arrived,
 /// since the banks of water just over a chunk's edge reach into it.
@@ -154,6 +159,7 @@ pub fn water_banks<'a>(
     chunk: ChunkCoord,
     water: impl Fn(ChunkCoord) -> Option<&'a Field>,
     ground: impl Fn(ChunkCoord) -> Option<&'a Field>,
+    sea: Option<f32>,
 ) -> Option<Vec<f32>> {
     let [sx, sy] = water(chunk)?.size;
     assert!(
@@ -180,7 +186,8 @@ pub fn water_banks<'a>(
                 ([sx as u32, sy as u32], [sx as u32, sy as u32]),
                 "the water's and the ground's chunks share a size"
             );
-            wet.push(level.get(i, j) - floor.get(i, j) > WET);
+            let level = sea.map_or(level.get(i, j), |sea| level.get(i, j).max(sea));
+            wet.push(level - floor.get(i, j) > WET);
         }
     }
     let wet_at = |x: i64, y: i64| wet[((y + reach) * wide + x + reach) as usize];
@@ -250,7 +257,7 @@ mod tests {
         let (water, ground) = (fields(lake), fields(bowl));
         let chunk = ChunkCoord::new(0, 0, 0);
 
-        let mesh = water_surface(chunk, |at| water.get(&at), |at| ground.get(&at), CELL)
+        let mesh = water_surface(chunk, |at| water.get(&at), |at| ground.get(&at), CELL, None)
             .expect("all arrived");
 
         for j in 0..9 {
@@ -275,7 +282,7 @@ mod tests {
         let (water, ground) = (fields(lake), fields(bowl));
         let chunk = ChunkCoord::new(0, 0, 0);
 
-        let mesh = water_surface(chunk, |at| water.get(&at), |at| ground.get(&at), CELL)
+        let mesh = water_surface(chunk, |at| water.get(&at), |at| ground.get(&at), CELL, None)
             .expect("all arrived");
 
         assert_eq!(mesh.depths.len(), mesh.positions.len());
@@ -299,6 +306,7 @@ mod tests {
             |at| water.get(&at),
             |at| ground.get(&at),
             CELL,
+            None,
         )
         .expect("all arrived");
 
@@ -310,7 +318,7 @@ mod tests {
         let (water, ground) = (fields(lake), fields(bowl));
         let chunk = ChunkCoord::new(-1, 0, 0);
 
-        let mesh = water_surface(chunk, |at| water.get(&at), |at| ground.get(&at), CELL)
+        let mesh = water_surface(chunk, |at| water.get(&at), |at| ground.get(&at), CELL, None)
             .expect("all arrived");
 
         for triangle in mesh.indices.chunks(6) {
@@ -332,6 +340,7 @@ mod tests {
             ChunkCoord::new(0, 0, 0),
             |at| water.get(&at),
             |at| ground.get(&at),
+            None,
         )
         .expect("all arrived");
 
@@ -350,6 +359,7 @@ mod tests {
             ChunkCoord::new(0, 0, 0),
             |at| water.get(&at),
             |at| ground.get(&at),
+            None,
         )
         .expect("all arrived");
 
@@ -368,8 +378,74 @@ mod tests {
                     .flatten()
             },
             |at| ground.get(&at),
+            None,
         );
 
         assert_eq!(banks, None);
+    }
+
+    /// Dry land around the origin above a sea at a level of 1: the water's field holds no lake.
+    fn island(x: i64, y: i64) -> f32 {
+        3.0 - ((x * x + y * y) as f32).sqrt() * 0.25
+    }
+
+    fn no_lake(_: i64, _: i64) -> f32 {
+        -1000.0
+    }
+
+    #[test]
+    fn the_sea_is_water_where_it_stands_over_the_ground_whatever_the_waters_field_holds() {
+        let (water, ground) = (fields(no_lake), fields(island));
+        let chunk = ChunkCoord::new(1, 0, 0);
+
+        let mesh = water_surface(
+            chunk,
+            |at| water.get(&at),
+            |at| ground.get(&at),
+            CELL,
+            Some(1.0),
+        )
+        .expect("all arrived");
+
+        for j in 0..9 {
+            for i in 0..9 {
+                let floor = island(8 + i, j);
+                let depth = mesh.depths[(j * 9 + i) as usize];
+                let expected = if 1.0 - floor > WET {
+                    (1.0 - floor) * CELL[1]
+                } else {
+                    0.0
+                };
+                assert_eq!(depth, expected, "vertex ({i}, {j})");
+            }
+        }
+        assert!(!mesh.indices.is_empty());
+    }
+
+    #[test]
+    fn the_seas_shores_are_wet_banks() {
+        let (water, ground) = (fields(no_lake), fields(island));
+        let chunk = ChunkCoord::new(1, 0, 0);
+
+        let banks = water_banks(chunk, |at| water.get(&at), |at| ground.get(&at), Some(1.0))
+            .expect("all arrived");
+
+        let (mut under, mut shore) = (0, 0);
+        for j in 0..9 {
+            for i in 0..9 {
+                let wet = banks[(j * 9 + i) as usize];
+                if 1.0 - island(8 + i, j) > WET {
+                    assert_eq!(wet, 1.0, "vertex ({i}, {j}) is under the sea");
+                    under += 1;
+                } else if wet > 0.0 {
+                    assert!(wet < 1.0, "vertex ({i}, {j}) is dry but {wet}");
+                    shore += 1;
+                }
+            }
+        }
+        assert!(
+            under > 0 && shore > 0,
+            "{under} under the sea, {shore} on its shore"
+        );
     }
 }
