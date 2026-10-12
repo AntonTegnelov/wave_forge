@@ -20,7 +20,7 @@ const QUALITY := 0.7
 ## The sets kept, in the order of their index: ambientCG's asset id and the set's name.
 const SETS := [
 	["Grass004", "grass"], ["Ground106", "dirt"], ["Gravel022", "gravel"], ["Ground080", "sand"],
-	["Rock030", "rock"], ["Rock051", "cliff"], ["Snow010A", "snow"], ["Ground071", "mud"],
+	["Rock060", "rock"], ["Rock051", "cliff"], ["Snow010A", "snow"], ["Ground071", "mud"],
 ]
 
 func _initialize() -> void:

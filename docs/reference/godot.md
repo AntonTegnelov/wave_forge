@@ -719,7 +719,7 @@ A category can be drawn with a texture set instead of its colour, ramp and relie
 `ground_albedo_height` (the colour, sRGB, with the height in alpha) and `ground_normal_roughness`
 (the OpenGL normal with the roughness in alpha), or, with neither given, in the plugin's own eight:
 0 grass, 1 dirt, 2 gravel, 3 sand, 4 rock, 5 cliff, 6 snow and 7 mud, ambientCG's CC0 Grass004,
-Ground106, Gravel022, Ground080, Rock030, Rock051, Snow010A and Ground071, kept in
+Ground106, Gravel022, Ground080, Rock060, Rock051, Snow010A and Ground071, kept in
 `addons/wave_forge/ground_textures/` with their licence (`LICENSE_ambientCG.txt`) and written at
 1024 texels a side by `tools/make_ground_textures.gd`. The shader samples a set in world space, so
 it runs on across chunks with no seam: from above, and on steep ground from the sides as well,
