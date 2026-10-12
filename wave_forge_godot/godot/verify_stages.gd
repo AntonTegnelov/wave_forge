@@ -195,11 +195,12 @@ func _process(_delta: float) -> bool:
 	if not _check_towns() or not _check_drawn() or not _check_trees() or not _check_cover():
 		return true
 	var stats: Dictionary = world.stats()
-	print("verify_stages: the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms; its slowest frame: %d events in %.3f ms, %d grounds in %.3f ms, %d bodies in %.3f ms, navigation %.3f ms" % [
+	print("verify_stages: the node's own process per frame p50 %.3f ms, p99 %.3f ms, max %.3f ms; its slowest frame: %d events in %.3f ms, %d grounds in %.3f ms, %d bodies in %.3f ms, navigation %.3f ms; navigation at most %.3f ms a frame" % [
 		stats["process_ms_median"], stats["process_ms_p99"], stats["process_ms_max"],
 		stats["slowest_frame_events"], stats["slowest_frame_signals_ms"],
 		stats["slowest_frame_grounds"], stats["slowest_frame_grounds_ms"],
-		stats["slowest_frame_bodies"], stats["slowest_frame_bodies_ms"], stats["slowest_frame_navigation_ms"]])
+		stats["slowest_frame_bodies"], stats["slowest_frame_bodies_ms"], stats["slowest_frame_navigation_ms"],
+		stats["slowest_navigation_ms"]])
 	var costs: Dictionary = stats["stages"]
 	for stage: String in costs:
 		var cost: Dictionary = costs[stage]

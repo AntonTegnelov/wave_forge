@@ -488,6 +488,8 @@ pub struct WaveForgeStages {
     palette: Option<(Gd<ImageTexture>, Gd<ShaderMaterial>)>,
     /// What the node's slowest frame since the start spent Godot's thread on.
     slowest_frame: FrameCost,
+    /// The most any frame has spent keeping navigation regions, in milliseconds.
+    slowest_navigation_ms: f64,
     /// How long the node's last frame took on Godot's thread, in milliseconds.
     last_frame_ms: f64,
     /// Signals not yet emitted, in the order their events arrived.
@@ -500,6 +502,9 @@ pub struct WaveForgeStages {
     /// Each chunk's navigation region, and what the colliders of the chunk and its neighbours
     /// held when it was baked.
     navigation: StageNavigation<Vec<BodyContents>>,
+    /// Each chunk's walkable triangles for its navigation source, with what the chunk held when
+    /// they were worked out: derived one chunk a frame, so starting a bake only joins them.
+    walkable: HashMap<ChunkCoord, (BodyContents, Vec<[f32; 3]>)>,
     /// The triangles of each module's collision shape, counter-clockwise seen from outside as the
     /// navigation bake reads them.
     shape_faces: HashMap<String, Vec<[f32; 3]>>,
@@ -940,6 +945,7 @@ impl INode for WaveForgeStages {
             navigation_radius: -1,
             navigation_template: None,
             navigation: StageNavigation::new(),
+            walkable: HashMap::new(),
             shape_faces: HashMap::new(),
             occluder_radius: -1,
             occluders: Occluders::default(),
@@ -953,6 +959,7 @@ impl INode for WaveForgeStages {
             promotion_radius: -1,
             placements: Placements::default(),
             slowest_frame: FrameCost::default(),
+            slowest_navigation_ms: 0.0,
             pending: VecDeque::new(),
         }
     }
@@ -1256,6 +1263,7 @@ impl INode for WaveForgeStages {
             self.signals().navigation_ready().emit(to_vector(chunk));
         }
         frame.navigation_ms = elapsed_ms(navigating);
+        self.slowest_navigation_ms = self.slowest_navigation_ms.max(frame.navigation_ms);
         self.update_occluders(&towns);
         self.update_grass();
         self.update_audio(&near_changed);
@@ -2348,6 +2356,7 @@ impl WaveForgeStages {
         // Navigation is baked again with the new shapes over the next frames.
         self.shape_faces.clear();
         self.navigation.clear();
+        self.walkable.clear();
     }
 
     /// The chunks within `occluder_radius` that have occluders, of their towns' solid cells.
@@ -3185,7 +3194,8 @@ impl WaveForgeStages {
     /// `slowest_frame_signals_ms` (the handlers connected to them included),
     /// `slowest_frame_grounds` chunks given ground in `slowest_frame_grounds_ms`, and
     /// `slowest_frame_bodies` chunks given a body in `slowest_frame_bodies_ms`, and
-    /// `slowest_frame_navigation_ms` keeping navigation regions. And `stages`: what
+    /// `slowest_frame_navigation_ms` keeping navigation regions; and `slowest_navigation_ms`, the
+    /// most any frame has spent keeping them. And `stages`: what
     /// each stage has cost on the stages' thread, by name, as `products`, `ms` in all and
     /// `slowest_ms` for one product. And `pending_signals`, `pending_grounds` and
     /// `pending_colliders`: the signals, grounds and bodies waiting for a later frame. And
@@ -3266,6 +3276,7 @@ impl WaveForgeStages {
             ("slowest_frame_bodies_ms", slowest.bodies_ms),
             ("slowest_frame_navigation_ms", slowest.navigation_ms),
             ("slowest_frame_placements_ms", slowest.placements_ms),
+            ("slowest_navigation_ms", self.slowest_navigation_ms),
         ] {
             out.set(&key.to_variant(), &value.to_variant());
         }
@@ -4654,6 +4665,7 @@ impl WaveForgeStages {
                 })
             })
         };
+        self.derive_walkable(&solves, &wanted, focus);
         let cell_height = NavigationServer3D::singleton().map_get_cell_height(map);
         let mut navigation = std::mem::replace(&mut self.navigation, StageNavigation::new());
         let result = navigation.start_bake(
@@ -4674,7 +4686,7 @@ impl WaveForgeStages {
                     chunk,
                     chunk_size,
                     in_world,
-                    |around| self.walkable_triangles(&solves, around),
+                    |around| self.cached_walkable(&solves, around),
                     border,
                     cell_height,
                 )
@@ -4767,6 +4779,49 @@ impl WaveForgeStages {
     /// The triangles a chunk's colliders hold in Godot's world, counter-clockwise seen from where
     /// agents walk: its ground, its volume's surface, and its towns' shapes. None while its ground
     /// or surface is not built.
+    /// Works out the walkable triangles of one chunk a bake of `wanted` reads, the nearest to
+    /// `focus` whose triangles are missing or out of date, and forgets those of chunks no bake of
+    /// `wanted` reads. Deriving a town chunk's triangles is the dear part of a bake's source, a
+    /// millisecond or more of Godot's thread, and every bake reads nine chunks.
+    fn derive_walkable(&mut self, solves: &[String], wanted: &[ChunkCoord], focus: ChunkCoord) {
+        let read: HashSet<ChunkCoord> = wanted
+            .iter()
+            .flat_map(|chunk| {
+                (-1..=1).flat_map(move |dy| {
+                    (-1..=1).map(move |dx| ChunkCoord::new(chunk.x + dx, chunk.y + dy, 0))
+                })
+            })
+            .collect();
+        self.walkable.retain(|chunk, _| read.contains(chunk));
+        let mut due: Vec<ChunkCoord> = read
+            .into_iter()
+            .filter(|chunk| {
+                self.walkable
+                    .get(chunk)
+                    .is_none_or(|(contents, _)| *contents != self.body_contents(solves, *chunk))
+            })
+            .collect();
+        due.sort_by_key(|chunk| {
+            (
+                (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs()),
+                *chunk,
+            )
+        });
+        for chunk in due {
+            if let Some(triangles) = self.walkable_triangles(solves, chunk) {
+                let contents = self.body_contents(solves, chunk);
+                self.walkable.insert(chunk, (contents, triangles));
+                return;
+            }
+        }
+    }
+
+    /// The walkable triangles of `chunk` worked out for what it holds now, if they have been.
+    fn cached_walkable(&self, solves: &[String], chunk: ChunkCoord) -> Option<Vec<[f32; 3]>> {
+        let (contents, triangles) = self.walkable.get(&chunk)?;
+        (*contents == self.body_contents(solves, chunk)).then(|| triangles.clone())
+    }
+
     fn walkable_triangles(&self, solves: &[String], chunk: ChunkCoord) -> Option<Vec<[f32; 3]>> {
         let corner = self.chunk_corner(chunk).to_array();
         let mut triangles = Vec::new();
@@ -4834,6 +4889,7 @@ impl WaveForgeStages {
             self.free_bodies();
             self.shape_faces.clear();
             self.navigation.clear();
+            self.walkable.clear();
         }
         self.mesh_shapes = Some(given);
     }
@@ -5579,6 +5635,7 @@ impl WaveForgeStages {
         self.chunk_materials.clear();
         self.free_bodies();
         self.navigation.clear();
+        self.walkable.clear();
         for chunk in self.occluders.chunks().collect::<Vec<_>>() {
             self.occluders.drop_chunk(chunk);
         }
