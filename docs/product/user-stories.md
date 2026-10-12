@@ -133,9 +133,21 @@ named parameter sets ([World generation](https://dwarffortresswiki.org/index.php
 **Needs.** Region jobs with hashed retries, Field and Filter at coarse scale, CurveSet, an atlas and
 point queries, tables of facts ([#72](https://github.com/AntonTegnelov/wave_forge/issues/72)), a local level reading its parent. History simulation is the
 game's; tables of facts are the seam, and N11 is the check that the seam is approachable.
-**Status:** not started (2026-09-23). The history seam this story's second criterion needs is built
-and checked by N11's example (`examples/history`): sites with their culture and fate, roads as
-curves, towns of each fate's rule set and ruins, and roads levelled into the ground.
+**Status:** verified by automated checks (2026-10-12), with the test pack
+`wfc-devtools/tests/fixtures/colony.world.ron` and its checks in `wfc-devtools/tests/colony.rs`:
+- A world map of 32 by 32 tiles, generated whole before play inside its bound, is one region: coarse
+  elevation, rainfall and temperature; ground worn by droplets and drained by rivers as curves over
+  the whole world; biomes by rules and their connected regions (a [Connected](../reference/packs.md#connected)
+  stage), more regions than biomes; strata of soil, sandstone, limestone and granite in order
+  under the ground; and a region job of the game's that turned down attempts before accepting one,
+  its reasons kept (`Runtime::region_log`).
+- A history made before play over the world map's samples, given as tables, stands as towns of
+  each culture's module set, ruins where a place fell, and a road from each place to the next,
+  levelled into the ground.
+- A local area generated from a tile meets the world map along the tile's edges, within 0.05 cells,
+  and has detail of its own inside.
+- The same seed gives the same world on every GPU: the hashes of all 1 024 chunks of ground, towns
+  and peaks match a record made on NVIDIA through dozen, and CI checks them on lavapipe.
 
 ### G3. A No Man's Sky-like planet
 
