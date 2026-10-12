@@ -2149,6 +2149,22 @@ impl Runtime {
         self.shared(stage, chunk).map(Arc::as_ref)
     }
 
+    /// A 64-bit hash of the product `stage` holds for `chunk`, over its every bit, if the chunk is
+    /// generated: the same on every machine given the same seed, pack and edits, whatever order the
+    /// chunks were generated in, so peers compare it to confirm they agree
+    /// (docs/reference/packs.md, "Hashes").
+    #[must_use]
+    pub fn product_hash(&self, stage: &str, chunk: ChunkCoord) -> Option<u64> {
+        self.product(stage, chunk).map(super::codec::hash)
+    }
+
+    /// A 64-bit hash of what `chunk` holds of each of `stages`, in that order, once it holds every
+    /// one of them: [`Runtime::product_hash`] for a whole chunk.
+    #[must_use]
+    pub fn chunk_hash(&self, chunk: ChunkCoord, stages: &[&str]) -> Option<u64> {
+        super::codec::chunk_hash(stages, |stage| self.product_hash(stage, chunk))
+    }
+
     /// The same product, shared, so a worker can hand it to another thread without a copy.
     pub(crate) fn shared(&self, stage: &str, chunk: ChunkCoord) -> Option<&Arc<Product>> {
         let index = self.pack.index(stage)?;
