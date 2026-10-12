@@ -493,7 +493,10 @@ horizon is terrain, and the islands' and archipelago's sea reaches as far. The p
 measured ground's ([terrain-look.md](../research/terrain-look.md#measured-albedo)); they darken
 their hollows through a cavity channel, wet their shores and tint covered ground toward the grass.
 The hills' and islands' meadows dry toward a measured dry grass up the hills and on slopes, and
-stay lush in the hollows, through a ramp. The node follows the current camera,
+stay lush in the hollows, through a ramp. The hills, islands, archipelago and small city draw their
+grass, sand, rock and forest floor with the plugin's texture sets
+([Ground and colliders](#ground-and-colliders)), their ramps tinting them; the canyon keeps its
+colours, since no set is red rock. The node follows the current camera,
   so a game's own player, or any camera, sees the world come in around it; a player is the game's
   (the checks and examples use a walker of their own, `wave_forge_godot/godot/walker.tscn`, which
   waits until the ground and its body are under it before it stands, as a game's player has to);
@@ -734,8 +737,9 @@ textured category's palette colour, which its grass and the far ground draw it i
 mean colour, and the far ground draws no textures. Its ramp tints the set by as much as it moves
 that mean, so a meadow's grass set dries up the hills as a meadow's colour does, and the near
 ground seen from afar meets the far ground's ramped colour. The node stacks the plugin's sets into texture
-arrays with mipmaps when it starts, which takes about half a second and about 89 MB of video
-memory ([measurements.md](../research/measurements.md) E70, where the textured shader also costs
+arrays with mipmaps when it first starts, and keeps them when it starts again, as an editor preview
+does on every change. Stacking takes about half a second, and the arrays hold about 89 MB of
+video memory ([measurements.md](../research/measurements.md) E70, where the textured shader also costs
 no more than the procedural one). Without a renderer, as headless, a given array keeps no data to
 take a mean from, and its categories keep their palette colours. The sets are 12 MB; a game that
 draws no textures, or brings its own arrays (imported as VRAM-compressed `Texture2DArray`s, say),
