@@ -407,7 +407,8 @@ land against a thirtieth before, with outcrops stepped in rock bands that shed s
 where droplets drain the land, lower than its median; the islands rise from shelves through a
 narrow beach and coastal plains, about a quarter of their land, to rough hills whose spines shed
 scree, wet where they drain; the archipelago's islands are gullied and shed scree from their
-crags; and the canyon's floors carry dry washes where the desert drains (`tests/presets.rs`,
+crags; the canyon's floors carry dry washes where the desert drains; and the small city stands in
+countryside of valley floors and gullied hills, wet where it drains (`tests/presets.rs`,
 [#366](https://github.com/AntonTegnelov/wave_forge/issues/366)). The inspector shows each parameter as a slider over its
 range that changes the running stages as it moves, reads its default until set and reverts to it
 (`verify_params.gd`), and Godot's inspector makes each change undoable. The editor plugin's dock

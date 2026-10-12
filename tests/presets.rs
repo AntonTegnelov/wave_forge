@@ -875,6 +875,57 @@ fn survey_city(runtime: &Runtime) -> (Site, usize, usize, f32, f32) {
 }
 
 #[test]
+fn the_city_stands_in_countryside_of_valley_floors_wet_where_it_drains() {
+    // A square of 24 by 24 chunks around the origin, 192 cells a side, of the countryside alone:
+    // the city's own stage is not asked for.
+    let mut runtime = Runtime::new(preset("city"), 3, SIZE);
+    let chunks: Vec<ChunkCoord> = (-12..12)
+        .flat_map(|y| (-12..12).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime
+        .request(&focus, &["hills", "wet"])
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+
+    let (mut heights, mut flat, mut wet_heights) = (Vec::new(), 0, Vec::new());
+    for &chunk in &chunks {
+        let height = runtime.field("hills", chunk).expect("generated");
+        let wet = runtime.field("wet", chunk).expect("generated");
+        for y in 1..7 {
+            for x in 1..7 {
+                let h = height.get(x, y);
+                let across = (height.get(x + 1, y) - height.get(x - 1, y)).abs();
+                let along = (height.get(x, y + 1) - height.get(x, y - 1)).abs();
+                flat += usize::from(across.max(along) < 0.1);
+                if wet.get(x, y) > 0.5 {
+                    wet_heights.push(h);
+                }
+                heights.push(h);
+            }
+        }
+    }
+    heights.sort_by(f32::total_cmp);
+    let median = heights[heights.len() / 2];
+    let floors = flat as f32 / heights.len() as f32;
+    let wet_mean = wet_heights.iter().sum::<f32>() / wet_heights.len().max(1) as f32;
+    println!(
+        "{floors} of the countryside flat, {} wet at a mean height of {wet_mean} against a median of {median}",
+        wet_heights.len()
+    );
+
+    assert!(
+        floors > 0.15,
+        "only {floors} of the countryside on flat floors"
+    );
+    assert!(
+        !wet_heights.is_empty() && wet_mean < median,
+        "{} wet columns at a mean height of {wet_mean}, the land's median {median}",
+        wet_heights.len()
+    );
+}
+
+#[test]
 fn every_value_in_the_city_ranges_gives_a_sound_world() {
     let grid = [0.0, 0.5, 1.0];
 
