@@ -416,7 +416,12 @@ scree, wet where they drain; the archipelago's islands are gullied and shed scre
 crags; the canyon's floors carry dry washes where the desert drains; and the small city stands in
 countryside of valley floors and gullied hills, wet where it drains; and the cave level's hills
 rise from valley floors, a quarter of their surface against a fiftieth before (`tests/presets.rs`,
-[#366](https://github.com/AntonTegnelov/wave_forge/issues/366)). The inspector shows each parameter as a slider over its
+[#366](https://github.com/AntonTegnelov/wave_forge/issues/366)). Where a preset's terrain cannot
+carry one of the three processes it is left out, by the owner's decision: no gullies cut across the
+canyon's terraced mesas, no drainage on the archipelago's islands, which are too small to drain
+anywhere but straight into the sea, and no talus on the small city's countryside or the cave
+level's surface, whose slopes are too gentle to shed
+([#415](https://github.com/AntonTegnelov/wave_forge/issues/415)). The inspector shows each parameter as a slider over its
 range that changes the running stages as it moves, reads its default until set and reverts to it
 (`verify_params.gd`), and Godot's inspector makes each change undoable. The editor plugin's dock
 lists the shipped presets, each a scene of a configured node, and copies the chosen one's settings
