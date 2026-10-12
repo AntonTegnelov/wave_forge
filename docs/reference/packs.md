@@ -315,7 +315,7 @@ Data flows only from coarse to fine. A stage reads stages as coarse as itself or
 factor, and loading refuses anything else. A fine stage reads a coarser field between its columns,
 linearly from the four around its column's centre, and a coarser category from the column its own
 lies in. Positions in expressions (`X`, `Y`, `Distance`, `Angle`, and noise) are in WFC cells at
-every scale, so a formula means the same at any scale. Field, Blur, Rules, Region, Lakes,
+every scale, so a formula means the same at any scale. Field, Blur, Horizon, Rules, Region, Lakes,
 Droplets and Talus stages can be coarse; Sites, Flatten, Solve and Scatter work on the WFC lattice, at scale 1, and may read coarser
 fields.
 

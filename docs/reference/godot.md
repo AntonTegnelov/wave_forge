@@ -494,7 +494,9 @@ horizon is terrain, and the islands' and archipelago's sea reaches as far. The p
 measured ground's ([terrain-look.md](../research/terrain-look.md#measured-albedo)); they darken
 their hollows through a cavity channel, wet their shores and tint covered ground toward the grass.
 The hills' and islands' meadows dry toward a measured dry grass up the hills and on slopes, and
-stay lush in the hollows, through a ramp. The hills, islands, archipelago and small city draw their
+stay lush in the hollows, through a ramp. The hills, islands, canyon and small city darken their
+valleys near and far by how much of the sky the land around hides, a Horizon stage over their far
+height given as the far ground's cavity and to the near ground's (`far_ground_cavity_stage`). The hills, islands, archipelago and small city draw their
 grass, sand, rock and forest floor with the plugin's texture sets
 ([Ground and colliders](#ground-and-colliders)), their ramps tinting them; the canyon keeps its
 colours, since no set is red rock. The node follows the current camera,
