@@ -1,0 +1,94 @@
+// A finite world for a colony game (docs/product/user-stories.md, G2): a world map of 32 by 32
+// world tiles, each a chunk of 8 by 8 columns, generated whole before play, then the ground a
+// player walks on any tile. The world map's fields are coarse, one column per tile: elevation,
+// rainfall and temperature, biomes by rules and the connected regions of each biome. The ground
+// reads the elevation between its columns and adds detail that fades out at every tile's edge, so a
+// local area meets the world map along its border. The ground is worn by droplets and drained by
+// rivers over the whole world as one region, and layered into strata below. A game's history,
+// given as tables, settles places of two cultures, leaves some in ruins and joins them by roads.
+(
+    version: 1,
+    bound: Some(Rect(min: (0.0, 0.0), max: (255.0, 255.0))),
+    water: Some((level: 0.0)),
+    tables: [
+        (name: "settlements", kind: Given(columns: [
+            // What stands there: a town of either culture, or the ruins of a fallen place.
+            ("x", Number), ("y", Number), ("size", Number),
+            ("built", Names(["woodlanders", "highlanders", "ruins"])),
+        ])),
+        (name: "roads", kind: Given(columns: [
+            ("x0", Number), ("y0", Number), ("x1", Number), ("y1", Number), ("width", Number),
+        ])),
+    ],
+    stages: [
+        // The world map, a column per world tile of 8 cells.
+        // Land in the middle, falling into the sea 90 to 125 cells from the centre.
+        (name: "elevation", scale: 8, kind: Field(Sub(
+            Mul(Noise(frequency: 0.01, octaves: 4, name: Some("land")), Constant(2.0)),
+            Add(Constant(0.55), Clamp(Remap(Distance((128.0, 128.0)), (90.0, 125.0), (0.0, 1.5)), 0.0, 1.5)),
+        ))),
+        (name: "rainfall", scale: 8, kind: Field(Noise(frequency: 0.02, octaves: 2, name: Some("rain")))),
+        // Colder to the north and up high.
+        (name: "temperature", scale: 8, kind: Field(Sub(
+            Remap(Y, (0.0, 256.0), (1.0, 0.0)),
+            Mul(Max(Input("elevation"), Constant(0.0)), Constant(0.5)),
+        ))),
+        (name: "biome", scale: 8, kind: Rules(rules: [
+            (category: "ocean", when: [Less(Input("elevation"), Constant(0.0))]),
+            (category: "mountain", when: [Greater(Input("elevation"), Constant(0.55))]),
+            (category: "tundra", when: [Less(Input("temperature"), Constant(0.3))]),
+            (category: "desert", when: [Less(Input("rainfall"), Constant(0.4))]),
+            (category: "forest", when: [Greater(Input("rainfall"), Constant(0.55))]),
+        ], otherwise: "grassland")),
+        // The world's connected regions of each biome: its seas, its ranges, its deserts. The
+        // world is 4 coarse chunks a side, one region.
+        (name: "regions", scale: 8, kind: Connected(input: "biome", region: 4)),
+
+        // The ground of a local area, in cells. How far a column lies inside its tile, 0 at the
+        // tile's edge and 1 at its middle, along each axis.
+        (name: "inside_x", kind: Field(Mul(Min(
+            Sub(Mul(X, Constant(0.125)), Floor(Mul(X, Constant(0.125)))),
+            Sub(Constant(1.0), Sub(Mul(X, Constant(0.125)), Floor(Mul(X, Constant(0.125))))),
+        ), Constant(2.0)))),
+        (name: "inside_y", kind: Field(Mul(Min(
+            Sub(Mul(Y, Constant(0.125)), Floor(Mul(Y, Constant(0.125)))),
+            Sub(Constant(1.0), Sub(Mul(Y, Constant(0.125)), Floor(Mul(Y, Constant(0.125))))),
+        ), Constant(2.0)))),
+        // The world map's elevation read between its columns, which every tile agrees on.
+        (name: "plain", kind: Field(Mul(Input("elevation"), Constant(24.0)))),
+        // Detail of up to 3 cells, fading out towards every tile's edge.
+        (name: "local", kind: Field(Add(
+            Input("plain"),
+            Mul(
+                Mul(Sub(Noise(frequency: 0.15, octaves: 2, name: Some("detail")), Constant(0.5)), Constant(6.0)),
+                Mul(Mul(Input("inside_x"), Input("inside_x")), Mul(Input("inside_y"), Input("inside_y"))),
+            ),
+        ))),
+        // Worn by droplets over the whole world, then drained by rivers to the sea.
+        (name: "worn", kind: Droplets(height: "local", region: 32, fade: 4)),
+        (name: "rivers", kind: Rivers(height: "worn", region: 32, sources: 6, width: (0.8, 2.0), step: 2)),
+        (name: "carved", kind: Apply(height: "worn", curves: "rivers", max_radius: 3, blend: 2, profile: Carve(1.0))),
+        // The history: places settled, flattened and built, or left in ruins, joined by roads.
+        (name: "roads", kind: TableCurves(table: "roads", from: ("x0", "y0"), to: ("x1", "y1"), radius: "width")),
+        (name: "paved", kind: Apply(height: "carved", curves: "roads", max_radius: 2, blend: 3, profile: Level)),
+        (name: "settlements", kind: TableSites(table: "settlements", height: "paved", at: ("x", "y"), size: "size", max_size: 2)),
+        (name: "ground", kind: Flatten(height: "paved", sites: "settlements", blend: 6)),
+        (name: "towns", kind: Solve(sites: "settlements", rules: "woodlanders",
+            by: Some(("built", [("highlanders", "highlanders"), ("ruins", "ruins")])),
+            bottom: Some(Tagged("street_level")), top: Some(Named("air")))),
+        // The world's peaks, chosen by the game's region job, which turns down a choice that falls
+        // in the sea.
+        (name: "peaks", kind: Region(job: "peaks", region: 32, inputs: ["ground"], budget: 32)),
+        // Strata under the ground: soil, sandstone, limestone and granite, deeper and deeper.
+        (name: "rock", kind: Volume(
+            density: Sub(Input("ground"), Z),
+            bottom: -40,
+            top: 64,
+            materials: Some((rules: [
+                (category: "soil", when: [Greater(Z, Sub(Input("ground"), Constant(2.0)))]),
+                (category: "sandstone", when: [Greater(Z, Sub(Input("ground"), Constant(10.0)))]),
+                (category: "limestone", when: [Greater(Z, Sub(Input("ground"), Constant(25.0)))]),
+            ], otherwise: "granite")),
+        )),
+    ],
+)
