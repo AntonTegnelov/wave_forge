@@ -291,7 +291,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
   the top of the ground over a cave, NaN until the surfaces within a cell of it are built.
 - `sample(stage, position)` and `atlas(stage, min, size)`: a stage's value at a position on the
   ground plane, and a world map of its own columns, computed on Godot's thread without chunks, for
-  Field, Rules, Nearest, Blur, Delta, Erode, Area, Lakes, Droplets and Talus stages (a Lakes,
+  Field, Rules, Nearest, Blur, Delta, Horizon, Erode, Area, Lakes, Droplets and Talus stages (a Lakes,
   Droplets or Talus stage computed once over the region a position lies in). An error, and NaN or an empty array, for
   another stage.
 - `locate(stage, position, within)`: the site of a Sites stage nearest a position, as `sites`

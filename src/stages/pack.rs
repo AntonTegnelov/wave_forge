@@ -296,6 +296,10 @@ const fn half() -> f32 {
     0.5
 }
 
+const fn eight() -> u32 {
+    8
+}
+
 const fn two() -> u32 {
     2
 }
@@ -393,6 +397,17 @@ pub enum StageKind {
     /// The highest value of another field less its lowest over the square of `radius` cells around
     /// each column: how uneven the ground is there, what Valheim calls terrain delta.
     Delta { input: String, radius: u32 },
+    /// How much of the sky the ground of another field hides from each column, 0 to 1: in each of
+    /// `directions` directions spread evenly around it, the steepest rise of the input over the
+    /// columns out to `reach` columns away, as the sine of its angle above the horizontal (none
+    /// below it), averaged over the directions. Heights and distances are both in cells, a coarser
+    /// stage's distances too, so the angles are true where cells are as tall as they are wide.
+    Horizon {
+        input: String,
+        reach: u32,
+        #[serde(default = "eight")]
+        directions: u32,
+    },
     /// Another field with gullies cut into it that run downhill and branch: `octaves` of them, the
     /// first `spacing` cells apart and `depth` cells from floor to the ridge's middle, each next at
     /// twice the frequency and `gain` times the depth. They are cut fully where the field slopes by
@@ -1196,6 +1211,7 @@ impl StageKind {
             Self::Field(_)
             | Self::Blur { .. }
             | Self::Delta { .. }
+            | Self::Horizon { .. }
             | Self::Erode { .. }
             | Self::Flatten { .. }
             | Self::Apply { .. }
@@ -2452,6 +2468,21 @@ impl Pack {
                 StageKind::Blur { input, radius } | StageKind::Delta { input, radius } => {
                     vec![(input.as_str(), Reach::Cells(*radius), Output::Field)]
                 }
+                StageKind::Horizon {
+                    input,
+                    reach,
+                    directions,
+                } => {
+                    if *reach == 0 {
+                        return Err(invalid("a horizon reaching no columns out".to_owned()));
+                    }
+                    if !(4..=32).contains(directions) {
+                        return Err(invalid(format!(
+                            "a horizon in {directions} directions, not 4 to 32"
+                        )));
+                    }
+                    vec![(input.as_str(), Reach::Cells(*reach), Output::Field)]
+                }
                 StageKind::Erode {
                     input,
                     spacing,
@@ -3440,6 +3471,7 @@ impl Pack {
                 }
                 StageKind::Blur { .. }
                 | StageKind::Delta { .. }
+                | StageKind::Horizon { .. }
                 | StageKind::Erode { .. }
                 | StageKind::Area { .. }
                 | StageKind::Sites { .. }
