@@ -7,17 +7,20 @@
 ## debris lies deep, its boulders drawn with the plugin's nature kit's rocks and the kinds around
 ## them with the kit's trees, bushes and ferns and the plugin's props (the continent binds no scenes
 ## of its own, so it would draw placeholders), loaded before the node starts. Once the view has
-## settled it finds the boulder with the most others within 15 m in the 9 by 9 chunks around, and
-## the camera stands 1.7 m over the ground 14 m from it, on ground no more than 3 m below or above
-## it with nothing of the ground in between and nothing placed within 4 m, looking at it under the
-## reference look (`reference_look.gd`). The picture lands in Godot's
-## user directory, and the script prints where, with how many boulders stand within 15 m.
+## settled it finds the boulder with the most others within 15 m in the 9 by 9 chunks around and
+## follows it, so the near ground stands all round it. Once that has settled the camera stands 1.7 m
+## over the lowest ground 14 m from it, or 20 or 28 m where no spot that near will do, with nothing
+## of the ground in between and nothing placed within 4 m, looking up at it against the slope its
+## debris came from under the reference look (`reference_look.gd`). The script fails if no spot
+## will do. The picture lands in Godot's user directory, and the script prints where, with how many
+## boulders stand within 15 m.
 extends SceneTree
 
 const ReferenceLook := preload("res://reference_look.gd")
 const TIMEOUT_S := 300.0
 const EYE_M := 1.7
-const BACK_M := 14.0
+## How far from the boulders the camera may stand, nearest first.
+const BACK_M: Array[float] = [14.0, 20.0, 28.0]
 const CLUSTER_M := 15.0
 const NATURE := "res://addons/wave_forge/nature/%s_%d.tscn"
 ## The continent's kinds drawn with the nature kit's kinds, and how many variants each has there.
@@ -41,6 +44,10 @@ var started_usec := 0
 var settled := 0
 ## The boulders around `at` once the view has settled, in Godot's world; empty before.
 var boulders := PackedVector3Array()
+## The densest boulder once found and followed, which the camera frames once the view about it has
+## settled.
+var cluster := Vector3.ZERO
+var framed := false
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -103,7 +110,16 @@ func _process(_delta: float) -> bool:
 		if boulders.is_empty():
 			_fail("no boulders in the 9 by 9 chunks around %s" % at)
 			return true
-		_place_camera(_densest())
+		cluster = _densest()
+		at = cluster
+		stages.follow(cluster)
+		settled = 0
+		return false
+	if not framed:
+		if not _place_camera(cluster):
+			_fail("no spot within %s m of the boulders at %s stands in sight of them, clear of anything placed" % [BACK_M, cluster])
+			return true
+		framed = true
 		settled = 0
 		return false
 	var path := "user://continent_boulders.png"
@@ -112,25 +128,30 @@ func _process(_delta: float) -> bool:
 	quit(0)
 	return true
 
-## Stands the camera at eye height 14 m from `cluster`, on ground no more than 3 m below or above
-## it and as low as that allows, so the slope behind the boulders shows, looking at it; and moves
-## `at` there.
-func _place_camera(cluster: Vector3) -> void:
+## Stands the camera at eye height as near `cluster` as `BACK_M` allows, on the lowest ground there,
+## so the slope behind the boulders shows, looking at it; and moves `at` there. Returns false, with
+## the camera unmoved, where no spot will do.
+func _place_camera(cluster: Vector3) -> bool:
 	at = cluster
-	var from := cluster + Vector3(BACK_M, EYE_M, 0.0)
-	var lowest := INF
-	for step in 16:
-		var angle := TAU * step / 16.0
-		var there := cluster + Vector3(cos(angle), 0.0, sin(angle)) * BACK_M
-		var height: float = stages.ground_height(there)
-		if is_nan(height) or absf(height - cluster.y) > 3.0 or height >= lowest:
-			continue
-		var eye := Vector3(there.x, height + EYE_M, there.z)
-		if not _in_sight(eye, cluster + Vector3(0.0, 1.0, 0.0)) or _crowded(eye):
-			continue
-		lowest = height
-		from = eye
-	camera.look_at_from_position(from, cluster + Vector3(0.0, 1.0, 0.0))
+	var target := cluster + Vector3(0.0, 1.0, 0.0)
+	for back: float in BACK_M:
+		var from := Vector3.INF
+		var lowest := INF
+		for step in 16:
+			var angle := TAU * step / 16.0
+			var there := cluster + Vector3(cos(angle), 0.0, sin(angle)) * back
+			var height: float = stages.ground_height(there)
+			if is_nan(height) or height >= lowest:
+				continue
+			var eye := Vector3(there.x, height + EYE_M, there.z)
+			if not _in_sight(eye, target) or _crowded(eye):
+				continue
+			lowest = height
+			from = eye
+		if from != Vector3.INF:
+			camera.look_at_from_position(from, target)
+			return true
+	return false
 
 ## Whether the ground stands below the line from `eye` to `target` all the way.
 func _in_sight(eye: Vector3, target: Vector3) -> bool:
