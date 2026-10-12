@@ -239,9 +239,10 @@ whose `WaterLook` tints the water from `shallow_colour` to `deep_colour` and fro
 water shader does; a game may draw it with a material of its own. With a ground material stage,
 the ground's wetness channel also takes the water's banks, wet out to two columns from the water
 (`wave_forge::water_banks`), and a chunk's ground waits for the water of the chunks around it.
-The plugin draws no sea plane of its own: a water stage that holds the sea's level, a constant field
-at the pack's water level say, draws the sea within the ground's radius as this water, tinted by its
-depth and fading in at the shore, and a game covers the sea beyond with a plane of its own.
+The plugin draws no sea plane of its own and passes no sea to `water_surface`: a water stage that
+holds the sea's level, a constant field at the pack's water level say, draws the sea within the
+ground's radius as this water, tinted by its depth and fading in at the shore, and a game covers the
+sea beyond with a plane of its own.
 
 ## Ambience
 

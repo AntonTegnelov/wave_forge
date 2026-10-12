@@ -3468,6 +3468,13 @@ impl WaveForgeStages {
         let wetness_stage = self.ground_wetness_stage.to_string();
         let cover_stage = self.ground_cover_stage.to_string();
         let water_stage = self.water_stage.to_string();
+        // The sea counts as water in the chunks' water, so the chunks the sea's plane leaves to
+        // their own water draw the sea there whatever the water's stage holds.
+        let sea = self
+            .pack
+            .as_ref()
+            .and_then(|pack| pack.water())
+            .map(|water| water.level);
         let cell = self.cell_size.to_array();
         // Drops first: a raise drops a chunk and generates it again in one frame, and it is due.
         for chunk in gone {
@@ -3512,6 +3519,7 @@ impl WaveForgeStages {
                     |at| worker.field(&water_stage, at),
                     |at| worker.field(&stage, at),
                     cell,
+                    sea,
                 );
                 let Some(surface) = surface else {
                     continue;
@@ -3549,6 +3557,7 @@ impl WaveForgeStages {
                     chunk,
                     |at| worker.field(&water_stage, at),
                     |at| worker.field(&stage, at),
+                    sea,
                 ) else {
                     continue;
                 };

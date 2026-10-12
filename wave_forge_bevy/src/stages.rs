@@ -1122,6 +1122,7 @@ fn drain(
                         |at| stages.worker.field(water, at),
                         |at| stages.worker.field(stage, at),
                         cell,
+                        None,
                     ) else {
                         continue;
                     };
@@ -1136,6 +1137,7 @@ fn drain(
                         chunk,
                         |at| stages.worker.field(water, at),
                         |at| stages.worker.field(stage, at),
+                        None,
                     ) else {
                         continue;
                     };
