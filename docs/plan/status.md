@@ -156,8 +156,11 @@ Each is a gap between the code and the design or the stories, with where it is t
   names to Fluent ([bevy.md](../reference/bevy.md#sound-and-names)); interiors that reverb through buses wait for an audio
   crate that has them on the tracked Bevy
   ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
-- **No sediment transport.** A prototype stage that carries sediment down rivers waits for a
-  decision on its look ([#348](https://github.com/AntonTegnelov/wave_forge/issues/348)).
+- **No sediment transport.** The droplets are the continent's erosion. A prototype stage that
+  carries sediment down rivers is parked on the branch `feat/transport`: its look did not beat the
+  droplets' at nine times their cost, and no story needs deltas or braided channels yet. If a game
+  does, a GPU port of the MIT transport kernel is the path, not the LGPL simulation
+  ([#348](https://github.com/AntonTegnelov/wave_forge/issues/348)).
 - **Licences for a distributed build.** Everything in both integrations' dependency trees is MIT,
   Apache-2.0, Zlib or Unlicense except godot-rust (0.5.5), which is MPL-2.0: compatible, but a
   distributed extension binary has to say where the MPL-covered source can be obtained.

@@ -674,7 +674,12 @@ its distance can be missed. It reads `reach` columns around each column and noth
 generate in any order and meet without seams, and it can be sampled. Handed to the ground as its
 cavity channel, alone or with a finer cavity (`Max(Input("hollow"), Input("occlusion"))`), it shades
 valleys and the feet of slopes near and far
-([godot.md](godot.md#ground-and-colliders), [bevy.md](bevy.md#ground-materials)).
+([godot.md](godot.md#ground-and-colliders), [bevy.md](bevy.md#ground-materials)). It does not
+know where the sun is, since the scene's light is the game's: beyond the reach of the engine's
+shadows a slope facing away from the sun is darkened by its own normal alone, and a valley behind a
+ridge casts no sun shadow. Far shadows that follow a moving sun would need a horizon per direction
+for the shader to read at the sun's azimuth, which waits for a game that needs them
+([#409](https://github.com/AntonTegnelov/wave_forge/issues/409)).
 
 ### Erode
 
