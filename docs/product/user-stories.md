@@ -335,6 +335,11 @@ verification project) walks the default preset, standing on its ground, with not
 (`verify_walk.gd`). The ground is drawn asset free by the procedural reference shader, its
 materials meeting along broken lines and steep ground turning to rock, on every renderer
 (`render_presets.sh`'s contact sheets, [#322](https://github.com/AntonTegnelov/wave_forge/issues/322)).
+A category can instead be drawn with one of eight CC0 texture sets the addon ships, or a game's
+own, seen from the sides on steep ground and with no seam between chunks, its grass and far ground
+in the set's mean colour (`verify_ground.gd`, `verify_far.gd`, `render_ground.gd -- textured` on
+both renderers, Bevy's `ground_material_render`, [#323](https://github.com/AntonTegnelov/wave_forge/issues/323));
+the presets do not use them yet ([#405](https://github.com/AntonTegnelov/wave_forge/issues/405)).
 `render_views.sh` shows every preset from eye level, oblique and top-down under the sun and sky a
 game gets from the inspector, on Compatibility and Forward+, for judging the look
 ([testing.md](../guides/testing.md#the-engine-integrations),

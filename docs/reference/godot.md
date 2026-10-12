@@ -193,6 +193,7 @@ with no coloured module has none. `proxy_chunks()` lists the chunks given their 
 | | `ground_palette` | a colour per category of `ground_material_stage`, for the reference ground shader |
 | | `ground_ramp_colours`, `ground_ramp_drivers`, `ground_ramp_heights` | a ramp per category, by index as `ground_palette`, along which the reference ground shader moves the category's colour: the colour it runs toward, and a `Vector4` of how far the ground's height (0 to 1 over `ground_ramp_heights`, in world units), its slope (0 flat to 1 sheer), its cavity and its wetness each move it, from -1 to 1, summed and clamped to the ramp. A category past either array's end has none. Handed to the shader as `wave_forge_ramps` and `ramp_heights` |
 | | `ground_relief` | a micro-height per category, by index as `ground_palette`: a `Vector4` of how much of it is pebbles, cracks and tufts, and how wide one feature is in world units (`wave_forge::GroundRelief`); a category past its end has fine tufts. The reference ground shader bumps the ground near the camera by it and lets the material standing higher win where materials meet. Handed to the shader as `wave_forge_relief` |
+| | `ground_texture_layers`, `ground_albedo_height`, `ground_normal_roughness` | a texture set per category, by index as `ground_palette`: the layer of the set the reference ground shader draws it with instead of its colour, ramp and relief, or -1, as for a category past its end, for its colour. The layers are those of the two texture arrays given, the colour with its height in alpha and the OpenGL normal with its roughness in alpha, or with neither given the plugin's own eight sets ([Ground and colliders](#ground-and-colliders)); `start` refuses a layer past the sets or one array without the other. Handed to the shader as `wave_forge_texture_layers`, `wave_forge_albedo_height` and `wave_forge_normal_roughness` |
 | | `ground_cavity_stage`, `ground_wetness_stage`, `ground_cover_stage` | field stages whose values, 0 to 1, the reference ground shader takes as channels: a cavity that darkens hollows, a wetness that darkens and smooths the ground, and a cover that tints it toward the grass where the grass fades out |
 | | `sea_material` | the material the pack's sea is drawn with: a plane at the pack's water level ([packs.md](packs.md#water)) under the followed chunk, as wide as the view or, when it reaches further, the far ground; empty, or a pack without water, draws none |
 | | `water_stage`, `water_material` | a field stage at the ground's scale holding the level of the lakes' and rivers' water ([packs.md](packs.md#water-surfaces)): each chunk whose ground is drawn also gets its water, drawn with `water_material`, or `sea_material` when that is empty, and with neither, as with the sea, not drawn. Each vertex of the water carries how deep it stands over the ground in its second UV's x; `addons/wave_forge/water.tres`, the reference water shader (`shaders/water.gdshader`), tints the water from a light shallow colour to a dark deep one by it and fades it out toward the shore, on every renderer. With `ground_material_stage` set, the ground's wetness channel also takes the water's banks, wet out to two columns from the water (`wave_forge::water_banks`), and a chunk's ground waits for the water of the chunks around it. `water_chunks()` lists the chunks with water drawn and `water_surface_of(chunk)` gives one's `positions`, `depths` and `indices`; loading refuses a water stage that is no field |
@@ -712,6 +713,33 @@ default; zero noise and
 the reference shader given as `ground_material`, whose parameters every chunk's copy keeps. What
 the shader costs is in [measurements.md](../research/measurements.md) (E58, and E66 and E69 for
 the micro-heights).
+
+A category can be drawn with a texture set instead of its colour, ramp and relief.
+`ground_texture_layers` gives each category the layer of a set in two texture arrays,
+`ground_albedo_height` (the colour, sRGB, with the height in alpha) and `ground_normal_roughness`
+(the OpenGL normal with the roughness in alpha), or, with neither given, in the plugin's own eight:
+0 grass, 1 dirt, 2 gravel, 3 sand, 4 rock, 5 cliff, 6 snow and 7 mud, ambientCG's CC0 Grass004,
+Ground106, Gravel022, Ground080, Rock030, Rock051, Snow010A and Ground071, kept in
+`addons/wave_forge/ground_textures/` with their licence (`LICENSE_ambientCG.txt`) and written at
+1024 texels a side by `tools/make_ground_textures.gd`. The shader samples a set in world space, so
+it runs on across chunks with no seam: from above, and on steep ground from the sides as well,
+weighted by the normal, each sample blended by a broad noise with a second one turned and scaled,
+so its tiles do not repeat. Where materials meet, the set's height takes the relief's place; its
+normal leans the ground at every distance, its mipmaps fading it; and its roughness moves the
+material's `roughness` by `texture_roughness` (0.25), since photographed sets read glossier than
+ground does in sunlight. `texture_size` (3 world units a tile) and `texture_normal` (1) set the
+rest. Steep ground does not turn a textured category to rock, so a cliff set draws its own cliff;
+the channels, the gullies and the broad variation darken and tint it as they do a colour. A
+textured category's palette colour, which its grass and the far ground draw it in, is its set's
+mean colour, and the far ground draws no textures. The node stacks the plugin's sets into texture
+arrays with mipmaps when it starts, which takes about half a second and about 89 MB of video
+memory ([measurements.md](../research/measurements.md) E70, where the textured shader also costs
+no more than the procedural one). Without a renderer, as headless, a given array keeps no data to
+take a mean from, and its categories keep their palette colours. The sets are 12 MB; a game that
+draws no textures, or brings its own arrays (imported as VRAM-compressed `Texture2DArray`s, say),
+can leave them out of an export with `addons/wave_forge/ground_textures/*` in the export preset's
+filters to exclude. `render_ground.gd -- textured` draws the ground check's pack with the sand,
+rock and grass sets.
 
 With `ground_cavity_stage`, `ground_wetness_stage` or `ground_cover_stage` set to field stages at
 the ground's scale, a chunk's ground also waits for their values at its vertices, those beyond its
