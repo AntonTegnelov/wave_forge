@@ -251,6 +251,39 @@ fn a_rejected_attempt_is_retried_with_new_hashes_within_the_budget() {
 }
 
 #[test]
+fn an_accepted_region_keeps_why_each_attempt_before_it_was_rejected() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let mut runtime = runtime(vec![height(), region("picky", 1, 0, 64)])
+        .with_region_job("picky", Picky(Arc::clone(&runs)));
+    let chunks: Vec<ChunkCoord> = (0..6).map(|x| ChunkCoord::new(x, 0, 0)).collect();
+    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+
+    runtime.request(&focus, &["rivers"]).expect("a stage");
+    runtime.run_until_idle().expect("every region is accepted");
+
+    let logs: Vec<&[String]> = chunks
+        .iter()
+        .map(|chunk| {
+            runtime
+                .region_log("rivers", (chunk.x, 0))
+                .expect("a computed region")
+        })
+        .collect();
+    let rejected: usize = logs.iter().map(|log| log.len()).sum();
+    assert_eq!(
+        rejected + chunks.len(),
+        runs.load(Ordering::SeqCst),
+        "{logs:?}"
+    );
+    for log in logs {
+        for (retry, reason) in log.iter().enumerate() {
+            assert_eq!(reason, &format!("attempt {retry} drew an odd hash"));
+        }
+    }
+    assert!(runtime.region_log("rivers", (40, 40)).is_none());
+}
+
+#[test]
 fn a_region_is_given_up_on_with_every_reason_when_its_budget_runs_out() {
     let mut runtime =
         runtime(vec![height(), region("never", 1, 0, 3)]).with_region_job("never", Never);
