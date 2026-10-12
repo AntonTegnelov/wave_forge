@@ -16,7 +16,8 @@
 ## per vertex and the ground's materials and palette, and fading out before the edge of the square of chunks within the radius, measured
 ## from the followed chunk's centre, over which every chunk's ground takes the cover's tint in; the
 ## centre moves with the followed chunk. Last, raising the first
-## column of the chunk beside the origin builds the origin's ground again, which reaches to it.
+## column of the chunk beside the origin builds the origin's ground again, which reaches to it, and
+## starting the node again keeps the plugin's texture sets it stacked.
 extends SceneTree
 
 const CELLS := 8
@@ -44,6 +45,11 @@ var raised := Vector2i(CELLS, 3)
 var before := 0.0
 ## The mean colour of the texture set `TEXTURED_LAYER`, once worked out.
 var textured_mean: Variant = null
+## The plugin's texture sets the ground was drawn with before the node started again, when and
+## how long that start took.
+var sets_before: Texture2DArray
+var restarted_usec := 0
+var restart_ms := 0.0
 
 func _initialize() -> void:
 	var wrong := _world("height")
@@ -105,6 +111,8 @@ func _world(material_stage: String) -> Node:
 	return node
 
 func _process(_delta: float) -> bool:
+	if sets_before != null:
+		return _check_restarted()
 	if raising:
 		return _check_raise()
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
@@ -322,12 +330,38 @@ func _check_raise() -> bool:
 		var vertices: PackedVector3Array = RenderingServer.mesh_surface_get_arrays(rid, 0)[Mesh.ARRAY_VERTEX]
 		if absf(vertices[raised.y * (CELLS + 1) + raised.x].y - _height(raised)) < 1e-4:
 			print("verify_ground: raising the first column of the chunk beside the origin builds the origin's ground again, %.1f s after the raise" % ((Time.get_ticks_usec() - started_usec) / 1e6))
-			quit(0)
-			return true
+			_check_restart()
+			return false
 	if (Time.get_ticks_usec() - started_usec) / 1e6 > TIMEOUT_S:
 		_fail("the origin's ground still stands at the column's old height beside the raise")
 		return true
 	return false
+
+## Starts the node again, as an editor preview does on every change, timing the start.
+func _check_restart() -> void:
+	sets_before = world.ground_material_of(world.ground_chunks()[0]).get_shader_parameter("wave_forge_albedo_height")
+	var started := Time.get_ticks_usec()
+	if not world.start():
+		_fail("the stages did not start again")
+		return
+	restart_ms = (Time.get_ticks_usec() - started) / 1000.0
+	world.follow(Vector3(1, 0, 1))
+	restarted_usec = Time.get_ticks_usec()
+
+## Whether the started-again node's ground has arrived with the texture sets it stacked before.
+func _check_restarted() -> bool:
+	if world.ground_chunks().is_empty():
+		if (Time.get_ticks_usec() - restarted_usec) / 1e6 > TIMEOUT_S:
+			_fail("no ground arrived after starting again")
+			return true
+		return false
+	var sets: Texture2DArray = world.ground_material_of(world.ground_chunks()[0]).get_shader_parameter("wave_forge_albedo_height")
+	if sets != sets_before:
+		_fail("starting again stacked the plugin's texture sets again")
+		return true
+	print("verify_ground: starting again keeps the plugin's texture sets, in %.1f ms" % restart_ms)
+	quit(0)
+	return true
 
 func _fail(message: String) -> void:
 	printerr("verify_ground: " + message)

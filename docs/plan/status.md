@@ -52,7 +52,9 @@ Both engines draw lakes and rivers as water surfaces, and sound running water al
 louder where they flow faster. Their reference ground shaders draw the palette procedurally: borders
 broken by noise, rock in strata, gullies down steep ground, a broad colour variation, cavity,
 wetness and cover from field stages, and the ground tinted toward the grass where its blades fade
-out ([terrain-look.md](../research/terrain-look.md)).
+out ([terrain-look.md](../research/terrain-look.md)). A material can be drawn with a texture set
+instead, triplanar on steep ground; the Godot addon ships eight CC0 sets, which four of its presets
+draw their ground with ([godot.md](../reference/godot.md#ground-and-colliders)).
 
 **Products.** Instance sets in Godot's MultiMesh layout with positional `InstanceId`s, for streamed
 worlds and towns; navigation source geometry with a border into the neighbours; `YUpSpace` for
@@ -154,12 +156,8 @@ Each is a gap between the code and the design or the stories, with where it is t
   names to Fluent ([bevy.md](../reference/bevy.md#sound-and-names)); interiors that reverb through buses wait for an audio
   crate that has them on the tracked Bevy
   ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
-- **No sediment transport, and presets drawn without texture sets.** A prototype stage that carries
-  sediment down rivers waits for a decision on its look
-  ([#348](https://github.com/AntonTegnelov/wave_forge/issues/348)). The ground shader in both
-  engines can draw a material with a texture set, and the addon ships eight CC0 sets
-  ([godot.md](../reference/godot.md#ground-and-colliders)), but no preset uses them yet
-  ([#405](https://github.com/AntonTegnelov/wave_forge/issues/405)).
+- **No sediment transport.** A prototype stage that carries sediment down rivers waits for a
+  decision on its look ([#348](https://github.com/AntonTegnelov/wave_forge/issues/348)).
 - **Licences for a distributed build.** Everything in both integrations' dependency trees is MIT,
   Apache-2.0, Zlib or Unlicense except godot-rust (0.5.5), which is MPL-2.0: compatible, but a
   distributed extension binary has to say where the MPL-covered source can be obtained.

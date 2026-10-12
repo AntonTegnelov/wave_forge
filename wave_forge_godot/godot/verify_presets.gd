@@ -7,7 +7,8 @@
 ## chunk of the view, stands ground there (its ground's, or the top of its volume for a preset drawn
 ## from a volume alone), has bodies and navigation, draws its sea when it has one, draws its far ground when it has one, draws its props
 ## (trees, cacti, palms) as MultiMesh instances, and has a palette colour per material of its ground
-## or volume, each as bright as the measured ground of its class.
+## or volume, each drawn as bright as the measured ground of its class: for a ground, the colour its
+## material's palette holds, a textured material's its texture set's mean.
 extends SceneTree
 
 const Presets := preload("res://addons/wave_forge/presets.gd")
@@ -109,6 +110,12 @@ func _settled(path: String, stats: Dictionary) -> String:
 	var palette: PackedColorArray = stages.volume_palette if volume else stages.ground_palette
 	if materials.size() != palette.size():
 		return "%s has %d palette colours for the materials %s" % [path, palette.size(), materials]
+	# What the ground is drawn in: its palette, a textured material taking its set's mean colour.
+	if not volume:
+		var material: ShaderMaterial = stages.ground_material_of(stages.ground_chunks()[0])
+		var drawn: Image = material.get_shader_parameter("wave_forge_palette").get_image()
+		for index in materials.size():
+			palette[index] = drawn.get_pixel(index, 0)
 	for index in materials.size():
 		if materials[index] in NOT_GROUND:
 			continue
