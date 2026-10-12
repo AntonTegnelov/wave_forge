@@ -29,7 +29,7 @@ use bevy_shader::ShaderRef;
 use wave_forge::stages::Field;
 use wave_forge::{
     ChunkCoord, GROUND_CHANNELS, GrassThinning, GroundMesh, GroundRelief, VolumeMesh,
-    far_ground_categories, far_steps,
+    far_ground_categories, far_ground_values, far_steps,
 };
 
 /// How many colours a palette holds: one per category a Rules stage can have.
@@ -1088,6 +1088,31 @@ pub fn far_ground_material(
             normal_roughness: images.add(no_texture_sets()),
         },
     })
+}
+
+/// The channels of a coarse chunk's far ground material ([`far_ground_material`]), for its
+/// `extension.channels`: each vertex of its grid takes the value of `cavity`, a field stage at the
+/// far ground's scale (a Horizon stage over the far height, say), of the column under it
+/// ([`wave_forge::far_ground_values`]) as its cavity, with no wetness or cover, so the far ground
+/// darkens as the near ground does by its channels. `None` until the far ground and the stage's
+/// chunk are both there, or without a far ground.
+#[must_use]
+pub fn far_ground_channels(
+    stages: &WaveForgeStages,
+    chunk: ChunkCoord,
+    cavity: &str,
+) -> Option<Image> {
+    let far = stages.far_ground(chunk)?;
+    let field = stages.field(cavity, chunk)?;
+    let scale = stages.far_ground_scale()?;
+    let cell = stages.settings().cell_size;
+    let side = scale * far_steps(field.size[0], scale) + 1;
+    let channels: Vec<f32> = far_ground_values(far, field, scale, cell.to_array())
+        .into_iter()
+        .take((side * side) as usize)
+        .flat_map(|value| [value, 0.0, 0.0])
+        .collect();
+    Some(ground_channels_image([side, side], &channels))
 }
 
 #[cfg(test)]

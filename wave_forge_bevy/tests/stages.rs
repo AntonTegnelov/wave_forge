@@ -27,7 +27,9 @@ use wave_forge::{
     ground_materials, ground_values, volume_height, volume_mesh, water_banks, water_surface,
 };
 use wave_forge_bevy::GenerationFocus;
-use wave_forge_bevy::materials::{GroundMaterials, coloured_surface_mesh, far_ground_material};
+use wave_forge_bevy::materials::{
+    GroundMaterials, coloured_surface_mesh, far_ground_channels, far_ground_material,
+};
 use wave_forge_bevy::stages::{
     FarGroundDropped, FluidDropped, FluidReady, GroundDropped, GroundReady, InstanceSpawned,
     Placed, StageDropped, StagePlacements, StageReady, StagesSaved, StagesSettings, VolumeDropped,
@@ -1211,6 +1213,7 @@ const FAR_PACK: &str = r#"(
         (name: "height", kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
         (name: "far", scale: 8, kind: Field(Mul(Noise(frequency: 0.01, octaves: 3), Constant(10.0)))),
         (name: "far_surface", scale: 8, kind: Rules(rules: [(category: "high", when: [Greater(Input("far"), Constant(0.0))])], otherwise: "low")),
+        (name: "far_occlusion", scale: 8, kind: Horizon(input: "far", reach: 4)),
     ],
 )"#;
 
@@ -1286,6 +1289,58 @@ fn a_far_grounds_material_holds_its_categories_on_its_grid_of_coarse_columns() {
         Vec4::new(1.0 / 16.0, 1.0 / 16.0, 8.0, 0.0)
     );
     assert_ne!(material.extension.layout, GroundMaterials::NEAR_LAYOUT);
+}
+
+#[test]
+fn a_far_grounds_channels_hold_each_vertexs_cavity_from_the_coarse_column_under_it() {
+    let mut app = app_with(
+        WaveForgeStagesPlugin::new(&["height", "far", "far_occlusion"], SETTINGS, || {
+            Ok(Runtime::new(
+                Arc::new(Pack::parse(FAR_PACK).expect("a valid pack")),
+                4,
+                SETTINGS.chunk,
+            ))
+        })
+        .with_ground("height")
+        .with_far_ground("far", 8)
+        .with_radius("far", 24)
+        .with_radius("far_occlusion", 24),
+    );
+    let chunk = ChunkCoord::new(1, 0, 0);
+    run_until(&mut app, |app| {
+        let stages = app.world().resource::<WaveForgeStages>();
+        stages.far_ground(chunk).is_some() && stages.field("far_occlusion", chunk).is_some()
+    });
+    let stages = app.world().resource::<WaveForgeStages>();
+
+    let channels = far_ground_channels(stages, chunk, "far_occlusion")
+        .expect("its far ground and its cavity arrived");
+
+    // As the material's ids: 9 vertices a side, each the value of the coarse column under it, as
+    // red of four floats, the rest zero.
+    let far = stages.far_ground(chunk).expect("built");
+    let field = stages.field("far_occlusion", chunk).expect("arrived");
+    let expected: Vec<f32> =
+        wave_forge::far_ground_values(far, field, 8, SETTINGS.cell_size.to_array())
+            .into_iter()
+            .take(9 * 9)
+            .flat_map(|value| [value, 0.0, 0.0, 0.0])
+            .collect();
+    assert_eq!((channels.width(), channels.height()), (9, 9));
+    let held: Vec<f32> = channels
+        .data
+        .as_deref()
+        .expect("data")
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&bytes| f32::from_le_bytes(bytes))
+        .collect();
+    assert_eq!(held, expected);
+    assert!(
+        held.iter().any(|&value| value > 0.0),
+        "no vertex is occluded"
+    );
 }
 
 #[test]
