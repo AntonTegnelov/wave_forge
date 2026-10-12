@@ -350,7 +350,10 @@ game gets from the inspector, on Compatibility and Forward+, for judging the loo
 ground out to about 1 km, so at eye level its horizon is terrain, not sky; its far height stands
 where the ground does (`tests/presets.rs`, [#358](https://github.com/AntonTegnelov/wave_forge/issues/358)).
 Every preset's ground fills its view, and its colours are as bright as measured ground of their
-kind (`verify_presets.gd`, [#359](https://github.com/AntonTegnelov/wave_forge/issues/359)).
+kind (`verify_presets.gd`, [#359](https://github.com/AntonTegnelov/wave_forge/issues/359)). The
+islands' and the archipelago's sea is drawn near the player as water tinted by its depth and fading
+in at the shore, with wet banks, the sea's plane leaving those chunks to it (`verify_presets.gd`,
+`render_presets.sh`'s views, [#389](https://github.com/AntonTegnelov/wave_forge/issues/389)).
 Grass grows in clumps that share a height, a lean and a colour between healthy and dry, each
 blade's base in the colour of the ground under it, on both renderers and in Bevy; it thins with
 distance, so the hills preset draws grass out to three chunks for fewer blades than two chunks of

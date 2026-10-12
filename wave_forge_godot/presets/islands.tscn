@@ -11,11 +11,11 @@
 [ext_resource type="PackedScene" path="res://addons/wave_forge/nature/rock_2.tscn" id="k9_rock_2"]
 [ext_resource type="PackedScene" path="res://addons/wave_forge/nature/rock_3.tscn" id="k10_rock_3"]
 
-[ext_resource type="StandardMaterial3D" path="res://addons/wave_forge/sea.tres" id="2_sea"]
+[ext_resource type="ShaderMaterial" path="res://addons/wave_forge/sea.tres" id="2_sea"]
 
 [node name="Islands" type="WaveForgeStages"]
 pack_file = "res://addons/wave_forge/presets/islands.world.ron"
-targets = PackedStringArray("height", "surface", "trees", "far_height", "far_surface", "hollow", "wet", "rocks", "far_occlusion")
+targets = PackedStringArray("height", "surface", "trees", "far_height", "far_surface", "hollow", "wet", "rocks", "far_occlusion", "water")
 start_on_ready = true
 preview_in_editor = true
 view_radius = 3
@@ -32,6 +32,7 @@ ground_wetness_stage = "wet"
 ground_cavity_stage = "hollow"
 ground_material_stage = "surface"
 sea_material = ExtResource("2_sea")
+water_stage = "water"
 ground_palette = PackedColorArray(0.69, 0.62, 0.482, 1, 0.514, 0.522, 0.478, 1, 0.56, 0.54, 0.5, 1, 0.376, 0.384, 0.231, 1)
 ground_relief = PackedVector4Array(0.15, 0, 0.35, 0.3, 0.25, 0.75, 0, 0.9, 0.7, 0, 0.2, 0.45, 0, 0, 1, 0.45)
 ground_texture_layers = PackedInt32Array(3, 4, 2, 0)
