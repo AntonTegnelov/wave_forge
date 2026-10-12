@@ -803,9 +803,10 @@ fn elapsed_ms(since: std::time::Instant) -> f64 {
 }
 
 /// How long a frame may already have spent on Godot's thread, in milliseconds, for a navigation
-/// bake to be started in it: starting one costs up to a millisecond, and P1 bounds the node's own
-/// time at 2 ms a frame.
-const NAVIGATION_START_MS: f64 = 1.0;
+/// bake to be started in it. P1 bounds the node's own time at 2 ms a frame, and gathering a bake's
+/// source and starting it has taken up to 1.2 ms on the CI runner (measurements.md E71), so a start
+/// after 1 ms carried frames past the bound; most frames spend a tenth of a millisecond, so bakes still start.
+const NAVIGATION_START_MS: f64 = 0.5;
 
 /// The names of the pack's Solve stages, in the pack's order.
 fn solve_stages(pack: &Pack) -> Vec<String> {
