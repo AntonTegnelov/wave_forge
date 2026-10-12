@@ -14,28 +14,29 @@
         "meadows": (default: 0.6, range: (0.0, 1.0)),
     },
     noises: {
+        // Ridged and broad: the long ridgelines the hills run along.
+        "chains": (noise_type: SimplexSmooth, seed: 29, frequency: 0.004, fractal_type: Ridged, fractal_octaves: 3,
+            domain_warp_enabled: true, domain_warp_amplitude: 60.0, domain_warp_frequency: 0.003, domain_warp_fractal_octaves: 2),
         // Warped, so the hills wind rather than lining up.
         "hills": (noise_type: SimplexSmooth, seed: 21, frequency: 0.012, fractal_octaves: 4,
             domain_warp_enabled: true, domain_warp_amplitude: 40.0, domain_warp_frequency: 0.008, domain_warp_fractal_octaves: 2),
-        // Ridged and warped: the crests that run along the hills.
-        "crests": (noise_type: SimplexSmooth, seed: 24, frequency: 0.006, fractal_type: Ridged, fractal_octaves: 4,
-            domain_warp_enabled: true, domain_warp_amplitude: 40.0, domain_warp_frequency: 0.004, domain_warp_fractal_octaves: 2),
         "detail": (noise_type: SimplexSmooth, seed: 22, frequency: 0.07, fractal_octaves: 2),
         "woods": (noise_type: Perlin, seed: 23, frequency: 0.035, fractal_octaves: 2),
     },
     stages: [
-        // The hills rise from 2 cells above the ground's zero to as much as 22, by the hills amount,
-        // their crests sharpened where the ridged noise peaks.
-        (name: "shape", kind: Field(Add(
-            Constant(2.0),
-            Mul(
-                Add(
-                    Add(Add(FastNoise("hills"), Constant(1.0)), Mul(FastNoise("detail"), Constant(0.15))),
-                    Mul(Pow(Remap(FastNoise("crests"), (-1.0, 1.0), (0.0, 1.0)), 2.5), Constant(1.0)),
-                ),
-                Add(Constant(3.0), Mul(Param("hills"), Constant(7.0))),
-            ),
-        ))),
+        // The relief, about 0 to 2.6: warped hills under long ridgelines that wind through them,
+        // and a little detail.
+        (name: "relief", kind: Field(Add(Add(Mul(Add(FastNoise("hills"), Constant(1.0)), Constant(0.45)), Mul(Pow(Remap(FastNoise("chains"), (-1.0, 1.0), (0.0, 1.0)), 1.5), Constant(1.5))), Mul(FastNoise("detail"), Constant(0.08))))),
+        // The land rises from 2 cells above the ground's zero by as much as the hills amount: the
+        // low half of the relief lifted onto floors that rise only gently, where water would
+        // settle and the meadows spread, and the rest rising from them as before.
+        (name: "rolling", kind: Field(Add(Constant(2.0), Mul(Curve(Input("relief"), [(0.0, 0.55), (0.8, 0.6), (0.95, 0.7), (1.1, 0.95), (1.35, 1.45), (2.6, 3.2)]), Add(Constant(3.0), Mul(Param("hills"), Constant(7.0))))))),
+        // Outcrops: from 3 cells below the rock's line, the ground steps up in treads and risers 2
+        // cells high, as bands of rock weather.
+        (name: "shape", kind: Field(Add(Input("rolling"), Mul(
+            Sub(Mul(Add(Floor(Mul(Input("rolling"), Constant(0.5))), Pow(Sub(Mul(Input("rolling"), Constant(0.5)), Floor(Mul(Input("rolling"), Constant(0.5)))), 3.0)), Constant(2.0)), Input("rolling")),
+            Clamp(Mul(Sub(Input("rolling"), Add(Constant(5.3), Mul(Param("hills"), Constant(14.7)))), Constant(0.33)), 0.0, 1.0),
+        )))),
         // Gullies cut down the steeper slopes, so the tallest hills come out dissected and the
         // gentle ones keep their shape.
         (name: "height", kind: Erode(input: "shape", spacing: 20.0, octaves: 5, depth: 1.5, slope: 0.3, smooth: 3)),
@@ -71,19 +72,11 @@
         // darkens the hollows and the valleys.
         (name: "around", kind: Blur(input: "height", radius: 4)),
         (name: "hollow", kind: Field(Max(Clamp(Mul(Sub(Input("around"), Input("height")), Constant(0.6)), 0.0, 1.0), Input("far_occlusion")))),
-        // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the hills' shape
-        // without the gullies over a world map of 8 by 8 cells a column, coloured by the same
-        // categories as the surface.
-        (name: "far_height", scale: 8, kind: Field(Add(
-            Constant(2.0),
-            Mul(
-                Add(
-                    Add(Add(FastNoise("hills"), Constant(1.0)), Mul(FastNoise("detail"), Constant(0.15))),
-                    Mul(Pow(Remap(FastNoise("crests"), (-1.0, 1.0), (0.0, 1.0)), 2.5), Constant(1.0)),
-                ),
-                Add(Constant(3.0), Mul(Param("hills"), Constant(7.0))),
-            ),
-        ))),
+        // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the hills' floors
+        // and rise without the outcrops' steps or the gullies, too fine for a world map of 8 by 8
+        // cells a column, coloured by the same categories as the surface.
+        (name: "far_relief", scale: 8, kind: Field(Add(Add(Mul(Add(FastNoise("hills"), Constant(1.0)), Constant(0.45)), Mul(Pow(Remap(FastNoise("chains"), (-1.0, 1.0), (0.0, 1.0)), 1.5), Constant(1.5))), Mul(FastNoise("detail"), Constant(0.08))))),
+        (name: "far_height", scale: 8, kind: Field(Add(Constant(2.0), Mul(Curve(Input("far_relief"), [(0.0, 0.55), (0.8, 0.6), (0.95, 0.7), (1.1, 0.95), (1.35, 1.45), (2.6, 3.2)]), Add(Constant(3.0), Mul(Param("hills"), Constant(7.0))))))),
         // How much of the sky the land within 8 coarse columns hides from each, at the far
         // ground's scale (docs/reference/packs.md, "Horizon"): the far ground's cavity, and the
         // near ground's in its valleys, so the two darken alike where they meet.
