@@ -401,7 +401,11 @@ seeds finds a sound world at each, more land as `land` or `islands` rises, more 
 `forest` does, more relief as `hills` does, more sand as `canyons` does, more level ground as
 `strata` does, more shallow water as `reefs` does, more hollow rock, openings and crystal as
 `caves`, `openings` and `crystals` do and more buildings as `density` does, and a changed parameter
-regenerates only what reads it (`tests/presets.rs`, `verify_params.gd`). The inspector shows each parameter as a slider over its
+regenerates only what reads it (`tests/presets.rs`, `verify_params.gd`). The hills are shaped
+rather than evenly bumpy: they run along ridgelines over flat valley floors, about a fifth of their
+land against a thirtieth before, with outcrops stepped in rock bands that shed scree, and wet lines
+where droplets drain the land, lower than its median (`tests/presets.rs`,
+[#366](https://github.com/AntonTegnelov/wave_forge/issues/366)). The inspector shows each parameter as a slider over its
 range that changes the running stages as it moves, reads its default until set and reverts to it
 (`verify_params.gd`), and Godot's inspector makes each change undoable. The editor plugin's dock
 lists the shipped presets, each a scene of a configured node, and copies the chosen one's settings

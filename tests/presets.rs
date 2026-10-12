@@ -269,6 +269,71 @@ fn every_value_in_the_hills_ranges_gives_a_sound_world() {
 }
 
 #[test]
+fn the_hills_lie_on_flat_floors_under_ridges_with_scree_and_wet_lines_where_they_drain() {
+    // A square of 24 by 24 chunks around the origin, 192 cells a side: several ridges and floors.
+    let pack = preset("hills");
+    let mut runtime = Runtime::new(Arc::clone(&pack), 3, SIZE);
+    let chunks: Vec<ChunkCoord> = (-12..12)
+        .flat_map(|y| (-12..12).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime
+        .request(&focus, &["height", "surface", "wet"])
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+    let scree = pack
+        .kind("surface")
+        .expect("a surface stage")
+        .categories()
+        .iter()
+        .position(|&name| name == "scree")
+        .expect("scree") as u8;
+
+    let (mut heights, mut flat, mut scree_columns, mut wet_heights) =
+        (Vec::new(), 0, 0, Vec::new());
+    for &chunk in &chunks {
+        let height = runtime.field("height", chunk).expect("generated");
+        let wet = runtime.field("wet", chunk).expect("generated");
+        let surface = runtime.categories("surface", chunk).expect("generated");
+        for y in 1..7 {
+            for x in 1..7 {
+                let h = height.get(x, y);
+                let across = (height.get(x + 1, y) - height.get(x - 1, y)).abs();
+                let along = (height.get(x, y + 1) - height.get(x, y - 1)).abs();
+                // Less than a twentieth of a cell's rise per cell either way.
+                flat += usize::from(across.max(along) < 0.1);
+                scree_columns += usize::from(surface.get(x, y) == scree);
+                if wet.get(x, y) > 0.5 {
+                    wet_heights.push(h);
+                }
+                heights.push(h);
+            }
+        }
+    }
+    heights.sort_by(f32::total_cmp);
+    let (low, median, high) = (
+        heights[0],
+        heights[heights.len() / 2],
+        heights[heights.len() - 1],
+    );
+    let wet_mean = wet_heights.iter().sum::<f32>() / wet_heights.len().max(1) as f32;
+
+    let floors = flat as f32 / heights.len() as f32;
+    println!(
+        "relief {low} to {high}, {floors} of the land flat, {scree_columns} columns of scree, {} wet at a mean height of {wet_mean} against a median of {median}",
+        wet_heights.len()
+    );
+    assert!(high - low > 8.0, "relief {low} to {high}");
+    assert!(floors > 0.15, "only {floors} of the land on flat floors");
+    assert!(scree_columns > 0, "no scree below the outcrops");
+    assert!(
+        !wet_heights.is_empty() && wet_mean < median,
+        "{} wet columns at a mean height of {wet_mean}, the land's median {median}",
+        wet_heights.len()
+    );
+}
+
+#[test]
 fn more_hills_make_taller_hills_and_more_forest_more_trees() {
     let pack = preset("hills");
     let survey_at = |hills: f32, forest: f32| {
