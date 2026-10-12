@@ -211,6 +211,21 @@ pub struct WaveForgeStages {
 }
 
 impl WaveForgeStages {
+    /// A 64-bit hash of what `stage` holds for `chunk`, over its every bit, if it has arrived: the
+    /// same on every machine given the same seed, pack and edits, so peers compare it to confirm
+    /// they agree ([`wave_forge::stages::Runtime::product_hash`]).
+    #[must_use]
+    pub fn product_hash(&self, stage: &str, chunk: ChunkCoord) -> Option<u64> {
+        self.worker.product_hash(stage, chunk)
+    }
+
+    /// A 64-bit hash of what `chunk` holds of each of `stages`, in that order, once every one has
+    /// arrived ([`wave_forge::stages::Runtime::chunk_hash`]).
+    #[must_use]
+    pub fn chunk_hash(&self, chunk: ChunkCoord, stages: &[&str]) -> Option<u64> {
+        self.worker.chunk_hash(chunk, stages)
+    }
+
     /// A field stage's values for a chunk, if it has arrived.
     #[must_use]
     pub fn field(&self, stage: &str, chunk: ChunkCoord) -> Option<&Field> {

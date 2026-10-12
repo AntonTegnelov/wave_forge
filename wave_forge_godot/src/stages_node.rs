@@ -1703,6 +1703,39 @@ impl WaveForgeStages {
         self.place_sea(chunk, size);
     }
 
+    /// A 64-bit hash of what `stage` holds for `chunk`, over its every bit, as 16 hexadecimal digits;
+    /// empty until it has arrived. It is the same on every machine given the same seed, pack and
+    /// edits, so players sharing a world compare it to confirm they agree.
+    #[func]
+    fn product_hash(&self, stage: GString, chunk: Vector3i) -> GString {
+        self.worker
+            .as_ref()
+            .and_then(|worker| worker.product_hash(&stage.to_string(), from_vector(chunk)))
+            .map_or_else(GString::new, |hash| {
+                GString::from(format!("{hash:016x}").as_str())
+            })
+    }
+
+    /// A 64-bit hash of what `chunk` holds of each of `targets`, in their order, as 16 hexadecimal
+    /// digits; empty until every one has arrived. Two players with the same seed, pack, edits and
+    /// targets get the same hash for every chunk.
+    #[func]
+    fn chunk_hash(&self, chunk: Vector3i) -> GString {
+        let targets: Vec<String> = self
+            .targets
+            .as_slice()
+            .iter()
+            .map(GString::to_string)
+            .collect();
+        let stages: Vec<&str> = targets.iter().map(String::as_str).collect();
+        self.worker
+            .as_ref()
+            .and_then(|worker| worker.chunk_hash(from_vector(chunk), &stages))
+            .map_or_else(GString::new, |hash| {
+                GString::from(format!("{hash:016x}").as_str())
+            })
+    }
+
     /// A field stage's values for a chunk, column by column with the lattice's x fastest; empty if
     /// it is not a field stage or the chunk has not arrived.
     #[func]

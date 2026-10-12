@@ -43,6 +43,34 @@ pub(crate) fn encode(product: &Product) -> Vec<u8> {
     bytes
 }
 
+/// A 64-bit FNV-1a hash of `product`'s exact binary form, uncompressed, so it depends on the
+/// product's every bit and on nothing else: the same on every machine for the same product.
+pub(crate) fn hash(product: &Product) -> u64 {
+    let plain = postcard::to_allocvec(product).expect("a product is plain data");
+    fnv(FNV_START, &plain)
+}
+
+/// A 64-bit hash of a chunk's products of `stages`, in that order, from each one's `product_hash`,
+/// once every one of them is there.
+pub(crate) fn chunk_hash(
+    stages: &[&str],
+    product_hash: impl Fn(&str) -> Option<u64>,
+) -> Option<u64> {
+    stages.iter().try_fold(FNV_START, |hash, stage| {
+        Some(fnv(hash, &product_hash(stage)?.to_le_bytes()))
+    })
+}
+
+/// FNV-1a's offset basis, where a 64-bit hash starts.
+pub(crate) const FNV_START: u64 = 0xCBF2_9CE4_8422_2325;
+
+/// A 64-bit FNV-1a hash of `bytes`, continuing from `hash`.
+pub(crate) fn fnv(hash: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(hash, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01B3)
+    })
+}
+
 /// The product `bytes` hold, as [`encode`] made them.
 ///
 /// # Errors

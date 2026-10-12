@@ -536,10 +536,16 @@ and with the designer's node (`verify_bake.gd`).
 
 **Acceptance criteria.** The same seed and pack give identical product hashes on two machines with
 GPUs from different vendors; a chunk hash lets peers confirm they agree. **Needs.** Determinism
-across GPUs (the golden world test), chunk hashes. **Status:** in progress (2026-09-23): the golden world is
-identical on NVIDIA through dozen and on Mesa's lavapipe, and a city is the same whatever order its
-chunks are generated in, repairs included ([testing.md](../guides/testing.md)), for tiles only; chunk hashes
-do not exist yet.
+across GPUs (the golden world test), chunk hashes. **Status:** verified by automated checks
+(2026-10-12). Every stage's product for a chunk has a hash over its every bit, and a chunk a hash of
+its stages', in the library and in both engines ([packs.md](../reference/packs.md#hashes)). The
+same seed and pack hash every chunk alike whatever order it is generated in, and another seed or an
+edit hashes it otherwise (`tests/hashes.rs`). 64 chunks of ground, sites, towns solved on the GPU and
+trees hash alike on NVIDIA through dozen and on Mesa's lavapipe (`golden_chunks.rs`, which CI runs on
+lavapipe against the fixture recorded on NVIDIA, as `golden_world.rs` does for a city's tiles). A
+Godot node given another's edits log hashes its chunk alike (`verify_edits.gd`), and Bevy's
+resource hashes as the runtime does (`wave_forge_bevy/tests/stages.rs`)
+([#431](https://github.com/AntonTegnelov/wave_forge/pull/431)).
 
 ### N11. Put my own history into the world
 

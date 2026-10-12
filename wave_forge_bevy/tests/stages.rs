@@ -159,6 +159,9 @@ fn what_arrives_is_what_the_runtime_generates() {
     for chunk in around_origin() {
         assert_eq!(stages.field("height", chunk), direct.field("height", chunk));
         assert_eq!(stages.points("trees", chunk), direct.points("trees", chunk));
+        let hash = stages.chunk_hash(chunk, &["height", "trees"]);
+        assert!(hash.is_some(), "{chunk:?} has every stage, so a hash");
+        assert_eq!(hash, direct.chunk_hash(chunk, &["height", "trees"]));
     }
     let seen = app.world().resource::<Seen>();
     assert!(

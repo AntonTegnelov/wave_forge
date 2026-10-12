@@ -309,6 +309,20 @@ impl StageWorker {
             .map(Arc::as_ref)
     }
 
+    /// A 64-bit hash of what `stage` holds for `chunk`, over its every bit, if it has arrived: as
+    /// [`super::Runtime::product_hash`] gives it.
+    #[must_use]
+    pub fn product_hash(&self, stage: &str, chunk: ChunkCoord) -> Option<u64> {
+        self.product(stage, chunk).map(super::codec::hash)
+    }
+
+    /// A 64-bit hash of what `chunk` holds of each of `stages`, in that order, once every one has
+    /// arrived: as [`super::Runtime::chunk_hash`] gives it.
+    #[must_use]
+    pub fn chunk_hash(&self, chunk: ChunkCoord, stages: &[&str]) -> Option<u64> {
+        super::codec::chunk_hash(stages, |stage| self.product_hash(stage, chunk))
+    }
+
     /// A stage's product for a chunk, shared, to hand to another thread, if it has arrived.
     #[must_use]
     pub fn shared(&self, stage: &str, chunk: ChunkCoord) -> Option<Arc<Product>> {
