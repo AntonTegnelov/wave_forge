@@ -252,7 +252,17 @@ Inserting authored bodies shifted procedural ids, which is why ids here are posi
 - Two runs, and two travel orders, give the same systems and surfaces.
 
 **Needs.** Generated tables with parent-level reads, Field, Scatter, Sites and Apply, positional ids. Galaxy
-scale, spheres and `f64` are deferred. **Status:** not started (2026-09-23).
+scale, spheres and `f64` are deferred. **Status:** verified by automated checks (2026-10-13), with
+the test pack `tests/fixtures/galaxy.world.ron` and its checks in `tests/galaxy.rs`. Sixteen sectors
+share their stellar mass out among their generated systems to the last unit, and every body's size
+follows its own system's radius alone. Two authored systems from a catalogue and an authored outpost
+join the generated rows ([packs.md](../reference/packs.md#tables-of-facts)) and leave every generated
+system and body as it was without them. Focused on a body, the surface follows its row: the
+roughest body's relief more than twice the smoothest's, the coldest all ice and the hottest all
+dunes, more rocks on the driest than on the wettest and never two within three cells, and the
+authored outpost standing on ground flattened to its site's height. The same tables come from two
+runs, and every chunk of the surface hashes alike generated at once, one chunk at a time and in the
+reverse order.
 
 ### G7. A Valheim-like island world
 
