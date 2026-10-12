@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Renders a pack's ground with a material per category and grass and saves pictures, to look at,
-# timing grass; then draws trees with the vegetation shader and checks they move in the wind; then
+# timing grass, and again with the plugin's texture sets; then draws trees with the vegetation shader and checks they move in the wind; then
 # draws a wide view at the ground's levels of detail and checks no gap opens between chunks; then
 # draws the far ground beyond the near ground and checks no view sees between them, at a coarse
 # scale of 8 and of 4; then draws a valley's lakes and river and checks the water shows with no gap
@@ -19,6 +19,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "$here/prepare.sh" "${1:-release}"
 "${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script render_ground.gd
+"${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script render_ground.gd -- textured
 "${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script render_wind.gd
 "${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script render_lods.gd
 "${GODOT:-godot}" --rendering-driver opengl3 --path "$here/godot" --script render_far.gd

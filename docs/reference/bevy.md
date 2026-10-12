@@ -297,6 +297,20 @@ ground's height (0 to 1 over `GroundLook::ramp_heights`), slope, cavity and wetn
 from -1 to 1. Both makers give a single texel of zeros, no ramp; a game sets the field, one image
 shared by every chunk.
 
+`GroundMaterials::texture_layers` draws palette colours with texture sets instead, as Godot's
+`ground_texture_layers` does ([godot.md](godot.md#ground-and-colliders)): `texture_layer_image(layers)`
+makes it from an `Option<u8>` per colour by index, the layer of the set it is drawn with, or none
+for its colour, as for a colour past the layers given. The sets are layers of two 2D arrays a game
+loads, a KTX2 array with mipmaps say, with a repeating sampler: `albedo_height`, the colour in an
+sRGB format with the height in alpha, and `normal_roughness`, the OpenGL normal with the roughness
+in alpha. The plugin's own sets ship with the Godot addon, from ambientCG's CC0 sources a game can
+load as well. Both makers give no layers and `no_texture_sets()`, a one-texel array, so a game sets
+all three fields, one image each shared by every chunk; `far_ground_material` always draws colours,
+so a game gives a textured colour its set's mean colour in the palette, which the far ground and
+the grass draw it in, and which a ramp's tint of the set is measured against. `GroundLook`'s `texture_size`, `texture_normal` and `texture_roughness` are
+the Godot shader's. The shader samples the sets with explicit derivatives, taken before the
+per-material branch, since WGSL samples with implicit ones only in uniform control flow.
+
 ## Grass
 
 `GrassMaterial` is an `ExtendedMaterial` over `StandardMaterial` with a vertex shader of its own.

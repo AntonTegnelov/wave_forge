@@ -2,11 +2,13 @@
 // carries its vertices' materials as an id texture, one texel per vertex, and every fragment draws
 // the materials of the four vertices around it. Where they differ, each is weighted by how near
 // its vertices are plus a noise of its own, and the highest wins with a short blend, so materials
-// meet along a broken line rather than the grid's. Each material has a micro-height of its own,
-// pebbles, cracks or tufts, which bumps the ground and grains its colour near the camera and
-// decides where materials meet, the one standing higher winning. Steep ground turns to rock by its
-// own slope, its colour muted and banded in strata; a broad noise varies the colour across the
-// land. Asset free; works on every
+// meet along a broken line rather than the grid's. A material may be drawn with a texture set
+// instead of its colour and relief, seen from above and, on steep ground, from the sides, its tiles
+// broken up by a second sample. Each material has a micro-height, its relief's (pebbles, cracks or
+// tufts) or its texture's height, and where materials meet the one standing higher wins; near the
+// camera a relief bumps the ground and grains its colour. Steep ground turns to rock by its own
+// slope, its colour muted and banded in strata, unless a texture set draws it; a broad noise varies
+// the colour across the land. Asset free without texture sets; works on every
 // renderer, Compatibility included. Channels the node hands in darken hollows and wet ground, and
 // each material's colour may run along a ramp of its own by height, slope, cavity and wetness.
 // `wave_forge_bevy/src/shaders/ground.wesl` is the same shader for Bevy.
@@ -38,6 +40,20 @@ uniform sampler2D wave_forge_ramps : filter_nearest, repeat_disable, hint_defaul
 uniform sampler2D wave_forge_relief : filter_nearest, repeat_disable, hint_default_black;
 // How far the materials' micro-heights move the line where they meet.
 uniform float relief_blend : hint_range(0.0, 1.0) = 0.6;
+// Texture sets a material can be drawn with instead of its colour: layers of two arrays, the
+// colour with the height in alpha and the OpenGL normal with the roughness in alpha. Per material
+// id, in texel id of a 256 by 1 texture, its set's layer plus one, as id / 255 in red; 0, and black
+// where the node hands in none, draws the material in its colour. A textured material's palette
+// colour is its set's mean, and its ramp tints the set by how far it moves that colour.
+uniform sampler2DArray wave_forge_albedo_height : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2DArray wave_forge_normal_roughness : filter_linear_mipmap, repeat_enable;
+uniform sampler2D wave_forge_texture_layers : filter_nearest, repeat_disable, hint_default_black;
+// How wide one tile of a texture set is, in world units, and how far its normal leans the ground's.
+uniform float texture_size = 3.0;
+uniform float texture_normal : hint_range(0.0, 2.0) = 1.0;
+// How far a texture set's own roughness moves the ground's from `roughness`: photographed sets
+// tend to read glossier than ground does in sunlight.
+uniform float texture_roughness : hint_range(0.0, 1.0) = 0.25;
 // The heights, in world units, over which the ramps' height runs from 0 to 1.
 uniform vec2 ramp_heights = vec2(0.0, 1.0);
 // Per ground vertex, 0 to 1: a cavity in red, which darkens the ground, a wetness in green, which
@@ -242,6 +258,72 @@ vec3 colour_of(int id, vec4 drivers) {
 	return mix(colour, toward, clamp(dot(by, drivers), 0.0, 1.0));
 }
 
+// What a material looks like at a fragment: its colour, its micro-height (its height 0 to 1 and its
+// slope along x and z, scaled by its depth), how deep that height is, 0 to 1, its roughness, and 1
+// for a texture set or 0 for its colour and relief.
+struct Look {
+	vec3 albedo;
+	vec3 micro;
+	float depth;
+	float roughness;
+	float textured;
+};
+
+// A texture set's layer `layer` at `ground`, seen along `axis`: two samples, the second turned and
+// scaled, blended by a broad noise, so the tiles do not repeat; (colour and height, normal and
+// roughness).
+void sample_set(float layer, vec2 ground, out vec4 colour, out vec4 normal) {
+	vec2 uv = ground / texture_size;
+	mat2 turn = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
+	vec2 other = turn * uv * 0.73 + 0.37;
+	float blend = smoothstep(0.3, 0.7, value(ground / (texture_size * 2.3)));
+	colour = mix(texture(wave_forge_albedo_height, vec3(uv, layer)), texture(wave_forge_albedo_height, vec3(other, layer)), blend);
+	normal = mix(texture(wave_forge_normal_roughness, vec3(uv, layer)), texture(wave_forge_normal_roughness, vec3(other, layer)), blend);
+}
+
+// Material `id`'s look at `at`, `ground` along the ground plane, on a surface of normal `surface`:
+// its texture set's, seen from above and, on steep ground, from the sides as well, or its colour
+// and, with `relief`, its relief's.
+Look look_of(int id, vec3 at, vec2 ground, vec3 surface, vec4 drivers, bool relief) {
+	Look look;
+	float layer = floor(texelFetch(wave_forge_texture_layers, ivec2(id, 0), 0).r * 255.0 + 0.5) - 1.0;
+	if (layer < 0.0) {
+		vec4 r = relief ? relief_of(id, ground) : vec4(0.5, 0.0, 0.0, 0.0);
+		look.albedo = colour_of(id, drivers);
+		look.micro = vec3(r.x, r.yz * r.w);
+		look.depth = r.w;
+		look.roughness = roughness;
+		look.textured = 0.0;
+		return look;
+	}
+	vec3 weights = pow(abs(surface), vec3(4.0));
+	weights /= weights.x + weights.y + weights.z;
+	vec4 colour;
+	vec4 normal;
+	sample_set(layer, ground, colour, normal);
+	// The normal's lean along the ground's x and z, from above.
+	vec2 lean = (normal.rg * 2.0 - 1.0) * vec2(1.0, -1.0);
+	if (weights.y < 0.98) {
+		vec4 side_x;
+		vec4 side_x_normal;
+		vec4 side_z;
+		vec4 side_z_normal;
+		sample_set(layer, vec2(at.z, -at.y), side_x, side_x_normal);
+		sample_set(layer, vec2(at.x, -at.y), side_z, side_z_normal);
+		colour = colour * weights.y + side_x * weights.x + side_z * weights.z;
+		normal = normal * weights.y + side_x_normal * weights.x + side_z_normal * weights.z;
+		lean *= weights.y;
+	}
+	// Its ramp moves the set's colour as it would the set's mean, its palette colour.
+	vec3 mean = texelFetch(wave_forge_palette, ivec2(id, 0), 0).rgb;
+	look.albedo = colour.rgb * colour_of(id, drivers) / max(mean, vec3(1e-3));
+	look.micro = vec3(colour.a, -lean * texture_normal);
+	look.depth = 1.0;
+	look.roughness = mix(roughness, normal.a, texture_roughness);
+	look.textured = 1.0;
+	return look;
+}
+
 void fragment() {
 	ivec2 size = textureSize(wave_forge_materials, 0);
 	vec2 at = clamp(column, vec2(0.0), vec2(size - 1));
@@ -280,14 +362,14 @@ void fragment() {
 	}
 	float near = 1.0 - smoothstep(30.0, 120.0, length(world - CAMERA_POSITION_WORLD));
 	float grain = detail * near;
-	vec3 albedo = colour_of(ids[0], drivers);
-	// The micro-height here: its height, its slope in feature widths times its depth.
-	vec3 micro = vec3(0.5, 0.0, 0.0);
+	// What the ground looks like here: one material's look, or where materials meet, theirs blended
+	// by how high each stands.
+	Look here = look_of(ids[0], world, ground, surface, drivers, grain > 0.0);
 	// Most fragments have one material on all four corners and need no border.
 	if (ids[1] != ids[0] || ids[2] != ids[0] || ids[3] != ids[0]) {
 		float heights[4];
 		float shares[4];
-		vec4 reliefs[4];
+		Look looks[4];
 		float highest = -2.0;
 		for (int k = 0; k < 4; k++) {
 			float weight = 0.0;
@@ -298,39 +380,47 @@ void fragment() {
 					same += 1.0;
 				}
 			}
-			// A material on several corners has its micro-height worked out once.
+			// A material on several corners has its look worked out once.
 			int first = k;
 			for (int j = k - 1; j >= 0; j--) {
 				if (ids[j] == ids[k]) {
 					first = j;
 				}
 			}
-			reliefs[k] = first == k ? relief_of(ids[k], ground) : reliefs[first];
-			// The material standing higher, by its micro-height, wins: sand settles between
-			// pebbles, rock plates stand out of their cracks.
+			looks[k] = first == k ? look_of(ids[k], world, ground, surface, drivers, true) : looks[first];
+			// The material standing higher, by its micro-height or its texture's height, wins: sand
+			// settles between pebbles, rock plates stand out of their cracks.
 			heights[k] = weight + border_noise * (fbm(ground / (2.0 * wave_forge_coarseness) + float(ids[k]) * 17.31) - 0.5) * 2.0
-				+ (1.0 - rock) * relief_blend * reliefs[k].w * (reliefs[k].x - 0.5);
+				+ (1.0 - rock) * relief_blend * looks[k].depth * (looks[k].micro.x - 0.5);
 			shares[k] = 1.0 / same;
 			highest = max(highest, heights[k]);
 		}
-		albedo = vec3(0.0);
-		micro = vec3(0.0);
+		Look blended;
+		blended.albedo = vec3(0.0);
+		blended.micro = vec3(0.0);
+		blended.roughness = 0.0;
+		blended.textured = 0.0;
 		float total = 0.0;
 		for (int k = 0; k < 4; k++) {
 			float weight = max(heights[k] - highest + border_width, 0.0) * shares[k];
-			albedo += colour_of(ids[k], drivers) * weight;
-			micro += vec3(reliefs[k].x, reliefs[k].yz * reliefs[k].w) * weight;
+			blended.albedo += looks[k].albedo * weight;
+			blended.micro += looks[k].micro * weight;
+			blended.roughness += looks[k].roughness * weight;
+			blended.textured += looks[k].textured * weight;
 			total += weight;
 		}
-		albedo /= total;
-		micro /= total;
-	} else if (grain > 0.0) {
-		vec4 relief = relief_of(ids[0], ground);
-		micro = vec3(relief.x, relief.yz * relief.w);
+		here.albedo = blended.albedo / total;
+		here.micro = blended.micro / total;
+		here.roughness = blended.roughness / total;
+		here.textured = blended.textured / total;
 	}
-	// The micro-height bumps the surface by its slope, fading with distance.
-	vec3 normal = normalize(surface + vec3(-micro.y, 0.0, -micro.z) * RELIEF_BUMP * grain);
-	// The rock is the ground's colour muted, banded in warped strata.
+	vec3 albedo = here.albedo;
+	vec3 micro = here.micro;
+	// The micro-height bumps the surface by its slope, fading with distance; a texture's normal
+	// does at every distance, its mipmaps fading it.
+	vec3 normal = normalize(surface + vec3(-micro.y, 0.0, -micro.z) * mix(RELIEF_BUMP * grain, 1.0, here.textured));
+	// The rock is the ground's colour muted, banded in warped strata; a texture set draws its own.
+	rock *= 1.0 - here.textured;
 	if (rock > 0.0) {
 		float band = 0.5 + 0.5 * sin(world.y * 1.8 + fbm(ground / 12.0) * 2.0);
 		vec3 muted = mix(albedo, vec3(dot(albedo, vec3(0.299, 0.587, 0.114))), 0.3) * 0.8;
@@ -355,9 +445,9 @@ void fragment() {
 	float beyond_grass = smoothstep(wave_forge_fade.x, wave_forge_fade.y, max(from_focus.x, from_focus.y));
 	albedo = mix(albedo, cover_colour, cover * cover_tint * beyond_grass);
 	albedo *= (1.0 - cavity_darkening * cavity) * (1.0 - wet_darkening * wet);
-	albedo *= mix(1.0, 0.86 + 0.28 * micro.x, grain);
+	albedo *= mix(1.0, 0.86 + 0.28 * micro.x, grain * (1.0 - here.textured));
 
 	ALBEDO = albedo;
-	ROUGHNESS = mix(roughness, wet_roughness, wet);
+	ROUGHNESS = mix(here.roughness, wet_roughness, wet);
 	NORMAL = normalize((VIEW_MATRIX * vec4(normal, 0.0)).xyz);
 }

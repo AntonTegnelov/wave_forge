@@ -154,10 +154,12 @@ Each is a gap between the code and the design or the stories, with where it is t
   names to Fluent ([bevy.md](../reference/bevy.md#sound-and-names)); interiors that reverb through buses wait for an audio
   crate that has them on the tracked Bevy
   ([#195](https://github.com/AntonTegnelov/wave_forge/issues/195)).
-- **No sediment transport and no textured ground.** A prototype stage that carries sediment down
-  rivers waits for a decision on its look ([#348](https://github.com/AntonTegnelov/wave_forge/issues/348)),
-  and a textured ground for one on which texture sets ship
-  ([#323](https://github.com/AntonTegnelov/wave_forge/issues/323)).
+- **No sediment transport, and presets drawn without texture sets.** A prototype stage that carries
+  sediment down rivers waits for a decision on its look
+  ([#348](https://github.com/AntonTegnelov/wave_forge/issues/348)). The ground shader in both
+  engines can draw a material with a texture set, and the addon ships eight CC0 sets
+  ([godot.md](../reference/godot.md#ground-and-colliders)), but no preset uses them yet
+  ([#405](https://github.com/AntonTegnelov/wave_forge/issues/405)).
 - **Licences for a distributed build.** Everything in both integrations' dependency trees is MIT,
   Apache-2.0, Zlib or Unlicense except godot-rust (0.5.5), which is MPL-2.0: compatible, but a
   distributed extension binary has to say where the MPL-covered source can be obtained.

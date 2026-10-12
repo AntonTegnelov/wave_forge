@@ -32,6 +32,7 @@ use godot::classes::{
     FastNoiseLite, FileAccess, HeightMapShape3D, INode, Image, ImageTexture, Material,
     MeshInstance3D, MeshLibrary, NavigationMesh, NavigationServer3D, Node, Node3D, PhysicsServer3D,
     RenderingServer, ResourceSaver, ShaderMaterial, Shape3D, StandardMaterial3D, StaticBody3D,
+    Texture2D, Texture2DArray,
 };
 use godot::global::Error;
 use godot::obj::EngineEnum;
@@ -195,6 +196,22 @@ pub struct WaveForgeStages {
     /// (`wave_forge::GroundRelief`). A category past its end has the default, fine tufts.
     #[export]
     ground_relief: PackedVector4Array,
+    /// Per category, by index: the layer of the texture set the reference ground shader draws it
+    /// with instead of its colour and relief, or -1 for its colour, as for a category past its end.
+    /// Without `ground_albedo_height` the layers are the plugin's own sets: 0 grass, 1 dirt,
+    /// 2 gravel, 3 sand, 4 rock, 5 cliff, 6 snow, 7 mud. Its palette colour, which its grass and
+    /// the far ground draw it in, is the set's mean, and its ramp tints the set.
+    #[export]
+    ground_texture_layers: PackedInt32Array,
+    /// The texture sets of `ground_texture_layers`, one layer each: its colour with its height in
+    /// alpha. Empty for the plugin's own sets; given, `ground_normal_roughness` is given too, with
+    /// as many layers.
+    #[export]
+    ground_albedo_height: Option<Gd<Texture2DArray>>,
+    /// The texture sets' OpenGL normals with their roughness in alpha, by layer as
+    /// `ground_albedo_height`.
+    #[export]
+    ground_normal_roughness: Option<Gd<Texture2DArray>>,
     /// A field stage at the ground's scale whose values, 0 to 1, darken the ground's hollows: its
     /// cavity, handed to the ground material with `ground_material_stage`'s categories, in the red
     /// channel of `wave_forge_channels`. Empty for none.
@@ -424,6 +441,8 @@ pub struct WaveForgeStages {
     /// Chunks of `far_ground_stage` whose far ground may have to be built again: a field around
     /// them arrived, or near ground came or went on or beside them.
     far_due: std::collections::BTreeSet<ChunkCoord>,
+    /// The texture sets `ground_texture_layers` names, while it names any.
+    ground_textures: Option<GroundTextures>,
     /// The colour of each category of `far_ground_material_stage`, by index, from `ground_palette`.
     far_colours: Vec<Color>,
     /// The far categories' palette, ramps and reliefs, with a ground material stage.
@@ -867,6 +886,10 @@ impl INode for WaveForgeStages {
             ground_ramp_drivers: PackedVector4Array::new(),
             ground_ramp_heights: Vector2::new(0.0, 1.0),
             ground_relief: PackedVector4Array::new(),
+            ground_texture_layers: PackedInt32Array::new(),
+            ground_albedo_height: None,
+            ground_normal_roughness: None,
+            ground_textures: None,
             ground_cavity_stage: GString::new(),
             ground_wetness_stage: GString::new(),
             ground_cover_stage: GString::new(),
@@ -1323,6 +1346,22 @@ impl WaveForgeStages {
         if let Some(problem) = self.stage_setting_problems(&pack).first() {
             godot_error!("wave forge: {problem}");
             return false;
+        }
+        self.ground_textures = None;
+        if !self.ground_material_stage.is_empty()
+            && self
+                .ground_texture_layers
+                .as_slice()
+                .iter()
+                .any(|&layer| layer >= 0)
+        {
+            match self.load_ground_textures() {
+                Ok(textures) => self.ground_textures = Some(textures),
+                Err(error) => {
+                    godot_error!("wave forge: {error}");
+                    return false;
+                }
+            }
         }
         if !self.ground_material_stage.is_empty() {
             match self.materials_template() {
@@ -5183,7 +5222,7 @@ impl WaveForgeStages {
             .into_iter()
             .enumerate()
             .map(|(index, near)| match near {
-                Some(near) => palette_colour(&self.ground_palette, near),
+                Some(near) => self.ground_colour(near),
                 None => palette_colour(&PackedColorArray::new(), index),
             })
             .collect()
@@ -5249,8 +5288,104 @@ impl WaveForgeStages {
         template.set_shader_parameter("wave_forge_ramps", &self.ramps_texture(own)?.to_variant());
         template.set_shader_parameter("ramp_heights", &self.ground_ramp_heights.to_variant());
         template.set_shader_parameter("wave_forge_relief", &self.relief_texture(own)?.to_variant());
-        let palette = palette_texture(|index| palette_colour(&self.ground_palette, index))?;
+        if let Some(textures) = &self.ground_textures {
+            let layers: Vec<u8> = (0..MAX_CATEGORIES)
+                .map(|index| self.texture_layer(index).map_or(0, |layer| layer + 1))
+                .collect();
+            let image = Image::create_from_data(
+                MAX_CATEGORIES as i32,
+                1,
+                false,
+                ImageFormat::R8,
+                &PackedByteArray::from(layers.as_slice()),
+            )
+            .ok_or("the ground's texture layers could not be made")?;
+            let layers = ImageTexture::create_from_image(&image)
+                .ok_or("the ground's texture layers could not be made")?;
+            template.set_shader_parameter("wave_forge_texture_layers", &layers.to_variant());
+            template.set_shader_parameter(
+                "wave_forge_albedo_height",
+                &textures.albedo_height.to_variant(),
+            );
+            template.set_shader_parameter(
+                "wave_forge_normal_roughness",
+                &textures.normal_roughness.to_variant(),
+            );
+        }
+        let palette = palette_texture(|index| self.ground_colour(index))?;
         Ok((palette, template))
+    }
+
+    /// The layer of the texture set category `index` of `ground_material_stage` is drawn with, if
+    /// any.
+    fn texture_layer(&self, index: usize) -> Option<u8> {
+        self.ground_textures.as_ref()?;
+        self.ground_texture_layers
+            .get(index)
+            .and_then(|layer| u8::try_from(layer).ok())
+    }
+
+    /// The colour category `index` of `ground_material_stage` is drawn in where it is not drawn
+    /// with its texture set: its palette colour, or its set's mean colour.
+    fn ground_colour(&self, index: usize) -> Color {
+        self.texture_layer(index)
+            .zip(self.ground_textures.as_ref())
+            .and_then(|(layer, textures)| textures.means[usize::from(layer)])
+            .unwrap_or_else(|| palette_colour(&self.ground_palette, index))
+    }
+
+    /// The texture sets `ground_texture_layers` names: those given, or the plugin's own.
+    fn load_ground_textures(&self) -> Result<GroundTextures, String> {
+        let (albedo_height, normal_roughness, means) =
+            match (&self.ground_albedo_height, &self.ground_normal_roughness) {
+                (Some(albedo_height), Some(normal_roughness)) => {
+                    // Without a renderer, as headless, a texture keeps no data to take means of.
+                    let means = (0..albedo_height.get_layers())
+                        .map(|layer| {
+                            albedo_height
+                                .get_layer_data(layer)
+                                .map(|image| mean_colour(&image))
+                        })
+                        .collect();
+                    (albedo_height.clone(), normal_roughness.clone(), means)
+                }
+                (None, None) => {
+                    let (albedo_height, means) = plugin_texture_sets("albedo_height")?;
+                    let (normal_roughness, _) = plugin_texture_sets("normal_roughness")?;
+                    (albedo_height, normal_roughness, means)
+                }
+                _ => {
+                    return Err(
+                        "ground_albedo_height and ground_normal_roughness are given \
+                                together or not at all"
+                            .to_owned(),
+                    );
+                }
+            };
+        let count = albedo_height.get_layers();
+        if normal_roughness.get_layers() != count {
+            return Err(format!(
+                "ground_albedo_height has {count} layers but ground_normal_roughness {}",
+                normal_roughness.get_layers()
+            ));
+        }
+        if let Some((index, layer)) = self
+            .ground_texture_layers
+            .as_slice()
+            .iter()
+            .enumerate()
+            .find(|&(_, &layer)| layer >= count.min(255))
+        {
+            return Err(format!(
+                "ground_texture_layers gives category {index} layer {layer}, but the texture sets \
+                 have {count}"
+            ));
+        }
+        Ok(GroundTextures {
+            albedo_height,
+            normal_roughness,
+            means,
+        })
     }
 
     /// The ramps' texture for a ground material: per category, the colour its ramp runs toward,
@@ -5877,6 +6012,69 @@ fn far_group_of(chunk: ChunkCoord) -> ChunkCoord {
     )
 }
 
+/// The texture sets the reference ground shader draws categories with.
+struct GroundTextures {
+    albedo_height: Gd<Texture2DArray>,
+    normal_roughness: Gd<Texture2DArray>,
+    /// Per layer, its colour's mean, which its grass and the far ground draw it in; none where the
+    /// renderer keeps no texture data, which draws its category in its palette colour.
+    means: Vec<Option<Color>>,
+}
+
+/// Where the plugin keeps its own texture sets (`tools/make_ground_textures.gd`).
+const PLUGIN_TEXTURES: &str = "res://addons/wave_forge/ground_textures";
+/// The plugin's own texture sets' names, in the order of their layers.
+const PLUGIN_TEXTURE_SETS: [&str; 8] = [
+    "grass", "dirt", "gravel", "sand", "rock", "cliff", "snow", "mud",
+];
+
+/// The plugin's own texture sets' `kind`, `albedo_height` or `normal_roughness`, stacked in a
+/// texture array with mipmaps, and each set's mean colour.
+fn plugin_texture_sets(kind: &str) -> Result<(Gd<Texture2DArray>, Vec<Option<Color>>), String> {
+    let mut images: Array<Gd<Image>> = Array::new();
+    let mut means = Vec::new();
+    for (index, name) in PLUGIN_TEXTURE_SETS.iter().enumerate() {
+        let path = format!("{PLUGIN_TEXTURES}/{index}_{name}_{kind}.res");
+        let texture = try_load::<Texture2D>(&path).map_err(|error| {
+            format!("{path}: {error}; the plugin's ground textures are not in the project")
+        })?;
+        let mut image = texture
+            .get_image()
+            .ok_or_else(|| format!("{path} has no image"))?;
+        image.decompress();
+        means.push(Some(mean_colour(&image)));
+        image.generate_mipmaps();
+        images.push(&image);
+    }
+    let mut array = Texture2DArray::new_gd();
+    match array.create_from_images(&images) {
+        Error::OK => Ok((array, means)),
+        error => Err(format!(
+            "the plugin's ground textures could not be stacked: {error:?}"
+        )),
+    }
+}
+
+/// The mean of `image`'s colour, averaged in linear light, in sRGB.
+fn mean_colour(image: &Gd<Image>) -> Color {
+    let mut image = image.duplicate_resource();
+    image.decompress();
+    image.clear_mipmaps();
+    image.convert(ImageFormat::RGBA8);
+    let data = image.get_data();
+    let (texels, _) = data.as_slice().as_chunks::<4>();
+    let count = texels.len().max(1) as f32;
+    let linear = |byte: u8| Color::from_rgba8(byte, 0, 0, 255).srgb_to_linear().r;
+    let table: Vec<f32> = (0..=255).map(linear).collect();
+    let mut sum = [0.0_f32; 3];
+    for texel in texels {
+        for (total, &byte) in sum.iter_mut().zip(texel) {
+            *total += table[usize::from(byte)];
+        }
+    }
+    Color::from_rgb(sum[0] / count, sum[1] / count, sum[2] / count).linear_to_srgb()
+}
+
 /// The far categories' palette, ramps and reliefs for the far ground's copies of the ground
 /// material.
 struct FarLook {
@@ -5958,6 +6156,8 @@ fn far_material(
     material.set_shader_parameter("wave_forge_palette", &look.palette.to_variant());
     material.set_shader_parameter("wave_forge_ramps", &look.ramps.to_variant());
     material.set_shader_parameter("wave_forge_relief", &look.relief.to_variant());
+    // The far ground draws every category in its colour.
+    material.set_shader_parameter("wave_forge_texture_layers", &Variant::nil());
     material.set_shader_parameter("wave_forge_cell", &spacing.to_variant());
     material.set_shader_parameter("wave_forge_first", &first.to_variant());
     material.set_shader_parameter("wave_forge_coarseness", &coarseness.to_variant());
