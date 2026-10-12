@@ -39,9 +39,19 @@ const GRAVITY: f32 = 4.0;
 /// The slope a droplet's capacity never falls below, so it still carries a little on flat ground.
 const MIN_SLOPE: f32 = 0.01;
 
+/// What droplets leave behind over a region, both laid out as its heights are.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Drained {
+    /// The worn ground, faded into the heights over the fade from the region's edges.
+    pub worn: Vec<f32>,
+    /// The water that passed each column, in columns' worth of rain: about how many columns drain
+    /// through it. It fades to nothing over the fade from the region's edges, as the wear does.
+    pub flow: Vec<f32>,
+}
+
 /// `heights`, `size[0]` columns by `size[1]` rows, x fastest, in cells, drained by droplets started
-/// at the columns `start` hashes their index to, with columns `cell` cells wide: the field the
-/// droplets leave, faded into `heights` over `droplets.fade` columns from the edges.
+/// at the columns `start` hashes their index to, with columns `cell` cells wide: the ground the
+/// droplets leave and the water that ran over each column.
 #[must_use]
 pub fn drain(
     heights: &[f32],
@@ -49,10 +59,11 @@ pub fn drain(
     cell: f32,
     droplets: &Droplets,
     start: impl Fn(u32) -> [u32; 3],
-) -> Vec<f32> {
+) -> Drained {
     let [width, depth] = size;
     assert_eq!(heights.len(), width * depth, "a height per column");
     let mut ground = heights.to_vec();
+    let mut flow = vec![0.0f32; ground.len()];
     let brush = brush(droplets.radius);
     let count = (droplets.per_column * (width * depth) as f32).round() as u32;
     for index in 0..count {
@@ -61,9 +72,15 @@ pub fn drain(
             (x >> 8) as f32 / (1u32 << 24) as f32 * (width - 1) as f32,
             (y >> 8) as f32 / (1u32 << 24) as f32 * (depth - 1) as f32,
         ];
-        run_droplet(&mut ground, size, cell, droplets, &brush, at);
+        run_droplet(&mut ground, &mut flow, size, cell, droplets, &brush, at);
     }
-    fade_to(heights, &ground, size, droplets.fade)
+    // A droplet stands for the rain on `1 / per_column` columns.
+    let per_droplet = 1.0 / droplets.per_column.max(f32::MIN_POSITIVE);
+    let flow: Vec<f32> = flow.iter().map(|water| water * per_droplet).collect();
+    Drained {
+        worn: fade_to(heights, &ground, size, droplets.fade),
+        flow: fade_to(&vec![0.0; flow.len()], &flow, size, droplets.fade),
+    }
 }
 
 /// The hashed starts of droplets in a region: three words for droplet `index`, from the world, the
@@ -118,9 +135,10 @@ fn inside(size: [usize; 2], at: [f32; 2]) -> bool {
 }
 
 /// Runs one droplet from `at` over `ground` until it stops: it leaves the region, comes to rest, or
-/// its lifetime ends.
+/// its lifetime ends, adding its water to `flow` on every column it crosses.
 fn run_droplet(
     ground: &mut [f32],
+    flow: &mut [f32],
     size: [usize; 2],
     cell: f32,
     droplets: &Droplets,
@@ -134,6 +152,7 @@ fn run_droplet(
     for _ in 0..droplets.lifetime {
         let column = [at[0] as usize, at[1] as usize];
         let offset = [at[0] - column[0] as f32, at[1] - column[1] as f32];
+        flow[column[1] * width + column[0]] += water;
         let (height, slope) = height_and_slope(ground, width, at);
         direction = [
             direction[0] * INERTIA - slope[0] * (1.0 - INERTIA),
@@ -238,10 +257,14 @@ mod tests {
             .collect()
     }
 
-    fn drained(heights: &[f32]) -> Vec<f32> {
+    fn drained_both(heights: &[f32]) -> Drained {
         drain(heights, [64, 64], 1.0, &DROPLETS, |index| {
             droplet_start(7, 11, (0, 0), index)
         })
+    }
+
+    fn drained(heights: &[f32]) -> Vec<f32> {
+        drained_both(heights).worn
     }
 
     #[test]
@@ -295,5 +318,32 @@ mod tests {
         let (slope, foot) = (change(12..36), change(41..48));
         assert!(slope < 0.0, "the slope changed by {slope} on average");
         assert!(foot > 0.0, "the foot changed by {foot} on average");
+    }
+
+    #[test]
+    fn more_water_runs_down_the_slope_than_over_its_top() {
+        let heights = slope_then_flat();
+
+        let flow = drained_both(&heights).flow;
+
+        // Away from the fade, the slope's foot gathers what fell above it, its top only its own.
+        let band = |x: usize| -> f32 { (16..48).map(|y| flow[y * 64 + x]).sum() };
+        assert!(
+            band(38) > 1.5 * band(10),
+            "{} at the foot, {} at the top",
+            band(38),
+            band(10)
+        );
+    }
+
+    #[test]
+    fn no_water_runs_on_the_regions_edges() {
+        let flow = drained_both(&slope_then_flat()).flow;
+
+        for i in 0..64 {
+            for index in [i, 63 * 64 + i, i * 64, i * 64 + 63] {
+                assert_eq!(flow[index], 0.0, "column {index}");
+            }
+        }
     }
 }

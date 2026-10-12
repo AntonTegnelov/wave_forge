@@ -686,6 +686,10 @@ fine one's features, and least where the slope lies between half of `slope` and 
 small difference in the fit moves the fade. Its cost per chunk is in
 [measurements.md](../research/measurements.md) (E59).
 
+The gullies' crease, how deep the stage cut below its input, is a Field stage away, keeping the
+stage's bounded reach, for the ground's colour (gravel in the gullies, say) or a Scatter stage's
+rules: `(name: "crease", kind: Field(Max(Sub(Input("height"), Input("eroded")), Constant(0.0))))`.
+
 ### Area
 
 `Area(input: "biome", distance: d)`: where each column lies in its category of a Rules stage. Its
@@ -1147,6 +1151,17 @@ drained when its first chunk is generated, from its whole height field, so it su
 over a finite world best: the continent drains its 512 by 512 columns at scale 4 as one region
 ([measurements.md](../research/measurements.md), E61). Loading refuses a region, lifetime or radius
 of 0, no droplets, no capacity, and an erosion or deposition beyond 0 to 1.
+
+With `gives: Flow` the stage's product is the water that ran over each column instead: every step
+a droplet takes adds its water, which evaporates as it runs, to the column it crosses, counted in
+columns' worth of rain, so a column's flow is about how many columns drain through it, and it fades
+to nothing toward the region's edges as the wear does. A second Droplets stage over the same input
+with the same settings gives the flow of the very droplets the first one ran, at the cost of
+running them again. What the droplets laid down and wore away is a Field stage away:
+`Max(Sub(Input("worn"), Input("height")), 0)` is their deposition, the fans where they leave steep
+ground, and `Max(Sub(Input("height"), Input("worn")), 0)` their wear. Flow suits the ground's
+wetness channel, darker and smoother along the lines a land drains by, and a Scatter stage's rules:
+the continent's willows follow it.
 
 ### Talus
 

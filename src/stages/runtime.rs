@@ -17,8 +17,8 @@ use super::facts::{Facts, Row, RowId, Table};
 use super::lakes::lake_surface;
 use super::network::SitePaths;
 use super::pack::{
-    Column, Expr, LocationKind, MAX_APPEARANCE, MAX_SCATTER_SLOTS, Output, Pack, Persist, Profile,
-    Reach, Rule, Stage, StageKind, TableKind, point_stage_id, salt,
+    Column, DropletsGive, Expr, LocationKind, MAX_APPEARANCE, MAX_SCATTER_SLOTS, Output, Pack,
+    Persist, Profile, Reach, Rule, Stage, StageKind, TableKind, point_stage_id, salt,
 };
 use super::regions::{Attempt, Curve, CurveId, RegionInput, RegionJob, region_of};
 use super::rivers::DownhillRivers;
@@ -2753,6 +2753,7 @@ impl Runtime {
                 erosion,
                 deposition,
                 fade,
+                gives,
                 ..
             } => {
                 let settings = Droplets {
@@ -2765,9 +2766,13 @@ impl Runtime {
                     fade,
                 };
                 let world = (self.seed as u32) ^ ((self.seed >> 32) as u32);
-                drain(heights, columns, stage.scale as f32, &settings, |droplet| {
+                let drained = drain(heights, columns, stage.scale as f32, &settings, |droplet| {
                     droplet_start(world, stage.salt, region, droplet)
-                })
+                });
+                match gives {
+                    DropletsGive::Height => drained.worn,
+                    DropletsGive::Flow => drained.flow,
+                }
             }
             StageKind::Talus {
                 slope,
