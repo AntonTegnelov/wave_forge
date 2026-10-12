@@ -326,17 +326,44 @@ pub fn far_ground_categories(
     scale: u32,
     cell_size: [f32; 3],
 ) -> Vec<u8> {
-    let [columns_x, columns_y] = categories.size;
-    let column = |at: f32, cell: f32, columns: u32| {
+    far_columns(far, categories.size, scale, cell_size)
+        .map(|[x, y]| categories.get(x, y))
+        .collect()
+}
+
+/// The value each vertex of `far` stands on: that of the column under it of `field`, the chunk of
+/// a field stage at the far ground's `scale`, taken as [`far_ground_categories`] takes categories.
+/// An engine shades the far ground by these, as it shades the near ground by a field's channels.
+///
+/// # Panics
+/// If `field` has no columns, or `scale` is zero.
+#[must_use]
+pub fn far_ground_values(
+    far: &FarGround,
+    field: &Field,
+    scale: u32,
+    cell_size: [f32; 3],
+) -> Vec<f32> {
+    far_columns(far, field.size, scale, cell_size)
+        .map(|[x, y]| field.get(x, y))
+        .collect()
+}
+
+/// The column of a chunk of `size` columns at the far ground's `scale` under each vertex of `far`,
+/// the chunk's far edges' and walls' clamped into it.
+fn far_columns(
+    far: &FarGround,
+    size: [u32; 2],
+    scale: u32,
+    cell_size: [f32; 3],
+) -> impl Iterator<Item = [u32; 2]> + '_ {
+    let column = move |at: f32, cell: f32, columns: u32| {
         ((at / (cell * scale as f32)).floor().max(0.0) as u32).min(columns - 1)
     };
-    far.positions
-        .iter()
-        .map(|&[x, _, z]| {
-            categories.get(
-                column(x, cell_size[0], columns_x),
-                column(z, cell_size[2], columns_y),
-            )
-        })
-        .collect()
+    far.positions.iter().map(move |&[x, _, z]| {
+        [
+            column(x, cell_size[0], size[0]),
+            column(z, cell_size[2], size[1]),
+        ]
+    })
 }

@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{
-    ChunkCoord, FarGround, FocusPoint, GroundMesh, far_ground, far_ground_categories, far_steps,
-    ground,
+    ChunkCoord, FarGround, FocusPoint, GroundMesh, far_ground, far_ground_categories,
+    far_ground_values, far_steps, ground,
 };
 
 const PACK: &str = r#"(
@@ -406,6 +406,29 @@ fn each_far_vertex_stands_on_the_category_of_the_coarse_column_under_it() {
         seen.len() > 1,
         "only the categories {seen:?} under the chunk"
     );
+}
+
+#[test]
+fn each_far_vertex_stands_on_the_value_of_the_coarse_column_under_it() {
+    let runtime = runtime();
+    let chunk = ChunkCoord::new(1, 0, 0);
+    let far = far(&runtime, chunk, &BTreeMap::new());
+    let field = runtime.field("far", chunk).expect("generated");
+
+    let under = far_ground_values(&far, field, SCALE, CELL);
+
+    assert_eq!(under.len(), far.positions.len());
+    let side = (COLUMNS * SCALE as i32) as f32;
+    let origin = [chunk.x as f32 * side, chunk.y as f32 * side];
+    for (vertex, &value) in far.positions.iter().zip(&under) {
+        // Within the chunk, a vertex on its far edges in the edge column.
+        let at = [
+            origin[0] + (vertex[0] / CELL[0]).clamp(0.0, side - 0.5),
+            origin[1] + (vertex[2] / CELL[2]).clamp(0.0, side - 0.5),
+        ];
+        let sampled = runtime.sample("far", at).expect("a field samples");
+        assert_eq!(value, sampled, "the vertex at {vertex:?}");
+    }
 }
 
 #[test]
