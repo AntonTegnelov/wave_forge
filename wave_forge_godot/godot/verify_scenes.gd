@@ -7,7 +7,8 @@
 ## every tree is drawn once. With a promotion radius that puts some pieces inside and some outside,
 ## those outside are freed as nodes and drawn as MultiMeshes of their mesh instead, and become
 ## nodes again when promotion is turned off. Moving away frees every node and MultiMesh instance of
-## the view left behind, while the view moved to places its own.
+## the view left behind, while the view moved to places its own. The node's placement budget is 0,
+## spent before any chunk, so all of it rests on a frame placing at least one chunk.
 extends SceneTree
 
 const CELLS := 8
@@ -38,6 +39,7 @@ func _initialize() -> void:
 		_fail("the street scene could not be saved")
 		return
 	world = ClassDB.instantiate("WaveForgeStages")
+	world.placement_budget_ms = 0.0
 	world.pack_file = "res://scenes.world.ron"
 	world.targets = PackedStringArray(["village", "level", "trees"])
 	world.seed = 21

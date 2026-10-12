@@ -196,8 +196,9 @@ impl Placements {
     }
 
     /// Places due chunks, and chunks that crossed the promotion radius, nearest `focus` first,
-    /// until `budget_ms` is spent: each chunk's items as `items` gives them, a node scene's as nodes
-    /// only where `near` holds. Waits while any scene is still loading. Returns the nodes placed.
+    /// until `budget_ms` is spent and at least one: each chunk's items as `items` gives them, a node
+    /// scene's as nodes only where `near` holds. Waits while any scene is still loading. Returns the
+    /// nodes placed.
     ///
     /// # Errors
     /// Naming a scene that failed to load or whose root is not a `Node3D`.
@@ -222,13 +223,18 @@ impl Placements {
             .collect();
         self.due.extend(crossed);
         let mut due: Vec<(String, ChunkCoord)> = self.due.iter().cloned().collect();
-        due.sort_by_key(|(stage, chunk)| {
-            let distance = (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs());
-            (distance, *chunk, stage.clone())
+        // Compared by reference: a key that cloned the stage's name allocated on every comparison,
+        // and with thousands of chunks due, a continent's, the sort alone spent the frame's budget.
+        let distance =
+            |chunk: &ChunkCoord| (chunk.x - focus.x).abs().max((chunk.y - focus.y).abs());
+        due.sort_by(|(a_stage, a), (b_stage, b)| {
+            (distance(a), a, a_stage).cmp(&(distance(b), b, b_stage))
         });
         let mut spawned = Vec::new();
-        for (stage, chunk) in due {
-            if started.elapsed().as_secs_f64() * 1000.0 >= budget_ms {
+        // At least one chunk a frame, so a frame the budget is spent in before the first, a slow
+        // one or one with many chunks due, still places.
+        for (index, (stage, chunk)) in due.into_iter().enumerate() {
+            if index > 0 && started.elapsed().as_secs_f64() * 1000.0 >= budget_ms {
                 break;
             }
             let key = (stage, chunk);
