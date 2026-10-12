@@ -1,0 +1,53 @@
+// A galaxy of sectors, systems and bodies for a space game (docs/product/user-stories.md, G6),
+// and the surface of the body a runtime is focused on. Each table reads only its parent: a sector's
+// stellar mass is a budget its systems share out, and a body's size follows its system's. A few
+// systems and an outpost are authored, given in the pack among the generated rows, and move no
+// generated row's id. The surface follows the focused body's row: its relief from its roughness,
+// its zones from its temperature, its rocks from its dryness, and the outpost's site flattened into
+// it.
+(
+    version: 1,
+    tables: [
+        (name: "sectors", kind: Generated(count: Constant(16.0), columns: [
+            ("mass", Floor(Random(1000.0, 5000.0))),
+        ])),
+        (name: "systems", kind: Generated(parent: Some("sectors"), count: Floor(Random(2.0, 8.0)),
+            columns: [
+                ("mass", Share("mass")),
+                ("radius", Random(1.0, 10.0)),
+            ],
+            // A home system and a neighbour, from a catalogue, in sector 2.
+            authored: [
+                (parent: [2], id: 0, values: [("mass", 1.0), ("radius", 1.0)]),
+                (parent: [2], id: 1, values: [("mass", 1.1), ("radius", 1.2)]),
+            ])),
+        (name: "bodies", kind: Generated(parent: Some("systems"), count: Floor(Random(1.0, 6.0)),
+            columns: [
+                ("size", Mul(Parent("radius"), Random(0.2, 1.0))),
+                ("roughness", Random(0.0, 1.0)),
+                ("temperature", Random(0.0, 1.0)),
+                ("water", Random(0.0, 1.0)),
+            ])),
+        // Sites an author placed on every surface: none generated, one given.
+        (name: "outposts", kind: Generated(count: Constant(0.0),
+            columns: [("x", Constant(0.0)), ("y", Constant(0.0)), ("size", Constant(1.0))],
+            authored: [(id: 0, values: [("x", 20.0), ("y", 20.0), ("size", 1.0)])])),
+    ],
+    stages: [
+        // Relief of up to 40 cells on the roughest bodies, nearly flat on the smoothest.
+        (name: "relief", kind: Field(Mul(
+            Noise(frequency: 0.04, octaves: 3),
+            Add(Constant(2.0), Mul(Row("bodies", "roughness"), Constant(38.0))),
+        ))),
+        (name: "zones", kind: Rules(rules: [
+            (category: "ice", when: [Less(Row("bodies", "temperature"), Constant(0.3))]),
+            (category: "dunes", when: [Greater(Row("bodies", "temperature"), Constant(0.7))]),
+            (category: "high", when: [Greater(Input("relief"), Constant(20.0))]),
+        ], otherwise: "plain")),
+        // Rocks stand thicker on drier bodies, never closer than three cells apart.
+        (name: "dryness", kind: Field(Sub(Constant(1.0), Row("bodies", "water")))),
+        (name: "rocks", kind: Scatter(kind: "rock", height: "ground", spacing: 3, apart: 3, density: Some("dryness"))),
+        (name: "outposts", kind: TableSites(table: "outposts", height: "relief", at: ("x", "y"), size: "size", max_size: 2)),
+        (name: "ground", kind: Flatten(height: "relief", sites: "outposts", blend: 4)),
+    ],
+)
