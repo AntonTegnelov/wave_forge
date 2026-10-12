@@ -377,7 +377,10 @@ Steep ground sheds debris that settles in aprons at its foot (a Talus stage): th
 keep their faces with scree below them, and the continent's boulders stand wherever the debris lies
 deep, where its rocky biomes alone placed none (`tests/talus.rs`,
 [measurements.md](../research/measurements.md) L52,
-[#363](https://github.com/AntonTegnelov/wave_forge/issues/363)).
+[#363](https://github.com/AntonTegnelov/wave_forge/issues/363)). From eye level in the continent's
+hill pasture at (2640, 1608), five boulders gather in a rocky gully at the foot of its walls
+(`render_continent_boulders.gd` on a bake,
+[#403](https://github.com/AntonTegnelov/wave_forge/issues/403)).
 The water a land drains by darkens and wets its ground along the lines it runs, and willows follow
 it: a Droplets stage gives the flow of its droplets as well as the ground they wore
 (`tests/droplets.rs`, [measurements.md](../research/measurements.md) L53,
