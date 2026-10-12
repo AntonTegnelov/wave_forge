@@ -18,6 +18,7 @@
 
 use crate::ground::GroundMesh;
 use crate::stages::{Categories, Field};
+use std::collections::BTreeSet;
 use wfc_core::ChunkCoord;
 
 /// One coarse chunk's far ground, in a Y-up engine's axes as [`crate::YUpSpace`] maps them.
@@ -121,6 +122,20 @@ pub fn far_ground<'a>(
             normals.push([-slope_x / length, 1.0 / length, -slope_z / length]);
         }
     }
+    // Where a far vertex stands on a near ground's vertex it takes that vertex's height and normal,
+    // so the far ground meets the near ground's edge with no wall between them and the step between
+    // the two spreads over the far squares beside it. Every far chunk does the same, so neighbours
+    // still meet exactly.
+    for j in 0..i64::from(side) {
+        for i in 0..i64::from(side) {
+            let (column, row) = (i * stride, j * stride);
+            if let Some((height, normal)) = near_vertex(&near, first, own.size, column, row) {
+                let vertex = (j * i64::from(side) + i) as usize;
+                positions[vertex][1] = height;
+                normals[vertex] = normal;
+            }
+        }
+    }
     let lattice = |i: u32, j: u32| ChunkCoord::new(first.x + i as i32, first.y + j as i32, first.z);
     let vertex = |i: u32, j: u32| j * side + i;
     let mut indices = Vec::new();
@@ -148,45 +163,37 @@ pub fn far_ground<'a>(
             let (right, below) = (vertex(gi + steps, gj), vertex(gi, gj + steps));
             let far_corner = vertex(gi + steps, gj + steps);
             // The block's edges in the order its surface winds, counter-clockwise seen from above:
-            // each edge's neighbour across it, its corners, and the far vertices along it from its
-            // first corner up to its last.
+            // each edge's neighbour across it, and the far vertices along it from its first corner up
+            // to its last.
             let edges = [
                 (
                     (-1, 0),
-                    corner,
-                    below,
                     (0..steps).map(|k| vertex(gi, gj + k)).collect::<Vec<u32>>(),
                 ),
                 (
                     (0, 1),
-                    below,
-                    far_corner,
                     (0..steps)
                         .map(|k| vertex(gi + k, gj + steps))
                         .collect::<Vec<u32>>(),
                 ),
                 (
                     (1, 0),
-                    far_corner,
-                    right,
                     (0..steps)
                         .map(|k| vertex(gi + steps, gj + steps - k))
                         .collect::<Vec<u32>>(),
                 ),
                 (
                     (0, -1),
-                    right,
-                    corner,
                     (0..steps)
                         .map(|k| vertex(gi + steps - k, gj))
                         .collect::<Vec<u32>>(),
                 ),
             ];
-            // The block's outline: along an edge shared with a near ground, the far foot of its
-            // wall, one vertex under or over each of the near edge's; along any other, its far
+            // The block's outline: along an edge shared with a near ground, the top of the curtain
+            // under it, one vertex on each of the near edge's at its height; along any other, its far
             // vertices, which the far squares beside it share.
             let mut outline = Vec::new();
-            for ((dx, dy), from, to, along) in edges {
+            for ((dx, dy), along) in edges {
                 let across = ChunkCoord::new(here.x + dx, here.y + dy, first.z);
                 let Some(ground) = near(across) else {
                     outline.extend(along);
@@ -198,7 +205,6 @@ pub fn far_ground<'a>(
                     &mut indices,
                     ground,
                     (dx, dy),
-                    [from, to],
                     [
                         (across.x - first.x) as f32 * span_x,
                         (across.y - first.y) as f32 * span_z,
@@ -231,6 +237,33 @@ pub fn far_ground<'a>(
     })
 }
 
+/// The coarse chunks at `scale` whose far ground reads the near ground of the lattice chunk `fine`,
+/// which an engine builds again when that near ground arrives, changes or goes: those holding
+/// `fine` or any of the eight lattice chunks around it, since a far ground leaves the near ground's
+/// block out, hangs curtains on the blocks beside it and takes its heights at every far vertex on
+/// its edges and corners.
+///
+/// # Panics
+/// If `scale` is zero.
+#[must_use]
+pub fn far_chunks_reading(fine: ChunkCoord, scale: u32) -> BTreeSet<ChunkCoord> {
+    assert!(
+        scale > 0,
+        "a coarse stage's scale is a whole number of cells"
+    );
+    let scale = scale as i32;
+    (-1..=1)
+        .flat_map(|dy| (-1..=1).map(move |dx| (dx, dy)))
+        .map(|(dx, dy)| {
+            ChunkCoord::new(
+                (fine.x + dx).div_euclid(scale),
+                (fine.y + dy).div_euclid(scale),
+                fine.z,
+            )
+        })
+        .collect()
+}
+
 /// How many far squares a far ground of a coarse stage at `scale`, whose chunks have `columns`
 /// columns along each side, has along each side of a lattice chunk: one per coarse column the
 /// lattice chunk spans, or one where it spans less than one or not a whole number of them.
@@ -243,20 +276,18 @@ pub fn far_steps(columns: u32, scale: u32) -> u32 {
     }
 }
 
-/// Hangs a wall between a near ground's edge facing across `(dx, dy)` and the far square's edge
-/// from the vertex `ends[0]` to `ends[1]`, and returns the wall's far feet in that order: a vertex
-/// on the far edge under or over each of the near edge's. The wall reaches from the higher of the
-/// two edges to below the lower by as much as the near ground's skirt hangs, which is as far as any
-/// of its levels of detail strays from the full-detail edge, so it closes the gap to whichever
-/// level the near ground is drawn at. The near ground's positions are moved by `offset` into the
-/// far ground's frame.
+/// Hangs a curtain below a near ground's edge facing across `(dx, dy)`, which the far square meets,
+/// and returns the curtain's tops along it, running the way the far square's edge does: a vertex on
+/// each of the near edge's, at its height, which the far square's surface takes as its edge. The
+/// curtain hangs as far as the near ground's skirt, which is as far as any of its levels of detail
+/// strays from the full-detail edge, so it closes the gap to whichever level the near ground is
+/// drawn at. The near ground's positions are moved by `offset` into the far ground's frame.
 fn wall(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
     ground: &GroundMesh,
     (dx, dy): (i32, i32),
-    ends: [u32; 2],
     offset: [f32; 2],
 ) -> Vec<u32> {
     let [w, h] = ground.size;
@@ -273,36 +304,59 @@ fn wall(
     }
     // The skirt's first vertex is the grid's first, hung below it.
     let depth = ground.positions[0][1] - ground.positions[(w * h) as usize][1];
-    let [start, end] = ends.map(|end| positions[end as usize]);
-    let [start_normal, end_normal] = ends.map(|end| normals[end as usize]);
-    let steps = (edge.len() - 1) as f32;
-    // Down each place along the edge: the wall's top, its foot on the far edge, and its bottom.
+    // Down each place along the edge: the curtain's top, at the near edge, and its bottom.
     let mut columns = Vec::with_capacity(edge.len());
-    for (k, &vertex) in edge.iter().enumerate() {
+    for &vertex in &edge {
         let [x, near, z] = ground.positions[vertex as usize];
-        let along = k as f32 / steps;
-        let far = start[1] + (end[1] - start[1]) * along;
-        let at = [x + offset[0], z + offset[1]];
-        let normal = unit(
-            [0, 1, 2]
-                .map(|axis| start_normal[axis] + (end_normal[axis] - start_normal[axis]) * along),
-        );
-        let column = [near.max(far), far, near.min(far) - depth].map(|height| {
-            positions.push([at[0], height, at[1]]);
+        let normal = ground.normals[vertex as usize];
+        let column = [near, near - depth].map(|height| {
+            positions.push([x + offset[0], height, z + offset[1]]);
             normals.push(normal);
             positions.len() as u32 - 1
         });
         columns.push(column);
     }
     for pair in columns.windows(2) {
-        let [a, b] = [pair[0], pair[1]];
-        for level in 0..2 {
-            let (a_top, a_low, b_top, b_low) = (a[level], a[level + 1], b[level], b[level + 1]);
-            indices.extend([a_top, b_top, a_low, b_top, b_low, a_low]);
-            indices.extend([a_top, a_low, b_top, b_top, a_low, b_low]);
+        let ([a_top, a_low], [b_top, b_low]) = (pair[0], pair[1]);
+        indices.extend([a_top, b_top, a_low, b_top, b_low, a_low]);
+        indices.extend([a_top, a_low, b_top, b_top, a_low, b_low]);
+    }
+    columns.iter().map(|&[top, _]| top).collect()
+}
+
+/// The height and normal of the near ground's vertex standing at `column`, `row`, counted in columns
+/// of the WFC lattice from the corner of the lattice chunk `first`, if any near ground has one there:
+/// a vertex on a lattice chunk's edge belongs to each chunk the edge bounds.
+fn near_vertex<'a>(
+    near: &impl Fn(ChunkCoord) -> Option<&'a GroundMesh>,
+    first: ChunkCoord,
+    [columns_x, columns_y]: [u32; 2],
+    column: i64,
+    row: i64,
+) -> Option<(f32, [f32; 3])> {
+    let (columns_x, columns_y) = (i64::from(columns_x), i64::from(columns_y));
+    // The chunks whose squares hold the vertex: the one it lies in, and the one before it along an
+    // axis where it lies on their shared edge.
+    let chunks = |at: i64, columns: i64| {
+        let chunk = at.div_euclid(columns);
+        if at.rem_euclid(columns) == 0 {
+            vec![chunk - 1, chunk]
+        } else {
+            vec![chunk]
+        }
+    };
+    for cy in chunks(row, columns_y) {
+        for cx in chunks(column, columns_x) {
+            let at = ChunkCoord::new(first.x + cx as i32, first.y + cy as i32, first.z);
+            let Some(ground) = near(at) else {
+                continue;
+            };
+            let (i, j) = (column - cx * columns_x, row - cy * columns_y);
+            let vertex = (j * i64::from(ground.size[0]) + i) as usize;
+            return Some((ground.positions[vertex][1], ground.normals[vertex]));
         }
     }
-    columns.iter().map(|column| column[1]).collect()
+    None
 }
 
 /// `v` scaled to unit length.

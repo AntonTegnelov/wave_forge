@@ -601,7 +601,11 @@ a far ground from a coarse height stage ([#183](https://github.com/AntonTegnelov
 ground from a coarse height stage are built in both engines (in Godot a far chunk of the city is
 one draw call, `render_proxies.sh` in [testing.md](../guides/testing.md), and the far ground meets
 the near ground without a gap pixel in any view, `render_far.gd`, E52, where the coarse stage
-generates about 58 000 chunks a second of its own time, each covering 64 of the lattice). Nothing
+generates about 58 000 chunks a second of its own time, each covering 64 of the lattice). The far
+ground meets the near ground's edge at its height, so where the coarse ground disagrees with the
+full detail the step slopes across the far squares beside it instead of standing as a wall: the
+canyon's near square no longer reads as a pit in its oblique view (`tests/far_ground.rs`,
+`render_presets.gd -- views canyon`, [#401](https://github.com/AntonTegnelov/wave_forge/issues/401)). Nothing
 is measured at 2 km on a desktop yet ([desktop-measurements.md](../guides/desktop-measurements.md)). Beyond the 100 m Godot's shadows reach by default, the far ground's valleys darken by how much of the sky the land around hides, a Horizon stage over its coarse height given to the far and near ground alike, in both engines (`tests/horizon.rs`, `verify_far.gd`, Bevy's `stages.rs`; 0.155 ms a coarse chunk and no seam where they meet, E72, [#367](https://github.com/AntonTegnelov/wave_forge/issues/367)). Measured so far: a field stage costs 0.02 ms per chunk of 64 columns on the CPU in release (valley pack, dozen on the RTX 3070, [measurements.md](../research/measurements.md) E29), so fields are not what limits view distance.
 
 ### P3. Fast into a new world

@@ -1,6 +1,6 @@
 //! Far ground from a coarse height field: its heights are what a fine stage reading the coarse field
 //! gets, neighbouring coarse chunks meet exactly, it covers every point of the ground plane that no
-//! near ground covers and none that one does, a wall joins it to every near ground it meets, and
+//! near ground covers and none that one does, it meets every near ground's edge at that edge's height, and
 //! each vertex stands on the category of the coarse column under it. A coarse stage at a scale of 8
 //! spans one coarse column to a lattice chunk; one at a scale of 4 spans two, and its far ground
 //! has a vertex for each.
@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use wave_forge::stages::{Pack, Runtime};
 use wave_forge::{
-    ChunkCoord, FarGround, FocusPoint, GroundMesh, far_ground, far_ground_categories,
-    far_ground_values, far_steps, ground,
+    ChunkCoord, FarGround, FocusPoint, GroundMesh, far_chunks_reading, far_ground,
+    far_ground_categories, far_ground_values, far_steps, ground,
 };
 
 const PACK: &str = r#"(
@@ -43,7 +43,7 @@ fn runtime() -> Runtime {
             &[FocusPoint::new(ChunkCoord::new(4, 4, 0), 3)],
             &[
                 ("far", Some(24)),
-                ("near", None),
+                ("near", Some(7)),
                 ("read", Some(5)),
                 ("far_kind", Some(24)),
                 ("far4", Some(16)),
@@ -152,11 +152,72 @@ fn neighbouring_far_grounds_meet_exactly() {
     }
 }
 
+#[test]
+fn neighbouring_far_grounds_meet_exactly_where_a_near_ground_lies_across_their_border() {
+    let runtime = runtime();
+    // Lattice chunks 7 to 9 along x: the first coarse chunk's last and the second's first two.
+    let near = near_grounds_from(&runtime, ChunkCoord::new(7, 2, 0));
+    let (a, b) = (ChunkCoord::new(0, 0, 0), ChunkCoord::new(1, 0, 0));
+
+    let (a, b) = (far(&runtime, a, &near), far(&runtime, b, &near));
+
+    let side = SCALE + 1;
+    for j in 0..side {
+        let on_a = world(&a, (j * side + SCALE) as usize);
+        let on_b = world(&b, (j * side) as usize);
+        assert!(
+            on_a.iter().zip(on_b).all(|(p, q)| (p - q).abs() < 1e-4),
+            "row {j}: {on_a:?} against {on_b:?}"
+        );
+    }
+}
+
+#[test]
+fn every_far_ground_a_near_ground_changes_is_one_that_reads_it() {
+    let runtime = runtime();
+    // The last lattice chunk of the coarse chunk at the origin, whose far corner is the first
+    // vertex of the coarse chunk diagonally beyond it.
+    let fine = ChunkCoord::new(SCALE as i32 - 1, SCALE as i32 - 1, 0);
+    let mesh = ground(fine, |at| runtime.field("near", at), CELL).expect("fields around");
+    let with: BTreeMap<ChunkCoord, GroundMesh> = [(fine, mesh)].into_iter().collect();
+
+    let reading = far_chunks_reading(fine, SCALE);
+
+    for y in -1..=2 {
+        for x in -1..=2 {
+            let chunk = ChunkCoord::new(x, y, 0);
+            let (Some(without), Some(given)) = (
+                far_ground(chunk, SCALE, |at| runtime.field("far", at), CELL, |_| None),
+                far_ground(
+                    chunk,
+                    SCALE,
+                    |at| runtime.field("far", at),
+                    CELL,
+                    |at| with.get(&at),
+                ),
+            ) else {
+                continue;
+            };
+            if without.positions != given.positions || without.indices != given.indices {
+                assert!(
+                    reading.contains(&chunk),
+                    "{chunk:?} changes but is not read"
+                );
+            }
+        }
+    }
+}
+
 /// The near grounds of the lattice chunks from (2, 2) to (4, 4), in the middle of the coarse chunk
 /// at the origin.
 fn near_grounds(runtime: &Runtime) -> BTreeMap<ChunkCoord, GroundMesh> {
-    (2..=4)
-        .flat_map(|y| (2..=4).map(move |x| ChunkCoord::new(x, y, 0)))
+    near_grounds_from(runtime, ChunkCoord::new(2, 2, 0))
+}
+
+/// The near grounds of the 3 by 3 lattice chunks from `first`.
+fn near_grounds_from(runtime: &Runtime, first: ChunkCoord) -> BTreeMap<ChunkCoord, GroundMesh> {
+    (first.y..first.y + 3)
+        .flat_map(|y| (first.x..first.x + 3).map(move |x| ChunkCoord::new(x, y, 0)))
         .map(|chunk| {
             let mesh = ground(chunk, |at| runtime.field("near", at), CELL).expect("fields around");
             (chunk, mesh)
@@ -325,7 +386,7 @@ fn assert_cover_once(far: &FarGround, scale: u32, near: &BTreeMap<ChunkCoord, Gr
 }
 
 #[test]
-fn a_wall_joins_every_near_edge_the_far_ground_meets_from_above_it_to_below_its_skirt() {
+fn the_far_ground_meets_every_near_edge_at_its_height_and_hangs_below_it_as_far_as_its_skirt() {
     let runtime = runtime();
     let near = near_grounds(&runtime);
 
@@ -360,18 +421,17 @@ fn a_wall_joins_every_near_edge_the_far_ground_meets_from_above_it_to_below_its_
                 let [x, edge, z] = mesh.positions[vertex as usize];
                 let (low, high) = span_at(x + corner[0], z + corner[1]);
                 assert!(
-                    high >= edge - 1e-4 && low <= edge - skirt + 1e-4,
-                    "the wall at {chunk:?}'s vertex {vertex} spans {low} to {high}, its edge {edge}"
+                    (high - edge).abs() < 1e-4 && low <= edge - skirt + 1e-4,
+                    "the far ground at {chunk:?}'s vertex {vertex} spans {low} to {high}, its edge {edge}"
                 );
             }
         }
     }
     assert_eq!(edges, 12, "the block's outer edges");
-    // Two triangles each way per segment of each of a wall's two strips, above and below its foot on
-    // the far edge, eight segments to an edge; a square beside the
-    // block fans from its centre through its outline, eight vertices along its walled edge and one
-    // for each other corner; the rest are two triangles.
-    let walls = 12 * 8 * 2 * 4;
+    // Two triangles each way per segment of a curtain below each near edge, eight segments to an
+    // edge; a square beside the block fans from its centre through its outline, eight vertices along
+    // its edge with the near ground and one for each other corner; the rest are two triangles.
+    let walls = 12 * 8 * 4;
     let beside = 12 * (8 + 3);
     let plain = 2 * (SCALE * SCALE - 9 - 12) as usize;
     assert_eq!(far.indices.len(), 3 * (walls + beside + plain));
