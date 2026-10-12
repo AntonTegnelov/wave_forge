@@ -1225,6 +1225,18 @@ ground's colour and a Scatter stage's rules can read:
 (name: "debris", kind: Field(Max(Sub(Input("weathered"), Input("rock")), Constant(0.0)))),
 ```
 
+### Connected
+
+`Connected(input: "biome", region: 16)`: the connected areas of a Rules, Nearest or Area stage's
+categories, as a field of ids. In every square region of `region` chunks, two columns that share an
+edge and a category belong to one area, and every column takes its area's id: 0 for the area of the
+region's first column, row by row with x fastest, then 1 for the next area met, and so on. So the
+ids depend on the categories alone, chunks generate in any order, and the stage can be sampled. An
+area ends at its region's border; a finite world labels its whole map as one region, which is how a
+world names its connected regions of each biome, its seas, deserts and ranges say. A Field stage
+reads an id as any field's value, exact as a float up to 2^24 areas. Loading refuses a region of 0
+chunks and an input that gives no categories (`tests/connected.rs`).
+
 ### Network
 
 `Network(sites: "towns", height: "ground", region: 12, width: 1.5, climb: 4.0, dry: Some(0.05))`:
@@ -1291,7 +1303,7 @@ let trees = runtime.points("trees", chunk);
 - `sample(stage, at)` gives a stage's value at a point in WFC cells, and `atlas(stage, min, size)`
   its values over an area of its own columns, row by row with x fastest, without generating any
   chunk: exactly what the chunks would hold. Field, Rules, Nearest, Blur, Delta, Horizon, Erode and Area stages whose
-  inputs are too can be sampled, and so can Lakes, Droplets and Talus stages, each computed once over the
+  inputs are too can be sampled, and so can Lakes, Droplets, Talus and Connected stages, each computed once over the
   whole region a sample lies in from samples of its input, the latest eight kept for later
   samples; the others need neighbouring chunks and fail with `StageError::NotSampled`. Sampling
   takes `&self` and holds no products, so a game can build a runtime just to sample, on any thread:
