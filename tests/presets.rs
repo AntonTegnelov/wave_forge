@@ -104,6 +104,67 @@ fn every_value_in_the_islands_ranges_gives_a_sound_world() {
 }
 
 #[test]
+fn the_islands_rise_from_shelves_over_coastal_plains_with_scree_and_wet_lines_where_they_drain() {
+    // A square of 24 by 24 chunks around the origin, 192 cells a side: several islands.
+    let pack = islands();
+    let mut runtime = Runtime::new(Arc::clone(&pack), 3, SIZE);
+    let chunks: Vec<ChunkCoord> = (-12..12)
+        .flat_map(|y| (-12..12).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime
+        .request(&focus, &["height", "surface", "wet"])
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+    let scree = pack
+        .kind("surface")
+        .expect("a surface stage")
+        .categories()
+        .iter()
+        .position(|&name| name == "scree")
+        .expect("scree") as u8;
+
+    let (mut sea, mut shelf, mut land, mut plain, mut scree_columns, mut wet_inland) =
+        (0, 0, 0, 0, 0, 0);
+    for &chunk in &chunks {
+        let height = runtime.field("height", chunk).expect("generated");
+        let wet = runtime.field("wet", chunk).expect("generated");
+        let surface = runtime.categories("surface", chunk).expect("generated");
+        for y in 1..7 {
+            for x in 1..7 {
+                let h = height.get(x, y);
+                let across = (height.get(x + 1, y) - height.get(x - 1, y)).abs();
+                let along = (height.get(x, y + 1) - height.get(x, y - 1)).abs();
+                let flat = across.max(along) < 0.2;
+                if h < 0.0 {
+                    sea += 1;
+                    shelf += usize::from(h > -1.5);
+                } else {
+                    land += 1;
+                    // Low, flat land above the beach.
+                    plain += usize::from(flat && (1.2..3.0).contains(&h));
+                    // Wet above the beach, where the land drains.
+                    wet_inland += usize::from(h > 1.2 && wet.get(x, y) > 0.5);
+                }
+                scree_columns += usize::from(surface.get(x, y) == scree);
+            }
+        }
+    }
+    let (shelves, plains) = (
+        shelf as f32 / sea.max(1) as f32,
+        plain as f32 / land.max(1) as f32,
+    );
+    println!(
+        "{shelves} of the sea on shelves, {plains} of the land on coastal plains, {scree_columns} columns of scree, {wet_inland} wet inland"
+    );
+
+    assert!(shelves > 0.1, "only {shelves} of the sea on shelves");
+    assert!(plains > 0.1, "only {plains} of the land on coastal plains");
+    assert!(scree_columns > 0, "no scree below the spines");
+    assert!(wet_inland > 20, "only {wet_inland} wet columns inland");
+}
+
+#[test]
 fn more_land_makes_more_land_and_more_trees_more_trees() {
     let pack = islands();
     let survey_at = |land: f32, trees: f32| {
@@ -449,6 +510,42 @@ fn every_value_in_the_canyon_ranges_gives_a_sound_world() {
 }
 
 #[test]
+fn dry_washes_run_across_the_canyons_floors_where_the_desert_drains() {
+    // A square of 24 by 24 chunks around the origin, 192 cells a side.
+    let pack = preset("canyon");
+    let mut runtime = Runtime::new(Arc::clone(&pack), 3, SIZE);
+    let chunks: Vec<ChunkCoord> = (-12..12)
+        .flat_map(|y| (-12..12).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime.request(&focus, &["surface"]).expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+    let names = pack.kind("surface").expect("a surface stage").categories();
+    let index = |name: &str| names.iter().position(|&n| n == name).expect(name) as u8;
+    let (wash, sand) = (index("wash"), index("sand"));
+
+    let (mut washes, mut floor) = (0, 0);
+    for &chunk in &chunks {
+        for &category in &runtime
+            .categories("surface", chunk)
+            .expect("generated")
+            .values
+        {
+            washes += usize::from(category == wash);
+            floor += usize::from(category == wash || category == sand);
+        }
+    }
+
+    let share = washes as f32 / floor.max(1) as f32;
+    println!("{share} of the canyons' floors in washes");
+    // Lines through the floors, not sheets over them.
+    assert!(
+        (0.01..0.2).contains(&share),
+        "{share} of the floors in washes"
+    );
+}
+
+#[test]
 fn wider_canyons_more_strata_and_more_cacti_each_make_more_of_theirs() {
     let pack = preset("canyon");
     let survey_at = |canyons: f32, strata: f32, cacti: f32| {
@@ -775,6 +872,57 @@ fn survey_city(runtime: &Runtime) -> (Site, usize, usize, f32, f32) {
         }
     }
     (city, buildings, trees, high - low, cover)
+}
+
+#[test]
+fn the_city_stands_in_countryside_of_valley_floors_wet_where_it_drains() {
+    // A square of 24 by 24 chunks around the origin, 192 cells a side, of the countryside alone:
+    // the city's own stage is not asked for.
+    let mut runtime = Runtime::new(preset("city"), 3, SIZE);
+    let chunks: Vec<ChunkCoord> = (-12..12)
+        .flat_map(|y| (-12..12).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime
+        .request(&focus, &["hills", "wet"])
+        .expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+
+    let (mut heights, mut flat, mut wet_heights) = (Vec::new(), 0, Vec::new());
+    for &chunk in &chunks {
+        let height = runtime.field("hills", chunk).expect("generated");
+        let wet = runtime.field("wet", chunk).expect("generated");
+        for y in 1..7 {
+            for x in 1..7 {
+                let h = height.get(x, y);
+                let across = (height.get(x + 1, y) - height.get(x - 1, y)).abs();
+                let along = (height.get(x, y + 1) - height.get(x, y - 1)).abs();
+                flat += usize::from(across.max(along) < 0.1);
+                if wet.get(x, y) > 0.5 {
+                    wet_heights.push(h);
+                }
+                heights.push(h);
+            }
+        }
+    }
+    heights.sort_by(f32::total_cmp);
+    let median = heights[heights.len() / 2];
+    let floors = flat as f32 / heights.len() as f32;
+    let wet_mean = wet_heights.iter().sum::<f32>() / wet_heights.len().max(1) as f32;
+    println!(
+        "{floors} of the countryside flat, {} wet at a mean height of {wet_mean} against a median of {median}",
+        wet_heights.len()
+    );
+
+    assert!(
+        floors > 0.15,
+        "only {floors} of the countryside on flat floors"
+    );
+    assert!(
+        !wet_heights.is_empty() && wet_mean < median,
+        "{} wet columns at a mean height of {wet_mean}, the land's median {median}",
+        wet_heights.len()
+    );
 }
 
 #[test]

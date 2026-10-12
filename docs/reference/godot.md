@@ -496,7 +496,12 @@ their hollows through a cavity channel, wet their shores and tint covered ground
 The hills' and islands' meadows dry toward a measured dry grass up the hills and on slopes, and
 stay lush in the hollows, through a ramp. The hills run along ridgelines over flat valley floors, their crowns
 stepped in rock bands that shed scree, and darken with wetness where the land drains (a Droplets
-flow over their far height). The hills, islands, canyon and small city darken their
+flow over their far height). The islands rise from shallow shelves through a narrow beach and
+coastal plains to rough hills, gullied, their spines shedding scree, and wet where they drain as
+along their shores. The archipelago's islands are gullied, shedding scree from their crags, and the
+canyon's floors carry dry washes of gravel where the desert drains. The small city's countryside lies
+on valley floors between gullied hills, wet where it drains. The hills, islands, canyon and
+small city darken their
 valleys near and far by how much of the sky the land around hides, a Horizon stage over their far
 height given as the far ground's cavity and to the near ground's (`far_ground_cavity_stage`). The hills, islands, archipelago and small city draw their
 grass, sand, rock and forest floor with the plugin's texture sets

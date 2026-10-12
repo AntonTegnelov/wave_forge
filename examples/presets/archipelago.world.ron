@@ -36,7 +36,7 @@
         ))),
         // An island rises from its beach to as much as 7 cells; off it, a reef lies flat just under
         // the water as far out as the reefs amount reaches, and past it the sea floor falls away.
-        (name: "height", kind: Field(Select(
+        (name: "shaped", kind: Field(Select(
             when: Less(Input("shore"), Constant(0.0)),
             then: Curve(Input("shore"), [(-0.3, 7.0), (-0.1, 3.0), (-0.025, 0.6), (0.0, -0.3)]),
             otherwise: Max(
@@ -47,10 +47,20 @@
                 Constant(-8.0),
             ),
         ))),
+        // Gullies cut down the islands' steeper flanks, leaving the beaches and the reefs flat.
+        (name: "eroded", kind: Erode(input: "shaped", spacing: 10.0, octaves: 3, depth: 0.6, slope: 0.5, smooth: 2)),
+        // Debris shed by the islands' rocky crowns settles below them (docs/reference/packs.md,
+        // "Talus"), the ground the higher of the two, and the sea floor no deeper than 8 cells,
+        // however the gullies cut where it drops away.
+        (name: "weathered", kind: Talus(height: "eroded", region: 4, slope: 1.2, passes: 30, fade: 8)),
+        (name: "height", kind: Field(Max(Max(Input("eroded"), Input("weathered")), Constant(-8.0)))),
+        (name: "debris", kind: Field(Max(Sub(Input("weathered"), Input("eroded")), Constant(0.0)))),
         (name: "surface", kind: Rules(rules: [
             (category: "deep", when: [Less(Input("height"), Constant(-1.0))]),
             (category: "sand", when: [Less(Input("height"), Constant(1.0))]),
             (category: "rock", when: [Greater(Input("height"), Constant(5.5))]),
+            // Scree where the crowns' debris lies deep enough to show.
+            (category: "scree", when: [Greater(Input("debris"), Constant(0.25))]),
         ], otherwise: "jungle")),
         // Grass through the jungle.
         (name: "cover", kind: Field(Mul(Is("surface", ["jungle"]), Constant(0.7)))),

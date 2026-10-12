@@ -20,11 +20,14 @@
         "woods": (noise_type: Perlin, seed: 63, frequency: 0.05, fractal_octaves: 2),
     },
     stages: [
-        // The countryside, 4 cells above the ground's zero and up to 4 to 14 more.
-        (name: "hills", kind: Field(Add(
+        // The countryside, 4 cells above the ground's zero and up to 4 to 14 more: its low half
+        // lifted onto valley floors that rise only gently, where water would settle, and hills
+        // rising from them, gullied down their steeper slopes.
+        (name: "rolling", kind: Field(Add(
             Constant(4.0),
-            Mul(Add(FastNoise("hills"), Constant(1.0)), Add(Constant(2.0), Mul(Param("hills"), Constant(5.0)))),
+            Mul(Curve(Add(FastNoise("hills"), Constant(1.0)), [(0.0, 0.3), (0.7, 0.36), (0.9, 0.5), (1.2, 0.95), (2.0, 2.0)]), Add(Constant(2.0), Mul(Param("hills"), Constant(5.0)))),
         ))),
+        (name: "hills", kind: Erode(input: "rolling", spacing: 20.0, octaves: 4, depth: 1.0, slope: 0.3, smooth: 3)),
         // One city of 3 by 3 chunks beside the world's centre, whatever the seed: a footprint of 3
         // chunks kept one chunk inside a region of 5 has one place in it, chunks -4 to -2 in the
         // region beside the centre, and only that place's centre is near (-20, -20).
@@ -64,12 +67,18 @@
         // darkens the hollows and the valleys.
         (name: "around", kind: Blur(input: "level", radius: 4)),
         (name: "hollow", kind: Field(Max(Clamp(Mul(Sub(Input("around"), Input("level")), Constant(0.6)), 0.0, 1.0), Input("far_occlusion")))),
-        // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the hills over a
-        // world map of 4 by 4 cells a column, coloured by the same categories as the surface.
+        // The far ground beyond the view (docs/reference/packs.md, "Far ground"): the countryside's
+        // floors and hills without the gullies over a world map of 4 by 4 cells a column, coloured by
+        // the same categories as the surface.
         (name: "far_height", scale: 4, kind: Field(Add(
             Constant(4.0),
-            Mul(Add(FastNoise("hills"), Constant(1.0)), Add(Constant(2.0), Mul(Param("hills"), Constant(5.0)))),
+            Mul(Curve(Add(FastNoise("hills"), Constant(1.0)), [(0.0, 0.3), (0.7, 0.36), (0.9, 0.5), (1.2, 0.95), (2.0, 2.0)]), Add(Constant(2.0), Mul(Param("hills"), Constant(5.0)))),
         ))),
+        // The water that drains the countryside, from droplets rolling down the far ground's shape
+        // (docs/reference/packs.md, "Droplets"), and 0 to 1, how wet that leaves the ground along
+        // the lines it runs by, for the ground shader's wetness channel.
+        (name: "flow", scale: 4, kind: Droplets(height: "far_height", region: 16, gives: Flow)),
+        (name: "wet", kind: Field(Clamp(Remap(Input("flow"), (15.0, 60.0), (0.0, 1.0)), 0.0, 1.0))),
         // How much of the sky the land within 8 coarse columns hides from each, at the far
         // ground's scale (docs/reference/packs.md, "Horizon"): the far ground's cavity, and the
         // near ground's in its valleys, so the two darken alike where they meet.

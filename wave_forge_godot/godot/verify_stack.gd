@@ -121,7 +121,7 @@ func _dropped() -> bool:
 	var islands := Stack.new()
 	islands.read_pack_text(FileAccess.get_file_as_string(ISLANDS))
 	var categories := islands.rule_categories()
-	if categories != {"surface": PackedStringArray(["sand", "rock", "grass"])}:
+	if categories != {"surface": PackedStringArray(["sand", "rock", "scree", "grass"])}:
 		return _fail("the islands' rule categories are %s" % categories)
 	# Each drag from the FileSystem dock, or of nodes, with the scene it drops; none for most.
 	var drags := [
