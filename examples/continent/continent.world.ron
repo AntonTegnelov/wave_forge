@@ -261,7 +261,7 @@
             otherwise: "highland_swamp",
         )),
         // Each biome's own ground, blended over four cells where biomes meet: the oceans deepen,
-        // the peaks steepen, wetlands lie nearly flat, mesas and badlands rise in terraces, and
+        // the peaks rise, wetlands lie nearly flat, mesas and badlands rise in terraces, and
         // deserts in dunes.
         (name: "dunes", kind: Field(Mul(Sin(Add(Mul(X, Constant(0.09)), Mul(Noise(frequency: 0.01, octaves: 2, name: Some("dunes")), Constant(6.0)))), Constant(1.5)))),
         (name: "terrain", kind: Field(Match(
@@ -269,8 +269,10 @@
             cases: [
                 ("deep_ocean", Mul(Input("height"), Constant(1.6))),
                 ("ocean", Mul(Input("height"), Constant(1.3))),
-                ("ice_peaks", Add(Constant(70.0), Mul(Sub(Input("height"), Constant(70.0)), Constant(1.8)))),
-                ("snow_peaks", Add(Constant(70.0), Mul(Sub(Input("height"), Constant(70.0)), Constant(1.6)))),
+                // Raised by how much of the mountain stands above 70 cells, its coarse height, not by
+                // each column's own, so a peak grows taller without its slopes growing steeper.
+                ("ice_peaks", Add(Input("height"), Mul(Max(Sub(Input("coarse_height"), Constant(70.0)), Constant(0.0)), Constant(0.8)))),
+                ("snow_peaks", Add(Input("height"), Mul(Max(Sub(Input("coarse_height"), Constant(70.0)), Constant(0.0)), Constant(0.6)))),
                 ("scree", Add(Input("height"), Mul(Input("ridges"), Constant(4.0)))),
                 ("frost_marsh", Add(Constant(2.0), Mul(Sub(Input("height"), Constant(2.0)), Constant(0.3)))),
                 ("muskeg", Add(Constant(2.0), Mul(Sub(Input("height"), Constant(2.0)), Constant(0.3)))),
