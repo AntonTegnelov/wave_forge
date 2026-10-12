@@ -25,8 +25,14 @@
         "mouths": (noise_type: SimplexSmooth, seed: 55, frequency: 0.03, fractal_octaves: 2),
     },
     stages: [
-        // The hills' surface, 6 to 18 cells above the ground's zero.
-        (name: "height", kind: Field(Add(Constant(12.0), Mul(FastNoise("hills"), Constant(9.0))))),
+        // The hills' surface, 6 to 18 cells above the ground's zero: the low half of the hills noise
+        // lifted onto valley floors that rise only gently, the hills rising from them, gullied
+        // down their steeper slopes.
+        (name: "rolling", kind: Field(Add(Constant(12.0), Mul(
+            Curve(FastNoise("hills"), [(-1.0, -0.6), (-0.1, -0.55), (0.1, -0.35), (0.35, 0.12), (1.0, 1.0)]),
+            Constant(9.0),
+        )))),
+        (name: "height", kind: Erode(input: "rolling", spacing: 16.0, octaves: 4, depth: 1.0, slope: 0.3, smooth: 3)),
         // How far each column lies from the entrance cavern's middle.
         (name: "entrance", kind: Field(Distance((-6.0, -6.0)))),
         // How deep a crust of rock seals the caves: at least 1.5 cells where the mouths noise lies

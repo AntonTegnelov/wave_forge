@@ -724,6 +724,38 @@ fn survey_cave(runtime: &Runtime, pack: &Pack) -> (f32, f32, f32, usize) {
 }
 
 #[test]
+fn the_caves_hills_rise_from_valley_floors() {
+    // A square of 24 by 24 chunks around the origin, 192 cells a side, of the hills' surface.
+    let mut runtime = Runtime::new(preset("cave"), 3, SIZE);
+    let chunks: Vec<ChunkCoord> = (-12..12)
+        .flat_map(|y| (-12..12).map(move |x| ChunkCoord::new(x, y, 0)))
+        .collect();
+    let focus: Vec<FocusPoint> = chunks.iter().map(|&c| FocusPoint::new(c, 0)).collect();
+    runtime.request(&focus, &["height"]).expect("the stages");
+    runtime.run_until_idle().expect("the stages run");
+
+    let (mut columns, mut flat) = (0, 0);
+    for &chunk in &chunks {
+        let height = runtime.field("height", chunk).expect("generated");
+        for y in 1..7 {
+            for x in 1..7 {
+                let across = (height.get(x + 1, y) - height.get(x - 1, y)).abs();
+                let along = (height.get(x, y + 1) - height.get(x, y - 1)).abs();
+                flat += usize::from(across.max(along) < 0.1);
+                columns += 1;
+            }
+        }
+    }
+
+    let floors = flat as f32 / columns as f32;
+    println!("{floors} of the hills' surface flat");
+    assert!(
+        floors > 0.15,
+        "only {floors} of the hills' surface on flat floors"
+    );
+}
+
+#[test]
 fn every_value_in_the_cave_ranges_gives_a_sound_world() {
     let pack = preset("cave");
     let grid = [0.0, 0.5, 1.0];
