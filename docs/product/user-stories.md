@@ -726,8 +726,9 @@ at 1080p with no stage run, at p50 21 and 13 ms a frame in the dev container
 the library's whole run took 676 s, over the 10 minutes
 ([measurements.md](../research/measurements.md) D10,
 [#319](https://github.com/AntonTegnelov/wave_forge/issues/319)). Since then the stages that read a
-square of an input around each column read it once per chunk, and in the dev container the whole
-run fell from 729 to 477 s (L55); the desktop has not run it again. The bake's time and the
+square of an input around each column read it once per chunk, and a Volume its inputs once over its
+chunk's columns, and in the dev container the whole run fell from 729 to 418 s (L55, L56); the
+desktop has not run it again. The bake's time and the
 playback's frame times and memory there are the desktop script's `m1` part, not yet run.
 
 ### M2. Generate a maximal world once before play

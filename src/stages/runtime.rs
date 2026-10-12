@@ -4025,6 +4025,22 @@ impl Runtime {
             materials: kinds,
         } = &stage.kind
         {
+            // A voxel reads its inputs at its own column, the same at every level of it: each is
+            // read once for the chunk's columns, and what lies beyond them through the views.
+            let columns = views
+                .keys()
+                .map(|&input| {
+                    InputWindow::read(&self.pack.stages[input].name, chunk, self.size, 0, &read)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let read = |name: &str, x: i64, y: i64| match columns
+                .iter()
+                .find(|window| window.input == name)
+                .and_then(|window| window.get(x, y))
+            {
+                Some(value) => Ok(value),
+                None => read(name, x, y),
+            };
             let [sx, sy] = self.size;
             let levels = top.abs_diff(*bottom);
             let names = &self.categories[index];
@@ -4180,7 +4196,7 @@ impl Runtime {
             .map(|(input, reach)| InputWindow::read(input, chunk, self.size, reach, &read))
             .collect::<Result<Vec<_>, _>>()?;
         // A stage reading one input around each column reads it from that input's window.
-        let windowed = |x: i64, y: i64| Ok(windows[0].get(x, y));
+        let windowed = |x: i64, y: i64| Ok(windows[0].within(x, y));
         let mut values = Vec::with_capacity((sx * sy) as usize);
         for y in 0..sy {
             for x in 0..sx {
@@ -5207,15 +5223,22 @@ impl<'n> InputWindow<'n> {
         })
     }
 
-    /// The value at the world column `x`, `y`, which a stage reads only within its reach.
-    fn get(&self, x: i64, y: i64) -> f32 {
+    /// The value at the world column `x`, `y`, if the window holds it.
+    fn get(&self, x: i64, y: i64) -> Option<f32> {
         let (i, j) = (x - self.min[0], y - self.min[1]);
-        assert!(
-            (0..self.side[0]).contains(&i) && (0..self.side[1]).contains(&j),
-            "{} read at ({x}, {y}), outside the window it was read into",
-            self.input
-        );
-        self.values[(j * self.side[0] + i) as usize]
+        ((0..self.side[0]).contains(&i) && (0..self.side[1]).contains(&j))
+            .then(|| self.values[(j * self.side[0] + i) as usize])
+    }
+
+    /// The value at the world column `x`, `y`, which a stage reads only within the reach it was
+    /// read into the window for.
+    fn within(&self, x: i64, y: i64) -> f32 {
+        self.get(x, y).unwrap_or_else(|| {
+            panic!(
+                "{} read at ({x}, {y}), outside the window it was read into",
+                self.input
+            )
+        })
     }
 }
 
@@ -5280,7 +5303,7 @@ impl Leaves for ColumnPlace<'_, '_> {
                         let weight = ((reach + 1 - dx.abs()) * (reach + 1 - dy.abs())) as f32;
                         let (x, y) = (column[0] + dx, column[1] + dy);
                         let category = match window {
-                            Some(window) => window.get(x, y),
+                            Some(window) => window.within(x, y),
                             None => read(stage, x, y)?,
                         } as u8;
                         if weight_of[usize::from(category)] == 0.0 {
