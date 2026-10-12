@@ -3,7 +3,7 @@
 ## Run by `../verify.sh` after `verify_noise.gd`. A tree and a blade of grass the node placed are
 ## removed by the ids `point_sets` gave them, and the ground is raised under a position; the chunk
 ## comes back without them and with the ground higher. A second node given only the first one's
-## `edits_log` holds the same. Then the first node's save, from `request_save` and the `saved`
+## `edits_log` holds the same, and gives the same `chunk_hash` and `product_hash`. Then the first node's save, from `request_save` and the `saved`
 ## signal, is loaded into a third: the tree stays felled and the ground raised, but the grass,
 ## an ephemeral stage whose edits are never saved, grows back. Removing a point that is not there,
 ## raising a stage that is no field, and a log or a save that is not one are refused.
@@ -112,7 +112,11 @@ func _check_restored() -> bool:
 	if _ids(second) != _ids(first) or second.field_values("ground", ORIGIN) != first.field_values("ground", ORIGIN):
 		_fail("the edits restored from the log give another world")
 		return true
-	print("verify_edits: a node given only the edits log holds the same trees and ground")
+	var hash: String = first.chunk_hash(ORIGIN)
+	if hash.length() != 16 or second.chunk_hash(ORIGIN) != hash or second.product_hash("ground", ORIGIN) != first.product_hash("ground", ORIGIN):
+		_fail("the node restored from the log hashes its chunk otherwise: %s against %s" % [second.chunk_hash(ORIGIN), hash])
+		return true
+	print("verify_edits: a node given only the edits log holds the same trees and ground, and hashes its chunk alike (%s)" % hash)
 	first.saved.connect(func(text: String) -> void: save_text = text)
 	first.request_save()
 	phase = "saving"
